@@ -77,7 +77,7 @@ from flask import Blueprint as _Blueprint
 ROUTE_MODULES = [
     'activity',
     'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'code',
-    'compute', 'connectors', 'contacts', 'content_pipeline', 'context',
+    'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
     'control', 'core_routes',
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',

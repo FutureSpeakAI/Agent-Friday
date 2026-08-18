@@ -85,6 +85,66 @@ chat_bp = Blueprint('chat', __name__)
 
 
 
+# ── Conversations (docs/design/conversations-and-concurrency.md §3.1) ───────
+#
+# Every turn belongs to a conversation. Until now there was ONE transcript: the
+# global CHAT_HISTORY list, which "+ New Chat" deleted outright. Two chats open
+# at once shared it, so concurrent turns interleaved into each other's context.
+#
+# The legacy list is still written, deliberately, for one release: /api/chat/
+# history, the voice path and several panels still read it, and changing them
+# all in the same commit would make a large change unreviewable. The
+# conversation store is the source of truth for CONTEXT — which is the half
+# that corrupts — and the legacy list is a mirror that will be dropped.
+
+
+def _conv_id_from(data):
+    """The conversation this request addresses; Main when unaddressed.
+
+    Voice, channels and the scheduler predate conversations and send nothing;
+    they must keep working, and their output needs a real destination.
+    """
+    from agent_friday.services import conversations as _conv
+    return _conv.resolve(((data or {}).get('conversation_id') or '').strip() or None)
+
+
+def _conv_context(cid, limit=100):
+    """This conversation's replayable turns — never another conversation's."""
+    from agent_friday.services import conversations as _conv
+    out = []
+    for m in _conv.messages(cid, limit):
+        # System lines (seat changes, interruption notices) are transparency
+        # surfaces, not conversation, and are never replayed into model context.
+        if m.get('role') in ('system', 'system_report'):
+            continue
+        role = 'user' if m.get('role') == 'user' else 'assistant'
+        text = m.get('text') or ''
+        if text:
+            out.append({"role": role, "content": text})
+    return out
+
+
+def _persist_turn(cid, user_msg, friday_msg, meta=None):
+    """Write a completed exchange to its conversation (and the legacy mirror)."""
+    from agent_friday.services import conversations as _conv
+    try:
+        _conv.append(cid, {"id": user_msg.get('id'), "role": "user",
+                           "text": user_msg.get('text') or '',
+                           "pinned": bool(user_msg.get('pinned')),
+                           "meta": {"kind": "turn"}})
+        _conv.append(cid, {"id": friday_msg.get('id'), "role": "friday",
+                           "text": friday_msg.get('text') or '',
+                           "pinned": bool(friday_msg.get('pinned')),
+                           "meta": dict(meta or {}, kind="turn",
+                                        sources=friday_msg.get('sources') or [])})
+        _conv.prune(cid)
+    except Exception as _e:
+        print(f"  [conversations] could not persist turn to {cid}: {_e}")
+    # Legacy mirror — see the note above.
+    CHAT_HISTORY.append(user_msg)
+    CHAT_HISTORY.append(friday_msg)
+
+
 @chat_bp.route('/api/chat', methods=['POST'])
 def chat():
     """Text chat — powered by Anthropic Claude.
@@ -94,6 +154,9 @@ def chat():
     """
     try:
         data = request.get_json(silent=True) or {}
+        # Resolve the addressed conversation FIRST: the context build below reads
+        # from it, and everything downstream persists into it.
+        _conversation_id = _conv_id_from(data)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
@@ -146,8 +209,7 @@ def chat():
                   'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace}
             _f = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                   'role': 'friday', 'text': _nav_reply, 'pinned': False, 'sources': []}
-            CHAT_HISTORY.append(_u)
-            CHAT_HISTORY.append(_f)
+            _persist_turn(_conv_id_from(data), _u, _f)
             try:
                 _save_chat_history(CHAT_HISTORY)
             except Exception:
@@ -175,8 +237,7 @@ def chat():
                   'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace}
             _f = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                   'role': 'friday', 'text': _open_reply, 'pinned': False, 'sources': []}
-            CHAT_HISTORY.append(_u)
-            CHAT_HISTORY.append(_f)
+            _persist_turn(_conv_id_from(data), _u, _f)
             try:
                 _save_chat_history(CHAT_HISTORY)
             except Exception:
@@ -226,8 +287,7 @@ def chat():
                       'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace}
                 _f = {'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                       'role': 'friday', 'text': _dr, 'pinned': False, 'sources': []}
-                CHAT_HISTORY.append(_u)
-                CHAT_HISTORY.append(_f)
+                _persist_turn(_conv_id_from(data), _u, _f)
                 try:
                     _save_chat_history(CHAT_HISTORY)
                 except Exception:
@@ -240,17 +300,9 @@ def chat():
         # Build conversation history as Anthropic-format messages.
         # Pull up to 40 turns, then run trajectory compression if the total
         # char count is above the soft limit — older turns get summarised.
-        raw_history = []
-        for msg in CHAT_HISTORY[-100:]:
-            if msg.get('role') == 'system':
-                # B2/B5: system lines (seat changes etc.) are user-facing
-                # transparency surfaces, not conversation — never replayed
-                # into model context.
-                continue
-            role = 'user' if msg.get('role') == 'user' else 'assistant'
-            text = msg.get('text', '')
-            if text:
-                raw_history.append({"role": role, "content": text})
+        # THIS conversation's history. Reading the global list here is what
+        # let two open chats contaminate each other's context.
+        raw_history = _conv_context(_conversation_id, 100)
         messages = _compress_trajectory(raw_history)
         messages.append({"role": "user", "content": message})
 
@@ -399,8 +451,7 @@ def chat():
                 'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'friday', 'text': _warn, 'pinned': False, 'sources': [],
             }
-            CHAT_HISTORY.append(user_msg)
-            CHAT_HISTORY.append(friday_msg)
+            _persist_turn(_conv_id_from(data), user_msg, friday_msg)
             _save_chat_history(CHAT_HISTORY)
             return jsonify({
                 "response": _warn, "user_msg": user_msg, "friday_msg": friday_msg,
@@ -615,8 +666,7 @@ def chat():
                         'role': 'friday', 'text': _local_only_msg, 'pinned': False,
                         'sources': [],
                     }
-                    CHAT_HISTORY.append(user_msg)
-                    CHAT_HISTORY.append(friday_msg)
+                    _persist_turn(_conv_id_from(data), user_msg, friday_msg)
                     _save_chat_history(CHAT_HISTORY)
                     return jsonify({
                         "response": _local_only_msg, "user_msg": user_msg,
@@ -825,8 +875,8 @@ def chat():
         }
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
-        CHAT_HISTORY.append(user_msg)
-        CHAT_HISTORY.append(friday_msg)
+        _persist_turn(_conversation_id, user_msg, friday_msg,
+                      meta={'model': _seat_model, 'seat': _seat_class})
 
         # ── Context log: append both turns unless off-record. ──
         if not settings.get('off_record'):
@@ -953,6 +1003,8 @@ def chat_send():
     """
     try:
         data = request.get_json(silent=True) or {}
+        # Same addressing rule as /api/chat: unaddressed callers reach Main.
+        _conversation_id = _conv_id_from(data)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
@@ -1108,8 +1160,8 @@ def chat_send():
         }
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
-        CHAT_HISTORY.append(user_msg)
-        CHAT_HISTORY.append(friday_msg)
+        _persist_turn(_conversation_id, user_msg, friday_msg,
+                      meta={'model': _seat_model, 'seat': _seat_class})
 
         # Prune and save
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
