@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:app": "playwright test --config=playwright.app.config.ts",
+    "test:smoke": "playwright test --config=playwright.app.config.ts smoke.spec.ts seams.spec.ts",
+    "test:vision": "playwright test --config=playwright.app.config.ts vision.spec.ts",
+    "test": "playwright test --config=playwright.app.config.ts smoke.spec.ts seams.spec.ts"
   },
   "keywords": [],
   "author": "",
