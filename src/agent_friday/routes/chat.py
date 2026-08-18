@@ -384,9 +384,19 @@ def chat():
         try:
             from agent_friday.routing.model_router import get_router
             _router = get_router(_routing_cfg)
+            # The conversation's own binding, if it has one. A null seat
+            # means "follow the global default", resolved per turn.
+            _conv_seat = None
+            try:
+                from agent_friday.services import conversations as _convs
+                _conv_seat = (_convs.load(_conversation_id) or {}).get("seat")
+            except Exception:
+                pass
             _route_info = _router.route(messages, task_context={
                 "has_tools": True,
                 "workspace": workspace,
+                "conversation_id": _conversation_id,
+                "conversation_seat": _conv_seat,
                 "cloud_model": settings.get('orchestrator_model') or 'claude-opus-5',
             })
         except Exception as _re:

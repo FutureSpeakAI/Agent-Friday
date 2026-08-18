@@ -268,8 +268,20 @@ class ModelRouter:
         result["warning"] = warning
         return result
 
-    def _chosen_seat(self):
-        """The model he explicitly bound to the chat seat, or None.
+    def _chosen_seat(self, ctx=None):
+        """The model bound to this turn's seat, or None.
+
+        Precedence, per docs/design/conversations-and-concurrency.md §3.2:
+
+            vault-forced local  >  per-turn route_mode  >  CONVERSATION seat
+                                >  global capability_routing.reasoning
+
+        The vault route and route_mode are handled above this in `route()` and
+        are unchanged. What is new is the middle term: a conversation may bind
+        its own model, and when it has, that wins over the global default.
+        A conversation with no binding follows the global default resolved at
+        DISPATCH time — so a user who never opens a second chat sees exactly
+        today's behaviour.
 
         `capability_routing.reasoning` is what the model picker writes, what
         Settings -> Intelligence displays, and what capability_router.resolve()
@@ -286,6 +298,10 @@ class ModelRouter:
         An explicit binding is an instruction, not a hint. The classifier
         decides when he has expressed no preference.
         """
+        seat = (ctx or {}).get("conversation_seat")
+        if isinstance(seat, dict) and (seat.get("model") or "").strip():
+            return ((seat.get("model") or "").strip(),
+                    (seat.get("provider") or "").strip().lower())
         try:
             from agent_friday.core import _load_settings
             cr = (_load_settings() or {}).get("capability_routing") or {}
@@ -470,9 +486,12 @@ class ModelRouter:
         # Say which seat won and why. Three sessions have now debugged "the
         # model I picked is not the model that answered" without this line.
         try:
-            _m, _p = self._chosen_seat()
-            print("  [ROUTER] chose %s/%s | seat bound: %s (%s) | %s"
-                  % (result.get("provider"), result.get("model"), _m, _p,
+            _m, _p = self._chosen_seat(ctx)
+            _src = ("conversation" if isinstance(ctx.get("conversation_seat"), dict)
+                    and (ctx.get("conversation_seat") or {}).get("model")
+                    else "global default")
+            print("  [ROUTER] chose %s/%s | seat bound: %s (%s, from the %s) | %s"
+                  % (result.get("provider"), result.get("model"), _m, _p, _src,
                      result.get("reason")))
         except Exception:
             pass
@@ -630,7 +649,7 @@ class ModelRouter:
         # a deliberate per-class rule and still wins over a general seat.
         overrides = self.config.get("task_overrides", {})
         if task_type not in overrides and task_type != TaskType.VOICE:
-            _m, _p = self._chosen_seat()
+            _m, _p = self._chosen_seat(ctx)
             chosen = self._route_chosen_seat(_m, task_type, _p)
             if chosen and task_type != TaskType.TOOL_USE:
                 if chosen.get("model") is None:
@@ -705,7 +724,7 @@ class ModelRouter:
             # it, and the whole point of the redesigned picker is that the
             # choice takes effect. Leaving this branch cloud-only meant every
             # selection he made was cosmetic.
-            _m, _p = self._chosen_seat()
+            _m, _p = self._chosen_seat(ctx)
             chosen = self._route_chosen_seat(_m, task_type, _p)
             if chosen:
                 if chosen.get("model") is None:
