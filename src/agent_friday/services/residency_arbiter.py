@@ -357,12 +357,31 @@ class LlamaServerBackend:
             pass
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
+        # ── The port must be OURS before we trust a health check ──
+        #
+        # MEASURED 2026-08-18: three llama-server processes for gemma4-12b, all
+        # on :8090, working sets of 4/6/14 MB — none had loaded the model. The
+        # first held the port; the later two were orphans from failed launches.
+        #
+        # The mechanism is worse than "no cleanup". The readiness loop polls
+        # 127.0.0.1:PORT/health, so when a stale process is already listening
+        # there it answers 200 and the NEW process is recorded as healthy while
+        # the OLD one does the serving. The launch "succeeds", the new process
+        # sits idle forever, and the next attempt leaks another. Stephen deleted
+        # gemma4:12b over this — it reads exactly like a model that will not
+        # start.
+        stale = _reap_port(port, keep=set(pr.pid for pr, _ in self.procs.values()))
+        if stale:
+            _log.warning("reaped %d stale process(es) holding :%d before "
+                         "launching %s", stale, port, model_id)
+
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                                 cwd=str(Path(binary).parent))
         t0 = time.time()
         while time.time() - t0 < timeout:
             if proc.poll() is not None:
+                _terminate(proc)
                 raise TransitionError(
                     "%s exited %s loading %s"
                     % (Path(binary).parent.name, proc.returncode, model_id))
@@ -375,7 +394,8 @@ class LlamaServerBackend:
                         return round(time.time() - t0, 2)
             except Exception:
                 time.sleep(1.5)
-        proc.terminate()
+        # A launch that did not become ready leaves NOTHING behind.
+        _terminate(proc)
         raise TransitionError("%s never became ready in %ss for %s"
                               % (Path(binary).name, timeout, model_id))
 
@@ -395,6 +415,60 @@ class LlamaServerBackend:
     def evict_all(self):
         for m in list(self.procs):
             self.evict(m)
+
+
+def _terminate(proc, wait_s: int = 20) -> None:
+    """Terminate, WAIT, then kill. terminate() alone returns immediately and a
+    process that ignores it becomes the orphan this function exists to prevent."""
+    try:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=wait_s)
+        except Exception:
+            proc.kill()
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _reap_port(port: int, keep: set | None = None) -> int:
+    """Kill processes listening on `port` that we do not own. Returns the count.
+
+    Only llama-server processes are touched, and only ones absent from `keep`
+    (the PIDs this Arbiter believes it is running) — reaping something else
+    because it happened to hold a port would be a worse bug than the leak.
+    """
+    keep = keep or set()
+    killed = 0
+    try:
+        import psutil  # optional
+    except Exception:
+        psutil = None
+    if psutil is None:
+        return 0
+    for c in psutil.net_connections(kind="inet"):
+        if not c.laddr or c.laddr.port != port or c.status != "LISTEN":
+            continue
+        if not c.pid or c.pid in keep:
+            continue
+        try:
+            pr = psutil.Process(c.pid)
+            if "llama-server" not in (pr.name() or "").lower():
+                continue
+            pr.terminate()
+            try:
+                pr.wait(timeout=15)
+            except Exception:
+                pr.kill()
+            killed += 1
+        except Exception:
+            continue
+    return killed
 
 
 class ComfyUIBackend:

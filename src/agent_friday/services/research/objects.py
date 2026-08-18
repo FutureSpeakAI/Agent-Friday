@@ -144,6 +144,23 @@ class Finding:
     struck_reason: str = ""          # set by verification when a receipt fails
 
 
+def _sub_question(d: dict) -> "SubQuestion":
+    """Build a SubQuestion from persisted JSON, tolerating schema drift.
+
+    SubQuestion(**d) raised TypeError the moment a field was added — every
+    commission written by newer code became unloadable by older code, and
+    GET /api/research answered 500 for the whole list because ONE record had a
+    field the running build had never heard of. A record on disk outlives the
+    code that wrote it; the loader has to survive that.
+
+    Unknown keys are dropped and missing ones take their defaults, so a
+    commission stays readable in both directions.
+    """
+    from dataclasses import fields as _fields
+    known = {f.name for f in _fields(SubQuestion)}
+    return SubQuestion(**{k: v for k, v in (d or {}).items() if k in known})
+
+
 class Commission:
     """A research commission and its directory on disk."""
 
@@ -171,6 +188,10 @@ class Commission:
         self.styled_path: str | None = None
         self.colophon: dict = {}
         self.failure: str | None = None
+        # Times the pipeline could NOT use the model he named and used another.
+        # These reach the report; a silent substitution is the defect he
+        # reported in the first place.
+        self.substitutions: list[str] = []
         # Live counters the progress endpoint reads (§6).
         self.progress: dict = {"stage": PROPOSED, "sub_question": 0,
                                "sub_questions_total": 0, "fetches": 0,
@@ -206,6 +227,7 @@ class Commission:
             "plan": self.plan.to_dict() if self.plan else None,
             "report_path": self.report_path, "styled_path": self.styled_path,
             "colophon": self.colophon, "failure": self.failure,
+            "substitutions": self.substitutions,
             "progress": self.progress,
         }
         tmp = self.meta_path.with_suffix(".json.tmp")
@@ -230,13 +252,14 @@ class Commission:
         c.styled_path = d.get("styled_path")
         c.colophon = d.get("colophon") or {}
         c.failure = d.get("failure")
+        c.substitutions = d.get("substitutions") or []
         c.progress = d.get("progress") or c.progress
         pd = d.get("plan")
         if pd:
             c.plan = ResearchPlan(
                 commission_id=pd.get("commission_id", c.id),
                 perspectives=pd.get("perspectives") or [],
-                sub_questions=[SubQuestion(**s) for s in pd.get("sub_questions") or []],
+                sub_questions=[_sub_question(s) for s in pd.get("sub_questions") or []],
                 working_title=pd.get("working_title", ""),
                 internal_first=pd.get("internal_first") or [],
                 scoped_by=pd.get("scoped_by", ""))

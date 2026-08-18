@@ -187,6 +187,19 @@ def detect_moe(info: dict, total_b: float | None,
     if "moe" in arch:
         return True, "architecture:%s" % arch
 
+    # Self-declaring MoE families whose NAME does not contain "moe". Found by
+    # sweeping the classifier after the glm-4.7-flash defect: `mixtral` is the
+    # canonical mixture-of-experts model and the substring test missed it, so
+    # it would have been refused as dense exactly the way GLM was. A substring
+    # check is a smaller version of the hand-maintained table it replaced —
+    # this list is the residue, and expert_count above outranks it whenever
+    # the artifact bothers to say.
+    for fam in ("mixtral", "deepseek-v2", "deepseek-v3", "deepseekv2",
+                "deepseekv3", "qwen2_moe", "dbrx", "grok", "arctic",
+                "jamba", "olmoe", "phimoe", "granitemoe", "hunyuan"):
+        if fam in arch:
+            return True, "architecture:%s (known MoE family)" % arch
+
     if active_b and total_b and active_b < total_b:
         return True, "known_active_params"
 
