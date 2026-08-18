@@ -1,3 +1,12 @@
+
+<!-- NOTE (2026-08-18): the model quick switch and Settings -> Intelligence were
+     rebuilt in index.html, which is the file the server actually serves. This
+     file is a hand-maintained JSX mirror that nothing builds from and nothing
+     reads; mirroring 560 lines of new components here by hand would create a
+     second source of truth that silently drifts, which is the defect class the
+     rebuild exists to remove. The authoritative implementation is:
+       index.html  ->  E()/QuickSwitch/ModelPicker/SettingsTabIntelligence
+     backed by src/agent_friday/routes/intelligence.py -->
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback,useContext}=React;
 // Per-workspace live customizations Friday applies through the Workspace Studio

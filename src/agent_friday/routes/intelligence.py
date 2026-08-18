@@ -1,0 +1,387 @@
+"""One read-only view behind both model surfaces.
+
+The top-bar quick switch and Settings → Intelligence used to assemble
+themselves from whatever each happened to fetch, which is how the same model
+ended up listed twice with the selected dot on both copies, and how an
+automatic-speech-recognition model ended up offered as the orchestrator.
+
+This composes the four live sources — the catalogue, the residency plan, the
+machine, and what has actually been billed — into one payload, deduplicated
+once, so the two surfaces cannot disagree with each other.
+
+Nothing here is curated. Every list is derived from what the machine reports
+right now; there are no hardcoded model names and no fallback lists.
+"""
+from __future__ import annotations
+
+import os
+import sqlite3
+import time
+
+from flask import Blueprint, jsonify
+
+intelligence_bp = Blueprint("intelligence", __name__)
+
+
+# ── Capability model ─────────────────────────────────────────────────────────
+#
+# A job is described by the MODALITY it requires, never by a list of approved
+# models. That is the whole fix for the orchestrator picker offering Whisper:
+# running an agentic loop requires "tools", and an ASR model does not declare
+# it, so it is shown as unsuitable-for-this-job with the reason stated rather
+# than being silently absent.
+#
+# The labels are the words Stephen uses for these jobs, not the internal keys.
+
+ROLE_SPEC = [
+    # (key, label, catalogue role, required modality, help)
+    #
+    # TWO signals, because neither alone is sufficient on this machine:
+    #
+    #   - `modalities` is authoritative for media work (image / video / audio),
+    #     but every local Ollama model declares only ["text"] — none advertise
+    #     "tools" even though they demonstrably run tool loops. Filtering the
+    #     orchestrator on modality alone would hide EVERY local model, which is
+    #     worse than the bug being fixed.
+    #   - `roles` is what the catalogue says a model is FOR, and it is correct
+    #     where it matters here: Whisper and Piper carry roles [], Z-Image
+    #     carries ["creative"], the chat models carry ["orchestrator"].
+    #
+    # A model qualifies if EITHER signal says so. That admits every model that
+    # can really do the job and still excludes speech and image models from the
+    # seat that runs your conversation.
+    ("reasoning",      "Everyday conversation", "orchestrator", "tools",
+     "The model that answers you in chat and can use tools."),
+    ("heavy_hitter",   "Heavy thinking",        "orchestrator", "tools",
+     "Long, hard problems where you will wait for a better answer."),
+    ("local",          "Quick reflexes",        "orchestrator", "tools",
+     "The small local model that stays awake for fast replies."),
+    ("subagent",       "Research & background", "subagent",     "tools",
+     "Runs commissions and background work while you do other things."),
+    ("creative_image", "Images",                "creative",     "image",
+     "Generates pictures."),
+    ("creative_video", "Video",                 "creative",     "video",
+     "Generates moving images."),
+    ("creative_music", "Music",                 "creative",     "music",
+     "Generates audio compositions."),
+    ("voice",          "Live voice",            "voice",        "live",
+     "Real-time spoken conversation."),
+    ("asr",            "Voice in",              None,           "audio",
+     "Turns what you say into text."),
+    ("tts",            "Voice out",             None,           "audio",
+     "Speaks Friday's replies aloud."),
+    ("embedding",      "Memory",                None,           "text",
+     "Turns text into vectors so Friday can recall it later."),
+]
+
+# Seat names in the residency plan do not match capability keys one-for-one.
+_SEAT_FOR_ROLE = {
+    "reasoning": "interactive_brain",
+    "heavy_hitter": "heavy_hitter",
+    "local": "sidekick",
+    "subagent": "sidekick_heavy",
+    "creative_image": "image",
+    "embedding": "embedder",
+    "asr": "stt",
+    "tts": "tts",
+}
+
+
+def _costs_rollup():
+    """What has actually been served, per provider and per model.
+
+    Read-only against the existing cost ledger. This is the column nobody
+    builds: a provider that is configured but has never served anything says
+    so, instead of looking identical to one doing all the work.
+    """
+    path = os.path.expanduser("~/.friday/costs.db")
+    out = {"providers": {}, "models": {}, "serving": None}
+    if not os.path.exists(path):
+        return out
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+    except Exception:
+        return out
+    try:
+        cutoff = time.time() - 7 * 86400
+        for prov, calls, last_ts, cost in con.execute(
+                "SELECT provider, COUNT(*), MAX(ts), COALESCE(SUM(cost_usd),0) "
+                "FROM cost_calls GROUP BY provider"):
+            out["providers"][prov or "?"] = {
+                "calls": calls, "last_ts": last_ts, "cost_usd": round(cost or 0.0, 4)}
+        for prov, calls, cost in con.execute(
+                "SELECT provider, COUNT(*), COALESCE(SUM(cost_usd),0) FROM cost_calls "
+                "WHERE ts > ? GROUP BY provider", (cutoff,)):
+            p = out["providers"].setdefault(prov or "?", {})
+            p["calls_7d"] = calls
+            p["cost_7d"] = round(cost or 0.0, 4)
+        for model, calls, last_ts in con.execute(
+                "SELECT model, COUNT(*), MAX(ts) FROM cost_calls GROUP BY model"):
+            if model:
+                out["models"][model] = {"calls": calls, "last_ts": last_ts}
+        # The pill must name the model that served the LAST ACTUAL TURN, not
+        # the one configured in settings — those drift apart, and the whole
+        # point of the pill is answering "who is answering me".
+        row = con.execute(
+            "SELECT model, provider, ts FROM cost_calls WHERE kind='chat' "
+            "ORDER BY ts DESC LIMIT 1").fetchone()
+        if row:
+            out["serving"] = {"model": row[0], "provider": row[1], "at": row[2]}
+    except Exception:
+        pass
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    return out
+
+
+def _ollama_sizes():
+    """On-disk size per local model — the basis for the wake estimate."""
+    sizes = {}
+    try:
+        import requests
+        from agent_friday.routing.ollama_manager import OLLAMA_HOST  # type: ignore
+        host = OLLAMA_HOST
+    except Exception:
+        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    try:
+        import requests
+        r = requests.get(f"{host.rstrip('/')}/api/tags", timeout=3)
+        for m in (r.json() or {}).get("models", []):
+            if m.get("name"):
+                sizes[m["name"]] = int(m.get("size") or 0)
+    except Exception:
+        pass
+    return sizes
+
+
+# Measured on this class of machine: an NVMe-resident weight file reaches VRAM
+# at roughly 1.1 GB/s once page cache is cold. Reported as an estimate, and
+# labelled as one in the UI, because it is one.
+_GB_PER_SEC = 1.1
+
+
+def _wake_estimate_s(size_bytes: int) -> int | None:
+    if not size_bytes:
+        return None
+    return max(1, int(round((size_bytes / 1e9) / _GB_PER_SEC)))
+
+
+@intelligence_bp.route("/api/intelligence")
+def api_intelligence():
+    from agent_friday.services.model_catalog import build_catalog
+    from agent_friday.core import _load_settings
+
+    cat = build_catalog()
+    settings = _load_settings()
+    routing = settings.get("capability_routing") or {}
+
+    # ── Residency: what is actually loaded, and what a change would cost ──
+    seats, budgets, refusals, resident = {}, {}, [], set()
+    pinned = {}
+    try:
+        # Reuse the residency route's own view rather than re-deriving it, so
+        # this surface and /api/residency/status can never disagree.
+        from agent_friday.routes.residency import status as _residency_status
+        resp = _residency_status()
+        st = resp.get_json() if hasattr(resp, "get_json") else (resp[0].get_json())
+        seats = st.get("seats") or {}
+        budgets = st.get("budgets") or {}
+        refusals = st.get("refusals") or []
+        pinned = st.get("pinned_vram_mib") or {}
+        for k in ("resident_ollama", "resident_llama_server"):
+            v = st.get(k)
+            if isinstance(v, dict):
+                resident.update(v.keys())
+            elif isinstance(v, list):
+                resident.update(v)
+    except Exception:
+        pass
+
+    seat_by_model = {}
+    for seat_name, seat in (seats.items() if isinstance(seats, dict) else []):
+        mid = (seat or {}).get("model_id")
+        if mid:
+            seat_by_model[mid] = dict(seat, seat=seat_name)
+            if (seat or {}).get("status") in ("resident", "pinned", "leased"):
+                resident.add(mid)
+
+    costs = _costs_rollup()
+    sizes = _ollama_sizes()
+
+    # ── Deduplicate the catalogue by model id ────────────────────────────────
+    # The same local model is published by more than one provider entry
+    # (arbiter-local and ollama-local are the same daemon), which is why three
+    # models appeared twice in the picker and why selection state rendered on
+    # both copies of e4b. One row per model, provenance kept as a list.
+    merged: dict[str, dict] = {}
+    for m in cat.get("models", []):
+        mid = m.get("id")
+        if not mid:
+            continue
+        cur = merged.get(mid)
+        if cur is None:
+            cur = dict(m)
+            cur["providers"] = []
+            cur["roles"] = list(m.get("roles") or [])
+            cur["modalities"] = list(m.get("modalities") or [])
+            merged[mid] = cur
+        else:
+            cur["roles"] = sorted(set(cur["roles"]) | set(m.get("roles") or []))
+            cur["modalities"] = sorted(set(cur["modalities"]) | set(m.get("modalities") or []))
+            cur["available"] = bool(cur.get("available")) or bool(m.get("available"))
+        prov = m.get("provider")
+        if prov and prov not in cur["providers"]:
+            cur["providers"].append(prov)
+
+    models = []
+    for mid, m in merged.items():
+        size = sizes.get(mid) or 0
+        seat = seat_by_model.get(mid)
+        is_local = bool(m.get("local")) or m.get("classification") == "local"
+        state = "cloud"
+        if is_local:
+            state = "resident" if (mid in resident or (seat and seat.get("status") in
+                                                       ("resident", "pinned", "leased"))) else "cold"
+        used = costs["models"].get(mid) or {}
+        models.append({
+            "id": mid,
+            "label": m.get("label") or mid,
+            "providers": m["providers"],
+            "provider_label": m.get("provider_label"),
+            "local": is_local,
+            "state": state,
+            "seat": (seat or {}).get("seat"),
+            "seat_status": (seat or {}).get("status"),
+            "vram_mib": (seat or {}).get("vram_mib"),
+            "size_bytes": size or None,
+            "wake_s": None if state == "resident" else _wake_estimate_s(size),
+            "modalities": m.get("modalities") or [],
+            "roles": m.get("roles") or [],
+            "available": bool(m.get("available", True)),
+            "needs_key": m.get("needs_key"),
+            "cost_per_1k": m.get("cost_per_1k"),
+            "free": bool(m.get("free")),
+            "context_window": m.get("context_window"),
+            "last_used": used.get("last_ts"),
+            "calls": used.get("calls") or 0,
+        })
+    models.sort(key=lambda x: (not x["local"], x["label"].lower()))
+
+    # ── Roles, in his language, each with what it requires ───────────────────
+    roles = []
+    for key, label, need_role, need_mod, help_text in ROLE_SPEC:
+        bound = routing.get(key) or {}
+        mid = bound.get("model") or ""
+        seat = seat_by_model.get(mid) or {}
+        seat_name = _SEAT_FOR_ROLE.get(key)
+        if not seat and seat_name:
+            seat = (seats.get(seat_name) or {}) if isinstance(seats, dict) else {}
+        used = costs["models"].get(mid) or {}
+        roles.append({
+            "key": key, "label": label, "help": help_text,
+            "requires": need_mod,
+            "requires_role": need_role,
+            "model": mid,
+            "provider": bound.get("provider"),
+            "seat": seat_name,
+            "where": seat.get("device") or ("local" if mid in sizes else None),
+            "status": seat.get("status"),
+            "backend": seat.get("backend"),
+            "num_ctx": seat.get("num_ctx"),
+            # "Proven" means this exact model has actually served this machine,
+            # not that it appears in a config file.
+            "proven": bool(used.get("calls")),
+            "last_used": used.get("last_ts"),
+        })
+
+    # ── The machine ──────────────────────────────────────────────────────────
+    machine = {"vram": None, "ram": None, "refusals": refusals,
+               "resident": sorted(resident), "pinned_vram_mib": pinned}
+    try:
+        from agent_friday.services import gpu_headroom
+        risk = gpu_headroom.display_at_risk()
+        machine["vram"] = {
+            "total_mib": risk.get("total_mib"), "free_mib": risk.get("free_mib"),
+            "reserve_mib": risk.get("threshold_mib"), "at_risk": risk.get("at_risk"),
+            "gpu": risk.get("gpu"),
+        }
+    except Exception:
+        pass
+    ram = (budgets or {}).get("ram") or {}
+    if ram:
+        machine["ram"] = {
+            "total_mib": ram.get("total_mib"),
+            "available_mib": ram.get("available_hard_mib"),
+            "reserve_mib": ram.get("os_reserve_mib"),
+        }
+
+    # ── Providers, including whether they have ever actually served ──────────
+    #
+    # Attribution is by MODEL, not by matching provider-name strings. The cost
+    # ledger records coarse provider names ("local") that do not line up with
+    # catalogue names ("ollama-local", "local-voice-lite"), and stem-matching
+    # them put 657 local chat calls under "Local Voice (CPU)" while reporting
+    # "Local (Ollama) — never served anything", which was false in both
+    # directions. Every cost row names a model, and the catalogue says which
+    # provider owns that model, so we count through the model.
+    prov_of_model = {}
+    for m in models:
+        for pname in m["providers"]:
+            prov_of_model.setdefault(m["id"], set()).add(pname)
+
+    by_provider = {}
+    for mid, used in costs["models"].items():
+        owners = prov_of_model.get(mid)
+        if not owners:
+            continue
+        # A model published by two provider entries (the same local daemon seen
+        # twice) credits both; they are the same hardware either way.
+        for owner in owners:
+            acc = by_provider.setdefault(owner, {"calls": 0, "last_ts": None, "cost_usd": 0.0})
+            acc["calls"] += used.get("calls") or 0
+            ts = used.get("last_ts")
+            if ts and (acc["last_ts"] is None or ts > acc["last_ts"]):
+                acc["last_ts"] = ts
+
+    # Cost is only meaningful per provider for paid ones, and the ledger's own
+    # provider column is right about money even when it is coarse about which
+    # local backend served a turn.
+    for pname, stat in list(costs["providers"].items()):
+        for cand in (pname, pname + "-local"):
+            if cand in by_provider:
+                by_provider[cand]["cost_usd"] = stat.get("cost_usd") or 0.0
+
+    providers = []
+    for p_ in cat.get("providers", []):
+        name = p_.get("name")
+        stat = by_provider.get(name) or {}
+        if not stat and name in costs["providers"]:
+            stat = costs["providers"][name]
+        key_env = p_.get("needs_key")
+        providers.append({
+            "name": name,
+            "label": p_.get("label") or name,
+            "type": p_.get("type"),
+            "connected": bool(p_.get("available")),
+            "key_env": key_env,
+            "key_present": bool(os.environ.get(key_env)) if key_env else None,
+            "models": sum(1 for m in models if name in m["providers"]),
+            "calls": stat.get("calls") or 0,
+            "cost_usd": round(stat.get("cost_usd") or 0.0, 2),
+            "last_used": stat.get("last_ts"),
+        })
+    providers.sort(key=lambda x: (x["last_used"] is None, -(x["last_used"] or 0)))
+
+    return jsonify({
+        "status": "ok",
+        "serving": costs["serving"],
+        "roles": roles,
+        "models": models,
+        "machine": machine,
+        "providers": providers,
+        "catalog_meta": cat.get("catalog_meta") or {},
+        "now": time.time(),
+    })
