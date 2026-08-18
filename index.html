@@ -31648,6 +31648,7 @@ function SettingsTabIntelligence() {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
+  const [savingMode, setSavingMode] = useState(null);
 
   const pick = (key, m) => {
     setSaving(key);
@@ -31684,7 +31685,73 @@ function SettingsTabIntelligence() {
   const ram = mach.ram || {};
   const vUsed = (vram.total_mib || 0) - (vram.free_mib || 0);
 
+  const setMode = (id) => {
+    setSavingMode(id);
+    apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { model_routing: { mode: id } } }),
+    }).then(r => r.json()).then(() => apiFetch('/api/settings'))
+      .then(r => r.json()).then(d => {
+        const got = ((d || {}).settings || {}).model_routing || {};
+        if ((got.mode || '') !== id) {
+          alert('That mode did not stick — the server still has ' + (got.mode || 'nothing') + '.');
+          return;
+        }
+        reload();
+      }).catch(() => {}).finally(() => setSavingMode(null));
+  };
+
   return E('div', { style: { padding: '4px 2px' } },
+
+    // ── MODE ─────────────────────────────────────────────────────────────────
+    // Restored from the old dropdown, which had this and the rebuild dropped
+    // it. It belongs above the seats because it governs them: on "Local only"
+    // a busy or failing local model produces an honest refusal instead of a
+    // quiet trip to Sonnet, which is the substitution he objected to.
+    E(StSection, { title: 'WHERE WORK RUNS' },
+      E('div', {
+        style: {
+          fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
+          lineHeight: 1.6, marginBottom: 8,
+        },
+      }, 'This decides whether a seat can be substituted at all.'),
+      E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+        (d.routing_modes || []).map(m => {
+          const on = (d.routing_mode || 'smart') === m.id;
+          return E('button', {
+            key: m.id,
+            onClick: () => setMode(m.id),
+            title: m.help,
+            style: {
+              flex: '1 1 200px', textAlign: 'left', cursor: 'pointer',
+              background: on ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.03)',
+              border: '1px solid ' + (on ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
+              borderRadius: 8, padding: '8px 10px',
+            },
+          },
+            E('div', {
+              style: {
+                fontFamily: 'JetBrains Mono', fontSize: 12,
+                color: on ? '#cfefff' : 'rgba(255,255,255,0.85)',
+                display: 'flex', alignItems: 'center', gap: 6,
+              },
+            },
+              E('span', {
+                style: {
+                  width: 7, height: 7, borderRadius: 4, flexShrink: 0,
+                  background: on ? '#00d4ff' : 'rgba(255,255,255,0.22)',
+                },
+              }),
+              m.label,
+              savingMode === m.id && E('span', {
+                style: { fontSize: 9, color: '#f59e0b' } }, 'saving...')),
+            E('div', {
+              style: {
+                fontSize: 9.5, color: 'rgba(255,255,255,0.45)',
+                fontFamily: 'JetBrains Mono', marginTop: 3, lineHeight: 1.45,
+              },
+            }, m.help));
+        }))),
 
     // ── ROLES ────────────────────────────────────────────────────────────────
     E(StSection, { title: 'WHAT RUNS EACH JOB' },
@@ -38030,12 +38097,42 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
      and "what finished". */
   const [liveProcs, setLiveProcs] = useState([]);
   const [failedProcs, setFailedProcs] = useState([]);
+  const [orbiting, setOrbiting] = useState([]);
+  const [clearingOrbs, setClearingOrbs] = useState(false);
+  /* One control that empties the desk.
+     Stephen, 2026-08-18: "there are a bunch of error orbs and reasoning orbs
+     floating on my desktop but I don't want or need them... I just hate how
+     cluttered the desktop is with all these dead orbs floating around."
+     Per-orb dismissal existed and the only clear-all was for failures, inside
+     a panel he had to find. This lives in the top bar, appears the moment
+     anything is in orbit, and says how many. */
+  const clearOrbs = () => {
+    setClearingOrbs(true);
+    const ids = orbiting.filter(p => p.status !== 'running').map(p => p.id);
+    ids.forEach(id => { try { window.fridayRemoveOrb?.(id); } catch (_) {} });
+    setFailedProcs([]);
+    setOrbiting(o => o.filter(p => p.status === 'running'));
+    apiFetch('/api/orbs/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'finished' }),
+    }).then(r => r.json()).then(d => {
+      // Reap anything the server retired that the ring still shows.
+      [...(d.ids || []), ...(d.orphan_ids || [])].forEach(id => {
+        try { window.fridayRemoveOrb?.(id); } catch (_) {}
+      });
+    }).catch(() => {}).finally(() => setClearingOrbs(false));
+  };
   useEffect(() => {
     let on = true;
     const tick = () => apiFetch('/api/processes').then(r => r.json()).then(d => {
       if (!on) return;
       setLiveProcs((d.processes || []).filter(p => p.status === 'running'));
       setFailedProcs((d.processes || []).filter(p => p.orb_failed && !p.dismissed));
+      // Everything actually in orbit — failures AND finished-but-lingering AND
+      // still-working. The old "CLEAR ALL" only knew about failures, so the
+      // reasoning and completed orbs Stephen was looking at had no exit at all.
+      setOrbiting((d.processes || []).filter(p => p.orb_visible && !p.dismissed));
     }).catch(() => {});
     tick();
     const iv = setInterval(tick, 1500);
@@ -38986,7 +39083,22 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), /*#__PURE__*/React.createElement(QuickSwitch, {
+  }, "|"), orbiting.length > 0 && /*#__PURE__*/React.createElement("button", {
+    onClick: clearOrbs,
+    disabled: clearingOrbs,
+    title: orbiting.length + ' orb(s) in orbit. Clears everything that has '
+      + 'finished or failed; anything still working is left alone.',
+    'aria-label': 'Clear finished orbs',
+    style: {
+      background: 'rgba(245,158,11,0.12)',
+      border: '1px solid rgba(245,158,11,0.45)',
+      borderRadius: 10, padding: '3px 9px', marginRight: 8, cursor: 'pointer',
+      fontFamily: 'JetBrains Mono', fontSize: 11, color: '#f59e0b',
+      display: 'flex', alignItems: 'center', gap: 6,
+    },
+  }, '\u2726 ' + orbiting.length, /*#__PURE__*/React.createElement('span', {
+    style: { opacity: 0.75, fontSize: 10 },
+  }, clearingOrbs ? 'clearing...' : 'clear')), /*#__PURE__*/React.createElement(QuickSwitch, {
     current: curOrchId,
     switching: pendingSeat,
     onPick: m => {

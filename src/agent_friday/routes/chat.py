@@ -582,6 +582,48 @@ def chat():
                 if _vault_access:
                     print(f"  [ROUTER] local vault inference failed; refusing cloud fallback: {_ole}")
                     raise
+                # LOCAL ONLY MEANS LOCAL ONLY.
+                #
+                # Stephen, 2026-08-18: "It took forever to reply then kicked
+                # back to Sonnet 4.6 again, which I do not want." The mode
+                # setting is exactly the control that should prevent this, and
+                # this fallback never consulted it — so "local only" still
+                # reached Anthropic whenever a local seat had a bad minute.
+                # Refusing is the honest outcome: he asked for on-device work,
+                # and a slow answer from the model he chose beats a fast one
+                # from a model he rejected.
+                _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
+                if _mode == 'local_only':
+                    print(f"  [ROUTER] local inference failed and mode is "
+                          f"local_only — refusing the cloud: {_ole}")
+                    _local_only_msg = (
+                        "I could not get an answer out of "
+                        + str(_route_info.get('model') or 'the local model')
+                        + " just now (" + str(_ole)[:160] + ").\n\n"
+                        "You are in **local only** mode, so I did not send this "
+                        "to a cloud model. Options: wait and try again once the "
+                        "GPU is free, pick a smaller local model, or switch the "
+                        "mode to Local preferred in Settings -> Intelligence if "
+                        "you want me to fall back when local is busy."
+                    )
+                    user_msg = {
+                        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                        'role': 'user', 'text': message, 'pinned': False, 'sources': [],
+                    }
+                    friday_msg = {
+                        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                        'role': 'friday', 'text': _local_only_msg, 'pinned': False,
+                        'sources': [],
+                    }
+                    CHAT_HISTORY.append(user_msg)
+                    CHAT_HISTORY.append(friday_msg)
+                    _save_chat_history(CHAT_HISTORY)
+                    return jsonify({
+                        "response": _local_only_msg, "user_msg": user_msg,
+                        "friday_msg": friday_msg, "sources": [], "tool_trace": [],
+                        "model": _route_info.get('model'), "seat": "local",
+                        "local_only_refused": True,
+                    })
                 print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
                 # He chose a local seat. Answering from the cloud instead is a
                 # decision he did not make, about data he chose to keep on the

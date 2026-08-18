@@ -375,9 +375,30 @@ def api_intelligence():
         })
     providers.sort(key=lambda x: (x["last_used"] is None, -(x["last_used"] or 0)))
 
+    # Routing mode. Present in the payload because it belongs on the same page
+    # as the seats: it decides whether a seat may be substituted at all, and
+    # dropping it from the rebuilt picker was a regression.
+    routing_mode = str(((settings.get("model_routing") or {}).get("mode")
+                        or "smart")).lower()
+
     return jsonify({
         "status": "ok",
         "serving": costs["serving"],
+        "routing_mode": routing_mode,
+        "routing_modes": [
+            {"id": "local_only", "label": "Local only",
+             "help": "Never leaves the machine. If a local model cannot answer, "
+                     "I say so rather than using the cloud."},
+            {"id": "local_preferred", "label": "Local preferred",
+             "help": "Try local first, fall back to the cloud when local is "
+                     "busy or unavailable."},
+            {"id": "smart", "label": "Smart",
+             "help": "Choose per task: local for routine work, cloud when it "
+                     "will clearly be better."},
+            {"id": "cloud_only", "label": "Cloud only",
+             "help": "Always use a cloud model. Fastest, costs money, and every "
+                     "turn leaves the machine."},
+        ],
         "roles": roles,
         "models": models,
         "machine": machine,
