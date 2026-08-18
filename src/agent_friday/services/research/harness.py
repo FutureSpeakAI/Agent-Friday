@@ -28,6 +28,46 @@ from agent_friday.services.research.objects import (
 
 _log = logging.getLogger("friday.research")
 
+# SEATS ARE RESOLVED AGAINST WHAT IS ACTUALLY INSTALLED, not hardcoded.
+# Found 2026-08-18: `gemma4:12b` was removed from Ollama between runs (the
+# model-suite work reshuffles tags), and every local call in the grind answered
+# 404 "model not found". The commission failed correctly — "I could not turn
+# this into a research plan" — but the REASON was buried in a warning line, and
+# a pipeline whose seats can silently evaporate should say so in the words a
+# person needs: the model is gone, not the research.
+_SEAT_FALLBACKS = {
+    "brain": ["gemma4:12b", "hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced:Q4_K_M",
+              "qwen3.5:9b", "gemma4:26b", "gemma4:e2b"],
+    "sidekick": ["gemma4:e2b", "gemma4:e4b", "qwen3.5:9b"],
+    "heavy": ["gemma4:26b", "gemma4:12b"],
+}
+
+
+def installed_models() -> list[str]:
+    try:
+        import requests
+        from agent_friday.services.local_call import ollama_url
+        d = requests.get(f"{ollama_url()}/api/tags", timeout=8).json()
+        return [m.get("name", "") for m in d.get("models", [])]
+    except Exception:
+        return []
+
+
+def resolve_seat(role: str) -> str | None:
+    """The first candidate for `role` that is actually installed, or None."""
+    have = set(installed_models())
+    for cand in _SEAT_FALLBACKS.get(role, []):
+        if cand in have:
+            return cand
+    return None
+
+
+def seat_report() -> dict:
+    """What each role resolves to right now — so a missing seat is a stated
+    fact rather than a 404 buried in a log line."""
+    return {role: resolve_seat(role) for role in _SEAT_FALLBACKS}
+
+
 BRAIN = "gemma4:12b"        # judgment: reformulate, converse, done_when
 SIDEKICK = "gemma4:e2b"     # cheap structured work
 # Extraction seat, MEASURED 2026-08-17 on a 24,000-char page:
@@ -65,6 +105,17 @@ def _json_local(system: str, user: str, model: str, *, max_tokens: int = 2048,
     return out
 
 
+# Seat substitutions seen during a run, drained onto the commission so they
+# reach the REPORT rather than dying in a log line.
+_SUBSTITUTIONS: list[str] = []
+
+
+def drain_substitutions() -> list[str]:
+    out = list(_SUBSTITUTIONS)
+    _SUBSTITUTIONS.clear()
+    return out
+
+
 def _json_local_or_cloud(seat: str, system: str, user: str, *,
                          max_tokens: int = 2048) -> dict | None:
     """One structured call on `seat`, cloud or local. Keeps the caller from
@@ -76,6 +127,8 @@ def _json_local_or_cloud(seat: str, system: str, user: str, *,
         except Exception as e:
             _log.warning("cloud call on %s failed (%s) — using %s",
                          seat, e, SIDEKICK)
+            _SUBSTITUTIONS.append(
+                f"{seat} was unreachable ({str(e)[:100]}); {SIDEKICK} did that step")
     return _json_local(system, user, SIDEKICK, max_tokens=max_tokens)
 
 
@@ -195,6 +248,21 @@ JSON shape:
 def scope(c: Commission) -> ResearchPlan | None:
     """Turn the question into a plan. Who scopes is the gate's decision."""
     c.set_stage(SCOPING)
+    global BRAIN, SIDEKICK, EXTRACTOR, HEAVY
+    _b, _s, _h = resolve_seat("brain"), resolve_seat("sidekick"), resolve_seat("heavy")
+    if _b and _b != BRAIN:
+        c.log(f"seat resolved: brain {BRAIN} is not installed, using {_b}")
+        BRAIN = _b
+    if _s:
+        SIDEKICK = EXTRACTOR = _s
+    if _h:
+        HEAVY = _h
+    if not _b:
+        c.failure = ("None of my local models are installed "
+                     f"({', '.join(_SEAT_FALLBACKS['brain'][:3])} all missing). "
+                     "This is a missing model, not a research failure.")
+        c.log("NO LOCAL SEAT AVAILABLE — refusing to start")
+        return None
 
     from agent_friday.services import judgment_gate as jg
     dry = jg.dry_run("\n\n".join(x for x in (c.question, c.context) if x))
@@ -366,6 +434,7 @@ def grind(c: Commission) -> None:
         corpus: list[dict] = []
         if getattr(sq, "source", WEB_TIER) == VAULT_TIER:
             corpus = _vault_corpus(sq.text)
+            persist_vault_corpus(c, corpus)
             c.log(f"vault pass: {len(corpus)} passage(s) read locally "
                   f"(never transmitted)", sq_id=sq.id, tier=VAULT_TIER)
             sq.seat = BRAIN
@@ -484,7 +553,16 @@ def grind(c: Commission) -> None:
                     conv = _extract_json(_claude(_CONVERSE_SYSTEM, _prompt,
                                                  model=cloud_model))
                 except Exception as e:
-                    c.log(f'cloud grind failed on {sq.id}, falling back: {e}', sq_id=sq.id)
+                    # DISCLOSED, not just logged. Stephen's original report was
+                    # "I asked for Opus 5 but it ran on Gemma4 instead" — and a
+                    # silent fallback here reproduces exactly that, one layer
+                    # down. A capability the tools cannot deliver is told to the
+                    # user; it is never quietly substituted.
+                    note = (f"You asked for {cloud_model} on this sub-question "
+                            f"and I could not reach it ({type(e).__name__}: "
+                            f"{str(e)[:120]}), so it ran on {BRAIN} instead.")
+                    c.substitutions.append(note)
+                    c.log("SEAT SUBSTITUTION: " + note, sq_id=sq.id)
                     sq.seat = BRAIN
                     conv = _json_local(_CONVERSE_SYSTEM, _prompt, BRAIN, max_tokens=3072)
             else:
@@ -778,7 +856,10 @@ def verify(c: Commission, draft: dict) -> dict:
         if not f.source_id:
             killed.append((fid, "no source recorded"))
             continue
-        page = _norm(web_fetch.load_extraction(f.source_id))
+        raw = (load_vault_extraction(c, f.source_id)
+               if f.source_id.startswith("vault:")
+               else web_fetch.load_extraction(f.source_id))
+        page = _norm(raw)
         if not page:
             killed.append((fid, "the cached source could not be read"))
             continue
@@ -913,3 +994,42 @@ def _vault_corpus(sq_text: str, limit: int = 6) -> list[dict]:
                             "url": "", "title": f.stem, "tier": VAULT_TIER})
                 break
     return out[:limit]
+
+
+def persist_vault_corpus(c, corpus: list[dict]) -> None:
+    """Write vault passages where verification can read them back.
+
+    DEFECT FOUND ON A REAL RUN: every vault finding was struck with "the cached
+    source could not be read". Verification resolves a receipt through
+    web_fetch.load_extraction(), which only knows the WEB source cache — vault
+    passages were never stored anywhere, so a vault citation could never verify
+    and was guaranteed to be struck. His personal context still reached the
+    report, with every sentence marked [unverified], which is the worst
+    outcome: sourced material rendered as though it were not.
+
+    Stored INSIDE the commission directory, never in the shared web cache —
+    vault text does not belong in a store whose whole purpose is material
+    fetched from the public internet.
+    """
+    d = c.dir / "vault_sources"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        for e in corpus:
+            sid = e.get("source_id", "")
+            if not sid.startswith("vault:"):
+                continue
+            (d / f"{sid.split(':', 1)[1]}.txt").write_text(
+                e.get("text", ""), encoding="utf-8")
+    except Exception as ex:
+        c.log(f"could not persist vault passages for verification: {ex}")
+
+
+def load_vault_extraction(c, source_id: str) -> str:
+    """The verbatim vault passage a finding was born from."""
+    if not source_id.startswith("vault:"):
+        return ""
+    try:
+        return (c.dir / "vault_sources" /
+                f"{source_id.split(':', 1)[1]}.txt").read_text(encoding="utf-8")
+    except Exception:
+        return ""

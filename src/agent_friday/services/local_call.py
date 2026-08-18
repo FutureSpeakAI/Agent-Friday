@@ -121,6 +121,14 @@ def _openai_style(base: str, system: str, user: str, model: str,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "max_tokens": max_tokens, "temperature": 0.1, "stream": False,
+        # MEASURED 2026-08-18: without this, gemma4-12b served by llama-server
+        # returns HTTP 200 with content="" and the whole answer in
+        # `reasoning_content`. Every structured call then reads as "no usable
+        # JSON" and the stage fails for a reason that looks nothing like the
+        # cause. The Ollama branch above already passes think:false; the
+        # OpenAI-compatible branch — which is the one an Arbiter-owned seat
+        # uses — did not.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
@@ -129,7 +137,14 @@ def _openai_style(base: str, system: str, user: str, model: str,
         if r.status_code >= 400:
             return ""
         ch = (r.json().get("choices") or [{}])[0]
-        return ((ch.get("message") or {}).get("content") or "").strip()
+        msg = ch.get("message") or {}
+        content = (msg.get("content") or "").strip()
+        if not content:
+            # Belt and braces: a server that ignores the kwarg still put the
+            # answer somewhere. Empty content with a full reasoning field is a
+            # transport quirk, not the model declining to answer.
+            content = (msg.get("reasoning_content") or "").strip()
+        return content
     except Exception as e:
         _log.warning("local_call (openai-style) to %s failed: %s", model, e)
         return ""

@@ -63,6 +63,17 @@ def build_markdown(c, verified: dict) -> str:
         lines.append(_link_citations(body, findings, keep) + "\n")
 
     # Mandatory section. May be empty, is never absent (§3.0).
+    # A model he NAMED that we could not reach is disclosed in the report,
+    # not left in a log line. His original bug report was "I asked for
+    # Opus 5 but it ran on Gemma4" — a silent fallback here is that same
+    # defect wearing a different hat.
+    subs = list(getattr(c, "substitutions", []) or [])
+    if subs:
+        lines.append("## Where I could not use the model you asked for" + chr(10))
+        for s in subs:
+            lines.append("- " + s)
+        lines.append("")
+
     lines.append("## What I could not confirm\n")
     unc = verified.get("unconfirmed") or []
     if not unc:
