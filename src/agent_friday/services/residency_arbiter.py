@@ -63,6 +63,31 @@ class TransitionError(RuntimeError):
 ARBITER = None
 
 
+def exclusive_lease() -> dict | None:
+    """The lease currently holding the card, or None.
+
+    Acquiring an exclusive lease evicts every seat but the R10-retained ones,
+    precisely so an image job gets the whole card. Nothing on the dispatch path
+    ever asked whether that lease existed, so the exclusivity was real on the
+    way IN and unenforced afterwards: any timer that woke up and called a local
+    model loaded ~7 GB straight back onto a card an image job believed it owned.
+
+    Stephen, 2026-08-18: "An hourly heartbeat launched while I was running my
+    last image job and the whole computer slowed to a crawl." The heartbeat was
+    harmless while background work went to the cloud; moving it to a local
+    model (correctly — it was costing a million tokens a day) turned it into a
+    GPU competitor, and nothing taught the scheduler about leases.
+    """
+    try:
+        arb = get_arbiter()
+    except Exception:
+        return None
+    if arb is None:
+        return None
+    lease = getattr(arb, "lease", None)
+    return dict(lease) if lease else None
+
+
 def get_arbiter():
     return ARBITER
 

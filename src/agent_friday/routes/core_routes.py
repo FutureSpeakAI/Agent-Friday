@@ -713,6 +713,46 @@ def api_settings():
         # on-disk file. Spreading _load_settings() in here would risk persisting
         # the non-persistent offline routing overlay (mode=local_only).
         merged = _save_settings(new_settings)
+
+        # A seat change must reach the PLAN, not just dispatch.
+        #
+        # Until now the plan was computed once at boot and never again, so
+        # choosing a model in the UI changed what answered him while the
+        # residency plan kept describing the old seat. Everything that reads
+        # the plan — the pause forecaster above all — then reasoned about a
+        # model that was not serving anyone, which is how a "cold model"
+        # warning appeared before every message for a model that was warm.
+        #
+        # The plan is recomputed, but capability_routing is deliberately NOT
+        # rebound from it: his selection is the input here, and a save that
+        # quietly rewrote his choice back to whatever fits would be the same
+        # silent-override defect wearing different clothes. Where his choice
+        # cannot be seated the plan records a refusal with its reason, which
+        # /api/residency/status and Settings -> Intelligence both surface.
+        if any(k in (new_settings or {}) for k in
+               ('capability_routing', 'orchestrator_model', 'subagent_model')):
+            def _replan_after_seat_change():
+                try:
+                    from agent_friday.services.residency_arbiter import get_arbiter
+                    from agent_friday.services import residency_catalog as _rc
+                    from agent_friday.services import seat_binding as _sb
+                    arb = get_arbiter()
+                    if arb is None:
+                        return
+                    arb.entries = _rc.installed_entries(arb.profile)
+                    plan = arb.compute_plan(_sb.overrides_from_settings(merged))
+                    seats = {r: (v or {}).get('model_id')
+                             for r, v in (plan.get('seats') or {}).items()}
+                    print('  [RESIDENCY] replanned after a seat change: %s' % seats)
+                    for f in (plan.get('refusals') or []):
+                        print('  [RESIDENCY] cannot seat %s: %s'
+                              % (f.get('role'), f.get('explanation')))
+                except Exception as _e:
+                    print('  [RESIDENCY] replan after seat change failed: %s' % _e)
+
+            import threading
+            threading.Thread(target=_replan_after_seat_change, daemon=True,
+                             name='residency-replan').start()
         personality = data.get('personality')
         if personality is not None:
             # The personality store is free-text (GET returns it as a string), so

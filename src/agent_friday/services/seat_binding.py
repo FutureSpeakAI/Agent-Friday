@@ -59,6 +59,46 @@ CAPABILITY_TO_FLAT = {
 # Never bound from a plan. See the module docstring — D5.
 NEVER_BIND = {"embedder", "stt", "tts"}
 
+# capability_routing key -> residency role. The inverse of SEAT_TO_CAPABILITY,
+# and the missing half of this module.
+#
+# Binding ran in ONE direction: the plan wrote capability_routing. The plan,
+# though, was computed with `overrides=None`, so it never saw what Stephen had
+# actually chosen — `interactive_brain` was picked by a fit heuristic ("best
+# remaining model that fits some GPU alone") and then OVERWROTE his selection
+# at every boot.
+#
+# Caught 2026-08-18: he switched his chat seat in the UI, dispatch honoured it,
+# the plan did not, and the two disagreed for the rest of the session. The
+# pause forecaster reads the plan, so it announced a 30-second cold load before
+# every message while the model he chose answered him at normal speed.
+#
+# His choice is now an INPUT to planning rather than something planning
+# discards. The plan stays authoritative — but it plans around what he asked
+# for, and where it cannot, `_apply_overrides` records a refusal with a reason
+# instead of silently seating something else.
+CAPABILITY_TO_SEAT = {cap: seat for seat, cap in SEAT_TO_CAPABILITY.items()}
+
+
+def overrides_from_settings(settings: dict) -> dict:
+    """{residency role: model_id} for every seat the user has explicitly chosen.
+
+    Only text seats. The image seat is ComfyUI's and has one candidate; the
+    embedder, stt and tts seats are NEVER_BIND (D5 — the embedding dimension
+    mismatch presents as silent memory loss).
+    """
+    routing = (settings or {}).get("capability_routing") or {}
+    out = {}
+    for cap, seat in CAPABILITY_TO_SEAT.items():
+        if seat in NEVER_BIND or seat == "image":
+            continue
+        model = ((routing.get(cap) or {}) if isinstance(routing.get(cap), dict)
+                 else {}).get("model")
+        if model:
+            out[seat] = model
+    return out
+
+
 def _provider_for(seat: dict) -> str:
     backend = (seat or {}).get("backend") or ""
     if backend == "llama-server":
