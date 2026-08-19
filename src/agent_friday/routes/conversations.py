@@ -54,7 +54,13 @@ def conversations_index():
         return jsonify({"status": "ok", "conversation": _view(conv)})
 
     conv_store.ensure_main()      # first call also performs the legacy import
-    include_archived = str(request.args.get("archived", "1")).lower() not in ("0", "false")
+    # Archived means HIDDEN. The DELETE branch below archives rather than
+    # destroys precisely so the address running work reports into stays alive,
+    # and its own comment says "the list view hides it" — but this defaulted to
+    # including them, so archiving a chat left it sitting in the switcher and
+    # the only visible effect of "delete" was nothing at all. Pass
+    # ?archived=1 to see them.
+    include_archived = str(request.args.get("archived", "0")).lower() not in ("0", "false")
     return jsonify({
         "status": "ok",
         "main_id": conv_store.MAIN_ID,
