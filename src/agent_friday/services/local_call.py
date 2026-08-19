@@ -26,7 +26,9 @@ prompt, `format: json` when structured output is wanted, no tools, no loop.
 from __future__ import annotations
 
 import json
+import json as _json
 import logging
+import time as _time
 
 _log = logging.getLogger("friday.local_call")
 
@@ -48,25 +50,104 @@ def ollama_url() -> str:
         return "http://localhost:11434"
 
 
+# Verified endpoints.json lookups, briefly. Dispatch asks per call and the
+# probe is a loopback round trip; without this a grinding loop pays it every
+# time. Short enough that a seat dying is noticed within seconds.
+_EP_CACHE: dict = {}
+_EP_TTL_S = 5.0
+
+
+def _serves(url: str, model: str) -> bool:
+    """Does the server at `url` actually hold `model` right now?
+
+    endpoints.json is a record of intent written by whoever spawned the seat,
+    and it goes stale: measured 2026-08-18, the file claimed `gemma4:e4b` was
+    on :8090 while :8090 was serving `gemma4:12b`. Trusting it unverified
+    would answer as a model the caller did not ask for -- the silent
+    substitution this whole layer exists to prevent -- so the file is a HINT
+    and the server itself is the authority.
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/models", timeout=2) as r:
+            rows = (_json.loads(r.read().decode()) or {})
+        rows = rows.get("models") or rows.get("data") or []
+        return any((m.get("id") or m.get("name")) == model for m in rows)
+    except Exception:
+        return False
+
+
+def _endpoints_file() -> dict:
+    """`model_id -> url` as last recorded by whoever spawned the seats."""
+    try:
+        from agent_friday.services.residency_arbiter import endpoints_path
+        raw = endpoints_path().read_text(encoding="utf-8")
+        return (_json.loads(raw) or {}).get("endpoints") or {}
+    except Exception:
+        return {}
+
+
 def seat_endpoint(model: str) -> str | None:
     """A seat the Arbiter runs as an owned process is NOT in the daemon.
 
     Once a model's GGUF is extracted and served by llama-server on its own
-    port, asking :11434 for it finds nothing. The Arbiter is the only authority
-    that knows a live seat's port, so it is asked first.
+    port, asking :11434 for it finds nothing.
+
+    TWO sources, in order of authority:
+
+      1. This process's own Arbiter. If we spawned it, we know.
+      2. `runtime/residency/endpoints.json`, VERIFIED against the server.
+
+    (2) is the fix for the drift that put Ollama back in the local path. The
+    Arbiter's `procs` dict lives in memory, so after any restart the new
+    process holds nothing, every lookup returned None, and dispatch fell
+    through to the Ollama daemon -- which only has what was `ollama pull`ed.
+    That is how `gemma4:12b` was logged as "not found" while it was serving on
+    127.0.0.1:8090. `liveness_audit` already stated the contract as "dispatch
+    resolves seats through endpoints.json"; it simply was not doing it.
+
+    Verified, not trusted: see `_serves`.
     """
+    if not model:
+        return None
     try:
         from agent_friday.services.residency_arbiter import get_arbiter
         arb = get_arbiter()
-        if arb is None:
-            return None
-        procs = getattr(arb, "procs", None) or {}
-        for _seat, info in procs.items():
-            if isinstance(info, dict) and info.get("model_id") == model and info.get("port"):
-                return f"http://127.0.0.1:{info['port']}/v1"
+        procs = getattr(arb, "procs", None) or {} if arb is not None else {}
+        # The Arbiter stores `{model_id: (proc, port)}`. This used to test
+        # `isinstance(info, dict)` and read info["port"], which matches that
+        # shape never -- so even the process that SPAWNED a seat could not
+        # find it, and fell through to the Ollama daemon like everyone else.
+        # Both shapes are accepted now so a future refactor cannot re-break it
+        # silently.
+        for key, info in procs.items():
+            port = None
+            if isinstance(info, (tuple, list)) and len(info) >= 2:
+                port = info[1]
+            elif isinstance(info, dict):
+                if info.get("model_id") not in (None, model):
+                    continue
+                port = info.get("port")
+            elif isinstance(info, int):
+                port = info
+            if port and (key == model or (isinstance(info, dict)
+                                          and info.get("model_id") == model)):
+                return f"http://127.0.0.1:{port}/v1"
     except Exception:
         pass
-    return None
+
+    now = _time.time()
+    hit = _EP_CACHE.get(model)
+    if hit and (now - hit[0]) < _EP_TTL_S:
+        return hit[1]
+
+    url = _endpoints_file().get(model)
+    good = url if (url and _serves(url, model)) else None
+    if url and not good:
+        _log.info("endpoints.json points %s at %s, which is not serving it",
+                  model, url)
+    _EP_CACHE[model] = (now, good)
+    return good
 
 
 def call(system: str, user: str, model: str, *, json_mode: bool = False,

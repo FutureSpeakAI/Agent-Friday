@@ -506,6 +506,78 @@ def _arbiter_seat_entries() -> list:
     return out
 
 
+def _friday_store_entries(exclude: set | None = None) -> list:
+    """Every model Friday HOLDS, whether or not it is seated right now.
+
+    `_arbiter_seat_entries` reports the residency PLAN, which is a statement
+    about what should be hot -- not about what exists. Stephen's store holds
+    gemma4:e2b, :12b, :e4b and :26b; the plan pins two of them; so two of his
+    own models were absent from his own picker. One of the absent pair was
+    serving a live seat on 127.0.0.1:8090 while he was looking at a list that
+    did not mention it, which is the screenshot he sent.
+
+    A model on disk with a template beside it is a model he can pick. Whether
+    it is loaded is a `resident` flag, not a reason to hide it.
+    """
+    exclude = exclude or set()
+    out = []
+    try:
+        import json as _json
+        import os as _os
+        import pathlib as _pl
+        home = _os.environ.get("USERPROFILE") or _os.path.expanduser("~")
+        raw = _pl.Path(home, ".friday", "runtime", "models",
+                       "models.json").read_text(encoding="utf-8")
+        rows = (_json.loads(raw) or {}).get("models") or {}
+    except Exception:
+        return []
+
+    try:
+        from agent_friday.services.residency_arbiter import owned_endpoint
+    except Exception:
+        owned_endpoint = lambda _m: None            # noqa: E731
+
+    for mid, rec in rows.items():
+        if mid in exclude or not isinstance(rec, dict):
+            continue
+        if rec.get("is_embedding") or rec.get("can_generate") is False:
+            continue
+        path = rec.get("path")
+        if path:
+            try:
+                import pathlib as _pl2
+                if not _pl2.Path(path).exists():
+                    continue                        # listed is not present
+            except Exception:
+                pass
+        try:
+            live = bool(owned_endpoint(mid))
+        except Exception:
+            live = False
+        m = _humanize(mid)
+        gb = float(rec.get("size_bytes") or 0) / 1e9
+        out.append({
+            "id": mid,
+            "label": m["label"],
+            "short": m["short"],
+            "provider": "arbiter-local",
+            "provider_label": "Local (Friday's own seats)",
+            "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
+            "modalities": ["text", "tools"],
+            "local": True,
+            "classification": "local",
+            "available": True,
+            "needs_key": None,
+            "hint": ("in Friday's store · %.1f GB" % gb)
+                    + ("" if live else " · not currently loaded"),
+            "seat": None,
+            "resident": live,
+            "cost_per_1k": 0.0,
+            "curated": True,
+        })
+    return out
+
+
 def build_catalog() -> dict:
     """Return the full model catalog grouped by UI role.
 
@@ -543,10 +615,25 @@ def build_catalog() -> dict:
         seen.add((e["id"], e["provider"]))
         e["_ord"] = len(flat)
         flat.append(e)
+    # Then everything else Friday holds on disk but has not seated.
+    for e in _friday_store_entries(exclude={f["id"] for f in flat}):
+        seen.add((e["id"], e["provider"]))
+        e["_ord"] = len(flat)
+        flat.append(e)
+
+    _local_ids = {f["id"] for f in flat}
     for provider in registry.get_enabled_providers():
         for e in _model_entries_for(provider, registry):
             key = (e["id"], e["provider"])
             if key in seen:
+                continue
+            # ONE model, ONE row. `embeddinggemma:300m` is in both stores and
+            # appeared twice -- once as `arbiter-local`, once as
+            # `ollama-local` -- because the dedupe key carried the provider.
+            # Two rows for one model is a question he has to answer before he
+            # can pick, about a difference that does not affect the answer.
+            # Friday's own runtime wins; the daemon copy is the same weights.
+            if e.get("provider") == "ollama-local" and e["id"] in _local_ids:
                 continue
             # A retired daemon must not name models. Ollama's daemon is stopped
             # and Friday does not need it, so its STATIC fallback list is pure

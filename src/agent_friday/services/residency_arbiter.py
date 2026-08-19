@@ -292,6 +292,165 @@ _ENGINE_MEMO: dict = {}
 DAEMON_SERVED: dict = {}
 
 
+
+# ── Seats that outlived the process that spawned them ───────────────────────
+#
+# `procs` lives in memory, so a restart forgets every llama-server it started
+# while the processes themselves keep running and keep their VRAM. Measured
+# 2026-08-18: EIGHT of them, 12:06 to 22:36, one per restart that day, holding
+# ~4.1 GB between them, none known to the Arbiter that had just booted. That
+# is the same defect as a daemon seating a model behind our back -- the rule
+# is that nothing occupies that GPU without the Arbiter knowing, and it does
+# not care who started it.
+#
+# So boot LOOKS first: whatever is serving a model the plan wants is adopted,
+# and everything else on our ports is reaped.
+
+
+class AdoptedProc:
+    """A llama-server this process did not spawn but now owns.
+
+    Quacks like `subprocess.Popen` for the four calls `evict` makes, so an
+    adopted seat is evicted, leased against and republished exactly like one
+    we started. Anything less would make adoption a second class of seat.
+    """
+
+    def __init__(self, pid: int):
+        self.pid = int(pid)
+        self._rc = None
+
+    def _alive(self) -> bool:
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"if (Get-Process -Id {self.pid} -ErrorAction SilentlyContinue)"
+                 f" {{'1'}} else {{'0'}}"],
+                capture_output=True, text=True, timeout=10)
+            return out.stdout.strip().endswith("1")
+        except Exception:
+            return False
+
+    def poll(self):
+        if self._rc is not None:
+            return self._rc
+        return None if self._alive() else 0
+
+    def terminate(self):
+        try:
+            subprocess.run(["taskkill", "/PID", str(self.pid)],
+                           capture_output=True, timeout=20)
+        except Exception:
+            pass
+
+    def kill(self):
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", str(self.pid)],
+                           capture_output=True, timeout=20)
+            self._rc = 0
+        except Exception:
+            pass
+
+    def wait(self, timeout=None):
+        deadline = time.time() + (timeout or 30)
+        while time.time() < deadline:
+            if not self._alive():
+                self._rc = 0
+                return 0
+            time.sleep(0.5)
+        raise TimeoutError(f"pid {self.pid} did not exit")
+
+
+def _listening_ports() -> dict:
+    """`port -> owning pid` for everything listening, in one call."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-NetTCPConnection -State Listen | "
+             "Select-Object -Property LocalPort,OwningProcess | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=30)
+        rows = json.loads(out.stdout or "[]")
+        if isinstance(rows, dict):
+            rows = [rows]
+        return {int(r["LocalPort"]): int(r["OwningProcess"]) for r in rows}
+    except Exception:
+        return {}
+
+
+def _llama_server_pids() -> set:
+    """llama-server processes serving OUR models. Not the daemon's.
+
+    The discriminator is the MODEL PATH, not the binary. Ollama's daemon
+    spawns the same `llama-server.exe` for its own models, and the Arbiter
+    deliberately uses Ollama's binary for the e-series that upstream cannot
+    parse — so "is this Ollama's exe" answers the wrong question in both
+    directions.
+
+    Ours load from `~/.friday/runtime/models`; the daemon's load from
+    `~/.ollama/models/blobs`. Measured 2026-08-18, the first version of this
+    matched on the binary name and reaped Ollama's live runner (pid 17104,
+    port 56662) along with the real orphans, forcing the daemon to reload a
+    model mid-session. Killing another scheduler's process is exactly the
+    discourtesy this module exists to stop, and it does not stop being one
+    when we are the ones doing it.
+    """
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | "
+             "Where-Object { $_.CommandLine -like '*.friday*runtime*models*' } | "
+             "Select-Object -ExpandProperty ProcessId"],
+            capture_output=True, text=True, timeout=30)
+        return {int(x) for x in out.stdout.split() if x.strip().isdigit()}
+    except Exception:
+        return set()
+
+
+def _model_on_port(port: int) -> str | None:
+    """What a llama-server is actually holding. The server, not a record."""
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/v1/models" % port, timeout=2) as r:
+            data = json.loads(r.read().decode()) or {}
+        rows = data.get("models") or data.get("data") or []
+        for m in rows:
+            mid = m.get("id") or m.get("name")
+            if mid:
+                return str(mid)
+    except Exception:
+        pass
+    return None
+
+
+def _seat_num_ctx(pid: int) -> int | None:
+    """The `-c` a running llama-server was started with, or None."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}' | "
+             f"Select-Object -ExpandProperty CommandLine"],
+            capture_output=True, text=True, timeout=20)
+        parts = (out.stdout or "").split()
+        for i, tok in enumerate(parts):
+            if tok == "-c" and i + 1 < len(parts) and parts[i + 1].isdigit():
+                return int(parts[i + 1])
+    except Exception:
+        pass
+    return None
+
+
+def survey_live_seats(port_lo: int = PORT_BASE, port_hi: int = PORT_BASE + 40) -> dict:
+    """`model_id -> (pid, port)` for llama-servers answering on our ports."""
+    listening = _listening_ports()
+    found = {}
+    for port in range(port_lo, port_hi + 1):
+        if port not in listening:
+            continue
+        model = _model_on_port(port)
+        if model:
+            found[model] = (listening[port], port)
+    return found
+
+
 class LlamaServerBackend:
     """Pinned seats. One process per seat, owned end to end (R9).
 
@@ -353,8 +512,29 @@ class LlamaServerBackend:
                 last = e
         raise TransitionError("no engine could load %s: %s" % (model_id, last))
 
+    # A seat's window is the Arbiter's decision, and it is bounded.
+    #
+    # MEASURED on this card: the 12b at 131072 took 11,351 MiB of a 12,282 MiB
+    # GPU on ONE request. At 262144 -- the model's architectural maximum, which
+    # is what `models.json` reports and what a seat gets when nothing clamps it
+    # -- boot alone left 448 MiB free, under the 1024 MiB display reserve, in
+    # the exact state that has already dropped Stephen's second monitor twice
+    # today. The daemon was blamed for it the first time.
+    #
+    # 32768 is the measured working point (residency_policy.TOOL_SEAT_NUM_CTX).
+    # A bigger window is worth nothing on a seat that costs him a screen.
+    MAX_SEAT_NUM_CTX = 32768
+
     def _spawn(self, binary, model_id, num_ctx, *, gguf_path, port,
                n_cpu_moe=None, timeout=300):
+        try:
+            asked = int(num_ctx or 0)
+        except Exception:
+            asked = 0
+        if asked > self.MAX_SEAT_NUM_CTX:
+            print(f"  [arbiter] {model_id}: capping context {asked:,} -> "
+                  f"{self.MAX_SEAT_NUM_CTX:,} to keep the display reserve")
+            num_ctx = self.MAX_SEAT_NUM_CTX
         cmd = [str(binary), "-m", str(gguf_path), "--alias", model_id,
                "--host", "127.0.0.1", "--port", str(port),
                "-ngl", "99", "--flash-attn", "on", "-c", str(num_ctx),
@@ -420,6 +600,74 @@ class LlamaServerBackend:
     def evict_all(self):
         for m in list(self.procs):
             self.evict(m)
+
+    def adopt_or_reap(self, wanted: set) -> dict:
+        """Take ownership of what the plan wants; kill what it does not.
+
+        Called at boot, before anything is loaded. `wanted` is the set of
+        model ids the computed plan intends to keep pinned.
+
+        Adoption is not politeness — it is the only way the invariant holds
+        across a restart. An orphan we cannot see is an orphan we cannot
+        evict when a lease needs the card, and it still costs its VRAM.
+        Reaping the rest is what stops one leak per restart.
+        """
+        report = {"adopted": [], "reaped": []}
+        try:
+            live = survey_live_seats()
+        except Exception as e:
+            print(f"  [arbiter] could not survey live seats: {e}")
+            return report
+
+        # Seats WE already hold, whether or not they are listening yet. A
+        # llama-server loading a 262k-context model takes tens of seconds and
+        # answers nothing while it does; without this it is invisible to the
+        # survey, unclaimed, and reaped by its own owner mid-load.
+        claimed = set()
+        for _m, _entry in list(self.procs.items()):
+            try:
+                _pid = getattr(_entry[0], "pid", None)
+                if _pid:
+                    claimed.add(int(_pid))
+            except Exception:
+                pass
+
+        for model_id, (pid, port) in live.items():
+            # Adoption inherits whatever the previous process decided, and a
+            # seat started at 262144 keeps that window forever if we simply
+            # take it. Boot then reports a healthy adoption while the card sits
+            # at 448 MiB free. A seat that does not conform to policy is not
+            # adopted; it is reaped, and the plan reloads it inside the cap.
+            over = _seat_num_ctx(pid)
+            if over and over > self.MAX_SEAT_NUM_CTX:
+                print(f"  [arbiter] not adopting {model_id} on :{port}: it was "
+                      f"started at {over:,} context, over the "
+                      f"{self.MAX_SEAT_NUM_CTX:,} cap - reloading it instead")
+                continue
+
+            if model_id in wanted and model_id not in self.procs:
+                self.procs[model_id] = (AdoptedProc(pid), port)
+                claimed.add(pid)
+                report["adopted"].append(f"{model_id} on :{port} (pid {pid})")
+            elif model_id in self.procs:
+                claimed.add(pid)
+
+        for pid in (_llama_server_pids() - claimed):
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=20)
+                report["reaped"].append(pid)
+            except Exception:
+                pass
+
+        if report["adopted"] or report["reaped"]:
+            _publish_endpoints(self.procs)
+        for line in report["adopted"]:
+            print(f"  [arbiter] adopted {line}")
+        if report["reaped"]:
+            print(f"  [arbiter] reaped {len(report['reaped'])} orphaned "
+                  f"llama-server process(es): {sorted(report['reaped'])}")
+        return report
 
 
 class ComfyUIBackend:
@@ -558,6 +806,68 @@ class Arbiter:
 
     # ── boot ────────────────────────────────────────────────────────────────
 
+    def authorized_daemon_models(self) -> set:
+        """Models the Arbiter has actually asked the daemon to hold."""
+        out = set()
+        try:
+            for seat in (self.plan.get("seats") or {}).values():
+                if not isinstance(seat, dict):
+                    continue
+                if str(seat.get("backend") or seat.get("device") or "").find("ollama") >= 0 \
+                        or seat.get("served_by") == "ollama":
+                    if seat.get("model_id"):
+                        out.add(seat["model_id"])
+        except Exception:
+            pass
+        try:
+            for m in (getattr(self, "_daemon_leases", None) or set()):
+                out.add(m)
+        except Exception:
+            pass
+        return out
+
+    def reconcile_daemon(self, evict: bool = True) -> dict:
+        """Nothing occupies that GPU without the Arbiter knowing.
+
+        The rule does not care who started it. Ollama's daemon has its own
+        scheduler, and on 2026-08-18 it seated a model at 262k context behind
+        the Arbiter's back, took the card, and dropped Stephen's second
+        monitor. The Arbiter had no idea, because it had never once looked.
+
+        HONEST LIMIT, and it matters: Ollama exposes observation (`/api/ps`)
+        and eviction (`keep_alive: 0`), but NO admission hook. Friday cannot
+        stop `ollama run` in a terminal, or the tray app, from loading
+        something -- it can only notice and reclaim. `OLLAMA_MAX_LOADED_MODELS`
+        and `OLLAMA_KEEP_ALIVE` are read by the daemon at START, so enforcing
+        them means owning daemon startup, which we do not. This is
+        detect-and-reclaim, not prevention, and it should not be described as
+        more than that.
+        """
+        report = {"authorized": [], "unexpected": [], "evicted": []}
+        try:
+            resident = self.ollama.resident() or {}
+        except Exception as e:
+            print(f"  [arbiter] could not read daemon residency: {e}")
+            return report
+        allowed = self.authorized_daemon_models()
+        for model, mib in resident.items():
+            if model in allowed:
+                report["authorized"].append(model)
+                continue
+            report["unexpected"].append((model, mib))
+            print(f"  [arbiter] daemon is holding {model!r} ({mib} MiB) that "
+                  f"nothing here asked for")
+            if evict:
+                try:
+                    self.ollama.evict(model)
+                    report["evicted"].append(model)
+                except Exception as e:
+                    print(f"  [arbiter] could not evict {model!r}: {e}")
+        if report["evicted"]:
+            print(f"  [arbiter] reclaimed the card from "
+                  f"{len(report['evicted'])} unauthorised daemon model(s)")
+        return report
+
     def boot(self, *, measure_baseline=True):
         """Bring the machine to the default plan.
 
@@ -566,6 +876,24 @@ class Arbiter:
         load every restart.
         """
         with self._lock:
+            # BEFORE anything else. `evict_all` walks `self.procs`, which is
+            # empty in a fresh process, so seats left running by the previous
+            # one survived every restart -- including the baseline wipe, which
+            # then measured an "idle" floor with several GB of forgotten
+            # models still resident. Look at the machine first.
+            self.compute_plan()
+            try:
+                _wanted = {s.get("model_id") for s in
+                           (self.plan.get("seats") or {}).values()
+                           if isinstance(s, dict) and s.get("status") == "pinned"}
+                self.llama.adopt_or_reap({m for m in _wanted if m})
+            except Exception as e:
+                print(f"  [arbiter] adopt/reap failed (continuing): {e}")
+            try:
+                self.reconcile_daemon(evict=True)
+            except Exception as e:
+                print(f"  [arbiter] daemon reconciliation failed: {e}")
+
             if measure_baseline:
                 # The one moment we can honestly measure the idle GPU floor.
                 self.ollama.evict_all()

@@ -403,12 +403,18 @@ def chat():
                 pass
             # A conversation bound to a model that is GONE.
             #
-            # Stephen's inventory changed twice during one session — gemma4:e2b,
-            # gemma4:12b and glm-4.7-flash left the daemon while chats were bound
-            # to them — and a binding to a missing model 404s and falls through
-            # to the cloud. §3.8: a stated choice to rebind, never a silent
-            # substitution. Answering as Claude when he asked for a local model
-            # is the defect this whole day has been about.
+            # A binding to a missing model 404s and falls through to the cloud.
+            # §3.8: a stated choice to rebind, never a silent substitution.
+            # Answering as Claude when he asked for a local model is the defect
+            # this whole day has been about.
+            #
+            # "Gone" is asked of every place Friday can serve from, not just
+            # the catalogue. The catalogue omitted `gemma4:e2b` while that seat
+            # was live on 127.0.0.1:8092, so a chat bound to one of her OWN
+            # models was told it was no longer installed — refusing to answer
+            # from a model that was running two ports away. A wrong "it's
+            # gone" is as damaging as a silent substitution: both end with him
+            # not getting the model he chose.
             if isinstance(_conv_seat, dict) and (_conv_seat.get('model') or ''):
                 _want = _conv_seat['model']
                 _known = False
@@ -416,6 +422,12 @@ def chat():
                     from agent_friday.services.model_catalog import build_catalog
                     _known = any(m.get('id') == _want
                                  for m in (build_catalog().get('models') or []))
+                    if not _known:
+                        from agent_friday.services import local_seats
+                        _known = any(n == _want for n, _ in local_seats.installed())
+                    if not _known:
+                        from agent_friday.services.local_call import seat_endpoint
+                        _known = bool(seat_endpoint(_want))
                 except Exception:
                     _known = True          # cannot check → do not block the turn
                 if not _known:
