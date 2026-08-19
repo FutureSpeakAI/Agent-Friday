@@ -186,3 +186,66 @@ def test_a_vision_model_does_not_win_a_text_role_by_being_smaller(monkeypatch):
 def test_a_vision_model_is_used_when_it_is_the_only_thing_there(monkeypatch):
     _inventory(monkeypatch, [VISION])
     assert seats.resolve("brain", "gone:1b") == "qwen3-vl:8b"
+
+
+# ── Friday's own runtime counts as installed ────────────────────────────────
+#
+# The first version of this module asked only the Ollama daemon, which
+# inverted its purpose. gemma4:e2b / :12b / :e4b / :26b are real entries in
+# ~/.friday/runtime/models/models.json with files on disk, served by the
+# Arbiter as processes Friday owns. The daemon has never heard of them. A
+# resolver that trusts the daemon alone declares her own models missing and
+# substitutes whatever was last `ollama pull`ed -- moving a seat off the
+# runtime Stephen chose, which is what happened to his reasoning seat.
+
+def test_a_model_in_fridays_own_store_is_installed(monkeypatch):
+    monkeypatch.setattr(seats, "_friday_store",
+                        lambda: [("gemma4:e2b", 7.16), ("gemma4:26b", 16.95)])
+    monkeypatch.setattr(seats.urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("no daemon")))
+    names = {n for n, _ in seats.installed(force=True)}
+    assert "gemma4:e2b" in names, (
+        "her own runtime was treated as empty because the daemon was asked")
+
+
+def test_a_seat_bound_to_fridays_own_model_is_not_healed_away(monkeypatch):
+    monkeypatch.setattr(seats, "installed",
+                        lambda force=False: [("gemma4:e2b", 7.16),
+                                             ("qwen3.5:9b", 6.59)])
+    settings = {"orchestrator_model": "gemma4:e2b",
+                "capability_routing": {"reasoning": {"model": "gemma4:e2b"}}}
+    assert seats.heal(settings) == []
+    assert settings["orchestrator_model"] == "gemma4:e2b"
+
+
+def test_both_stores_are_merged_without_duplicates(monkeypatch):
+    """functiongemma:270m lives in BOTH. It is one seat, not two."""
+    import json as _json
+
+    payload = {"models": [{"name": "functiongemma:270m", "size": 3e8},
+                          {"name": "qwen3.5:9b", "size": 6.59e9}]}
+
+    class _R:
+        def read(self): return _json.dumps(payload).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(seats, "_friday_store",
+                        lambda: [("functiongemma:270m", 0.30), ("gemma4:12b", 7.38)])
+    monkeypatch.setattr(seats.urllib.request, "urlopen", lambda *a, **k: _R())
+    names = [n for n, _ in seats.installed(force=True)]
+    assert names.count("functiongemma:270m") == 1
+    assert {"gemma4:12b", "qwen3.5:9b"} <= set(names)
+
+
+def test_a_manifest_entry_whose_file_is_gone_does_not_count(monkeypatch, tmp_path):
+    """Listed is not the same as present."""
+    import json as _json
+    manifest = {"models": {"ghost:1b": {"path": str(tmp_path / "nope.gguf"),
+                                        "size_bytes": 1e9}}}
+    home = tmp_path / "home"
+    (home / ".friday" / "runtime" / "models").mkdir(parents=True)
+    (home / ".friday" / "runtime" / "models" / "models.json").write_text(
+        _json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("USERPROFILE", str(home))
+    assert seats._friday_store() == []
