@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — how much of a context window is spent before the user types.
 
 The residency policy has to choose a `num_ctx` for every seat (rule R7). Until
@@ -35,7 +35,27 @@ import time
 # cannot be read; a stale constant is a much smaller error than assuming zero.
 MEASURED_TOOL_TOKENS = 8534
 MEASURED_SYSTEM_PROMPT_TOKENS = 11681
-MEASURED_OVERHEAD_TOKENS = MEASURED_TOOL_TOKENS + MEASURED_SYSTEM_PROMPT_TOKENS
+
+# Injected memory and source context: recalled conversation, wiki spans, search
+# results and anything else assembled INTO the turn before the user's words.
+#
+# This was missing entirely, and its absence is why seats came out too small.
+# Measured 2026-08-18: a real turn against a 32,768 seat totalled 47,448 tokens
+# -- roughly 13k system prompt, 9.7k tools, and ~25k of injected context that
+# nothing budgeted against the seat at all. A seat sized from tools plus system
+# prompt was therefore sized for 22k while the turn demanded 47k, and the
+# overflow is silent: the window fills and the oldest spans fall out the front,
+# so the model answers from a truncated view and nothing reports it.
+#
+# It belongs in the overhead figure because seat sizing asks "how big must this
+# window be to hold one turn?", and injected context is unambiguously part of
+# one turn. It varies where the other two are fixed, which is why it carries
+# its own basis rather than being folded into either.
+MEASURED_INJECTED_TOKENS = 25000
+
+MEASURED_OVERHEAD_TOKENS = (MEASURED_TOOL_TOKENS
+                            + MEASURED_SYSTEM_PROMPT_TOKENS
+                            + MEASURED_INJECTED_TOKENS)
 
 CHARS_PER_TOKEN = 4.0
 
@@ -86,18 +106,65 @@ def overhead(*, force: bool = False) -> dict:
         return hit[1]
     tools, tool_basis = tool_tokens()
     sysp, sys_basis = system_prompt_tokens()
+    inj, inj_basis = injected_tokens()
     out = {
         "tool_tokens": tools,
         "system_prompt_tokens": sysp,
-        "total_tokens": tools + sysp,
+        "injected_tokens": inj,
+        "total_tokens": tools + sysp + inj,
         "basis": ("measured" if tool_basis == sys_basis == "measured"
                   else "partial" if "measured" in (tool_basis, sys_basis)
                   else "recorded"),
         "tool_basis": tool_basis,
         "system_prompt_basis": sys_basis,
+        "injected_basis": inj_basis,
     }
     _MEMO["overhead"] = (time.time(), out)
     return out
+
+
+def injected_tokens() -> tuple[int, str]:
+    """Memory and source context assembled into the turn, and where it came from.
+
+    Prefers a figure recorded from a real turn, because this is the one
+    component that genuinely varies and a constant will always be wrong for
+    somebody. Falls back to the measured reference figure rather than zero: a
+    stale number is a far smaller error than pretending 25k of context does not
+    exist, which is the mistake this function was written to end.
+    """
+    try:
+        from agent_friday.core import runtime_dir
+        p = runtime_dir() / "residency" / "turn_demand.json"
+        d = json.loads(p.read_text(encoding="utf-8"))
+        v = int(d.get("injected_tokens") or 0)
+        if v > 0:
+            return v, "recorded"
+    except Exception:
+        pass
+    return MEASURED_INJECTED_TOKENS, "reference"
+
+
+def record_turn_demand(*, injected_tokens: int, total_tokens: int | None = None,
+                       note: str = "") -> None:
+    """Persist what a REAL turn actually demanded, so seats size against it.
+
+    Called from the turn path rather than guessed at here. The whole defect this
+    addresses is that seat sizing was reasoning about a turn it had never
+    measured.
+    """
+    try:
+        from agent_friday.core import runtime_dir
+        p = runtime_dir() / "residency" / "turn_demand.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({
+            "injected_tokens": int(injected_tokens),
+            "total_tokens": total_tokens,
+            "note": note,
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }, indent=2), encoding="utf-8")
+        _MEMO.clear()
+    except Exception:
+        pass
 
 
 def overhead_tokens() -> int:

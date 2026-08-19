@@ -288,7 +288,9 @@ def test_an_unmeasured_model_is_not_counted_as_free(entries, profile):
 def test_a_measured_model_still_reports_a_number(entries, profile):
     view = rp.preview_assignment({"sidekick": "gemma4:e2b"}, entries, profile)
     assert view["models"][0]["sized"] is True
-    assert view["models"][0]["vram_mib"] == 1811
+    # 1,811 was this seat at 32,768. Since injected context entered the
+    # overhead count a tool-using seat needs 65,536 to hold one turn.
+    assert view["models"][0]["vram_mib"] > 1811
     assert view["fits"] is True
 
 
@@ -436,3 +438,59 @@ def test_registry_prefixes_and_quant_markers_are_not_evidence():
     assert "hauhaucs" not in toks or "gemma4" in toks
     assert "q4_k_m" not in toks and "q4" not in toks
     assert _id_tokens("gemma4:e2b") & _id_tokens("gemma4:e4b") == {"gemma4"}
+
+
+# ── seats are not sized where the cost is a guess ────────────────────────────
+# 2026-08-18: a seat spawned at the architectural maximum of 262,144 left
+# 448 MiB of 12,282 and took a monitor off the desktop. Above the largest
+# measured context the VRAM figure is extrapolated, and on this family it
+# extrapolates flat because sliding-window attention caps the KV cache across
+# the measured range. It does not stay flat.
+
+def test_a_seat_is_capped_at_the_largest_measured_context():
+    e = _entry("well-measured:12b", {32768: 7718, 65536: 7750, 131072: 7814})
+    cb = rp.context_for("interactive_brain", e, 12000, 47309)
+    assert cb["num_ctx"] <= 131072, "must not exceed the measured range"
+
+
+def test_when_every_sufficient_rung_is_a_guess_take_the_smallest():
+    """The hole that defeated the cap on its first attempt.
+
+    gemma4:e4b is measured only at 8,192. With the floor above that, no rung is
+    both sufficient AND measured, the cap found nothing to apply, and the seat
+    sailed past every rung to 262,144 -- the exact value the rule exists to
+    prevent. Some extrapolation is unavoidable here; the largest possible
+    extrapolation never is.
+    """
+    e = _entry("barely-measured:8b", {8192: 3081})
+    cb = rp.context_for("interactive_brain", e, 12000, 47309)
+    assert cb["num_ctx"] is not None
+    assert cb["num_ctx"] < 262144, "never the architectural maximum on a guess"
+    assert cb["num_ctx"] == 65536, "the smallest rung that holds one real turn"
+
+
+def test_a_model_with_no_measurements_at_all_is_not_capped():
+    """A fresh install must stay usable; there is nothing to be careful about."""
+    e = {"model_id": "brand-new:8b", "backend": "llama-server",
+         "can_generate": True, "is_embedding": False, "is_moe": False,
+         "context_window": 262144, "measured": []}
+    cb = rp.context_for("interactive_brain", e, 12000, 47309)
+    assert cb["num_ctx"] is not None
+
+
+def test_a_tool_seat_can_hold_a_real_turn():
+    """32,768 could not: 47,309 tokens of overhead is 14,541 over the window."""
+    from agent_friday.services import context_budget as cb
+    assert rp.TOOL_SEAT_NUM_CTX >= 65536
+    room = cb.working_room(rp.TOOL_SEAT_NUM_CTX)
+    assert room["sufficient"] is True
+    assert cb.working_room(32768)["sufficient"] is False
+
+
+def test_injected_context_is_counted_in_the_overhead():
+    """It was not counted at all, which is why seats came out too small."""
+    from agent_friday.services import context_budget as cb
+    o = cb.overhead(force=True)
+    assert o["injected_tokens"] > 0
+    assert o["total_tokens"] == (o["tool_tokens"] + o["system_prompt_tokens"]
+                                + o["injected_tokens"])

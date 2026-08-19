@@ -1,4 +1,4 @@
-# Contract: roles, model identity, and the budget preview
+﻿# Contract: roles, model identity, and the budget preview
 
 **Status:** live on branch `model-suite-determination`. **Audience:** anything that renders a model
 picker, binds a model to a conversation, or shows the user what their machine can hold.
@@ -89,7 +89,11 @@ one process cannot sit on two devices.
 
 If the picker presents thirteen roles without their residency class, a user reasonably concludes
 they need thirteen models resident at once. On a 12 GB card that reads as impossible, and it isn't:
-**seven roles fit in four models at a 7,046 MiB peak against 8,241 usable.**
+**seven roles fit in three or four models**, because only the conversational tier is resident.
+
+Do not hardcode a peak figure from this document. It moved once already — a lineup that peaked at
+7,046 MiB when overhead was believed to be 22,309 tokens peaks higher now that injected context is
+counted (see §6a). Ask the preview.
 
 ---
 
@@ -163,6 +167,30 @@ It is the normal state of a role nobody has assigned yet. Every other refusal ru
 something could not be done; R11 means nothing has been asked for.
 
 ---
+
+## 6a. Context sizing changed on 2026-08-18 — read this before showing a seat size
+
+Two corrections landed together, and both move numbers a client may be caching.
+
+**Injected context is now budgeted.** `context_budget.overhead()` previously counted only the
+system prompt and tool schemas (~22,309 tokens). It omitted the memory and source context assembled
+into every turn. A real turn measures **47,309 tokens** — 12,706 system prompt, 9,603 tools, ~25,000
+injected — so seats were being sized for less than half of what a turn actually demands. `overhead()`
+now returns `injected_tokens` alongside the other two; `total_tokens` includes it.
+
+**Consequence: a 32,768 seat cannot hold one turn.** It is 14,541 tokens short, and the overflow is
+silent — the oldest spans fall out the front and the model answers from a truncated view.
+`TOOL_SEAT_NUM_CTX` is therefore **65,536**, not 32,768. If you display "working room", compute it
+from `context_budget.working_room(num_ctx)`, which now accounts for all three components.
+
+**Seats are capped at their largest MEASURED context.** Above that the VRAM figure is extrapolated,
+and extrapolation understates: a seat spawned at the architectural maximum of 262,144 left 448 MiB
+of 12,282 on the card and took a monitor off the desktop. Where no sufficient rung has been measured,
+the seat takes the *smallest* sufficient rung — the least extrapolation, never the largest.
+
+**What this means for a picker:** a model's `context_window` (what the artifact declares, often
+262,144) is **not** the seat size it will get, and showing the declared window as if it were is
+misleading. Show `seat.num_ctx` from the plan or preview.
 
 ## 7. Where things live
 

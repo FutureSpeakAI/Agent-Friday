@@ -50,7 +50,14 @@ def test_p1_pins_the_12b_on_the_gpu_with_an_explicit_context():
     # the tool registry alone, which left ~12.5k of room — 38% of its own
     # window. See services/context_budget.py.
     assert s["num_ctx"] == 131072       # R7: never a backend default
-    assert s["context"]["room_tokens"] > 100_000
+    # 131,072 is also the largest context this model has been MEASURED at, and
+    # seats are capped there: above it the VRAM figure is extrapolated, and a
+    # seat spawned at the architectural maximum of 262,144 left 448 MiB of
+    # 12,282 on the card and took a monitor off the desktop.
+    # Was >100,000 when overhead was believed to be 22,309 tokens. Injected
+    # context is counted now (47,309), so the same window leaves ~86k of
+    # genuine conversation room.
+    assert s["context"]["room_tokens"] > 80_000
     assert s["context"]["basis"] == "measured"
 
 
@@ -65,7 +72,11 @@ def test_p1_pinned_pair_fits_the_budget_with_room_to_spare():
     avail = p["budgets"]["gpus"][0]["available_mib"]
     # The 12b at 131072 (7814) beside the e2b at 32768 (1811). Quadrupling the
     # brain's window over the old 32768 placement cost 96 MiB.
-    assert p["pinned_vram_mib"]["gpu:0"] == 7814 + 1811 == 9625
+    # Figures moved 2026-08-18 when injected memory/source context entered
+    # the overhead count (22,309 -> 47,309 tokens). Seats now size one rung
+    # larger to hold a real turn, so the sidekick is 1,875 MiB at 65,536
+    # rather than 1,811 at 32,768.
+    assert p["pinned_vram_mib"]["gpu:0"] == 7814 + 1875 == 9689
     assert p["pinned_vram_mib"]["gpu:0"] <= avail == 9997
 
 
@@ -120,7 +131,7 @@ def test_p2_refuses_the_heavy_seat_with_arithmetic():
     # 12938, not the 11127 it was before R10: holding the sidekick resident
     # takes 1811 MiB off the lease budget, so more of the model lands in host
     # RAM and the refusal it breaks is by a wider margin.
-    assert "12938" in r["explanation"]       # the host RAM it needed
+    assert "13002" in r["explanation"]       # the host RAM it needed
 
 
 # ── P3 — the budget, not taste, moves the embedder onto the GPU ──────────────
@@ -157,7 +168,11 @@ def test_p4_gpu0_stays_within_budget():
     p = _plan("P4")
     g0 = [g for g in p["budgets"]["gpus"] if g["index"] == 0][0]
     # 1811 = the e2b at the 32768 tool-seat context (was 1763 at 8192).
-    assert p["pinned_vram_mib"]["gpu:0"] == 17391 + 1811 + 2029 == 21231
+    # Figures moved 2026-08-18 when injected memory/source context entered
+    # the overhead count (22,309 -> 47,309 tokens). Seats now size one rung
+    # larger to hold a real turn, so the sidekick is 1,875 MiB at 65,536
+    # rather than 1,811 at 32,768.
+    assert p["pinned_vram_mib"]["gpu:0"] == 17391 + 1875 + 2029 == 21295
     assert p["pinned_vram_mib"]["gpu:0"] <= g0["available_mib"]
 
 
@@ -446,14 +461,18 @@ def test_the_lease_budget_is_the_gpu_minus_the_retained_sidekick():
     avail = p["budgets"]["gpus"][0]["available_mib"]
     side = p["seats"]["sidekick"]["vram_mib"]
     assert p["seats"]["heavy_hitter"]["offload"]["lease_budget_mib"] == \
-        avail - side == 9997 - 1811
+        avail - side == 9997 - 1875
 
 
 def test_an_image_lease_takes_everything_except_the_sidekick():
     s = _plan("P1")["seats"]["image"]
     assert s["exclusive"] is True
     assert s["displaces"] == "all seats except sidekick"
-    assert s["retained_mib"] == 1811
+    # Figures moved 2026-08-18 when injected memory/source context entered
+    # the overhead count (22,309 -> 47,309 tokens). Seats now size one rung
+    # larger to hold a real turn, so the sidekick is 1,875 MiB at 65,536
+    # rather than 1,811 at 32,768.
+    assert s["retained_mib"] == 1875
 
 
 def test_the_offload_point_comes_from_a_sweep_under_r10_conditions():

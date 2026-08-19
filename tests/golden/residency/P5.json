@@ -77,9 +77,9 @@
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 45321,
-        "want": 44791
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "cpu",
       "est_load_s": 17.1,
@@ -107,7 +107,7 @@
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "interactive_brain",
       "status": "resident",
@@ -124,7 +124,7 @@
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick",
       "status": "resident",
@@ -136,9 +136,9 @@
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 45321,
-        "want": 44791
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "cpu",
       "displaces": null,
