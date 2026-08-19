@@ -882,6 +882,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                                       headers=headers, json=payload,
                                       timeout=timeout_s)
             try:
+                if r.status_code >= 400:
+                    # requests' str() is "400 Client Error: Bad Request for
+                    # url: ..." and throws the body away. The body is where
+                    # llama.cpp and every OpenAI-compatible server put the
+                    # actual reason, and without it a local 400 is reported as
+                    # a bare status while the turn quietly leaves for the
+                    # cloud. Same defect as the Ollama path, same fix.
+                    import requests as _rq
+                    raise _rq.HTTPError(
+                        f"{r.status_code} {r.reason} from {r.url}: "
+                        f"{(r.text or '')[:600]}", response=r)
                 r.raise_for_status()
             except Exception:
                 _health(False, int((_time.time() - _t0) * 1000),
