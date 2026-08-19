@@ -4928,8 +4928,9 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
             full = f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(raw)}"[:64]
             desc = t.get("description") or f"{raw} via the {server_name} connector"
             desc = f"[MCP·{server_name}] {desc}"[:1024]
-            schema = (t.get("inputSchema") or t.get("input_schema")
-                      or {"type": "object", "properties": {}})
+            schema = _mcp_normalize_schema(
+                t.get("inputSchema") or t.get("input_schema")
+                or {"type": "object", "properties": {}}, full)
             # Replace any existing CLAUDE_TOOLS entry with the same name.
             CLAUDE_TOOLS[:] = [c for c in CLAUDE_TOOLS if c.get("name") != full]
             CLAUDE_TOOLS.append({"name": full, "description": desc,
@@ -5031,6 +5032,68 @@ def _screenshot_result_to_block(tool_use_id, result):
             {"type": "text", "text": data.get('note', 'Screenshot captured.')},
             {"type": "image", "source": {
                 "type": "base64",
+_SCHEMA_COMBINATORS = ("anyOf", "oneOf", "allOf")
+
+
+def _mcp_normalize_schema(schema: dict, tool_name: str = "") -> dict:
+    """Make a third-party tool schema acceptable to the Anthropic tools API.
+
+    Anthropic rejects `oneOf`, `allOf` and `anyOf` at the TOP level of an
+    `input_schema` — and it rejects the whole REQUEST, not the one tool. So a
+    single connector shipping such a schema takes every cloud turn down with
+    a 400 that names a tool index and nothing else:
+
+        tools.90.custom.input_schema: input_schema does not support
+        oneOf, allOf, or anyOf at the top level
+
+    Measured 2026-08-18: this is exactly what happened once the Higgsfield
+    connector registered 86 tools. Cloud chat returned "[Friday offline]" for
+    every message, in every conversation, and the cause was a schema written
+    by a server we do not control.
+
+    Dropping the offending tool would be the easy fix and the wrong one — it
+    silently removes a capability. Instead the branches are merged into one
+    object schema: properties are unioned, and a field stays `required` only
+    if every branch required it (a field the caller can omit in some valid
+    shape is not required). Nested combinators are left alone; the API only
+    objects at the top level.
+    """
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}}
+    if not any(k in schema for k in _SCHEMA_COMBINATORS):
+        if not schema.get("type"):
+            schema = dict(schema, type="object")
+        return schema
+
+    merged = {k: v for k, v in schema.items() if k not in _SCHEMA_COMBINATORS}
+    props = dict(merged.get("properties") or {})
+    required_sets = []
+    base_required = merged.get("required")
+    if isinstance(base_required, list):
+        required_sets.append(set(base_required))
+
+    for key in _SCHEMA_COMBINATORS:
+        for branch in (schema.get(key) or []):
+            if not isinstance(branch, dict):
+                continue
+            for name, spec in (branch.get("properties") or {}).items():
+                props.setdefault(name, spec)
+            br = branch.get("required")
+            required_sets.append(set(br) if isinstance(br, list) else set())
+
+    merged["type"] = "object"
+    merged["properties"] = props
+    keep = set.intersection(*required_sets) if required_sets else set()
+    if keep:
+        merged["required"] = sorted(keep)
+    else:
+        merged.pop("required", None)
+
+    print(f"  [mcp] normalised a top-level combinator schema for {tool_name!r} "
+          f"- Anthropic rejects oneOf/allOf/anyOf there")
+    return merged
+
+
                 "media_type": data.get('media_type', 'image/png'),
                 "data": b64,
             }},
@@ -5472,6 +5535,23 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
                 tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
                 _bmon_log(tu.name, tu.input, result)
+            # Last line of defence for tool schemas. Normalising at MCP
+            # registration fixes the known source, but ONE malformed schema
+            # from any future path 400s the entire request — every tool, every
+            # conversation — with an error that names only an index. This loop
+            # is the primary cloud path in Friday; it should not be possible
+            # for a third party's JSON to silence it.
+            try:
+                _tl = kwargs.get("tools")
+                if isinstance(_tl, list):
+                    kwargs["tools"] = [
+                        dict(_t, input_schema=_mcp_normalize_schema(
+                            _t.get("input_schema") or {}, _t.get("name") or "?"))
+                        if isinstance(_t, dict) else _t
+                        for _t in _tl
+                    ]
+            except Exception:
+                pass
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,

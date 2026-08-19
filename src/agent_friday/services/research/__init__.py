@@ -67,6 +67,11 @@ def propose(question: str, *, context: str | None = None,
 
 def run(commission_id: str) -> dict:
     """Run a commission to completion. Blocking. Returns its status dict."""
+    # The inventory can change between commissions — and did, mid-flight.
+    try:
+        harness.refresh_seats()
+    except Exception:
+        pass
     c = Commission.load(commission_id)
     if c is None:
         return {"error": f"no commission {commission_id!r}"}
