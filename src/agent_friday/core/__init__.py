@@ -1742,6 +1742,29 @@ def _sync_capability_routing(settings, changed=None):
             entry["provider"] = defaults[cap]["provider"]
     return settings
 
+    # A local model that has been uninstalled must not survive a save.
+    #
+    # The flat key outranks capability_routing whenever routing was not
+    # explicitly part of `changed`, so a stale `orchestrator_model` re-stamps
+    # itself over the canonical entry on EVERY write. Stephen's sat at
+    # `gemma4:e2b` for hours after he removed that model, which is why the
+    # model picker appeared not to stick no matter what the picker did.
+    # Healing here — at the single point both representations pass through —
+    # is the only place the repair cannot be undone by the next writer.
+    #
+    # Not under test: the repair asks the real Ollama daemon what is installed,
+    # so leaving it on made every settings-touching test depend on this
+    # machine's model inventory — and it duly rewrote fixture models that
+    # happen not to be installed here, breaking eight arbiter tests that had
+    # nothing to do with seats.
+    if not os.environ.get("FRIDAY_TESTING"):
+        try:
+            from agent_friday.services.local_seats import heal as _heal_seats
+            for _note in _heal_seats(settings):
+                print(f"  [seats] healed settings - {_note}")
+        except Exception:
+            pass
+
 
 def _load_settings_raw():
     """Load agent settings exactly as persisted (no offline overlay).

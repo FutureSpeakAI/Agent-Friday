@@ -343,11 +343,21 @@ DEFAULT_JUDGE_MODEL = "gemma4:e2b"
 
 
 def _judge_model() -> str | None:
-    """The seat that judges. Settings override; sidekick by default."""
-    explicit = _cfg("model", None)
-    if explicit:
-        return str(explicit)
-    return DEFAULT_JUDGE_MODEL
+    """The seat that judges. Settings override; otherwise something INSTALLED.
+
+    DEFAULT_JUDGE_MODEL used to be returned unconditionally, and on 2026-08-18
+    that name (`gemma4:e2b`) was deleted from the daemon while it was still the
+    default. Every probe in the boot battery then 404'd, one after another,
+    which both crawled startup and left the judgment layer reporting
+    "judgment unavailable" — so the privacy gate silently degraded to its
+    deterministic outcome and nobody was told why.
+
+    The general form of that bug — a module constant naming a model that has
+    been uninstalled — bit three modules the same day, so the resolution now
+    lives in one place. See services/local_seats.py.
+    """
+    from agent_friday.services import local_seats
+    return local_seats.resolve("judge", _cfg("model", None) or DEFAULT_JUDGE_MODEL)
 
 
 def judge_spans(spans: list[str]) -> tuple[list[dict] | None, str]:

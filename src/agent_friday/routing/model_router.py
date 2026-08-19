@@ -308,11 +308,33 @@ class ModelRouter:
             entry = cr.get("reasoning")
             if isinstance(entry, dict):
                 model = (entry.get("model") or "").strip()
-                if model:
+                # The FACTORY value is not a binding — it is the absence of
+                # one. This method's own rule is that an explicit binding is an
+                # instruction and the classifier decides when no preference was
+                # expressed; an untouched default is the second case, and
+                # treating it as the first made `local_preferred` unreachable
+                # for interactive turns (settings ship with a cloud reasoning
+                # seat, so the seat always "won"). Stephen runs local_preferred.
+                #
+                # Cost, stated plainly: if he explicitly picks the same model
+                # the factory ships, that choice is indistinguishable from
+                # never having chosen, and local_preferred will route local.
+                # The error runs toward keeping his turn on this machine.
+                if model and model != self._factory_reasoning_model():
                     return model, (entry.get("provider") or "").strip().lower()
         except Exception:
             pass
         return None, None
+
+    @staticmethod
+    def _factory_reasoning_model():
+        """The reasoning model DEFAULT_SETTINGS ships with, or None."""
+        try:
+            from agent_friday.core import DEFAULT_SETTINGS
+            return ((DEFAULT_SETTINGS.get("capability_routing") or {})
+                    .get("reasoning") or {}).get("model")
+        except Exception:
+            return None
 
     # Providers that mean "this runs on this machine".
     _LOCAL_PROVIDERS = {"ollama-local", "llama-cpp-local", "local", "local-comfyui",

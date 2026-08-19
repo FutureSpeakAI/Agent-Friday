@@ -27,6 +27,13 @@ from agent_friday.services.research.objects import (
 
 _log = logging.getLogger("friday.research")
 
+# These four are DEFAULTS, not addresses. They were measured on the inventory
+# of 2026-08-17 and every one of them was uninstalled the next day; the grind
+# then failed with "no usable JSON from gemma4:12b", which reads like a model
+# refusing to comply rather than a model that is not there. `refresh_seats()`
+# rebinds them to what the daemon actually serves, and is called at the top of
+# every commission — not at import, because the daemon is often not up yet
+# when this module first loads.
 BRAIN = "gemma4:12b"        # judgment: reformulate, converse, done_when
 SIDEKICK = "gemma4:e2b"     # cheap structured work
 # Extraction seat, MEASURED 2026-08-17 on a 24,000-char page:
@@ -38,6 +45,27 @@ SIDEKICK = "gemma4:e2b"     # cheap structured work
 # what was timing out at the old 120s ceiling mid-commission.
 EXTRACTOR = "gemma4:e2b"    # page -> relevant verbatim spans
 HEAVY = "gemma4:26b"        # synthesis
+
+
+def refresh_seats() -> dict:
+    """Rebind the four seats to models that are actually installed.
+
+    Called at the start of a commission so a long-running pipeline picks up
+    the inventory as it is now, and so a seat that vanished between runs is
+    reported as a substitution instead of surfacing as a research finding.
+    """
+    global BRAIN, SIDEKICK, EXTRACTOR, HEAVY
+    try:
+        from agent_friday.services import local_seats
+    except Exception:
+        return {"brain": BRAIN, "sidekick": SIDEKICK,
+                "extractor": EXTRACTOR, "heavy": HEAVY}
+    BRAIN = local_seats.resolve("brain", BRAIN) or BRAIN
+    SIDEKICK = local_seats.resolve("sidekick", SIDEKICK) or SIDEKICK
+    EXTRACTOR = local_seats.resolve("extractor", EXTRACTOR) or EXTRACTOR
+    HEAVY = local_seats.resolve("heavy", HEAVY) or HEAVY
+    return {"brain": BRAIN, "sidekick": SIDEKICK,
+            "extractor": EXTRACTOR, "heavy": HEAVY}
 
 
 # ── model plumbing ────────────────────────────────────────────────────────────
