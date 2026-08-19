@@ -169,3 +169,80 @@ def test_the_existing_history_is_imported_into_main_once(store, tmp_path):
     # Idempotent: calling again must not duplicate the transcript.
     store.ensure_main()
     assert len(store.messages(main["id"])) == 2
+
+
+# ── archived means hidden ───────────────────────────────────────────────────
+
+def test_archiving_removes_a_conversation_from_the_default_listing(tmp_path, monkeypatch):
+    """The DELETE route archives rather than destroys so running work keeps its
+    address. That only works as "delete" if the list actually hides it — and
+    the index defaulted to including archived, so archiving a chat left it
+    sitting in the switcher and delete appeared to do nothing.
+    """
+    import importlib
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path, raising=False)
+    conv = importlib.import_module("agent_friday.services.conversations")
+    importlib.reload(conv)
+    monkeypatch.setattr(conv, "FRIDAY_DIR", tmp_path, raising=False)
+
+    a = conv.create(title="kept")
+    b = conv.create(title="archived")
+    conv.patch(b["id"], status="archived")
+
+    visible = [c["id"] for c in conv.list_all(False)]
+    assert a["id"] in visible
+    assert b["id"] not in visible
+    # and it is still THERE — archiving is not destruction
+    assert b["id"] in [c["id"] for c in conv.list_all(True)]
+
+
+# ── a migration that did not migrate has not run ────────────────────────────
+
+def _fresh(tmp_path, monkeypatch):
+    import importlib
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path, raising=False)
+    conv = importlib.import_module("agent_friday.services.conversations")
+    importlib.reload(conv)
+    monkeypatch.setattr(conv, "FRIDAY_DIR", tmp_path, raising=False)
+    return conv
+
+
+def test_unreadable_legacy_history_is_not_marked_migrated(tmp_path, monkeypatch):
+    """conv-main came up with 6 messages while chat_history.json held 51, and
+    the one-shot flag meant it would never look again. An import that did not
+    import has not run.
+    """
+    conv = _fresh(tmp_path, monkeypatch)
+    (tmp_path / "chat_history.json").write_text("{ not json", encoding="utf-8")
+    main = conv.ensure_main()
+    assert not main.get("_migrated_legacy"), (
+        "a failed import marked itself done, so his transcript is unreachable")
+
+
+def test_rows_that_cannot_be_read_leave_the_flag_off(tmp_path, monkeypatch):
+    import json as _json
+    conv = _fresh(tmp_path, monkeypatch)
+    (tmp_path / "chat_history.json").write_text(
+        _json.dumps(["not", "dicts", 3]), encoding="utf-8")
+    main = conv.ensure_main()
+    assert not main.get("_migrated_legacy")
+
+
+def test_a_good_history_is_imported_and_marked(tmp_path, monkeypatch):
+    import json as _json
+    conv = _fresh(tmp_path, monkeypatch)
+    (tmp_path / "chat_history.json").write_text(_json.dumps([
+        {"role": "user", "text": "what did I say"},
+        {"role": "friday", "text": "this"},
+    ]), encoding="utf-8")
+    main = conv.ensure_main()
+    said = " ".join(m["text"] for m in conv.messages(conv.MAIN_ID))
+    assert "what did I say" in said
+    assert main.get("_migrated_legacy") is True
+
+
+def test_no_legacy_file_is_a_clean_migration(tmp_path, monkeypatch):
+    conv = _fresh(tmp_path, monkeypatch)
+    assert conv.ensure_main().get("_migrated_legacy") is True

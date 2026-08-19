@@ -280,8 +280,15 @@ def _migrate_legacy_history(conv: dict) -> int:
         return 0
     try:
         rows = json.loads(legacy.read_text(encoding="utf-8"))
-    except Exception:
-        rows = []
+    except Exception as e:
+        # Do NOT mark this migrated. A one-shot import that marks itself done
+        # after failing has silently eaten the transcript: on 2026-08-18
+        # conv-main came up holding 6 messages while chat_history.json still
+        # held 51, and the flag meant it would never look again. An import
+        # that did not import has not run.
+        print(f"  [conversations] legacy history unreadable, NOT marking "
+              f"migrated: {e}")
+        return 0
     n = 0
     if isinstance(rows, list):
         with open(_dir(conv["id"]) / "messages.jsonl", "a", encoding="utf-8") as fh:
@@ -298,6 +305,13 @@ def _migrate_legacy_history(conv: dict) -> int:
                              "sources": r.get("sources") or []},
                 }, ensure_ascii=False) + "\n")
                 n += 1
+    if isinstance(rows, list) and rows and n == 0:
+        # Rows were there and none came across — a shape this build does not
+        # understand. Leaving the flag off means a later build can still
+        # rescue it; his words are not something to give up on quietly.
+        print(f"  [conversations] {len(rows)} legacy message(s) present but "
+              f"none could be imported - leaving them for a later attempt")
+        return 0
     conv["_migrated_legacy"] = True
     conv.setdefault("totals", {})["turns"] = sum(
         1 for m in messages(conv["id"]) if m.get("role") == "user")
