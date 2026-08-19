@@ -20,26 +20,61 @@
     }
   },
   "pinned_vram_mib": {
-    "gpu:0": 4892
+    "gpu:0": 4956
   },
   "policy_version": 1,
   "profile_id": "p2-laptop-8gb",
   "refusals": [
     {
       "ceiling_mib": 12288,
-      "explanation": "host RAM 12938 MiB + OS reserve 6144 MiB = 19082 MiB exceeds the 12288 MiB hard ceiling (75% of 16384 MiB)",
-      "host_mib": 12938,
+      "explanation": "host RAM 13002 MiB + OS reserve 6144 MiB = 19146 MiB exceeds the 12288 MiB hard ceiling (75% of 16384 MiB)",
+      "host_mib": 13002,
       "model": "gemma4:26b",
       "role": "heavy_hitter",
       "rule": "ram-ceiling",
       "rule_id": "R2"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "orchestrator",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "sidekick_fast",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "function_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "memory_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "researcher",
+      "rule": "assigned-role",
+      "rule_id": "R11"
     }
   ],
   "seats": {
     "embedder": {
       "backend": "ollama",
       "demoted_from": "gpu",
-      "demotion_reason": "needs 2029 MiB, 1372 MiB left after the pinned seats",
+      "demotion_reason": "needs 2029 MiB, 1308 MiB left after the pinned seats",
       "demotion_rule": "R3",
       "device": "cpu",
       "est_load_s": 4.5,
@@ -52,6 +87,7 @@
       "status": "resident",
       "vram_mib": 0
     },
+    "function_manager": null,
     "heavy_hitter": null,
     "image": {
       "backend": "comfyui",
@@ -62,7 +98,7 @@
       "model_id": "z-image-turbo-fp8",
       "num_ctx": null,
       "offload": {},
-      "retained_mib": 1811,
+      "retained_mib": 1875,
       "role": "image",
       "status": "leased",
       "vram_mib": null
@@ -72,49 +108,53 @@
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 110857,
-        "want": 118519
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 143519
       },
       "device": "gpu:0",
       "est_load_s": 26.0,
       "is_moe": false,
       "model_id": "gemma4:e4b",
       "needs_think_disabled": true,
-      "num_ctx": 131072,
+      "num_ctx": 65536,
       "offload": {},
       "role": "interactive_brain",
       "status": "pinned",
       "vram_mib": 3081
     },
+    "memory_manager": null,
+    "orchestrator": null,
+    "researcher": null,
     "sidekick": {
       "backend": "ollama",
       "context": {
-        "basis": "measured",
+        "basis": "extrapolated",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 12553,
-        "want": 28407
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 53407
       },
       "device": "gpu:0",
       "est_load_s": 20.3,
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick",
       "status": "pinned",
-      "vram_mib": 1811
+      "vram_mib": 1875
     },
+    "sidekick_fast": null,
     "sidekick_heavy": {
       "backend": "ollama",
       "context": {
         "basis": "measured",
-        "capped_by": "needs 7718 MiB at the floor rung 32768, budget is 4453 MiB",
-        "floor": 28407,
-        "room_tokens": 12553,
-        "want": 44791
+        "capped_by": "needs 7750 MiB at the floor rung 65536, budget is 4389 MiB",
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "gpu:0",
       "displaces": "loaded on demand; may displace a pinned seat",
@@ -122,11 +162,11 @@
       "is_moe": false,
       "model_id": "gemma4:12b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick_heavy",
       "status": "leased",
-      "vram_mib": 7718
+      "vram_mib": 7750
     },
     "stt": {
       "backend": "cpu-service",

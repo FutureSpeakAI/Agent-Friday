@@ -20,6 +20,41 @@
       "role": "image",
       "rule": "image-exclusive",
       "rule_id": "R5"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "orchestrator",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "sidekick_fast",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "function_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "memory_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "researcher",
+      "rule": "assigned-role",
+      "rule_id": "R11"
     }
   ],
   "seats": {
@@ -36,14 +71,15 @@
       "status": "resident",
       "vram_mib": 0
     },
+    "function_manager": null,
     "heavy_hitter": {
       "backend": "ollama",
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 45321,
-        "want": 44791
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "cpu",
       "est_load_s": 17.1,
@@ -71,12 +107,15 @@
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "interactive_brain",
       "status": "resident",
       "vram_mib": 0
     },
+    "memory_manager": null,
+    "orchestrator": null,
+    "researcher": null,
     "sidekick": {
       "backend": "ollama",
       "collapsed_into": "interactive_brain",
@@ -85,20 +124,21 @@
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick",
       "status": "resident",
       "vram_mib": 0
     },
+    "sidekick_fast": null,
     "sidekick_heavy": {
       "backend": "ollama",
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 45321,
-        "want": 44791
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "cpu",
       "displaces": null,

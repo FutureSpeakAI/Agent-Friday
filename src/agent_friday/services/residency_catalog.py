@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — CatalogEntry: what a model costs on THIS machine.
 
 `services/model_catalog.py` answers "what can the user pick?" — it is the
@@ -451,6 +451,11 @@ def gguf_models() -> dict:
     return {k: v for k, v in raw.items() if Path(v).exists()}
 
 
+def gguf_models_canonical() -> dict:
+    """The gguf registry keyed by canonical id, which is what a seat looks up."""
+    return {canonical_model_id(k): v for k, v in gguf_models().items()}
+
+
 def register_gguf(model_id: str, path) -> None:
     p = gguf_registry_path()
     try:
@@ -515,6 +520,121 @@ def store_entry(model_id: str, rec: dict, profile: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+#  Model identity: one artifact, one id
+# ---------------------------------------------------------------------------
+#
+# The same weights can arrive twice under two names -- once when Ollama pulls
+# them and once when they are copied into Friday's own store -- and then the
+# picker offers two rows that are the same model and the budget charges it
+# twice. Found 2026-08-18: `qwen3-embed:0.6b-q8` (store, 639,150,592 bytes) and
+# `qwen3-embedding:0.6b` (daemon, 644,245,094 bytes) were one 0.6B embedder
+# wearing two labels.
+#
+# `installed_entries` already dedupes, but only on an exact id match, which is
+# why models present in BOTH stores under the SAME name (embeddinggemma,
+# functiongemma) collapse correctly and this pair did not.
+#
+# Canonical form is the UPSTREAM name -- what `ollama list` shows and what
+# someone would search for -- because that is the name the rest of the world
+# uses and the one his settings already contain.
+MODEL_ALIASES = {
+    "qwen3-embed:0.6b-q8": "qwen3-embedding:0.6b",
+    "qwen3-embed:0.6b": "qwen3-embedding:0.6b",
+}
+
+
+def canonical_model_id(model_id):
+    """The one id an artifact is known by. Unknown ids pass through unchanged.
+
+    Resolves the same way `residency_policy.resolve_role` does for roles, and
+    for the same reason: two spellings must never become two seats.
+    """
+    if not model_id:
+        return model_id
+    return MODEL_ALIASES.get(model_id, model_id)
+
+
+# Two artifacts whose sizes agree this closely are treated as suspected
+# duplicates. The tolerance is ABSOLUTE, not a percentage, and that matters:
+# the difference between two containers holding the same weights is framing
+# overhead, which is a fixed few MB and does not scale with the model. A 2%
+# relative tolerance was tried first and was wrong in the expensive direction --
+# 2% of a 7 GB model is 140 MB, which flagged `gemma4:12b` (7,381,382,048) as a
+# duplicate of the HauhauCS 12B finetune (7,516,192,768). Those are genuinely
+# different weights and a picker that merged them would hide a model.
+#
+# For scale: the real duplicate pair differed by 5,094,502 bytes; that false
+# positive differed by 134,810,720.
+_DUP_TOLERANCE_BYTES = 32 * 1024 * 1024
+
+# Size alone is too weak a signal, and loosening or tightening it only moves
+# which pair is wrong. Two 600 MB embedders 17 MB apart -- `embeddinggemma:300m`
+# and `qwen3-embedding:0.6b` -- are entirely different models, and no threshold
+# that catches a 5 MB framing difference will exclude them.
+#
+# So a duplicate must ALSO look like the same name. Two labels for one artifact
+# share a real word (`qwen3-embed` / `qwen3-embedding`); two different models of
+# similar size do not. Both conditions are required, which is what keeps a
+# finetune distinct from its base (shared stem, but 134 MB apart) and two
+# same-size embedders distinct from each other (close in size, nothing shared).
+_QUANT_TOKENS = {"q4", "q8", "q4_k_m", "q8_0", "fp8", "fp16", "bf16", "gguf",
+                 "latest", "instruct", "it", "chat"}
+
+
+def _id_tokens(model_id):
+    """Meaningful words in a model id, lowercased.
+
+    Registry prefixes and quantisation markers are dropped: `hf.co/...` says
+    where a model came from, not what it is, and every Q4_K_M would otherwise
+    look like every other.
+    """
+    import re as _re
+    raw = str(model_id or "").lower()
+    raw = raw.split("/")[-1]                      # drop hf.co/Org/
+    parts = [t for t in _re.split(r"[^a-z0-9.]+", raw) if t]
+    return {t for t in parts if len(t) >= 4 and t not in _QUANT_TOKENS}
+
+
+def duplicate_candidates(entries):
+    """Ids that look like the same artifact under different names.
+
+    An alias table only knows the duplicates someone has already met. This is
+    the standing check for the ones nobody has met yet -- and Stephen's
+    inventory churns constantly, so there will be more.
+
+    Deliberately advisory: it reports suspicion, it does not merge anything.
+    Guessing that two models are the same and silently collapsing them would be
+    a worse failure than showing two rows.
+    """
+    groups = []
+    by_kind = {}
+    for e in entries:
+        key = bool(e.get("is_embedding"))
+        by_kind.setdefault(key, []).append(e)
+    for _kind, items in by_kind.items():
+        items = [e for e in items if (e.get("artifact_bytes") or 0) > 0]
+        for i, a in enumerate(sorted(items, key=lambda e: e["model_id"])):
+            for b in sorted(items, key=lambda e: e["model_id"])[i + 1:]:
+                if canonical_model_id(a["model_id"]) == \
+                        canonical_model_id(b["model_id"]):
+                    continue          # already collapsed by the alias table
+                delta = abs(a["artifact_bytes"] - b["artifact_bytes"])
+                shared = _id_tokens(a["model_id"]) & _id_tokens(b["model_id"])
+                if delta <= _DUP_TOLERANCE_BYTES and shared:
+                    groups.append({
+                        "ids": [a["model_id"], b["model_id"]],
+                        "bytes": [a["artifact_bytes"], b["artifact_bytes"]],
+                        "delta_bytes": delta,
+                        "shared_tokens": sorted(shared),
+                        "why": ("sizes differ by only %d bytes (about what "
+                                "container framing costs) and the ids share "
+                                "%s; likely one model under two names"
+                                % (delta, ", ".join(sorted(shared)))),
+                    })
+    return groups
+
+
 def installed_entries(profile: dict) -> list:
     """A CatalogEntry for every locally available model.
 
@@ -534,8 +654,19 @@ def installed_entries(profile: dict) -> list:
     out, seen = [], set()
     try:
         for model_id, rec in sorted(ms.available().items()):
-            out.append(store_entry(model_id, rec, profile))
-            seen.add(model_id)
+            canon = canonical_model_id(model_id)
+            if canon in seen:
+                continue
+            # Built under the CANONICAL id, not renamed afterwards: `measured`
+            # rows are looked up by model id inside store_entry, so renaming
+            # after the fact reads the wrong key and the seat comes back
+            # unsized -- which then blocks the fit claim for a model that has
+            # been measured all along.
+            e = store_entry(canon, rec, profile)
+            if canon != model_id:
+                e["aliases"] = [model_id]
+            out.append(e)
+            seen.add(canon)
     except Exception:
         pass
 
@@ -545,7 +676,7 @@ def installed_entries(profile: dict) -> list:
     except Exception:
         models = []
     for m in models:
-        name = m.get("name")
+        name = canonical_model_id(m.get("name"))
         if not name or name in seen:
             continue          # the store already described it, from the file
         seen.add(name)
@@ -553,6 +684,7 @@ def installed_entries(profile: dict) -> list:
                          artifact_bytes=int(round(
                              (m.get("size_gb") or 0) * 1024 ** 3))))
     for model_id, path in sorted(gguf_models().items()):
+        model_id = canonical_model_id(model_id)
         if model_id in seen:
             continue
         try:

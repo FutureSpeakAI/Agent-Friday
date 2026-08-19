@@ -20,11 +20,47 @@
     }
   },
   "pinned_vram_mib": {
-    "gpu:0": 11654
+    "gpu:0": 11718
   },
   "policy_version": 1,
   "profile_id": "p3-desktop-24gb",
-  "refusals": [],
+  "refusals": [
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "orchestrator",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "sidekick_fast",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "function_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "memory_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "researcher",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    }
+  ],
   "seats": {
     "embedder": {
       "backend": "ollama",
@@ -46,14 +82,15 @@
       "status": "pinned",
       "vram_mib": 2029
     },
+    "function_manager": null,
     "heavy_hitter": {
       "backend": "ollama",
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 45321,
-        "want": 44791
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "gpu:0",
       "displaces": "pinned seats on gpu:0",
@@ -76,7 +113,7 @@
       "model_id": "z-image-turbo-fp8",
       "num_ctx": null,
       "offload": {},
-      "retained_mib": 1811,
+      "retained_mib": 1875,
       "role": "image",
       "status": "leased",
       "vram_mib": null
@@ -86,9 +123,9 @@
       "context": {
         "basis": "measured",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 110857,
-        "want": 118519
+        "floor": 53407,
+        "room_tokens": 85857,
+        "want": 143519
       },
       "device": "gpu:0",
       "est_load_s": 4.1,
@@ -101,34 +138,38 @@
       "status": "pinned",
       "vram_mib": 7814
     },
+    "memory_manager": null,
+    "orchestrator": null,
+    "researcher": null,
     "sidekick": {
       "backend": "ollama",
       "context": {
-        "basis": "measured",
+        "basis": "extrapolated",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 12553,
-        "want": 28407
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 53407
       },
       "device": "gpu:0",
       "est_load_s": 4.1,
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick",
       "status": "pinned",
-      "vram_mib": 1811
+      "vram_mib": 1875
     },
+    "sidekick_fast": null,
     "sidekick_heavy": {
       "backend": "ollama",
       "context": {
         "basis": "below-range",
         "capped_by": null,
-        "floor": 28407,
-        "room_tokens": 45321,
-        "want": 44791
+        "floor": 53407,
+        "room_tokens": 20321,
+        "want": 69791
       },
       "device": "gpu:0",
       "displaces": "loaded on demand; may displace a pinned seat",

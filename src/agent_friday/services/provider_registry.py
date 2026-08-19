@@ -143,7 +143,12 @@ DEFAULT_PROVIDERS = [
         "base_url": "http://127.0.0.1:8188",
         "auth": {"type": "none"},
         "classification": "local",
-        "models": ["z-image-turbo-fp8"],
+        # Two on-device image models, and the picker should offer BOTH. They
+        # are not interchangeable: Z-Image is a turbo model that trades some
+        # fidelity for eight-step speed, SD 3.5 Medium runs thirty steps and
+        # costs several times as much per picture. `note` carries that trade
+        # so the choice is informed at the point it is made.
+        "models": ["z-image-turbo-fp8", "sd3.5-medium-fp8"],
         "capabilities": ["image"],
         "roles": [ROLE_CREATIVE],
         "cost_per_1k": {},
@@ -153,6 +158,22 @@ DEFAULT_PROVIDERS = [
                 "short": "Z-Image",
                 "roles": [ROLE_CREATIVE],
                 "modalities": ["image"],
+                "note": "8 steps — fastest local image",
+                "default": True,
+            },
+            "sd3.5-medium-fp8": {
+                "label": "Stable Diffusion 3.5 Medium (local image)",
+                "short": "SD 3.5 Medium",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["image"],
+                "note": "30 steps — slower, stronger prompt adherence",
+                # Surfaced rather than buried: this model is free to use
+                # commercially only below $1M annual revenue, and redistributing
+                # it obliges a "Powered by Stability AI" notice. Z-Image carries
+                # no such condition, so the difference belongs in the picker.
+                "licence": "Stability AI Community License",
+                "licence_note": "free commercial use below $1M annual revenue; "
+                                "attribution required if redistributed",
             },
         },
         "enabled": True,

@@ -1,4 +1,4 @@
-"""Routed local image generation under the arbiter's exclusive lease (D8).
+﻿"""Routed local image generation under the arbiter's exclusive lease (D8).
 
 D8 held this until a residency scheduler existed, because Z-Image's ~14.5 GB of
 weights and the language seats cannot share a 12 GB card. The lease performs
@@ -32,7 +32,7 @@ class FakeArbiter:
 
 @pytest.fixture
 def installed(monkeypatch):
-    monkeypatch.setattr(li, "is_installed", lambda: True)
+    monkeypatch.setattr(li, "is_installed", lambda mid=None: True)
 
 
 # ── the workflow ─────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ def test_aspect_ratios_map_to_sizes(ar, size):
 # ── availability is earned ───────────────────────────────────────────────────
 
 def test_missing_weights_report_unavailable_rather_than_failing(monkeypatch):
-    monkeypatch.setattr(li, "is_installed", lambda: False)
+    monkeypatch.setattr(li, "is_installed", lambda mid=None: False)
     out = li.generate("x")
     assert out["status"] == "unavailable"
     assert "not found" in out["reason"]
@@ -148,6 +148,11 @@ def test_creative_engine_routes_the_local_model_without_a_cloud_key(
     monkeypatch.setattr(ce, "is_available", lambda: False)
     monkeypatch.setattr(ce, "_configured_image_model", lambda: li.MODEL_ID)
     monkeypatch.setattr(ce, "check_content_safety", lambda p: (True, None))
+    # The dispatch gate checks the weights are really on disk, so a model that
+    # is configured but half-downloaded falls through to cloud instead of
+    # failing at the sampler. Under test the runtime dir is a temp path, so
+    # that check has to be stated rather than inherited from the real machine.
+    monkeypatch.setattr(li, "is_installed", lambda mid=None: True)
     monkeypatch.setattr(li, "generate",
                         lambda p, **k: {"status": "ok", "files": ["a.png"],
                                         "local": True})
@@ -307,3 +312,67 @@ def test_system_generations_stay_out_of_the_creations_gallery(installed,
     assert copied["n"] == 0, "a system image must not be published to the gallery"
     assert out["files"][0]["system_generated"] is True
     assert out["files"][0]["url"] is None
+
+
+# ── SD 3.5 Medium, the alternative image seat ────────────────────────────────
+# Added 2026-08-18. Z-Image stays the default; this model is a CHOICE, and the
+# two disagree about sampler settings by enough that swapping one graph's
+# numbers into the other yields a grey smear rather than a slower picture.
+
+def test_sd35_uses_one_checkpoint_for_model_clip_and_vae():
+    wf = li.build_workflow("a red bicycle", model_id=li.SD35_MEDIUM_ID)
+    assert wf["1"]["class_type"] == "CheckpointLoaderSimple"
+    assert wf["1"]["inputs"]["ckpt_name"].startswith("sd3.5_medium_incl_clips")
+    # MODEL from slot 0, CLIP from slot 1, VAE from slot 2 — all one loader.
+    assert wf["7"]["inputs"]["model"] == ["1", 0]
+    assert wf["4"]["inputs"]["clip"] == ["1", 1]
+    assert wf["8"]["inputs"]["vae"] == ["1", 2]
+
+
+def test_sd35_does_not_inherit_z_images_turbo_settings():
+    """cfg 1.0 and 8 steps are Z-Image's; SD 3.5 needs guidance and time."""
+    z = li.build_workflow("x")
+    s = li.build_workflow("x", model_id=li.SD35_MEDIUM_ID,
+                          steps=li.MODELS[li.SD35_MEDIUM_ID]["steps"],
+                          cfg=li.MODELS[li.SD35_MEDIUM_ID]["cfg"])
+    assert z["7"]["inputs"]["cfg"] == 1.0
+    assert z["7"]["inputs"]["steps"] == 8
+    assert s["7"]["inputs"]["cfg"] == 4.5
+    assert s["7"]["inputs"]["steps"] == 30
+    assert s["7"]["inputs"]["scheduler"] == "sgm_uniform"
+
+
+def test_the_default_seat_is_still_z_image():
+    """Adding a model must not silently move the seat."""
+    assert li.MODEL_ID == "z-image-turbo-fp8"
+    assert li.build_workflow("x")["1"]["class_type"] == "UNETLoader"
+
+
+def test_a_model_missing_its_weights_is_never_offered(monkeypatch, tmp_path):
+    monkeypatch.setattr(li, "comfy_root", lambda: tmp_path)
+    assert li.available_models() == []
+    assert li.is_installed(li.SD35_MEDIUM_ID) is False
+
+
+def test_available_models_lists_only_what_is_on_disk(monkeypatch, tmp_path):
+    (tmp_path / "models" / "checkpoints").mkdir(parents=True)
+    (tmp_path / "models" / "checkpoints"
+     / "sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors").touch()
+    monkeypatch.setattr(li, "comfy_root", lambda: tmp_path)
+    assert li.available_models() == [li.SD35_MEDIUM_ID]
+
+
+def test_an_uninstalled_request_falls_back_rather_than_failing(monkeypatch):
+    """A seat naming absent weights must not reach the sampler and error."""
+    monkeypatch.setattr(li, "is_installed",
+                        lambda mid=None: mid != li.SD35_MEDIUM_ID)
+    monkeypatch.setattr(li, "_ensure_comfy", lambda **k: True, raising=False)
+    seen = {}
+    monkeypatch.setattr(li, "build_workflow",
+                        lambda *a, **k: seen.setdefault("model", k.get("model_id")) or {})
+    monkeypatch.setattr(li, "_post", lambda p, b, timeout=60: {"prompt_id": "1"})
+    monkeypatch.setattr(li, "_await_result",
+                        lambda pid, timeout=600, cancelled=None: [
+                            {"filename": "a.png", "subfolder": ""}])
+    li.generate("x", model=li.SD35_MEDIUM_ID)
+    assert seen["model"] == li.MODEL_ID
