@@ -290,3 +290,149 @@ def test_a_measured_model_still_reports_a_number(entries, profile):
     assert view["models"][0]["sized"] is True
     assert view["models"][0]["vram_mib"] == 1811
     assert view["fits"] is True
+
+
+# ── one artifact, one id ─────────────────────────────────────────────────────
+# Found 2026-08-18: the same 0.6B embedder was registered as
+# `qwen3-embed:0.6b-q8` (Friday's store) and `qwen3-embedding:0.6b` (Ollama).
+# installed_entries deduped on an exact id match, so models present in BOTH
+# stores under the SAME name collapsed correctly and this pair did not -- and
+# the picker would have offered two rows for one model.
+
+def _emb_entries():
+    e = _entry("qwen3-embedding:0.6b", {2048: 640}, embedding=True)
+    return [e, _entry("gemma4:e2b", {4096: 1629, 32768: 1811})]
+
+
+def test_either_embedder_id_resolves_to_one_seat_and_one_charge():
+    """Assign the embedder role by each id; expect one seat, one charge."""
+    from agent_friday.services.residency_catalog import canonical_model_id
+    assert canonical_model_id("qwen3-embed:0.6b-q8") == "qwen3-embedding:0.6b"
+
+    canonical = rp.assignment_cost(
+        {"embeddings_manager": "qwen3-embedding:0.6b"}, _emb_entries())
+    legacy = rp.assignment_cost(
+        {"embeddings_manager": "qwen3-embed:0.6b-q8"}, _emb_entries())
+
+    assert canonical["distinct_models"] == legacy["distinct_models"] == 1
+    assert legacy["models"][0]["model_id"] == "qwen3-embedding:0.6b"
+    assert legacy["models"][0]["sized"] is True, \
+        "the legacy id must inherit the canonical entry's measurements"
+    assert canonical["peak_vram_mib"] == legacy["peak_vram_mib"]
+
+
+def test_both_ids_at_once_are_still_one_model(entries):
+    """The picker offering both rows must not double-charge the budget."""
+    cost = rp.assignment_cost({"embeddings_manager": "qwen3-embedding:0.6b",
+                               "memory_manager": "qwen3-embed:0.6b-q8"},
+                              _emb_entries())
+    assert cost["distinct_models"] == 1
+    assert cost["roles_assigned"] == 2
+    assert cost["models"][0]["roles"] == ["embedder", "memory_manager"]
+
+
+def test_an_unaliased_id_passes_through_unchanged():
+    from agent_friday.services.residency_catalog import canonical_model_id
+    assert canonical_model_id("gemma4:e2b") == "gemma4:e2b"
+    assert canonical_model_id(None) is None
+
+
+def test_the_duplicate_detector_flags_look_alike_artifacts():
+    """The standing check for duplicates nobody has met yet."""
+    from agent_friday.services import residency_catalog as rc
+    ents = [
+        {"model_id": "some-embedder:0.6b", "artifact_bytes": 639150592,
+         "is_embedding": True},
+        {"model_id": "some-embedder-gguf:q8", "artifact_bytes": 644245094,
+         "is_embedding": True},
+        {"model_id": "gemma4:e2b", "artifact_bytes": 7162394016,
+         "is_embedding": False},
+    ]
+    dups = rc.duplicate_candidates(ents)
+    assert len(dups) == 1
+    assert sorted(dups[0]["ids"]) == ["some-embedder-gguf:q8",
+                                      "some-embedder:0.6b"]
+
+
+def test_the_detector_does_not_flag_genuinely_different_models():
+    from agent_friday.services import residency_catalog as rc
+    ents = [
+        {"model_id": "gemma4:e2b", "artifact_bytes": 7162394016,
+         "is_embedding": False},
+        {"model_id": "gemma4:e4b", "artifact_bytes": 9608338848,
+         "is_embedding": False},
+        {"model_id": "qwen3.5:9b", "artifact_bytes": 6549825126,
+         "is_embedding": False},
+    ]
+    assert rc.duplicate_candidates(ents) == []
+
+
+def test_an_already_aliased_pair_is_not_reported_twice():
+    """The alias table has handled it; the detector must stay quiet."""
+    from agent_friday.services import residency_catalog as rc
+    ents = [
+        {"model_id": "qwen3-embed:0.6b-q8", "artifact_bytes": 639150592,
+         "is_embedding": True},
+        {"model_id": "qwen3-embedding:0.6b", "artifact_bytes": 644245094,
+         "is_embedding": True},
+    ]
+    assert rc.duplicate_candidates(ents) == []
+
+
+def test_a_finetune_is_not_mistaken_for_its_base_model():
+    """Regression for a false positive found on the live inventory 2026-08-18.
+
+    A 2% relative tolerance flagged gemma4:12b (7,381,382,048 bytes) as a
+    duplicate of the HauhauCS 12B finetune (7,516,192,768). They are genuinely
+    different weights, and merging them in the picker would HIDE a model --
+    worse than showing two rows. The tolerance is absolute now, because
+    container framing overhead is a fixed cost, not a proportion.
+    """
+    from agent_friday.services import residency_catalog as rc
+    ents = [
+        {"model_id": "gemma4:12b", "artifact_bytes": 7381382048,
+         "is_embedding": False},
+        {"model_id": "hf.co/HauhauCS/Gemma4-12B-Balanced:Q4_K_M",
+         "artifact_bytes": 7516192768, "is_embedding": False},
+    ]
+    assert rc.duplicate_candidates(ents) == []
+
+
+def test_two_different_embedders_of_similar_size_are_not_merged():
+    """Second false positive from the live inventory, 2026-08-18.
+
+    embeddinggemma:300m (621,867,104) and qwen3-embedding:0.6b (639,150,592)
+    are 17 MB apart and completely different models. No size threshold that
+    catches a 5 MB framing difference can exclude them, so a duplicate must
+    also SHARE A NAME.
+    """
+    from agent_friday.services import residency_catalog as rc
+    ents = [
+        {"model_id": "embeddinggemma:300m", "artifact_bytes": 621867104,
+         "is_embedding": True},
+        {"model_id": "qwen3-embedding:0.6b", "artifact_bytes": 639150592,
+         "is_embedding": True},
+    ]
+    assert rc.duplicate_candidates(ents) == []
+
+
+def test_a_real_duplicate_still_trips_both_conditions():
+    from agent_friday.services import residency_catalog as rc
+    ents = [
+        {"model_id": "nomic-embed:v1.5", "artifact_bytes": 639150592,
+         "is_embedding": True},
+        {"model_id": "nomic-embed-text:latest", "artifact_bytes": 644245094,
+         "is_embedding": True},
+    ]
+    dups = rc.duplicate_candidates(ents)
+    assert len(dups) == 1
+    assert "nomic" in dups[0]["shared_tokens"]
+
+
+def test_registry_prefixes_and_quant_markers_are_not_evidence():
+    """`hf.co/Org/` says where a model came from; Q4_K_M is not an identity."""
+    from agent_friday.services.residency_catalog import _id_tokens
+    toks = _id_tokens("hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored:Q4_K_M")
+    assert "hauhaucs" not in toks or "gemma4" in toks
+    assert "q4_k_m" not in toks and "q4" not in toks
+    assert _id_tokens("gemma4:e2b") & _id_tokens("gemma4:e4b") == {"gemma4"}
