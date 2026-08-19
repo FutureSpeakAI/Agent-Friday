@@ -1580,6 +1580,18 @@ DEFAULT_SETTINGS = {
         # it, and the seat never appeared in settings or the UI.
         "heavy_hitter":   {"provider": "ollama-local",  "model": ""},
         "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-5"},
+        # The five working roles. Declared with an EMPTY model on purpose:
+        # rule R11 says nothing is assigned until Stephen says so, and an
+        # empty seat awaiting a choice is the normal state, not a failure.
+        # They must appear here even so -- `_sync_capability_routing` rebuilds
+        # capability_routing from these keys alone, so a capability missing
+        # from this table is silently dropped on every settings save. That is
+        # exactly what happened to `heavy_hitter` on 2026-08-15.
+        "orchestrator":     {"provider": "ollama-local", "model": ""},
+        "sidekick_fast":    {"provider": "ollama-local", "model": ""},
+        "function_manager": {"provider": "ollama-local", "model": ""},
+        "memory_manager":   {"provider": "ollama-local", "model": ""},
+        "researcher":       {"provider": "ollama-local", "model": ""},
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
         "creative_music": {"provider": "google-gemini", "model": "lyria-clip"},

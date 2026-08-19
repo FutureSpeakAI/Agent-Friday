@@ -31749,14 +31749,17 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
               fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.92)', flex: 1,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             },
-          }, r.model ? prettyModel(r.model, m && m.label) : 'not set'),
+          }, r.model ? prettyModel(r.model, m && m.label) : (r.awaiting_choice ? 'no model chosen yet' : (r.blocked_because ? 'cannot be seated' : 'not set'))),
           m && E(StateChip, { m: m })),
         E('div', {
           style: {
             fontSize: 10, fontFamily: 'JetBrains Mono', marginTop: 3, marginLeft: 13,
-            color: fit.ok ? 'rgba(255,255,255,0.45)' : '#f59e0b',
+            color: (!fit.ok || r.blocked_because) ? '#f59e0b' : 'rgba(255,255,255,0.45)',
           },
         }, !fit.ok ? fit.why
+          : r.awaiting_choice
+            ? 'This seat is yours to choose. Friday will not pick one for you.'
+          : r.blocked_because ? r.blocked_because
           : [r.where || (m && !m.local ? 'cloud' : '—'),
              r.proven ? 'proven — has served ' + (fmtAgo(r.last_used) || 'before') : 'untested on this machine',
             ].join(' · '))),
@@ -31888,10 +31891,41 @@ function SettingsTabIntelligence() {
         },
       }, 'One row per job. Clicking a row shows only models that can actually do it — ' +
          'which is why speech models no longer appear as candidates for running your chat.'),
-      (d.roles || []).map(r => E(RoleRow, {
-        key: r.key, r: r, intel: d, onOpen: onOpen, openFor: openFor,
-        pickerErr: err, onRetry: reload,
-      })),
+      // Grouped by when a seat costs memory, because a flat list of sixteen
+      // jobs reads as sixteen models loaded at once. Only the resident tier
+      // is warm; the rest arrive when the work does and leave after. Seven
+      // roles routinely share three or four models.
+      ['resident', 'leased', 'on-demand', null].map(cls => {
+        const rows = (d.roles || []).filter(r => (r.residency || null) === cls);
+        if (!rows.length) return null;
+        return E('div', { key: cls || 'other' },
+          E('div', {
+            style: {
+              display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 14,
+              marginBottom: 2, paddingBottom: 4,
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+            },
+          },
+            E('span', {
+              style: {
+                fontFamily: 'Orbitron', fontSize: 10.5, letterSpacing: 0.6,
+                color: cls === 'resident' ? '#00d4ff' : 'rgba(255,255,255,0.55)',
+                textTransform: 'uppercase',
+              },
+            }, cls === 'resident' ? 'Always warm'
+               : cls === 'leased' ? 'Only while working'
+               : cls === 'on-demand' ? 'Wakes when needed' : 'Other'),
+            E('span', {
+              style: {
+                fontFamily: 'JetBrains Mono', fontSize: 9.5,
+                color: 'rgba(255,255,255,0.38)',
+              },
+            }, ((d.residency_help || {})[cls] || ''))),
+          rows.map(r => E(RoleRow, {
+            key: r.key, r: r, intel: d, onOpen: onOpen, openFor: openFor,
+            pickerErr: err, onRetry: reload,
+          })));
+      }),
       saving && E('div', {
         style: { fontSize: 10, color: '#f59e0b', fontFamily: 'JetBrains Mono', marginTop: 8 },
       }, 'Saving ' + saving + '…')),

@@ -35,6 +35,21 @@ SEAT_TO_CAPABILITY = {
     "sidekick": "local",
     "sidekick_heavy": "subagent",
     "image": "creative_image",
+    # The five WORKING roles (roles contract 1). Rule R11 says these are
+    # assigned by Stephen rather than inferred, and an unassigned one is a
+    # refusal by name -- correct, and it was also unreachable: with no
+    # capability key, `overrides_from_settings` could never emit an override
+    # for them, so "chosen by the user" described a choice the user had no way
+    # to make. They would have sat R11-empty forever.
+    #
+    # Keys match the role names deliberately. A third namespace between
+    # residency roles and capability keys is what produced the
+    # embeddings_manager/embedder duplicate the contract warns about.
+    "orchestrator": "orchestrator",
+    "sidekick_fast": "sidekick_fast",
+    "function_manager": "function_manager",
+    "memory_manager": "memory_manager",
+    "researcher": "researcher",
 }
 
 # Flat legacy mirrors. These are NOT optional bookkeeping: core's
