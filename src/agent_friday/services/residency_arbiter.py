@@ -521,8 +521,45 @@ class LlamaServerBackend:
     # the exact state that has already dropped Stephen's second monitor twice
     # today. The daemon was blamed for it the first time.
     #
-    # 32768 is the measured working point (residency_policy.TOOL_SEAT_NUM_CTX).
-    # A bigger window is worth nothing on a seat that costs him a screen.
+    # MEASURED ON THIS CARD, 2026-08-19, and the answer was not the expected
+    # one. The roles contract (docs/contracts/roles-and-model-identity.md
+    # 6a) sets TOOL_SEAT_NUM_CTX to 65,536 on the reasoning that over-
+    # reserving is nearly free because the KV curve is flat -- about 32 MiB --
+    # while under-reserving truncates silently. On gemma4:12b on this RTX 4070
+    # the curve is not flat:
+    #
+    #     32,768 -> 1,936 MiB free of 12,282
+    #     65,536 ->   551 MiB free      <-- under the 1024 MiB display reserve
+    #
+    # A 1,385 MiB difference, not 32. The compute buffer scales with context
+    # and dwarfs the KV cache at long windows, which is the same effect
+    # already recorded on the batch-size flag below. 65,536 costs Stephen his
+    # second monitor on this hardware.
+    #
+    # The silent-truncation worry also does not apply to these seats:
+    # llama-server REJECTS an over-length request with a 400 naming the token
+    # count -- observed, "request (47448 tokens) exceeds the available context
+    # size" -- rather than dropping the oldest spans. Loud beats quiet, and
+    # the fallback is reported to the caller.
+    #
+    # So: 32,768 here, and the contract's 65,536 wants re-measuring on this
+    # card before it is applied to it.
+    #
+    # Superseded reasoning, kept because the shape of the trade is right:
+    # (docs/contracts/roles-and-model-identity.md §6a, branch
+    # model-suite-determination) showed 32,768 to be the WRONG side of this
+    # trade: a real turn does not fit in it, and the overflow is silent --
+    # the oldest spans fall out the front and the model answers from a
+    # truncated view without anyone being told. Over-reserving is nearly free
+    # on this model family because the KV curve is flat; under-reserving
+    # corrupts the answer quietly. Between a cost measured in tens of MiB and
+    # a failure nobody can see, take the MiB.
+    #
+    # The ceiling stays, because the thing it was built to stop is real: this
+    # seat spawned at its architectural 262,144 left 448 MiB of 12,282 and
+    # took a monitor off the desktop. Measured on this card at 65,536 before
+    # committing to it -- see the report; a claim about a flat curve is not
+    # the same as this card.
     MAX_SEAT_NUM_CTX = 32768
 
     def _spawn(self, binary, model_id, num_ctx, *, gguf_path, port,
