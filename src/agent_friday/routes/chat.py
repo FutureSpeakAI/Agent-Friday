@@ -98,6 +98,15 @@ chat_bp = Blueprint('chat', __name__)
 # that corrupts — and the legacy list is a mirror that will be dropped.
 
 
+
+def _fit_tools(model_id, tools):
+    """As much of the tool registry as this seat can hold. Never raises."""
+    try:
+        from agent_friday.services.tool_budget import fit_tools_to_seat
+        return fit_tools_to_seat(model_id, tools)
+    except Exception:
+        return list(tools or []), None
+
 def _conv_id_from(data):
     """The conversation this request addresses; Main when unaddressed.
 
@@ -669,6 +678,16 @@ def chat():
         reply, tool_trace = None, []
         _fell_back_from_local = None
         if _routed_local:
+            # As much of the tool registry as this seat can physically hold.
+            # 112 tools cost ~46k tokens; his seat's window is 32,768, so
+            # every local turn 400'd with "exceeds the available context
+            # size" and the router fell back to Anthropic. The model, the
+            # seat, the picker and the mode were all fine — the request could
+            # not be built. See services/tool_budget.py.
+            _local_tools, _tool_note = _fit_tools(
+                _route_info.get('model'), CLAUDE_TOOLS)
+            if _tool_note:
+                system_prompt = (system_prompt or '') + "\n\n[SEAT] " + _tool_note
             try:
                 reply, tool_trace = _call_ollama(
                     messages, system=system_prompt,
@@ -676,9 +695,10 @@ def chat():
                     temperature=settings.get('temperature'),
                     orb_label=f"🏠 {_orb_label}",
                     orb_icon='🏠',
-                    # Local models drive the full agent loop too: same unified
-                    # tool registry, vault gate, and governance as the cloud path.
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    # Local models drive the full agent loop too: same
+                    # unified tool registry, vault gate and governance as the
+                    # cloud path -- but only as much of the registry as fits.
+                    tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             except Exception as _ole:
                 # A vault request must NEVER silently fall back to cloud with raw
