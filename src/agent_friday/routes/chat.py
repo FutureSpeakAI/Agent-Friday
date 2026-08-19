@@ -392,6 +392,49 @@ def chat():
                 _conv_seat = (_convs.load(_conversation_id) or {}).get("seat")
             except Exception:
                 pass
+            # A conversation bound to a model that is GONE.
+            #
+            # Stephen's inventory changed twice during one session — gemma4:e2b,
+            # gemma4:12b and glm-4.7-flash left the daemon while chats were bound
+            # to them — and a binding to a missing model 404s and falls through
+            # to the cloud. §3.8: a stated choice to rebind, never a silent
+            # substitution. Answering as Claude when he asked for a local model
+            # is the defect this whole day has been about.
+            if isinstance(_conv_seat, dict) and (_conv_seat.get('model') or ''):
+                _want = _conv_seat['model']
+                _known = False
+                try:
+                    from agent_friday.services.model_catalog import build_catalog
+                    _known = any(m.get('id') == _want
+                                 for m in (build_catalog().get('models') or []))
+                except Exception:
+                    _known = True          # cannot check → do not block the turn
+                if not _known:
+                    _gone = (
+                        f"This chat is bound to **{_want}**, and that model is no "
+                        f"longer installed.\n\n"
+                        f"I have not answered from a different model, because you "
+                        f"asked for that one. Pick another for this chat with the "
+                        f"model button in the chat header, or say "
+                        f"\"switch to <model>\" and I will rebind it."
+                    )
+                    user_msg = {
+                        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                        'role': 'user', 'text': message, 'pinned': False, 'sources': [],
+                    }
+                    friday_msg = {
+                        'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                        'role': 'friday', 'text': _gone, 'pinned': False, 'sources': [],
+                    }
+                    _persist_turn(_conversation_id, user_msg, friday_msg,
+                                  meta={'kind': 'seat_missing', 'model': _want})
+                    return jsonify({
+                        "response": _gone, "user_msg": user_msg,
+                        "friday_msg": friday_msg, "sources": [], "tool_trace": [],
+                        "seat_missing": {"model": _want,
+                                         "conversation_id": _conversation_id},
+                    })
+
             _route_info = _router.route(messages, task_context={
                 "has_tools": True,
                 "workspace": workspace,

@@ -569,11 +569,14 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 # second number. Generous margin on top: waiting is what he
                 # was warned about and chose, whereas a wrong answer from the
                 # wrong model is not something he agreed to.
-                _to = 180
+                # Floor of 300s: a cold multi-gigabyte seat on a card that is
+                # also driving a desktop spills to CPU, and generation after the
+                # load is the slow part, not the load itself.
+                _to = 300
                 try:
                     from agent_friday.services import pause_forecast as _pf
                     _est, _ = _pf._load_estimate(model, None)
-                    _to = max(180, int(_est * 3) + 120)
+                    _to = max(300, int(_est * 4) + 180)
                 except Exception:
                     pass
                 resp = ollama.chat_completion(

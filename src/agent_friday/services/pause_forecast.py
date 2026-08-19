@@ -161,6 +161,20 @@ def _load_estimate(model_id: str, arb) -> tuple[float, str]:
                 return float(e["est_load_s"]), "estimated from artifact size"
     if model_id in RECORDED_COLD_LOAD_S:
         return RECORDED_COLD_LOAD_S[model_id], "recorded from an earlier run"
+    # Before falling back to a flat guess, ask the daemon how big the thing
+    # actually is. A 6.6 GB model and a 1.8 GB model do not take the same time
+    # to wake, and treating them the same is what made the local timeout too
+    # thin for the larger seats — the turn died mid-load and the cloud answered.
+    try:
+        import json as _json
+        import urllib.request as _u
+        with _u.urlopen("http://localhost:11434/api/tags", timeout=3) as r:
+            for m in (_json.loads(r.read().decode()) or {}).get("models", []):
+                if m.get("name") == model_id and m.get("size"):
+                    gb = float(m["size"]) / 1e9
+                    return max(8.0, gb * 6.0), "estimated from artifact size (%.1f GB)" % gb
+    except Exception:
+        pass
     return 30.0, ROUGH_DEFAULT_BASIS
 
 

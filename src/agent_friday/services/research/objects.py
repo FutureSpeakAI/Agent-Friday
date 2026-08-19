@@ -96,6 +96,9 @@ class SubQuestion:
     done_when: str = ""
 
 
+_SUBQ_FIELDS = {"id", "text", "perspective", "done_when"}
+
+
 @dataclass
 class ResearchPlan:
     commission_id: str
@@ -213,7 +216,15 @@ class Commission:
             c.plan = ResearchPlan(
                 commission_id=pd.get("commission_id", c.id),
                 perspectives=pd.get("perspectives") or [],
-                sub_questions=[SubQuestion(**s) for s in pd.get("sub_questions") or []],
+                # Tolerate fields an older build wrote and this one dropped.
+                # A commission record is HIS WORK; refusing to load one
+                # because of an extra key means the run is unrecoverable and
+                # cannot even be reported. Seven of nine records on disk were
+                # unreadable this way (2026-08-18: `cloud_allowed`), including
+                # a commission frozen mid-grind.
+                sub_questions=[SubQuestion(**{k: v for k, v in s.items()
+                                             if k in _SUBQ_FIELDS})
+                               for s in pd.get("sub_questions") or []],
                 working_title=pd.get("working_title", ""),
                 internal_first=pd.get("internal_first") or [],
                 scoped_by=pd.get("scoped_by", ""))
