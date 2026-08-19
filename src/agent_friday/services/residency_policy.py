@@ -253,7 +253,21 @@ RULE_BY_ID = {r["id"]: r for r in RULES}
 #
 # It stays as the floor rung and the dispatch fallback, not as the answer:
 # `context_for()` computes the real number from overhead + room, per role.
-TOOL_SEAT_NUM_CTX = 32768
+# The context a tool-using seat needs. RAISED from 32768 on 2026-08-18, and the
+# old value was not merely tight -- it was insufficient, by a lot.
+#
+# Measured that day: one real turn against a 32,768 seat totalled 47,309 tokens
+# (12,706 system prompt + 9,603 tools + ~25,000 injected memory and source
+# context). That is 14,541 tokens MORE than the window holds, so every such turn
+# was silently truncating its own oldest context and answering from a partial
+# view. 32768 was chosen when overhead was believed to be ~22k, because injected
+# context was not counted at all -- see context_budget.MEASURED_INJECTED_TOKENS.
+#
+# 65536 is the smallest ladder rung that holds a real turn, and on this family
+# it is nearly free: gemma4:12b measures 7,718 MiB at 32768 and 7,750 MiB at
+# 65536, because sliding-window attention keeps most of the KV cache capped.
+# Thirty-two MiB to stop truncating every conversation is not a close call.
+TOOL_SEAT_NUM_CTX = 65536
 
 # Rungs, not arbitrary integers: backends allocate KV in blocks, and a tidy
 # number is one a human can recognise in `ollama ps` output or a bug report.
@@ -531,6 +545,47 @@ def context_for(role: str, e: dict, budget_mib: int | None,
     rungs = [c for c in CONTEXT_LADDER if c >= floor]
     if not rungs:
         rungs = [CONTEXT_LADDER[-1]]
+
+    # DO NOT SIZE A SEAT WHERE THE COST IS EXTRAPOLATED.
+    #
+    # Above the largest measured context, `vram_estimate_at` extrapolates, and
+    # extrapolation understates: the curve is flat across the measured range on
+    # this family because sliding-window attention caps most of the KV cache,
+    # and a straight line through flat points stays flat forever. It does not.
+    #
+    # Measured 2026-08-18, and this is the whole reason for the rule: a seat
+    # spawned at the architectural maximum of 262,144 left 448 MiB of 12,282 on
+    # the card and took a monitor off the desktop. The largest MEASURED row for
+    # that model is 131,072 at 7,814 MiB, so every rung above it was a guess
+    # that happened to be catastrophic.
+    #
+    # Raising the overhead figure to include injected context (context_budget,
+    # same day) pushed the brain's target past 131,072 and would have re-armed
+    # exactly that failure, which is how this rule came to be written.
+    #
+    # A model with no measurements at all is not capped -- there is nothing to
+    # be conservative about yet, and refusing every unmeasured model would make
+    # a fresh install unusable.
+    measured_ctx = [m.get("num_ctx") for m in (e.get("measured") or [])
+                    if m.get("num_ctx") and m.get("vram_mib")]
+    if measured_ctx:
+        ceiling = max(measured_ctx)
+        within = [c for c in rungs if c <= ceiling]
+        if within:
+            rungs = within
+        else:
+            # Every rung that clears the floor is above what this model has
+            # been measured at, so SOME extrapolation is unavoidable. Take the
+            # least of it -- the smallest sufficient rung -- rather than the
+            # largest affordable one.
+            #
+            # Leaving `rungs` untouched here was a hole that defeated the whole
+            # cap: gemma4:e4b is measured only at 8,192, the floor is now above
+            # that, and the seat sailed past every rung to 262,144 -- the exact
+            # value this rule exists to prevent. A guess is sometimes necessary;
+            # the biggest possible guess never is.
+            rungs = [rungs[0]]
+
     if declared:
         allowed = [c for c in rungs if c <= declared]
         if allowed:
@@ -956,8 +1011,23 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens,
 #     (resident) and the researcher (leased) is resident: it is already in
 #     memory, and a lease cannot evict what the conversation is using.
 
-def _role_ctx_want(role):
-    return DEFAULT_NUM_CTX.get(resolve_role(role), TOOL_SEAT_NUM_CTX)
+def _role_ctx_want(role, overhead_tokens=None):
+    """The context this role needs, sized from real demand where it is known.
+
+    A constant cannot answer this: what a turn costs moves with the tool
+    registry, the assembled system prompt and how much memory gets injected.
+    So when the live overhead figure is available, this returns the smallest
+    ladder rung that actually holds one turn plus room to answer in -- and the
+    declared default becomes a floor rather than the answer.
+    """
+    want = DEFAULT_NUM_CTX.get(resolve_role(role), TOOL_SEAT_NUM_CTX)
+    if not overhead_tokens or resolve_role(role) in NO_PROMPT_ROLES:
+        return want
+    need = overhead_tokens + MIN_CONVERSATION_ROOM
+    for rung in CONTEXT_LADDER:
+        if rung >= need:
+            return max(want, rung)
+    return max(want, CONTEXT_LADDER[-1])
 
 
 def assignment_cost(assignments, entries, *, overhead_tokens=None,
@@ -1020,7 +1090,7 @@ def assignment_cost(assignments, entries, *, overhead_tokens=None,
         roles = sorted(set(g["roles"]))
         residency = max((residency_of(r) for r in roles),
                         key=lambda c: _WARMTH.get(c, 0))
-        want_ctx = max(_role_ctx_want(r) for r in roles)
+        want_ctx = max(_role_ctx_want(r, overhead_tokens) for r in roles)
         # CPU placement only when EVERY role on this model tolerates it: a
         # model shared by the embedder and the orchestrator has to sit where
         # the orchestrator needs it.
