@@ -984,7 +984,20 @@ def assignment_cost(assignments, entries, *, overhead_tokens=None,
         from agent_friday.services.context_budget import (
             MEASURED_OVERHEAD_TOKENS)
         overhead_tokens = MEASURED_OVERHEAD_TOKENS
-    by_id = {e["model_id"]: e for e in entries}
+    # Model ids are canonicalised for the same reason role names are: the same
+    # artifact can arrive under two names (Friday's store and Ollama's registry
+    # disagreed about the 0.6B embedder), and two names would be two seats and
+    # two charges for one copy of one set of weights.
+    try:
+        from agent_friday.services.residency_catalog import canonical_model_id
+    except Exception:                                  # keep this module pure
+        def canonical_model_id(m):
+            return m
+
+    by_id = {}
+    for e in entries:
+        by_id.setdefault(canonical_model_id(e["model_id"]), e)
+        by_id.setdefault(e["model_id"], e)
 
     grouped = {}
     unknown = []
@@ -996,6 +1009,7 @@ def assignment_cost(assignments, entries, *, overhead_tokens=None,
             continue
         if not model_id:
             continue
+        model_id = canonical_model_id(model_id)
         g = grouped.setdefault(model_id,
                                {"roles": [], "entry": by_id.get(model_id)})
         g["roles"].append(canon)
