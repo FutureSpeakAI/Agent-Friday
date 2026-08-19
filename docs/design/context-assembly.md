@@ -4,11 +4,14 @@
 **Status:** design. **No implementation code exists for this document — it lands first, by
 instruction.** Written for a fresh-context builder: every fact needed is here or at a cited
 file:line.
-**Revised:** 2026-08-19, twice. First written from the initial token audit; revised when the
-audit's live turns landed final numbers and Stephen proposed the central mechanism himself:
-*"Can we make a tool that opens the toolbox, allowing the model to find the right one and
-only use those tokens?"* — which is deferred tool loading, and it is not hypothetical: it is
-exactly how the harness these build sessions run in works today (§3.1).
+**Revised:** 2026-08-19, three times. First written from the initial token audit; revised
+when the audit's live turns landed final numbers and Stephen proposed the central mechanism
+himself: *"Can we make a tool that opens the toolbox, allowing the model to find the right
+one and only use those tokens?"* — which is deferred tool loading, and it is not
+hypothetical: it is exactly how the harness these build sessions run in works today (§3.1).
+Revised a third time the same day for Stephen's follow-up — *"would prompt caching help?"* —
+which interacts with the toolbox in a way this spec must resolve: §1.4 verifies what each
+backend actually offers, §3.7 resolves the interaction and orders the prompt around it.
 **Measured against:** [`docs/audits/prompt-token-audit.md`](../audits/prompt-token-audit.md)
 final form (commits `e5cf151`, `9504c8d` — live turns, sandboxed against real data), plus
 commit `ed10711` (the display-reserve measurement). Cited as **AUDIT**.
@@ -34,8 +37,9 @@ dominant later, the worst shape a cost can have. This document specifies the fix
 order the measurement ranks it: **deferred tool schemas** (a small resident core, everything
 else as names with a lookup tool — Stephen's own proposal), **a token budget for the
 transcript** with relevance-first dropping, **assembly fitted to the actual seat**, a
-**report for every trim**, and **instrumentation that never turns off** so none of this can
-silently regress.
+**report for every trim**, **an order of assembly that keeps prompt caches warm** (stable
+prefix first; the minute-resolution clock evicted from it), and **instrumentation that
+never turns off** so none of this can silently regress.
 
 ---
 
@@ -93,6 +97,48 @@ turns** whenever his conversation grows past what the seat holds. (The old Ollam
 path did truncate silently; those seats are nearly retired.) Either way the cure is the
 same and stands: an assembler that never emits more than the seat holds.
 
+### 1.4 What prompt caching actually offers — VERIFIED against both backends
+
+Stephen asked whether prompt caching would help. Verified before designing, per the
+commission's own rule: don't design against a capability that isn't there.
+
+**Both backends cache by byte-identical prefix.** The cache covers the prompt from its
+first byte up to the first byte that differs from the previous request; one changed byte
+at position N invalidates everything after N. Everything in §3.7 follows from that one
+sentence.
+
+- **llama-server (the local seats):** prefix reuse is **already enabled** — `cache_prompt`
+  defaults to on, and the server reuses the longest common prefix of the prior request in
+  the same slot, re-processing only the differing suffix (VERIFIED, llama.cpp server
+  docs). It is per-slot: Friday's seats run a single slot, so the cache holds one
+  conversation's state at a time. Also available and currently unused: `--cache-reuse N`
+  (salvages non-prefix chunks via KV shifting, off by default) and
+  `/slots/{id}?action=save|restore` (parks a slot's KV cache to disk).
+- **Anthropic (the cloud ladder):** opt-in per request via `cache_control` breakpoints
+  (max 4). Cache **reads bill at ~0.1× the input price; writes at 1.25×** for the default
+  5-minute TTL or **2×** for the 1-hour TTL; the TTL refreshes on use. Minimum cacheable
+  prefix is per-model: **1,024 tokens on `claude-sonnet-5`** (the default cloud seat),
+  512 on `claude-opus-5`, 4,096 on `claude-haiku-4-5`. Render order is
+  tools → system → messages, and invalidation is hierarchical: a tool-set or model change
+  invalidates everything; a system-prompt edit invalidates system+messages but the tools
+  tier survives; message edits invalidate messages only. Every response reports hits in
+  `usage.cache_read_input_tokens` (VERIFIED, current API reference). **Friday sends no
+  `cache_control` anywhere today** — grep across `src/` finds zero occurrences — so every
+  cloud token, including the heartbeat's ~42,654 hourly, bills at full price.
+- **The clock defeats both backends, today.** `clock_context_block()` renders
+  `%Y-%m-%d %H:%M` — minute resolution — and assembly adds it at **position 2**, directly
+  after `FRIDAY_SYSTEM_PROMPT` (`model_router.py:2235`, `clock.py:47`). A byte change at
+  position ~4,200 on any turn that crosses a minute boundary (that is: essentially every
+  turn) invalidates everything after the system prompt on both backends. llama-server's
+  enabled cache is thereby reduced to reusing the system prompt alone, and any Anthropic
+  breakpoint placed below the clock would never hit. The audit's finding that three
+  different turn types produced **identical system prompts** is the asset here: the
+  prefix is already stable *except for what we inject into it*.
+- **What caching does not do:** it skips **recomputation**, not **residency**. Cached
+  tokens still occupy the KV cache, and the compute buffer still scales with the window —
+  §1.2's numbers do not move. Caching changes nothing about seat sizing, and there is
+  still no local heavy hitter on this card.
+
 ---
 
 ## 2. Settled questions, carried decisions
@@ -104,7 +150,7 @@ same and stands: an assembler that never emits more than the seat holds.
   the build order (§5.6); it is no longer suspected of hiding 25,000 tokens — the
   transcript was the variable — but two builders is still one too many.
 - **Instrumentation exists and works** (`prompt_audit.py`, `record_turn_demand`,
-  `turn_audit.json`). §3.7 makes it permanent instead of env-gated.
+  `turn_audit.json`). §3.6 makes it permanent instead of env-gated.
 - The audit's asymmetry rule (over-reserve rather than silently truncate) served its
   purpose and retires with the dispute; the card's display reserve now sets the ceiling,
   and fitting under it is this spec's job.
@@ -170,11 +216,14 @@ measured chain rates: five dependent calls in 13.8 s / 10.6 s). When it is worth
   common path pays nothing.
 - On the rare-tool turn, the fetch's seconds buy the seat's privacy: the alternative at
   today's overhead is not "faster local" but **"answered by Anthropic"** (§1.3).
-- **UNKNOWN, measure before tuning:** prefill amortization. llama-server's prompt cache
-  reuses a stable prefix across turns, so the 14k resident schemas may cost full prefill
-  only when the prefix changes; per-turn injected content invalidates suffixes anyway.
-  Step 1 measures prefill time at both registry shapes on the live seat; if the cache
-  makes resident schemas cheaper than feared, the token/VRAM argument still stands alone.
+- **RESOLVED (was UNKNOWN): prefill amortization.** llama-server's prefix cache is real
+  and already enabled (§1.4) — whether resident schemas cost prefill every turn depends
+  entirely on prompt *ordering*, and today the minute-resolution clock at position 2
+  guarantees they do. §3.7 fixes the order and states plainly what that changes here:
+  once caching works, deferral's **latency** argument becomes conditional (a warm prefix
+  makes resident schemas prefill-free anyway), but its **context-headroom** argument is
+  untouched and sufficient on its own — 14k of schemas occupy 14k of a 32,768 window
+  whether or not they were cached. Step 1 still measures prefill at both registry shapes.
 
 **How we would know tool-calling had broken** — instruments, not assurance, because this
 subsystem has been the most fragile thing in the system all day and a model that cannot
@@ -286,6 +335,111 @@ itself.
   connector's tax, or the next persona edit's creep, becomes visible the week it happens
   instead of at the next crisis audit.
 
+### 3.7 Prompt caching — order the prompt so yesterday's tokens stay paid for
+
+Caching pays only when the prefix is byte-identical between requests; deferred tool
+loading makes the tool region *vary* on fetch-turns — exactly the kind of change that
+breaks a prefix cache. The two designs compose, on one condition: **the prompt is ordered
+by volatility**, stable content first, per-turn content last, with the cache boundary
+sitting at the seam.
+
+**The order (normative, both backends):**
+
+```
+STABLE PREFIX (identical bytes across turns and conversations; cache boundary at its end)
+  1. FRIDAY_SYSTEM_PROMPT       — frozen; editing it is a versioned change (one cold turn)
+  2. resident core tool schemas — deterministic serialization, sorted by name
+  3. the deferred-tool index    — changes only when a connector is added or removed
+APPEND-ONLY MIDDLE
+  4. the transcript             — appending preserves the prefix; pruning rewrites it (below)
+VOLATILE TAIL (may change every turn; nothing above it may depend on it)
+  5. clock · TODAY'S CONTEXT · workspace · recall · fetched schemas · the user message
+```
+
+**The clock moves.** Content unchanged, position changed: from position 2 to the volatile
+tail. Its authority, its `PINNED` drop class, and its TIER_1-by-contract vault status are
+all untouched — render position is orthogonal to drop order and tier gating. On the cloud
+mapping it must leave the `system` string entirely (a system edit invalidates the message
+cache by the hierarchy) and ride as a content block in the final user turn — the portable
+form that works on every Claude model, since mid-conversation `role:system` messages are
+Opus-tier only and the default cloud seat is Sonnet-class.
+
+**Cloud mapping.** `tools` = the core schemas in deterministic order; `system` =
+`FRIDAY_SYSTEM_PROMPT` + the index, with one `cache_control` breakpoint on the last
+system block (by render order that caches tools+system together); a second breakpoint on
+the last block of the newest appended turn, so conversation history accrues
+incrementally. TTL: the 5-minute default on interactive turns — break-even is two
+requests, and consecutive turns in a live conversation land well inside it. The **hourly
+heartbeat** sits outside the 5-minute window entirely; only the 1-hour TTL (2× write,
+needs ≥3 refreshed reads to pay off) can serve it, and whether it actually pays is a
+counter question, not a design question — enable it, watch `cache_read_input_tokens`,
+drop it if the counters say no.
+
+**Local mapping.** The same rendered order flows through the chat template, and
+llama-server's already-enabled prefix reuse then covers regions 1–4 with no further work.
+What still costs a full prefill, said honestly:
+- **Seat swaps and lease displacement** evict the KV cache — an image job that takes the
+  GPU costs the next chat turn its warm prefix. Caching pays *within* bursts of
+  conversation, not across displacements. `/slots/.../save|restore` could park the cache
+  to disk across leases — optional, measure the restore cost before adopting.
+- **Conversation interleaving on the single slot** — a turn from conversation B after a
+  turn from conversation A reuses only regions 1–3 (~9,700 tokens post-deferral), losing
+  A's transcript warmth. That is precisely why regions 1–3 must be byte-identical
+  *across conversations*, not merely across turns: the shared prefix is what survives
+  the interleave that the conversations build makes routine.
+- **More slots would fix interleaving but cannot be afforded:** slots split `num_ctx`,
+  so a 32,768 seat at two slots is two 16,384 windows — under §3.3's arithmetic that
+  fits nothing. One slot stands on this card.
+
+**What invalidates the cache boundary** — enumerated, so anything else observed is a bug:
+1. a model or seat change (caches are per-model on both backends);
+2. seat restart or lease displacement (local only, above);
+3. a persona/system-prompt edit — a versioned change; one cold turn, expected and
+   reported;
+4. a change to the resident set or the index — including a **toolbox fetch-turn** (next
+   paragraph);
+5. transcript pruning/compression — rewrites the middle, so the message-region cache is
+   lost from the edit point; regions 1–3 survive (on Anthropic by the invalidation
+   hierarchy, locally because the prefix match still reaches the end of region 3).
+   Acceptable by construction: pruning fires when the transcript is over budget, and
+   what must re-prefill is exactly what pruning just shrank.
+
+**Deferred tools × caching, resolved.** A fetch-turn adds a schema to the tool region →
+one cold prefill from that position. The fetched tool then **pins for the conversation**
+(§3.1), so the very next turn re-warms with the new schema inside the stable prefix. At
+the ledger-predicted ~5% fetch rate that is roughly one cold turn in twenty — bounded,
+and reported (`cache_cold: toolbox_fetch` in the assembly report). What caching changes
+about deferral's economics, stated once and plainly: **deferral's latency argument is
+conditional** (on a warm prefix, resident schemas were free anyway — though on this card
+cold prefixes stay common: displacement, interleaving, restarts), **its headroom argument
+is not** — schemas occupy the context window and the KV cache cached or not, and headroom
+is what makes 32,768 livable. Deferral stays on headroom alone. (Cloud note: Anthropic
+now ships the cache-preserving form of exactly Stephen's mechanism — tools declared with
+`defer_loading` and surfaced mid-conversation by `tool_addition` blocks, beta, Opus 5
+onward. If the cloud seat is ever Opus 5, the assembler can adopt it and even fetch-turns
+keep their cache; on Sonnet-class seats the bounded cold fetch-turn stands.)
+
+**The answer to Stephen's question, in three parts:**
+- **Latency: yes, and mostly locally.** The five-minute local call was prompt
+  processing. With this order, turn N+1 re-prefills only its delta instead of
+  re-reading the entire conversation — this is the single largest latency lever
+  available on the 4070, and it costs a reordering, not hardware.
+- **Cloud cost: yes, with real numbers.** The heartbeat ships ~42,654 tokens hourly at
+  full price today; under this section the stable ~9,700 bills at ~0.1× on every hit,
+  and interactive threads inside the TTL reuse their entire accrued history at ~0.1×.
+  The discount is established from the API's own terms (§1.4), and the realized rate is
+  read off the counters (CA15), never assumed.
+- **VRAM: no.** Caching means those tokens aren't recomputed; it does not mean they
+  don't occupy memory. The seat is still sized for its full window, §3.3's arithmetic
+  and the 32,768 cap stand unchanged, and there is still no local heavy hitter (CA16).
+
+**Verification (CA15).** Every cloud response's `cache_read_input_tokens` /
+`cache_creation_input_tokens` land in the cost meter per conversation; every local turn
+logs prompt-tokens-processed (the server's timings) against prompt-tokens-sent; the
+assembly report gains a `prefix_reused` field. An unchanged prefix showing zero reuse
+across a day **alarms** — it means a silent invalidator (the clock's successor) has crept
+back into the prefix, and this is the instrument that catches it the week it happens.
+
 ---
 
 ## 4. Rules as data (updated)
@@ -305,6 +459,9 @@ itself.
 | **CA11** | MCP tools are DEFERRED by default, present and future; promotion to core is earned through the ledger, never granted by connection |
 | **CA12** | The transcript is budgeted in tokens, never in message count; within budget, relevance outranks recency; the last K turns are verbatim-inviolable |
 | **CA13** | The instrumentation is always on. Turning it off is not a setting; the weekly overhead regression check notifies on >10% fixed-cost growth |
+| **CA14** | The prompt is ordered by volatility: stable prefix (system core → resident schemas → index) → append-only transcript → volatile tail (clock, daily context, workspace, recall, fetched schemas, user message). No per-turn value may render before the transcript; the clock lives in the tail on every backend |
+| **CA15** | Cache behavior is read off counters, never assumed: cloud cache-read/write fields into the cost meter, local prefill counts into the turn report. An unchanged prefix showing zero reuse across a day alarms |
+| **CA16** | Caching never changes seat sizing. Cached tokens still occupy KV and compute; §3.3's arithmetic, the 32,768 cap, and the display reserve stand regardless of hit rate |
 
 ---
 
@@ -335,6 +492,14 @@ Each step one commit, offline-testable, real bodies / fake transport; UI via `ui
 8. **Seat sizing from the demand distribution** (CA7) — `TOOL_SEAT_NUM_CTX` becomes a
    measured percentile, and the roles-contract figure gets re-derived from it against
    this card's display reserve.
+9. **Cache alignment** (§3.7, CA14–CA16) — assembly reordered to the volatility order
+   (the clock leaves the prefix), Anthropic breakpoints added, counters wired into the
+   cost meter and the turn report. May land any time after step 2 — it edits the same
+   chokepoint — and is listed last only because the toolbox (steps 5–6) changes what the
+   stable prefix contains. Acceptance: two consecutive turns on the live 12b seat show
+   near-zero re-prefill in the server timings; a cloud turn pair shows nonzero
+   `cache_read_input_tokens`; crossing a minute boundary no longer changes a single
+   prefix byte.
 
 ---
 
@@ -351,6 +516,11 @@ Each step one commit, offline-testable, real bodies / fake transport; UI via `ui
    32,768 livable again.
 5. **Every trim reported** — §3.5/CA4, including the reframed loud-400 alarm.
 6. **Instrumentation always-on** — §3.6/CA13, with the weekly regression notice.
+7. **Prompt caching folded in** — §1.4/§3.7/CA14–16: both backends' terms verified
+   (llama-server's cache is already on and defeated by the clock at position 2;
+   Anthropic's is unused entirely), the prompt ordered by volatility with the cache
+   boundary and its invalidators named, the deferral interaction bounded to ~one cold
+   turn in twenty, and the honest no on record: VRAM and seating are unhelped.
 
 ---
 
@@ -389,6 +559,12 @@ display reserve outranks window size?
 - The harness precedent for §3.1 — the deferred-tool mechanism these build sessions run
   under: names in a system listing, schemas fetched by a search tool on demand,
   fetched tools callable thereafter; described from direct operational use.
+- §1.4's caching terms — llama.cpp's server documentation (`cache_prompt` default,
+  per-slot prefix reuse, `--cache-reuse`, slot save/restore) and Anthropic's current
+  prompt-caching reference (pricing multipliers, per-model prefix minimums, TTLs,
+  breakpoint limits, the tools→system→messages invalidation hierarchy), both read
+  2026-08-19. The clock finding: `services/clock.py:47` (minute-resolution render) and
+  `services/model_router.py:2235` (position 2 in assembly).
 - Prior design docs: [`residency-policy.md`](residency-policy.md) (seat num_ctx, the
   ladder), [`conversations-and-concurrency.md`](conversations-and-concurrency.md)
   (per-conversation transcripts; the stated-choice refuse shape),
