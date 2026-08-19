@@ -207,9 +207,47 @@ def test_the_image_seat_updates_its_flat_mirror(all_green):
     assert s["creative_model"] == "z-image-turbo-fp8"
 
 
+# Capabilities that have no legacy flat key and do not need one. A flat mirror
+# exists to keep an OLD `*_model` setting congruent with the canonical entry;
+# a capability introduced after that era never had one to disagree with.
+#
+# Verified rather than assumed, 2026-08-19: assigning `orchestrator` and
+# `memory_manager` then running `_sync_capability_routing` twice — once with
+# `capability_routing` in `changed`, once with only an unrelated key — leaves
+# both assignments intact. `_sync` rebuilds from DEFAULT_SETTINGS (where these
+# are declared) and only applies flat-key precedence to members of
+# `_CAP_FLAT_MAP`, so a non-member is preserved, not reverted.
+_NO_LEGACY_FLAT_KEY = {
+    "local", "heavy_hitter",
+    # the five working roles (roles contract 1)
+    "orchestrator", "sidekick_fast", "function_manager", "memory_manager",
+    "researcher",
+}
+
+
 def test_every_bound_capability_has_a_flat_mirror():
-    """A bound capability with no mirror loses to the sync on the next save."""
+    """A bound capability with no mirror loses to the sync on the next save.
+
+    Unless it never had a legacy flat key at all — see _NO_LEGACY_FLAT_KEY.
+    """
     missing = [c for c in sb.SEAT_TO_CAPABILITY.values()
-               if c not in sb.CAPABILITY_TO_FLAT and c not in ("local",
-                                                               "heavy_hitter")]
+               if c not in sb.CAPABILITY_TO_FLAT
+               and c not in _NO_LEGACY_FLAT_KEY]
     assert not missing, "no flat mirror for: %s" % missing
+
+
+def test_a_working_role_assignment_survives_a_settings_save():
+    """The claim above, executed rather than asserted in a comment.
+
+    Rule R11 makes these seats the user's to choose; a choice that silently
+    reverts on the next unrelated save would be worse than no choice at all.
+    """
+    import copy
+
+    from agent_friday.core import DEFAULT_SETTINGS, _sync_capability_routing
+
+    s = copy.deepcopy(DEFAULT_SETTINGS)
+    s["capability_routing"]["orchestrator"] = {"model": "gemma4:e2b",
+                                               "provider": "ollama-local"}
+    _sync_capability_routing(s, changed={"theme": "dark"})
+    assert s["capability_routing"]["orchestrator"]["model"] == "gemma4:e2b"

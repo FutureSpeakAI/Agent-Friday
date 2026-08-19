@@ -72,7 +72,47 @@ ROLE_SPEC = [
      "Speaks Friday's replies aloud."),
     ("embedding",      "Memory",                None,           "text",
      "Turns text into vectors so Friday can recall it later."),
+
+    # THE WORKING ROLES (roles contract 1). Rule R11: these are chosen by
+    # Stephen, never inferred, and an unassigned one is an empty seat awaiting
+    # a choice -- not an error. They were unassignable until seat_binding got
+    # capability keys for them, so "chosen by the user" described a choice the
+    # UI offered no way to make.
+    ("orchestrator",     "Routing your work",   "orchestrator", "tools",
+     "Decides which model handles what. Empty until you pick one."),
+    ("sidekick_fast",    "Fast sidekick",       "orchestrator", "tools",
+     "The quickest local model, for work that should not make you wait."),
+    ("function_manager", "Tool calling",        "orchestrator", "tools",
+     "Turns your request into the right tool call."),
+    ("memory_manager",   "Memory keeper",       "orchestrator", "tools",
+     "Reads the day and decides what is worth keeping."),
+    ("researcher",       "Deep research",       "subagent",     "tools",
+     "Runs long commissions end to end."),
 ]
+
+# capability key -> residency class, from the contract's 3.
+#
+# THIS IS THE POINT OF SHOWING IT. Thirteen roles without their class reads as
+# thirteen models resident at once, which on a 12 GB card looks impossible and
+# is not: only the conversational tier stays warm, and seven roles routinely
+# fit in three or four models. Sent to the client so the page can group by it
+# rather than listing thirteen equal-looking seats.
+_RESIDENCY_FOR_ROLE = {
+    "reasoning": "resident", "local": "resident", "orchestrator": "resident",
+    "sidekick_fast": "resident", "function_manager": "resident",
+    "embedding": "resident",
+    "heavy_hitter": "leased", "subagent": "leased", "researcher": "leased",
+    "creative_image": "leased", "creative_video": "leased",
+    "creative_music": "leased",
+    "memory_manager": "on-demand", "asr": "on-demand", "tts": "on-demand",
+    "voice": "on-demand",
+}
+
+RESIDENCY_HELP = {
+    "resident": "Warm all day. These hold VRAM continuously.",
+    "leased": "Loaded only while the work runs, then released.",
+    "on-demand": "Wakes when needed, sleeps again. Costs nothing idle.",
+}
 
 # Seat names in the residency plan do not match capability keys one-for-one.
 _SEAT_FOR_ROLE = {
@@ -272,11 +312,28 @@ def api_intelligence():
 
     # ── Roles, in his language, each with what it requires ───────────────────
     roles = []
+    # Refusals, so an empty seat can say WHICH kind of empty it is. R11 means
+    # nothing was asked for; R1-R10 mean something could not be done. Rendering
+    # both as "unset" loses the only distinction that matters to the person
+    # looking at it.
+    refusal_for = {}
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        _arb = get_arbiter()
+        for _r in ((getattr(_arb, "plan", None) or {}).get("refusals") or []):
+            _role = _r.get("role")
+            if _role and _role not in refusal_for:
+                refusal_for[_role] = _r
+    except Exception:
+        pass
+
     for key, label, need_role, need_mod, help_text in ROLE_SPEC:
         bound = routing.get(key) or {}
         mid = bound.get("model") or ""
         seat = seat_by_model.get(mid) or {}
-        seat_name = _SEAT_FOR_ROLE.get(key)
+        # The working roles deliberately use their residency-role name AS the
+        # capability key, so no third mapping exists to drift out of sync.
+        seat_name = _SEAT_FOR_ROLE.get(key, key)
         if not seat and seat_name:
             seat = (seats.get(seat_name) or {}) if isinstance(seats, dict) else {}
         used = costs["models"].get(mid) or {}
@@ -295,6 +352,18 @@ def api_intelligence():
             # not that it appears in a config file.
             "proven": bool(used.get("calls")),
             "last_used": used.get("last_ts"),
+            # Grouping, so thirteen roles do not read as thirteen models.
+            "residency": _RESIDENCY_FOR_ROLE.get(key),
+            # WHY this seat is empty, when it is. R11 is the normal state of a
+            # role nobody has assigned; every other rule means something could
+            # not be done. The page must not render the first as a failure.
+            "awaiting_choice": (not mid) and (
+                (refusal_for.get(seat_name) or {}).get("rule_id") == "R11"),
+            "blocked_because": (
+                (refusal_for.get(seat_name) or {}).get("explanation")
+                if (not mid) and (refusal_for.get(seat_name) or {}
+                                  ).get("rule_id") not in (None, "R11")
+                else None),
         })
 
     # ── The machine ──────────────────────────────────────────────────────────
@@ -384,6 +453,7 @@ def api_intelligence():
     return jsonify({
         "status": "ok",
         "serving": costs["serving"],
+        "residency_help": RESIDENCY_HELP,
         "routing_mode": routing_mode,
         "routing_modes": [
             {"id": "local_only", "label": "Local only",
