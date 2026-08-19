@@ -66,6 +66,32 @@ _CACHE_TTL_S = 30.0
 _ANNOUNCED: set = set()
 
 
+def _friday_store() -> list[tuple[str, float]]:
+    """(model_id, size_gb) from Friday's OWN registry.
+
+    ~/.friday/runtime/models/models.json is the manifest the Arbiter serves
+    from -- her runtime, not the daemon's. A file that is listed but missing
+    from disk does not count.
+    """
+    out: list[tuple[str, float]] = []
+    try:
+        import os
+        import pathlib
+        home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+        raw = pathlib.Path(home, ".friday", "runtime", "models",
+                           "models.json").read_text("utf-8")
+        for mid, rec in ((json.loads(raw) or {}).get("models") or {}).items():
+            if not isinstance(rec, dict) or rec.get("is_embedding"):
+                continue
+            path = rec.get("path")
+            if path and not pathlib.Path(path).exists():
+                continue
+            out.append((mid, float(rec.get("size_bytes") or 0) / 1e9))
+    except Exception as e:
+        _log.debug("could not read Friday's model store: %s", e)
+    return out
+
+
 def installed(force: bool = False) -> list[tuple[str, float]]:
     """(name, size_gb) for every seat the daemon can serve, smallest first.
 
@@ -77,6 +103,23 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     now = time.time()
     if not force and _CACHE["rows"] and (now - _CACHE["at"]) < _CACHE_TTL_S:
         return list(_CACHE["rows"])
+
+    # FRIDAY'S OWN STORE COUNTS AS INSTALLED.
+    #
+    # This module originally asked only the Ollama daemon, and that was wrong
+    # in a way that inverted its purpose. `gemma4:e2b`, `gemma4:12b`, `e4b`
+    # and `26b` are real entries in ~/.friday/runtime/models/models.json with
+    # files on disk and extracted templates -- Friday's own runtime, which the
+    # Arbiter serves as processes it owns. Asking the daemon about them
+    # returns nothing, so a resolver that trusts the daemon alone concludes
+    # her own models are missing and substitutes whatever happens to have been
+    # `ollama pull`ed. That is not healing a dangling pointer; it is moving a
+    # seat off the runtime Stephen chose, and on 2026-08-18 it did exactly
+    # that to his reasoning seat.
+    #
+    # "Installed" means "Friday can serve it", from either store.
+    rows = list(_friday_store())
+    seen = {n for n, _ in rows}
     try:
         from agent_friday.services.local_call import ollama_url
         base = ollama_url().rstrip("/")
@@ -85,15 +128,19 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     try:
         with urllib.request.urlopen(f"{base}/api/tags", timeout=4) as r:
             raw = json.loads(r.read().decode()).get("models", [])
-        rows = [(m["name"], float(m.get("size") or 0) / 1e9)
-                for m in raw if m.get("name")]
-        rows = [t for t in rows if "embed" not in t[0].lower()]
-        rows.sort(key=lambda t: t[1])
-        _CACHE.update(at=now, rows=rows)
-        return list(rows)
+        for m in raw:
+            n = m.get("name")
+            if n and n not in seen:
+                seen.add(n)
+                rows.append((n, float(m.get("size") or 0) / 1e9))
     except Exception as e:
-        _log.debug("could not read the local inventory: %s", e)
-        return list(_CACHE["rows"])
+        _log.debug("could not read the Ollama inventory: %s", e)
+
+    rows = [t for t in rows if "embed" not in t[0].lower()]
+    rows.sort(key=lambda t: t[1])
+    if rows:
+        _CACHE.update(at=now, rows=rows)
+    return list(rows)
 
 
 def _configured(role: str) -> str | None:
