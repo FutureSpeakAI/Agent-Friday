@@ -260,6 +260,23 @@ conservative by construction:
 5. Rollout: subsetting ships behind `settings.context_assembly.tool_tiering` (default
    OFF), enabled after the miss-rate over a trial week measures near zero. The audit's
    number says this is where the tokens are; the codebase's history says walk, don't run.
+6. **How we would know it had not broken** — stated as instruments, not assurance:
+   - **Shadow mode first**: with the flag off, every turn computes the subset it *would*
+     have shipped and counts tools the model actually called that the subset would have
+     withheld. Nothing changes for the model; the counter is the evidence. Enablement
+     requires a week at ~zero.
+   - **The dependent-chain probe as a regression gate**: the measured 15/15
+     five-call-chain battery (symphony §0.6) runs against a subsetted registry before
+     and after enablement; any drop below 15/15 reverts the flag. This is the exact
+     instrument that caught the argument-dropping bug — a chain score, not a vibe.
+   - **The live miss alarm**: every withheld-tool miss in production (caught at the
+     unknown-tool / pseudo-toolcall seam, one automatic full-registry retry) is counted
+     in the assembly report and the ledger. A nonzero weekly miss count is a visible
+     number on the overview, not a log line — and two consecutive nonzero weeks
+     auto-disable the flag with a notice.
+   - **The failure smell this system has learned**: a model "refusing" or "failing" at
+     tools after any registry change is treated as our plumbing until proven otherwise
+     — the standing rule that has been right three times running.
 
 ### 3.5 What Friday tells him — the honesty surface
 
