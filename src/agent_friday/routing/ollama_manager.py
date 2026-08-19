@@ -69,8 +69,23 @@ class OllamaManager:
             url, data=data, method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            # Ollama says WHY in the body; urllib's str() is only
+            # "HTTP Error 400: Bad Request". On 2026-08-18 that cost hours:
+            # local turns were 400ing, the router logged the bare status and
+            # silently fell back to Anthropic, so the visible symptom was
+            # "my local model answers as Claude" with no stated cause.
+            # An error that does not carry its reason is a defect of its own.
+            try:
+                detail = e.read().decode("utf-8", "replace")[:600]
+            except Exception:
+                detail = ""
+            raise urllib.error.HTTPError(
+                e.url, e.code, f"{e.reason}: {detail}" if detail else e.reason,
+                e.headers, None) from None
 
     def _post_stream(self, path, body, timeout=600):
         url = f"{self.base_url}{path}"
