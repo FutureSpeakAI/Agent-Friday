@@ -31550,6 +31550,132 @@ function QuickSwitch({ current, onPick, switching }) {
       })));
 }
 
+/** The model for ONE conversation.
+ *
+ * Deliberately separate from the top-bar quick switch, which sets the GLOBAL
+ * default. Binding here changes only this chat, and the label says so —
+ * "switching models in one tab switched every tab" is the confusion this whole
+ * layer exists to end.
+ */
+function ConversationSeatPicker({ current, onPick, onClear, onClose }) {
+  const { d, err, reload } = useIntelligence(8000);
+  return E('div', null,
+    E(ModelPicker, {
+      intel: d, err: err, onRetry: reload,
+      need: { role: 'orchestrator', modality: 'tools' },
+      current: current, onPick: onPick, onClose: onClose,
+      note: 'For THIS conversation only. Your other chats and your default are untouched.',
+    }),
+    current ? E('button', {
+      onClick: onClear,
+      style: {
+        marginTop: 6, width: '100%', cursor: 'pointer', background: 'transparent',
+        border: '1px dashed rgba(255,255,255,0.18)', borderRadius: 7,
+        padding: '6px 8px', color: 'rgba(255,255,255,0.6)',
+        fontFamily: 'JetBrains Mono', fontSize: 10,
+      },
+    }, 'Follow my default model instead') : null);
+}
+
+/** One row in the conversation list. */
+function ConversationRow({ c, active, onOpen }) {
+  const bits = [
+    (c.totals && c.totals.turns) ? c.totals.turns + ' turns' : 'empty',
+    (c.seat && c.seat.model) ? prettyModel(c.seat.model) : 'default model',
+    c.running ? c.running + ' running' : null,
+    (c.totals && c.totals.cost_usd) ? '$' + Number(c.totals.cost_usd).toFixed(2) : null,
+  ].filter(Boolean).join(' · ');
+  return E('button', {
+    onClick: () => onOpen(c.id),
+    title: c.id,
+    style: {
+      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+      background: active ? 'rgba(0,212,255,0.10)' : 'transparent',
+      border: '1px solid ' + (active ? 'rgba(0,212,255,0.4)' : 'transparent'),
+      borderRadius: 7, padding: '7px 9px', marginBottom: 2,
+    },
+  },
+    E('div', {
+      style: {
+        fontFamily: 'JetBrains Mono', fontSize: 11.5, color: 'rgba(255,255,255,0.9)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      },
+    }, c.title || 'New chat'),
+    E('div', {
+      style: {
+        fontSize: 9.5, color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono', marginTop: 2,
+      },
+    }, bits));
+}
+
+/** Which conversation you are in, and which model it uses. */
+function ConversationBar({ convList, convId, convSeat, open, setOpen,
+                           pickerOpen, setPickerOpen, onOpenConversation,
+                           onBindSeat, onRefresh }) {
+  const cur = convList.filter(c => c.id === convId)[0];
+  const live = convList.filter(c => c.status !== 'archived');
+  return E('div', {
+    style: { display: 'flex', alignItems: 'center', gap: 8, position: 'relative' },
+  },
+    E('button', {
+      onClick: () => { setOpen(!open); onRefresh(); },
+      title: 'Switch conversation',
+      'aria-label': 'Switch conversation',
+      style: {
+        background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+        fontFamily: 'Orbitron', fontSize: 11, color: '#00d4ff',
+        display: 'flex', alignItems: 'center', gap: 5, maxWidth: 180,
+      },
+    },
+      E('span', {
+        style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      }, (cur && cur.title) || 'FRIDAY CHAT'),
+      E('span', { style: { fontSize: 9, opacity: 0.7 } }, '\u25BE')),
+
+    E('button', {
+      onClick: () => setPickerOpen(!pickerOpen),
+      title: convSeat ? ('This chat uses ' + convSeat.model)
+                      : 'This chat follows your default model',
+      'aria-label': 'Model for this conversation',
+      style: {
+        background: 'rgba(0,212,255,0.07)', border: '1px solid rgba(0,212,255,0.22)',
+        borderRadius: 8, padding: '1px 6px', cursor: 'pointer',
+        fontFamily: 'JetBrains Mono', fontSize: 9.5,
+        color: convSeat ? '#cfefff' : 'rgba(255,255,255,0.5)',
+        maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      },
+    }, convSeat ? prettyModel(convSeat.model) : 'default model'),
+
+    open ? E('div', {
+      style: {
+        position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400,
+        width: 300, maxHeight: 340, overflowY: 'auto', padding: 6,
+        background: '#0a0e1a', border: '1px solid rgba(0,212,255,0.22)',
+        borderRadius: 10, boxShadow: '0 18px 50px rgba(0,0,0,0.6)',
+      },
+    },
+      live.length === 0
+        ? E('div', {
+            style: {
+              fontSize: 10.5, color: 'rgba(255,255,255,0.45)', padding: 8,
+              fontFamily: 'JetBrains Mono',
+            },
+          }, 'No conversations yet.')
+        : live.map(c => E(ConversationRow, {
+            key: c.id, c: c, active: c.id === convId, onOpen: onOpenConversation,
+          }))) : null,
+
+    pickerOpen ? E('div', {
+      style: { position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 2400 },
+    }, E(ConversationSeatPicker, {
+      current: convSeat && convSeat.model,
+      onPick: onBindSeat,
+      onClear: () => onBindSeat(null),
+      onClose: () => setPickerOpen(false),
+    })) : null);
+}
+
 // ── Surface 2: Settings → Intelligence ───────────────────────────────────────
 
 function Bar({ used, total, reserve, label, sub }) {
@@ -34739,6 +34865,83 @@ function App() {
      indicator — bound to the same flag — span forever. Stephen, 2026-08-18:
      "the new chat just showed 'Friday is thinking' and she didn't respond."
      The guard is now scoped to the conversation that owns the running turn. */
+  /* Conversations (docs/design/conversations-and-concurrency.md §3.1).
+     `chatMsgs` stays the ACTIVE conversation's transcript, so the panel below
+     is unchanged — but WHICH conversation that is now moves, and each carries
+     its own model binding. Switching loads that chat's own messages. */
+  const [convList, setConvList] = useState([]);
+  const [convId, setConvId] = useState(null);
+  const [convOpen, setConvOpen] = useState(false);
+  const [convSeat, setConvSeat] = useState(null);
+  const [convPickerOpen, setConvPickerOpen] = useState(false);
+
+  const refreshConvs = React.useCallback(() => apiFetch('/api/conversations')
+    .then(r => r.json()).then(d => {
+      if (d && d.status === 'ok') {
+        setConvList(d.conversations || []);
+        setConvId(cur => cur || d.main_id);
+      }
+      return d;
+    }).catch(() => null), []);
+
+  useEffect(() => { refreshConvs(); }, [refreshConvs]);
+
+  const openConversation = React.useCallback(cid => {
+    if (!cid) return;
+    chatEpoch.current += 1;
+    setChatLoad(false);
+    setPausePending(null);
+    setConvId(cid);
+    setConvOpen(false);
+    apiFetch('/api/conversations/' + encodeURIComponent(cid) + '/messages')
+      .then(r => r.json()).then(d => {
+        setChatMsgs((d.messages || []).map(m => ({
+          role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
+          text: m.text || '',
+          time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
+          model: (m.meta || {}).model,
+          seat: (m.meta || {}).seat,
+          kind: (m.meta || {}).kind,
+        })));
+      }).catch(() => setChatMsgs([]));
+    apiFetch('/api/conversations/' + encodeURIComponent(cid))
+      .then(r => r.json()).then(d => setConvSeat((d.conversation || {}).seat || null))
+      .catch(() => setConvSeat(null));
+  }, []);
+
+  const convIdRef = useRef(null);
+  useEffect(() => {
+    if (convId && convIdRef.current !== convId) {
+      convIdRef.current = convId;
+      openConversation(convId);
+    }
+  }, [convId, openConversation]);
+
+  /** Bind a model to THIS conversation — never the global default. */
+  const bindConvSeat = (m) => {
+    const seat = m ? { model: m.id, provider: (m.providers || [])[0] } : null;
+    setConvSeat(seat);
+    setConvPickerOpen(false);
+    apiFetch('/api/conversations/' + encodeURIComponent(convId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seat: seat }),
+    }).then(r => r.json()).then(d => {
+      const got = ((d.conversation || {}).seat || {}).model || null;
+      if ((seat && got !== seat.model) || (!seat && got)) {
+        alert('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
+        setConvSeat((d.conversation || {}).seat || null);
+        return;
+      }
+      setChatMsgs(p => [...p, {
+        role: 'system', kind: 'seat_change',
+        text: seat ? ('This chat now uses ' + prettyModel(seat.model) + '.')
+                   : 'This chat now follows your default model.',
+      }]);
+      refreshConvs();
+    }).catch(() => {});
+  };
+
   const chatEpoch = useRef(0);
   const inFlightEpoch = useRef(-1);
   const inFlightSince = useRef(0);
@@ -38779,7 +38982,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       const body = {
         message: m,
         voice_mode: voiceOn,
-        cite_sources: !!agentSettings.cite_sources
+        cite_sources: !!agentSettings.cite_sources,
+        // Without this every turn lands in Main and the transcripts merge again.
+        conversation_id: convId || undefined
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
       if (focusWin) body.workspace = focusWin;
@@ -39689,7 +39894,13 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontSize: 11,
       color: '#00d4ff'
     }
-  }, "FRIDAY CHAT"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(ConversationBar, {
+    convList: convList, convId: convId, convSeat: convSeat,
+    open: convOpen, setOpen: setConvOpen,
+    pickerOpen: convPickerOpen, setPickerOpen: setConvPickerOpen,
+    onOpenConversation: openConversation, onBindSeat: bindConvSeat,
+    onRefresh: refreshConvs,
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -39700,15 +39911,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       // A new conversation is not responsible for the old one's turn. Bump the
       // epoch so any reply still in flight lands in the conversation that
       // asked for it, and release the composer here immediately.
+      // Was: clear the ONE global transcript, deleting the chat he wanted to
+      // come back to. Now: create a conversation and switch to it. Nothing
+      // belonging to any other conversation is touched.
       chatEpoch.current += 1;
       setChatLoad(false);
       setPausePending(null);
       setChatMsgs([]);
-      fetch('/api/chat/clear', {
-        method: 'POST'
+      apiFetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New chat' }),
+      }).then(r => r.json()).then(d => {
+        const id = (d.conversation || {}).id;
+        if (id) setConvId(id);
+        refreshConvs();
       }).catch(() => {});
     },
-    title: "Start a new conversation (pinned messages preserved)",
+    title: "Start a new conversation (the current one is kept)",
     style: {
       background: 'rgba(0,212,255,0.06)',
       border: '1px solid rgba(0,212,255,0.2)',

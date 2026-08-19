@@ -228,6 +228,20 @@ if not _TESTING:
     except Exception as _pk_err:
         print(f"  Provider keys: skipped ({_pk_err})")
 
+    # Adopt whatever was running when the previous process died.
+    #
+    # Storage survived a restart; execution never did — a research commission
+    # sat frozen at `grinding` while the app that started it had restarted
+    # around it. Structured work resumes at its recorded stage; free-form work
+    # is reported interrupted into the conversation that asked for it. Never
+    # silence: a job that stopped has to say it stopped.
+    try:
+        from agent_friday.services import reconcile as _reconcile
+        threading.Thread(target=_reconcile.run_at_boot, daemon=True,
+                         name="boot-reconcile").start()
+    except Exception as _rc_err:
+        print(f"  Reconciliation: unavailable ({_rc_err})")
+
     threading.Thread(target=_start_kill_hotkey, daemon=True).start()
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central is
     # disabled for general release; re-enable once there are 50+ skills.
