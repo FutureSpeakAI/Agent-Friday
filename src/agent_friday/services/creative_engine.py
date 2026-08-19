@@ -625,7 +625,12 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     try:
         from agent_friday.services import local_image as _local_image
         _requested = model or _configured_image_model()
-        if _requested == _local_image.MODEL_ID:
+        # Any on-device model whose weights are really here, not just the one
+        # that used to be the only one. Z-Image and SD 3.5 Medium both land
+        # here; the check is `is_installed` rather than mere membership so a
+        # half-downloaded model falls through to cloud instead of failing at
+        # the sampler.
+        if _requested in _local_image.MODELS and _local_image.is_installed(_requested):
             # `n` used to stop here. The tool schema advertises it, the cloud
             # path honours it, and this line dropped it — so "make me three"
             # produced one, the model called again to make up the shortfall,
@@ -634,8 +639,9 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
             # lease taken and released nine times.
             out = _local_image.generate(prompt, aspect_ratio=aspect_ratio,
                                         system=system, n=n,
-                                        prompts=opts_prompts)
-            out.setdefault("api_model", _local_image.MODEL_ID)
+                                        prompts=opts_prompts,
+                                        model=_requested)
+            out.setdefault("api_model", out.get("model") or _requested)
             out.setdefault("prompt", prompt)
             return out
     except Exception as _li_err:                 # never break the cloud path

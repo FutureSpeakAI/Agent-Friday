@@ -66,14 +66,15 @@ def capabilities() -> list:
 
     try:
         from agent_friday.services import local_image
-        installed = local_image.is_installed()
+        have = local_image.available_models()
         caps.append({
             "name": "image generation",
-            "available": bool(installed),
+            "available": bool(have),
             "how": "on-device, %s via ComfyUI under the Arbiter's exclusive "
-                   "GPU lease" % local_image.MODEL_ID,
-            "note": None if installed else
-                    "the Z-Image build is not present on this machine",
+                   "GPU lease" % (", ".join(have) if have
+                                  else local_image.MODEL_ID),
+            "note": None if have else
+                    "no local image weights are present on this machine",
         })
     except Exception as e:
         caps.append({"name": "image generation", "available": False,
