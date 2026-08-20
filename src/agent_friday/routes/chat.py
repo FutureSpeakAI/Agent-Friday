@@ -99,11 +99,15 @@ chat_bp = Blueprint('chat', __name__)
 
 
 
-def _fit_tools(model_id, tools):
-    """As much of the tool registry as this seat can hold. Never raises."""
+def _fit_tools(model_id, tools, prompt_cost=0):
+    """As much of the tool registry as this seat can hold. Never raises.
+
+    `prompt_cost` — estimated tokens of system prompt + transcript, so the
+    budget covers the request as a whole, not the tool preamble in isolation.
+    """
     try:
         from agent_friday.services.tool_budget import fit_tools_to_seat
-        return fit_tools_to_seat(model_id, tools)
+        return fit_tools_to_seat(model_id, tools, prompt_cost=prompt_cost)
     except Exception:
         return list(tools or []), None
 
@@ -696,8 +700,15 @@ def chat():
             # size" and the router fell back to Anthropic. The model, the
             # seat, the picker and the mode were all fine — the request could
             # not be built. See services/tool_budget.py.
+            #
+            # The budget covers the WHOLE request: the 2026-08-19 400 was
+            # tools "within budget" landing on top of an ordinary prompt.
+            _prompt_cost = (len(system_prompt or '') + sum(
+                len(m.get('content')) for m in messages
+                if isinstance(m.get('content'), str))) // 4
             _local_tools, _tool_note = _fit_tools(
-                _route_info.get('model'), CLAUDE_TOOLS)
+                _route_info.get('model'), CLAUDE_TOOLS,
+                prompt_cost=_prompt_cost)
             if _tool_note:
                 system_prompt = (system_prompt or '') + "\n\n[SEAT] " + _tool_note
             try:
@@ -765,6 +776,15 @@ def chat():
                 # machine, and it must not happen quietly — a silent fallback
                 # is indistinguishable from "changing the model does nothing",
                 # which is precisely how this was reported.
+                #
+                # friday.log too, with the full error: the tray DEVNULLs
+                # stdout, so the print above vanishes — the 2026-08-19 400's
+                # body (which named the exact token count) survived in no log
+                # anywhere, and the diagnosis had to be rebuilt from replay.
+                import logging as _logging
+                _logging.getLogger("friday.local_fallback").warning(
+                    "local seat %s failed, falling back to cloud: %s",
+                    _route_info.get('model'), str(_ole)[:800])
                 _fell_back_from_local = {
                     "model": _route_info.get('model'),
                     "why": str(_ole)[:200],
@@ -823,11 +843,15 @@ def chat():
         def _redispatch_for_integrity(corrective_note):
             _retry_messages = messages + [{"role": "user", "content": corrective_note}]
             if _routed_local:
+                # The FITTED registry, not CLAUDE_TOOLS: the primary dispatch
+                # trimmed the tools to what this seat can hold, and a retry
+                # that re-sends the full registry is a guaranteed 400 on any
+                # seat whose window the connectors do not fit.
                 return _call_ollama(
                     _retry_messages, system=system_prompt, model=_route_info['model'],
                     temperature=settings.get('temperature'),
                     orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
-                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    tools=_local_tools, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 )
             if _provider == 'openai':
                 return _call_openai(

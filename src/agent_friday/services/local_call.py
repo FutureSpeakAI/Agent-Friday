@@ -208,6 +208,11 @@ def _openai_style(base: str, system: str, user: str, model: str,
     try:
         r = requests.post(f"{base}/chat/completions", json=payload, timeout=timeout)
         if r.status_code >= 400:
+            # The body is where llama-server puts the actual reason (e.g. the
+            # exact token count of an over-length request). Same fix as the
+            # Ollama path above: a bare "" here is a diagnosis nobody can make.
+            _log.warning("local_call (openai-style) HTTP %s from %s: %s",
+                         r.status_code, model, (r.text or "")[:300])
             return ""
         ch = (r.json().get("choices") or [{}])[0]
         return ((ch.get("message") or {}).get("content") or "").strip()
