@@ -17,8 +17,10 @@ from agent_friday.services import tool_budget as tb
 @pytest.fixture(autouse=True)
 def quiet():
     tb._ANNOUNCED.clear()
+    tb._SERVED_CACHE.clear()
     yield
     tb._ANNOUNCED.clear()
+    tb._SERVED_CACHE.clear()
 
 
 def _tool(name, size=200):
@@ -94,6 +96,56 @@ def test_the_served_window_beats_the_architectural_one(monkeypatch):
         "agent_friday.services.model_catalog.context_window_for",
         lambda m: 131072, raising=False)
     assert tb._window("seat:9b") == 32768
+
+
+def test_prompt_cost_shrinks_the_tool_budget(monkeypatch):
+    """2026-08-19: tools 'within budget' landed on top of an ordinary prompt
+    and the sum exceeded the seat — 400, fallback to the cloud. The request
+    is budgeted as a WHOLE or it is not budgeted.
+    """
+    _seat(monkeypatch, 65536)
+    small_conn = [_tool(f"mcp_gh_{i}") for i in range(10)]
+    kept, note = tb.fit_tools_to_seat("seat:e4b", CORE + small_conn)
+    assert len(kept) == len(CORE) + len(small_conn) and note is None
+    kept, note = tb.fit_tools_to_seat("seat:e4b", CORE + small_conn,
+                                      prompt_cost=60_000)
+    assert [t["name"] for t in kept] == [t["name"] for t in CORE]
+    assert note and "not loaded" in note
+
+
+def test_the_server_beats_the_plan(monkeypatch):
+    """The plan asked for 65,536; _spawn capped the seat to 32,768 and never
+    wrote it back. Measured 2026-08-19: budgeting against the plan built a
+    >32k request for a 32k seat. The server is the authority — the same
+    principle local_call._serves states for model identity.
+    """
+    monkeypatch.setattr(tb, "_served_ctx", lambda m: 32768)
+    monkeypatch.setattr(
+        "agent_friday.services.residency_policy.num_ctx_for_model",
+        lambda m: 65536, raising=False)
+    assert tb._window("seat:e4b") == 32768
+
+
+def test_unreachable_server_falls_back_to_the_plan(monkeypatch):
+    monkeypatch.setattr(tb, "_served_ctx", lambda m: None)
+    monkeypatch.setattr(tb, "_spawn_cap", lambda m: None)
+    monkeypatch.setattr(
+        "agent_friday.services.residency_policy.num_ctx_for_model",
+        lambda m: 65536, raising=False)
+    assert tb._window("seat:e4b") == 65536
+
+
+def test_plan_fallback_is_clamped_to_the_spawn_cap(monkeypatch):
+    """Restart scenario: new process, empty procs, wiped endpoints.json — the
+    server cannot be asked, but a GGUF-seat model will be served under
+    _spawn's cap regardless of what the plan asked for.
+    """
+    monkeypatch.setattr(tb, "_served_ctx", lambda m: None)
+    monkeypatch.setattr(tb, "_spawn_cap", lambda m: 32768)
+    monkeypatch.setattr(
+        "agent_friday.services.residency_policy.num_ctx_for_model",
+        lambda m: 65536, raising=False)
+    assert tb._window("seat:e4b") == 32768
 
 
 def test_no_connectors_means_no_change(monkeypatch):
