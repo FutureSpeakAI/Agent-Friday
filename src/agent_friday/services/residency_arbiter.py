@@ -96,7 +96,37 @@ def endpoints_path() -> Path:
     return runtime_dir() / "residency" / "endpoints.json"
 
 
-def _publish_endpoints(procs: dict) -> None:
+def _read_published() -> dict:
+    """`model_id -> base_url` as the file currently claims. Never raises."""
+    try:
+        data = json.loads(endpoints_path().read_text(encoding="utf-8"))
+        return {str(m): str(b)
+                for m, b in (data.get("endpoints") or {}).items() if b}
+    except Exception:
+        return {}
+
+
+def _endpoint_port(base: str) -> int | None:
+    try:
+        return int(base.rsplit(":", 1)[1].split("/")[0])
+    except Exception:
+        return None
+
+
+def _endpoint_alive(base: str) -> bool:
+    """Is anything answering /health on that base URL's port right now?"""
+    port = _endpoint_port(base)
+    if not port:
+        return False
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/health" % port, timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _publish_endpoints(procs: dict, drop=()) -> None:
     """Write the live seat->port map where OTHER processes can read it.
 
     An in-memory map serves the server and nothing else. Any other process —
@@ -106,15 +136,38 @@ def _publish_endpoints(procs: dict) -> None:
     Measured 2026-08-15: the tool-chain probe scored 0/5 with that error while
     the same seat answered a real turn inside the server in 4.5 s.
 
+    MERGES, never clobbers. `procs` is one process's view, and a fresh process
+    starts with an empty one. Observed 2026-08-19T22:26:54: pid 8620 booted and
+    wrote {"endpoints": {}} over the file while gemma4:e4b — spawned by the
+    previous process at 22:16:52 — sat healthy on :8091 serving requests. Every
+    reader (`seat_endpoint`, `_published_endpoint`, tool_budget's /props probe)
+    went blind to a live seat in exactly the restart window where it matters.
+    So entries this process does not own are kept iff they still answer
+    /health; our own entries always win, and a foreign entry claiming a port
+    we now own is dropped rather than health-checked against OUR server.
+
+    `drop` names seats being evicted right now: eviction publishes before the
+    process is terminated, so a health check alone would keep the dying seat.
+
     Best-effort and never fatal: a seat that cannot publish its port is still
     a working seat for the process that owns it.
     """
     try:
+        ours = {m: "http://127.0.0.1:%d/v1" % port
+                for m, (_proc, port) in procs.items()}
+        our_ports = {_endpoint_port(b) for b in ours.values()}
+        merged = dict(ours)
+        for model, base in _read_published().items():
+            if model in merged or model in drop:
+                continue
+            if _endpoint_port(base) in our_ports:
+                continue
+            if _endpoint_alive(base):
+                merged[model] = base
         p = endpoints_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         data = {"pid": os.getpid(), "updated_at": time.time(),
-                "endpoints": {m: "http://127.0.0.1:%d/v1" % port
-                              for m, (_proc, port) in procs.items()}}
+                "endpoints": merged}
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         os.replace(tmp, p)
@@ -128,17 +181,10 @@ def _published_endpoint(model_id: str) -> str | None:
     The file can outlive the process that wrote it, so a stale entry must not
     send a caller to a port nobody is listening on. Health-checked first.
     """
-    try:
-        data = json.loads(endpoints_path().read_text(encoding="utf-8"))
-        base = (data.get("endpoints") or {}).get(model_id)
-        if not base:
-            return None
-        port = int(base.rsplit(":", 1)[1].split("/")[0])
-        with urllib.request.urlopen(
-                "http://127.0.0.1:%d/health" % port, timeout=2) as r:
-            return base if r.status == 200 else None
-    except Exception:
-        return None
+    base = _read_published().get(model_id)
+    if base and _endpoint_alive(base):
+        return base
+    return None
 
 
 def owned_endpoint(model_id: str) -> str | None:
@@ -623,7 +669,9 @@ class LlamaServerBackend:
 
     def evict(self, model_id):
         entry = self.procs.pop(model_id, None)
-        _publish_endpoints(self.procs)
+        # `drop` because the seat is still answering /health at this point —
+        # termination comes below — and the merge would otherwise keep it.
+        _publish_endpoints(self.procs, drop=(model_id,))
         if not entry:
             return
         proc, _ = entry
@@ -698,7 +746,9 @@ class LlamaServerBackend:
                 pass
 
         if report["adopted"] or report["reaped"]:
-            _publish_endpoints(self.procs)
+            reaped = set(report["reaped"])
+            _publish_endpoints(self.procs, drop={
+                m for m, (pid, _port) in live.items() if pid in reaped})
         for line in report["adopted"]:
             print(f"  [arbiter] adopted {line}")
         if report["reaped"]:
