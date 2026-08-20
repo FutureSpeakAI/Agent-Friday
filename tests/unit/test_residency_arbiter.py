@@ -324,3 +324,99 @@ def test_status_reports_state_lease_and_residency(arb):
     assert st["lease"] is None
     assert st["plan_seats"]["interactive_brain"] == "gemma4:12b"
     assert "gemma4:12b" in st["resident_llama_server"]
+
+
+# ── endpoint publishing merges, never clobbers ───────────────────────────────
+#
+# Observed 2026-08-19T22:26:54: a fresh server process (pid 8620) published
+# {"endpoints": {}} from its empty in-memory procs while gemma4:e4b — spawned
+# by the PREVIOUS process at 22:16:52 — sat healthy on :8091. Every reader
+# that resolves seats through the file went blind to a live seat in exactly
+# the restart window where the plan/served drift matters most.
+
+import json as _json
+
+
+@pytest.fixture
+def ep_file(tmp_path, monkeypatch):
+    """Point the module at a temp endpoints.json and control liveness."""
+    p = tmp_path / "runtime" / "residency" / "endpoints.json"
+    monkeypatch.setattr(ra, "endpoints_path", lambda: p)
+    alive = {"http://127.0.0.1:8091/v1"}      # tests mutate this set
+    monkeypatch.setattr(ra, "_endpoint_alive", lambda base: base in alive)
+    return {"path": p, "alive": alive}
+
+
+def _written(p):
+    return _json.loads(p.read_text(encoding="utf-8"))["endpoints"]
+
+
+def _seed(p, endpoints, pid=11111):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_json.dumps({"pid": pid, "updated_at": 0.0,
+                              "endpoints": endpoints}), encoding="utf-8")
+
+
+def test_a_fresh_process_publishing_empty_keeps_anothers_live_seat(ep_file):
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8091/v1"})
+    ra._publish_endpoints({})
+    assert _written(ep_file["path"]) == {
+        "gemma4:e4b": "http://127.0.0.1:8091/v1"}
+
+
+def test_a_dead_foreign_entry_is_dropped_on_publish(ep_file):
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8099/v1"})
+    ra._publish_endpoints({})
+    assert _written(ep_file["path"]) == {}, \
+        "an entry nobody answers /health on must not be carried forward"
+
+
+def test_our_own_procs_beat_the_files_claim_for_the_same_model(ep_file):
+    ep_file["alive"].add("http://127.0.0.1:8091/v1")
+    _seed(ep_file["path"], {"gemma4:12b": "http://127.0.0.1:8091/v1"})
+    ra._publish_endpoints({"gemma4:12b": (object(), 8090)})
+    assert _written(ep_file["path"]) == {
+        "gemma4:12b": "http://127.0.0.1:8090/v1"}
+
+
+def test_a_foreign_entry_claiming_a_port_we_own_is_dropped(ep_file):
+    """OUR server answers /health on our port, so a health check alone would
+    vouch for the stale claim — the silent substitution local_call._serves
+    exists to catch, stopped one layer earlier."""
+    ep_file["alive"].add("http://127.0.0.1:8090/v1")
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8090/v1"})
+    ra._publish_endpoints({"gemma4:12b": (object(), 8090)})
+    assert _written(ep_file["path"]) == {
+        "gemma4:12b": "http://127.0.0.1:8090/v1"}
+
+
+def test_drop_excludes_a_seat_being_evicted_even_while_it_still_answers(ep_file):
+    """Eviction publishes BEFORE terminating, so the dying seat still passes a
+    health check; `drop` is what keeps it out of the file anyway."""
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8091/v1"})
+    ra._publish_endpoints({}, drop=("gemma4:e4b",))
+    assert _written(ep_file["path"]) == {}
+
+
+def test_evicting_a_seat_keeps_other_processes_seats_published(ep_file):
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8091/v1"})
+    be = ra.LlamaServerBackend(binary="/nonexistent")
+    be.evict("gemma4:12b")               # not held here; publishes regardless
+    assert _written(ep_file["path"]) == {
+        "gemma4:e4b": "http://127.0.0.1:8091/v1"}
+
+
+def test_published_endpoint_returns_only_verified_live_entries(ep_file):
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8091/v1",
+                            "gemma4:12b": "http://127.0.0.1:8098/v1"})
+    assert ra._published_endpoint("gemma4:e4b") == "http://127.0.0.1:8091/v1"
+    assert ra._published_endpoint("gemma4:12b") is None
+    assert ra._published_endpoint("gemma4:e2b") is None
+
+
+def test_publish_survives_a_corrupt_endpoints_file(ep_file):
+    ep_file["path"].parent.mkdir(parents=True, exist_ok=True)
+    ep_file["path"].write_text("{not json", encoding="utf-8")
+    ra._publish_endpoints({"gemma4:12b": (object(), 8090)})
+    assert _written(ep_file["path"]) == {
+        "gemma4:12b": "http://127.0.0.1:8090/v1"}
