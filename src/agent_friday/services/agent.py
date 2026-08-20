@@ -5011,27 +5011,6 @@ def _mcp_reload() -> dict:
     return {"ok": True}
 
 
-def _screenshot_result_to_block(tool_use_id, result):
-    """Convert a screenshot tool result (JSON with base64 image) into an Anthropic
-    tool_result block carrying a real image so the model can SEE the screen.
-
-    Returns None for error strings / unparseable results so the caller falls back
-    to a plain-text tool_result.
-    """
-    try:
-        data = json.loads(result)
-    except Exception:
-        return None
-    b64 = data.get('image_b64')
-    if not b64:
-        return None
-    return {
-        "type": "tool_result",
-        "tool_use_id": tool_use_id,
-        "content": [
-            {"type": "text", "text": data.get('note', 'Screenshot captured.')},
-            {"type": "image", "source": {
-                "type": "base64",
 _SCHEMA_COMBINATORS = ("anyOf", "oneOf", "allOf")
 
 
@@ -5094,6 +5073,27 @@ def _mcp_normalize_schema(schema: dict, tool_name: str = "") -> dict:
     return merged
 
 
+def _screenshot_result_to_block(tool_use_id, result):
+    """Convert a screenshot tool result (JSON with base64 image) into an Anthropic
+    tool_result block carrying a real image so the model can SEE the screen.
+
+    Returns None for error strings / unparseable results so the caller falls back
+    to a plain-text tool_result.
+    """
+    try:
+        data = json.loads(result)
+    except Exception:
+        return None
+    b64 = data.get('image_b64')
+    if not b64:
+        return None
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": [
+            {"type": "text", "text": data.get('note', 'Screenshot captured.')},
+            {"type": "image", "source": {
+                "type": "base64",
                 "media_type": data.get('media_type', 'image/png'),
                 "data": b64,
             }},
