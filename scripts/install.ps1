@@ -54,7 +54,7 @@ function Write-Dim     { param($msg) Write-Host "     `e[2m$msg`e[0m" }
 function Write-Fail    { param($msg) Write-Host "  `e[31m✗  $msg`e[0m"; exit 1 }
 
 # ── Config ───────────────────────────────────────────────────────
-$REPO_URL    = "https://github.com/FutureSpeakAI/friday-desktop.git"
+$REPO_URL    = "https://github.com/FutureSpeakAI/Agent-Friday.git"
 $INSTALL_DIR = Join-Path $env:USERPROFILE ".friday-desktop"
 $VENV_DIR    = Join-Path $INSTALL_DIR "venv"
 $PYTHON_VENV = Join-Path $VENV_DIR "Scripts\python.exe"
@@ -135,13 +135,7 @@ Write-Info "Installing dependencies..."
 
 Write-Success "Dependencies installed"
 
-# ── 6. Build UI ──────────────────────────────────────────────────
-Write-Host ""
-Write-Info "Building UI..."
-& $PYTHON_VENV (Join-Path $INSTALL_DIR "src\agent_friday\ui\build_ui.py") | Out-Null
-Write-Success "index.html built"
-
-# ── 6.5 Bundled model (Ollama + Gemma) — zero cloud key needed ───
+# ── 6. Bundled model (Ollama + Gemma) — zero cloud key needed ───
 #  Friday runs a local Gemma model by default so chat works with NO API key.
 #  Best-effort and non-fatal; skip with FRIDAY_SKIP_MODEL=1.
 Write-Host ""
@@ -231,5 +225,5 @@ Write-Host ""
 $runNow = Read-Host "  Run setup now? [Y/n]"
 if ($runNow -eq "" -or $runNow -match "^[Yy]") {
     Write-Host ""
-    & $PYTHON_VENV (Join-Path $INSTALL_DIR "setup_wizard.py")
+    & $PYTHON_VENV (Join-Path $INSTALL_DIR "src\agent_friday\setup_wizard.py")
 }

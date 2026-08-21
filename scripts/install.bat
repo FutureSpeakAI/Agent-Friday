@@ -58,10 +58,7 @@ REM   venv\Scripts\pip.exe install torch --index-url https://download.pytorch.or
 REM   venv\Scripts\pip.exe install -e .[voice-local-gpu]
 REM Then pick Settings -^> Audio ^& Voice -^> Voice Engine -^> Local GPU (NeMo).
 
-echo [3/5] Building the UI ^(index.html^)...
-python src\agent_friday\ui\build_ui.py
-
-echo [4/5] Setting up local model ^(gemma3:4b^) for no-API-key chat...
+echo [3/4] Setting up local model ^(gemma3:4b^) for no-API-key chat...
 if "%FRIDAY_SKIP_MODEL%"=="1" goto :skipmodel
 where ollama >nul 2>nul
 if errorlevel 1 (
@@ -77,7 +74,7 @@ if errorlevel 1 (
 )
 :skipmodel
 
-echo [5/5] Post-install health check...
+echo [4/4] Post-install health check...
 python -m agent_friday.cli health
 
 echo.
