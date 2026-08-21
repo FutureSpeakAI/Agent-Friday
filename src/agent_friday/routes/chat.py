@@ -83,6 +83,12 @@ from agent_friday.services.response_provenance import (
 
 chat_bp = Blueprint('chat', __name__)
 
+# Chat-turn failures must survive a pythonw launch (no console): the "friday"
+# logger writes to ~/.friday/friday.log, so log tracebacks there — stderr from
+# traceback.print_exc() is simply lost in production.
+import logging as _logging
+_LOG = _logging.getLogger("friday.chat")
+
 
 
 # ── Conversations (docs/design/conversations-and-concurrency.md §3.1) ───────
@@ -166,6 +172,11 @@ def chat():
     is a designer/perception task. Reasoning stays on Claude.
     """
     try:
+        # Fresh receipt book for this turn. Everything _execute_tool actually
+        # runs gets recorded against it, so the reply can be checked against
+        # what happened rather than taken on trust.
+        from agent_friday.services import tool_receipts as _receipts
+        _receipts.begin_turn()
         data = request.get_json(silent=True) or {}
         # Resolve the addressed conversation FIRST: the context build below reads
         # from it, and everything downstream persists into it.
@@ -180,6 +191,21 @@ def chat():
             _um.observe_message(message, role='user', workspace=workspace)
         except Exception:
             pass
+        # An empty message with no image is unanswerable — refuse it cleanly
+        # here instead of crashing downstream (the orb-label slice indexed
+        # splitlines()[0] on '' and every such request died as
+        # "[Friday offline] list index out of range"). An empty message WITH
+        # an image stays valid: Camera Mode sends bare frames.
+        if not (message or '').strip() and not (data.get('image') or data.get('screenshot')):
+            if not request.get_data(cache=True, as_text=False):
+                _LOG.warning("chat: request body empty or unparseable "
+                             "(content-type=%s)", request.content_type)
+            return jsonify({
+                "response": "I didn't receive a message — the request body "
+                            "was empty or couldn't be read.",
+                "error": "empty_message",
+                "sources": [], "tool_trace": [], "actions": [],
+            }), 400
         include_vision = data.get('includeVision', False)
         voice_mode = bool(data.get('voice_mode', False))
         # Source Production Mode — when true, Friday cites every factual claim
@@ -393,7 +419,7 @@ def chat():
         except Exception:
             _attr = None
         _routing_cfg = settings.get('model_routing') or {}
-        _orb_label = (message or '').strip().splitlines()[0][:24] or 'Chat'
+        _orb_label = ((message or '').strip().splitlines() or ['Chat'])[0][:24] or 'Chat'
         try:
             from agent_friday.routing.model_router import get_router
             _router = get_router(_routing_cfg)
@@ -1063,8 +1089,24 @@ def chat():
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
         _save_chat_history(CHAT_HISTORY)
 
+        # No receipt, no claim. If the reply names a tool that never ran this
+        # turn, say so in the reply itself rather than letting a fabricated
+        # tool result stand — the failure that made this necessary was a seat
+        # reporting "SUCCESS: Balance retrieved" from a call it never made.
+        _unbacked = []
+        try:
+            _unbacked = _receipts.unbacked_claims(reply)
+            if _unbacked:
+                reply = (reply or "") + _receipts.correction_note(_unbacked)
+                print("  [receipts] UNBACKED CLAIM in reply: %s"
+                      % ", ".join(c["tool"] for c in _unbacked))
+        except Exception:
+            pass
+
         return jsonify({
             "response": reply,
+            "tools_ran": _receipts.summary(),
+            "unbacked_claims": _unbacked,
             "user_msg": user_msg,
             "friday_msg": friday_msg,
             "sources": sources,
@@ -1082,7 +1124,8 @@ def chat():
             "local_fallback": _fell_back_from_local,
         })
     except Exception as e:
-        traceback.print_exc()
+        traceback.print_exc()  # console launches; a no-op loss under pythonw
+        _LOG.exception("chat turn failed")
         return jsonify({"response": f"[Friday offline] {str(e)}"})
 
 
