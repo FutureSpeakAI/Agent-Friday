@@ -3949,6 +3949,10 @@ const DOCK_GROUPS = [{
     ico: '🛒',
     label: 'Marketplace'
   }, {
+    id: 'workflows',
+    ico: '🧩',
+    label: 'Workflows'
+  }, {
     id: 'system',
     ico: '🖥️',
     label: 'System',
@@ -16624,6 +16628,621 @@ function TrustWS() {
       }
     }, "Evidence: ", p.evidence && Array.isArray(p.evidence) ? p.evidence.length : 0, " records")));
   }));
+}
+function WorkflowsWS() {
+  const [tab, setTab] = useState('workflows');
+  const [chains, setChains] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [runStatus, setRunStatus] = useState(null);
+  const [watching, setWatching] = useState(null);
+  const [showNew, setShowNew] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [draft, setDraft] = useState({
+    name: '',
+    description: '',
+    seat: '',
+    steps: [{
+      name: '',
+      prompt: ''
+    }]
+  });
+  const [schedules, setSchedules] = useState([]);
+  const [showNewSched, setShowNewSched] = useState(false);
+  const [sdraft, setSdraft] = useState({
+    name: '',
+    trigger: 'daily',
+    hour: 9,
+    minute: 0,
+    weekday: 6,
+    every: 60,
+    at: '',
+    prompt: ''
+  });
+  const loadChains = () => {
+    fetch('/api/workflows/chains').then(r => r.json()).then(d => {
+      setChains(d.chains || []);
+      setLoading(false);
+    }).catch(() => {
+      setError(true);
+      setLoading(false);
+    });
+  };
+  const loadSchedules = () => {
+    fetch('/api/schedules').then(r => r.json()).then(d => {
+      setSchedules(d.schedules || []);
+    }).catch(() => {});
+  };
+  useEffect(() => {
+    loadChains();
+    loadSchedules();
+  }, []);
+  useEffect(() => {
+    if (!watching) return;
+    let alive = true;
+    const tick = () => {
+      fetch('/api/workflows/chains/' + watching + '/status').then(r => r.json()).then(d => {
+        if (alive && d.run) {
+          setRunStatus(d.run);
+        }
+      }).catch(() => {});
+    };
+    tick();
+    const t = setInterval(tick, 4000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [watching]);
+  const runChain = slug => {
+    setBusy(slug);
+    apiFetch('/api/workflows/chains/' + slug + '/run', {
+      method: 'POST'
+    }).then(r => r.json()).then(() => {
+      setBusy('');
+      setWatching(slug);
+    }).catch(() => setBusy(''));
+  };
+  const deleteChain = slug => {
+    if (!confirm('Delete workflow "' + slug + '"?')) return;
+    apiFetch('/api/workflows/chains/' + slug, {
+      method: 'DELETE'
+    }).then(() => loadChains());
+  };
+  const saveChain = () => {
+    const steps = draft.steps.filter(s => (s.prompt || '').trim());
+    if (!draft.name.trim() || !steps.length) {
+      alert('A workflow needs a name and at least one step with a prompt.');
+      return;
+    }
+    apiFetch('/api/workflows/chains', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: draft.name,
+        description: draft.description,
+        seat: draft.seat || null,
+        steps
+      })
+    }).then(r => r.json()).then(d => {
+      if (d.status === 'ok') {
+        setShowNew(false);
+        setDraft({
+          name: '',
+          description: '',
+          seat: '',
+          steps: [{
+            name: '',
+            prompt: ''
+          }]
+        });
+        loadChains();
+      } else alert(d.message || 'Save failed');
+    });
+  };
+  const setStep = (i, k, v) => {
+    const s = draft.steps.slice();
+    s[i] = Object.assign({}, s[i], {
+      [k]: v
+    });
+    setDraft(Object.assign({}, draft, {
+      steps: s
+    }));
+  };
+  const stepColor = st => st === 'completed' ? '#2ecc71' : st === 'running' ? '#00d4ff' : st === 'queued' ? '#f1c40f' : st === 'failed' ? '#ff0080' : '#666';
+  const fmtTrig = s => {
+    const sp = s.spec || {};
+    if (s.trigger === 'interval') return 'every ' + (sp.every_minutes || 60) + ' min';
+    if (s.trigger === 'daily') return 'daily ' + String(sp.hour || 0).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
+    if (s.trigger === 'weekly') return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][sp.weekday === undefined ? 6 : sp.weekday] + ' ' + String(sp.hour || 0).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
+    if (s.trigger === 'once') return 'once @ ' + new Date((sp.at || 0) * 1000).toLocaleString();
+    return s.trigger;
+  };
+  const toggleSched = s => {
+    apiFetch('/api/schedules/' + s.id, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        enabled: !s.enabled
+      })
+    }).then(() => loadSchedules());
+  };
+  const runSched = s => {
+    apiFetch('/api/schedules/' + s.id + '/run-now', {
+      method: 'POST'
+    }).then(() => setTimeout(loadSchedules, 1500));
+  };
+  const deleteSched = s => {
+    if (!confirm('Delete schedule "' + (s.name || s.id) + '"?')) return;
+    apiFetch('/api/schedules/' + s.id, {
+      method: 'DELETE'
+    }).then(() => loadSchedules());
+  };
+  const saveSched = () => {
+    if (!sdraft.name.trim() || !sdraft.prompt.trim()) {
+      alert('A schedule needs a name and a prompt.');
+      return;
+    }
+    const spec = sdraft.trigger === 'interval' ? {
+      every_minutes: Number(sdraft.every) || 60
+    } : sdraft.trigger === 'weekly' ? {
+      weekday: Number(sdraft.weekday),
+      hour: Number(sdraft.hour),
+      minute: Number(sdraft.minute)
+    } : sdraft.trigger === 'once' ? {
+      at: Math.floor(new Date(sdraft.at || Date.now()).getTime() / 1000)
+    } : {
+      hour: Number(sdraft.hour),
+      minute: Number(sdraft.minute)
+    };
+    apiFetch('/api/schedules', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: sdraft.name,
+        trigger: sdraft.trigger,
+        spec,
+        task: {
+          kind: 'agent_prompt',
+          prompt: sdraft.prompt
+        },
+        enabled: true
+      })
+    }).then(r => r.json()).then(() => {
+      setShowNewSched(false);
+      setSdraft({
+        name: '',
+        trigger: 'daily',
+        hour: 9,
+        minute: 0,
+        weekday: 6,
+        every: 60,
+        at: '',
+        prompt: ''
+      });
+      loadSchedules();
+    });
+  };
+  const inp = {
+    background: 'rgba(255,255,255,.06)',
+    border: '1px solid rgba(255,255,255,.15)',
+    borderRadius: 6,
+    color: '#eee',
+    padding: '6px 8px',
+    fontSize: 13,
+    width: '100%',
+    boxSizing: 'border-box'
+  };
+  if (loading) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#999',
+      textAlign: 'center',
+      padding: 40
+    }
+  }, "Loading workflows...");
+  if (error) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#ff0080',
+      textAlign: 'center',
+      padding: 40
+    }
+  }, "\u26A0\uFE0F Unable to load workflows ", /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => {
+      setError(false);
+      setLoading(true);
+      loadChains();
+    }
+  }, "Retry"));
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
+    text: chains.length + ' workflows, ' + schedules.length + ' scheduled tasks. Fire one, or build a new pipeline.'
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: tab === 'workflows' ? {
+      borderColor: '#00d4ff',
+      color: '#00d4ff'
+    } : {},
+    onClick: () => setTab('workflows')
+  }, "\uD83E\uDDE9 Workflows"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: tab === 'schedules' ? {
+      borderColor: '#00d4ff',
+      color: '#00d4ff'
+    } : {},
+    onClick: () => setTab('schedules')
+  }, "\u23F0 Scheduled Tasks")), tab === 'workflows' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "Workflows \u2014 multi-step agent pipelines"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setShowNew(!showNew)
+  }, showNew ? 'Cancel' : '+ New workflow')), showNew && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Workflow name",
+    value: draft.name,
+    onChange: e => setDraft(Object.assign({}, draft, {
+      name: e.target.value
+    }))
+  }), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Seat override (model id, optional)",
+    value: draft.seat,
+    onChange: e => setDraft(Object.assign({}, draft, {
+      seat: e.target.value
+    }))
+  })), /*#__PURE__*/React.createElement("input", {
+    style: Object.assign({}, inp, {
+      marginBottom: 8
+    }),
+    placeholder: "Description (optional)",
+    value: draft.description,
+    onChange: e => setDraft(Object.assign({}, draft, {
+      description: e.target.value
+    }))
+  }), draft.steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      border: '1px solid rgba(255,255,255,.1)',
+      borderRadius: 8,
+      padding: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    style: Object.assign({}, inp, {
+      marginBottom: 6
+    }),
+    placeholder: 'Step ' + (i + 1) + ' name',
+    value: s.name,
+    onChange: e => setStep(i, 'name', e.target.value)
+  }), /*#__PURE__*/React.createElement("textarea", {
+    style: Object.assign({}, inp, {
+      minHeight: 64
+    }),
+    placeholder: "What should Friday do in this step? She has all her tools \u2014 generation, inspect_image / inspect_audio for self-checks, save_output, files, shell.",
+    value: s.prompt,
+    onChange: e => setStep(i, 'prompt', e.target.value)
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setDraft(Object.assign({}, draft, {
+      steps: draft.steps.concat([{
+        name: '',
+        prompt: ''
+      }])
+    }))
+  }, "+ Step"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      borderColor: '#2ecc71',
+      color: '#2ecc71'
+    },
+    onClick: saveChain
+  }, "Save workflow"))), chains.map(c => /*#__PURE__*/React.createElement("div", {
+    key: c.slug,
+    className: "card",
+    style: {
+      padding: '10px 12px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600
+    }
+  }, c.name, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#777',
+      fontWeight: 400,
+      fontSize: 12
+    }
+  }, "\xB7 ", c.steps, " steps")), c.description ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#999',
+      fontSize: 12,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, c.description) : null), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    disabled: busy === c.slug,
+    onClick: () => runChain(c.slug)
+  }, busy === c.slug ? 'Starting…' : '▶ Run'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setWatching(c.slug)
+  }, "Status"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      color: '#ff5f7a'
+    },
+    onClick: () => deleteChain(c.slug)
+  }, "\uD83D\uDDD1"))), !chains.length && !showNew && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#888',
+      padding: 20,
+      textAlign: 'center'
+    }
+  }, "No workflows yet. Build one \u2014 each step is a full agent run with all of Friday's tools."), runStatus && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 12,
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title"
+  }, "Run: ", runStatus.name, " \u2014 ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: stepColor(runStatus.state === 'completed' ? 'completed' : runStatus.state === 'failed' ? 'failed' : 'running')
+    }
+  }, runStatus.state)), runStatus.steps.map(s => /*#__PURE__*/React.createElement("div", {
+    key: s.index,
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'flex-start',
+      padding: '6px 0',
+      borderBottom: '1px solid rgba(255,255,255,.06)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: stepColor(s.status),
+      fontSize: 18,
+      lineHeight: '18px'
+    }
+  }, "\u25CF"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13
+    }
+  }, s.index + 1, ". ", s.name, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888',
+      fontSize: 11
+    }
+  }, "(", s.status, ")")), s.status === 'running' && s.log_tail && s.log_tail.length ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#7fd4ff',
+      fontSize: 11
+    }
+  }, s.log_tail[s.log_tail.length - 1]) : null, s.status === 'failed' && s.result_tail ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#ff8fae',
+      fontSize: 11
+    }
+  }, s.result_tail) : null))))), tab === 'schedules' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "Scheduled tasks"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => setShowNewSched(!showNewSched)
+  }, showNewSched ? 'Cancel' : '+ New schedule')), showNewSched && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '2fr 1fr',
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    placeholder: "Schedule name",
+    value: sdraft.name,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      name: e.target.value
+    }))
+  }), /*#__PURE__*/React.createElement("select", {
+    style: inp,
+    value: sdraft.trigger,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      trigger: e.target.value
+    }))
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "daily"
+  }, "daily"), /*#__PURE__*/React.createElement("option", {
+    value: "weekly"
+  }, "weekly"), /*#__PURE__*/React.createElement("option", {
+    value: "interval"
+  }, "interval"), /*#__PURE__*/React.createElement("option", {
+    value: "once"
+  }, "once"))), sdraft.trigger === 'interval' ? /*#__PURE__*/React.createElement("input", {
+    style: Object.assign({}, inp, {
+      marginBottom: 8
+    }),
+    type: "number",
+    placeholder: "Every N minutes",
+    value: sdraft.every,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      every: e.target.value
+    }))
+  }) : sdraft.trigger === 'once' ? /*#__PURE__*/React.createElement("input", {
+    style: Object.assign({}, inp, {
+      marginBottom: 8
+    }),
+    type: "datetime-local",
+    value: sdraft.at,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      at: e.target.value
+    }))
+  }) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: sdraft.trigger === 'weekly' ? '1fr 1fr 1fr' : '1fr 1fr',
+      gap: 8,
+      marginBottom: 8
+    }
+  }, sdraft.trigger === 'weekly' && /*#__PURE__*/React.createElement("select", {
+    style: inp,
+    value: sdraft.weekday,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      weekday: e.target.value
+    }))
+  }, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => /*#__PURE__*/React.createElement("option", {
+    key: d,
+    value: i
+  }, d))), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    type: "number",
+    min: "0",
+    max: "23",
+    placeholder: "Hour",
+    value: sdraft.hour,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      hour: e.target.value
+    }))
+  }), /*#__PURE__*/React.createElement("input", {
+    style: inp,
+    type: "number",
+    min: "0",
+    max: "59",
+    placeholder: "Minute",
+    value: sdraft.minute,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      minute: e.target.value
+    }))
+  })), /*#__PURE__*/React.createElement("textarea", {
+    style: Object.assign({}, inp, {
+      minHeight: 56,
+      marginBottom: 8
+    }),
+    placeholder: "What should Friday do when this fires? (full agent run with tools)",
+    value: sdraft.prompt,
+    onChange: e => setSdraft(Object.assign({}, sdraft, {
+      prompt: e.target.value
+    }))
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      borderColor: '#2ecc71',
+      color: '#2ecc71'
+    },
+    onClick: saveSched
+  }, "Save schedule")), schedules.map(s => /*#__PURE__*/React.createElement("div", {
+    key: s.id,
+    className: "card",
+    style: {
+      padding: '10px 12px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600
+    }
+  }, s.name || s.id, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#777',
+      fontWeight: 400,
+      fontSize: 12
+    }
+  }, "\xB7 ", fmtTrig(s), s.source === 'builtin' ? ' · builtin' : '')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: s.last_status === 'error' ? '#ff8fae' : '#999',
+      fontSize: 12,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, s.last_status ? 'last: ' + s.last_status + (s.last_summary ? ' — ' + s.last_summary : '') : 'never run')), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: s.enabled ? {
+      borderColor: '#2ecc71',
+      color: '#2ecc71'
+    } : {
+      color: '#888'
+    },
+    onClick: () => toggleSched(s)
+  }, s.enabled ? 'On' : 'Off'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: () => runSched(s)
+  }, "\u25B6 Now"), s.source !== 'builtin' && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      color: '#ff5f7a'
+    },
+    onClick: () => deleteSched(s)
+  }, "\uD83D\uDDD1"))), !schedules.length && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#888',
+      padding: 20,
+      textAlign: 'center'
+    }
+  }, "No schedules yet.")));
 }
 function SitesWS() {
   // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
@@ -39120,6 +39739,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     messages: /*#__PURE__*/React.createElement(MessagesWS, null),
     calendar: /*#__PURE__*/React.createElement(CalendarWS, null),
     marketplace: /*#__PURE__*/React.createElement(MarketplaceWS, null),
+    workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
     settings: /*#__PURE__*/React.createElement(SettingsWS, null)
   };
   const wsInfo = WS.reduce((a, w) => {
