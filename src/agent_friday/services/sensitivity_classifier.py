@@ -198,15 +198,49 @@ def _kw_re(keywords, exclude=frozenset()) -> "re.Pattern":
     return re.compile(r"\b(?:" + "|".join(re.escape(k) for k in kws) + r")\b")
 
 
+# TIER-2 strong/common split (2026-08-19). The common words below appear
+# constantly in text that carries no personal data at all — a storybook prompt
+# reading "family picture-book aesthetic" or "nano banana family" was routed
+# as PRIVATE, vault-forced onto the local seat, and (with a full tool payload
+# that cannot fit the local context window) the whole turn died. A bare
+# common word is NOT a personal-data signal; the same word inside a
+# possessive/personal frame ("my family", "her daughter's school") is. Strong
+# multi-word phrases stay unconditional in both modes.
+_TIER2_STRONG = ("phone number", "home address", "personal note", "trust graph")
+_TIER2_COMMON = ("contact", "family", "daughter", "partner", "memory",
+                 "relationship", "todo")
+
+# Possessive/personal context for a common word: a personal determiner shortly
+# BEFORE it ("my family", "our daughter", "his partner's"), or the word itself
+# in possessive form ("daughter's schedule"). Window is deliberately short so
+# "my favorite family of typefaces" still matches (over-trigger routes local,
+# the safe direction) while a bare stylistic mention does not.
+_TIER2_COMMON_CTX_RE = re.compile(
+    r"\b(?:my|our|his|her|their|your)\b[\w'\-\s]{0,24}?"
+    r"\b(?:" + "|".join(_TIER2_COMMON) + r")\b"
+    r"|\b(?:" + "|".join(_TIER2_COMMON) + r")'s\b")
+
+
+def _tier2_hit(low: str, exclude=frozenset()) -> bool:
+    """True when TIER-2 content is present: any strong phrase, or a common
+    word in possessive/personal context."""
+    strong = [k for k in _TIER2_STRONG if k not in exclude]
+    if strong and _kw_re(strong).search(low):
+        return True
+    common = [k for k in _TIER2_COMMON if k not in exclude]
+    if not common:
+        return False
+    m = _TIER2_COMMON_CTX_RE.search(low)
+    return bool(m and any(k in m.group(0) for k in common))
+
+
 # Egress mode: precision matching (product terms excluded, strong/weak split).
 _TIER3_STRONG_RE = _kw_re(_TIER3_STRONG, _EGRESS_EXCLUDED)
 _TIER3_WEAK_RE   = _kw_re(_TIER3_WEAK, _EGRESS_EXCLUDED)
-_TIER2_RE        = _kw_re(TIER_2_KEYWORDS, _EGRESS_EXCLUDED)
-# Routing/vault mode (default): the FULL authoritative keyword tiers — any
+# Routing/vault mode (default): the FULL authoritative TIER-3 keywords — any
 # TIER-3 keyword (including product terms) rates SENSITIVE, as vault_access
 # and the model router's needs_vault_access have always relied on.
 _TIER3_FULL_RE = _kw_re(TIER_3_KEYWORDS)
-_TIER2_FULL_RE = _kw_re(TIER_2_KEYWORDS)
 
 
 def _keyword_tier(low: str, egress: bool = False) -> int:
@@ -226,7 +260,7 @@ def _keyword_tier(low: str, egress: bool = False) -> int:
     if not egress:
         if _TIER3_FULL_RE.search(low):
             return Tier.SENSITIVE
-        if _TIER2_FULL_RE.search(low):
+        if _tier2_hit(low):
             return Tier.PRIVATE
         return 0
     if _TIER3_STRONG_RE.search(low):
@@ -234,7 +268,7 @@ def _keyword_tier(low: str, egress: bool = False) -> int:
     weak_hits = set(_TIER3_WEAK_RE.findall(low))
     if len(weak_hits) >= 2:
         return Tier.SENSITIVE
-    if weak_hits or _TIER2_RE.search(low):
+    if weak_hits or _tier2_hit(low, _EGRESS_EXCLUDED):
         return Tier.PRIVATE
     return 0
 
