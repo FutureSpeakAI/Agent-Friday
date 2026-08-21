@@ -195,10 +195,33 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # tool calling, e.g. gemma4) — same unified CLAUDE_TOOLS registry, vault
         # gate, and _execute_tool governance as the cloud paths. Returns
         # (text, tool_trace).
+        # Fit the tool payload to the local seat's context window. Without
+        # this, a vault-forced local route with the full registry (~59k
+        # tokens observed) exceeds n_ctx and the turn dies with a 400 —
+        # chat.py's dispatch trims, but this path did not (2026-08-19).
+        # NOTE: `system` is a closure variable here — assigning to it would
+        # make it function-local and raise UnboundLocalError on first read
+        # (that exact bug took down every local background task on
+        # 2026-08-19 evening). Build the augmented prompt in a NEW name.
+        _sys_out = system
+        try:
+            from agent_friday.services.tool_budget import fit_tools_to_seat
+            # Budget the whole request, not tools in isolation (2026-08-19:
+            # in-budget tools atop an ordinary prompt still overflowed the
+            # seat and 400'd).
+            _prompt_cost = (len(system or "") + sum(
+                len(m.get("content")) for m in (messages or [])
+                if isinstance(m.get("content"), str))) // 4
+            _fitted, _fit_note = fit_tools_to_seat(
+                use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost)
+            if _fit_note:
+                _sys_out = (system or "") + "\n[SEAT] " + _fit_note
+        except Exception:
+            _fitted = CLAUDE_TOOLS
         return _call_ollama(
-            messages, system=system, model=use_model,
+            messages, system=_sys_out, model=use_model,
             max_tokens=max_tokens, temperature=temperature,
-            orb_label=orb_label, tools=CLAUDE_TOOLS,
+            orb_label=orb_label, tools=_fitted,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
         )
 
@@ -2954,15 +2977,18 @@ CLAUDE_TOOLS.append({
 CLAUDE_TOOLS.append({
     "name": "generate_music",
     "description": (
-        "Generate REAL music from a text prompt using Google's Lyria 3 and save "
-        "it to the user's creations folder. Use whenever the user asks you to "
-        "'make/write/compose a song/track/beat/score/jingle', set something to "
-        "music, or score a video. You CAN make music — do not say you can't. "
-        "Supports instrumental or vocal songs (pass lyrics, with [verse]/[chorus] "
-        "section tags), a mood-reference image, and multi-language vocals. "
-        "Clips are ≤30s ('lyria-clip'); full songs use 'lyria-pro'. If cloud "
-        "music isn't available, Friday writes a demo preview describing the "
-        "track. A progress orb shows while it renders."),
+        "Write a DEMO PREVIEW of a track — a text description of the music, "
+        "not audio. Use when the user asks you to 'make/write/compose a "
+        "song/track/beat/score/jingle'. Say plainly that this produces a "
+        "written preview rather than a playable file, and offer it on those "
+        "terms; do not describe the result as a song the user can listen to. "
+        "The installed google-genai exposes no batch music surface (only "
+        "Lyria RealTime streaming), so no audio is rendered by this path. "
+        "Higgsfield's account catalogue does list an audio model "
+        "('sonilo_music'), but nothing has generated audio on this machine "
+        "yet, so it is not offered here until it has. Accepts lyrics with "
+        "[verse]/[chorus] tags and a mood-reference image, which shape the "
+        "written preview."),
     "input_schema": {
         "type": "object",
         "properties": {
@@ -2986,14 +3012,16 @@ CLAUDE_TOOLS.append({
         "dialogue, and platform exports (YouTube 16:9, Instagram Reel / TikTok "
         "9:16, WebM, GIF preview, audio-only MP3). Use when the user asks you to "
         "'edit/assemble/stitch/cut these clips together', 'add music to this "
-        "video', or 'export a reel/vertical version'. Pass the creation "
-        "filenames of the clips (in order) and optionally a music filename. The "
-        "source clips' content hashes are signed into the production's "
-        "provenance."),
+        "video', or 'export a reel/vertical version'. Each clip may be a "
+        "creation filename, an absolute path, a path relative to either "
+        "creations folder (subfolders fine, e.g. 'storybook/clips/clip1.mp4'), "
+        "or an object {file, in, out} for per-clip trims; optionally add a "
+        "music filename/path. The source clips' content hashes are signed into "
+        "the production's provenance."),
     "input_schema": {
         "type": "object",
         "properties": {
-            "clips": {"type": "array", "description": "Ordered list of video clip creation filenames (or absolute paths) to stitch.", "items": {"type": "string"}},
+            "clips": {"type": "array", "description": "Ordered list of clips: filenames/paths, or {file, in, out} objects for per-clip trims."},
             "music": {"type": "string", "description": "Optional music/audio creation filename to lay under the video."},
             "transition": {"type": "string", "description": "Transition between clips: 'cut' (default), 'crossfade', or 'fadeblack'."},
             "title": {"type": "string", "description": "Optional title-card text shown at the start."},
@@ -3112,9 +3140,17 @@ def _tool_compose_timeline(inp):
         return "compose_timeline error: 'clips' (a list of clip filenames) is required."
     transition = (inp.get("transition") or "cut").lower()
     clip_seconds = inp.get("clip_seconds") or 6
-    video_clips = [{"file": c, "in": 0.0, "out": clip_seconds,
-                    "transition_in": {"type": transition, "dur": 0.5}}
-                   for c in clips]
+    video_clips = []
+    for c in clips:
+        if isinstance(c, dict):
+            video_clips.append({
+                "file": c.get("file") or "",
+                "in": float(c.get("in") or 0.0),
+                "out": float(c.get("out") or c.get("seconds") or clip_seconds),
+                "transition_in": {"type": transition, "dur": 0.5}})
+        else:
+            video_clips.append({"file": c, "in": 0.0, "out": clip_seconds,
+                                "transition_in": {"type": transition, "dur": 0.5}})
     tracks = [{"kind": "video", "clips": video_clips}]
     if inp.get("music"):
         tracks.append({"kind": "audio", "clips": [
@@ -4342,6 +4378,24 @@ TOOL_RINGS.update({
     "knowledge_communities": 0,
 })
 
+# Self-QC + asset tools (inspect_image / inspect_audio / save_output). Added
+# after the storybook E2E test showed the seat generating media it could not
+# look at, listen to, or reliably save — see services/media_tools.py.
+try:
+    from agent_friday.services import media_tools as _media_tools
+    _media_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _mte:  # never let optional deps break the agent import
+    print(f"  [MEDIA-TOOLS] registration skipped: {_mte}")
+
+# ElevenLabs speech (speak_text / list_voices). The seat could listen to audio
+# and save a provider's output but could not produce speech — narration was a
+# hole in the middle of the storybook pipeline. See services/elevenlabs_tools.py.
+try:
+    from agent_friday.services import elevenlabs_tools as _elevenlabs_tools
+    _elevenlabs_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _ete:  # never let optional deps break the agent import
+    print(f"  [ELEVENLABS] registration skipped: {_ete}")
+
 
 _GOVERNANCE_KEY: bytes | None = None
 
@@ -4815,6 +4869,62 @@ def _task_log_tool(session_ctx, name, args):
         pass
 
 
+from agent_friday.services import tool_receipts as _receipts
+
+#: Verb prefixes a model habitually invents in front of a tool's real name.
+#: Observed: the seat called `mcp_higgsfield_get_balance` when the registered
+#: tool is `mcp_higgsfield_balance`. The arguments and intent were right; only
+#: the name was embellished.
+_TOOL_VERB_NOISE = ("get_", "fetch_", "read_", "call_", "do_", "run_",
+                    "list_", "show_", "check_", "query_")
+
+
+def _tool_name_key(name):
+    """Collapse a tool name to what it MEANS, for matching purposes.
+
+    Drops the mcp_ prefix, any invented verb prefix, and separators, so
+    `mcp_higgsfield_get_balance`, `higgsfield.balance` and `balance` all
+    reduce to the same key.
+    """
+    s = str(name or "").strip().lower().replace(".", "_").replace("-", "_")
+    if s.startswith("mcp_"):
+        s = s[4:]
+    parts = s.split("_")
+    # Drop invented verbs wherever they sit — the observed miss was
+    # `higgsfield_GET_balance`, i.e. the verb after the server name, not at
+    # the front. Never drop the last token: `list_voices` collapsing to
+    # `higgsfield` would be worse than not matching at all.
+    verbs = {v.rstrip("_") for v in _TOOL_VERB_NOISE}
+    kept = [p for i, p in enumerate(parts)
+            if p not in verbs or i == len(parts) - 1]
+    parts = kept or parts
+    out, seen = [], set()
+    for p in parts:                      # order-preserving dedupe
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return "".join(out)
+
+
+def _resolve_tool_name(name):
+    """(resolved_name | None, suggestions) for a tool name that did not match.
+
+    Resolves ONLY when exactly one registered tool shares the collapsed key —
+    an ambiguous guess would run a tool the model did not ask for, which is
+    worse than failing. Otherwise returns near misses so the error can say
+    what would have worked.
+    """
+    key = _tool_name_key(name)
+    if not key:
+        return None, []
+    exact = [n for n in CLAUDE_TOOL_HANDLERS if _tool_name_key(n) == key]
+    if len(exact) == 1:
+        return exact[0], exact
+    near = [n for n in CLAUDE_TOOL_HANDLERS
+            if key and (key in _tool_name_key(n) or _tool_name_key(n) in key)]
+    return None, sorted(near)[:6]
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -4829,7 +4939,24 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     """
     handler = CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
-        return f"Unknown tool: {name}"
+        resolved, suggestions = _resolve_tool_name(name)
+        if resolved:
+            print(f"  [tools] '{name}' is not registered; resolved to "
+                  f"'{resolved}' (unambiguous match)")
+            name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
+        else:
+            # A bare "Unknown tool: x" is a dead end: it says the call failed
+            # but not what would work, and a dead end is where invented
+            # results come from. Name the near misses and state plainly that
+            # nothing ran, so the honest next move is obvious.
+            hint = ("Closest registered tools: "
+                    + ", ".join(suggestions)) if suggestions else \
+                   "No similarly-named tool is registered."
+            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
+                    f"nothing ran and no result was produced. {hint} "
+                    f"Retry with an exact name from your tool list, or tell "
+                    f"the user you could not do it. Do not describe an "
+                    f"outcome: there isn't one.")
 
     ctx = _hooks.HookContext(
         tool_name=name,
@@ -4843,6 +4970,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     # A DENY short-circuits; the deny message is what the model sees as the result.
     verdict = _hooks.run_pre_hooks(ctx)
     if verdict.action == "deny":
+        _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
         return verdict.reason
 
     try:
@@ -4851,7 +4979,13 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
             result = json.dumps(result, default=str)
     except Exception as e:
         traceback.print_exc()
+        _receipts.record(name, ok=False, detail=str(e))
         return f"Tool error ({name}): {e}"
+
+    # Receipt written only after the handler actually returned. This is the
+    # only place one is created, so a receipt cannot exist for a call that did
+    # not happen — which is what makes an unbacked claim detectable later.
+    _receipts.record(name, ok=True)
 
     # Cap result size to prevent token explosion in the model context window.
     # The voice path already caps at 8 KB; apply the same limit uniformly here.
@@ -5121,11 +5255,21 @@ def _load_mcp_servers() -> dict:
             pass
         return seed
     try:
-        data = json.loads(MCP_SERVERS_FILE.read_text(encoding="utf-8"))
+        # utf-8-sig, not utf-8: anything that edits this file from PowerShell
+        # leaves a BOM, json.loads chokes on it, and the except below used to
+        # swallow that into an empty config — every configured MCP server
+        # silently vanished while the UI still listed them as enabled.
+        data = json.loads(MCP_SERVERS_FILE.read_text(encoding="utf-8-sig"))
         if not isinstance(data, dict):
+            print(f"  [MCP] {MCP_SERVERS_FILE} is not a JSON object — "
+                  f"no MCP servers loaded")
             return {"servers": {}}
         return data
-    except Exception:
+    except Exception as e:
+        # Loud, not silent: returning {} here disables every connector, and a
+        # subsystem that produces nothing must say so rather than exit clean.
+        print(f"  [MCP] FAILED to read {MCP_SERVERS_FILE}: {e} — "
+              f"no MCP servers loaded (all connectors are OFF)")
         return {"servers": {}}
 
 
@@ -5144,13 +5288,237 @@ def _mcp_sanitize(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", str(s))[:48]
 
 
+def _mcp_is_remote(server_name: str) -> bool:
+    """True when this MCP server lives off-machine (Streamable HTTP).
+
+    Remote servers are cloud egress by construction. A stdio server is a local
+    subprocess; what that subprocess then does with the payload is outside what
+    this gate can see, and _mcp_gate_args says so rather than implying cover it
+    does not provide.
+    """
+    mgr = _MCP_MANAGER
+    if mgr is None:
+        return True                      # fail-closed: unknown destination = cloud
+    sp = (getattr(mgr, "servers", {}) or {}).get(server_name)
+    if sp is None:
+        return True
+    return bool(getattr(sp, "url", None))
+
+
+def _mcp_vault_conflict(value: str):
+    """Return the vault directory a string points into, or None.
+
+    Image bytes cannot be text-classified (routes/chat.py, qa_gates.py), so a
+    file *path* is the only handle the gate has on an upload. A path under a
+    sensitive vault dir is refused outright — the answer is the local pipeline
+    or nothing.
+    """
+    if not value or len(value) > 4096 or chr(0) in value:
+        return None
+    try:
+        cand = Path(value.strip().strip('"')).expanduser()
+    except Exception:
+        return None
+    try:
+        cand = cand.resolve(strict=False)
+    except Exception:
+        return None
+    for d in _sensitive_vault_dirs():
+        try:
+            if cand == d or d in cand.parents:
+                return str(d)
+        except Exception:
+            continue
+    return None
+
+
+def _mcp_gate_args(server_name: str, tool_name: str, args):
+    """The single egress choke point for remote MCP tool calls.
+
+    Every string anywhere in the argument tree goes through
+    egress_gate.gate_text() with this server as the provider. Unknown provider
+    names classify as cloud there, so this is fail-closed from day one without
+    any registry work.
+
+    If the gate CHANGES a string, the call is refused rather than submitted
+    partially redacted: a half-gated prompt is a different request than the one
+    that was asked for, and silently sending it would be substitution without
+    disclosure. Returns (ok, explanation_or_None).
+    """
+    from agent_friday.services import egress_gate as _eg
+
+    findings = []
+
+    def _walk(node, path):
+        if isinstance(node, str):
+            hit = _mcp_vault_conflict(node)
+            if hit:
+                findings.append(f"{path}: refers to a file under {hit}, a "
+                                f"vault-sensitive directory")
+                return
+            if not node.strip():
+                return
+            try:
+                gated = _eg.gate_text(node, server_name, f"{tool_name}.{path}")
+            except Exception as e:                       # a gate that cannot run
+                findings.append(f"{path}: egress gate failed to run ({e})")
+                return
+            if gated != node:
+                what = "dropped entirely" if not gated.strip() else "redacted"
+                findings.append(f"{path}: sensitive content was {what} by the "
+                                f"egress gate")
+        elif isinstance(node, dict):
+            for k, v in node.items():
+                _walk(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                _walk(v, f"{path}[{i}]")
+
+    _walk(args, "")
+    if not findings:
+        return True, None
+    detail = "; ".join(findings[:6])
+    return False, (
+        f"[blocked] This call to '{tool_name}' was not sent to {server_name}. "
+        f"{server_name} is a cloud service, and the egress gate found content "
+        f"that must not leave this machine — {detail}. Nothing was sent and "
+        f"nothing was charged. Rewrite the request without that material, or "
+        f"use a local capability instead. I have not sent a redacted version, "
+        f"because that would be a different request than the one you made."
+    )
+
+
+#: Documented defaults for Higgsfield generation, applied only when the model
+#: names no model at all. Chosen on measured price (2026-08-19): the cheapest
+#: option that does the job, per the standing "cheapest safe default" rule.
+#: These are a stated policy, not a guess — and any use is logged, because a
+#: silently-substituted model is exactly the kind of thing that should never
+#: happen quietly.
+_HF_DEFAULT_MODEL = {
+    "generate_image": "nano_banana_2",   # 2 credits
+    "generate_video": "veo3_1_lite",     # 8 credits, cheapest image-to-video
+}
+
+
+def _mcp_fit_envelope(server_name: str, tool_name: str, payload: dict) -> dict:
+    """Reshape a flat tool payload into the envelope the server's schema wants.
+
+    Higgsfield nests every generation argument under a single ``params``
+    object whose schema is an ``anyOf`` of several branches. A model that
+    sends ``{"model": ..., "prompt": ...}`` flat — which is the obvious shape,
+    and what Friday's local seat actually sends — gets back
+    ``params: Invalid input`` and no picture. The arguments were right; only
+    the wrapper was missing.
+
+    This fixes the wrapper and nothing else. It does not invent arguments,
+    does not choose between anyOf branches on meaning, and does not touch a
+    payload that already has the envelope. The one value it will supply is a
+    model id, and only when none was given at all — see _HF_DEFAULT_MODEL.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    full = f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(tool_name)}"[:64]
+    tool = next((t for t in CLAUDE_TOOLS if t.get("name") == full), None) or {}
+    props = ((tool.get("input_schema") or {}).get("properties") or {})
+    if "params" not in props or "params" in payload:
+        return payload
+    # Everything the model sent belongs inside params (nothing else is declared).
+    outer = {k: v for k, v in payload.items() if k in props}
+    inner = {k: v for k, v in payload.items() if k not in props}
+    if not inner:
+        return payload
+    fitted = dict(outer)
+    fitted["params"] = inner
+    default = _HF_DEFAULT_MODEL.get(tool_name)
+    if default and not inner.get("model"):
+        inner["model"] = default
+        print(f"  [mcp:{server_name}] no model given for {tool_name}; using the "
+              f"documented default '{default}'")
+    print(f"  [mcp:{server_name}] wrapped flat arguments into the 'params' "
+          f"envelope for {tool_name}")
+    return fitted
+
+
 def _make_mcp_handler(server_name: str, tool_name: str):
-    """Build a CLAUDE_TOOL_HANDLERS handler that forwards to the MCP server."""
+    """Build a CLAUDE_TOOL_HANDLERS handler that forwards to the MCP server.
+
+    Remote (HTTP) servers pass through the egress gate first. Local stdio
+    servers are not gated here: the payload goes to a process on this machine,
+    and pretending otherwise would claim a boundary this function does not
+    enforce.
+    """
     def _handler(inp):
         if _MCP_MANAGER is None:
             return "[mcp error] MCP manager not initialized"
-        return _MCP_MANAGER.call(server_name, tool_name, inp or {})
+        payload = _mcp_fit_envelope(server_name, tool_name, inp or {})
+        if _mcp_is_remote(server_name):
+            ok, explanation = _mcp_gate_args(server_name, tool_name, payload)
+            if not ok:
+                return explanation
+        return _MCP_MANAGER.call(server_name, tool_name, payload)
     return _handler
+
+
+_SCHEMA_COMBINATORS = ("anyOf", "oneOf", "allOf")
+
+
+def _mcp_normalize_schema(schema: dict, tool_name: str = "") -> dict:
+    """Make a third-party tool schema acceptable to the Anthropic tools API.
+
+    Anthropic rejects `oneOf`, `allOf` and `anyOf` at the TOP level of an
+    `input_schema` — and it rejects the whole REQUEST, not the one tool. So a
+    single connector shipping such a schema takes every cloud turn down with
+    a 400 that names a tool index and nothing else:
+
+        tools.90.custom.input_schema: input_schema does not support
+        oneOf, allOf, or anyOf at the top level
+
+    Measured 2026-08-18: this is exactly what happened once the Higgsfield
+    connector registered 86 tools. Cloud chat returned "[Friday offline]" for
+    every message, in every conversation, and the cause was a schema written
+    by a server we do not control.
+
+    Dropping the offending tool would be the easy fix and the wrong one — it
+    silently removes a capability. Instead the branches are merged into one
+    object schema: properties are unioned, and a field stays `required` only
+    if every branch required it (a field the caller can omit in some valid
+    shape is not required). Nested combinators are left alone; the API only
+    objects at the top level.
+    """
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}}
+    if not any(k in schema for k in _SCHEMA_COMBINATORS):
+        if not schema.get("type"):
+            schema = dict(schema, type="object")
+        return schema
+
+    merged = {k: v for k, v in schema.items() if k not in _SCHEMA_COMBINATORS}
+    props = dict(merged.get("properties") or {})
+    required_sets = []
+    base_required = merged.get("required")
+    if isinstance(base_required, list):
+        required_sets.append(set(base_required))
+
+    for key in _SCHEMA_COMBINATORS:
+        for branch in (schema.get(key) or []):
+            if not isinstance(branch, dict):
+                continue
+            for name, spec in (branch.get("properties") or {}).items():
+                props.setdefault(name, spec)
+            br = branch.get("required")
+            required_sets.append(set(br) if isinstance(br, list) else set())
+
+    merged["type"] = "object"
+    merged["properties"] = props
+    keep = set.intersection(*required_sets) if required_sets else set()
+    if keep:
+        merged["required"] = sorted(keep)
+    else:
+        merged.pop("required", None)
+
+    print(f"  [mcp] normalised a top-level combinator schema for {tool_name!r} "
+          f"- Anthropic rejects oneOf/allOf/anyOf there")
+    return merged
 
 
 def _mcp_register_server_tools(server_name: str, tools: list) -> list:
@@ -5254,68 +5622,6 @@ def _mcp_reload() -> dict:
     return {"ok": True}
 
 
-_SCHEMA_COMBINATORS = ("anyOf", "oneOf", "allOf")
-
-
-def _mcp_normalize_schema(schema: dict, tool_name: str = "") -> dict:
-    """Make a third-party tool schema acceptable to the Anthropic tools API.
-
-    Anthropic rejects `oneOf`, `allOf` and `anyOf` at the TOP level of an
-    `input_schema` — and it rejects the whole REQUEST, not the one tool. So a
-    single connector shipping such a schema takes every cloud turn down with
-    a 400 that names a tool index and nothing else:
-
-        tools.90.custom.input_schema: input_schema does not support
-        oneOf, allOf, or anyOf at the top level
-
-    Measured 2026-08-18: this is exactly what happened once the Higgsfield
-    connector registered 86 tools. Cloud chat returned "[Friday offline]" for
-    every message, in every conversation, and the cause was a schema written
-    by a server we do not control.
-
-    Dropping the offending tool would be the easy fix and the wrong one — it
-    silently removes a capability. Instead the branches are merged into one
-    object schema: properties are unioned, and a field stays `required` only
-    if every branch required it (a field the caller can omit in some valid
-    shape is not required). Nested combinators are left alone; the API only
-    objects at the top level.
-    """
-    if not isinstance(schema, dict):
-        return {"type": "object", "properties": {}}
-    if not any(k in schema for k in _SCHEMA_COMBINATORS):
-        if not schema.get("type"):
-            schema = dict(schema, type="object")
-        return schema
-
-    merged = {k: v for k, v in schema.items() if k not in _SCHEMA_COMBINATORS}
-    props = dict(merged.get("properties") or {})
-    required_sets = []
-    base_required = merged.get("required")
-    if isinstance(base_required, list):
-        required_sets.append(set(base_required))
-
-    for key in _SCHEMA_COMBINATORS:
-        for branch in (schema.get(key) or []):
-            if not isinstance(branch, dict):
-                continue
-            for name, spec in (branch.get("properties") or {}).items():
-                props.setdefault(name, spec)
-            br = branch.get("required")
-            required_sets.append(set(br) if isinstance(br, list) else set())
-
-    merged["type"] = "object"
-    merged["properties"] = props
-    keep = set.intersection(*required_sets) if required_sets else set()
-    if keep:
-        merged["required"] = sorted(keep)
-    else:
-        merged.pop("required", None)
-
-    print(f"  [mcp] normalised a top-level combinator schema for {tool_name!r} "
-          f"- Anthropic rejects oneOf/allOf/anyOf there")
-    return merged
-
-
 def _screenshot_result_to_block(tool_use_id, result):
     """Convert a screenshot tool result (JSON with base64 image) into an Anthropic
     tool_result block carrying a real image so the model can SEE the screen.
@@ -5373,7 +5679,12 @@ _TOOL_DENY_SENTINELS = (
     "[VAULT-ZT DENY]", "[VAULT ACCESS DENIED]", "[CONFIRMATION REQUIRED]",
     "[GOVERNANCE DENY]", "[SANDBOX DENY]",
 )
-_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:")
+# "TOOL CALL FAILED" is the unknown-name message _execute_tool now returns.
+# It MUST be listed here: _tool_call_status classifies anything unrecognised as
+# 'ok', so a failure prefix missing from this tuple is a failed call reporting
+# itself as a success — which is the exact defect the receipts work exists to
+# remove. Changing a failure message means updating this tuple in the same edit.
+_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED")
 
 
 def _tool_call_status(result):

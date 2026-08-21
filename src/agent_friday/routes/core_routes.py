@@ -49,7 +49,6 @@ from agent_friday.core import (
 )  # noqa: E501
 from agent_friday.services.agent import (
     TOOL_RINGS,
-    _MCP_MANAGER,
     _MCP_TOOL_MAP,
     _load_mcp_servers,
     _mcp_register_server_tools,
@@ -776,6 +775,13 @@ def api_settings():
 @core_bp.route('/api/mcp/status', methods=['GET'])
 def api_mcp_status():
     """Live status of every configured MCP server + its discovered tools."""
+    # Read the manager off the live module, never `from ... import _MCP_MANAGER`:
+    # that binds the value at import time, which is None because _mcp_boot()
+    # runs later. Importing it by value made this endpoint report
+    # "available: false, 0 tools" for the life of the process while ~99 tools
+    # were in fact registered - a working subsystem reporting itself dead.
+    import agent_friday.services.agent as _agent_svc
+    _MCP_MANAGER = _agent_svc._MCP_MANAGER
     if _MCP_MANAGER is None:
         return jsonify({"status": "ok", "available": False, "servers": {}})
     try:
@@ -783,7 +789,7 @@ def api_mcp_status():
             "status": "ok",
             "available": True,
             "servers": _MCP_MANAGER.status(),
-            "registered_tools": sorted(_MCP_TOOL_MAP.keys()),
+            "registered_tools": sorted(_agent_svc._MCP_TOOL_MAP.keys()),
         })
     except Exception as e:
         traceback.print_exc()
@@ -815,6 +821,8 @@ def api_mcp_servers():
 @core_bp.route('/api/mcp/restart', methods=['POST'])
 def api_mcp_restart():
     """Restart a single MCP server and re-register its tools."""
+    import agent_friday.services.agent as _agent_svc  # live module state
+    _MCP_MANAGER = _agent_svc._MCP_MANAGER
     if _MCP_MANAGER is None:
         return jsonify({"status": "error", "message": "MCP unavailable"}), 503
     try:
