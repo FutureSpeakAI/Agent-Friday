@@ -18,7 +18,12 @@ registry + settings, so adding a provider surfaces in routing automatically.
 """
 from __future__ import annotations
 
+# creative_music was absent from this tuple entirely, so /api/capabilities has
+# never reported music at all — neither as present nor as missing. An omitted
+# capability reads as "not a thing Friday does"; the honest report is that it
+# IS a thing she is asked for and currently cannot do.
 CAPABILITIES = ("reasoning", "subagent", "creative_image", "creative_video",
+                "creative_music",
                 "voice", "asr", "tts", "embedding", "local")
 
 _CAP_LABEL = {
@@ -26,6 +31,7 @@ _CAP_LABEL = {
     "subagent": "Background tasks",
     "creative_image": "Image generation",
     "creative_video": "Video generation",
+    "creative_music": "Music generation",
     "voice": "Live voice (cloud)",
     "asr": "Speech-to-text",
     "tts": "Text-to-speech",
@@ -49,6 +55,28 @@ def _provider_label(name):
         return None
     p = _registry().get_provider(name)
     return (p or {}).get("label") or name
+
+
+#: Routes that resolve to a configured provider but a backend that has never
+#: produced output. Each entry must carry WHY, and must be deleted the moment
+#: the route is proven — this list is a disclosure, not a permanent opinion.
+_STUB_ROUTES = {
+    ("creative_music", "google-gemini"): (
+        "Music is not available: the installed google-genai has no batch music "
+        "surface (only Lyria RealTime streaming), so this route writes a "
+        "written preview rather than audio. Higgsfield lists an audio model "
+        "('sonilo_music') but nothing has generated audio here yet."),
+}
+
+
+def _stub_route_reason(capability, provider, model=None):
+    """Why a resolved route cannot actually deliver, or None if it can.
+
+    Deliberately a declared list rather than a guess: claiming a capability
+    works because a key exists is the failure this guards against, and
+    inventing a probe that does not exist would be the same error inverted.
+    """
+    return _STUB_ROUTES.get((capability, provider))
 
 
 def resolve(capability, settings=None):
@@ -76,8 +104,20 @@ def resolve(capability, settings=None):
     else:
         available = False
 
+    # A route can resolve to a provider whose key is present and whose backend
+    # still cannot do the job. Availability here is derived from key presence,
+    # which answers "is this provider configured", not "does this work" — so a
+    # configured key in front of a stub reports AVAILABLE and the capability
+    # list lies. Known non-producing routes are named here, with the reason,
+    # until something probes for real output instead of for credentials.
+    stub_reason = _stub_route_reason(capability, provider, model)
+    if stub_reason:
+        available = False
+
     unlock_hint = None
-    if not available:
+    if stub_reason:
+        unlock_hint = stub_reason
+    elif not available:
         # Local voice degrades to an install hint, not a "connect a key" one.
         prov = _registry().get_provider(provider) if provider else None
         if prov and prov.get("type") in ("local-voice", "nemo-local"):

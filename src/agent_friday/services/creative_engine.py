@@ -348,7 +348,24 @@ def _slug(text: str, fallback: str = "creation") -> str:
 
 
 def _timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
+    """Timestamp for creation filenames, in a form no PII detector misreads.
+
+    The old format was "%Y%m%d-%H%M%S" — e.g. 20260819-140523. That is
+    fourteen digits separated by a dash, which matches the credit-card
+    detector in sensitivity_classifier (`\\b(?:\\d[ -]?){13,19}\\b`), so every
+    filename built from it classified TIER_3. The consequence was invisible
+    and expensive: a video would render fine, and the tool result naming it
+    was then withheld from the model as sensitive, so Friday could not see
+    her own success and told the user the render had been blocked. Verified
+    2026-08-19 — it is why the creations record showed working Veo videos
+    that Friday described as untested.
+
+    The 'T' separator (ISO-8601) breaks the digit run while keeping the
+    timestamp readable and sortable. The classifier is left alone: a
+    false-positive filename is our problem to fix, not a reason to loosen a
+    detector that guards real card numbers.
+    """
+    return datetime.now().strftime("%Y%m%dT%H%M%S")
 
 
 def _ext_for_mime(mime: str, default: str) -> str:
