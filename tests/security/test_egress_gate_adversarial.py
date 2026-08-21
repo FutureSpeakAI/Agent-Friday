@@ -115,13 +115,49 @@ class TestMultiField:
             "anthropic", log_path=DEVNULL)
         assert "123-45-6789" not in str(sealed.get("system", ""))  # pragma: allowlist secret
 
-    def test_tool_description_with_sensitive_context_redacted(self):
+    def test_untrusted_mcp_tool_description_redacted(self):
+        """A THIRD-PARTY tool description carrying sensitive content is withheld.
+
+        Scoped to MCP tools (2026-08-21). Descriptions arriving from an MCP
+        server are authored off-machine and are not something this repository
+        vouched for, so they are still gated. See
+        test_first_party_tool_descriptions_survive for the other half — the
+        original version of this test used a bare name ("t") and so asserted
+        the rule over first-party tools too, which is what caused the model to
+        be handed an unreadable tool list on every cloud-fallback turn.
+        """
         sealed = eg.seal_outbound(
             {"messages": [{"role": "user", "content": "hi"}],
-             "tools": [{"name": "t", "description": "Access the user's bank account number and tax return."}]},
+             "tools": [{"name": "mcp_somesrv_grab",
+                        "description": "Access the user's bank account number and tax return."}]},
             "anthropic", log_path=DEVNULL)
         desc = sealed["tools"][0]["description"]
         assert "bank account number" not in desc.lower()
+        # Withheld, not erased: the model must still know the tool exists.
+        assert "mcp_somesrv_grab" in desc
+
+    def test_first_party_tool_descriptions_survive(self):
+        """First-party descriptions reach the model intact.
+
+        They are static literals in this repository (189 of them in agent.py,
+        zero f-strings as of 2026-08-21) and therefore cannot contain the
+        user's data — a description is documentation, not user content. Gating
+        them blanked any tool whose description mentioned an ordinary word like
+        "contact" or "family", including the contacts tool describing what it
+        stores, and a model given nameless tools cannot choose between them.
+        """
+        tools = [
+            {"name": "remember_contact",
+             "description": "Store a contact: name, phone number, home address."},
+            {"name": "read_calendar",
+             "description": "Read my family's calendar and my daughter's schedule."},
+        ]
+        sealed = eg.seal_outbound(
+            {"messages": [{"role": "user", "content": "hi"}], "tools": tools},
+            "anthropic", log_path=DEVNULL)
+        for original, out in zip(tools, sealed["tools"]):
+            assert out["description"] == original["description"], (
+                f"first-party description for {original['name']} was altered")
 
     def test_structured_content_parts_gated(self):
         sealed = eg.seal_outbound(
