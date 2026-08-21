@@ -751,6 +751,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         )
     else:
         pname = 'openai'
+        local_bypass = False
         base_url = (cfg.get('openai_base_url') or 'https://api.openai.com/v1').rstrip('/')
         api_key = (cfg.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')  # pragma: allowlist secret
                    or os.environ.get('OPENROUTER_API_KEY') or '')
@@ -767,6 +768,27 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             "HTTP-Referer": "https://futurespeak.ai",
             "X-Title": "Agent Friday",
         }
+
+    # LOCAL seats have a hard n_ctx — fit the tool payload to it BEFORE
+    # conversion. The llama-cpp path skipped this while the Ollama path
+    # trimmed, so a background task with the full registry (~56k tokens
+    # observed) 400'd against a 32k window every time this seat was up
+    # (2026-08-19). Cloud providers are left untrimmed as before.
+    if tools and local_bypass:
+        try:
+            from agent_friday.services.tool_budget import fit_tools_to_seat
+            # Budget the whole request, not tools in isolation (2026-08-19:
+            # in-budget tools atop an ordinary prompt still overflowed the
+            # seat and 400'd).
+            _prompt_cost = (len(system or "") + sum(
+                len(m.get("content")) for m in (messages or [])
+                if isinstance(m.get("content"), str))) // 4
+            tools, _fit_note = fit_tools_to_seat(
+                model, tools, prompt_cost=_prompt_cost)
+            if _fit_note:
+                system = (system or "") + "\n[SEAT] " + _fit_note
+        except Exception:
+            pass
 
     # Convert Anthropic tool schemas → OpenAI function-tool schemas.
     oai_tools = None
