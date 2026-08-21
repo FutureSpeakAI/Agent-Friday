@@ -1683,6 +1683,9 @@ _WORKSPACE_ALIASES = {
     'settings': 'settings', 'setting': 'settings', 'settings menu': 'settings',
     'system settings': 'settings', 'preferences': 'settings',
     'options': 'settings', 'config': 'settings', 'configuration': 'settings',
+    'workflows': 'workflows', 'workflow': 'workflows',
+    'scheduled tasks': 'workflows', 'schedules': 'workflows',
+    'pipelines': 'workflows', 'automations': 'workflows',
     'marketplace': 'marketplace', 'market': 'marketplace',
     'store': 'marketplace', 'shop': 'marketplace', 'skill store': 'marketplace',
     'news': 'news', 'headlines': 'news', 'feed': 'news', 'newsfeed': 'news',
@@ -2098,7 +2101,8 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
             f"there was nothing actionable to do.")
 
 
-def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
+def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
+                 model=None):
     """Run a Claude agent prompt to completion and store results.
 
     Heuristic log lines come from inspecting the tool_trace returned by
@@ -2152,7 +2156,12 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
                                      (f.get('why') or '')[:120]))
             except Exception:
                 pass
-        subagent_model = _load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT
+        # A per-task seat override (workflow chains carry one) beats the
+        # global subagent seat — a heavy creative workflow can ask for the
+        # orchestrator-grade model without reseating all background work.
+        subagent_model = (model
+                          or _load_settings().get("subagent_model")
+                          or ANTHROPIC_MODEL_DEFAULT)
         _bg_label = (name or prompt or 'Task')[:24]
         # Route through the provider-agnostic agent dispatcher so a background
         # task (distill-to-wiki, deep research) never hard-fails with
@@ -2290,6 +2299,12 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
         # A FAILED task must report too. Silence on failure is the worse half
         # of this gap: it reads exactly like success to anyone not watching.
         _report_task_completion(task_id, name, 'failed', f'[Error] {e}')
+        # A failed CHAIN link retries itself (per-step budget) instead of the
+        # chain dying silently mid-run — the workflow UI shows the retry.
+        try:
+            _retry_chain_step(task_id, str(e))
+        except Exception as re_:
+            _task_log(task_id, f'Chain retry error: {re_}')
 
 
 def _report_task_completion(task_id, name, status, result_text):
@@ -2326,7 +2341,8 @@ def _report_task_completion(task_id, name, status, result_text):
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,
-                chain=None, chain_step=0, orb_icon='🛰', scope=None):
+                chain=None, chain_step=0, orb_icon='🛰', scope=None,
+                model=None):
     """Spawn a background task.
 
     on_complete: optional dict {"spawn": "<next step name>", "prompt": "<optional
@@ -2371,6 +2387,7 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'on_complete': on_complete,
             'chain': chain,
             'chain_step': chain_step,
+            'model': model,
         }
     _log_context("task_spawn", {
         "task_id": task_id,
@@ -2394,7 +2411,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         pass
     th = threading.Thread(target=_task_worker,
                           args=(task_id, name, prompt, description),
-                          kwargs={'orb_icon': orb_icon}, daemon=True)
+                          kwargs={'orb_icon': orb_icon, 'model': model},
+                          daemon=True)
     th.start()
     return task_id
 
@@ -2445,11 +2463,18 @@ def save_workflow_chain(defn):
             'name': (s.get('name') or f'Step {i + 1}').strip()[:120],
             'prompt': s['prompt'].strip(),
             'with_context': bool(s.get('with_context', True)),
+            # Per-step seat override (model id); falls back to the chain seat.
+            'seat': (s.get('seat') or '').strip() or None,
+            # How many times a FAILED step is retried before the chain halts.
+            'retries': max(0, min(3, int(s.get('retries', 1)))),
         })
     stored = {
         'name': name.strip()[:120],
         'slug': _chain_slug(name),
         'description': (defn.get('description') or '').strip(),
+        # Chain-level seat: which model runs the steps (e.g. the orchestrator
+        # model for heavy creative work). None = the global subagent seat.
+        'seat': ((defn.get('seat') or '').strip() or None),
         'steps': norm_steps,
         'updated': datetime.now().isoformat(),
     }
@@ -2500,7 +2525,203 @@ def run_workflow_chain(name):
         prompt=first['prompt'],
         description=f"Chain '{chain.get('name')}' · step 1/{len(steps)}",
         chain=slug, chain_step=0,
+        model=first.get('seat') or chain.get('seat'),
     )
+
+
+def chain_run_status(name):
+    """Live status of a chain's most recent run, assembled from the task
+    registry: one row per spawned step task (running, done, failed), plus the
+    chain definition so the UI can show pending steps too."""
+    chain = load_workflow_chain(name)
+    if not chain:
+        return None
+    slug = chain.get('slug') or _chain_slug(name)
+    steps = chain.get('steps') or []
+    with TASKS_LOCK:
+        rows = [dict(t) for t in TASKS.values() if t.get('chain') == slug]
+    rows.sort(key=lambda t: t.get('created') or 0)
+    # Only the latest run: walk back from the end until chain_step resets.
+    latest = []
+    for t in rows:
+        if latest and int(t.get('chain_step', 0)) <= int(latest[-1].get('chain_step', 0)):
+            latest = []
+        latest.append(t)
+    def _norm(st):
+        """Collapse the task registry's richer statuses ('complete',
+        'completed_unverified', 'done') onto the four the panel knows."""
+        st = (st or 'pending').lower()
+        if st.startswith('complete') or st == 'done':
+            return 'completed'
+        if st in ('queued', 'running', 'failed'):
+            return st
+        return st
+    out_steps = []
+    for i, s in enumerate(steps):
+        row = next((t for t in latest if int(t.get('chain_step', -1)) == i), None)
+        out_steps.append({
+            'index': i, 'name': s.get('name'),
+            'status': _norm((row or {}).get('status')),
+            'task_id': (row or {}).get('task_id'),
+            'started': (row or {}).get('started'),
+            'ended': (row or {}).get('ended'),
+            'result_tail': ((row or {}).get('result') or '')[-400:],
+            'log_tail': ((row or {}).get('log') or [])[-3:],
+        })
+    running = any(s['status'] in ('queued', 'running') for s in out_steps)
+    failed = any(s['status'] == 'failed' for s in out_steps)
+    done = all(s['status'] == 'completed' for s in out_steps) if out_steps else False
+    return {'name': chain.get('name'), 'slug': slug,
+            'state': 'running' if running else
+                     'failed' if failed else
+                     'completed' if done else 'idle',
+            'steps': out_steps}
+
+
+# ── Workflow chains as agent TOOLS ──────────────────────────────────────────
+# Until 2026-08-20 chains could only be authored via the HTTP API or the UI —
+# the seat itself could run one-off tasks but could not build a multi-step
+# pipeline. These three tools close that loop: Friday can now design a chain,
+# launch it, and watch it, entirely from a chat turn or a scheduled prompt.
+
+def _tool_create_workflow(inp):
+    inp = inp or {}
+    try:
+        stored = save_workflow_chain({
+            'name': inp.get('name'),
+            'description': inp.get('description') or '',
+            'seat': inp.get('seat'),
+            'steps': inp.get('steps') or [],
+        })
+        return ("workflow '%s' saved with %d steps (slug: %s). Run it with "
+                "run_workflow." % (stored['name'], len(stored['steps']),
+                                   stored['slug']))
+    except ValueError as ve:
+        return "create_workflow error: %s" % ve
+    except Exception as e:
+        return "create_workflow error: %s" % e
+
+
+def _tool_run_workflow(inp):
+    inp = inp or {}
+    name = (inp.get('name') or '').strip()
+    if not name:
+        return "run_workflow error: 'name' is required."
+    tid = run_workflow_chain(name)
+    if not tid:
+        return "run_workflow error: no chain named %r (or it has no steps)." % name
+    return ("workflow '%s' started (first task %s). Steps auto-advance; check "
+            "progress with workflow_status." % (name, tid))
+
+
+def _tool_workflow_status(inp):
+    inp = inp or {}
+    name = (inp.get('name') or '').strip()
+    if not name:
+        chains = list_workflow_chains()
+        return "workflows on file: " + (", ".join(
+            "%s (%d steps)" % (c['slug'], c['steps']) for c in chains) or "none")
+    st = chain_run_status(name)
+    if st is None:
+        return "workflow_status error: no chain named %r." % name
+    lines = ["%s: %s" % (st['name'], st['state'])]
+    for s in st['steps']:
+        lines.append("  %d. %s - %s" % (s['index'] + 1, s['name'], s['status']))
+        if s['status'] == 'failed' and s.get('result_tail'):
+            lines.append("     failure tail: %s" % s['result_tail'][-200:])
+    return "\n".join(lines)
+
+
+CLAUDE_TOOLS.extend([
+    {
+        "name": "create_workflow",
+        "description": (
+            "Create or update a stored multi-step workflow (chain). Each step "
+            "is a full autonomous agent run with all your tools; steps run in "
+            "order and each receives the previous step's result as context. "
+            "Use for long multi-stage productions (films, research pipelines) "
+            "instead of trying to do everything in one turn. steps: list of "
+            "{name, prompt, retries?}; optional seat = model id override."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Workflow name."},
+                "description": {"type": "string"},
+                "seat": {"type": "string", "description": "Optional model id to run steps on."},
+                "steps": {"type": "array", "description": "Ordered steps: {name, prompt, retries (0-3, default 1)}."},
+            },
+            "required": ["name", "steps"],
+        },
+    },
+    {
+        "name": "run_workflow",
+        "description": ("Start a stored workflow (chain) by name. Steps "
+                        "auto-advance on completion and retry on failure."),
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "workflow_status",
+        "description": ("Live status of a stored workflow's most recent run "
+                        "(per-step states, failure tails). Without a name, "
+                        "lists the stored workflows."),
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        },
+    },
+])
+
+
+def _retry_chain_step(task_id, error_text):
+    """Respawn a failed chain link if its step has retry budget left."""
+    with TASKS_LOCK:
+        t = dict(TASKS.get(task_id) or {})
+    slug = t.get('chain')
+    if not slug:
+        return None
+    chain = load_workflow_chain(slug)
+    steps = (chain or {}).get('steps') or []
+    idx = int(t.get('chain_step', 0))
+    if idx >= len(steps):
+        return None
+    step = steps[idx]
+    used = int(t.get('chain_retry', 0))
+    if used >= int(step.get('retries', 1)):
+        _task_log(task_id, f'Chain halted: step {idx + 1} failed with no retries left.')
+        return None
+    _task_log(task_id, f'→ retrying step {idx + 1} ({used + 1}/{step.get("retries", 1)})')
+    prompt = (f"The previous attempt at this step FAILED with: {error_text[:500]}\n"
+              f"Diagnose what went wrong and complete the step properly this time.\n\n"
+              f"---\n\n{step['prompt']}")
+    new_id = _spawn_task(
+        name=step.get('name') or f'Step {idx + 1} (retry)',
+        prompt=prompt,
+        description=f"Chain '{(chain or {}).get('name')}' · step {idx + 1}/{len(steps)} · retry {used + 1}",
+        chain=slug, chain_step=idx,
+        model=step.get('seat') or (chain or {}).get('seat'),
+    )
+    with TASKS_LOCK:
+        if new_id in TASKS:
+            TASKS[new_id]['chain_retry'] = used + 1
+    return new_id
+
+
+#: Reply shapes that mean the agent never actually worked — the provider
+#: refused or crashed and the ERROR TEXT became the task's "result". A chain
+#: that advances past one of these ships nothing while reporting success
+#: (run 2 of the teen storybook advanced through five such steps). Treated
+#: as step failure: retried if budget remains, else the chain halts.
+_CHAIN_FAILURE_SIGNATURES = (
+    "no model provider could run the agent",
+    "exceeds the available context size",
+    "it was not sent to a cloud provider",
+    "[friday offline]",
+    "credit balance is too low",
+)
 
 
 def _advance_task_chain(task_id, result_text):
@@ -2510,6 +2731,15 @@ def _advance_task_chain(task_id, result_text):
     with TASKS_LOCK:
         t = dict(TASKS.get(task_id) or {})
     result_text = (result_text or '').strip()
+
+    # A "completed" chain link whose result is a provider-failure message did
+    # not do its work — route it through the retry path instead of advancing.
+    if t.get('chain'):
+        low = result_text.lower()
+        if any(sig in low for sig in _CHAIN_FAILURE_SIGNATURES):
+            _task_log(task_id, 'Chain link result is a provider failure — '
+                               'not advancing; retrying this step.')
+            return _retry_chain_step(task_id, result_text[:500])
 
     # 1) Named workflow chain — advance to the next step.
     chain_slug = t.get('chain')
@@ -2530,6 +2760,7 @@ def _advance_task_chain(task_id, result_text):
                 prompt=prompt,
                 description=f"Chain '{chain.get('name')}' · step {nxt + 1}/{len(steps)}",
                 chain=chain_slug, chain_step=nxt,
+                model=step.get('seat') or chain.get('seat'),
             )
         return None
 
@@ -3526,6 +3757,18 @@ TOOL_RINGS.update({
     "creative_project":        1,   # local Series-Bible state mutation
     "start_creative_pipeline": 2,   # drives generation/LLM calls (network)
     "compare_image_takes":     2,   # calls the Gemini image API (network)
+})
+
+CLAUDE_TOOL_HANDLERS.update({
+    "create_workflow": _tool_create_workflow,
+    "run_workflow": _tool_run_workflow,
+    "workflow_status": _tool_workflow_status,
+})
+
+TOOL_RINGS.update({
+    "create_workflow": 1,   # writes a JSON file under ~/.friday/workflows
+    "run_workflow": 1,      # spawns local background tasks
+    "workflow_status": 0,   # read-only
 })
 
 

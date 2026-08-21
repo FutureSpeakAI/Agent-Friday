@@ -35,6 +35,7 @@ from agent_friday.core import (
     get_genai_client,
 )  # noqa: E501
 from agent_friday.services.agent import (
+    chain_run_status,
     delete_workflow_chain,
     list_workflow_chains,
     load_workflow_chain,
@@ -707,6 +708,16 @@ def workflow_chain_get(name):
 def workflow_chain_delete(name):
     ok = delete_workflow_chain(name)
     return jsonify({"status": "ok" if ok else "not_found"}), (200 if ok else 404)
+
+
+@workflows_bp.route('/api/workflows/chains/<name>/status', methods=['GET'])
+def workflow_chain_status(name):
+    """Live per-step status of the chain's most recent run (for the
+    Workflows workspace panel)."""
+    st = chain_run_status(name)
+    if st is None:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": "ok", "run": st})
 
 
 @workflows_bp.route('/api/workflows/chains/<name>/run', methods=['POST'])
