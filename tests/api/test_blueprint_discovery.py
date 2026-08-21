@@ -40,3 +40,64 @@ def test_core_and_v5_endpoints_registered():
         "/api/onboarding/state",
     ):
         assert path in rules, f"{path} not registered — blueprint discovery broken"
+
+
+# ── Zero-skip guards ──────────────────────────────────────────────────────
+# Added 2026-08-20. The two tests above did NOT catch a real seven-week
+# regression: routes/jobs.py failed to import on ~70 consecutive starts while
+# 'jobs' stayed in ROUTE_MODULES (so the manifest test passed) and no checked
+# path was a pipeline route (so the endpoint test passed). The server logged one
+# WARNING and reported itself healthy. See docs/audits/server-death-forensics.md.
+#
+# These assert the thing that actually matters: every route module that exists
+# must actually register. Cheapest durable guard we have.
+
+
+def test_no_blueprint_was_skipped():
+    """Every route module imported cleanly. This is the July-1 catcher."""
+    skipped = server.BLUEPRINT_REPORT.get("skipped") or []
+    assert skipped == [], (
+        "Route module(s) failed to import and were silently skipped: "
+        + "; ".join(f"{s['module']}: {s['error']}" for s in skipped)
+        + ". A skipped blueprint means an entire API surface is missing while "
+          "the server still reports healthy."
+    )
+
+
+def test_every_manifest_module_registered():
+    """The registered set covers the full frozen-build manifest."""
+    registered = set(server.BLUEPRINT_REPORT.get("registered") or [])
+    missing = sorted(set(server.ROUTE_MODULES) - registered)
+    assert not missing, f"declared in ROUTE_MODULES but never registered: {missing}"
+
+
+def test_required_modules_are_never_skipped():
+    """REQUIRED modules must load; their absence is fatal, not degraded."""
+    skipped = {s["module"] for s in (server.BLUEPRINT_REPORT.get("skipped") or [])}
+    fatal = sorted(skipped & set(server.REQUIRED_ROUTE_MODULES))
+    assert not fatal, f"required route module(s) failed to load: {fatal}"
+
+
+def test_career_pipeline_endpoints_registered():
+    """Pinned explicitly: these are a live, in-use job search, not a demo.
+
+    routes/jobs.py depends on `data` and `skills`, which live at the REPO ROOT
+    rather than inside the installed package - so it is the module most likely
+    to silently stop registering again.
+    """
+    rules = {str(r.rule) for r in server.app.url_map.iter_rules()}
+    for path in (
+        "/api/pipeline/jobs",
+        "/api/pipeline/scan",
+        "/api/pipeline/jobs/<job_id>/apply",
+        "/api/pipeline/applications/<application_id>/response",
+    ):
+        assert path in rules, (
+            f"{path} not registered - the career pipeline is offline"
+        )
+
+
+def test_startup_report_endpoint_registered():
+    """The integrity endpoint must itself be present, or nothing reports."""
+    rules = {str(r.rule) for r in server.app.url_map.iter_rules()}
+    assert "/api/startup-report" in rules

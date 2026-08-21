@@ -19,6 +19,27 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
+# `data` and `skills` are top-level packages at the REPO ROOT, not inside
+# agent_friday, so they resolve only when the repo root is on sys.path.
+# `python server.py` puts it there implicitly (Python adds the script's own
+# directory); the `friday` CLI entry point and any launch from another cwd do
+# NOT - and this blueprint then fails to import and is silently skipped by
+# server.py's auto-discovery, taking the whole career pipeline offline with
+# nothing but a WARNING nobody reads. Roughly 70 such skips are visible in
+# friday.log between 2026-07-01 and 2026-08-19.
+#
+# Making the dependency explicit rather than accidental. NOTE: this fixes
+# source-tree launches only. An installed wheel does not ship data/ or skills/
+# at all (pyproject: packages.find where=["src"]), so a `pip install` user
+# cannot reach these routes regardless - a packaging gap, tracked separately in
+# docs/audits/server-death-forensics.md.
+import sys as _sys
+from pathlib import Path as _Path
+
+_REPO_ROOT = _Path(__file__).resolve().parents[3]
+if (_REPO_ROOT / "data").is_dir() and str(_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_REPO_ROOT))
+
 from data.job_tracker_schema import JobTracker
 from skills.application_engine import engine as app_engine
 from skills.job_scanner import scanner as job_scanner

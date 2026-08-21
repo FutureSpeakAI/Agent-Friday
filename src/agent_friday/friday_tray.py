@@ -26,9 +26,16 @@ VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
 ICON_PATH = PROJECT_DIR / "assets" / "icons" / "futurespeak.png"
 VOICE_LOG = Path.home() / ".friday" / "voice_debug.log"
+SERVER_STDERR_LOG = Path.home() / ".friday" / "server_stderr.log"
 SERVER_URL = "http://localhost:3000"
 HEALTH_URL = f"{SERVER_URL}/api/health"
 PORT = 3000
+# Real cold start measured at ~143s (wiki merge, model discovery, embedding
+# load, judgment probe battery). The previous 30s budget was structurally
+# guaranteed to expire before a HEALTHY server finished booting, so the tray
+# reported failure on every successful start and only recovered when the
+# watchdog later noticed the port. 300s is headroom, not a guess.
+SERVER_START_TIMEOUT_S = 300.0
 
 CREATE_NO_WINDOW = 0x08000000  # Windows: suppress child console
 
@@ -39,21 +46,37 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _wait_for_health(timeout: float = 30.0) -> bool:
+def _wait_for_health(timeout: float = SERVER_START_TIMEOUT_S,
+                     proc: subprocess.Popen | None = None) -> tuple[bool, str]:
+    """Wait for the server to answer /api/health.
+
+    Returns (healthy, detail). The distinction that matters: a server that
+    DIED and a server that is merely slow both used to look like one silent
+    timeout. Polling proc.poll() separates them - a dead child is reported
+    immediately with its exit code instead of burning the full budget.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            return False, (f"FAILED TO START (exit {proc.returncode}) - "
+                           f"see {SERVER_STDERR_LOG.name}")
         try:
-            with urllib.request.urlopen(HEALTH_URL, timeout=1.5) as r:
+            with urllib.request.urlopen(HEALTH_URL, timeout=3.0) as r:
                 if r.status < 500:
-                    return True
+                    return True, "healthy"
         except Exception:
             time.sleep(0.5)
-    return False
+    if proc is not None and proc.poll() is not None:
+        return False, (f"FAILED TO START (exit {proc.returncode}) - "
+                       f"see {SERVER_STDERR_LOG.name}")
+    return False, f"NOT RESPONDING after {timeout:.0f}s (process still alive)"
 
 
 class FridayTray:
     def __init__(self) -> None:
         self.server_proc: subprocess.Popen | None = None
+        self._child_err = None
+        self._last_failure: str | None = None
         self.running = False
         self.icon: pystray.Icon | None = None
         self._lock = threading.Lock()
@@ -78,16 +101,31 @@ class FridayTray:
             if _port_in_use(PORT):
                 # Server already running externally — treat as healthy.
                 self.running = True
+                self._last_failure = None
                 return
             python_exe = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
+            # Child stdout+stderr are appended to a file, never discarded: a
+            # server that dies during import (before its own file logging is
+            # up) has nowhere else to leave a traceback. DEVNULL here cost us
+            # seven invisible failures.
+            err_path = SERVER_STDERR_LOG
+            err_path.parent.mkdir(parents=True, exist_ok=True)
+            self._child_err = open(err_path, "ab", buffering=0)
+            self._child_err.write(
+                b"\n===== server start "
+                + time.strftime("%Y-%m-%dT%H:%M:%S").encode()
+                + b" =====\n"
+            )
             self.server_proc = subprocess.Popen(
                 [python_exe, str(SERVER_SCRIPT)],
                 cwd=str(PROJECT_DIR),
                 creationflags=CREATE_NO_WINDOW,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=self._child_err,
+                stderr=subprocess.STDOUT,
             )
-        self.running = _wait_for_health()
+        healthy, detail = _wait_for_health(proc=self.server_proc)
+        self.running = healthy
+        self._last_failure = None if healthy else detail
         self._refresh_menu()
 
     def stop_server(self) -> None:
@@ -103,6 +141,12 @@ class FridayTray:
                     proc.kill()
             except Exception:
                 pass
+        if self._child_err is not None:
+            try:
+                self._child_err.close()
+            except Exception:
+                pass
+            self._child_err = None
         self.running = False
 
     def restart_server(self) -> None:
@@ -139,7 +183,19 @@ class FridayTray:
 
     # ── Menu / icon ───────────────────────────────────────────────────
     def _status_label(self, _item=None) -> str:
-        return "Server Status: Running" if self.running else "Server Status: Stopped"
+        """A tray label that cannot lie about which of three states we are in.
+
+        Running / explicitly failed / merely stopped were previously collapsed
+        into two, so a crashed server was indistinguishable from a quit one.
+        """
+        if self.running:
+            return "Server Status: Running"
+        if self._last_failure:
+            detail = self._last_failure
+            if len(detail) > 60:
+                detail = detail[:57] + "..."
+            return f"Server Status: {detail}"
+        return "Server Status: Stopped"
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(

@@ -44,6 +44,15 @@ jobs:
         if: runner.os == 'Windows'
         run: pip install pyautogui pynput
 
+      # A module-level use-before-definition - a dict mutated ABOVE its own
+      # definition - is invisible to the ruff F82 set below, because the name
+      # IS defined, just later in the file. That exact break took the server
+      # down on 2026-08-19 and produced no traceback anywhere, because the
+      # tray discarded the child's stderr. Only executing the import proves
+      # module-level statement order is sound. ~4s.
+      - name: Import smoke test
+        run: python scripts/check_imports.py
+
       - name: Run unit + API suites
         run: pytest tests/unit tests/api -q
 
