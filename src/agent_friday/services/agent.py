@@ -2257,6 +2257,19 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         verification_summary = ', '.join(dict.fromkeys(t['name'] for t in evidence[:10])) if evidence else 'no tools used'
         final_status = 'complete' if verified else 'completed_unverified'
 
+        # A reply that IS a provider error is not a completed task, whatever the
+        # verifier concluded — the verifier grades the work, and there is no work
+        # here to grade. Without this a 404 comes back as prose, passes straight
+        # through _summarize_task_outcome verbatim, and the task announces
+        # "finished". See _looks_like_provider_failure for what this cost.
+        if _looks_like_provider_failure(reply):
+            final_status = 'failed'
+            _task_log(task_id,
+                      'FAILED: the model provider returned an error instead of '
+                      'a result, so nothing was produced. Reported as failed '
+                      'rather than complete. Provider said: %s'
+                      % (reply or '').strip()[:200])
+
         # v5: feed the learning loop with this task's outcome. The *approach* is
         # the tool strategy used (deduped tool names), so repeated tasks that
         # share a strategy form mineable buckets — "for agent_task tasks,
@@ -2738,13 +2751,43 @@ def _retry_chain_step(task_id, error_text):
 #: that advances past one of these ships nothing while reporting success
 #: (run 2 of the teen storybook advanced through five such steps). Treated
 #: as step failure: retried if budget remains, else the chain halts.
+#: Reply shapes that mean the provider never ran the work, whatever the status
+#: says. These arrive as ordinary prose in the reply — nothing raises — so a task
+#: carrying one of them reports "complete" and the caller believes it.
+#:
+#: 2026-08-21: every voice session's wiki distillation had been lost this way for
+#: weeks. `_spawn_voice_distill` routed to a model that is not resident, the call
+#: 404'd, the 404 text came back as the reply, and the task announced "Task
+#: complete." The record of every spoken conversation was discarded while
+#: asserting success — which is worse than failing, because nobody investigates
+#: a green light.
 _CHAIN_FAILURE_SIGNATURES = (
     "no model provider could run the agent",
     "exceeds the available context size",
     "it was not sent to a cloud provider",
     "[friday offline]",
     "credit balance is too low",
+    # Ollama / llama-server model-not-resident shapes
+    "model not found",
+    "model '",                      # {"error":"model 'x' not found"}
+    "http 404",
+    "connection refused",
+    "no local seat available",
 )
+
+
+def _looks_like_provider_failure(text) -> bool:
+    """True when a reply is a provider error rather than work product.
+
+    Used for EVERY background task, not just chain links. The chain path grew
+    this check first, but a one-off task that silently swallows a 404 is the
+    same defect with a smaller blast radius — and the voice distill proved the
+    blast radius is not small.
+    """
+    low = (text or "").strip().lower()
+    if not low:
+        return False
+    return any(sig in low for sig in _CHAIN_FAILURE_SIGNATURES)
 
 
 def _advance_task_chain(task_id, result_text):
