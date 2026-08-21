@@ -60,6 +60,31 @@ def _not_placeholder(value: str) -> bool:
     low = value.lower()
     return not any(p in low for p in PLACEHOLDER_VALUES)
 
+# A "key = value" line is only dangerous when the value is a literal credential.
+# `api_key=core.GEMINI_API_KEY` is the CORRECT pattern — a key read from config and
+# passed to a constructor — and flagging it teaches people that this scanner cries
+# wolf, which is how a scanner ends up bypassed and protecting nothing. Same for
+# prose: a comment reading "never drop the last token: `list_voices`" is not a
+# credential. (Both blocked a commit on 2026-08-21.)
+_CODE_REF_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
+_CODE_PUNCT = "`()[]{}"
+
+def _looks_like_code_not_literal(value: str) -> bool:
+    v = value.strip().strip(",;").rstrip(")")
+    if not v:
+        return True
+    # Never exempt something that matches a known real key shape — the AQ. and
+    # sk- formats contain dots and dashes and would otherwise read as identifiers.
+    for _cat, _rx, _val in RULES[:7]:
+        if _rx.search(value):
+            return False
+    if any(c in v for c in _CODE_PUNCT):
+        return True
+    return bool(_CODE_REF_RE.match(v))
+
+def _real_secret_assignment(value: str) -> bool:
+    return _not_placeholder(value) and not _looks_like_code_not_literal(value)
+
 def _is_personal_email(value: str) -> bool:
     low = value.lower()
     if any(a in low for a in EMAIL_ALLOW):
@@ -76,7 +101,7 @@ RULES = [
     ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"), None),
     ("Hardcoded secret assignment",
      re.compile(r"(?i)(?:api[_-]?key|secret|token|passwd|password|pwd|access[_-]?key)\s*[:=]\s*[\"']?([^\s\"';]{8,})"),
-     _not_placeholder),
+     _real_secret_assignment),
     ("Personal email (PII)",
      re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
      _is_personal_email),
