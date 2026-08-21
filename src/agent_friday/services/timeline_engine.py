@@ -142,15 +142,47 @@ def validate_timeline(tl: Optional[Dict[str, Any]]) -> Tuple[bool, List[str]]:
     return (not errs), errs
 
 
+def _creations_roots() -> list:
+    """Both creations roots, gallery first. DAILY_CREATIONS_DIR grew media
+    subfolders (project folders like storybook-liberty/) once agent sessions
+    started building there — the storybook E2E test's compose_timeline call
+    failed precisely because this resolver never looked in them."""
+    roots = [CREATIONS_DIR]
+    try:
+        from agent_friday.core import DAILY_CREATIONS_DIR as _daily
+        roots.append(Path(_daily))
+    except Exception:
+        pass
+    return roots
+
+
 def _resolve_clip_path(file: str) -> Optional[Path]:
-    """Resolve a clip reference to an absolute path (creation filename or path)."""
+    """Resolve a clip reference: absolute path, path relative to a creations
+    root (subfolders allowed), flat creation filename, or — as a last resort —
+    a unique recursive filename match under either creations root."""
     try:
         p = Path(file).expanduser()
         if p.exists() and p.is_file():
             return p
-        cand = CREATIONS_DIR / Path(file).name
-        if cand.exists():
-            return cand
+        rel = Path(str(file).replace("\\", "/").lstrip("/"))
+        for root in _creations_roots():
+            cand = root / rel
+            if cand.exists() and cand.is_file():
+                return cand
+            cand = root / rel.name
+            if cand.exists() and cand.is_file():
+                return cand
+        # Unique recursive match (bounded: creations trees are small).
+        hits = []
+        for root in _creations_roots():
+            try:
+                hits.extend(h for h in root.rglob(rel.name) if h.is_file())
+            except OSError:
+                continue
+            if len(hits) > 1:
+                return None  # ambiguous — force the caller to be specific
+        if len(hits) == 1:
+            return hits[0]
     except Exception:
         pass
     return None
