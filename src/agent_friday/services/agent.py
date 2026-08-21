@@ -5015,11 +5015,42 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
 #  after the critical gates and can only tighten, never loosen, governance.
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _creations_write_preapproved(name, inp) -> bool:
+    """write_file into the creations folders is project work, not persistent
+    system state — the storybook E2E showed the gate demanding a fresh yes
+    every turn for a manifest inside the project's own folder, while the same
+    bytes sailed through via shell curl. Writes whose resolved path lands
+    under CREATIONS_DIR or DAILY_CREATIONS_DIR skip the ask; everything else
+    keeps the ask-first contract unchanged."""
+    if name != "write_file":
+        return False
+    try:
+        from agent_friday import core as _core
+        raw = (inp or {}).get("path") or ""
+        if not str(raw).strip():
+            return False
+        p = Path(os.path.expanduser(str(raw))).resolve()
+        for root in (getattr(_core, "CREATIONS_DIR", None),
+                     getattr(_core, "DAILY_CREATIONS_DIR", None)):
+            if not root:
+                continue
+            try:
+                p.relative_to(Path(root).resolve())
+                return True
+            except ValueError:
+                continue
+    except Exception:
+        return False
+    return False
+
+
 def _hook_confirmation_gate(ctx):
     """Ask-first permission gate (interactive chat only). Pre, priority 10."""
     name = ctx.tool_name
     session_ctx = ctx.session_ctx
     _sid = (session_ctx or {}).get("session_id")
+    if _creations_write_preapproved(name, ctx.input):
+        return _hooks.ALLOW
     if (name in _tools_requiring_confirmation() and _sid
             and not _confirmation_bypassed(session_ctx)):
         if (session_ctx or {}).get("confirm_granted"):
