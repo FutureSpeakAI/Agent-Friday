@@ -1,8 +1,8 @@
 """Edit index.html without ever serving a half-finished page.
 
 The server reads index.html from disk on every request, so any partial edit
-reaches Stephen's live app the moment it touches the file. He is using Friday
-as his daily driver while sessions rebuild it underneath him; on 2026-08-18 he
+reaches the running app the moment it touches the file. The app is in use
+as a daily driver while sessions rebuild it underneath him; on 2026-08-18 he
 opened Settings and got a spinner that never resolved, because a component was
 live in his browser before the work behind it was.
 

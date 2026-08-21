@@ -41,8 +41,11 @@ friday           # launches the server, runs voice-first onboarding, opens http:
 ```
 
 **No API key? No problem.** Agent Friday ships a bundled local model — **`gemma3:4b`**
-(Google's open Gemma 3 4B, runs on ~8 GB RAM). The installers auto-install Ollama and
-pull it, so **chat works fully offline with zero cloud keys**. On first run, Friday
+(Google's open Gemma 3 4B, ~3.3 GB on disk, needs **16 GB system RAM**). The installers
+auto-install Ollama and pull it, so **chat works fully offline with zero cloud keys**.
+At that floor, local chat works but local *tool use* does not — `gemma3:4b` lacks native
+tool calling, so Friday disables tools for the turn rather than let the model narrate
+calls it never made. On first run, Friday
 greets you by voice and walks you through setup. Cloud keys are *optional upgrades* for
 sharper reasoning, image/video generation, and richer voice — add them any time in
 Settings (creative/voice degrade gracefully with a clear notice until you do).
@@ -101,10 +104,35 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, i
 
 ## Requirements
 
-- Python 3.10+
-- **Ollama + the bundled `gemma3:4b` model** — the zero-key default; chat runs fully local ([ollama.com](https://ollama.com), auto-installed by the installers)
-- Anthropic API key — *optional upgrade* for live Claude reasoning ([get one](https://console.anthropic.com/settings/keys))
-- Google Gemini API key — *optional* for voice and creative features ([get one](https://aistudio.google.com/apikey))
+- **Python 3.10+**
+- **16 GB system RAM.** This is a floor, not a recommendation. Friday's own budget rule
+  reserves 6 GB for the OS and takes 75% of the remainder, so at 8 GB the arithmetic
+  resolves to zero available and **every model seat is refused**. Earlier versions of this
+  README claimed 8 GB; that was wrong and the code always disagreed with it.
+- **~16 GB free disk** — roughly 6 GB consumed (`gemma3:4b` ~3.3 GB, embeddings ~90 MB,
+  venv and dependencies ~2–3 GB) against a 10 GB free-space floor the planner enforces.
+- **Ollama** — effectively required, not optional. It is the zero-key default and the only
+  local inference path on macOS and Linux ([ollama.com](https://ollama.com), auto-installed
+  by the installers).
+- **NVIDIA GPU** — required for local image generation and for the residency layer's
+  managed model seats. 12 GB VRAM is the only configuration with measured evidence behind
+  it. AMD GPUs are not detected at all (`nvidia-smi` is the only probe). There is a
+  CPU-only path for chat, and its throughput is unmeasured.
+- **Anthropic API key** — *optional upgrade* for live Claude reasoning ([get one](https://console.anthropic.com/settings/keys))
+- **Google Gemini API key** — *optional* for voice and creative features ([get one](https://aistudio.google.com/apikey))
+
+### Platform support, stated plainly
+
+Agent Friday runs on **Windows 10/11 with an NVIDIA GPU**. macOS and Linux can run the
+server, the web UI, cloud providers, and local chat through Ollama — but the system tray,
+the local model residency layer (llama-server seats), GPU-aware seat planning, and
+OS-protected credential storage are **Windows-only today**. On other platforms credentials
+fall back to plaintext unless you set `FRIDAY_PASSWORD`, and Apple Silicon is explicitly
+refused by the residency planner because no MLX or Metal backend exists in the tree.
+
+A clearly-scoped Windows product is more useful than a vaguely cross-platform one, so that
+is what this is. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for everything else that is broken
+or unverified.
 
 ---
 

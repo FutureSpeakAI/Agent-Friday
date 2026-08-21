@@ -22,7 +22,7 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.x   | Yes       |
+| 5.5.x   | Yes       |
 | < 1.0   | No        |
 
 ---

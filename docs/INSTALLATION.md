@@ -157,7 +157,7 @@ If `headroom-ai` fails to build (missing Rust/MSVC), Friday will still run — c
 
 ## Step 4: Configure API Keys
 
-Cloud keys are **optional** — with Ollama + `gemma3:4b`, chat runs fully local with no key at all. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted per provider under `~/.friday/providers/keys/` (vault-passphrase or Windows DPAPI protection) — never as plaintext in `settings.json` or source files.**
+Cloud keys are **optional** — with Ollama + `gemma3:4b`, chat runs fully local with no key at all. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted per provider under `~/.friday/providers/keys/` (vault-passphrase or Windows DPAPI protection).** One honest caveat: the setup wizard has historically also written keys and the vault passphrase as plaintext `SET` lines into launch scripts, and those plaintext values *override* the encrypted store at import. Treat any `start.bat` or `friday_startup.vbs` on your machine as containing live secrets. See KNOWN_ISSUES.md §7.
 
 ### Option A: Setup Wizard (Recommended)
 
@@ -233,7 +233,7 @@ Ollama enables local model routing — required for vault access to private data
    optional larger alternatives:
 
 ```bash
-ollama pull gemma3:4b    # bundled default — auto-installed, runs on ~8 GB RAM
+ollama pull gemma3:4b    # bundled default — auto-installed; needs 16 GB system RAM
 ollama pull qwen3:14b    # general purpose (8+ GB VRAM)
 ollama pull qwen3:8b     # lighter alternative (6+ GB VRAM)
 ollama pull qwen3:4b     # minimal (runs on CPU)
