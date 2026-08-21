@@ -651,17 +651,43 @@ def _gate_tool_result(part: dict, provider: str, field: str,
 
 def _gate_tools(tools: list, provider: str,
                 log_path: Path | None = None) -> list:
-    """Scan tool descriptions; redact any that carry sensitive context."""
+    """Redact tool descriptions that could carry third-party context.
+
+    Scoped deliberately to MCP-registered tools (``mcp_<server>_<tool>``).
+
+    First-party tool descriptions are static text authored in this repository
+    and shipped in the binary. They cannot leak the vault because they were
+    never in the vault — they are documentation, not user data. Running them
+    through a content classifier meant any description containing an ordinary
+    word like "contact", "family" or "calendar" was blanked, and the model was
+    handed a list of tools it could not read. That does not protect anything;
+    it just makes Friday look incapable, and it did so on every cloud-fallback
+    turn for an unknown length of time (found 2026-08-21).
+
+    MCP tool descriptions are still gated: they arrive at runtime from a
+    third-party server, so unlike first-party text they are not something this
+    repository vouched for. When one is withheld the replacement keeps the
+    tool's name and origin so the model can still reason about whether to call
+    it, rather than receiving an anonymous entry — a withheld description
+    should degrade capability, not erase it.
+    """
     gated = []
     for tool in tools:
         if not isinstance(tool, dict):
             gated.append(tool)
             continue
+        name = tool.get("name") or ""
         desc = tool.get("description", "")
-        if desc and _classify_cloud(desc) > Tier.PUBLIC:
+        if not (desc and name.startswith("mcp_")):
+            gated.append(tool)
+            continue
+        if _classify_cloud(desc) > Tier.PUBLIC:
             _log(provider, "tool.description", Tier.PRIVATE,
                  "redact", "sensitive-tool-desc", log_path)
-            gated.append({**tool, "description": "[description withheld by egress gate]"})
+            gated.append({**tool, "description": (
+                f"{name}: description withheld by the egress gate because it "
+                f"contained content classified as private. The tool is still "
+                f"callable; its parameters are unchanged.")})
         else:
             gated.append(tool)
     return gated
