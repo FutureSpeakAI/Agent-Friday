@@ -5414,6 +5414,23 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             # the main path. Route every iteration's payload through the same
             # centralized _seal_or_block wrapper (R3) so the boundary holds here too.
             kwargs = _seal_or_block(kwargs, "anthropic")
+            # Last line of defence for tool schemas. Normalising at MCP
+            # registration fixes the known source, but ONE malformed schema
+            # from any future path 400s the entire request — every tool, every
+            # conversation — with an error that names only an index. This loop
+            # is the primary cloud path in Friday; it should not be possible
+            # for a third party's JSON to silence it.
+            try:
+                _tl = kwargs.get("tools")
+                if isinstance(_tl, list):
+                    kwargs["tools"] = [
+                        dict(_t, input_schema=_mcp_normalize_schema(
+                            _t.get("input_schema") or {}, _t.get("name") or "?"))
+                        if isinstance(_t, dict) else _t
+                        for _t in _tl
+                    ]
+            except Exception:
+                pass
             _t0 = _time.time()
             resp = client.messages.create(**kwargs)
             # B4: accumulate token counts for the activity-ledger record.
@@ -5535,23 +5552,6 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
                 tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
                 _bmon_log(tu.name, tu.input, result)
-            # Last line of defence for tool schemas. Normalising at MCP
-            # registration fixes the known source, but ONE malformed schema
-            # from any future path 400s the entire request — every tool, every
-            # conversation — with an error that names only an index. This loop
-            # is the primary cloud path in Friday; it should not be possible
-            # for a third party's JSON to silence it.
-            try:
-                _tl = kwargs.get("tools")
-                if isinstance(_tl, list):
-                    kwargs["tools"] = [
-                        dict(_t, input_schema=_mcp_normalize_schema(
-                            _t.get("input_schema") or {}, _t.get("name") or "?"))
-                        if isinstance(_t, dict) else _t
-                        for _t in _tl
-                    ]
-            except Exception:
-                pass
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,
