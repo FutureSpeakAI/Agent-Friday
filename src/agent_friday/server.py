@@ -84,11 +84,52 @@ ROUTE_MODULES = [
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'messages',
     'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
-    'persona', 'platform', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'tasks', 'todos',
+    'persona', 'platform', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'tasks', 'todos',
     'work_plan',
     'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_studio', 'workspace_undo',
 ]
+
+# ── Blueprint criticality ─────────────────────────────────────────────────
+# Which route modules the app genuinely cannot run without. Deliberately
+# SHORT. A blanket 'any failure is fatal' rule would let one optional module
+# with a missing optional dependency brick a stranger's whole install - worse
+# than the silence it replaces. Everything not listed here is OPTIONAL: it may
+# fail, but it must announce itself (see _enforce_blueprint_policy).
+#
+# NOTE: 'jobs' (the career pipeline) is deliberately OPTIONAL despite being
+# actively used, because its deps live outside the installed package and a
+# pip-install user legitimately cannot have them. It must be LOUD, not fatal.
+REQUIRED_ROUTE_MODULES = frozenset({
+    'core_routes',   # /api/health, /api/models - the app is dead without it
+    'chat',          # the primary interaction surface
+})
+
+# Human-readable names for degradation messages. A user should never be shown
+# 'routes/jobs.py failed to import'; they should be told the career pipeline
+# is unavailable.
+ROUTE_LABELS = {
+    'jobs': 'Career pipeline',
+    'chat': 'Chat',
+    'core_routes': 'Core API',
+    'voice': 'Voice',
+    'calendar': 'Calendar',
+    'news': 'News',
+    'creations': 'Creations',
+    'creative_pipeline': 'Creative pipeline',
+    'content_pipeline': 'Content pipeline',
+    'scheduler': 'Scheduler',
+    'notifications': 'Notifications',
+}
+
+# Populated by _discover_and_register_blueprints; consumed by the policy
+# enforcer, /api/startup-report and tests/api/test_blueprint_discovery.py.
+BLUEPRINT_REPORT: dict = {'registered': [], 'skipped': [], 'blueprint_count': 0}
+
+
+def _route_leaf(dotted: str) -> str:
+    """'agent_friday.routes.jobs' -> 'jobs'."""
+    return dotted.rsplit('.', 1)[-1]
 
 
 def _discover_and_register_blueprints(flask_app):
@@ -128,6 +169,20 @@ def _discover_and_register_blueprints(flask_app):
     if _failed:
         _log.warning("Blueprint auto-discovery: %d registered, %d skipped",
                      len(_registered), len(_failed))
+    # Record the outcome instead of only logging it. A WARNING alone hid a
+    # missing capability for seven weeks and ~70 restarts
+    # (docs/audits/server-death-forensics.md). Degradation must cost
+    # something visible, so the result becomes enforceable, servable and
+    # testable rather than a line in a file nobody opens.
+    global BLUEPRINT_REPORT
+    _failed_leaves = {_route_leaf(_n) for _n, _ in _failed}
+    BLUEPRINT_REPORT = {
+        'registered': sorted(_route_leaf(_n) for _n in _names
+                             if _route_leaf(_n) not in _failed_leaves),
+        'skipped': [{'module': _route_leaf(_n), 'error': _err}
+                    for _n, _err in _failed],
+        'blueprint_count': len(_registered),
+    }
     return _registered
 
 _discover_and_register_blueprints(app)
@@ -355,6 +410,76 @@ def _fail_loud_and_exit(msg):
         except Exception:
             pass
     sys.exit(1)
+
+
+# ── Blueprint failure policy ──────────────────────────────────────────────
+# Deliberately placed HERE, after _fail_loud_and_exit is defined: the
+# discovery call near the top of this module runs long before that name
+# exists, so the enforcement cannot live inside the discovery function
+# without reintroducing exactly the module-level use-before-definition that
+# caused the 2026-08-19 outage.
+def _enforce_blueprint_policy():
+    """Make a failed blueprint cost something visible.
+
+    REQUIRED module fails -> refuse to start (a server missing its core API
+    is broken, not degraded). OPTIONAL module fails -> start, but say so in
+    three places a human or a machine will actually look: the log, a
+    notification worded for a person, and ~/.friday/startup-report.json.
+    """
+    _skipped = BLUEPRINT_REPORT.get('skipped') or []
+    _report_path = FRIDAY_DIR / 'startup-report.json'
+
+    if not _TESTING:
+        try:
+            import datetime as _dt
+            import json as _json
+            FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+            _report_path.write_text(_json.dumps({
+                'written_at': _dt.datetime.now().isoformat(timespec='seconds'),
+                'pid': os.getpid(),
+                'blueprints': BLUEPRINT_REPORT,
+            }, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+
+    if not _skipped:
+        return
+
+    _required = [_s for _s in _skipped
+                 if _s['module'] in REQUIRED_ROUTE_MODULES]
+    if _required and not _TESTING:
+        _detail = ', '.join(f"{_s['module']} ({_s['error']})"
+                            for _s in _required)
+        _fail_loud_and_exit(
+            'Agent Friday cannot start: required API module(s) failed to '
+            f'load: {_detail}. This is not a degraded server, it is a broken '
+            f'one. See {_report_path} and ~/.friday/server_stderr.log.')
+
+    for _s in _skipped:
+        _label = ROUTE_LABELS.get(_s['module'], _s['module'])
+        _log.warning('CAPABILITY OFFLINE: %s - routes/%s.py failed to '
+                     'import: %s', _label, _s['module'], _s['error'])
+
+    if not _TESTING:
+        try:
+            import agent_friday.notifications_engine as _notif
+            _lost = ', '.join(ROUTE_LABELS.get(_s['module'], _s['module'])
+                              for _s in _skipped)
+            _notif.push(
+                title=f'{_lost} unavailable',
+                body=('This feature did not load at startup and will not '
+                      'respond until it is fixed. Details: '
+                      f'{_report_path}'),
+                priority='high', source='startup', kind='degradation',
+                dedupe_key='blueprint-offline:' + ','.join(
+                    sorted(_s['module'] for _s in _skipped)),
+                meta={'skipped': _skipped},
+            )
+        except Exception:
+            pass
+
+
+_enforce_blueprint_policy()
 
 
 def _acquire_single_instance_lock():

@@ -24,4 +24,28 @@ else
     exit 0
 fi
 
+# ── Import smoke test ─────────────────────────────────────────────────────
+# A module-level use-before-definition in services/agent.py cost a silent
+# outage on 2026-08-19 (see docs/audits/server-death-forensics.md). Ruff
+# cannot catch it - the names ARE defined, just too late - so only a real
+# import proves statement order is sound. ~4s.
+#
+# Only runs when the repo venv exists: a bare clone without dependencies
+# must not be blocked from committing by a missing-dependency false alarm.
+if [ -x "$HERE/../venv/Scripts/python.exe" ]; then
+    IMPORTPY="$HERE/../venv/Scripts/python.exe"
+elif [ -x "$HERE/../venv/bin/python" ]; then
+    IMPORTPY="$HERE/../venv/bin/python"
+else
+    IMPORTPY=""
+fi
+
+if [ -n "$IMPORTPY" ]; then
+    if ! "$IMPORTPY" "$HERE/../scripts/check_imports.py"; then
+        echo "[pre-commit] import smoke test FAILED - commit blocked." >&2
+        echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+        exit 1
+    fi
+fi
+
 exec $PY "$SCANNER"
