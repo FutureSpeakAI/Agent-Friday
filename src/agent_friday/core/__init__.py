@@ -63,6 +63,7 @@ def _res_file(name):
     return alt if alt.exists() else p
 
 from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response, stream_with_context
+from flask.json.provider import DefaultJSONProvider as _FlaskDefaultJSONProvider
 from functools import wraps
 
 # Vault access control — gates Sovereign Vault content so it reaches local
@@ -131,6 +132,46 @@ except ImportError:
     _log.warning("flask-sock not installed — /ws/live disabled.")
 
 app = Flask(__name__, static_folder=None)
+
+
+# Resilient request-JSON parsing (2026-08-19). In the live pythonw process the
+# default provider's loads() raised ValueError for any request body containing
+# raw non-ASCII UTF-8 bytes (em-dash, é, …) — get_json(silent=True) swallowed
+# it, every such POST silently degraded to {}, and /api/chat then crashed on
+# the resulting empty message. The same bytes parse fine under the test
+# client, so the trigger is live-process state that hasn't been pinned down
+# yet; until it is, retry with an explicit utf-8 decode and log the original
+# failure (with the offending bytes) instead of losing both.
+class _ResilientJSONProvider(_FlaskDefaultJSONProvider):
+    def loads(self, s, **kwargs):
+        try:
+            return super().loads(s, **kwargs)
+        except ValueError as first_err:
+            if not isinstance(s, (bytes, bytearray)):
+                raise
+            try:
+                rv = super().loads(bytes(s).decode("utf-8", "replace"), **kwargs)
+            except ValueError as retry_err:
+                # Both parses failed — capture everything a post-mortem needs,
+                # since the caller (get_json(silent=True)) swallows the error.
+                logging.getLogger("friday.core").error(
+                    "request JSON unparseable even after utf-8/replace decode "
+                    "(%d bytes; first: %s: %s; retry: %s: %s; "
+                    "json.loads is %s.%s; head: %r)",
+                    len(s), type(first_err).__name__, first_err,
+                    type(retry_err).__name__, retry_err,
+                    getattr(json.loads, "__module__", "?"),
+                    getattr(json.loads, "__qualname__", repr(json.loads)),
+                    bytes(s[:120]))
+                raise first_err
+            logging.getLogger("friday.core").warning(
+                "request JSON parsed only after explicit utf-8 decode "
+                "(%d bytes; original error: %s: %s; head: %r)",
+                len(s), type(first_err).__name__, first_err, bytes(s[:120]))
+            return rv
+
+
+app.json = _ResilientJSONProvider(app)
 
 # When set, the module imports cleanly for the test suite: the background daemon
 # loops (kill-hotkey, daily scheduler, notification triggers, news archiver) are
@@ -778,6 +819,19 @@ def get_genai_client():
         except ImportError:
             print("  [FRIDAY] WARNING: google-genai not installed. Creative endpoints disabled.")
     return _genai_client
+
+
+# ── ElevenLabs (text-to-speech) ────────────────────────────────
+# Read here so services/elevenlabs_tools.py follows the same key-resolution
+# path as every other provider: env first, settings.json as the wizard-saved
+# fallback. A real key starts with "sk_"; the short hex string shown beside a
+# key in the ElevenLabs dashboard is the key *id* and will be rejected by the
+# API with `api_key_id_used_as_api_key`.
+# Env only at module scope — _load_settings() is defined further down this file,
+# so calling it here is a NameError at import time. The settings.json fallback
+# happens lazily in services/elevenlabs_tools._api_key(), which is the same
+# shape as get_genai_client()/get_anthropic_client() re-checking on first use.
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")  # pragma: allowlist secret
 
 
 # ── Anthropic Claude (text reasoning + chat) ───────────────────
