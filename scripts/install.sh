@@ -16,7 +16,7 @@
 # ─────────────────────────────────────────────────────────────────
 set -e
 
-REPO_URL="https://github.com/FutureSpeakAI/friday-desktop.git"
+REPO_URL="https://github.com/FutureSpeakAI/Agent-Friday.git"
 INSTALL_DIR="$HOME/.friday-desktop"
 BIN_DIR="$HOME/.local/bin"
 CLI_ENTRY="$BIN_DIR/friday"
@@ -129,13 +129,7 @@ fi
 
 success "Dependencies installed"
 
-# ── 6. Build UI ──────────────────────────────────────────────────
-echo ""
-info "Building UI..."
-"$PYTHON_VENV" "$INSTALL_DIR/src/agent_friday/ui/build_ui.py" > /dev/null
-success "index.html built"
-
-# ── 6.5 Bundled model (Ollama + Gemma) — zero cloud key needed ───
+# ── 6. Bundled model (Ollama + Gemma) — zero cloud key needed ───
 #  Friday runs a local Gemma model by default so chat works with NO API key.
 #  This step is best-effort and never fails the install; skip it with
 #  FRIDAY_SKIP_MODEL=1 or the --no-model flag.
@@ -229,5 +223,5 @@ read -r -p "  Run setup now? [Y/n] " REPLY
 REPLY="${REPLY:-Y}"
 if [[ "$REPLY" =~ ^[Yy] ]]; then
     echo ""
-    exec "$PYTHON_VENV" "$INSTALL_DIR/setup_wizard.py"
+    exec "$PYTHON_VENV" "$INSTALL_DIR/src/agent_friday/setup_wizard.py"
 fi

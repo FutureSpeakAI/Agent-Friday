@@ -89,7 +89,9 @@ def serve_ui():
         _html = _html.replace('<head>', f'<head>\n{_token_script}', 1)
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
-        return "index.html not found — run: python -m agent_friday.ui.build_ui", 404
+        return ("index.html not found. It is tracked in git — restore it with "
+                "`git checkout -- index.html`, or re-clone. It is NOT generated; "
+                "nothing in the install path rebuilds it."), 404
 
 
 @core_bp.route('/static/<path:filename>')

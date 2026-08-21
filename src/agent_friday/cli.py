@@ -580,9 +580,26 @@ def _ollama_installed() -> bool:
 
 
 def _has_model(models, name: str) -> bool:
-    """Match a model tag loosely (gemma3:4b matches 'gemma3:4b', 'gemma3:4b-...')."""
-    base = name.split(":")[0]
-    return any(m == name or m.startswith(name) or m.startswith(base + ":") for m in models)
+    """True when this exact model tag is installed.
+
+    The old version fell back to `m.startswith(base + ":")`, i.e. it answered
+    "is any tag of this family installed?" while the caller asked "is THIS tag
+    installed?". With only `gemma4:12b` present it returned True for
+    `gemma4:e2b`, `gemma4:26b` and every other gemma4 tag — so `friday doctor`
+    reported a model as ready and the next call to it 404'd. Fixed 2026-08-21;
+    it is the same defect as the harness that resolved `embeddinggemma` to a
+    tag that did not exist, and the same family as every other name-shape bug
+    found this week: comparing the SHAPE of an identifier instead of resolving
+    what it points at.
+
+    A BARE family name still matches any installed tag of that family, because
+    that is a genuine question ("do I have an embeddinggemma at all?"). A
+    SPECIFIC tag must match exactly, allowing only Ollama's quantisation
+    suffixes ("gemma3:4b" matches "gemma3:4b-it-q4_K_M").
+    """
+    if ":" not in name:
+        return any(m.split(":")[0] == name for m in models)
+    return any(m == name or m.startswith(name + "-") for m in models)
 
 
 def cmd_status():
@@ -691,10 +708,9 @@ def cmd_status():
     console.print()
     console.print("  [bold]Installation[/bold]")
     _check("server.py found", (HERE / "server.py").exists())
-    _check("build_ui.py found", (HERE / "ui" / "build_ui.py").exists())
-    _check("index.html built", (PROJ_ROOT / "index.html").exists(),
-           "run: python -m agent_friday.ui.build_ui" if not (PROJ_ROOT / "index.html").exists() else "")
-    _check("ui_parts/ present", (PROJ_ROOT / "ui_parts").is_dir())
+    _check("index.html present", (PROJ_ROOT / "index.html").exists(),
+           "index.html is tracked in git — re-clone or `git checkout -- index.html`"
+           if not (PROJ_ROOT / "index.html").exists() else "")
 
     console.print()
 
@@ -764,13 +780,6 @@ def cmd_update():
         pip_args = [sys.executable, "-m", "pip", "install", "--quiet", "-r", str(req)]
     subprocess.run(pip_args, check=False)
     console.print("  [green]✓[/green]  Dependencies up to date")
-
-    # Rebuild UI (build_ui.py writes index.html at the repo root)
-    build = HERE / "ui" / "build_ui.py"
-    if build.exists():
-        console.print("  [dim]Rebuilding UI...[/dim]")
-        subprocess.run([sys.executable, str(build)], capture_output=True, cwd=str(PROJ_ROOT))
-        console.print("  [green]✓[/green]  index.html rebuilt")
 
     console.print()
     console.print("  [bold cyan]Update complete.[/bold cyan]  Run [bold]friday[/bold] to start.\n")
