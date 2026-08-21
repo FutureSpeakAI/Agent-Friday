@@ -492,6 +492,23 @@ def voice_fallback_status():
     })
 
 
+def _local_brain_ready() -> bool:
+    """True when a local generation seat is actually resident and can answer.
+
+    Deliberately NOT `_ollama_available()`, which asks whether the daemon
+    socket accepts a connection. The daemon being up says nothing about whether
+    any model is loaded — that is the gap that let a voice session transcribe
+    speech and then fall silent. This asks the residency layer to name a seat,
+    and a name it will not give is the honest answer that local voice cannot
+    run right now.
+    """
+    try:
+        from agent_friday.services import local_seats as _seats
+        return bool(_seats.resolve("reasoning"))
+    except Exception:
+        return False
+
+
 def _resolve_voice_engine(settings=None):
     """Resolve which voice engine a session should use, honoring the ethos:
     LOCAL is the default, cloud (Gemini Live) is the opt-in.
@@ -542,7 +559,18 @@ def _resolve_voice_engine(settings=None):
     try:
         eng = get_local_voice_engine()
         local_ok = eng.available()
+        # THREE requirements, three checks. `eng.models_ready()` certifies the
+        # Whisper checkpoint and the Piper voice — the two ends of the cascade —
+        # and says nothing about the brain in the middle. A session could
+        # therefore be declared ready, transcribe speech, and then have nothing
+        # to think with. Local voice needs ASR *and* a resident brain *and* TTS;
+        # anything less is not a local voice session, it is a microphone.
         models_ready = eng.models_ready() if local_ok else False
+        if models_ready and not _local_brain_ready():
+            models_ready = False
+            _log.warning("local voice: ASR and TTS are ready but no local brain "
+                         "seat is resident — refusing the local engine rather "
+                         "than starting a session that cannot answer")
     except Exception:
         local_ok = False
         models_ready = False
@@ -949,9 +977,32 @@ if sock is not None:
                 # in this worker thread; no fake amplitude is emitted during the
                 # gap, so the cube color-shifts (processing) without motion.
                 try:
+                    # Pin the brain to a seat that is ACTUALLY RESIDENT.
+                    #
+                    # This call used to pass no model at all, so the router
+                    # picked — and picked a seat that was not loaded. The turn
+                    # transcribed, emitted status:thinking, 404'd inside the
+                    # router, and never spoke. Whisper and Piper both worked
+                    # perfectly, which is why this read as a voice bug for
+                    # weeks: the two ends of the cascade were fine and the
+                    # middle was absent. Same defect as the wiki distillation
+                    # loss and the `friday doctor` model check — resolving a
+                    # NAME instead of asking what is loaded (2026-08-21).
+                    #
+                    # local_seats.resolve() returns only installed seats and
+                    # returns the caller's preference unchanged when the daemon
+                    # is unreachable, so a transient blip cannot silently
+                    # rewrite which model answers.
+                    _brain = None
+                    try:
+                        from agent_friday.services import local_seats as _seats
+                        _brain = _seats.resolve("reasoning")
+                    except Exception:
+                        pass
                     reply, _trace = _generate_agent(
                         [{"role": "user", "content": user_text}],
                         system=system_prompt,
+                        model=_brain,
                         temperature=settings.get("temperature"),
                         workspace=settings.get("active_workspace") or "",
                     )
