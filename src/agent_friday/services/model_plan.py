@@ -16,30 +16,28 @@ Design principles, all of them earned the hard way (see KNOWN_ISSUES.md §1):
 * **Nothing is reported as available on the strength of a name.** A tier is
   ready only when its requirement is arithmetically satisfied by measured
   numbers.
-* **The floor is the vault, not the conversation.** This is the part most
-  hardware guides get backwards.
+* **If a model is not consumed, it is not installed.** No weights are fetched
+  for a seat that is not live, however plausible the seat sounds.
 
-## The measured floor
+## What the floor actually is
 
-Embeddings and function-calling run on CPU at usable speed. Measured
-2026-08-21 on an i7-10700F (8c/16t), Ollama, ``num_gpu: 0``:
+**Memory runs without a GPU.** It uses ``all-MiniLM-L6-v2`` through
+sentence-transformers, which is a declared pip dependency — so it arrives with
+the install rather than as a model download. That claim survived a correction;
+the mechanism behind it did not.
 
-    embeddinggemma:300m   57 ms  / ~40 tok chunk    (8 threads)
-                         150 ms  / ~180 tok chunk
-                         328 ms  / ~700 tok chunk
-    functiongemma:270m   358 ms  end-to-end function call, unthrottled
-                        1079 ms  end-to-end at 8 threads
+**Tool calling does not work on a local brain today.** ``function_manager``
+exists as a role in ``residency_policy`` with a residency class, a context
+budget and a UI label — and nothing in ``agent.py``, ``routes/chat.py``,
+``routing/`` or ``local_seats.py`` ever consults it. So a local-only Friday
+converses and remembers; she does not act. Tools need a cloud key. See
+KNOWN_ISSUES.md.
 
-Both returned real results — the function seat genuinely emitted a tool call,
-it did not merely respond. So **a machine with no usable GPU can still run
-Friday's memory and her tools.** The GPU buys a local conversational brain and
-local image generation, and nothing else.
-
-The thread asymmetry above is why the embedder is capped and the function seat
-is not: the embedder runs in bulk where sustained saturation is the cost and
-per-chunk latency is unwatched, and the function seat runs inside a turn
-someone is waiting on. Capping the embedder is free; capping the function seat
-costs 3x on the one path where latency is felt.
+An earlier version of this module recommended downloading ``embeddinggemma:300m``
+and ``functiongemma:270m`` on the strength of real benchmarks — 57-328 ms per
+embedding chunk, 358 ms per function call. The numbers were correct and the
+recommendation was worthless: nothing in ``src/`` loads either model. Measuring
+a component that is not in the path tells you nothing about the system.
 """
 from __future__ import annotations
 
@@ -48,17 +46,32 @@ from __future__ import annotations
 # the model registry. Where a number is inferred it says so, because the
 # installer should not quietly present an inference as a measurement.
 
-#: The two seats that make a vault usable. Both CPU-only, both tiny.
-VAULT_MODELS = (
-    {"id": "embeddinggemma:300m", "role": "embedder", "gib": 0.62,
-     "why": "indexes your vault so Friday can find things in it",
-     "threads": "capped",
-     "measured": "57/150/328 ms per chunk on CPU (short/medium/long)"},
-    {"id": "functiongemma:270m", "role": "function", "gib": 0.55,
-     "why": "turns your requests into tool calls",
-     "threads": "uncapped",
-     "measured": "358 ms end-to-end function call on CPU"},
-)
+#: NOTHING. Deliberately empty, and the reason matters.
+#:
+#: This used to list `embeddinggemma:300m` and `functiongemma:270m` — 1.17 GiB
+#: of Ollama models described as "indexes your vault" and "turns your requests
+#: into tool calls". Neither claim was true. Grepping `src/` for either name
+#: returns only comments; no runtime path loads them. The real embedder is
+#: `all-MiniLM-L6-v2`, reached through sentence-transformers, and
+#: `local_seats.py:48` sets `_MIN_USEFUL_GB = 1.5` specifically to EXCLUDE
+#: functiongemma from seat selection.
+#:
+#: They were benchmarked, and the numbers were real: 57-328 ms per embedding
+#: chunk, 358 ms per function call. But a measurement of a component that is
+#: not in the path says nothing about the system. See KNOWN_ISSUES.md §1.
+#:
+#: The rule now: **if a model is not consumed, it is not installed.** Nobody
+#: wants to download a gigabyte of weights staged for a seat that is not live.
+VAULT_MODELS = ()
+
+#: What the vault actually needs, and how it arrives.
+#: `sentence-transformers` is a declared dependency (pyproject.toml:81), so the
+#: library comes with `pip install -e .`. The ~90 MB of MiniLM weights are
+#: fetched by it on FIRST USE — which, left alone, means a 90 MB download in
+#: the middle of someone's first conversation. The installer pre-warms it
+#: instead.
+EMBEDDER = {"id": "all-MiniLM-L6-v2", "mib": 90,
+            "via": "sentence-transformers (a pip dependency)"}
 
 #: Local conversational brains, smallest first. `min_ram_gib` is what the model
 #: needs resident; `vram_gib` is what it needs on a card to be fast rather than
@@ -189,8 +202,7 @@ def _local_alternatives(conversational, need_gib: float) -> list:
     The point is not to pick one — it is to avoid telling someone to download
     5 GiB while a perfectly good model sits on their disk.
     """
-    known = {m["id"].split(":")[0]
-             for m in list(BRAIN_MODELS) + list(VAULT_MODELS)}
+    known = {m["id"].split(":")[0] for m in BRAIN_MODELS}
     return sorted({t for t in (conversational or ())
                    if ":" in t and t.split(":")[0] not in known})
 
@@ -242,43 +254,28 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
     tiers = []
 
     # ── Tier 1: the vault. The minimum requirement, and it runs on CPU. ──
-    vault_gib = round(sum(m["gib"] for m in VAULT_MODELS), 2)
     # Refuse if installing would leave the machine without room to run. 2 GiB is
     # a hard floor, not a comfortable one — R8 wants 10 GiB and disk_warning
     # fires below that. Installing 1.17 GiB into 3 GiB free technically succeeds
     # and leaves a machine that cannot write a log file.
-    vault_need = vault_gib + 2.0
+    vault_need = 2.0
     if n["disk_free_gib"] < vault_need:
         tiers.append({
-            "id": "vault", "name": "Vault memory and tools", "status": "refused",
+            "id": "vault", "name": "Memory", "status": "refused",
             "rule": "disk",
-            "reason": (f"needs {vault_need:.1f} GiB free ({vault_gib:.2f} GiB of "
-                       f"models plus 2 GiB to work in), found "
-                       f"{n['disk_free_gib']:.1f} GiB. Free some space and re-run "
-                       f"— this is the one tier worth making room for."),
+            "reason": (f"needs about {vault_need:.0f} GiB free to work in, found "
+                       f"{n['disk_free_gib']:.1f} GiB. Free some space and "
+                       f"re-run — this is the one tier worth making room for."),
             "models": [],
         })
     else:
-        need = [m for m in VAULT_MODELS if not _have(installed, m["id"])]
-        have = [m for m in VAULT_MODELS if _have(installed, m["id"])]
-        got = (f" Already installed: {', '.join(m['id'] for m in have)}."
-               if have else "")
         tiers.append({
-            "id": "vault", "name": "Vault memory and tools",
-            "status": "install" if need else "ready",
-            # Both figures below are the SHIPPED configuration, and they come
-            # from different thread settings on purpose: the embedder is capped
-            # at 8 threads (57/150/328 ms — capped is actually faster here, and
-            # uncapped pinned all 16 logical cores at 100%), the function seat
-            # is uncapped (358 ms; capping it costs 3x on the one path a user
-            # waits on). Quoting 1079 ms would describe a configuration that
-            # does not ship.
-            "reason": ((f"{sum(m['gib'] for m in need):.2f} GiB to fetch. " if need
-                        else "Already present. ")
-                       + "CPU-only, no GPU needed: measured 57-328 ms to embed a "
-                         "chunk (8 threads, as shipped) and 358 ms per function "
-                         "call (unthrottled, as shipped)." + got),
-            "models": need,
+            "id": "vault", "name": "Memory", "status": "ready",
+            "reason": (f"Runs on your processor, no graphics card needed. Uses "
+                       f"{EMBEDDER['id']} (~{EMBEDDER['mib']} MB) via "
+                       f"{EMBEDDER['via']}, so it arrives with the install "
+                       f"rather than as a separate download."),
+            "models": [],
         })
 
     # ── Tier 2: a local conversational brain. ──
@@ -440,6 +437,63 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
         "vault_ready": any(t["id"] == "vault" and t["status"] != "refused"
                            for t in tiers),
     }
+
+
+def brain_is_primary_capable(p: dict) -> tuple[bool, str]:
+    """Can the local brain be someone's PRIMARY brain? Today: no, on any machine.
+
+    THE THRESHOLD, stated so the next person knows when to move it:
+
+      A local brain is primary-capable when Friday can use her TOOLS through
+      it. Conversation and memory are not the bar — an assistant that talks and
+      remembers but cannot read a file, search, or touch a calendar is a
+      different product, not a slower one.
+
+    Today that is false everywhere, and NOT because of hardware.
+    ``function_manager`` exists as a role in ``residency_policy`` with a
+    residency class, a context budget and a UI label, and nothing in
+    ``agent.py``, ``routes/chat.py``, ``routing/`` or ``local_seats.py`` ever
+    consults it. A local brain therefore has no function seat to delegate to,
+    however capable it is. Presenting this as a hardware limit would send
+    someone to buy a better machine for the same result.
+
+    **When function_manager is wired, change this function**, and the
+    hardware-shaped test underneath becomes the real one: a model that can call
+    tools, running on the GPU (CPU generation throughput is unmeasured for
+    every model in this table). The scaffolding for that is deliberately left
+    below rather than deleted, so the next person can see what the test should
+    become.
+
+    Returns (capable, reason). The reason is written for a person, not a log.
+    """
+    _ = _hardware_brain_verdict(p)   # not the deciding factor yet — see above
+    return False, ("Friday can only use her tools — reading files, searching, "
+                   "your calendar — through a cloud model right now. Running "
+                   "them from a local model isn't built yet, so this isn't "
+                   "about your hardware. A local model handles conversation "
+                   "and memory perfectly well on its own.")
+
+
+def _hardware_brain_verdict(p: dict) -> tuple[bool, str]:
+    """The hardware-only half of the question, kept live and tested.
+
+    This is what brain_is_primary_capable() SHOULD return once a local brain
+    can reach a function seat. It is called (and discarded) above so it cannot
+    rot into something that no longer runs.
+    """
+    tier = next((t for t in p.get("tiers", []) if t["id"] == "brain"), None)
+    if not tier or tier["status"] == "refused":
+        return False, "This machine can't run a local conversational model at all."
+    picked = tier["models"][0] if tier.get("models") else None
+    on_gpu = " on GPU" in tier.get("reason", "")
+    has_tools = (bool(picked.get("tools")) if picked
+                 else "cannot call tools" not in tier.get("reason", ""))
+    if not has_tools:
+        return False, "The best local model here can't call tools natively."
+    if not on_gpu:
+        return False, ("A local model fits, but only on the processor, and CPU "
+                       "generation speed is unmeasured.")
+    return True, "This machine could run a capable local brain on its GPU."
 
 
 def render(p: dict) -> str:

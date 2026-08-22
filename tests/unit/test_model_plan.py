@@ -45,17 +45,18 @@ def tiers(p):
     (32, 100, 0, "linux"),
     (16, 50, 0, "darwin"),
 ])
-def test_vault_runs_without_a_gpu_on_every_supported_shape(ram, disk, vram, os_family):
-    """The vault is the minimum requirement and must not need a GPU.
+def test_memory_runs_without_a_gpu_and_downloads_nothing(ram, disk, vram, os_family):
+    """Memory is the minimum requirement, needs no GPU, and needs no download.
 
-    This is the claim the installer's whole story rests on: embeddings and
-    function calling are CPU-viable, so Friday's memory and tools work on
-    almost anything and the GPU only buys a local conversational brain.
+    The claim survived a correction; the mechanism did not. It used to name two
+    Ollama models that nothing in src/ loads. The real embedder is
+    all-MiniLM-L6-v2, reached through sentence-transformers, which is a declared
+    pip dependency — so it arrives with the install.
     """
     t = tiers(mp.plan(profile(ram, disk, vram, os_family)))
-    assert t["vault"]["status"] == "install"
-    assert {m["id"] for m in t["vault"]["models"]} == {
-        "embeddinggemma:300m", "functiongemma:270m"}
+    assert t["vault"]["status"] == "ready"
+    assert t["vault"]["models"] == []
+    assert "all-MiniLM-L6-v2" in t["vault"]["reason"]
 
 
 def test_eight_gigabytes_refuses_seats_and_names_rule_r2():
@@ -64,8 +65,8 @@ def test_eight_gigabytes_refuses_seats_and_names_rule_r2():
     assert t["seats"]["status"] == "refused"
     assert t["seats"]["rule"] == "R2"
     assert "16" in t["seats"]["reason"]
-    # ...but the vault still installs. A refusal must not cascade.
-    assert t["vault"]["status"] == "install"
+    # ...but memory still works. A refusal must not cascade.
+    assert t["vault"]["status"] == "ready"
 
 
 # ── Regressions from the first version of this module ────────────────────────
@@ -101,9 +102,9 @@ def test_cpu_only_gets_the_smallest_useful_model_not_the_largest(ram):
     assert "unmeasured" in t["brain"]["reason"]
 
 
-def test_install_that_would_leave_no_working_room_is_refused():
-    """1.17 GiB of models into 3 GiB free 'succeeds' and leaves a dead machine."""
-    t = tiers(mp.plan(profile(8, 3, 0)))
+def test_no_working_room_on_disk_refuses_memory():
+    """Friday needs somewhere to write. Under 2 GiB free, say so."""
+    t = tiers(mp.plan(profile(8, 1, 0)))
     assert t["vault"]["status"] == "refused"
     assert t["vault"]["rule"] == "disk"
 
@@ -146,7 +147,7 @@ def test_reads_the_key_hardware_profile_actually_writes():
                  "disk": {"free_mib": 247905},
                  "gpus": []})
     assert 240 < p["hardware"]["disk_free_gib"] < 245
-    assert tiers(p)["vault"]["status"] == "install"
+    assert tiers(p)["vault"]["status"] == "ready"
 
 
 @pytest.mark.parametrize("shape", [
@@ -256,26 +257,32 @@ def test_an_embedding_model_is_never_offered_as_a_brain():
     assert "nomic-embed-text" not in reason2
 
 
-def test_the_vault_still_sees_its_own_embedders_as_installed():
-    """`conversational` excludes embedders; `installed` must not.
+def test_conversational_filter_does_not_hide_an_installed_brain():
+    """`conversational` may be filtered; `installed` must not be.
 
-    The vault's two models ARE embedding-adjacent, so filtering the inventory
-    before passing it in would make the planner re-propose downloads the user
-    already has — trading one bug for its opposite.
+    The two parameters exist because filtering the inventory before passing it
+    in would make the planner re-propose downloads the user already has. The
+    original version of this test guarded the vault's own embedders; the vault
+    no longer downloads anything, so the same property is pinned on the brain,
+    which does.
     """
-    p = mp.plan(profile(32, 200, 0),
-                installed=["embeddinggemma:300m", "functiongemma:270m"],
-                conversational=[])
-    assert tiers(p)["vault"]["status"] == "ready"
-    assert not any(m["id"].startswith("embeddinggemma")
-                   for m in p["download"])
+    p = mp.plan(profile(32, 200, 0), installed=["gemma3:4b"], conversational=[])
+    assert tiers(p)["brain"]["status"] == "ready"
+    assert p["download"] == []
 
 
-def test_partial_install_only_fetches_the_missing_half():
-    p = mp.plan(profile(16, 100, 0), installed=["embeddinggemma:300m"])
-    ids = {m["id"] for m in tiers(p)["vault"]["models"]}
-    assert ids == {"functiongemma:270m"}
-    assert "Already installed" in tiers(p)["vault"]["reason"]
+def test_no_model_is_installed_that_nothing_consumes():
+    """The rule, pinned: if src/ does not load it, the installer does not fetch it.
+
+    embeddinggemma:300m and functiongemma:270m were recommended on the strength
+    of real benchmarks. Nothing loads either. This test exists so that cannot
+    quietly come back.
+    """
+    for args in [(16, 100, 0), (32, 200, 12), (8, 40, 0)]:
+        p = mp.plan(profile(*args))
+        ids = {m["id"] for m in p["download"]}
+        assert not (ids & {"embeddinggemma:300m", "functiongemma:270m"}), ids
+    assert mp.VAULT_MODELS == ()
 
 
 # ── The executor ─────────────────────────────────────────────────────────────
