@@ -39,10 +39,15 @@
 
        A JSON Schema enum is a request to the model, not a guarantee. Every
        parameter is re-checked here against a regex or a range before use,
-       and every one is passed to Invoke-Native as an ARGUMENT ARRAY ELEMENT,
-       never interpolated into a command line. A package name that contained
-       `& calc.exe` would fail validation; even if it did not, it would
-       arrive at pip as one literal argv entry.
+       and every one is passed to Invoke-Native as a distinct element of an
+       argument array. Invoke-Native runs with UseShellExecute = $false, so
+       the command line goes straight to CreateProcess and no shell ever
+       parses it - `&`, `|` and `;` are not metacharacters in that context.
+       A package name containing `& calc.exe` fails Assert-PackageName
+       outright; even if it somehow did not, it would arrive at pip as one
+       literal argv entry. See ConvertTo-NativeArgumentString in Common.ps1
+       for exactly how the array becomes a correctly quoted command line, and
+       why that is not the same as building a shell string.
 
     4. PATHS ARE CONFINED.
 

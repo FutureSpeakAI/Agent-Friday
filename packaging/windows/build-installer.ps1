@@ -32,8 +32,12 @@
 
 [CmdletBinding()]
 param(
-    [string] $RepoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
-    [string] $OutputDir  = (Join-Path $PSScriptRoot 'dist'),
+    # NOTE: these deliberately default to empty and are resolved in the body.
+    # $PSScriptRoot is not reliably populated while param() defaults are being
+    # evaluated under PowerShell 5.1 - it comes back empty and Join-Path
+    # throws before the script has printed a single line. Found the hard way.
+    [string] $RepoRoot    = '',
+    [string] $OutputDir   = '',
     [string] $BuildPython = 'python',
     # Skip fetching the embeddable Python. The installer will download it on
     # the target machine instead.
@@ -44,7 +48,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$Here     = $PSScriptRoot
+$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $RepoRoot)  { $RepoRoot  = (Resolve-Path (Join-Path $Here '..\..')).Path }
+if (-not $OutputDir) { $OutputDir = (Join-Path $Here 'dist') }
+
 $Staging  = Join-Path $Here 'staging'
 $Payload  = Join-Path $Staging 'payload'
 $PyBundle = Join-Path $Staging 'python'
@@ -62,6 +69,7 @@ $version = '0.0.0'
 $m = [regex]::Match((Get-Content -LiteralPath (Join-Path $RepoRoot 'pyproject.toml') -Raw), '(?m)^version\s*=\s*"([^"]+)"')
 if ($m.Success) { $version = $m.Groups[1].Value }
 
+Set-StepTotal 5
 Say-Banner -Version $version
 Say "Building the Windows installer artifact."
 Say "  repo   : $RepoRoot"

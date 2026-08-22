@@ -208,13 +208,78 @@ function Get-InstallWarnings { return @($script:Warnings) }
 
 # --- Running external commands ------------------------------------------
 
+function ConvertTo-NativeArgumentString {
+    <#  Turn an argument ARRAY into the single command-line string that
+        CreateProcess wants, using Microsoft's documented argv quoting rules
+        (backslashes before a quote are doubled; the quote is escaped).
+
+        WHY THIS EXISTS, AND WHY IT IS STILL SAFE
+        -----------------------------------------
+        ProcessStartInfo.ArgumentList - the API that takes a real array and
+        does this for you - was added in .NET Core 2.1. Windows PowerShell 5.1
+        runs on .NET Framework, where it does not exist. This installer targets
+        5.1 because that is what a stock Windows 11 machine has. So we must
+        compose a string; there is no array option available.
+
+        That is NOT the same thing as composing a shell command line, and the
+        difference is the whole security argument:
+
+          * Invoke-Native always sets UseShellExecute = $false, so this string
+            is handed to CreateProcess directly. No cmd.exe, no PowerShell
+            parser, no shell of any kind is involved.
+          * Therefore & | ; > < ` $ ( ) are NOT metacharacters here. They are
+            ordinary bytes in an argument. There is nothing for them to inject
+            into.
+          * The only real risk is ARGUMENT BOUNDARY injection - a value
+            containing a quote or a space splitting itself into two arguments.
+            Correct quoting below prevents that, and Heal.ps1's validators
+            reject quotes and spaces before a value ever reaches here anyway.
+            Two independent layers, either of which is sufficient.
+
+        If you ever change Invoke-Native to use cmd.exe /c, Start-Process
+        without -ArgumentList, or Invoke-Expression, every sentence above stops
+        being true and you have created a command-injection path.
+    #>
+    param([string[]] $Arguments)
+    $parts = @()
+    foreach ($a in $Arguments) {
+        $s = [string]$a
+        if ($s -eq '') { $parts += '""'; continue }
+        if ($s -notmatch '[\s"]') { $parts += $s; continue }
+
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.Append('"')
+        $i = 0
+        while ($i -lt $s.Length) {
+            $slashes = 0
+            while ($i -lt $s.Length -and $s[$i] -eq '\') { $slashes++; $i++ }
+            if ($i -eq $s.Length) {
+                # Trailing backslashes must be doubled so they do not escape
+                # the closing quote we are about to append.
+                [void]$sb.Append('\' * ($slashes * 2))
+            }
+            elseif ($s[$i] -eq '"') {
+                [void]$sb.Append('\' * ($slashes * 2 + 1))
+                [void]$sb.Append('"')
+                $i++
+            }
+            else {
+                [void]$sb.Append('\' * $slashes)
+                [void]$sb.Append($s[$i])
+                $i++
+            }
+        }
+        [void]$sb.Append('"')
+        $parts += $sb.ToString()
+    }
+    return ($parts -join ' ')
+}
+
 function Invoke-Native {
-    <#  Run an executable with an ARGUMENT ARRAY, never a composed shell
-        string. This is not stylistic. Argument arrays are what make it safe
-        for a healing remediation to supply a parameter (a package name, a
-        port) without that parameter being able to become a second command.
-        If you ever change this to build a string and hand it to cmd.exe or
-        Invoke-Expression, you have created a command-injection path.
+    <#  Run an executable. Callers pass an argument ARRAY; it is converted to
+        a properly quoted command line by ConvertTo-NativeArgumentString and
+        handed to CreateProcess with UseShellExecute = $false, so no shell
+        ever sees it. Read that function's header before changing this one.
 
         Returns a PSCustomObject: ExitCode, StdOut, StdErr, Combined.
         Never throws on a non-zero exit; the caller decides what that means.
@@ -239,9 +304,13 @@ function Invoke-Native {
     $psi.RedirectStandardError  = $true
     $psi.CreateNoWindow         = $true
     if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
-    foreach ($a in $Arguments) { [void]$psi.ArgumentList.Add($a) }
+    $psi.Arguments = ConvertTo-NativeArgumentString $Arguments
     if ($Environment) {
-        foreach ($k in $Environment.Keys) { $psi.Environment[$k] = [string]$Environment[$k] }
+        # EnvironmentVariables (StringDictionary), not Environment. The latter
+        # is another .NET Core-era addition that PowerShell 5.1's .NET
+        # Framework host does not reliably have - the same class of trap as
+        # ArgumentList above.
+        foreach ($k in $Environment.Keys) { $psi.EnvironmentVariables[[string]$k] = [string]$Environment[$k] }
     }
 
     $proc = New-Object System.Diagnostics.Process
