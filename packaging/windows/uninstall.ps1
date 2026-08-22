@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     Agent Friday - Windows uninstaller
 
@@ -531,7 +531,7 @@ $null = Invoke-Step -Id 'uninstall.root' -Title 'Removing Friday''s program file
 
 Complete-Install -ReportPath (Join-Path $LogDir 'LAST-UNINSTALL-REPORT.md')
 
-$warns = Get-InstallWarnings
+$warns = Get-FailureWarnings
 Say ''
 if ($warns.Count -eq 0) {
     Say "  $($script:C.Green)$($script:C.Bold)Agent Friday has been removed.$($script:C.Reset)"
@@ -548,3 +548,4 @@ Say ''
 
 if (-not $Unattended) { Read-Host '  Press Enter to close' | Out-Null }
 exit 0
+
