@@ -149,7 +149,55 @@ sys.stdout.write(json.dumps(sys.argv[1:]))
           (($got.Count -eq 1) -and ([string]$got[0] -ceq 'flask & calc.exe')) `
           ("got " + ($got.Count) + " arg(s): " + ($got -join ' | '))
 
-    Remove-Item -LiteralPath $printer -Force -ErrorAction SilentlyContinue
+    # --- REGRESSION: Invoke-Native must preserve output line ORDER ---------
+    #
+    # The first implementation used Register-ObjectEvent -Action handlers,
+    # which PowerShell dispatches with no ordering guarantee. A three-line
+    # probe came back scrambled, the Python version check compared a path
+    # against a version string, and the installer told a user with a perfectly
+    # good Python that their download had failed. Verification being wrong is
+    # the most expensive failure mode this installer has.
+    #
+    # 200 numbered lines, checked in sequence. Interleaved stderr too, since
+    # that is where a pipe-buffer deadlock would show up.
+    $ordered = Join-Path $env:TEMP 'friday_order_probe.py'
+    Set-Content -LiteralPath $ordered -Encoding ASCII -Value @'
+import sys
+for i in range(200):
+    print("line%03d" % i)
+    if i % 20 == 0:
+        sys.stderr.write("err%03d\n" % i)
+sys.stdout.flush()
+'@
+    $r = Invoke-Native -FilePath $py -Arguments @($ordered) -TimeoutSeconds 120
+    $outLines = @($r.StdOut -split "`r?`n" | Where-Object { $_ -match '^line\d{3}$' })
+    $inOrder = ($outLines.Count -eq 200)
+    if ($inOrder) {
+        for ($i = 0; $i -lt 200; $i++) {
+            if ($outLines[$i] -ne ("line{0:D3}" -f $i)) { $inOrder = $false; break }
+        }
+    }
+    Check 'Invoke-Native preserves stdout line order (200 lines)' $inOrder `
+          ("got $($outLines.Count) lines; first mismatch around: " + ($outLines | Select-Object -First 3) -join ',')
+    Check 'Invoke-Native captures interleaved stderr without deadlocking' `
+          (@($r.StdErr -split "`r?`n" | Where-Object { $_ -match '^err\d{3}$' }).Count -eq 10) `
+          ("stderr lines: " + @($r.StdErr -split "`r?`n" | Where-Object { $_ -match '^err' }).Count)
+
+    # Volume: enough to overflow a 4 KB pipe buffer many times over, which is
+    # what deadlocks the naive ReadToEnd() implementation.
+    $bulk = Join-Path $env:TEMP 'friday_bulk_probe.py'
+    Set-Content -LiteralPath $bulk -Encoding ASCII -Value @'
+import sys
+for i in range(20000):
+    sys.stdout.write("x" * 60 + "\n")
+    sys.stderr.write("y" * 60 + "\n")
+'@
+    $r = Invoke-Native -FilePath $py -Arguments @($bulk) -TimeoutSeconds 180
+    Check 'Invoke-Native survives 2.4 MB of interleaved output' `
+          (($r.ExitCode -eq 0) -and ($r.StdOut.Length -gt 1000000) -and ($r.StdErr.Length -gt 1000000)) `
+          ("exit=$($r.ExitCode) out=$($r.StdOut.Length) err=$($r.StdErr.Length)")
+
+    Remove-Item -LiteralPath $printer, $ordered, $bulk -Force -ErrorAction SilentlyContinue
 }
 
 # =====================================================================
@@ -296,7 +344,16 @@ foreach ($case in $cases) {
 Section '5. Structure'
 # =====================================================================
 
-foreach ($f in (Get-ChildItem -Path $Root -Recurse -Filter '*.ps1')) {
+# Only our sources. staging/ and dist/ are build outputs containing copies of
+# these same files, so sweeping them doubles every result and reports failures
+# against artifacts rather than against code.
+$buildDirs = @('staging', 'dist', 'payload', 'buildpy')
+$sourcePs1 = Get-ChildItem -Path $Root -Recurse -Filter '*.ps1' | Where-Object {
+    $rel = $_.FullName.Substring($Root.Length).TrimStart('\')
+    $first = ($rel -split '\\')[0].ToLowerInvariant()
+    $buildDirs -notcontains $first
+}
+foreach ($f in $sourcePs1) {
     $errs = $null; $toks = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$toks, [ref]$errs)
     Check "parses: $($f.Name)" (($errs -eq $null) -or ($errs.Count -eq 0))

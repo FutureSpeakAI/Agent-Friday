@@ -303,66 +303,96 @@ function Invoke-Native {
         [hashtable]                      $Environment = $null
     )
 
+    <#  ---------------------------------------------------------------
+        WHY THIS REDIRECTS TO FILES INSTEAD OF READING PIPES
+        ---------------------------------------------------------------
+        The obvious implementation - Register-ObjectEvent on
+        OutputDataReceived, appending each line to a StringBuilder - DOES NOT
+        PRESERVE LINE ORDER. PowerShell dispatches -Action handlers on its own
+        schedule and gives no ordering guarantee between invocations.
+
+        That is not theoretical. It broke the Python verification: a probe
+        printing version, then platform, then sys.path came back as sys.path,
+        platform, version, so the version check compared a path against
+        "3.12.10", declared a mismatch, and told the user their download had
+        failed. Python was perfect. The verifier was wrong - which is the most
+        expensive kind of bug this installer can have, because the whole design
+        rests on verification being trustworthy.
+
+        The other obvious implementation - StandardOutput.ReadToEnd() after
+        WaitForExit - deadlocks whenever the child fills the ~4 KB stderr pipe
+        buffer while the parent is blocked reading stdout. pip does that.
+
+        Redirecting both streams to temp files avoids both problems: the OS
+        writes them in order, there is no pipe buffer to fill, and we read them
+        once the process has exited.
+        --------------------------------------------------------------- #>
+
     $outFile = [System.IO.Path]::GetTempFileName()
     $errFile = [System.IO.Path]::GetTempFileName()
 
     Write-Log ("$FilePath " + ($Arguments -join ' ')) 'CMD'
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName               = $FilePath
-    $psi.UseShellExecute        = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-    $psi.CreateNoWindow         = $true
-    if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
-    $psi.Arguments = ConvertTo-NativeArgumentString $Arguments
+    $argString = ConvertTo-NativeArgumentString $Arguments
+
+    # -Environment is applied by setting process-scope variables around the
+    # call. Start-Process has no per-child environment parameter, and
+    # ProcessStartInfo.EnvironmentVariables is unavailable once we are not
+    # driving the Process object ourselves. Saved and restored either way.
+    $savedEnv = @{}
     if ($Environment) {
-        # EnvironmentVariables (StringDictionary), not Environment. The latter
-        # is another .NET Core-era addition that PowerShell 5.1's .NET
-        # Framework host does not reliably have - the same class of trap as
-        # ArgumentList above.
-        foreach ($k in $Environment.Keys) { $psi.EnvironmentVariables[[string]$k] = [string]$Environment[$k] }
+        foreach ($k in $Environment.Keys) {
+            $savedEnv[$k] = [Environment]::GetEnvironmentVariable([string]$k, 'Process')
+            [Environment]::SetEnvironmentVariable([string]$k, [string]$Environment[$k], 'Process')
+        }
     }
 
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $psi
-
-    $sbOut = New-Object System.Text.StringBuilder
-    $sbErr = New-Object System.Text.StringBuilder
-    $onOut = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action {
-        if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
-    } -MessageData $sbOut
-    $onErr = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -Action {
-        if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
-    } -MessageData $sbErr
-
     $exit = -1
+    $proc = $null
     try {
-        [void]$proc.Start()
-        $proc.BeginOutputReadLine()
-        $proc.BeginErrorReadLine()
+        $spArgs = @{
+            FilePath               = $FilePath
+            NoNewWindow            = $true
+            PassThru               = $true
+            RedirectStandardOutput = $outFile
+            RedirectStandardError  = $errFile
+        }
+        if ($argString) { $spArgs['ArgumentList'] = $argString }
+        if ($WorkingDirectory) { $spArgs['WorkingDirectory'] = $WorkingDirectory }
+
+        $proc = Start-Process @spArgs
+
+        # Touching .Handle forces the SafeProcessHandle to be cached by this
+        # process. Without it, Start-Process -PassThru gives back an object
+        # whose .ExitCode is $null once the child exits and Windows releases
+        # the process object - so every exit code in the installer would read
+        # as empty. Caught by a test that asserted exit -eq 0 on a run that
+        # very obviously succeeded. Do not remove this line; it looks like a
+        # no-op and is not.
+        $null = $proc.Handle
+
         if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
             try { $proc.Kill() } catch { }
             Write-Log "TIMEOUT after ${TimeoutSeconds}s: $FilePath" 'FAIL'
             $exit = 124
         } else {
-            # WaitForExit(ms) can return before the async readers drain.
-            $proc.WaitForExit()
+            $proc.WaitForExit()      # let the handles flush
             $exit = $proc.ExitCode
         }
     } catch {
         Write-Log "Could not start ${FilePath}: $($_.Exception.Message)" 'FAIL'
         $exit = 127
     } finally {
-        Unregister-Event -SourceIdentifier $onOut.Name -ErrorAction SilentlyContinue
-        Unregister-Event -SourceIdentifier $onErr.Name -ErrorAction SilentlyContinue
-        Remove-Job -Id $onOut.Id -Force -ErrorAction SilentlyContinue
-        Remove-Job -Id $onErr.Id -Force -ErrorAction SilentlyContinue
-        Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
+        foreach ($k in $savedEnv.Keys) {
+            [Environment]::SetEnvironmentVariable([string]$k, $savedEnv[$k], 'Process')
+        }
     }
 
-    $so = $sbOut.ToString()
-    $se = $sbErr.ToString()
+    $so = ''
+    $se = ''
+    try { $so = [System.IO.File]::ReadAllText($outFile) } catch { }
+    try { $se = [System.IO.File]::ReadAllText($errFile) } catch { }
+    Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
     $combined = ($so + "`n" + $se).Trim()
 
     Write-Log "exit=$exit" 'DATA'

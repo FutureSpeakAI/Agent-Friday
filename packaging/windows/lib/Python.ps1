@@ -79,15 +79,34 @@ function Test-PythonProvisioned {
         }
     } catch { return $false }
 
-    $probe = 'import sys,sqlite3,ssl,ctypes;print(sys.version.split()[0]);print(sys.platform);print("|".join(sys.path))'
+    # Each fact is LABELLED and matched by its label, not by its line number.
+    # The first version of this read $lines[0], $lines[1], $lines[2] and broke
+    # the moment the output arrived in a different order - which it did, for a
+    # reason that had nothing to do with Python (see Invoke-Native's header).
+    # A verifier that can be defeated by line ordering is not a verifier, and
+    # this one reports a healthy install as a failed download when it goes
+    # wrong, which is the worst possible direction to be wrong in.
+    $probe = 'import sys,sqlite3,ssl,ctypes' + "`n" +
+             'print("FRIDAY_VER=" + sys.version.split()[0])' + "`n" +
+             'print("FRIDAY_PLAT=" + sys.platform)' + "`n" +
+             'print("FRIDAY_PATH=" + "|".join(sys.path))'
     $r = Invoke-Native -FilePath $exe -Arguments @('-c', $probe) -TimeoutSeconds 60
-    if ($r.ExitCode -ne 0) { return $false }
+    if ($r.ExitCode -ne 0) {
+        Write-Log "Interpreter probe exited $($r.ExitCode)" 'FAIL'
+        return $false
+    }
 
-    $lines = @($r.StdOut -split "`r?`n" | Where-Object { $_.Trim() })
-    if ($lines.Count -lt 3) { return $false }
-    $ver  = $lines[0].Trim()
-    $plat = $lines[1].Trim()
-    $path = $lines[2]
+    $ver = ''; $plat = ''; $path = ''
+    foreach ($line in ($r.Combined -split "`r?`n")) {
+        $t = $line.Trim()
+        if ($t.StartsWith('FRIDAY_VER='))  { $ver  = $t.Substring(11) }
+        elseif ($t.StartsWith('FRIDAY_PLAT=')) { $plat = $t.Substring(12) }
+        elseif ($t.StartsWith('FRIDAY_PATH=')) { $path = $t.Substring(12) }
+    }
+    if (-not $ver -or -not $plat -or -not $path) {
+        Write-Log "Interpreter probe did not report all three facts (ver='$ver' plat='$plat' path len=$($path.Length))" 'FAIL'
+        return $false
+    }
 
     if ($ver -ne $ExpectedVersion) {
         Write-Log "Python version mismatch: wanted $ExpectedVersion, interpreter says $ver" 'FAIL'
