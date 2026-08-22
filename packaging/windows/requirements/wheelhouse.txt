@@ -1,0 +1,33 @@
+# Agent Friday - Windows installer :: WHEELHOUSE tier
+#
+# These packages publish NO wheels on PyPI - source distributions only.
+# Verified 2026-08-21 by attempting `pip download --only-binary=:all:
+# --platform win_amd64 --python-version 312` for each: all five refuse.
+#
+#   pyautogui     0.9.54    sdist only
+#   pyscreeze     1.0.1     sdist only
+#   pygetwindow   0.0.9     sdist only
+#   mouseinfo     0.1.3     sdist only
+#   pytweening    1.2.0     sdist only
+#
+# Their sdists were unpacked and inspected: no .c/.cpp/.pyx/.h files, no
+# ext_modules, no Extension() calls. They are pure Python. So they need no
+# compiler - but --only-binary=:all: refuses them anyway, and we would rather
+# not relax that flag on a stranger's laptop.
+#
+# So build-installer.ps1 turns these into wheels on the BUILD machine, where a
+# normal Python with setuptools already exists, and ships the results in
+# wheelhouse/. The target machine then installs them as wheels like everything
+# else, and never runs a build backend.
+#
+# Two consequences worth knowing:
+#   * pip's PEP 517 build isolation does not work in an embeddable interpreter
+#     at all (PYTHONPATH is inert when a ._pth file is present), so building
+#     these on her machine would need --no-build-isolation and a pre-seeded
+#     setuptools. Shipping wheels sidesteps the whole area.
+#   * mouseinfo imports tkinter, which the embeddable distribution does not
+#     have. That is fine: pyautogui imports mouseinfo defensively and works
+#     without it. Verified - `import pyautogui` succeeds, `import mouseinfo`
+#     raises ModuleNotFoundError, and nothing in agent_friday imports tkinter.
+
+pyautogui>=0.9

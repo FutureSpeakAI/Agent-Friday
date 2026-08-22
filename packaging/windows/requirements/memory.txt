@@ -1,0 +1,18 @@
+# Agent Friday - Windows installer :: MEMORY tier
+#
+# Cross-session conversation memory: every chat turn embedded with
+# all-MiniLM-L6-v2 into a local ChromaDB under ~/.friday/memory/conversations.
+# The tutorial calls this "the heart of her" and it is the difference between
+# an assistant who remembers you and one who does not.
+#
+# It is also, by a wide margin, the most expensive thing in the install:
+# sentence-transformers pulls torch, and on Windows that is roughly 2.5 GB of
+# download. The installer says so out loud before starting it and offers to
+# skip. It is never fatal.
+#
+# Model CHECKPOINTS are not downloaded here - all-MiniLM-L6-v2 arrives lazily
+# on first use, into %USERPROFILE%\.cache\huggingface. The uninstaller knows
+# about that path because nothing in the app redirects it.
+
+sentence-transformers>=2.2
+chromadb>=0.5

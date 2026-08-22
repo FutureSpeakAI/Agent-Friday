@@ -1,0 +1,46 @@
+# Agent Friday - Windows installer :: CORE tier
+#
+# Friday does not start without these. A failure here stops the install.
+#
+# Verified 2026-08-21 on Windows 11 in embeddable CPython 3.12.10:
+# all of these plus their full transitive tree resolve and install with
+# --only-binary=:all: and import cleanly. Zero wheels were built from source.
+#
+# Kept deliberately in step with pyproject.toml's [project.dependencies] plus
+# the Windows-only bits from the [windows] extra. If you add a dependency to
+# pyproject, add it here or the installer will produce a Friday that starts
+# and then fails on first use.
+#
+# pyautogui is NOT here. It publishes no wheels; see Deps.ps1 and
+# requirements/wheelhouse.txt.
+
+flask>=3.0
+flask-sock>=0.7
+requests>=2.31
+pyyaml>=6.0
+beautifulsoup4>=4.12
+feedparser>=6.0
+tzdata>=2024.1
+rich>=13.0
+colorama>=0.4
+cryptography>=44
+psutil>=5.9
+anthropic>=0.40
+google-genai>=1.0
+
+# Gmail / Calendar / Drive reads. Core rather than optional because the
+# routes import them at module scope.
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+
+# Windows Credential Manager, for the vault passphrase and the governance
+# HMAC key. Without it those fall back to weaker storage.
+keyring>=24.0
+
+# Tray icon - the normal Windows launch path. friday_tray.py dies on import
+# without pystray, so for this installer it is core, not optional.
+pystray>=0.19
+pillow>=10.0
+
+# Global Ctrl+Shift+Q kill-switch for Computer Control.
+pynput>=1.7
