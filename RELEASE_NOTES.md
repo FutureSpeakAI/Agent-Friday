@@ -43,7 +43,11 @@ Two specific bug classes are named there, because both recurred repeatedly and
 both are greppable. The first is a comparison that discards the part of the
 value carrying the meaning — a name's prefix instead of the name, a number's
 magnitude instead of its sign. Nine instances were found. The second is an
-assertion loose enough to accept a failure mode it wasn't testing for.
+assertion loose enough to accept a failure mode it wasn't testing for. The third
+is evidence about a component that isn't in the path: two models were
+benchmarked, real numbers produced, a seating plan built on them and an
+installer written to download them, and nothing in the codebase loads either
+one.
 
 Worth stating plainly, because it shows the class is live rather than tidied
 up: **the pattern appeared three times inside the fixes for itself.** The
@@ -121,10 +125,20 @@ health check had been reporting success.
 
 **`friday models`** detects RAM, disk and GPU and reports what your machine can
 run *before* downloading anything. Every refusal names its rule and shows the
-arithmetic. The floor is worth stating because it is the opposite of the usual
-advice: **vault memory and tools need no GPU at all** — measured at 57–328 ms to
-embed a chunk and 358 ms per function call on CPU. A graphics card buys exactly
-one thing, a local conversational brain.
+arithmetic, and it downloads **only models something actually loads**.
+
+Two things worth stating plainly, because the first version of this got both
+wrong:
+
+**Memory needs no GPU.** It runs on `all-MiniLM-L6-v2` through
+sentence-transformers, a declared pip dependency, so it arrives with the install
+rather than as a model download.
+
+**Tools do not work on a local brain today, on any machine.** `function_manager`
+exists as a role in the residency contract and nothing in the chat path consults
+it, so a local model has no function seat to delegate to. A local-only Friday
+converses and remembers; she does not act. Tools need a cloud key. This is a
+missing wire, not a hardware limit — see `KNOWN_ISSUES.md`.
 
 `friday models --install` verifies each model against the daemon's own inventory
 after downloading. A pull that exits zero having fetched no weights is reported

@@ -103,7 +103,44 @@ The cheapest way to check is to break the fix and re-run the test. If it still
 passes, it was never testing the fix. That takes about a minute and it caught
 both of these.
 
-### Why these two classes are worth naming together
+### The third class: evidence about a component that isn't in the path
+
+> **A measurement of something the system does not use is not a measurement of
+> the system.**
+
+The sharpest instance of the week, and it survived the longest because every
+individual step was done well.
+
+Two small models — `embeddinggemma:300m` and `functiongemma:270m` — were
+benchmarked against the live daemon. Real numbers came back: 57–328 ms to embed
+a chunk, 358 ms for a function call, both returning genuine results rather than
+timing out. A seating decision was built on them (cap the embedder, don't cap
+the function seat), a thread-saturation profile was measured to support it, and
+the installer was written to download both and describe what they do.
+
+Nothing in `src/` loads either model.
+
+The real embedder is `all-MiniLM-L6-v2`, reached through sentence-transformers.
+`local_seats.py:48` sets `_MIN_USEFUL_GB = 1.5` *specifically to exclude*
+`functiongemma` from seat selection, and says so in a comment. Both facts were
+one grep away throughout.
+
+Every check performed was a check on the *component*: does it exist, does it
+respond, how fast is it, does it use the GPU. None was a check on the *system*:
+does anything call this. The installer was about to have a first-time user
+download 1.17 GB of weights and tell her they indexed her vault and handled her
+tool calls.
+
+The question that catches it is one line and it is not about performance:
+
+```
+grep -rn "<model-or-component>" --include=*.py src/ | grep -v "^src/.*/<the-thing-itself>"
+```
+
+If the only hits are comments and your own new code, you have measured
+something that is not in the path.
+
+### Why these classes are worth naming together
 
 They are the same root failure at different layers. One is a comparison that
 discards meaning; the other is an assertion too broad to detect that discarding
@@ -172,6 +209,37 @@ a shipped feature is permanently broken is not the same as shipping a working fe
 whether bundled skills are Python package internals or first-class installed content, and
 that is a product decision about what the skills system *is*, not a packaging typo. It is
 deliberately not being answered inside a bug fix.
+
+### Local Friday converses and remembers. She does not act.
+
+**`function_manager` is a role in the contract that nothing consults.**
+
+It exists in `residency_policy.py` with a residency class (`RESIDENT`, commented
+*"sits inside the tool loop"*), a context budget, and a slot in `ROLE_RESIDENCY`.
+It has a default settings entry at `core/__init__.py:1661` — with an empty model
+string. It has a UI label, "Tool calling", in `routes/intelligence.py:85`.
+
+It appears **nowhere** in `agent.py`, `routes/chat.py`, `routing/`,
+`local_seats.py` or `local_call.py`. `local_seats._ROLE_TO_CAPABILITY` cannot
+even resolve a `"function"` role — it knows `brain`, `judge`, `sidekick`,
+`extractor`, `heavy`.
+
+The consequence, stated plainly because it is the honest summary of local-only
+Friday today:
+
+> **With a local model as the brain, Friday can hold a conversation and use her
+> memory. She cannot use her tools — no reading files, no searching, no
+> calendar. Tools require a cloud API key.**
+
+This is **not** a hardware limitation and must not be described as one. A local
+model that supports native tool calling would not help, because nothing
+delegates the decision to a function seat in the first place. Someone told
+"your machine is too weak for tools" would buy a better machine and get the
+same result.
+
+Wiring it is real work and is not scheduled. `functiongemma:270m` — the model
+the role was presumably intended to use — genuinely does emit tool calls, and
+does so in 358 ms on CPU, so the model side is not the obstacle.
 
 ### Other open defects
 
