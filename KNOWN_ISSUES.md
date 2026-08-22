@@ -140,6 +140,48 @@ grep -rn "<model-or-component>" --include=*.py src/ | grep -v "^src/.*/<the-thin
 If the only hits are comments and your own new code, you have measured
 something that is not in the path.
 
+### A note on the secret scanner: narrowed three times, bypassed zero
+
+`.githooks/security_scan.py` blocked three commits during this release. All
+three were false positives, and none was resolved with `--no-verify` or a
+pragma:
+
+| What it flagged | Why it was wrong | The fix |
+|---|---|---|
+| `api_key=core.GEMINI_API_KEY` | a config read is the *correct* pattern | exempt dotted identifiers, with a carve-out so no known key shape is ever exempted |
+| a comment reading ``token: `list_voices` `` | prose, not an assignment | exempt values containing code punctuation |
+| `(venv) PS C:\Users\you\Agent-Friday>` | `you` **is** the placeholder | an explicit `PLACEHOLDER_USERNAMES` set |
+
+The rule each time was the same: **a scanner that flags correct code teaches
+people it cries wolf, and a scanner people bypass protects nothing.** Every
+narrowing was verified in both directions — the real `C:\Users\<realname>\` leak
+this rule caught earlier still blocks, and so do the live Google key and the
+vault password.
+
+The third case is worth its own note because a pragma was the obvious move and
+the wrong one: `# pragma: allowlist secret` would have rendered visibly inside a
+markdown code block that a first-time user reads while following a tutorial. A
+suppression that damages the artifact is not a suppression, it is a defect with
+a comment on it.
+
+Each narrowing is an explicit list rather than a heuristic. "Short name" or
+"common word" would be a guess, and guessing is the failure mode this file
+exists to document.
+
+**A fourth instance, and the neatest one.** The commit fixing the third case was
+itself blocked — by the comment explaining the fix, which cited the real account
+name as its worked example. The rule read its own documentation and correctly
+identified a username. So the tally is now: a filename that looked like a credit
+card, a config read that looked like a hardcoded key, a prose sentence that
+looked like an assignment, and a comment *about* a leak that looked like a leak.
+
+Every one is a check unable to distinguish **using** a thing from **writing
+about** one. That is not a fixable property of any single rule — a scanner
+cannot read intent — so the practical form is: expect false positives in
+documentation and comments, keep the examples generic, and narrow the rule
+rather than exempt the file. Blanket-exempting comments would be wrong for the
+obvious reason that a real key in a comment is still a real key.
+
 ### Why these classes are worth naming together
 
 They are the same root failure at different layers. One is a comparison that
@@ -224,18 +266,31 @@ It appears **nowhere** in `agent.py`, `routes/chat.py`, `routing/`,
 even resolve a `"function"` role — it knows `brain`, `judge`, `sidekick`,
 `extractor`, `heavy`.
 
-The consequence, stated plainly because it is the honest summary of local-only
-Friday today:
+**What this does and does not mean** — the scope is narrower than it first
+appears, and an earlier version of this entry got it wrong.
 
-> **With a local model as the brain, Friday can hold a conversation and use her
-> memory. She cannot use her tools — no reading files, no searching, no
-> calendar. Tools require a cloud API key.**
+Friday's chat path DOES pass the tool registry to local providers and DOES
+execute what comes back. Verified by reading the chain 2026-08-22:
+``_via_ollama`` (agent.py:193) sends ``tools=``; ``_call_ollama``
+(services/model_router.py:410) converts to OpenAI tool schema and runs
+``_oai_agentic_loop``; that loop (agent.py:6225) reads ``msg["tool_calls"]``
+and calls ``_execute_tool`` under the same registry, vault gate and governance
+rings as the cloud path, feeding results back as ``role: "tool"`` messages for
+up to 50 iterations. There is even a fallback that parses tool calls out of
+prose for models that emit them textually.
 
-This is **not** a hardware limitation and must not be described as one. A local
-model that supports native tool calling would not help, because nothing
-delegates the decision to a function seat in the first place. Someone told
-"your machine is too weak for tools" would buy a better machine and get the
-same result.
+> **So a local model WITH native tool calling uses tools fully offline, with no
+> API key.** `qwen3:8b` and `gemma4:12b` do. `gemma3:4b` does not — and that is
+> a property of the model, not of Friday.
+
+`function_manager` would let a model *without* native tool calling delegate the
+decision to a small specialist like `functiongemma`. That path is unbuilt, so
+`gemma3:4b` cannot be rescued into tool use. The gap is real; it is just much
+narrower than "local Friday cannot act".
+
+Note for anyone reading old comments: `agent.py:93` describes `_call_ollama` as
+"single-shot, no tool loop". That is stale and contradicted by the function's
+own docstring and by its code.
 
 Wiring it is real work and is not scheduled. `functiongemma:270m` — the model
 the role was presumably intended to use — genuinely does emit tool calls, and
