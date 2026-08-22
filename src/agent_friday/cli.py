@@ -199,9 +199,18 @@ def cmd_start():
             border_style="yellow", padding=(1, 4)
         ))
         console.print()
+        # Propagate, like every other call site. This one is not in main()'s
+        # dispatch chain, so the "all 14 branches" sweep missed it: cmd_start
+        # ran setup, discarded whatever it returned, and returned None — so a
+        # first-run setup that failed still exited 0. cmd_setup returns None
+        # today, which makes this a no-op right now and correct the moment it
+        # does not, which is the point.
         if Confirm.ask("  Run setup now?", default=True):
-            cmd_setup()
-        return
+            return cmd_setup()
+        # Declining is a choice, not a failure — exit 0, but say what to do
+        # next rather than leaving an unconfigured install with no guidance.
+        console.print("  Run [bold]friday setup[/bold] when you're ready.\n")
+        return 0
 
     if not _port_free(SERVER_PORT):
         console.print(f"\n  [cyan]Server already running at {SERVER_URL}[/cyan]")
@@ -468,7 +477,20 @@ def cmd_models(install: bool = False):
         console.print("  [dim](Ollama not reachable — planning as if nothing is "
                       "installed yet; re-run once it is up.)[/dim]")
 
-    plan = model_plan.plan(profile, installed=installed)
+    # Which of those can actually hold a conversation. local_seats owns this
+    # question — it merges Friday's own model store with the daemon's and drops
+    # anything flagged is_embedding, which is a capability answer rather than a
+    # guess about a name. Without it the planner offered qwen3-embedding:0.6b as
+    # something to talk to.
+    conversational = None
+    try:
+        from agent_friday.services import local_seats
+        conversational = [n for n, _ in local_seats.installed()]
+    except Exception:
+        pass
+
+    plan = model_plan.plan(profile, installed=installed,
+                           conversational=conversational)
     console.print(model_plan.render(plan))
 
     if not install:

@@ -158,25 +158,53 @@ def _have(installed, model_id: str) -> bool:
     return any(t == model_id or t.startswith(model_id + "-") for t in tags)
 
 
-def _local_alternatives(installed, need_gib: float) -> list:
-    """Installed models big enough to plausibly serve as a brain.
+def _conversational_fallback(names) -> list:
+    """Last-resort filter for models that can hold a conversation.
 
-    Deliberately loose. The point is not to pick one — it is to avoid telling
-    someone to download 5 GiB while a perfectly good model sits on their disk,
-    which is what the first version did on a machine that already had
-    qwen3.5:9b and Gemma4-12B.
+    `services/local_seats.installed()` is the AUTHORITY on this and callers
+    should pass its output as `conversational=` — it merges Friday's own model
+    store with the daemon's, and drops anything flagged `is_embedding`, which
+    is a capability answer rather than a guess about a name. Its docstring
+    already says why: "Embedding models are excluded: they cannot answer, and
+    offering one as a fallback would turn a missing-model problem into a
+    baffling one."
+
+    This function exists only for callers who cannot reach the daemon. It is a
+    heuristic and is labelled as one.
+
+    History worth keeping, because it is the point: the first version of this
+    filter excluded models by family token, which let `qwen3-embedding:0.6b`
+    through — an embedding model offered as something to talk to. That is the
+    mirror image of the bug immediately before it, where a prefix match hid
+    `qwen3.5:9b`. One over-matched, one under-filtered, both compared the shape
+    of a name. The fix was never a better name rule; it was to ask the module
+    that already knew the answer.
     """
-    # Compare the family TOKEN, not a prefix. `"qwen3.5:9b".startswith("qwen3")`
-    # is true, so the prefix version hid qwen3.5:9b — a genuinely suitable model
-    # already on the user's disk — behind a recommendation to download qwen3:8b.
-    # Ninth instance of comparing the shape of a name instead of the name.
+    return [n for n in (names or ()) if "embed" not in n.lower()]
+
+
+def _local_alternatives(conversational, need_gib: float) -> list:
+    """Installed models that could plausibly serve as a brain.
+
+    The point is not to pick one — it is to avoid telling someone to download
+    5 GiB while a perfectly good model sits on their disk.
+    """
     known = {m["id"].split(":")[0]
              for m in list(BRAIN_MODELS) + list(VAULT_MODELS)}
-    return sorted({t for t in (installed or ())
+    return sorted({t for t in (conversational or ())
                    if ":" in t and t.split(":")[0] not in known})
 
 
-def plan(profile: dict, installed=None) -> dict:
+def plan(profile: dict, installed=None, conversational=None) -> dict:
+    """Plan against `profile`.
+
+    `installed`     — every tag on the machine. Used to avoid re-proposing a
+                      download, INCLUDING the embedding models the vault needs,
+                      so it must not be pre-filtered.
+    `conversational` — the subset that can actually hold a conversation, from
+                      `local_seats.installed()`. Falls back to a labelled
+                      heuristic when the daemon is unreachable.
+    """
     """What this machine can run, what to download, and what it cannot do.
 
     Returns a dict with a `tiers` list. Every tier carries `status` in
@@ -316,7 +344,9 @@ def plan(profile: dict, installed=None) -> dict:
                 pick = local_pick
 
         have_it = _have(installed, pick["id"])
-        others = _local_alternatives(installed, pick["gib"])
+        convo = (conversational if conversational is not None
+                 else _conversational_fallback(installed))
+        others = _local_alternatives(convo, pick["gib"])
         note_others = (f" Also already installed and possibly suitable: "
                        f"{', '.join(others[:4])}. Set one in Settings -> Models "
                        f"if you prefer it." if others else "")
