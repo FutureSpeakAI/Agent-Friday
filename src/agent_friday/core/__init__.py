@@ -754,7 +754,8 @@ def _bootstrap_env_from_launch_scripts():
     _FORCE_OVERRIDE = {
         'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
     }
-    loaded = []
+    loaded = set()
+    sources = []
     for fname in candidates:
         p = repo / fname
         if not p.exists():
@@ -769,12 +770,26 @@ def _bootstrap_env_from_launch_scripts():
                     continue
                 if name in _FORCE_OVERRIDE or not os.environ.get(name):
                     os.environ[name] = value
-                    loaded.append(name)
+                    loaded.add(name)
+                    if fname not in sources:
+                        sources.append(fname)
         except Exception as _be:
             print(f"  [FRIDAY] env bootstrap skipped {fname}: {_be}")
     if loaded:
-        print(f"  [FRIDAY] Loaded {len(loaded)} key(s) from launch script: "
-              + ", ".join(sorted(set(loaded))))
+        # Do NOT name the variables. This runs at package import, so it fires on
+        # every CLI command, every test run and the server itself, printing to
+        # stdout — which lands in terminals users paste into bug reports and in
+        # server_stderr.log when the tray captures the child. The set included
+        # FRIDAY_PASSWORD and FRIDAY_SECRET_KEY. Values were never printed, but
+        # publishing the inventory of which secrets a machine holds is free
+        # reconnaissance for no operational benefit; the count and the source
+        # file are what anyone debugging this actually needs.
+        #
+        # `loaded` is also a set now. It was a list, so a variable present in
+        # two launch scripts was counted twice while the printed list was
+        # deduped — the message read "12 key(s)" above a list of 9.
+        print(f"  [FRIDAY] Loaded {len(loaded)} environment variable(s) from "
+              f"{', '.join(sources)}. Run `friday doctor` to see which are set.")
 
 
 _bootstrap_env_from_launch_scripts()
