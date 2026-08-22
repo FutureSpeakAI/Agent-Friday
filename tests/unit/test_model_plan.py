@@ -8,6 +8,8 @@ release audit, the very bug the module was written to prevent.
 """
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from agent_friday.services import model_plan as mp
@@ -265,6 +267,66 @@ def test_sibling_tag_does_not_count_as_installed():
                         list_fn=lambda: [{"name": "gemma4:12b"}],
                         say=lambda s: None)
     assert report["ok"] is False
+
+
+# ── The exit code, asserted at the PROCESS boundary ──────────────────────────
+
+def test_exit_code_normalisation():
+    """False must become 1, not 0.
+
+    cmd_health returns a bool. Passed to sys.exit() raw, False is 0 — a failed
+    health check reporting success.
+    """
+    from agent_friday.cli import _exit_code
+    assert _exit_code(None) == 0
+    assert _exit_code(True) == 0
+    assert _exit_code(False) == 1
+    assert _exit_code(0) == 0
+    assert _exit_code(1) == 1
+    assert _exit_code(2) == 2
+    assert _exit_code("nonsense") == 0      # never crash the CLI over this
+
+
+def test_a_failed_install_exits_the_process_non_zero(tmp_path, monkeypatch):
+    """Assert on `$?`, not on the report.
+
+    The report said "0 of 2 models installed and verified" and "Vault memory is
+    NOT working", cmd_models correctly returned 1, and main() discarded it — so
+    a CI job checking the exit status was told the install succeeded. Testing
+    that the report says "failed" would have passed against that bug. Only the
+    process exit code catches it.
+    """
+    from agent_friday import cli
+    from agent_friday.services import hardware_profile, model_plan, model_setup
+
+    monkeypatch.setattr(hardware_profile, "get", lambda *a, **k: {
+        "os": {"family": "linux"}, "ram": {"total_mib": 16384},
+        "disk": {"free_mib": 51200}, "gpus": []})
+    monkeypatch.setattr(model_plan, "plan", lambda profile, installed=None: {
+        "hardware": {"ram_gib": 16, "disk_free_gib": 50, "gpu_count": 0,
+                     "vram_gib": 0.0, "os_family": "linux"},
+        "tiers": [{"id": "vault", "name": "Vault", "status": "install",
+                   "reason": "x", "models": [{"id": "a:1b"}]}],
+        "download": [{"id": "a:1b", "gib": 0.5, "why": "x"}],
+        "download_gib": 0.5, "disk_after_gib": 49.5, "disk_warning": False,
+        "vault_ready": True})
+    monkeypatch.setattr(model_plan, "render", lambda p: "")
+    monkeypatch.setattr(model_setup, "install", lambda plan, **kw: {
+        "results": [], "ok": False, "installed": 0, "failed": 1,
+        "summary": "0 of 1 models installed and verified."})
+    monkeypatch.setattr(model_setup, "vault_status",
+                        lambda r, p: (False, "Vault memory is NOT working"))
+    monkeypatch.setattr(sys, "argv", ["friday", "models", "--install"])
+
+    # main() must RAISE SystemExit with a non-zero code. Not "return a value the
+    # caller could inspect" — the entry point is `agent_friday.cli:main`, so
+    # whatever main() does IS the process exit status. Before the fix it fell
+    # off the end returning None, which exits 0.
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1, (
+        f"a totally failed install exited {exc.value.code}; a script checking "
+        f"$? would be told it worked")
 
 
 def test_vault_failure_is_reported_separately_from_the_count():
