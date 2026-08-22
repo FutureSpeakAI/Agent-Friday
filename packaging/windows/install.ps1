@@ -145,7 +145,15 @@ if ($freeGb -lt $neededGb) {
     exit 1
 }
 
-Say-Ok "Windows $($osVer.Major), 64-bit, $freeGb GB free."
+# Windows 11 reports itself as version 10.0.x - the major number never moved.
+# Printing "Windows $($osVer.Major)" told a Windows 11 laptop it was Windows 10,
+# which is the sort of small wrongness that makes someone distrust everything
+# else on the screen. The build number is the real discriminator (22000+).
+$osName = 'Windows'
+if ($os.Caption) { $osName = ($os.Caption -replace '^Microsoft\s+', '') }
+elseif ($osVer.Build -ge 22000) { $osName = 'Windows 11' }
+else { $osName = 'Windows 10' }
+Say-Ok "$osName, 64-bit, $freeGb GB free."
 
 # =========================================================================
 #  Step 2 - The self-repair question

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     Agent Friday - Windows installer :: Ollama.ps1
 
@@ -236,16 +236,16 @@ function Show-ManualOllamaInstruction {
 
 function Get-OllamaInstalledModels {
     $exe = Get-OllamaExe
-    if (-not $exe) { return @() }
+    if (-not $exe) { return ,@() }
     $r = Invoke-Native -FilePath $exe -Arguments @('list') -TimeoutSeconds 60
-    if ($r.ExitCode -ne 0) { return @() }
+    if ($r.ExitCode -ne 0) { return ,@() }
     $names = @()
     foreach ($line in ($r.StdOut -split "`r?`n")) {
         if ($line -match '^\s*NAME\s') { continue }
         if (-not $line.Trim()) { continue }
         $names += ($line -split '\s+')[0]
     }
-    return $names
+    return ,@($names)   # comma: keep it an array even with 0 or 1 element
 }
 
 function Test-OllamaHasModel {
@@ -270,3 +270,5 @@ function Test-OllamaHasModel {
     }
     return $false
 }
+
+
