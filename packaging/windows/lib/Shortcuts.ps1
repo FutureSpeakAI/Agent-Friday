@@ -269,6 +269,20 @@ function Install-LauncherScripts {
 rem Agent Friday - written by the installer. Safe to delete along with the
 rem rest of the install folder; contains no personal data and no keys.
 title Agent Friday
+
+rem Friday's own console output contains em-dashes, arrows and box characters.
+rem On a default Windows console (code page 437 or 1252) those arrive as
+rem mojibake - "Agent Friday - Asimov's Mind" renders with a replacement
+rem character in the middle of the product name, on the very first line she
+rem sees. cli.py already degrades gracefully rather than crashing, but the
+rem right place to fix the ENCODING is the launcher, not the application.
+rem
+rem chcp switches this console to UTF-8; PYTHONUTF8 tells Python to use UTF-8
+rem for stdio regardless of the locale. Both are scoped to this window.
+chcp 65001 >nul 2>&1
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+
 cd /d "%~dp0app"
 "%~dp0$pyRel" -m agent_friday.cli %*
 if errorlevel 1 (
@@ -284,6 +298,8 @@ if errorlevel 1 (
 @echo off
 rem Agent Friday - quiet start, used by the sign-in shortcut. pythonw.exe has
 rem no console window, so signing in does not flash a black box.
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
 cd /d "%~dp0app"
 start "" "%~dp0$pywRel" "%~dp0app\friday_tray.py"
 "@
