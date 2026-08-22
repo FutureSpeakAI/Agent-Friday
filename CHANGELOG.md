@@ -3,7 +3,96 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.4.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.5.0**
+
+---
+
+## [5.5.0] - 2026-08-21
+
+A release that fixes things that were quietly broken and documents what still
+is. Full notes in `RELEASE_NOTES.md`; open defects in `KNOWN_ISSUES.md`.
+
+### Fixed — the server could not start, and said nothing
+
+- `agent.py` had a module-level use-before-definition that killed every start
+  ~2s in. The tray spawned the server with `stderr=DEVNULL`, so six overnight
+  failures left no trace. Stderr is now captured to
+  `~/.friday/server_stderr.log`; a ~3.5s import check runs at launch, on
+  pre-commit and in CI.
+- `_wait_for_health` 30s -> 300s against a measured ~143s cold start. The tray
+  had reported `FAILED TO START` on every successful start.
+- Blueprint failures are tiered: required exits loudly, optional starts and
+  announces in the log, a notification and `~/.friday/startup-report.json`.
+  New `GET /api/startup-report`. The career pipeline had been unregistered for
+  seven weeks behind a warning nobody read.
+- `routes/jobs.py` resolves the repo root explicitly, so it imports outside the
+  tray launch path.
+
+### Fixed — silent success
+
+- Background tasks that received a provider error as prose reported "Task
+  complete". Every voice session's wiki distillation had been discarded this
+  way for weeks. Any task whose reply is a provider failure is now marked and
+  reported failed.
+- `tool_results.append` was indented inside an `except`, so tool results were
+  never appended on the normal path.
+- CLI commands did not propagate exit codes. `friday models --install`
+  computed a failure, printed it, and exited 0. All 14 branches now propagate;
+  `cmd_health` returned a bool, and `sys.exit(False)` is 0 — a failed health
+  check reporting success.
+- `/api/mcp/status` bound `_MCP_MANAGER` at import, reporting a working
+  subsystem with ~99 tools as dead for the life of every process.
+- `friday doctor` matched a model family instead of a tag, reporting
+  `gemma4:e2b` installed when only `gemma4:12b` was.
+
+### Fixed — privacy and safety
+
+- Tool descriptions were classifier-gated and blanked, so cloud-fallback turns
+  handed the model unreadable tools. Now scoped to MCP tools only; first-party
+  descriptions are static documentation.
+- TIER-2 sensitivity split into strong phrases and context-gated common words.
+- The secret scanner no longer flags config reads or prose; no known key shape
+  is exempted.
+- Package import no longer prints the names of secrets loaded from launch
+  scripts, and its count matches its list.
+- Local voice pins a resident brain via `local_seats.resolve()` and refuses to
+  start when none exists. Fixed in code, unproven in practice — see
+  `RELEASE_NOTES.md`.
+- Tag `v4.4.0` (pre-scrub) deleted from origin; 93 local `archive/*` tags
+  deleted. All 42 origin tags audited.
+
+### Fixed — install
+
+- `REPO_URL` pointed at `friday-desktop.git`, which does not exist. Every
+  one-line install died at the clone.
+- `setup_wizard.py` was invoked from the repo root in both installers.
+- All three installers and `friday update` regenerated `index.html` from a dead
+  mirror, deleting 17 components and downgrading to CDN Babel.
+
+### Added
+
+- `friday models` / `friday models --install`: hardware-grounded model
+  selection. Every refusal names its rule and shows the arithmetic. Vault
+  memory and tools are CPU-only and need no GPU.
+- `docs/TUTORIAL.md` — clone to first conversation.
+- `KNOWN_ISSUES.md` — open defects, unverified claims, and what leaves your
+  machine.
+
+### Changed
+
+- Documented RAM floor 8 GB -> 16 GB, matching rule R2, which always disagreed
+  with the old figure.
+- Platform support stated plainly as Windows-first.
+- `package.json` ISC -> MIT; `pyproject.toml` and `package.json` agree at 5.5.0.
+- `.github/SECURITY.md` supported versions 1.0.x -> 5.5.x.
+
+### Known limitations
+
+- A wheel install cannot run the career pipeline: `data/` and `skills/` are not
+  packaged. Install from a clone.
+- CPU generation throughput is unmeasured for every model.
+- No announced release should go out until the Google API key,
+  `FRIDAY_PASSWORD` and the Discord invite are rotated.
 
 ---
 

@@ -76,6 +76,46 @@ from the right one until something downstream fails for an unrelated-looking rea
 
 **If you are reviewing this codebase, this is the thing to grep for.**
 
+### The second class: an assertion loose enough to accept a failure it wasn't testing for
+
+The first class is a check that throws away the part of the value carrying the
+meaning. This one is its pair: a check so wide it cannot tell what it caught.
+
+Both examples below are from tests written during this release, to verify fixes
+for the bugs above. Both passed. Neither was evidence.
+
+| The test | Why it passed | What it actually proved |
+|---|---|---|
+| A benchmark harness asserted a `+0 MiB` VRAM delta meant CPU-only placement held | Every model request had 404'd, so nothing ran on any processor | Nothing. A green light manufactured by a workload that never executed. |
+| A test asserted a failed install `exited non-zero` | The subprocess crashed on `ModuleNotFoundError` before reaching the code under test | Nothing. It passed identically with the fix reverted. |
+
+In both cases the assertion was true and meaningless. `abs(delta) < 200` is
+satisfied by a run that did no work. `returncode != 0` is satisfied by a crash.
+The narrow forms — "did the workload complete, *and* was the delta flat", "did
+the command print its verdict, *and* was the code exactly 1" — catch both.
+
+The rule:
+
+> **A test that could not have failed for the reason you think it passed is not
+> evidence.**
+
+The cheapest way to check is to break the fix and re-run the test. If it still
+passes, it was never testing the fix. That takes about a minute and it caught
+both of these.
+
+### Why these two classes are worth naming together
+
+They are the same root failure at different layers. One is a comparison that
+discards meaning; the other is an assertion too broad to detect that discarding
+happened. A codebase with the first and without a guard against the second
+produces confident wrong answers *and* a green test suite, which is how a defect
+survives seven weeks and ~70 restarts.
+
+Both recurred *inside the fixes for themselves* during this release — the
+installer's model planner reproduced defect H3, the benchmark harness shipped
+the name-shape bug twice, and while fixing a command that exited 0 on failure we
+found `sys.exit(False)`, which is also 0. Treat them as live, not historical.
+
 ---
 
 ## 2. Fixed in this release
