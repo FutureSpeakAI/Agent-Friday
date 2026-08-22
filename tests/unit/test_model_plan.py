@@ -392,6 +392,52 @@ def test_a_failed_install_exits_the_process_non_zero(tmp_path, monkeypatch):
         f"$? would be told it worked")
 
 
+def test_prewarm_runs_even_when_there_are_no_models_to_download(monkeypatch):
+    """"Nothing to install" is about Ollama models, not the lazy assets.
+
+    An early `return 0` on an empty download plan put the prewarm call on an
+    unreachable line, so any machine whose models were already present — a
+    re-run after an interrupted install, or after pulling a model by hand —
+    silently fetched nothing, and MiniLM, faster-whisper and the Piper voice
+    still arrived mid-conversation.
+
+    It survived because the only machine available to test on already had its
+    models, which is precisely the state that skipped the code. This test
+    forces that state.
+    """
+    from agent_friday import cli
+    from agent_friday.services import (hardware_profile, model_plan,
+                                       model_setup, prewarm)
+
+    monkeypatch.setattr(hardware_profile, "get", lambda *a, **k: {
+        "os": {"family": "windows"}, "ram": {"total_mib": 16384},
+        "disk": {"free_mib": 307200}, "gpus": []})
+    monkeypatch.setattr(model_plan, "plan", lambda profile, **kw: {
+        "hardware": {"ram_gib": 16, "disk_free_gib": 300, "gpu_count": 0,
+                     "vram_gib": 0.0, "os_family": "windows"},
+        "tiers": [{"id": "vault", "name": "Memory", "status": "ready",
+                   "reason": "x", "models": []}],
+        "download": [], "download_gib": 0.0, "disk_after_gib": 300.0,
+        "disk_warning": False, "vault_ready": True})
+    monkeypatch.setattr(model_plan, "render", lambda p: "")
+    monkeypatch.setattr(model_setup, "vault_status", lambda r, p: (True, "ok"))
+
+    reached = {"prewarm": False}
+
+    def _spy(say=print, only=None):
+        reached["prewarm"] = True
+        return {"steps": [], "ok": True, "summary": "reached"}
+
+    monkeypatch.setattr(prewarm, "prewarm", _spy)
+    monkeypatch.setattr(sys, "argv", ["friday", "models", "--install"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert reached["prewarm"], (
+        "prewarm was skipped because the model plan had nothing to download")
+    assert exc.value.code == 0
+
+
 def test_vault_failure_is_reported_separately_from_the_count():
     """A run that installs a brain and fails the embedder has not succeeded."""
     plan = {"download": [{"id": "embeddinggemma:300m", "gib": 0.6, "why": "x"}],
