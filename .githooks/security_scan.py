@@ -85,6 +85,42 @@ def _looks_like_code_not_literal(value: str) -> bool:
 def _real_secret_assignment(value: str) -> bool:
     return _not_placeholder(value) and not _looks_like_code_not_literal(value)
 
+# A Windows path is only a leak when the username is somebody's. Documentation
+# has to show a path, and a tutorial written for Windows has to show a Windows
+# prompt — `(venv) PS C:\Users\you\Agent-Friday>` is the placeholder, not a
+# leak. This rule fired correctly earlier on a genuine `C:\Users\<realname>\`;
+# it simply could not tell a real account name from `you`.
+#
+# The example above is genericised on purpose: the first version of this comment
+# named the actual account, and the rule read its own documentation and blocked
+# the commit. That is the fourth time a check here could not distinguish USING a
+# thing from WRITING ABOUT one — see KNOWN_ISSUES.md. Not exempting comments
+# generally, because a real key in a comment is still a real key.
+#
+# Kept as an explicit list rather than a heuristic. "Short name" or "common
+# word" would be a guess, and guessing is what the other two narrowings of this
+# scanner were about. If you need another placeholder, add it here — that edit
+# is the review.
+PLACEHOLDER_USERNAMES = {
+    "you", "your", "yourname", "your-name", "your_name",
+    "user", "username", "user1", "name",
+    "me", "someone", "example", "test", "demo", "placeholder",
+    "public", "default", "all users", "administrator",
+    "<user>", "<username>", "<you>", "<name>",
+}
+
+
+def _is_real_username(value: str) -> bool:
+    """True when a Windows path's username looks like a person's, not a stand-in."""
+    v = (value or "").strip().lower()
+    if not v or v in PLACEHOLDER_USERNAMES:
+        return False
+    # Template markers of every flavour: {name}, %USERNAME%, <user>, $USER.
+    if v[0] in "{%<$" or v[-1] in "}%>":
+        return False
+    return True
+
+
 def _is_personal_email(value: str) -> bool:
     low = value.lower()
     if any(a in low for a in EMAIL_ALLOW):
@@ -109,8 +145,7 @@ RULES = [
     ("Possible phone number", re.compile(r"\b(?:\+?1[-.\s]?)?\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b|\b\d{3}[-.]\d{3}[-.]\d{4}\b"), None),
     ("Private Windows user path",
      re.compile(r"[A-Za-z]:\\Users\\([A-Za-z0-9._\-]+)\\"),
-     lambda v: v.lower() not in ("user", "username", "public", "default", "all users")
-               and not v.startswith(("{", "%", "<"))),
+     lambda v: _is_real_username(v)),
 ]
 
 # Never scan these (binary / generated / vendored). Staged-but-gitignored files
