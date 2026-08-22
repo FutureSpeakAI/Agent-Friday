@@ -213,6 +213,62 @@ def test_an_installed_model_does_not_win_if_it_cannot_call_tools():
     assert brain["models"], "should still propose a tool-capable download"
     assert brain["models"][0]["tools"] is True
     assert "cannot call tools" in brain["reason"]
+    assert "gemma3:4b" in brain["reason"], "should name what it declined to use"
+
+
+def test_tool_incapable_branch_on_a_cpu_only_machine():
+    """The same branch with no GPU, since that path was never exercised live.
+
+    A synthetic inventory rather than waiting for a machine that happens to
+    have exactly this combination installed.
+    """
+    p = mp.plan(profile(32, 200, 0), installed=["gemma3:4b"])
+    brain = tiers(p)["brain"]
+    # On CPU the planner picks the smallest useful model, which IS gemma3:4b —
+    # so here the installed copy legitimately wins and there is nothing to
+    # download. The tool caveat must not fire when no better option existed.
+    assert brain["status"] == "ready"
+    assert brain["models"] == []
+    assert "cannot call tools" not in brain["reason"]
+
+
+def test_an_embedding_model_is_never_offered_as_a_brain():
+    """qwen3-embedding:0.6b is not something you can talk to.
+
+    Found on a real inventory. The family-token filter that stopped
+    over-matching qwen3.5:9b under-filtered in the other direction and let an
+    embedder through. Capability, not name shape — local_seats.installed()
+    answers this properly and is passed in as `conversational`.
+    """
+    inventory = ["qwen3-embedding:0.6b", "nomic-embed-text:v1.5", "qwen3-vl:8b"]
+    # With the authoritative filter applied by the caller:
+    p = mp.plan(profile(32, 200, 12), installed=inventory,
+                conversational=["qwen3-vl:8b"])
+    reason = tiers(p)["brain"]["reason"]
+    assert "embedding" not in reason.lower()
+    assert "qwen3-vl:8b" in reason
+
+    # And when the daemon is unreachable, the labelled fallback must still not
+    # offer an embedder.
+    p2 = mp.plan(profile(32, 200, 12), installed=inventory)
+    reason2 = tiers(p2)["brain"]["reason"]
+    assert "qwen3-embedding" not in reason2
+    assert "nomic-embed-text" not in reason2
+
+
+def test_the_vault_still_sees_its_own_embedders_as_installed():
+    """`conversational` excludes embedders; `installed` must not.
+
+    The vault's two models ARE embedding-adjacent, so filtering the inventory
+    before passing it in would make the planner re-propose downloads the user
+    already has — trading one bug for its opposite.
+    """
+    p = mp.plan(profile(32, 200, 0),
+                installed=["embeddinggemma:300m", "functiongemma:270m"],
+                conversational=[])
+    assert tiers(p)["vault"]["status"] == "ready"
+    assert not any(m["id"].startswith("embeddinggemma")
+                   for m in p["download"])
 
 
 def test_partial_install_only_fetches_the_missing_half():
@@ -302,7 +358,7 @@ def test_a_failed_install_exits_the_process_non_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(hardware_profile, "get", lambda *a, **k: {
         "os": {"family": "linux"}, "ram": {"total_mib": 16384},
         "disk": {"free_mib": 51200}, "gpus": []})
-    monkeypatch.setattr(model_plan, "plan", lambda profile, installed=None: {
+    monkeypatch.setattr(model_plan, "plan", lambda profile, **kw: {
         "hardware": {"ram_gib": 16, "disk_free_gib": 50, "gpu_count": 0,
                      "vram_gib": 0.0, "os_family": "linux"},
         "tiers": [{"id": "vault", "name": "Vault", "status": "install",
