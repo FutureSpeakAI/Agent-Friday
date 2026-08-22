@@ -1,0 +1,8 @@
+# Build outputs and downloaded payloads. The repo describes how to build the
+# installer; it does not store the ~11 MB Python distribution, the wheelhouse,
+# or the finished zip.
+dist/
+staging/
+payload/
+wheelhouse/
+*.zip
