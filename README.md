@@ -36,9 +36,20 @@ Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, a
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
 pip install -e .
-friday doctor    # verify Python, Ollama, the bundled Gemma model, keys, disk
-friday           # launches the server, runs voice-first onboarding, opens http://localhost:3000
+friday models    # what your machine can run — and what it can't, with the reasons
+friday models --install
+friday           # launches the server, opens http://localhost:3000
 ```
+
+**New here? [docs/TUTORIAL.md](docs/TUTORIAL.md) gets you to a first working
+conversation in about twenty minutes and then stops.**
+
+**Install from a clone, not from a wheel.** `data/` and `skills/` live at the
+repository root and are not packaged, so a wheel install gets a career pipeline
+that cannot work. This is a known structural issue rather than an oversight —
+resolving it means deciding what the skills system *is*, which is deliberately
+not being answered inside a bug fix. See
+[KNOWN_ISSUES.md](KNOWN_ISSUES.md) §3.
 
 **No API key? No problem.** Agent Friday ships a bundled local model — **`gemma3:4b`**
 (Google's open Gemma 3 4B, ~3.3 GB on disk, needs **16 GB system RAM**). The installers
