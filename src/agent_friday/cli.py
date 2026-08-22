@@ -506,17 +506,40 @@ def cmd_models(install: bool = False):
     console.rule("[bold cyan]INSTALLING[/bold cyan]")
     report = model_setup.install(plan, say=lambda s: console.print(s))
 
+    # Everything else that would otherwise arrive lazily, mid-conversation.
+    # A 90 MB download inside someone's first sentence reads as a hang, not as
+    # a download, and it is the easiest bad first impression to avoid.
+    from agent_friday.services import prewarm as _prewarm
+    console.print()
+    warm = _prewarm.prewarm(say=lambda s: console.print(s))
+
     console.print()
     console.print(f"  {report['summary']}")
+    console.print(f"  {warm['summary']}")
 
     vault_ok, vault_msg = model_setup.vault_status(report, plan)
     console.print(f"  {'[green]' if vault_ok else '[yellow]'}{vault_msg}"
                   f"{'[/green]' if vault_ok else '[/yellow]'}")
+
+    # Say what is LEFT rather than implying nothing is. If this list is empty
+    # the "no download in your first conversation" promise holds; if it is not,
+    # the user is told exactly what remains instead of discovering it.
+    left = _prewarm.what_still_downloads_later(warm)
+    if left:
+        console.print()
+        console.print("  [yellow]Still to download later:[/yellow]")
+        for line in left:
+            console.print(f"    - {line}")
+    else:
+        console.print("  [green]Nothing else will download during your first "
+                      "conversation.[/green]")
     console.print()
 
     # Exit non-zero on failure so a script can tell. Saying "done" over a
     # failed install is the exact habit this release is trying to break.
-    return 0 if report["ok"] else 1
+    # A prewarm FAILURE counts; a prewarm skip (optional dependency absent)
+    # does not, because the install itself is still sound.
+    return 0 if (report["ok"] and warm["ok"]) else 1
 
 
 def cmd_tools():
