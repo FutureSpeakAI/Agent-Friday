@@ -233,12 +233,16 @@ def capability_summary(keys: dict, assessment: dict | None = None) -> dict:
     # to regardless of how capable it is. Saying "your hardware is too weak"
     # here would be a comfortable lie; the honest sentence is that the feature
     # isn't wired yet.
-    if not has_claude:
+    if not has_claude and not a.get("capable"):
         missing.append(("Tools — files, search, your calendar",
-                        "Friday can only use her tools through a cloud model "
-                        "right now. Running them from a local model isn't "
-                        "built yet, whatever the machine.",
+                        "The local model this machine can run can't call "
+                        "tools. A bigger graphics card would let Friday run "
+                        "one that can.",
                         "Add an Anthropic key — " + ADD_LATER))
+    elif not has_claude:
+        works.append("Use her tools — files, search, your calendar — entirely "
+                     "offline, because this machine runs a model that can call "
+                     "them.")
 
     # ── Memory: always local, always on ──
     if (tiers.get("vault") or {}).get("status") != "refused":

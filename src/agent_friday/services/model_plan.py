@@ -26,12 +26,18 @@ sentence-transformers, which is a declared pip dependency — so it arrives with
 the install rather than as a model download. That claim survived a correction;
 the mechanism behind it did not.
 
-**Tool calling does not work on a local brain today.** ``function_manager``
-exists as a role in ``residency_policy`` with a residency class, a context
-budget and a UI label — and nothing in ``agent.py``, ``routes/chat.py``,
-``routing/`` or ``local_seats.py`` ever consults it. So a local-only Friday
-converses and remembers; she does not act. Tools need a cloud key. See
-KNOWN_ISSUES.md.
+**Tool calling on a local brain is a MODEL question, not a wiring question.**
+Friday's chat path genuinely passes the tool registry to local providers and
+executes what comes back — ``_via_ollama`` sends ``tools=``, ``_call_ollama``
+converts the schema and runs ``_oai_agentic_loop``, and that loop calls
+``_execute_tool`` under the same governance as the cloud path. So a model with
+native tool calling needs no API key for tools: ``qwen3:8b`` and ``gemma4:12b``
+work fully offline, ``gemma3:4b`` does not, and the difference is the model.
+
+``function_manager`` — a role in the residency contract that nothing consults —
+would let a model WITHOUT native tool calling delegate the decision to a small
+specialist. Its absence is real and recorded in KNOWN_ISSUES.md, but it only
+bites models that cannot call tools themselves.
 
 An earlier version of this module recommended downloading ``embeddinggemma:300m``
 and ``functiongemma:270m`` on the strength of real benchmarks — 57-328 ms per
@@ -440,7 +446,7 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
 
 
 def brain_is_primary_capable(p: dict) -> tuple[bool, str]:
-    """Can the local brain be someone's PRIMARY brain? Today: no, on any machine.
+    """Can the local brain be someone's PRIMARY brain — tools and all?
 
     THE THRESHOLD, stated so the next person knows when to move it:
 
@@ -449,51 +455,58 @@ def brain_is_primary_capable(p: dict) -> tuple[bool, str]:
       remembers but cannot read a file, search, or touch a calendar is a
       different product, not a slower one.
 
-    Today that is false everywhere, and NOT because of hardware.
-    ``function_manager`` exists as a role in ``residency_policy`` with a
-    residency class, a context budget and a UI label, and nothing in
-    ``agent.py``, ``routes/chat.py``, ``routing/`` or ``local_seats.py`` ever
-    consults it. A local brain therefore has no function seat to delegate to,
-    however capable it is. Presenting this as a hardware limit would send
-    someone to buy a better machine for the same result.
+      That reduces to two questions, both about the MODEL:
+        1. Does it support native tool calling?
+        2. Does it fit on the GPU? (CPU generation throughput is unmeasured
+           for every model in this table, so RAM-fits is not a usability claim.)
 
-    **When function_manager is wired, change this function**, and the
-    hardware-shaped test underneath becomes the real one: a model that can call
-    tools, running on the GPU (CPU generation throughput is unmeasured for
-    every model in this table). The scaffolding for that is deliberately left
-    below rather than deleted, so the next person can see what the test should
-    become.
+    **This is a model question, not a wiring question.** Friday's chat path
+    genuinely passes the tool registry to local providers and executes what
+    comes back: `_via_ollama` (agent.py) sends `tools=`, `_call_ollama`
+    converts to OpenAI tool schema and runs `_oai_agentic_loop`, and that loop
+    calls `_execute_tool` under the same governance as the cloud path. Verified
+    by reading the chain 2026-08-22.
 
-    Returns (capable, reason). The reason is written for a person, not a log.
-    """
-    _ = _hardware_brain_verdict(p)   # not the deciding factor yet — see above
-    return False, ("Friday can only use her tools — reading files, searching, "
-                   "your calendar — through a cloud model right now. Running "
-                   "them from a local model isn't built yet, so this isn't "
-                   "about your hardware. A local model handles conversation "
-                   "and memory perfectly well on its own.")
+    So a tool-capable local model needs no API key for tools. `gemma3:4b`
+    cannot, which is why an 8 GiB card ends up wanting a key while a 12 GiB
+    card does not.
 
+    A NOTE ON `function_manager`, because it is easy to conflate: that role
+    exists in the residency contract and nothing consults it. It would let a
+    model WITHOUT native tool calling delegate the decision to a small
+    specialist. Its absence is real and recorded in KNOWN_ISSUES.md, but it
+    does not affect models that call tools themselves — and an earlier version
+    of this function wrongly generalised from "the delegation path is missing"
+    to "no local model can use tools", which is a much larger claim than the
+    evidence supported.
 
-def _hardware_brain_verdict(p: dict) -> tuple[bool, str]:
-    """The hardware-only half of the question, kept live and tested.
-
-    This is what brain_is_primary_capable() SHOULD return once a local brain
-    can reach a function seat. It is called (and discarded) above so it cannot
-    rot into something that no longer runs.
+    Returns (capable, reason), written for a person rather than a log.
     """
     tier = next((t for t in p.get("tiers", []) if t["id"] == "brain"), None)
     if not tier or tier["status"] == "refused":
-        return False, "This machine can't run a local conversational model at all."
+        return False, ("This machine can't run a local conversational model at "
+                       "all, so Friday needs a cloud key to be able to talk.")
+
     picked = tier["models"][0] if tier.get("models") else None
     on_gpu = " on GPU" in tier.get("reason", "")
     has_tools = (bool(picked.get("tools")) if picked
                  else "cannot call tools" not in tier.get("reason", ""))
+
     if not has_tools:
-        return False, "The best local model here can't call tools natively."
+        return False, ("The best local model this machine can run can't call "
+                       "tools — it chats and remembers, but it can't read "
+                       "files, search, or use your calendar. A bigger graphics "
+                       "card would let Friday run a model that can; a cloud "
+                       "key gets you there today.")
     if not on_gpu:
-        return False, ("A local model fits, but only on the processor, and CPU "
-                       "generation speed is unmeasured.")
-    return True, "This machine could run a capable local brain on its GPU."
+        return False, ("A tool-capable local model fits, but only on the "
+                       "processor rather than the graphics card, and Friday "
+                       "has no measurements for how fast that is. A cloud key "
+                       "is the reliable option here.")
+    return True, ("This machine can run a tool-capable model on its graphics "
+                  "card. Friday works completely offline — conversation, "
+                  "memory and tools — with no API key at all. A key is only "
+                  "needed for voice and image generation.")
 
 
 def render(p: dict) -> str:
