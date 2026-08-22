@@ -1,0 +1,88 @@
+{
+  "_comment": [
+    "Pinned external artefacts for the Agent Friday Windows installer.",
+    "",
+    "Anything listed here is either downloaded by build-installer.ps1 into the",
+    "artifact, or downloaded by install.ps1 on the target machine. Anything we",
+    "then EXECUTE must carry a sha256 where upstream makes one possible.",
+    "",
+    "Where sha256 is empty, that is a deliberate, documented gap rather than an",
+    "oversight - see the _why field next to it. The installer reports an unpinned",
+    "artefact as a warning in Stephen's install report; it does not pretend it",
+    "was verified."
+  ],
+
+  "python": {
+    "version": "3.12.10",
+    "pth_stem": "python312",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "sha256": "4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3",
+    "size_bytes": 11133606,
+    "_why_this_version": [
+      "3.12 rather than 3.13: presidio pulls spacy, which pulls blis/thinc/",
+      "murmurhash. Those consistently publish cp312 win_amd64 wheels; cp313",
+      "coverage lags. 3.12 maximises the chance that every dependency is a wheel.",
+      "",
+      "3.12.10 specifically: it is the LAST 3.12 release with an embeddable",
+      "amd64 build. 3.12.11 and later are source-only security releases.",
+      "Verified by HEAD request against python.org/ftp on 2026-08-21 - .10, .9",
+      "and .8 return 200, .11 and .12 return 404.",
+      "",
+      "sha256 above was computed from the actual download on 2026-08-21, not",
+      "copied from a page. Re-verify if you bump the version."
+    ]
+  },
+
+  "get_pip": {
+    "url": "https://bootstrap.pypa.io/get-pip.py",
+    "sha256": "",
+    "_why_no_hash": [
+      "bootstrap.pypa.io/get-pip.py is a moving target - it is regenerated",
+      "upstream and there is no stable published hash for the 'latest' URL.",
+      "Pinning a hash here would mean the installer breaks silently every time",
+      "PyPA regenerates it.",
+      "",
+      "Mitigations actually in place: it is fetched over TLS 1.2/1.3 from a",
+      "PyPA-controlled host, and the installer records an explicit warning in",
+      "the install report saying it was NOT hash-verified. We would rather say",
+      "'we did not check this' than imply we did.",
+      "",
+      "If you want this pinned properly, use the versioned path",
+      "https://bootstrap.pypa.io/pip/<version>/get-pip.py, download it once,",
+      "record its hash here, and delete this note."
+    ]
+  },
+
+  "ollama": {
+    "url": "https://ollama.com/download/OllamaSetup.exe",
+    "sha256": "",
+    "_why_no_hash": [
+      "Ollama publishes a single unversioned URL that always serves the latest",
+      "build, and no hash alongside it. Any hash recorded here is wrong within",
+      "days.",
+      "",
+      "The installer therefore does not pin it, records that fact as a warning,",
+      "and - more usefully - does not trust the installer's exit code either.",
+      "It runs the thing and then goes looking for a working ollama binary."
+    ],
+    "silent_switches": {
+      "_comment": [
+        "There is NO documented silent-install contract for Ollama on Windows.",
+        "Upstream issue ollama/ollama#7969 is titled 'Administrative / silent",
+        "install is borked'; issue #15038 discusses moving the installer to",
+        "NSIS, which would change the switch from /VERYSILENT to /S.",
+        "",
+        "So the installer tries winget first, then each dialect below in order,",
+        "and VERIFIES after every attempt by locating and running ollama.exe.",
+        "If none of them work it hands the user one clear instruction and lets",
+        "setup finish. It never reports Ollama as installed without proving it."
+      ],
+      "winget": ["install", "--id", "Ollama.Ollama", "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"],
+      "inno": ["/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES", "/NOCANCEL"],
+      "nsis": ["/S"]
+    },
+    "install_dir": "%LOCALAPPDATA%\\Programs\\Ollama",
+    "models_dir": "%USERPROFILE%\\.ollama\\models",
+    "_models_dir_note": "Overridden by OLLAMA_MODELS if set. Precedence copied from services/gguf_extract.py."
+  }
+}

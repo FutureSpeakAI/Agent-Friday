@@ -1,0 +1,41 @@
+# Agent Friday - Windows installer :: RECOMMENDED tier
+#
+# Friday starts and works without these; noticeably less of her works.
+# A failure here is a warning in Stephen's report and a calm sentence for
+# her. It is never a stop.
+#
+# Verified 2026-08-21 on Windows 11 in embeddable CPython 3.12.10: resolves
+# and installs with --only-binary=:all: and every module imports. Zero wheels
+# built from source. The heaviest thing in here is spacy's tree (blis, thinc,
+# numpy) pulled in by presidio, all of which ship cp312 win_amd64 wheels.
+
+# --- Tier-1 local voice: her ears and her mouth, CPU only, no torch --------
+faster-whisper>=1.0
+piper-tts>=1.2
+onnxruntime>=1.17
+
+# --- Last-resort offline TTS (Windows SAPI5), bottom of the voice chain ----
+pyttsx3>=2.90
+
+# --- Egress gate Layer 2 NER. Without these the privacy gate is weaker, ----
+#     which is exactly the thing not to ship quietly degraded.
+presidio-analyzer>=2.2
+presidio-anonymizer>=2.2
+
+# --- Ed25519 attestation + source-trust federation -------------------------
+pynacl>=1.5
+
+# --- PDF text extraction ---------------------------------------------------
+pdfplumber>=0.10
+
+# --- Creative trimmings ----------------------------------------------------
+imageio-ffmpeg>=0.5
+mutagen>=1.47
+
+# --- Context compression. Degrades to passthrough if absent. --------------
+# NOTE: requirements.txt at the repo root says this "builds from sdist
+# (Rust + MSVC on Windows)". That is out of date - as of 2026-08-21 a
+# cp312 win_amd64 wheel is published, verified by downloading it. It is
+# still in this tier rather than core so that if upstream ever goes back to
+# sdist-only, the install degrades instead of failing.
+headroom-ai[all]>=0.22
