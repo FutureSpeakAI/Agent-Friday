@@ -230,7 +230,22 @@ This is the single most confusing thing about a first run, so:
 | No new text for **under 3 minutes** on first start | Working. Leave it. |
 | No new text for **over 5 minutes** on first start | Something's wrong — see below |
 | Browser opened, page is blank or spinning | Give it 60 seconds, then refresh |
-| First reply takes 15–50 seconds | **Normal.** The model is waking up. |
+| First reply takes **up to two minutes** | **Normal.** See below. |
+
+### About that first reply
+
+**Your first message can take up to two minutes to answer, and that is normal.**
+
+Measured: 107.7 seconds for a first tool-using reply on a 12 GB graphics card,
+including waking the model up. Your laptop's card is smaller, so expect at least
+that and quite possibly more.
+
+It is slow **once**. The model has to load into the graphics card before it can
+think, and after that it stays warm — later replies come back in seconds. If you
+close Friday and reopen her, the first reply is slow again for the same reason.
+
+So: ask your first question, then go and make a cup of tea. If you sit watching
+it you will conclude it's broken, and it isn't.
 
 If you think it's stuck: press **Ctrl+C** in PowerShell to stop her, then run
 `friday` again. If it happens twice, the error is in the PowerShell window —

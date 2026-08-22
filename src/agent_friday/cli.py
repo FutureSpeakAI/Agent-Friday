@@ -499,12 +499,24 @@ def cmd_models(install: bool = False):
                           "these.\n")
         return 0
 
-    if not plan["download"]:
-        console.print("  Nothing to install.\n")
-        return 0
-
+    # "Nothing to install" is a statement about OLLAMA MODELS, not about the
+    # lazily-loaded assets below. This used to `return 0` here, which put the
+    # prewarm call on an unreachable line for any machine whose models were
+    # already present — so a re-run after an interrupted install, or after
+    # pulling a model by hand, silently did nothing and MiniLM, faster-whisper
+    # and the Piper voice still arrived mid-conversation.
+    #
+    # It went unnoticed because the only machine available to test on was one
+    # that already had its models, which is exactly the state that skips the
+    # code. Same shape as most of this release's bugs: a correct component
+    # sitting below a guard that stops the path reaching it.
     console.rule("[bold cyan]INSTALLING[/bold cyan]")
-    report = model_setup.install(plan, say=lambda s: console.print(s))
+    if not plan["download"]:
+        console.print("  No models to download — checking everything else.")
+        report = {"ok": True, "results": [], "installed": 0, "failed": 0,
+                  "summary": "No model downloads were needed."}
+    else:
+        report = model_setup.install(plan, say=lambda s: console.print(s))
 
     # Everything else that would otherwise arrive lazily, mid-conversation.
     # A 90 MB download inside someone's first sentence reads as a hang, not as
