@@ -4,8 +4,24 @@ This gets you from a cloned repository to one working conversation. It stops
 there on purpose. Everything else can wait until Friday is talking to you.
 
 **Time:** about 20 minutes, most of it waiting for a download.
-**You need:** Python 3.10+, 16 GB of RAM, about 16 GB of free disk.
+
+**You need:**
+
+- **Python 3.10+**
+- **Ollama** — [ollama.com/download](https://ollama.com/download). This is a
+  hard prerequisite, not an optional extra: it is what runs every local model,
+  including the two small ones that make your vault work. Without it, step 2's
+  download fails with `FileNotFoundError: 'ollama'` — legibly, but it stops
+  there. Install it before you start.
+- **16 GB of RAM** and about **16 GB of free disk**
+
 **You do not need:** a graphics card, or an API key.
+
+Verify Ollama is running before you begin:
+
+```bash
+ollama --version
+```
 
 If you have less than 16 GB of RAM, read step 2 anyway — it will tell you
 exactly what you can and cannot run rather than failing later.
