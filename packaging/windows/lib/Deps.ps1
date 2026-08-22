@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     Agent Friday - Windows installer :: Deps.ps1
 
@@ -185,6 +185,7 @@ function Get-InstalledDistributions {
     param([Parameter(Mandatory)][string] $InstallRoot)
     $exe = Get-PythonExe $InstallRoot
     $r = Invoke-Native -FilePath $exe -Arguments @('-m','pip','list','--format=freeze','--disable-pip-version-check') -TimeoutSeconds 180
-    if ($r.ExitCode -ne 0) { return @() }
-    return @($r.StdOut -split "`r?`n" | Where-Object { $_ -match '==' })
+    if ($r.ExitCode -ne 0) { return ,@() }
+    return ,@($r.StdOut -split "`r?`n" | Where-Object { $_ -match '==' })
 }
+

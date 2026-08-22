@@ -204,7 +204,18 @@ function Add-InstallWarning {
     Write-Log $Text 'WARN'
 }
 
-function Get-InstallWarnings { return @($script:Warnings) }
+function Get-InstallWarnings {
+    # `return @($x)` on an EMPTY collection returns nothing at all, so the
+    # caller's `$warns = Get-InstallWarnings` binds $null and the next
+    # `$warns.Count` throws under StrictMode. That crashed the build script at
+    # the very end of an otherwise successful run - and would have crashed the
+    # installer on the last line of a clean install, which is the worst
+    # possible place for it.
+    #
+    # The comma operator wraps the array so it survives the return unflattened.
+    # Every Get-* in this project that returns a collection does this.
+    return ,@($script:Warnings)
+}
 
 # --- Running external commands ------------------------------------------
 
@@ -545,7 +556,7 @@ function Add-HealEvent {
     param([Parameter(Mandatory)][hashtable] $Event)
     [void]$script:HealEvents.Add([PSCustomObject]$Event)
 }
-function Get-HealEvents { return @($script:HealEvents) }
+function Get-HealEvents { return ,@($script:HealEvents) }   # see Get-InstallWarnings
 
 # --- Finishing -----------------------------------------------------------
 

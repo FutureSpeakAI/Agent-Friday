@@ -131,7 +131,27 @@ foreach ($junk in @('__pycache__','.pytest_cache','.mypy_cache','.ruff_cache','n
     Get-ChildItem -LiteralPath $Payload -Recurse -Force -Directory -Filter $junk -ErrorAction SilentlyContinue |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 }
-Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -Include '*.pyc','*.pyo','*.key','*.pem' -ErrorAction SilentlyContinue |
+
+# -----------------------------------------------------------------------
+# DO NOT reintroduce `-LiteralPath ... -Include`. PowerShell SILENTLY IGNORES
+# -Include when the path is given as -LiteralPath. The previous version of
+# these four lines read:
+#
+#   Get-ChildItem -LiteralPath $Payload -Recurse -Force -File `
+#                 -Include '*.pyc','*.pyo','*.key','*.pem' | Remove-Item
+#
+# which matched EVERY FILE IN THE PAYLOAD and deleted all of them. The build
+# then reported "48 top-level item(s) copied; no credential-shaped strings
+# found" and produced a 12.5 MB zip containing the full directory tree and
+# zero files. The credential scan passed because there was nothing left to
+# scan - a check that passes vacuously is worse than no check, because it
+# reports as evidence.
+#
+# Filtering in PowerShell rather than in the provider avoids the whole area.
+# -----------------------------------------------------------------------
+$junkExt = @('.pyc', '.pyo', '.key', '.pem')
+Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -ErrorAction SilentlyContinue |
+    Where-Object { $junkExt -contains $_.Extension.ToLowerInvariant() } |
     ForEach-Object {
         Write-Log "Removed from payload: $($_.FullName)" 'WARN'
         Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
@@ -142,25 +162,140 @@ if ($skippedSensitive.Count -gt 0) {
     Write-Log "Sensitive files excluded: $($skippedSensitive -join ', ')" 'OK'
 }
 
-# --- Prove it. A grep is cheap; shipping a key is not. -------------------
-Say-Working 'Scanning the payload for anything that looks like a credential.'
-$leakPatterns = @('sk-ant-[A-Za-z0-9_\-]{8,}', 'AIza[A-Za-z0-9_\-]{20,}', 'sk-[A-Za-z0-9]{32,}')
-$leaks = @()
-foreach ($f in (Get-ChildItem -LiteralPath $Payload -Recurse -File -Include '*.py','*.bat','*.cmd','*.vbs','*.json','*.yaml','*.yml','*.md','*.txt','*.html','*.js' -ErrorAction SilentlyContinue)) {
-    try { $text = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue } catch { continue }
-    if (-not $text) { continue }
-    foreach ($p in $leakPatterns) {
-        if ([regex]::IsMatch($text, $p)) { $leaks += $f.FullName; break }
-    }
+# --- Prove the payload is actually there ---------------------------------
+#
+# This check exists because of the bug documented above: a build step deleted
+# every file in the payload and NOTHING NOTICED. The directory tree was
+# intact, the top-level count was right, the credential scan came back clean,
+# and the artifact was 12.5 MB of empty folders. The installer then failed on
+# a stranger's laptop with "Friday's own files could not be copied", which is
+# a true sentence pointing at entirely the wrong machine.
+#
+# So: name the files without which the artifact is worthless, and refuse to
+# continue if any is missing. A plausibility floor on the file count catches
+# the same class of failure for files nobody thought to name.
+Say-Working 'Checking the payload is complete.'
+$mustExist = @(
+    'pyproject.toml',
+    'requirements.txt',
+    'index.html',
+    'src\agent_friday\cli.py',
+    'src\agent_friday\server.py',
+    'src\agent_friday\setup_wizard.py',
+    'src\agent_friday\__init__.py',
+    'friday_tray.py'
+)
+$missing = @()
+foreach ($rel in $mustExist) {
+    if (-not [System.IO.File]::Exists((Join-Path $Payload $rel))) { $missing += $rel }
 }
-if ($leaks.Count -gt 0) {
-    Say-Problem -What ("The payload contains something that looks like a live API key, so the build has stopped. " +
-                       "Files: " + (($leaks | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')) `
-                -WhatToDo 'Remove the key from those files, or add them to Get-PayloadExcludes, then build again.'
-    Write-Log "BUILD ABORTED - possible credential in payload: $($leaks -join '; ')" 'FAIL'
+$payloadFiles = @(Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -ErrorAction SilentlyContinue)
+if ($missing.Count -gt 0 -or $payloadFiles.Count -lt 200) {
+    Say-Problem -What ("The payload is incomplete, so the build has stopped. " +
+                       "Missing: " + $(if ($missing.Count) { $missing -join ', ' } else { '(nothing named)' }) +
+                       ". File count: $($payloadFiles.Count).") `
+                -WhatToDo 'This is a bug in build-installer.ps1, not in your checkout. Do not ship this artifact.'
+    Write-Log "BUILD ABORTED - payload incomplete. missing=[$($missing -join ',')] filecount=$($payloadFiles.Count)" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.payload' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
     exit 1
 }
-Say-Ok "$copied top-level item(s) copied; no credential-shaped strings found."
+Say-Ok "$($payloadFiles.Count) files, all required entry points present."
+
+# --- Prove it carries no keys. A grep is cheap; shipping a key is not. ----
+#
+# The naive version of this - "does the file contain /sk-ant-.{8,}/?" - fired
+# on four files, all of which turned out to be deliberate test fixtures and
+# documentation placeholders. One of them carries the repo's own
+# `# pragma: allowlist secret`; another is docs/audits/release-readiness.md,
+# which exists specifically to record that those strings are benign.
+#
+# A scanner that cries wolf gets switched off, and a scanner that is switched
+# off is how a real key ships. So this one discriminates instead:
+#
+#   * a real credential is LONG. Anthropic keys run ~100 characters, Google
+#     AIza keys are exactly 39, OpenAI sk- keys are 51. Placeholders are 21-37
+#     characters of "abc123xyz".
+#   * a real credential is HIGH ENTROPY. "abcdefghijklmnop" is not random and
+#     Shannon entropy says so in one line of arithmetic.
+#   * the repo already has a convention for "I know, it's a fixture" - honour
+#     it rather than inventing a second one.
+#
+# Every candidate that is examined and cleared is logged by name, so the scan
+# leaves evidence that it ran rather than only evidence that it found nothing.
+function Get-ShannonEntropy {
+    param([string] $S)
+    if (-not $S -or $S.Length -eq 0) { return 0.0 }
+    $counts = @{}
+    foreach ($ch in $S.ToCharArray()) {
+        if ($counts.ContainsKey($ch)) { $counts[$ch]++ } else { $counts[$ch] = 1 }
+    }
+    $h = 0.0
+    foreach ($k in $counts.Keys) {
+        $p = $counts[$k] / $S.Length
+        $h -= $p * [Math]::Log($p, 2)
+    }
+    return $h
+}
+
+Say-Working 'Scanning the payload for anything that looks like a credential.'
+
+# pattern, minimum plausible real length
+$leakPatterns = @(
+    @{ Rx = 'sk-ant-[A-Za-z0-9_\-]{16,}'; MinLen = 50 },   # real ~100 chars
+    @{ Rx = 'AIza[A-Za-z0-9_\-]{30,}';    MinLen = 39 },   # real exactly 39
+    @{ Rx = 'sk-[A-Za-z0-9]{40,}';        MinLen = 48 },   # real 51
+    @{ Rx = 'gh[pousr]_[A-Za-z0-9]{30,}'; MinLen = 40 },
+    @{ Rx = 'xox[baprs]-[A-Za-z0-9\-]{24,}'; MinLen = 40 }
+)
+$scanExt = @('.py','.bat','.cmd','.vbs','.json','.yaml','.yml','.md','.txt','.html','.js','.ts','.ps1','.sh','.env','.ini','.cfg','.toml')
+$leaks    = @()
+$cleared  = @()
+
+foreach ($f in (Get-ChildItem -LiteralPath $Payload -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { $scanExt -contains $_.Extension.ToLowerInvariant() })) {
+    $lines = $null
+    try { $lines = Get-Content -LiteralPath $f.FullName -ErrorAction SilentlyContinue } catch { continue }
+    if (-not $lines) { continue }
+    $ln = 0
+    foreach ($line in $lines) {
+        $ln++
+        if ($line -match 'allowlist secret|pragma:\s*allowlist') { continue }
+        foreach ($p in $leakPatterns) {
+            foreach ($m in [regex]::Matches($line, $p.Rx)) {
+                $v = $m.Value
+                if ($v.Length -lt $p.MinLen) {
+                    $cleared += "$($f.Name):$ln (too short: $($v.Length) chars)"
+                    continue
+                }
+                $tail = $v.Substring([Math]::Min(8, $v.Length))
+                $ent = Get-ShannonEntropy $tail
+                if ($ent -lt 3.2) {
+                    $cleared += ("$($f.Name):$ln (low entropy: {0:N2} bits/char)" -f $ent)
+                    continue
+                }
+                # Long AND random. Treat as real and stop the build.
+                $leaks += "$($f.FullName.Replace($Payload,'<payload>')):$ln"
+            }
+        }
+    }
+}
+
+if ($cleared.Count -gt 0) {
+    Write-Log "Credential scan examined and CLEARED $($cleared.Count) placeholder(s):" 'OK'
+    foreach ($c2 in ($cleared | Select-Object -Unique)) { Write-Log "  cleared: $c2" 'OK' }
+}
+
+if ($leaks.Count -gt 0) {
+    Say-Problem -What ("The payload contains something that looks like a LIVE API key - long enough " +
+                       "and random enough to be real - so the build has stopped rather than ship it. " +
+                       "Locations: " + ($leaks -join ', ')) `
+                -WhatToDo ('Remove the key from those files, add the file to Get-PayloadExcludes, or ' +
+                           "append '# pragma: allowlist secret' if it genuinely is a fixture. Then build again.")
+    Write-Log "BUILD ABORTED - probable live credential in payload: $($leaks -join '; ')" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.credentialscan' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+Say-Ok "$copied top-level item(s); $($cleared.Count) placeholder(s) examined and cleared; no live credentials."
 
 # =========================================================================
 #  2. Bundle the embeddable Python
@@ -201,25 +336,99 @@ if ($NoWheelhouse) {
     Say-Step 'Building wheels for the packages that do not publish any'
     New-Item -ItemType Directory -Force -Path $Wheels | Out-Null
 
-    $r = Invoke-Native -FilePath $BuildPython -Arguments @(
-        '-m','pip','wheel',
-        '--no-deps',
-        '--wheel-dir', $Wheels,
-        '-r', (Join-Path $Here 'requirements\wheelhouse.txt')
-    ) -TimeoutSeconds 1800
+    # --- Which Python builds the wheels ---------------------------------
+    #
+    # NOT whatever `python` resolves to on the build machine. On this one it
+    # resolved to an unrelated project's venv shim, pip wheel failed, and the
+    # build cheerfully produced an artifact with an empty wheelhouse - i.e.
+    # it silently fell back to the source-build path the wheelhouse exists to
+    # avoid. A build step that can quietly not happen is worse than one that
+    # is not there.
+    #
+    # So we build with the SAME embeddable interpreter we just bundled. It is
+    # sitting in staging already, it is the exact version the target machine
+    # will run, and it means the build host needs no Python of its own. The
+    # five packages are pure Python, so the resulting wheels are py3-none-any
+    # and work anywhere regardless.
+    $buildPy = $null
+    $embedZip = $null
+    if (-not $NoBundlePython) {
+        $embedZip = Get-ChildItem -LiteralPath $PyBundle -Filter '*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if ($embedZip) {
+        $bpRoot = Join-Path $Staging 'buildpy'
+        Say-Working 'Preparing a throwaway interpreter to build them with.'
+        Expand-Archive -LiteralPath $embedZip.FullName -DestinationPath $bpRoot -Force
+        $pth = Get-ChildItem -LiteralPath $bpRoot -Filter 'python*._pth' | Select-Object -First 1
+        @("$($pth.BaseName -replace '\._pth$','').zip", '.', 'Lib\site-packages', 'import site') |
+            Set-Content -LiteralPath $pth.FullName -Encoding ascii
+        $buildPy = Join-Path $bpRoot 'python.exe'
 
-    # pip wheel with --no-deps only builds the named package, so build the
-    # transitive sdist-only set explicitly. They are all pure Python.
-    foreach ($p in @('pyscreeze','pygetwindow','mouseinfo','pytweening','pymsgbox','pyperclip','pyrect')) {
-        $null = Invoke-Native -FilePath $BuildPython -Arguments @(
-            '-m','pip','wheel','--no-deps','--wheel-dir', $Wheels, $p
+        $gp = Join-Path $PyBundle 'get-pip.py'
+        if (-not (Test-Path -LiteralPath $gp)) {
+            [void](Get-RemoteFile -Uri $sources.get_pip.url -OutFile $gp -FriendlyName 'the pip bootstrap')
+        }
+        $null = Invoke-Native -FilePath $buildPy -Arguments @($gp, '--no-warn-script-location', '--no-cache-dir') -TimeoutSeconds 900
+        # setuptools + wheel must be installed, not fetched by build isolation:
+        # a ._pth makes PYTHONPATH inert, which is how pip hands build backends
+        # their dependencies. Without this, every sdist fails with
+        # "BackendUnavailable: Cannot import 'setuptools.build_meta'".
+        $null = Invoke-Native -FilePath $buildPy -Arguments @(
+            '-m','pip','install','--only-binary=:all:','--no-warn-script-location',
+            '--disable-pip-version-check','--no-input','setuptools','wheel'
         ) -TimeoutSeconds 900
     }
+    if (-not $buildPy -or -not (Test-Path -LiteralPath $buildPy)) {
+        Say-Detail 'Falling back to the build machine''s own Python.'
+        $buildPy = $BuildPython
+    }
+
+    # Every sdist-only package in the PyAutoGUI dependency graph, named
+    # explicitly. `pip wheel --no-deps` builds only what you name, and naming
+    # them individually means one failing does not take the rest with it.
+    $targets = @('pyautogui','pyscreeze','pygetwindow','mouseinfo','pytweening','pymsgbox','pyperclip','pyrect')
+    $failed = @()
+    foreach ($p in $targets) {
+        $r = Invoke-Native -FilePath $buildPy -Arguments @(
+            '-m','pip','wheel','--no-deps','--no-build-isolation',
+            '--wheel-dir', $Wheels, $p
+        ) -TimeoutSeconds 900
+        if ($r.ExitCode -ne 0) {
+            # Retry once WITH build isolation - the build machine's own Python
+            # can do that even though the embedded one cannot.
+            $r = Invoke-Native -FilePath $buildPy -Arguments @(
+                '-m','pip','wheel','--no-deps','--wheel-dir', $Wheels, $p
+            ) -TimeoutSeconds 900
+        }
+        if ($r.ExitCode -ne 0) {
+            $failed += $p
+            Write-Log "Could not build a wheel for ${p}: exit $($r.ExitCode)" 'WARN'
+        }
+    }
+    if ($failed.Count -gt 0) {
+        Say-Note ("Could not build: " + ($failed -join ', '))
+    }
+
+    # The throwaway interpreter must not end up inside the artifact - it would
+    # double the download and ship a second Python nobody asked for.
+    $bpRootClean = Join-Path $Staging 'buildpy'
+    if (Test-Path -LiteralPath $bpRootClean) { Remove-Item -LiteralPath $bpRootClean -Recurse -Force }
 
     $built = @(Get-ChildItem -LiteralPath $Wheels -Filter '*.whl' -ErrorAction SilentlyContinue)
     if ($built.Count -eq 0) {
-        Say-Note 'No wheels were built. The installer will fall back to source builds on the target machine.'
-        Write-Log 'Wheelhouse is EMPTY after the build step.' 'WARN'
+        # ABORT rather than warn. An empty wheelhouse means the artifact
+        # silently falls back to building sdists on her laptop - the exact
+        # thing the wheelhouse exists to prevent - and the previous version of
+        # this script printed a Note and then said "installer built" anyway.
+        # A build that half-worked must not report as a build that worked.
+        Say-Problem -What ('No wheels could be built, so the installer would have to compile ' +
+                           'packages on the target machine. The build has stopped rather than ' +
+                           'produce an artifact that quietly does the wrong thing.') `
+                    -WhatToDo ('Check that the bundled Python could reach PyPI, or re-run with ' +
+                               '-NoWheelhouse if you accept the source-build fallback deliberately.')
+        Write-Log 'BUILD ABORTED - wheelhouse is empty.' 'FAIL'
+        Complete-Install -Failed -FailedStep 'build.wheelhouse' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+        exit 1
     } else {
         # Every wheel must be pure-Python (py3-none-any). A wheel tagged for a
         # specific CPython ABI would only work on the build machine's version

@@ -366,7 +366,10 @@ function Get-HealExtraPipFlags {
             'prefer-binary-fallback' { $out += @('--no-cache-dir','--timeout','120') }
         }
     }
-    return $out
+    # Comma operator - an empty $out would otherwise return $null and the
+    # caller's `+ (Get-HealExtraPipFlags)` would splice a null into the
+    # argument array. See Get-InstallWarnings in Common.ps1.
+    return ,@($out)
 }
 
 # --- Parameter validation ------------------------------------------------
