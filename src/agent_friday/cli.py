@@ -437,6 +437,66 @@ RING_LABELS = {
 }
 
 
+def cmd_models(install: bool = False):
+    """Show what this machine can run; with --install, download it.
+
+    Deliberately shows the plan first and downloads only when asked. An
+    installer that starts fetching gigabytes before telling you what it decided,
+    or that installs something your machine cannot run and lets you find out
+    later, is the behaviour this command exists to avoid.
+    """
+    from agent_friday.services import hardware_profile, model_plan, model_setup
+
+    console.print()
+    console.rule("[bold cyan]WHAT THIS MACHINE CAN RUN[/bold cyan]")
+    try:
+        profile = hardware_profile.get()
+    except Exception as e:
+        console.print(f"  [red]Hardware detection failed: {e}[/red]")
+        console.print("  Cannot plan without it — nothing was installed.\n")
+        return 2
+
+    # What is already on the machine, so we do not propose downloading 5 GiB
+    # next to a model that is already sitting on the user's disk. A daemon that
+    # is down means "unknown", not "nothing installed" — planning as if the
+    # disk were empty would be the same mistake as reading a missing key as 0.
+    installed = None
+    try:
+        from agent_friday.routing.ollama_manager import get_manager
+        installed = [m.get("name") for m in (get_manager().list_models() or [])]
+    except Exception:
+        console.print("  [dim](Ollama not reachable — planning as if nothing is "
+                      "installed yet; re-run once it is up.)[/dim]")
+
+    plan = model_plan.plan(profile, installed=installed)
+    console.print(model_plan.render(plan))
+
+    if not install:
+        if plan["download"]:
+            console.print("  Run [bold]friday models --install[/bold] to download "
+                          "these.\n")
+        return 0
+
+    if not plan["download"]:
+        console.print("  Nothing to install.\n")
+        return 0
+
+    console.rule("[bold cyan]INSTALLING[/bold cyan]")
+    report = model_setup.install(plan, say=lambda s: console.print(s))
+
+    console.print()
+    console.print(f"  {report['summary']}")
+
+    vault_ok, vault_msg = model_setup.vault_status(report, plan)
+    console.print(f"  {'[green]' if vault_ok else '[yellow]'}{vault_msg}"
+                  f"{'[/green]' if vault_ok else '[/yellow]'}")
+    console.print()
+
+    # Exit non-zero on failure so a script can tell. Saying "done" over a
+    # failed install is the exact habit this release is trying to break.
+    return 0 if report["ok"] else 1
+
+
 def cmd_tools():
     """Show tool ring configuration and toggle Ring 3 (OS Control)."""
     cfg = _load_config()
@@ -1012,6 +1072,11 @@ examples:
     # model
     sub.add_parser("model", help="Change LLM model")
 
+    p_models = sub.add_parser(
+        "models", help="Show what this machine can run, and install it")
+    p_models.add_argument("--install", action="store_true",
+                          help="Download the recommended models")
+
     # tools
     sub.add_parser("tools", help="Browse and configure tool rings")
 
@@ -1248,6 +1313,8 @@ def main():
         cmd_setup(quick=getattr(args, "quick", False))
     elif cmd == "model":
         cmd_model()
+    elif cmd == "models":
+        cmd_models(install=getattr(args, "install", False))
     elif cmd == "tools":
         cmd_tools()
     elif cmd == "config":
