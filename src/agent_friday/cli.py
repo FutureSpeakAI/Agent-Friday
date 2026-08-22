@@ -1301,42 +1301,70 @@ def cmd_health():
         pass
 
 
+def _exit_code(rv) -> int:
+    """Normalise a command's return value into a process exit code.
+
+    None       -> 0   (a command that returns nothing succeeded)
+    True/False -> 0/1  (cmd_health returns a bool; as a raw exit code False
+                        would be 0, i.e. a failed health check reporting
+                        success — the precise bug this function exists to stop)
+    int        -> itself
+    """
+    if rv is None or rv is True:
+        return 0
+    if rv is False:
+        return 1
+    try:
+        return int(rv)
+    except (TypeError, ValueError):
+        return 0
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
 
     cmd = args.command
 
+    # Every branch's return value is captured and propagated. Before this,
+    # `cmd_models` computed a correct non-zero result on a failed install,
+    # printed "0 of 2 models installed", printed "Vault memory is NOT working",
+    # and then main() discarded the value — so `$?` was 0 and any CI job or
+    # install script checking it was told the install succeeded. The honest
+    # verdict existed at every layer except the one that leaves the process.
     if cmd is None:
-        cmd_start()
+        rv = cmd_start()
     elif cmd == "setup":
-        cmd_setup(quick=getattr(args, "quick", False))
+        rv = cmd_setup(quick=getattr(args, "quick", False))
     elif cmd == "model":
-        cmd_model()
+        rv = cmd_model()
     elif cmd == "models":
-        cmd_models(install=getattr(args, "install", False))
+        rv = cmd_models(install=getattr(args, "install", False))
     elif cmd == "tools":
-        cmd_tools()
+        rv = cmd_tools()
     elif cmd == "config":
-        cmd_config(args)
+        rv = cmd_config(args)
     elif cmd in ("status", "doctor", "check"):
-        cmd_status()
+        rv = cmd_status()
     elif cmd == "health":
-        cmd_health()
+        rv = cmd_health()
     elif cmd == "update":
-        cmd_update()
+        rv = cmd_update()
     elif cmd == "skills":
-        cmd_skills(delete_name=getattr(args, "delete", None))
+        rv = cmd_skills(delete_name=getattr(args, "delete", None))
     elif cmd == "vault-setup":
-        cmd_vault_setup()
+        rv = cmd_vault_setup()
     elif cmd == "export":
-        cmd_export()
+        rv = cmd_export()
     elif cmd == "erase":
-        cmd_erase(assume_yes=getattr(args, "yes", False))
+        rv = cmd_erase(assume_yes=getattr(args, "yes", False))
     elif cmd == "tls-init":
-        cmd_tls_init()
+        rv = cmd_tls_init()
     else:
         parser.print_help()
+        rv = 2
+
+    sys.exit(_exit_code(rv))
 
 
 if __name__ == "__main__":
