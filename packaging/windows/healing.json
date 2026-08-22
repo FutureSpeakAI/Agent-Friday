@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Configuration for the installer's optional self-repair.",
+    "",
+    "Self-repair only runs if BOTH of these are true:",
+    "  - the person running setup pasted an Anthropic key at the prompt, and",
+    "  - she then answered yes to 'use it to fix problems automatically?'",
+    "",
+    "A key without consent does nothing. Declining costs her nothing except",
+    "the ability to self-repair; the installer works either way.",
+    "",
+    "The caps below exist so a pathological failure loop cannot spend her API",
+    "budget or hang the install. max_total_heals is the number of diagnosis",
+    "calls across the WHOLE install; each step separately gets at most 3",
+    "attempts (Invoke-Step -MaxHealAttempts). max_total_minutes is a wall",
+    "clock, checked before every call.",
+    "",
+    "The rate table is used only to put an approximate number in the install",
+    "report so Stephen can see what healing cost. It is an estimate baked in",
+    "at build time, not a bill, and it will drift as published prices change.",
+    "The report says so."
+  ],
+
+  "model": "claude-sonnet-5",
+  "_model_note": [
+    "Sonnet rather than Haiku because the input is gnarly, low-signal tool",
+    "output and a wrong diagnosis costs a wasted remediation plus a retry.",
+    "At roughly 2k input and 200 output tokens per call, twelve calls is",
+    "around eleven cents. Switch to claude-haiku-4-5-20251001 if that ever",
+    "stops being true."
+  ],
+
+  "api_url": "https://api.anthropic.com/v1/messages",
+  "api_version": "2023-06-01",
+  "max_tokens": 700,
+  "request_timeout_s": 60,
+
+  "max_total_heals": 12,
+  "max_total_minutes": 25,
+
+  "rate_input_per_mtok": 3.00,
+  "rate_output_per_mtok": 15.00
+}

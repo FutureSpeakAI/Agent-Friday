@@ -230,7 +230,24 @@ $null = Invoke-Step -Id 'app.copy' -Title 'Copying Friday onto this laptop' `
 
 # Now that the app is on disk, self-repair has something to repair.
 if ($healKey -and $healConsent) {
-    [void](Initialize-Healing -ApiKey $healKey -Consented $true -InstallRoot $InstallRoot)
+    $healCfg = $null
+    $healCfgPath = Join-Path $Here 'healing.json'
+    if (Test-Path -LiteralPath $healCfgPath) {
+        try {
+            # ConvertFrom-Json yields a PSCustomObject; Initialize-Healing
+            # wants a hashtable, and PS 5.1 has no -AsHashtable.
+            $obj = Get-Content -LiteralPath $healCfgPath -Raw | ConvertFrom-Json
+            $healCfg = @{}
+            foreach ($p in $obj.PSObject.Properties) {
+                if ($p.Name.StartsWith('_')) { continue }   # comment keys
+                $healCfg[$p.Name] = $p.Value
+            }
+        } catch {
+            Write-Log "healing.json could not be read; using built-in defaults. $($_.Exception.Message)" 'WARN'
+            $healCfg = $null
+        }
+    }
+    [void](Initialize-Healing -ApiKey $healKey -Consented $true -InstallRoot $InstallRoot -Config $healCfg)
 }
 
 # =========================================================================
