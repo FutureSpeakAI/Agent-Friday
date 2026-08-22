@@ -33,9 +33,27 @@ imageio-ffmpeg>=0.5
 mutagen>=1.47
 
 # --- Context compression. Degrades to passthrough if absent. --------------
-# NOTE: requirements.txt at the repo root says this "builds from sdist
-# (Rust + MSVC on Windows)". That is out of date - as of 2026-08-21 a
-# cp312 win_amd64 wheel is published, verified by downloading it. It is
-# still in this tier rather than core so that if upstream ever goes back to
-# sdist-only, the install degrades instead of failing.
-headroom-ai[all]>=0.22
+#
+# NOTE 1: requirements.txt at the repo root says this "builds from sdist
+# (Rust + MSVC on Windows)". That is out of date - as of 2026-08-21 a cp312
+# win_amd64 wheel is published, verified by downloading it.
+#
+# NOTE 2, and this one matters: the repo pins `headroom-ai[all]`. On a real
+# install, measured on Windows 11 on 2026-08-21, that [all] extra pulls in
+#
+#   torch (490 MB on disk), transformers, sentence-transformers, datasets,
+#   scikit-learn, scipy, pandas, pyarrow, opencv-python, rapidocr-onnxruntime,
+#   litellm, openai, fastapi, uvicorn, starlette, mcp, magika, trafilatura,
+#   and the whole tree-sitter-language-pack
+#
+# - about 2.3 GB, for an optional context-compression nicety that the app
+# explicitly degrades past if it is absent. It also silently installed the
+# ENTIRE memory tier, which made `-SkipMemory` skip nothing and made the
+# "this adds about 2.5 GB" warning shown to the user simply untrue.
+#
+# So the installer takes the base package. Everything headroom actually needs
+# for compression is in it; [all] is integrations with other tools. If you
+# want the full extra, move this line to memory.txt where a 2 GB download is
+# announced and consented to, rather than arriving inside "voice and PDF
+# reading".
+headroom-ai>=0.22

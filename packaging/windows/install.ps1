@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     Agent Friday - Windows installer
 
@@ -37,8 +37,16 @@ param(
     # declines autostart, and does NOT run the interactive setup wizard.
     [switch] $Unattended,
 
-    # Skip the ~2.5 GB memory tier (torch). Friday works without it; she just
-    # does not remember across sessions.
+    # Skip the memory tier. Friday works without it; she just does not
+    # remember across sessions.
+    #
+    # Measured on Windows 11, 2026-08-21: core + recommended is about 800 MB of
+    # site-packages, and the memory tier adds roughly 1.5 GB on top (torch is
+    # 490 MB of that on disk). It used to be far worse - headroom-ai[all] in the
+    # recommended tier was quietly pulling torch, transformers,
+    # sentence-transformers, datasets, scikit-learn, pandas, OpenCV and an OCR
+    # engine, so -SkipMemory skipped nothing and the size shown to the user was
+    # wrong. See requirements/recommended.txt.
     [switch] $SkipMemory,
 
     # Skip Ollama entirely. For test runs and for machines that already have
@@ -90,7 +98,11 @@ try {
     }
 } catch { }
 
-Set-StepTotal 12
+# Count the Say-Step calls below, not a guess. This read 12 while the script
+# made fifteen of them, so the last three announced themselves as "[13/12]",
+# "[14/12]", "[15/12]". The models step is conditional on Ollama being present,
+# so the total is bumped by one at that point rather than assumed here.
+Set-StepTotal 15
 
 # =========================================================================
 #  Welcome
@@ -425,6 +437,7 @@ if ($SkipOllama) {
 $modelTagsPulled = @()
 
 if ($ollamaOutcome.Installed) {
+    Set-StepTotal 16     # this step only exists when there is an Ollama to use
     Say-Step 'Downloading Friday''s local brain'
     Say-Detail 'Friday works out what this laptop can handle first, then downloads only that.'
     Say-Detail 'Usually about 3 GB. This is the longest wait.'
@@ -618,7 +631,7 @@ Complete-Install
 #  Done
 # =========================================================================
 
-$warns = Get-InstallWarnings
+$warns = Get-FailureWarnings
 Say ''
 Say "  $($script:C.Green)$($script:C.Bold)Friday is installed.$($script:C.Reset)"
 Say ''
@@ -631,7 +644,7 @@ if ($warns.Count -gt 0) {
 Say '  There is an Agent Friday icon on the desktop. Double-click it.'
 Say '  The first start takes a minute or two - she is waking up, not stuck.'
 Say ''
-Say "  To remove her: Start menu $([char]0x2192) Agent Friday $([char]0x2192) Uninstall Agent Friday."
+Say "  To remove her: Start menu -> Agent Friday -> Uninstall Agent Friday."
 Say '  Your notes are kept unless you ask it to remove those too.'
 Say ''
 Say "  $($script:C.Grey)For Stephen: $(Join-Path $LogDir 'LAST-INSTALL-REPORT.md')$($script:C.Reset)"
@@ -645,3 +658,4 @@ if (-not $Unattended) {
 }
 
 exit 0
+

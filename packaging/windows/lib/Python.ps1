@@ -218,7 +218,12 @@ function Install-Pip {
     } else {
         # No pin available (get-pip.py is a moving target upstream). Say so
         # loudly in the log rather than implying it was checked.
-        Add-InstallWarning "get-pip.py was used WITHOUT a SHA-256 pin. It is fetched over TLS from bootstrap.pypa.io but its contents were not verified against a known hash."
+        #
+        # -Informational: this belongs in Stephen's report and nowhere near
+        # her screen. Before the split, this single note made a completely
+        # clean install end by telling her "a couple of optional parts did not
+        # install" - nothing had failed at all.
+        Add-InstallWarning -Informational -Text "get-pip.py was used WITHOUT a SHA-256 pin. It is fetched over TLS from bootstrap.pypa.io but its contents were not verified against a known hash."
     }
     $exe = Get-PythonExe $InstallRoot
     $r = Invoke-Native -FilePath $exe -Arguments @($GetPipPath, '--no-warn-script-location', '--no-cache-dir') -TimeoutSeconds 900

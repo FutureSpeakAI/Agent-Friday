@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     Agent Friday - Windows installer :: Common.ps1
 
@@ -84,7 +84,7 @@ function Initialize-Log {
     $header = @(
         "Agent Friday - Windows install log",
         "Started      : $((Get-Date).ToString('o'))",
-        "Machine      : $env:COMPUTERNAME",
+        "Machine      : $([Environment]::MachineName)",
         "User         : $env:USERNAME",
         "OS           : $((Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption)",
         "PowerShell   : $($PSVersionTable.PSVersion)",
@@ -167,7 +167,19 @@ function Say-Step {
     <# Announces a step to her, in her language. Also opens the log section. #>
     param([Parameter(Mandatory)][string] $Title)
     $script:StepNumber++
-    $n = "{0}/{1}" -f $script:StepNumber, $script:StepTotal
+    # If the total is wrong, show the count alone rather than "[13/12]".
+    # A progress indicator that reads 15 of 12 is a small wrongness, and small
+    # wrongnesses on screen are what make someone stop trusting the big
+    # statements on the same screen. It also flags the mismatch in the log so
+    # the total gets fixed rather than papered over.
+    if ($script:StepTotal -gt 0 -and $script:StepNumber -le $script:StepTotal) {
+        $n = "{0}/{1}" -f $script:StepNumber, $script:StepTotal
+    } else {
+        $n = "{0}" -f $script:StepNumber
+        if ($script:StepTotal -gt 0) {
+            Write-Log "Step count overflow: step $($script:StepNumber) with a declared total of $($script:StepTotal). Fix Set-StepTotal." 'WARN'
+        }
+    }
     Write-Host ''
     Write-Host "  $($script:C.Grey)[$n]$($script:C.Reset) $($script:C.Bold)$Title$($script:C.Reset)"
     Write-Log ("=" * 72)
@@ -198,11 +210,34 @@ function Say-Problem {
 }
 
 function Add-InstallWarning {
-    <# A thing that did not stop the install but that Stephen must see. #>
-    param([Parameter(Mandatory)][string] $Text)
-    [void]$script:Warnings.Add($Text)
+    <#  A thing that did not stop the install but that Stephen must see.
+
+        -Informational marks entries that belong in his report but must NOT
+        drive anything she is told. Without this split, the note "get-pip.py
+        was not hash-pinned" - true, useful to him, meaningless to her - made
+        the installer end a completely clean run by telling her "a couple of
+        optional parts did not install". Saying something went wrong when
+        nothing did is the same defect as saying nothing went wrong when
+        something did; it just fails in the other direction.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Text,
+        [switch] $Informational
+    )
+    [void]$script:Warnings.Add([PSCustomObject]@{
+        Text          = $Text
+        Informational = [bool]$Informational
+    })
     Write-Log $Text 'WARN'
 }
+
+function Get-FailureWarnings {
+    <# Only the ones that mean a part of Friday is actually missing. This is
+       what decides what she is told. #>
+    return ,@($script:Warnings | Where-Object { -not $_.Informational } | ForEach-Object { $_.Text })
+}
+
+function Get-InstallWarningObjects { return ,@($script:Warnings) }
 
 function Get-InstallWarnings {
     # `return @($x)` on an EMPTY collection returns nothing at all, so the
@@ -214,7 +249,7 @@ function Get-InstallWarnings {
     #
     # The comma operator wraps the array so it survives the return unflattened.
     # Every Get-* in this project that returns a collection does this.
-    return ,@($script:Warnings)
+    return ,@($script:Warnings | ForEach-Object { $_.Text })
 }
 
 # --- Running external commands ------------------------------------------
@@ -619,7 +654,7 @@ function Complete-Install {
     [void]$lines.Add('')
     [void]$lines.Add("- Finished: $((Get-Date).ToString('u'))")
     [void]$lines.Add("- Took: $([int]$elapsed.TotalMinutes) min $($elapsed.Seconds) sec")
-    [void]$lines.Add("- Machine: $env:COMPUTERNAME  /  $((Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption)")
+    [void]$lines.Add("- Machine: $([Environment]::MachineName)  /  $((Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption)")
     [void]$lines.Add("- Full log: $($script:LogPath)")
     [void]$lines.Add('')
 
@@ -656,7 +691,7 @@ function Complete-Install {
         $cost   = ($heals | Measure-Object -Property CostUsd      -Sum).Sum
         [void]$lines.Add('### Cost of self-repair')
         [void]$lines.Add('')
-        [void]$lines.Add("Input tokens: $inTok  ·  Output tokens: $outTok")
+        [void]$lines.Add("Input tokens: $inTok  Â·  Output tokens: $outTok")
         [void]$lines.Add(("Approximate cost: **`${0:N4}** USD, charged to the Anthropic key entered during setup." -f $cost))
         [void]$lines.Add('')
         [void]$lines.Add('That figure is an estimate from a rate table baked into the installer at build')
@@ -664,13 +699,26 @@ function Complete-Install {
     }
     [void]$lines.Add('')
 
-    # --- Warnings ---------------------------------------------------------
+    # --- Warnings, split by whether they actually cost her anything -------
+    $all  = Get-InstallWarningObjects
+    $real = @($all | Where-Object { -not $_.Informational })
+    $info = @($all | Where-Object { $_.Informational })
+
     [void]$lines.Add('## Things that did not work but did not stop the install')
     [void]$lines.Add('')
-    if ($warns.Count -eq 0) {
+    if ($real.Count -eq 0) {
+        [void]$lines.Add('None. Every part of Friday that was meant to install, installed.')
+    } else {
+        foreach ($w in $real) { [void]$lines.Add("- $($w.Text)") }
+    }
+    [void]$lines.Add('')
+
+    [void]$lines.Add('## Notes (nothing is missing because of these)')
+    [void]$lines.Add('')
+    if ($info.Count -eq 0) {
         [void]$lines.Add('None.')
     } else {
-        foreach ($w in $warns) { [void]$lines.Add("- $w") }
+        foreach ($w in $info) { [void]$lines.Add("- $($w.Text)") }
     }
     [void]$lines.Add('')
 
@@ -689,3 +737,4 @@ function Complete-Install {
         Write-Log "Could not write report: $($_.Exception.Message)" 'WARN'
     }
 }
+
