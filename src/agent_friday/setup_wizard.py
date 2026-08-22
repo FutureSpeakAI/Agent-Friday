@@ -275,6 +275,14 @@ def _test_key(label: str, key: str, validator, required: bool = True) -> str:
 
 # ── Step helpers ──────────────────────────────────────────────────
 
+def _pause(msg: str = "  Press Enter to continue..."):
+    """Let the user actually read a screen before the next _clear() wipes it."""
+    try:
+        Prompt.ask(msg, default="", show_default=False)
+    except Exception:
+        pass
+
+
 def _clear():
     console.clear()
 
@@ -480,6 +488,126 @@ def step_creative_engine(total: int, existing: str) -> str:
         except ValueError:
             pass
         console.print(f"  [red]Enter 1–{len(engines)}.[/red]")
+
+
+def step_brain(total: int, existing_anthro: str, existing_gemini: str) -> tuple[str, str]:
+    """Decide local vs cloud from the hardware, and get a working key stored.
+
+    Replaces the old "here are two key prompts" screen. The difference that
+    matters: this asks the planner what THIS machine can actually be good at,
+    and says so, instead of presenting the same choice to every user and
+    letting the weak-hardware case discover the consequences later.
+
+    Keys go through the encrypted credential store, never a launch script, and
+    are validated with a real call before being stored.
+    """
+    from agent_friday import setup_brain as sb
+
+    _clear()
+    _header(5, total, "HOW FRIDAY THINKS")
+
+    with console.status("  Checking what this machine can run...", spinner="dots"):
+        a = sb.assess()
+
+    console.print(f"  {a['reason']}\n")
+    if a.get("brain_label"):
+        console.print(f"  [dim]Local model for this machine: {a['brain_label']}[/dim]\n")
+    console.print(Rule(style="dim"))
+    console.print()
+
+    anthro = existing_anthro or ""
+    if a["capable"]:
+        # Capable hardware gets a genuine choice. Assuming cloud here would be
+        # as wrong as never asking — running entirely on your own machine is
+        # the point of this project, not a fallback.
+        console.print("  [bold]You have a real choice here.[/bold]\n")
+        console.print("    [cyan]1[/cyan]  Local only — nothing leaves this machine")
+        console.print("    [cyan]2[/cyan]  Add a Claude key — sharper answers, all tools")
+        console.print("    [cyan]3[/cyan]  Both — local by default, Claude when it helps\n")
+        choice = Prompt.ask("  Which?", choices=["1", "2", "3"], default="3")
+        if choice == "1":
+            console.print("\n  [green]Local only. You can add a key any time in "
+                          "Settings -> Providers.[/green]\n")
+            _pause()
+            return "", existing_gemini or ""
+    else:
+        console.print("  [bold]Friday needs a Claude key to be useful on this "
+                      "machine.[/bold]")
+        console.print("  [dim]You can skip it, but see what stops working "
+                      "below.[/dim]\n")
+
+    console.print("  [dim]Get one at: console.anthropic.com/settings/keys[/dim]\n")
+    anthro = _store_validated_key(
+        "anthropic", "Anthropic key (sk-ant-...)", anthro,
+        skippable_note=("Skipping means Friday uses this machine's local model. "
+                        "On this machine that may mean no tool use."))
+
+    console.print()
+    console.print(Rule(style="dim"))
+    console.print()
+    console.print("  [bold]Google Gemini key[/bold]  [dim](optional)[/dim]")
+    console.print("  [dim]This one is what powers voice and image generation.[/dim]")
+    console.print("  [dim]Get one at: aistudio.google.com/app/apikey[/dim]\n")
+    gemini = _store_validated_key(
+        "google-gemini", "Gemini key (AIza...)", existing_gemini or "",
+        skippable_note="Voice and image generation stay unavailable without it.")
+
+    # Say what they have and have not, before they leave the screen.
+    console.print()
+    notice = sb.missing_capability_notice(bool(anthro), bool(gemini))
+    if notice:
+        console.print(Panel("\n".join(notice), border_style="yellow",
+                            padding=(1, 4), title="What you have"))
+    _pause()
+    return anthro, gemini
+
+
+def _store_validated_key(provider: str, label: str, existing: str,
+                         skippable_note: str = "") -> str:
+    """Prompt, VALIDATE with a real call, then store encrypted. Loops on error.
+
+    A key that is wrong, expired or mistyped fails here with a clear message.
+    Storing it unchecked would move that failure to the user's first sentence
+    to Friday, which is the single worst place to discover it.
+    """
+    from agent_friday import setup_brain as sb
+
+    if existing and sb.env_has(provider):
+        console.print(f"  [green]A {provider} key is already stored.[/green]")
+        if not Confirm.ask("  Replace it?", default=False):
+            return existing
+
+    while True:
+        key = Prompt.ask(f"  [cyan]{label}[/cyan]", password=True, default="")
+        if not key:
+            if skippable_note:
+                console.print(f"  [yellow]{skippable_note}[/yellow]")
+            if Confirm.ask("  Continue without it?", default=True):
+                return ""
+            continue
+
+        with console.status("  Checking the key works...", spinner="dots"):
+            ok, msg = sb.validate_key(provider, key)
+
+        if ok is False:
+            console.print(f"  [red]x {msg}[/red]")
+            if Confirm.ask("  Try again?", default=True):
+                continue
+            return ""
+        if ok is None:
+            console.print(f"  [yellow]? {msg}[/yellow]")
+            if not Confirm.ask("  Store it anyway?", default=True):
+                continue
+        else:
+            console.print(f"  [green]v {msg}[/green]")
+
+        stored, smsg = sb.store_key(provider, key)
+        if stored:
+            console.print(f"  [green]v {smsg}[/green]")
+            return key
+        console.print(f"  [red]x {smsg}[/red]")
+        if not Confirm.ask("  Try again?", default=True):
+            return ""
 
 
 def step_api_keys(total: int, existing_anthro: str, existing_gemini: str) -> tuple[str, str]:
@@ -851,7 +979,7 @@ def main():
         config.setdefault("creative_model", "gemini-nano-banana-2")
 
     # Step 5 (always): API keys
-    config["anthropic_api_key"], config["gemini_api_key"] = step_api_keys(
+    config["anthropic_api_key"], config["gemini_api_key"] = step_brain(
         total_steps,
         config.get("anthropic_api_key", ""),
         config.get("gemini_api_key", ""),
