@@ -210,6 +210,46 @@ shape."* from the same server, same image sizes, same flags.
 > `done_reason: length`) is a BUDGET symptom, not a blind model.** Read the
 > finish reason before concluding anything about capability.
 
+### Gating the content is not gating the decision to send
+
+Three times now, in three files, written by careful people, and the third one
+was found only by accident — so it is a class and not three incidents.
+
+The shape is always the same. Someone notices that a payload bound for a cloud
+provider might carry sensitive material. They do the thoughtful thing and
+protect the payload: run it through the egress gate, scrub the PII, redact what
+the classifier recognises. Then the code sends it. **Nobody asks whether the
+call should happen at all.**
+
+| where | what protected the payload | what was never asked |
+|---|---|---|
+| `routes/chat.py` screen capture | nothing — bytes are unclassifiable, so the comment concluded there was "nothing to gate" | should an image go to Gemini when the user chose Local only? |
+| `/api/analyze` uploads | `gate_text` on the PDF and text branches | should an upload leave at all in Local only? |
+| `agent.py::_evaluate_output` | `_seal_or_block(..., "anthropic")` — genuinely classifies and redacts | should a task that *just refused the cloud for its own work* be graded by a cloud call? |
+
+> **A redactor answers "what may leave?". It never answers "should this call
+> happen?"** Those are different questions with different inputs: the first
+> reads the text, the second reads the user's policy. Code that only asks the
+> first is not gated, however careful the redaction is.
+
+The evaluator case is the sharpest because the protection was real and the leak
+was still there. On 2026-08-24 a vault-protected task refused the cloud, told
+the user *"It was NOT sent to a cloud provider"*, and then `_evaluate_output`
+called Anthropic with that task's goal and up to 4,000 characters of its output.
+Nothing consulted `_vault_local_only()`. It surfaced only because the API key
+was out of credit; with a working key it would have gone silently.
+
+Two things fall out of it that are worth stating separately. That evaluator runs
+at the end of **every** background task, so it is a per-task cloud call nobody
+had counted. And it returned `GRADE: PARTIAL` when it *failed to run*, so a step
+that produced nothing at all was scored PARTIAL — the grader's own error
+becoming a judgement of the work, in a field people read as one. It now returns
+`GRADE: UNAVAILABLE` and says the output has not been assessed.
+
+**The check to apply anywhere a cloud call is made:** find the user's policy
+input, not the payload's. If the code path cannot name which setting permits
+this specific call, it is not gated.
+
 ### A true observation does not license the conclusion attached to it
 
 The fifth instance that day, and the cleanest statement of the shape, because
