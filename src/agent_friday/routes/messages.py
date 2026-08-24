@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.services import message_triage
 from agent_friday.services.calendar_engine import (
     MESSAGE_LANES,
     MESSAGE_LANE_IDS,
@@ -50,24 +51,50 @@ from agent_friday.services.model_router import (
 messages_bp = Blueprint('messages', __name__)
 
 
+def _qbool(value):
+    """Coerce a raw querystring value to True/False/None. None means
+    "the filter was not requested" -- apply_filters treats that as a
+    no-op rather than an implicit False, so an absent flag never
+    silently drops mail."""
+    if value is None:
+        return None
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 
 @messages_bp.route('/api/messages')
 def api_messages():
     """Classified message cards. ?lane= filters to a single lane;
     ?include_archived=1 keeps archived/snoozed cards in the result."""
     lane = (request.args.get("lane") or "").strip().lower()
+    account = request.args.get("account")
+    query = (request.args.get("query") or "").strip() or None
+    flagged = request.args.get("flagged")
+    min_confidence = request.args.get("min_confidence", type=float)
+    exclude_bulk = request.args.get("exclude_bulk")
+    has_attachments = request.args.get("has_attachments")
     include_archived = request.args.get("include_archived") in ("1", "true", "yes")
     try:
         limit = max(5, min(100, int(request.args.get("limit", 40))))
     except (TypeError, ValueError):
         limit = 40
-    cards, source = _collect_messages(limit=limit)
+    result = message_triage.collect(limit_per_account=limit)
+    cards, source = result["messages"], result["source"]
     now_iso = datetime.now().isoformat(timespec="seconds")
     if not include_archived:
         cards = [c for c in cards if not c["archived"]
                  and not (c["snoozed_until"] and c["snoozed_until"] > now_iso)]
     if lane and lane in MESSAGE_LANE_IDS:
         cards = [c for c in cards if c["lane"] == lane]
+    cards = message_triage.apply_filters(
+        cards,
+        account=account,
+        query=query,
+        flagged=_qbool(flagged),
+        min_confidence=min_confidence,
+        exclude_bulk=bool(_qbool(exclude_bulk)),
+        has_attachment=_qbool(has_attachments),
+    )
     # Cross-reference: flag messages whose sender is an attendee of an upcoming
     # event (next 7 days). Best-effort — failures must not break the inbox.
     try:
@@ -99,7 +126,8 @@ def api_messages():
 @messages_bp.route('/api/messages/stats')
 def api_messages_stats():
     """Per-lane counts + an actionable (non-noise/sub, unread, active) badge."""
-    cards, source = _collect_messages(limit=80)
+    result = message_triage.collect(limit_per_account=80)
+    cards, source = result["messages"], result["source"]
     now_iso = datetime.now().isoformat(timespec="seconds")
     active = [c for c in cards if not c["archived"]
               and not (c["snoozed_until"] and c["snoozed_until"] > now_iso)]
@@ -116,6 +144,7 @@ def api_messages_stats():
         "actionable": actionable,
         "source": source,
         "lanes": MESSAGE_LANES,
+        "per_account": message_triage.account_summary(active),
     })
 
 
@@ -272,3 +301,31 @@ def api_messages_draft():
         return jsonify({"status": "ok", "draft": draft})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@messages_bp.route('/api/messages/learn', methods=['POST'])
+def api_messages_learn():
+    """Record a manual sender->lane correction. Three consistent corrections
+    for the same sender outrank configured domain/keyword rules. Body:
+    {sender, lane}."""
+    data = request.get_json(silent=True) or {}
+    sender = str(data.get("sender") or "").strip().lower()
+    lane = str(data.get("lane") or "").strip().lower()
+    if not sender or lane not in MESSAGE_LANE_IDS:
+        return jsonify({"status": "error",
+                        "message": "sender and a valid lane are required"}), 400
+    result = message_triage.record_signal(sender, lane)
+    return jsonify({"status": "ok", "sender": sender, "lane": lane, "result": result})
+
+
+@messages_bp.route('/api/messages/forget', methods=['POST'])
+def api_messages_forget():
+    """Remove a learned sender override, reverting to configured/default
+    rules. Body: {sender}."""
+    data = request.get_json(silent=True) or {}
+    sender = str(data.get("sender") or "").strip().lower()
+    if not sender:
+        return jsonify({"status": "error", "message": "sender is required"}), 400
+    result = message_triage.forget_sender(sender)
+    return jsonify({"status": "ok", "sender": sender, "result": result})
+
