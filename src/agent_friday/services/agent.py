@@ -2041,8 +2041,39 @@ def _task_snapshot(task_id=None):
         return out
 
 
-def _evaluate_output(task_id, goal, output):
-    """Grade task output with a fresh Claude call that has no build history."""
+def _evaluate_output(task_id, goal, output, *, local_only=False):
+    """Grade task output with a fresh Claude call that has no build history.
+
+    TWO THINGS WORTH KNOWING BEFORE READING ON.
+
+    First: this runs at the end of EVERY background task, not only the ones
+    anyone is watching. It is a cloud call per task that nobody had counted,
+    and it sends the goal and up to 4,000 characters of the output.
+
+    Second, and the reason for `local_only`: on 2026-08-24 a vault-protected
+    task correctly refused the cloud for the work itself and told the user
+    "It was NOT sent to a cloud provider" — and then this evaluator called
+    Anthropic about that same task's goal and output. Nothing here consulted
+    the vault policy. It was caught only because the API key was out of credit;
+    with a working key, vault-derived text would have gone silently, inside the
+    feature whose message promised it would not.
+
+    The payload WAS gated — `_seal_or_block` classifies and redacts before the
+    send, and someone clearly thought about that. It is the third time this
+    exact distinction has been the bug (routes/chat.py's screen capture,
+    /api/analyze's uploads, now here), so it is a class rather than three
+    incidents:
+
+        Gating the CONTENT is not the same as gating the DECISION TO SEND.
+        A redactor answers "what may leave?". It never answers "should this
+        call happen at all?" — and on a vault turn the answer is no, whatever
+        the redactor would have made of the text.
+
+    Returns None when it must not or cannot run, so the caller records no
+    grade rather than a misleading one.
+    """
+    if local_only:
+        return None
     client = get_anthropic_client()
     if client is None:
         return None
@@ -2065,9 +2096,17 @@ def _evaluate_output(task_id, goal, output):
             "messages": [{"role": "user", "content": eval_prompt}],
         }, "anthropic")
         resp = client.messages.create(**_eval_kwargs)
-        return resp.content[0].text.strip() if resp.content else "GRADE: PARTIAL\nREASON: Evaluation unavailable."
+        if resp.content:
+            return resp.content[0].text.strip()
+        # An evaluator that could not run must not return the same verdict as
+        # one that ran and found the work middling. It used to answer
+        # "GRADE: PARTIAL" to both, so on 2026-08-24 a step that produced
+        # NOTHING was graded PARTIAL — the grader's own failure became the
+        # score, in a place people read as a judgement of the work.
+        return "GRADE: UNAVAILABLE\nREASON: The evaluator returned no content."
     except Exception as e:
-        return f"GRADE: PARTIAL\nREASON: Evaluation failed: {e}"
+        return ("GRADE: UNAVAILABLE\nREASON: The evaluator could not run, so "
+                "this output has NOT been assessed: %s" % str(e)[:200])
 
 
 TASK_TIMEOUT_SECONDS = int(os.environ.get('FRIDAY_TASK_TIMEOUT', 1800))  # 30 min default
@@ -2288,8 +2327,23 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                   verified=verified, verification_evidence=verification_summary)
 
         # ── Fresh-context evaluator ────────────────────────────────
-        _task_log(task_id, 'Running quality evaluation…')
-        evaluation = _evaluate_output(task_id, prompt, reply or '')
+        # The evaluator is a CLOUD call. A task that refused the cloud for its
+        # own work must not be graded by it — see _evaluate_output. Same signal
+        # the work used, read the same way, so the two cannot drift apart.
+        _eval_local_only = False
+        try:
+            from agent_friday.core import _vault_local_only as _vlo
+            _eval_local_only = bool(_vlo())
+        except Exception:
+            _eval_local_only = True   # cannot tell → do not send
+        if _eval_local_only:
+            _task_log(task_id, 'Skipping quality evaluation — it is a cloud '
+                               'call and this task is vault-protected.')
+            evaluation = None
+        else:
+            _task_log(task_id, 'Running quality evaluation (cloud)…')
+            evaluation = _evaluate_output(task_id, prompt, reply or '',
+                                          local_only=_eval_local_only)
         if evaluation:
             _task_set(task_id, evaluation=evaluation)
             lines = evaluation.splitlines()
@@ -2309,7 +2363,13 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 # And say what the grade DOES, because the answer is nothing.
                 # A grader whose verdict changes no outcome is a comment, and
                 # it should read as one rather than as a failure.
-                if 'FAIL' in grade_line or 'PARTIAL' in grade_line:
+                if 'UNAVAILABLE' in grade_line:
+                    # Say that nothing was assessed. An absent judgement read
+                    # as a middling one is exactly what PARTIAL used to do.
+                    _task_log(task_id,
+                              '  (the evaluator did not run — this output has '
+                              'NOT been assessed either way)')
+                elif 'FAIL' in grade_line or 'PARTIAL' in grade_line:
                     _task_log(task_id,
                               '  (advisory only — the result below was '
                               'delivered unchanged)')
