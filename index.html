@@ -31783,12 +31783,36 @@ function fmtAgo(ts) {
  *
  * `need` is { role, modality }; either match qualifies.
  */
+/* WHY THE TWO CASES DIFFER, because the asymmetry below looks like a bug and
+   is not — someone will be tempted to "tidy" it back into one rule.
+
+   The role-OR-modality substitution exists for ONE modality: `tools`. Every
+   local Ollama model declares only ["text"] and none advertise "tools", even
+   though they demonstrably run tool loops all day. Requiring the modality
+   there would empty the orchestrator picker of every local model, which is
+   worse than the bug it fixes. So for `tools` we accept the catalogue's `roles`
+   as a stand-in, and that is sound because `roles` IS reliable about what a
+   model is FOR.
+
+   For image / video / music / audio the catalogue is reliable about modality,
+   and the substitution actively misleads. Measured 2026-08-24: sd3.5-medium-fp8
+   declares roles ["creative"], modalities ["image"] — and appeared in the
+   VIDEO seat picker, because the Video seat asks for role "creative" OR
+   modality "video" and the role matched. Stephen found it there and reasonably
+   asked why he had a video model he did not remember installing. Z-Image would
+   have done the same. Any creative model qualified for every creative seat.
+
+   So: substitute the role only where the catalogue cannot be trusted, and
+   require the modality everywhere it can. */
+const ROLE_MAY_SUBSTITUTE_FOR = { tools: true };
+
 function suitability(m, need) {
   if (!need || (!need.role && !need.modality)) return { ok: true };
   const mods = m.modalities || [];
   const roles = m.roles || [];
   if (need.modality && mods.indexOf(need.modality) !== -1) return { ok: true };
-  if (need.role && roles.indexOf(need.role) !== -1) return { ok: true };
+  const roleMaySubstitute = !need.modality || !!ROLE_MAY_SUBSTITUTE_FOR[need.modality];
+  if (roleMaySubstitute && need.role && roles.indexOf(need.role) !== -1) return { ok: true };
   const does = [];
   if (roles.length) does.push(roles.join('/'));
   if (mods.length) does.push(mods.join(', '));
@@ -41026,9 +41050,17 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     "data-audio-device-toggle": "",
     className: "btn",
     onClick: () => setAudioDevicePopup(o => !o),
+    /* 🎚 and not 🎙. This picks the microphone and speaker; the button beside
+       it starts and stops voice mode. Two different jobs that were wearing 🎙
+       and 🎤 — two Unicode microphones, side by side, indistinguishable at
+       10px. Stephen read the pair as one control rendered twice, which was a
+       fair reading of what they looked like. The titles now say which is
+       which rather than relying on the glyph alone. */
     title: (() => {
       const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
-      return inp ? inp.label.split('(')[0].trim() : 'Audio device';
+      const name = inp ? inp.label.split('(')[0].trim() : 'default device';
+      return 'Choose microphone and speaker — currently ' + name +
+             '. This does not start voice mode; the 🎤 button beside it does.';
     })(),
     style: {
       padding: '4px 7px',
@@ -41037,7 +41069,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       border: '1px solid ' + (audioDevicePopup ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.1)'),
       background: audioDevicePopup ? 'rgba(0,212,255,0.08)' : 'rgba(255,255,255,0.03)'
     }
-  }, "\uD83C\uDF99"), audioDevicePopup && /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDF9A"), audioDevicePopup && /*#__PURE__*/React.createElement("div", {
     ref: audioDevicePopupRef,
     style: {
       position: 'absolute',
@@ -41229,10 +41261,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   }), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     disabled: !!uploading,
-    title: uploading ? ('Analysing ' + uploading) : 'Attach an image, PDF or text file',
+    title: uploading ? ('Analysing ' + uploading) : 'Attach a file — image, PDF or text',
+    /* 📁 and not 📎. The paperclip was already taken by "📎 Cite Sources" two
+       controls away in the same cluster, so shipping attach as a second
+       paperclip put two identical glyphs side by side doing unrelated things.
+       Mine, added 2026-08-24 and spotted the same morning while looking into
+       why the rail seemed to have duplicate buttons. */
     style: { flexShrink: 0, opacity: uploading ? 0.55 : 1 },
     onClick: () => { if (!uploading && chatFileRef.current) chatFileRef.current.click(); }
-  }, uploading ? '⋯' : '📎'), /*#__PURE__*/React.createElement("input", {
+  }, uploading ? '⋯' : '📁'), /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
