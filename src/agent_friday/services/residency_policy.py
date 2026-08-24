@@ -672,7 +672,8 @@ DEFAULT_IMAGE_MODEL = "z-image-turbo-fp8"
 
 def plan(profile: dict, entries: list, overrides: dict | None = None,
          overhead_tokens: int | None = None,
-         image_model: str | None = None) -> dict:
+         image_model: str | None = None,
+         cloud_roles=()) -> dict:
     """(HardwareProfile, Catalog, overrides, overhead) -> PlacementPlan. Pure.
 
     `image_model` is a PARAMETER for the same reason `overhead_tokens` is. The
@@ -924,7 +925,13 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     # choice could not be seated. An unplaced assignment is never an unmade
     # choice, so the two are now separated at the source rather than
     # disambiguated downstream.
-    _assigned = set((overrides or {}).keys())
+    #
+    # `cloud_roles` are filled too, just not by anything on this card. They are
+    # excluded from `overrides` so the planner does not try to place them (a
+    # local VRAM planner cannot install claude-opus-5 and should not say so),
+    # and they must be excluded here as well or the same seat is reported empty
+    # instead — the identical false statement under a different rule number.
+    _assigned = set((overrides or {}).keys()) | set(cloud_roles or ())
     for role in ASSIGNED_ROLES:
         if seats.get(role) is None and role not in _assigned:
             refusals.append(_refusal(
@@ -1328,10 +1335,19 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
             continue
         entry = by_id.get(model_id)
         if entry is None:
+            # Say WHOSE inventory this is. "installed" was measured against the
+            # residency catalogue -- the GGUFs this planner can serve through
+            # llama-server, plus what the Ollama daemon reports -- and printed
+            # as though it were the machine's whole truth. On 2026-08-23 it
+            # listed gemma4:12b/26b/e2b/e4b, none of which `ollama list`
+            # returns, and omitted every tag that daemon actually holds. Both
+            # halves of that are correct about their own source and neither
+            # says which source it is, which is how a true list misleads.
+            _inv = ", ".join(sorted(by_id)) or "(none)"
             refusals.append(_refusal(
                 role, model_id, "R6",
-                "override names a model that is not installed; installed: %s"
-                % ", ".join(sorted(by_id)) or "(none)"))
+                "override names a model the local planner cannot serve. "
+                "Locally placeable right now: %s" % _inv))
             continue
         if role in ("interactive_brain", "sidekick", "heavy_hitter") and \
                 not entry.get("can_generate"):

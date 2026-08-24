@@ -107,11 +107,79 @@ def overrides_from_settings(settings: dict) -> dict:
     for cap, seat in CAPABILITY_TO_SEAT.items():
         if seat in NEVER_BIND or seat == "image":
             continue
-        model = ((routing.get(cap) or {}) if isinstance(routing.get(cap), dict)
-                 else {}).get("model")
-        if model:
-            out[seat] = model
+        entry = (routing.get(cap) or {}) if isinstance(routing.get(cap), dict) else {}
+        model = entry.get("model")
+        if not model:
+            continue
+        # CLOUD SEATS ARE NOT THE RESIDENCY PLANNER'S BUSINESS.
+        #
+        # The planner allocates VRAM on this machine. A seat pointed at
+        # claude-opus-5 consumes none of it, cannot be "placed", and cannot be
+        # "installed". Passing it through anyway produced the most confidently
+        # wrong warning on the Intelligence page (measured 2026-08-23, three of
+        # them at once): "override names a model that is not installed;
+        # installed: embeddinggemma:300m, functiongemma:270m, gemma4:12b, ..."
+        # — a local VRAM planner refusing a cloud model for not being on the
+        # disk it manages, and then listing eleven local tags at a user who had
+        # deliberately chosen a cloud one.
+        #
+        # The seat is not broken. It is simply not this planner's to adjudicate.
+        # Filtered here rather than special-cased inside _apply_overrides so the
+        # planner keeps its precondition: everything it is handed is a candidate
+        # for local placement.
+        if _is_cloud_binding(entry, model):
+            continue
+        out[seat] = model
     return out
+
+
+def cloud_seats_from_settings(settings: dict) -> set:
+    """Roles the user HAS filled, with something this planner does not manage.
+
+    The necessary companion to `overrides_from_settings` filtering cloud seats
+    out. Removing them from the overrides stopped the planner refusing them for
+    not being installed; without this it then reported them as UNASSIGNED,
+    which is the same false statement wearing the other rule's number. A seat
+    holding claude-opus-5 is neither unplaceable nor empty. It is filled,
+    elsewhere, and the local plan should say nothing about it at all.
+    """
+    routing = (settings or {}).get("capability_routing") or {}
+    out = set()
+    for cap, seat in CAPABILITY_TO_SEAT.items():
+        if seat in NEVER_BIND or seat == "image":
+            continue
+        entry = (routing.get(cap) or {}) if isinstance(routing.get(cap), dict) else {}
+        model = entry.get("model")
+        if model and _is_cloud_binding(entry, model):
+            out.add(seat)
+    return out
+
+
+def _is_cloud_binding(entry: dict, model: str) -> bool:
+    """Is this capability_routing entry pointing at something off-machine?
+
+    Provider first, because it is what the user actually chose and what the
+    registry can classify. The model-id fallback exists only for older settings
+    written before the provider field was populated; it is deliberately narrow,
+    since guessing 'cloud' from a name is how a local model gets silently
+    dropped from the plan.
+    """
+    prov_name = (entry or {}).get("provider") or ""
+    if prov_name:
+        try:
+            from agent_friday.routing.provider_descriptors import classification_of
+            from agent_friday.services.provider_registry import get_provider_registry
+            for prov in get_provider_registry().get_enabled_providers():
+                if prov.get("name") == prov_name:
+                    return classification_of(prov) != "local"
+        except Exception:
+            pass
+        # No descriptor: the local ones are named, so anything else is cloud.
+        return prov_name not in (
+            "ollama-local", "arbiter-local", "llama-cpp-local",
+            "llama-cpp-brain", "local-comfyui", "local-voice-lite",
+            "nemo-local", "local")
+    return False
 
 
 def _provider_for(seat: dict) -> str:
