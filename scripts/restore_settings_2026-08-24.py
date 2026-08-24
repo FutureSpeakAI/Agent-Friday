@@ -29,9 +29,39 @@ decide which model answers a turn -- and prints the three contested keys with
 their candidates rather than picking for him.
 
     python scripts/restore_settings_2026-08-24.py            # show the plan
-    python scripts/restore_settings_2026-08-24.py --apply    # write it
+    python scripts/restore_settings_2026-08-24.py --apply    # write it (server must be down)
 
 A timestamped backup is taken before any write.
+
+WHY --apply REFUSES WHILE FRIDAY IS RUNNING
+-------------------------------------------
+Not caution in the abstract. Three named writers would silently revert it:
+
+  routes/core_routes.py:725   `_save_settings(new_settings)` -- the Settings UI
+                              posts the WHOLE settings blob, captured when the
+                              page loaded. _save_settings applies every key in
+                              that blob over the file (`merged[k] = v`), so a
+                              Settings tab opened before the restore reverts
+                              every restored key the moment anything in it is
+                              saved. That window is as long as the tab is open.
+  routes/context.py:169,175   `_save_settings({**_load_settings(), ...})` --
+                              read-modify-write of the entire dict. Safe once
+                              the cache is warm with restored values, and a
+                              2-second-stale cache is enough to lose them.
+  server.py:258               `_core._save_settings(settings)` after boot-time
+                              seat binding.
+
+And the guard that would make this safe -- _save_settings refusing to write
+when it cannot read the current file -- is committed but NOT LOADED in a
+running process. Restoring into a live app means restoring into the exact
+machinery that destroyed the data at 13:08:58.
+
+A restart is required anyway for the settings loader fix, the seat-binding
+fix and the KV cache flag. Doing the restore in that same window costs nothing
+and removes the concurrency question entirely.
+
+`--force` exists for the case where you have decided otherwise. It is not the
+recommended path and it says so.
 """
 from __future__ import annotations
 
@@ -86,8 +116,26 @@ def load(p: Path) -> dict:
     return json.loads(p.read_text(encoding="utf-8-sig"))
 
 
+def friday_is_up() -> bool:
+    """Is a Friday server answering on the usual loopback port?
+
+    A plain GET of /api/health, which needs no token and changes nothing.
+    Unreachable is read as "down" -- the failure mode of guessing wrong here
+    is a refused restore, which is recoverable, against a silently reverted
+    one, which is not.
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:3000/api/health", timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def main() -> int:
     apply = "--apply" in sys.argv
+    force = "--force" in sys.argv
     if not LIVE.exists():
         print("no settings.json at %s" % LIVE)
         return 1
@@ -126,10 +174,35 @@ def main() -> int:
         print("      options: %s" % options)
         print("      %s" % why)
 
+    up = friday_is_up()
+    print()
+    print("Friday server: %s" % ("RUNNING on :3000" if up else "not responding"))
+
     if not apply:
         print()
-        print("Dry run. Re-run with --apply to write.")
+        if up:
+            print("Dry run. Friday is UP -- stop it first, then --apply.")
+            print("  (see the docstring: three writers would revert this "
+                  "silently, and the save-path guard that would prevent that "
+                  "is committed but not loaded in the running process)")
+        else:
+            print("Dry run. Friday is down. Re-run with --apply to write.")
         return 0
+
+    if up and not force:
+        print()
+        print("REFUSING to write while Friday is running.")
+        print("  A Settings tab opened before this restore posts the whole")
+        print("  settings blob on its next save and reverts every key here,")
+        print("  with nothing logged. Stop Friday, run --apply, start it back")
+        print("  up: the restart is needed for the loader/seat/KV fixes anyway.")
+        print("  Override with --force if you have decided otherwise.")
+        return 2
+    if up and force:
+        print()
+        print("--force given: writing while Friday is running. The restored")
+        print("keys may be reverted by the next in-app settings save.")
+
     if not plan:
         return 0
 
