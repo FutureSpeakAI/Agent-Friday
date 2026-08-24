@@ -27,12 +27,28 @@ import time
 _TORCH_CUDA_INDEX = os.environ.get(
     "FRIDAY_TORCH_CUDA_INDEX", "https://download.pytorch.org/whl/cu126")
 
-#: The torch/torchaudio pair this tier installs. PINNED and matched, because
-#: torchaudio links torch's C++ ABI by exact symbol and the two must move
-#: together. Overridable for anyone testing a newer set, but the default is a
-#: pair someone has actually loaded rather than "whatever is newest".
+#: The torch/torchaudio pair this tier installs. PINNED, and pinned to a pair
+#: that has actually been loaded on this machine rather than to "whatever is
+#: newest" or to two numbers that look tidy.
+#:
+#: The version numbers do not match, and that is correct. Checked against
+#: download.pytorch.org/whl/cu126 on 2026-08-24:
+#:
+#:     torch      2.13.0, 2.12.1, 2.12.0, 2.11.0, ... 2.6.0
+#:     torchaudio             2.11.0, 2.10.0, ... 2.6.0     <- ends at 2.11
+#:
+#: torchaudio's cu126 line stops at 2.11 and the wheel declares NO dependency
+#: on torch at all, which is precisely why `pip install --upgrade torch
+#: torchaudio` moved torch to 2.13 and left torchaudio behind without a
+#: resolver complaint. A "matched" 2.13/2.13 pin is not available and would
+#: fail to resolve — an earlier draft of this file pinned exactly that, and a
+#: dry run caught it before it ran.
+#:
+#: So the pair is chosen and verified by hand. torch 2.13.0 + torchaudio 2.11.0
+#: import cleanly together with CUDA available, confirmed by loading them, not
+#: by reading version strings. Re-verify by loading before changing either.
 _TORCH_PIN = os.environ.get("FRIDAY_TORCH_PIN", "2.13.0+cu126")
-_TORCHAUDIO_PIN = os.environ.get("FRIDAY_TORCHAUDIO_PIN", "2.13.0+cu126")
+_TORCHAUDIO_PIN = os.environ.get("FRIDAY_TORCHAUDIO_PIN", "2.11.0+cu126")
 
 #: Every install writes here, append-only, and survives a restart. The job log
 #: used to live only in memory, last 60 lines, discarded on restart — so an
@@ -78,10 +94,21 @@ TARGETS = {
         #      for the embedder.
         #
         # Change the pin deliberately, together, after testing the trio.
+        # [asr] ONLY, not [asr,tts]. The tts extra pulls `pyopenjtalk`, a
+        # Japanese text-to-speech frontend that ships no Windows wheel, builds
+        # from source, and needs a C/C++ compiler. On this machine cmake 4.4.2
+        # is present and MSVC is not, so it dies with "CMAKE_C_COMPILER not
+        # set" — which is what actually killed the 2026-08-24 install. The tier
+        # was never installable on a stock Windows box, and the failure looked
+        # like an interrupted download rather than an impossible dependency.
+        #
+        # Nothing is lost: NeMo here is wanted for ASR (speech in). Speech OUT
+        # is already served by the Tier-1 Piper path on CPU, and Japanese TTS
+        # is not a feature of this product.
         "stages": [
             ["install",
              "torch==%s" % _TORCH_PIN, "torchaudio==%s" % _TORCHAUDIO_PIN,
-             "nemo_toolkit[asr,tts]>=2.6",
+             "nemo_toolkit[asr]>=2.6",
              "--extra-index-url", _TORCH_CUDA_INDEX],
         ],
         # Reported success means THIS imports, in a subprocess, after pip is
