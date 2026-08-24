@@ -159,6 +159,17 @@ def _window(model_id: str) -> int:
         return 8192
 
 
+#: Kept first when core tools have to be trimmed. Not "the most useful" — the
+#: ones whose absence changes what a turn can HONESTLY do. Reading and
+#: searching keep Friday able to ground an answer; writing and navigation keep
+#: her able to finish a task she has been given. A turn that can neither look
+#: something up nor say where it got it is worse than a turn with fewer tools.
+_ESSENTIAL_TOOLS = frozenset({
+    "search_web", "browse_web", "read_wiki", "search_wiki", "write_wiki",
+    "query_calendar", "search_email", "open_path", "navigate",
+})
+
+
 def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
                       prompt_cost: int = 0):
     """Return the tools that fit this seat, plus a note when any were left out.
@@ -189,14 +200,42 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
 
     core = [t for t in tools if not str(t.get("name") or "").startswith(_CONNECTOR_PREFIX)]
     connectors = [t for t in tools if str(t.get("name") or "").startswith(_CONNECTOR_PREFIX)]
-    if not connectors:
-        return tools, None
 
     core_cost = _tokens(core)
     conn_cost = _tokens(connectors)
 
+    # A TRIMMER THAT COULD NOT TRIM THE THING THAT WAS TOO BIG.
+    #
+    # This function used to return `tools, None` unchanged whenever there were
+    # no connector tools — no matter how far over budget the request was — and
+    # otherwise dropped connectors and kept every core tool regardless. So its
+    # only lever was connectors. Measured on this machine 2026-08-24 via
+    # /api/residency/status: tool_tokens 47,579 and system_prompt_tokens 13,626
+    # against a 32,768-token seat. Friday's OWN tools do not fit the window by
+    # themselves; dropping connectors cannot save a request that is already
+    # over on core.
+    #
+    # Three real failures came from this in one morning — 38,232 and 38,713
+    # tokens into 32,768, twice on a briefing chain and once on a
+    # distill-to-wiki pass. Each died as a provider 400 with no explanation the
+    # user could act on.
+    #
+    # Core tools are now droppable too, lowest value first, and the caller is
+    # told plainly when even an empty tool list will not fit — because at that
+    # point the prompt is the problem and no amount of tool trimming is the
+    # answer.
     if core_cost + conn_cost <= budget:
         return tools, None
+
+    if budget <= 0:
+        # The prompt alone has eaten the window. Report it as such: this is not
+        # a tools problem and pretending otherwise sends the caller round a
+        # loop that cannot terminate.
+        return [], (
+            "No tools were loaded: the request itself is about %s tokens "
+            "against %s's %s-token window, before any tool definitions. "
+            "Shorten the input or use a larger-context seat."
+            % (f"{int(prompt_cost or 0):,}", model_id, f"{window:,}"))
 
     note = (f"{len(connectors)} connector tools are not loaded on this seat: "
             f"their definitions cost about {conn_cost:,} tokens and "
@@ -214,14 +253,35 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
               f"(~{conn_cost:,} tokens) to fit a {window:,}-token window; "
               f"kept {len(core)} of Friday's own (~{core_cost:,})")
 
-    if core_cost > budget:
-        # Nothing left to trim without taking away what Friday IS. Send them
-        # and let the seat complain — an honest 400 naming the real number
-        # beats a silent trip to a cloud model.
-        _log.warning("%s: Friday's own tools alone cost ~%d tokens against a "
-                     "%d-token window (prompt ~%d)", model_id, core_cost,
-                     window, int(prompt_cost or 0))
-        print(f"  [tools] WARNING {model_id}: Friday's own tools alone cost "
-              f"~{core_cost:,} tokens against a {window:,}-token window")
+    if core_cost <= budget:
+        return core, note
 
-    return core, note
+    # Core alone still overflows. This used to send them anyway and let the
+    # seat 400 — "an honest 400 beats a silent trip to the cloud", which was
+    # right about the cloud and wrong about the 400: on a vault turn there IS
+    # no cloud to fall back to, so the honest 400 is simply the work not
+    # happening. Trim core too, cheapest-value-first, and keep what a turn
+    # cannot function without.
+    kept, kept_cost = [], 0
+    for t in sorted(core, key=lambda x: (str(x.get("name")) not in _ESSENTIAL_TOOLS,
+                                         _tokens([x]))):
+        c = _tokens([t])
+        if kept_cost + c > budget:
+            continue
+        kept.append(t)
+        kept_cost += c
+
+    dropped = len(core) - len(kept)
+    note = (f"This seat is small, so I am working with {len(kept)} of my "
+            f"{len(core)} tools plus none of the {len(connectors)} connectors. "
+            f"{model_id} has a {window:,}-token window and the full set costs "
+            f"about {core_cost + conn_cost:,}. If I need something I do not "
+            f"have here, ask me on a larger-context seat.")
+    _log.warning("%s: core tools trimmed %d -> %d (~%d of ~%d tokens) to fit a "
+                 "%d-token window with a ~%d-token prompt",
+                 model_id, len(core), len(kept), kept_cost, core_cost,
+                 window, int(prompt_cost or 0))
+    print(f"  [tools] {model_id}: kept {len(kept)}/{len(core)} of Friday's own "
+          f"tools (~{kept_cost:,} tokens), dropped {dropped} + "
+          f"{len(connectors)} connectors to fit {window:,}")
+    return kept, note
