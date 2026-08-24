@@ -191,6 +191,23 @@ def _provider_for(seat: dict) -> str:
     return "ollama-local"
 
 
+def _differs_from_factory(cap: str, entry) -> bool:
+    """Has this capability been changed from what DEFAULT_SETTINGS ships?
+
+    Used only to tell a deliberate cloud pick from an untouched cloud default.
+    Fails CLOSED — an unreadable DEFAULT_SETTINGS returns False, which keeps
+    the pre-existing behaviour (bind it) rather than silently freezing seats.
+    """
+    if not isinstance(entry, dict) or not (entry.get("model") or "").strip():
+        return False
+    try:
+        from agent_friday.core import DEFAULT_SETTINGS
+        dflt = (DEFAULT_SETTINGS.get("capability_routing") or {}).get(cap) or {}
+    except Exception:
+        return False
+    return (entry.get("model") or "") != (dflt.get("model") or "")
+
+
 def propose(plan: dict, settings: dict) -> dict:
     """Compute the capability_routing changes the plan implies. Pure.
 
@@ -200,8 +217,58 @@ def propose(plan: dict, settings: dict) -> dict:
     cr = dict((settings or {}).get("capability_routing") or {})
     changes, refusals, skipped = {}, [], []
 
+    # A SEAT HE FILLED WITH A CLOUD MODEL IS NOT THIS PLANNER'S TO REASSIGN.
+    #
+    # `overrides_from_settings` drops cloud picks before planning, and it is
+    # right to: a local VRAM planner cannot place claude-opus-5 and refusing
+    # it for "not being installed" was its own bug. But dropping the override
+    # and then binding anyway means the planner sees an EMPTY seat, fills it
+    # with its own candidate, and `apply()` writes that over his choice. So
+    # the choice survived exactly until the next boot, every time.
+    #
+    # Measured 2026-08-24 (docs/audits/workflow-run-forensics-2026-08-24.md
+    # §2.2). Stephen assigned Opus 5 in Settings -> Intelligence; the plan's
+    # own `heavy = gen[0]` picked the largest GGUF on disk; and friday.log
+    # recorded the overwrite twice:
+    #
+    #   2026-08-23T15:45:53 seat binding applied: heavy_hitter->gemma4:26b, ...
+    #   2026-08-24T11:46:40 seat binding applied: heavy_hitter->gemma4:26b, ...
+    #
+    # at a model 16.95 GB on disk, on a 12 GB card, that no live endpoint was
+    # serving. From where he sits that is "I changed the setting and it did
+    # nothing" — the same sentence this module's docstring was written to
+    # retire, arriving through the one door left open.
+    #
+    # `cloud_seats_from_settings` already exists for exactly this and was
+    # called by the Arbiter (residency_arbiter.py:951) and by nothing here.
+    # Read it in `propose` rather than adding a parameter, so every caller of
+    # propose/apply gets the fix without changing its call.
+    #
+    # THE FACTORY VALUE IS NOT A CHOICE. DEFAULT_SETTINGS ships `reasoning`
+    # and `subagent` pointed at claude-sonnet-5, so "is a cloud entry" would
+    # protect two seats nobody has touched and leave them unbindable on a
+    # fresh install — the plan would compute them correctly and never apply.
+    # `model_router._chosen_seat` already draws this distinction against
+    # `_factory_reasoning_model()`; drawing it the same way here keeps one
+    # rule rather than two. An untouched default is the absence of a
+    # preference; a value he changed is an instruction.
+    cloud_filled = {
+        role for role in cloud_seats_from_settings(settings or {})
+        if _differs_from_factory(SEAT_TO_CAPABILITY[role], cr.get(
+            SEAT_TO_CAPABILITY[role]))
+    }
+
     for role, cap in sorted(SEAT_TO_CAPABILITY.items()):
         if role in NEVER_BIND:
+            continue
+        if role in cloud_filled:
+            skipped.append({
+                "role": role, "capability": cap,
+                "why": "filled by the user with %r on %s, which this planner "
+                       "does not manage" % (
+                           ((cr.get(cap) or {}).get("model") or "a cloud model"),
+                           ((cr.get(cap) or {}).get("provider") or "a cloud provider")),
+            })
             continue
         seat = ((plan or {}).get("seats") or {}).get(role)
         if not seat or not seat.get("model_id"):

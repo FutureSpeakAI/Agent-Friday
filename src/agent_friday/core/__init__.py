@@ -1875,7 +1875,30 @@ def _load_settings_raw():
             _SETTINGS_CACHE["ts"] = _time.time()
         return seed
     try:
-        data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+        # utf-8-SIG, not utf-8. A leading U+FEFF is a JSONDecodeError, and the
+        # except below turns that into a SILENT, TOTAL reversion to
+        # DEFAULT_SETTINGS: every seat, every routing mode, every stored key
+        # replaced by the factory value, with nothing logged and no visible
+        # failure. Measured live 2026-08-24 12:47 — settings.json gained a BOM
+        # (PowerShell 5.1's Out-File/`>` writes UTF-8 WITH BOM by default, and
+        # a heal pass had just rewritten the file). The 83 keys on disk were
+        # perfectly intact and correct; the running process was reading none of
+        # them. Observable symptoms, all downstream of those three bytes:
+        #
+        #   * model_routing.mode read as the factory `cloud_only` against the
+        #     `local_preferred` on disk, so every turn went to Anthropic;
+        #   * orchestrator/subagent seats read as claude-sonnet-5 against the
+        #     gemma4:12b on disk;
+        #   * creative_image read as Gemini against the local SD 3.5 on disk;
+        #   * seat_transparency dutifully announced all of it as a seat change,
+        #     which is the one part that worked — it reported a change nobody
+        #     made.
+        #
+        # Several modules in this tree already read utf-8-sig for exactly this
+        # reason (services/role_consumers.py:_module_source names three BOM'd
+        # source files). The settings loader is the one place where getting it
+        # wrong costs every setting at once.
+        data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8-sig'))
         # Fill in any missing keys with defaults
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
@@ -1884,7 +1907,21 @@ def _load_settings_raw():
             _SETTINGS_CACHE["value"] = merged
             _SETTINGS_CACHE["ts"] = _time.time()
         return merged
-    except Exception:
+    except Exception as e:
+        # NEVER SILENT AGAIN. Reverting to defaults is a defensible last
+        # resort; doing it without a word is what made the BOM incident take
+        # an afternoon to see. The settings file existing and being unreadable
+        # is a different event from it not existing, and it must say so.
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").error(
+                "settings.json exists but could not be parsed (%s: %s) — "
+                "RUNNING ON FACTORY DEFAULTS. Every seat, routing mode and "
+                "stored preference in that file is being ignored until it "
+                "parses. Check for a byte-order mark or truncation: %s",
+                type(e).__name__, e, SETTINGS_FILE)
+        except Exception:
+            pass
         return dict(DEFAULT_SETTINGS)
 
 
@@ -1912,12 +1949,51 @@ def _save_settings(data):
     # the cloud. Same code, same server: passed one run, failed the next.
     _invalidate_settings_cache()
     # Read existing file first to preserve any keys not in DEFAULT_SETTINGS
+    #
+    # THIS READ IS LOAD-BEARING, AND IT USED TO FAIL OPEN.
+    #
+    # `except: pass` left `existing = {}`, and an empty `existing` makes the
+    # merge below start from DEFAULT_SETTINGS and end there — every key the
+    # user ever set, replaced by the factory value and then written to disk by
+    # the atomic write at the bottom. An unreadable settings file did not
+    # degrade the save; it CONVERTED the save into a factory reset.
+    #
+    # That is how the 2026-08-24 BOM incident became permanent. The read side
+    # (_load_settings_raw, above) had the same utf-8-vs-utf-8-sig bug and
+    # merely made the running process ignore Stephen's 83 keys — recoverable,
+    # since the file was still correct. Then something called _save_settings,
+    # this read returned {}, and at 13:08:58 the defaults were persisted over
+    # the real configuration. The BOM was stripped by that same write, so the
+    # evidence of the cause disappeared in the act of causing the damage:
+    # afterwards the file looks clean and merely wrong.
+    #
+    # Note the second-order loss too. The capability_routing deep-merge below
+    # is guarded on `isinstance(existing.get(k), dict)`; with `existing` empty
+    # that guard is False, so routing is replaced wholesale rather than merged
+    # per capability — the exact reset its own comment exists to prevent.
+    #
+    # So: read BOM-tolerantly, and if the file exists and still will not
+    # parse, REFUSE THE SAVE. A settings write that cannot see the current
+    # settings is not a write, it is an erasure. Better to fail loudly and
+    # leave the file alone than to persist a reset nobody asked for.
     existing = {}
     if SETTINGS_FILE.exists():
         try:
-            existing = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
-        except Exception:
-            pass
+            existing = json.loads(SETTINGS_FILE.read_text(encoding='utf-8-sig'))
+        except Exception as e:
+            try:
+                import logging as _lg
+                _lg.getLogger("friday.settings").error(
+                    "REFUSING to save settings: %s exists but could not be "
+                    "parsed (%s: %s). Writing now would replace every stored "
+                    "preference with a factory default. The file has been "
+                    "left untouched; fix or remove it and retry.",
+                    SETTINGS_FILE, type(e).__name__, e)
+            except Exception:
+                pass
+            raise RuntimeError(
+                "settings.json exists but is unreadable (%s); refusing to "
+                "overwrite it with defaults" % e) from e
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
