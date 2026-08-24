@@ -44,7 +44,10 @@ def status():
                     "Dispatch still works; nothing is enforcing placement.",
         })
 
-    plan = arb.plan or {}
+    # Recomputed if stale (Arbiter.PLAN_MAX_AGE_S). Every consumer of this
+    # route -- including Settings -> Intelligence, which labels the refusals
+    # "right now" -- was reading the plan built at boot.
+    plan = arb.plan_fresh() or {}
     seats = {}
     for role, s in (plan.get("seats") or {}).items():
         if not s:

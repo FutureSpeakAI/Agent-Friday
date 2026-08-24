@@ -909,8 +909,24 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     # So an unassigned working role carries a refusal that says so, rather than
     # a silently empty seat. Assign one through `overrides` and it is placed
     # like any other.
+    #
+    # R11 keys on ASSIGNMENT, not on placement, and the difference is the whole
+    # point of the rule. The test used to be `seats.get(role) is None`, which is
+    # a placement test: a role the user HAD assigned, whose model then failed to
+    # fit, collected an R3 explaining the failure and then an R11 saying "no
+    # model assigned" on top. Both were shown. Measured live 2026-08-23: five
+    # roles carried that second refusal -- orchestrator, sidekick_fast,
+    # function_manager, memory_manager and researcher -- while Settings ->
+    # Intelligence listed a model against every one of them two sections above.
+    #
+    # The text was simply false, and worse than false: it sends someone to
+    # choose a model they have already chosen, instead of to the reason their
+    # choice could not be seated. An unplaced assignment is never an unmade
+    # choice, so the two are now separated at the source rather than
+    # disambiguated downstream.
+    _assigned = set((overrides or {}).keys())
     for role in ASSIGNED_ROLES:
-        if seats.get(role) is None:
+        if seats.get(role) is None and role not in _assigned:
             refusals.append(_refusal(
                 role, None, "R11",
                 "no model assigned; this seat is chosen by the user, not "

@@ -32332,6 +32332,55 @@ function Bar({ used, total, reserve, label, sub }) {
       })));
 }
 
+/**
+ * One group of planner refusals, rendered as what it actually is.
+ *
+ * `tone` decides the colour and nothing else decides it. The whole defect this
+ * replaces was thirteen identically amber boxes, of which three were faults and
+ * ten were either a broken measurement or a choice nobody had made. Colour is a
+ * claim about severity, so it is driven by the server's classification rather
+ * than by the fact that a row exists.
+ *
+ * Each row is title / why / what to do. A row with no action renders without
+ * one instead of inventing advice.
+ */
+function RefusalGroup({ rows, tone, heading, blurb }) {
+  if (!rows || !rows.length) return null;
+  const skin = {
+    problem: { fg: '#f59e0b', bg: 'rgba(245,158,11,0.08)', bd: 'rgba(245,158,11,0.28)' },
+    choice:  { fg: '#cfefff', bg: 'rgba(0,212,255,0.05)',  bd: 'rgba(0,212,255,0.20)' },
+    info:    { fg: 'rgba(255,255,255,0.72)', bg: 'rgba(255,255,255,0.03)', bd: 'rgba(255,255,255,0.10)' },
+  }[tone] || {};
+  return E('div', { style: { marginTop: 12 } },
+    E('div', {
+      style: {
+        fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase',
+        color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', marginBottom: 4,
+      },
+    }, heading),
+    blurb && E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.42)', fontFamily: 'JetBrains Mono',
+        lineHeight: 1.5, marginBottom: 6,
+      },
+    }, blurb),
+    rows.map((f, i) => E('div', {
+      key: i,
+      style: {
+        background: skin.bg, border: '1px solid ' + skin.bd, borderRadius: 6,
+        padding: '7px 10px', marginBottom: 4, fontFamily: 'JetBrains Mono',
+        lineHeight: 1.5,
+      },
+    },
+      E('div', { style: { fontSize: 11, color: skin.fg } }, f.title),
+      f.why && E('div', {
+        style: { fontSize: 10.5, color: 'rgba(255,255,255,0.72)', marginTop: 2 },
+      }, f.why),
+      f.action && E('div', {
+        style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', marginTop: 3 },
+      }, '→ ' + f.action))));
+}
+
 function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
   const m = ((intel && intel.models) || []).filter(x => x.id === r.model)[0];
   const fit = m ? suitability(m, { role: r.requires_role, modality: r.requires }) : { ok: true };
@@ -32580,21 +32629,27 @@ function SettingsTabIntelligence() {
                 Math.round((vram.total_mib - (vram.free_mib || 0)) / 1024) +
                 ' GB is in use by something'
               : 'nothing — the card is idle')),
-      (mach.refusals || []).length > 0 && E('div', { style: { marginTop: 10 } },
-        E('div', {
-          style: {
-            fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase',
-            color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', marginBottom: 4,
-          },
-        }, 'What will not fit right now'),
-        (mach.refusals || []).map((f, i) => E('div', {
-          key: i,
-          style: {
-            fontSize: 10.5, fontFamily: 'JetBrains Mono', color: '#f59e0b',
-            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
-            borderRadius: 6, padding: '5px 8px', marginBottom: 3, lineHeight: 1.5,
-          },
-        }, prettyModel(f.model) + ' for ' + (f.role || 'a seat') + ' — ' + f.explanation)))),
+      // Three sections, because there are three different things here and
+      // rendering them identically is what made ten amber boxes read as
+      // wallpaper. Only a PROBLEM is amber. A seat nobody has chosen is an
+      // available option, not a fault. A fact about the machine is not yellow
+      // at all. See KNOWN_ISSUES.md §1.
+      E(RefusalGroup, {
+        rows: mach.problems, tone: 'problem',
+        heading: 'Needs your attention',
+        blurb: 'Something here cannot work until it is changed.',
+      }),
+      E(RefusalGroup, {
+        rows: mach.choices, tone: 'choice',
+        heading: 'Optional seats you have not filled',
+        blurb: 'These are yours to choose. Friday will not pick for you, and ' +
+               'leaving them empty is a normal, working setup.',
+      }),
+      E(RefusalGroup, {
+        rows: mach.notes, tone: 'info',
+        heading: 'Worth knowing',
+        blurb: null,
+      })),
 
     // ── PROVIDERS ────────────────────────────────────────────────────────────
     E(StSection, { title: 'PROVIDERS' },
