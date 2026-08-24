@@ -755,3 +755,75 @@ touch today.
   (`model_router.py:1155`), so there is **one confirmation slot per day**: the
   first two pending writes were overwritten by the third. Approving now runs
   only the most recently recorded write, with no record of the others.
+
+---
+
+## Addendum 2 — 2026-08-24 14:00: capture made durable, restore held
+
+### G. The capture now survives this session
+
+`ops/forensics-snapshot.py`, registered as Scheduled Task
+**`AgentFridayForensics`** by `ops/forensics-install.ps1`. Every **2 minutes**,
+as the current user, writing to `~/.friday/forensics/`.
+
+Verified rather than assumed:
+
+* **It ticks unattended.** Observed autonomous runs at 13:50:45 and 13:56:46,
+  `rc=0`, with no manual trigger — the second on the final code.
+* **Idempotent.** Back-to-back runs: `orbs +0, tasks +0, files [none changed]`.
+  Appends are deduped by content hash; a PID lock (stale after 15 min) makes
+  overlapping ticks impossible.
+* **Bounded, with the ceiling stated:** four append streams × 32 MB × 2
+  generations, plus 12 dated copies per rewritten-wholesale source ≈ **260 MB
+  absolute**. Rotation, pruning, index cap, lock exclusion, stale-lock reclaim
+  and server-down survival each proved by test (`ALL PASS`).
+* **Read-only against Friday.** Two loopback GETs and read-and-close file
+  reads. No locks on Friday's files, nothing restarted or signalled. With the
+  server down the HTTP half is skipped and the file half still runs, so
+  downtime yields a partial capture rather than a failed one.
+
+One design change worth recording. `friday.log` is ~6 MB and grows on nearly
+every tick; copying it whole would have written **~180 MB/hour** to preserve a
+few kilobytes of new lines. It and the ledger are captured as **deltas** past
+a stored offset, with the first 4 KB re-hashed each run so a source rotation
+(`friday.log` → `friday.log.1` at 10 MB) or truncation is detected instead of
+silently skipping everything after the rollover.
+
+Controls: `ops/forensics-verify.ps1` to check, `ops/forensics-down.ps1` to
+stop. `forensics-down` unregisters the task and **leaves the captured data in
+place** — stopping the capture and discarding what it captured are different
+decisions.
+
+### H. The settings restore is HELD, and why that is the right call
+
+`settings.json.bak-preheal` — the only surviving copy of the configuration the
+13:08:58 factory reset destroyed — is now also outside `~/.friday` entirely, at
+`~/Projects/friday-desktop-forensics-vault/`, SHA-verified identical.
+
+`--apply` now **refuses while Friday is running**. Not caution in the abstract;
+three named writers would revert a live restore:
+
+| writer | why it reverts the restore |
+|---|---|
+| `routes/core_routes.py:725` | The Settings UI posts the **whole** settings blob, captured when the page loaded. `_save_settings` applies every key in it (`merged[k] = v`), so a tab opened before the restore reverts every restored key on its next save — and the window is as long as the tab is open. |
+| `routes/context.py:169,175` | `_save_settings({**_load_settings(), ...})` — read-modify-write of the entire dict. A 2-second-stale cache is enough. |
+| `server.py:258` | Writes settings after boot-time seat binding. |
+
+And the guard that would make this safe — `_save_settings` refusing to write
+when it cannot read the current file — is committed but **not loaded** in the
+running process. Restoring now means restoring into the exact machinery that
+caused the loss.
+
+A restart is required anyway for the loader fix, the seat-binding fix and the
+KV flag. Doing the restore inside that window costs nothing and removes the
+concurrency question entirely. `--force` exists and says it is not the
+recommended path.
+
+### I. Correction to Addendum A
+
+Addendum A said stripping the BOM would restore the running process "within the
+2-second settings-cache TTL". That was true when written and is now moot: the
+app rewrote `settings.json` at 13:08:58 without a BOM and **with the factory
+defaults**, so the file parses cleanly and is simply wrong. The 2-second TTL
+also cuts the other way — it is what makes a stale full-blob writer dangerous,
+not purely an upside.
