@@ -14,6 +14,7 @@ import json
 import pytest
 
 import agent_friday.services.hosted_catalog as hc
+import agent_friday.services.higgsfield_catalog as hgc
 import agent_friday.services.model_discovery as md
 
 
@@ -65,10 +66,52 @@ def test_refresh_route_all_providers(client, cache_dir, monkeypatch):
     monkeypatch.setattr(hc, "fetch_openrouter_models",
                         lambda key=None, **kw: [{"id": "a/b", "name": "AB",
                                                  "pricing": {}}])
+    monkeypatch.setattr(hgc, "_explore",
+                        lambda params, timeout=60.0: {
+                            "items": [{"id": "z_image", "name": "Z Image",
+                                       "output_type": params["type"]}],
+                            "has_more": False})
     data = client.post("/api/models/refresh", json={}).get_json()
-    assert set(data["results"]) == set(hc.HOSTED_PROVIDERS)
+    # Higgsfield refreshes alongside the HTTP-fetched hosted providers: it
+    # writes to the same discovery cache and reports the same result shape,
+    # it just enumerates over its MCP connector instead of a /models endpoint.
+    assert set(data["results"]) == set(hc.HOSTED_PROVIDERS) | {hgc.PROVIDER}
     for res in data["results"].values():
         assert res["status"] == "refreshed"
+
+
+def test_refresh_route_higgsfield_alone(client, cache_dir, monkeypatch):
+    monkeypatch.setattr(hgc, "_explore",
+                        lambda params, timeout=60.0: {
+                            "items": [{"id": f"m_{params['type']}",
+                                       "name": "M",
+                                       "output_type": params["type"]}],
+                            "has_more": False})
+    data = client.post("/api/models/refresh",
+                       json={"provider": "higgsfield"}).get_json()
+    res = data["results"]["higgsfield"]
+    assert res["status"] == "refreshed"
+    assert res["count"] == len(hgc.MODALITIES)
+    assert set(md.cached_model_ids("higgsfield")) == {
+        f"m_{t}" for t in hgc.MODALITIES}
+
+
+def test_refresh_route_higgsfield_connector_down_keeps_cache(
+        client, cache_dir, monkeypatch):
+    """An unreachable connector must not clobber a working catalogue."""
+    md.write_cache("higgsfield", [{"id": "nano_banana_pro",
+                                   "label": "Nano Banana Pro",
+                                   "modalities": ["image"]}])
+    monkeypatch.setattr(hgc, "_explore",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("connector down")))
+    data = client.post("/api/models/refresh",
+                       json={"provider": "higgsfield"}).get_json()
+    res = data["results"]["higgsfield"]
+    assert res["status"] == "unavailable"
+    assert res["count"] == 0
+    # The previous catalogue survives untouched.
+    assert md.cached_model_ids("higgsfield") == ["nano_banana_pro"]
 
 
 def test_refresh_route_no_key_path(client, cache_dir, monkeypatch):

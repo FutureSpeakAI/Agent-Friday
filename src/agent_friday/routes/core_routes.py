@@ -368,26 +368,35 @@ def _kick_stale_catalog_refresh(cat_meta):
 def refresh_models_catalog():
     """Force a live hosted-catalog fetch into the discovery cache (spec A2).
 
-    Anthropic /v1/models and/or OpenRouter /models — body
-    {"provider": "anthropic"|"openrouter"} for one, empty/omitted for all.
-    Per-provider result: {status: refreshed|no_key|error, count, fetched_at}.
-    A no_key/error result never clobbers an existing cache
+    Anthropic /v1/models, OpenRouter /models and/or the Higgsfield catalogue —
+    body {"provider": "anthropic"|"openrouter"|"higgsfield"} for one,
+    empty/omitted for all.
+    Per-provider result: {status: refreshed|no_key|unavailable|error, count,
+    fetched_at}. A failed result never clobbers an existing cache
     (stale-while-revalidate), so the picker keeps its last good list.
     """
     try:
         from agent_friday.services.hosted_catalog import (
             HOSTED_PROVIDERS, refresh, refresh_all)
+        # Higgsfield enumerates over its MCP connector rather than an HTTP
+        # models endpoint, so it has its own module; it refreshes into the
+        # same discovery cache and reports the same result shape.
+        from agent_friday.services import higgsfield_catalog as _hf_cat
+        known = tuple(HOSTED_PROVIDERS) + (_hf_cat.PROVIDER,)
         body = request.get_json(silent=True) or {}
         provider = str(body.get("provider") or "").strip().lower()
         if provider:
-            if provider not in HOSTED_PROVIDERS:
+            if provider not in known:
                 return jsonify({
                     "status": "error",
                     "message": f"unknown provider '{provider}' — one of: "
-                               f"{', '.join(HOSTED_PROVIDERS)}"}), 400
-            results = {provider: refresh(provider)}
+                               f"{', '.join(known)}"}), 400
+            results = ({provider: _hf_cat.refresh()}
+                       if provider == _hf_cat.PROVIDER
+                       else {provider: refresh(provider)})
         else:
             results = refresh_all()
+            results[_hf_cat.PROVIDER] = _hf_cat.refresh()
         return jsonify({"status": "ok", "results": results})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
