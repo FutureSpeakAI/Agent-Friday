@@ -57,9 +57,21 @@ DEFAULT_PROMPT = ("Briefly describe what is visible in this image. Focus on "
 # with finish_reason "length" while the projector was loaded and working
 # perfectly. An empty reply from a thinking model is a budget symptom that looks
 # exactly like a broken capability -- ollama_manager.probe_generate documents
-# the same effect for num_predict=10. 400 leaves room for the trace and the
-# answer.
-DEFAULT_MAX_TOKENS = 400
+# the same effect for num_predict=10.
+#
+# 400 was the first fix and it was not enough, which is the more useful lesson.
+# It held for a terse prompt on a 140x140 image and failed the next morning on
+# a 160x160 one through the upload path: same model, same projector, same code,
+# empty reply, finish_reason=length. The trace length varies with the image and
+# the prompt, so a budget that merely clears the trace SOMETIMES produces an
+# intermittent blindness that reads as a broken seat -- worse than a consistent
+# failure, because it teaches the user the feature is unreliable rather than
+# unconfigured.
+#
+# 1200 is sized for the trace plus a real answer with headroom. The cost of
+# being wrong upward is a few hundred unused tokens on a local model; the cost
+# of being wrong downward is a capability that appears to come and go.
+DEFAULT_MAX_TOKENS = 1200
 
 
 def reasoning_model(settings: dict | None = None) -> str | None:

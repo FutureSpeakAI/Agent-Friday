@@ -924,39 +924,172 @@ def model_stats():
 #  FILE ANALYSIS (Gemini)
 # ═══════════════════════════════════════════════════════════════
 
+#: What the uploader accepts, shared with the UI so the file picker and the
+#: server cannot drift apart.
+ANALYZE_IMAGE_EXT = ('png', 'jpg', 'jpeg', 'gif', 'webp')
+ANALYZE_TEXT_EXT = ('txt', 'md', 'py', 'js', 'html', 'css', 'json', 'ts',
+                    'tsx', 'yaml', 'yml', 'toml')
+
+
+def _analyze_mode() -> str:
+    try:
+        return str(((_load_settings() or {}).get('model_routing') or {})
+                   .get('mode') or 'smart').lower()
+    except Exception:
+        return 'smart'
+
+
+def _analyze_record(provider, action, reason, nbytes):
+    try:
+        from agent_friday.services.egress_gate import record_binary_egress
+        record_binary_egress(provider, 'uploaded_file', action=action,
+                             reason=reason, byte_len=nbytes)
+    except Exception as _e:
+        print(f"  [ANALYZE] egress record failed: {_e}")
+
+
+def _analyze_withheld(filename, what, why, remedy):
+    """A refusal the user can read, for a send Local only does not permit."""
+    return jsonify({
+        "filename": filename, "type": "withheld", "withheld": True,
+        "analysis": ("I did not analyse %s, because that would mean sending it "
+                     "off this machine and you have chosen Local only.\n\n%s\n\n%s"
+                     % (what, why, remedy)),
+        "vision_events": [{
+            "kind": "vision_withheld",
+            "text": "🔒 %s stayed on your machine. Local only is on and %s"
+                    % (filename, why[0].lower() + why[1:] if why else "there is no local path for it."),
+            "ts": _time.time(),
+        }],
+    })
+
+
 @core_bp.route('/api/analyze', methods=['POST'])
 def analyze_file():
-    """Analyze an uploaded file using Gemini."""
+    """Analyze an uploaded file, locally where possible.
+
+    THE ROUTING MODE IS CHECKED BEFORE ANYTHING IS SENT. This endpoint existed
+    for months with no caller, and wiring it up unchanged would have reopened
+    the hole that `routes/chat.py` carried until 2026-08-23: an image reaching
+    Gemini regardless of the mode the user chose.
+
+    The comment that used to sit on the image branch said image bytes cannot be
+    text-classified by the egress gate, so sending them "is a conscious
+    tradeoff, not a silent leak." The premise is true and the conclusion does
+    not follow. Unclassifiable bytes are still a send, a send is still a
+    decision, and a decision made without consulting the mode the user set is
+    silent no matter how deliberate it was when it was written. It was also
+    only half true in practice: `gate_text` already ran on the PDF and text
+    branches, so the file whose comment defended ungated egress was gating two
+    of its four paths.
+    """
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
     file = request.files['file']
     filename = file.filename
     content = file.read()
+    nbytes = len(content or b"")
+    mode = _analyze_mode()
+    local_only = mode == 'local_only'
+    prefer_local = mode in ('local_only', 'local_preferred')
+    events = []
 
     try:
         from google import genai
         from google.genai import types
         from agent_friday.services import egress_gate as _eg
-        client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
 
         ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
-        if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp'):
-            # Image BYTES cannot be text-classified by the egress gate — this
-            # is the documented caveat (H1/H2 in FABLE5_INTEGRATION_STORM_REPORT):
-            # sending an uploaded image to Gemini vision is a conscious tradeoff,
-            # not a silent leak. The instruction prompt is fixed (no user text).
+        # Held in a box, not returned fresh per call. Building the Client
+        # inline inside the expression that used it -- `_cloud_client().models
+        # .generate_content(...)` -- left nothing holding a reference, so it
+        # was collected and its transport closed while the request was still
+        # in flight: "Cannot send a request, as the client has been closed."
+        # Caught on the first live smart-mode upload, which is the argument for
+        # testing both directions rather than the one that was interesting.
+        _client_box = []
+
+        def _cloud_client():
+            if not _client_box:
+                _client_box.append(
+                    genai.Client(api_key=core.GEMINI_API_KEY))  # pragma: allowlist secret
+            return _client_box[0]
+
+        def _disclose(what):
+            events.append({
+                "kind": "vision_cloud",
+                "text": "👁 %s went to Google (Gemini) to be analysed. Switch "
+                        "to Local only in Settings → Intelligence to keep "
+                        "uploads on this machine." % what,
+                "ts": _time.time(),
+            })
+
+        if ext in ANALYZE_IMAGE_EXT:
+            # 1 ── the local seat first, when the mode asks for local.
+            if prefer_local:
+                try:
+                    from agent_friday.services import local_vision as _lv
+                    _res = _lv.describe(
+                        base64.b64encode(content).decode(),
+                        mime=f"image/{'jpeg' if ext == 'jpg' else ext}",
+                        prompt=("Describe this image. If it looks like a job "
+                                "posting or a resume, note the key "
+                                "requirements. Be concise."))
+                except Exception as _e:
+                    _res = {"ok": False, "reason": "local vision raised %s" % _e}
+                if _res.get("ok"):
+                    _analyze_record('local:' + str(_res.get('model')), 'allow',
+                                    'described on-device; nothing left the machine',
+                                    nbytes)
+                    return jsonify({"filename": filename, "type": "image",
+                                    "analysis": _res["text"],
+                                    "analysed_by": _res.get("model"),
+                                    "vision_events": []})
+                if local_only:
+                    _analyze_record('gemini', 'block',
+                                    'local_only: image withheld (%s)' % _res.get("reason"),
+                                    nbytes)
+                    return _analyze_withheld(
+                        filename, "that image",
+                        "The local seat could not read it: %s." % _res.get("reason"),
+                        "Give the conversational seat a model with a vision "
+                        "projector, or switch to Local preferred and I will "
+                        "use the cloud when the local seat cannot.")
+
+            # 2 ── cloud, only where the mode permits it, and never silently.
             mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
-            response = client.models.generate_content(
+            response = _cloud_client().models.generate_content(
                 model='gemini-2.5-flash',
                 contents=[
                     types.Part.from_bytes(data=content, mime_type=mime),
                     "You are Friday. Describe this image. If it looks like a job posting or resume, analyze it for key requirements and fit."
                 ]
             )
-            return jsonify({"filename": filename, "type": "image", "analysis": response.text})
+            _analyze_record('gemini', 'allow',
+                            'routing mode %s permits cloud vision' % mode, nbytes)
+            _disclose("An image you uploaded")
+            return jsonify({"filename": filename, "type": "image",
+                            "analysis": response.text, "vision_events": events})
         elif ext == 'pdf':
+            # There is no local document path yet, and saying so is the whole
+            # job. The EXTRACTION is local -- pdfplumber runs here -- but the
+            # summary needs a model, and the conversational seat is not wired
+            # for document text. Under Local only that is a refusal with a
+            # reason, never a quiet trip to Gemini with the extracted contents
+            # of someone's bank statement.
+            if local_only:
+                _analyze_record('gemini', 'block',
+                                'local_only: PDF withheld, no local document path',
+                                nbytes)
+                return _analyze_withheld(
+                    filename, "that PDF",
+                    "The text can be pulled out here, but summarising it needs "
+                    "a model and the local seat is not wired for documents yet.",
+                    "Switch to Local preferred or Smart if you are happy for "
+                    "this one to go to Gemini. Wiring the local seat for "
+                    "document text is a small change and is not done yet.")
             try:
                 import pdfplumber
                 import io
@@ -967,15 +1100,36 @@ def analyze_file():
                     # a cloud provider (Gemini), which does not route through
                     # seal_outbound. Gate it fail-closed before it leaves the device.
                     _gated_pdf = _eg.gate_text(text[:8000], "gemini", "analyze_file.pdf")
-                    response = client.models.generate_content(
+                    response = _cloud_client().models.generate_content(
                         model='gemini-2.5-flash',
                         contents=f'You are Friday. Summarize this PDF document concisely. If it looks like a job posting, evaluate the key requirements and note the role level.\n\n{_gated_pdf}'
                     )
-                    return jsonify({"filename": filename, "type": "pdf", "analysis": response.text})
+                    _analyze_record('gemini', 'allow',
+                                    'routing mode %s permits cloud document '
+                                    'analysis; text passed the egress gate' % mode,
+                                    nbytes)
+                    _disclose("Text from a PDF you uploaded")
+                    return jsonify({"filename": filename, "type": "pdf",
+                                    "analysis": response.text,
+                                    "vision_events": events})
             except ImportError:
                 pass
             return jsonify({"filename": filename, "type": "pdf", "analysis": f"PDF received ({len(content)//1024}KB). Install pdfplumber for full analysis: pip install pdfplumber"})
-        elif ext in ('txt', 'md', 'py', 'js', 'html', 'css', 'json', 'ts', 'tsx', 'yaml', 'yml', 'toml'):
+        elif ext in ANALYZE_TEXT_EXT:
+            # Same reasoning as the PDF branch. gate_text below redacts what it
+            # can classify, which is a real protection and is not the same
+            # thing as permission to send: under Local only the answer is no.
+            if local_only:
+                _analyze_record('gemini', 'block',
+                                'local_only: text file withheld, no local document path',
+                                nbytes)
+                return _analyze_withheld(
+                    filename, "that file",
+                    "Reading it needs a model, and the local seat is not wired "
+                    "for document text yet.",
+                    "Paste the part you care about into the chat instead — the "
+                    "local seat answers that — or switch to Local preferred "
+                    "for this one.")
             text = content.decode('utf-8', errors='replace')[:8000]
             job_keywords = ['responsibilities', 'qualifications', 'salary', 'benefits', 'apply', 'experience required']
             is_job = sum(1 for kw in job_keywords if kw.lower() in text.lower()) >= 2
@@ -986,11 +1140,17 @@ def analyze_file():
                 prompt = f'You are Friday. This looks like a job posting. Evaluate the key requirements, role level, and compensation signals. Rate attractiveness 1-10 and explain.\n\n{text}'
             else:
                 prompt = f'You are Friday. Analyze this {ext} file and summarize its purpose and key content:\n\n{text}'
-            response = client.models.generate_content(
+            response = _cloud_client().models.generate_content(
                 model='gemini-2.5-flash',
                 contents=prompt
             )
-            return jsonify({"filename": filename, "type": "text" if not is_job else "job_posting", "analysis": response.text})
+            _analyze_record('gemini', 'allow',
+                            'routing mode %s permits cloud document analysis; '
+                            'text passed the egress gate' % mode, nbytes)
+            _disclose("Text from a file you uploaded")
+            return jsonify({"filename": filename,
+                            "type": "text" if not is_job else "job_posting",
+                            "analysis": response.text, "vision_events": events})
         else:
             return jsonify({"filename": filename, "type": ext, "analysis": f"File received ({len(content)} bytes). Type: .{ext} — drop a text, image, or PDF for full analysis."})
     except Exception as e:
