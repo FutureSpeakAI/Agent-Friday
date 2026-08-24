@@ -876,6 +876,21 @@ if sock is not None:
         _send({"type": "status",
                "text": ("starting local GPU voice (NeMo)" if tier == "gpu"
                         else "starting local voice")})
+        # A GPU tier that RUNS but displaces the resident brain is not a
+        # downgrade, so the block above stays silent for it -- and the user
+        # would otherwise meet the cost as "why did Friday get slow?". Measured
+        # 2026-08-24: holding the ASR working set took local replies from 0.30s
+        # to 3.08s and back. Say it at the point of use, once per session.
+        if tier == "gpu":
+            try:
+                from agent_friday.services.nemo_voice import gpu_status
+                _g = gpu_status()
+                if _g.get("contended"):
+                    _send({"type": "status", "text": _g.get("contention_detail") or
+                           "GPU voice is sharing VRAM with the loaded model; "
+                           "replies may be slower while voice is active."})
+            except Exception:
+                pass
 
         # Lazy, one-time model download/load with a visible progress orb.
         if tier == "gpu":
