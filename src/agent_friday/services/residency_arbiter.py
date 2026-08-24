@@ -608,8 +608,82 @@ class LlamaServerBackend:
     # the same as this card.
     MAX_SEAT_NUM_CTX = 32768
 
+    # KV CACHE QUANTIZATION. Off by default in llama.cpp, which stores K and V
+    # at f16; q8_0 halves that (8 bits plus a 2-byte scale per 32 elements =
+    # 1.0625 bytes/element against 2).
+    #
+    # Computed from gemma4-12b.gguf's own metadata on 2026-08-24, at the
+    # -c 32768 this seat actually runs:
+    #
+    #     f16   832 MiB      q8_0   442 MiB      saved 390 MiB (47%)
+    #
+    # Modest on purpose, and worth saying so rather than implying a bigger
+    # win: Gemma 4 interleaves five sliding-window layers (1024-token window,
+    # 8 KV heads, 256+256 dims) with one full-attention layer (1 KV head,
+    # 512+512), eight times over. Only the eight full layers scale with -c, so
+    # the f16 cache was never the multi-gigabyte object it is on a dense
+    # model. 390 MiB is real headroom on a card with ~700 MiB free; it is not
+    # room for another seat.
+    #
+    # q8_0 rather than q4_0: the quality cost of a quantized KV rises sharply
+    # below 8 bits, and this seat holds long tool-loop transcripts where an
+    # early token being wrong compounds. Halving is the safe half of the
+    # available win.
+    #
+    # Requires flash attention for the V cache, which this command already
+    # passes unconditionally.
+    KV_CACHE_TYPE = "q8_0"
+
+    def _kv_cache_type(self) -> str:
+        """The KV cache type to spawn seats with. Settings override, then the
+        class default, then f16 once a spawn has proved the flag unusable."""
+        if getattr(self, "_kv_quant_unsupported", False):
+            return "f16"
+        try:
+            from agent_friday.core import _load_settings
+            v = ((_load_settings() or {}).get("model_routing") or {}).get(
+                "kv_cache_type")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        except Exception:
+            pass
+        return self.KV_CACHE_TYPE
+
     def _spawn(self, binary, model_id, num_ctx, *, gguf_path, port,
                n_cpu_moe=None, timeout=300):
+        """Spawn a seat, retrying once unquantized if the KV flag is rejected.
+
+        The retry exists because this flag is the only argument in the command
+        that a given llama.cpp build may not accept, and the failure mode
+        without it is the worst one available: the seat never comes up, every
+        local call 404s, and — per commit 8a30831 — every turn silently
+        escalates to the cloud. A boot that is 30 seconds slower and correct
+        beats a boot that is fast and seatless.
+        """
+        quantized = self._kv_cache_type() not in ("", "f16")
+        try:
+            return self._spawn_once(binary, model_id, num_ctx,
+                                    gguf_path=gguf_path, port=port,
+                                    n_cpu_moe=n_cpu_moe, timeout=timeout)
+        except TransitionError as e:
+            if not quantized or getattr(self, "_kv_quant_unsupported", False):
+                raise
+            self._kv_quant_unsupported = True
+            print("  [arbiter] %s: spawn failed with a quantized KV cache "
+                  "(%s) — retrying at f16. This build may not support "
+                  "--cache-type-k/v; seats will use f16 for the rest of this "
+                  "process." % (model_id, e))
+            # `_log` is function-local elsewhere in this module, not a
+            # module global — import here rather than assume one exists.
+            __import__("logging").getLogger("friday.residency").warning(
+                "KV quantization rejected by %s spawning %s (%s); "
+                "falling back to f16", Path(binary).name, model_id, e)
+            return self._spawn_once(binary, model_id, num_ctx,
+                                    gguf_path=gguf_path, port=port,
+                                    n_cpu_moe=n_cpu_moe, timeout=timeout)
+
+    def _spawn_once(self, binary, model_id, num_ctx, *, gguf_path, port,
+                    n_cpu_moe=None, timeout=300):
         try:
             asked = int(num_ctx or 0)
         except Exception:
@@ -629,6 +703,13 @@ class LlamaServerBackend:
                # the compute buffer, not the model, and it is the difference
                # between the pinned pair fitting and not.
                "-b", "512", "-ub", "512"]
+        # See KV_CACHE_TYPE above. Settings can pin this back to "f16" without
+        # a code change; `_spawn_with_fallback` retries unquantized if the
+        # binary rejects the flag, so a build that does not support it costs a
+        # slower boot rather than the local seat.
+        kv_type = self._kv_cache_type()
+        if kv_type and kv_type != "f16":
+            cmd += ["--cache-type-k", kv_type, "--cache-type-v", kv_type]
         # A seat with no chat template silently falls back to ChatML, which
         # leaks `<|im_end|>` into replies and — the part that matters — hands
         # the seat a template with NO TOOL DEFINITIONS. gemma4:e2b and e4b ship
