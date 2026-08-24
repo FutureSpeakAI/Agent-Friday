@@ -91,15 +91,22 @@ ROUTING_KEY = "capability_routing"
 
 
 class Consumer:
-    """A claim that ``module.symbol`` reads seat ``key``, verifiable by AST."""
+    """A claim that ``module.symbol`` reads seat ``key``, verifiable by AST.
 
-    __slots__ = ("kind", "module", "note", "symbol")
+    ``mirror`` names a legacy flat settings key (``voice_model``,
+    ``orchestrator_model``, ...) when the consumer reads the seat THROUGH that
+    mirror rather than by its capability name. See MIRRORS below -- this field
+    exists because omitting it produced a false positive on 2026-08-23.
+    """
 
-    def __init__(self, module, symbol, kind, note=""):
+    __slots__ = ("kind", "mirror", "module", "note", "symbol")
+
+    def __init__(self, module, symbol, kind, note="", mirror=None):
         self.module = module
         self.symbol = symbol
         self.kind = kind
         self.note = note
+        self.mirror = mirror
 
     def __repr__(self):                                    # pragma: no cover
         return f"Consumer({self.module}.{self.symbol}, {self.kind})"
@@ -189,15 +196,25 @@ CONSUMERS: dict[str, Consumer] = {
         "WORKING ROLE. No reader. Long commissions run on the subagent seat."),
 
     "creative_music": _orphan(
-        "music_engine.resolve_music_model() reads its OWN settings key -- "
-        "settings['music_models'] (music_engine.py:75) -- not this seat and "
-        "not the music_model flat mirror. capability_router lists the key in "
-        "CAPABILITIES for the badge, which is display, not selection."),
+        "MIRROR CHECKED TOO, and it is also dead. core._CAP_FLAT_MAP maps "
+        "creative_music -> music_model, so the seat does reach that key -- but "
+        "nothing READS music_model for selection. Every caller passes model= "
+        "explicitly (services/creations.py:438 hardcodes 'lyria-clip'; the "
+        "agent tool takes it as a parameter) and resolve_music_model() falls "
+        "back to the DEFAULT_MUSIC_MODEL constant. settings['music_models'] is "
+        "a friendly-id -> API-string override TABLE, not a selection. So both "
+        "the seat and its mirror are inert."),
 
-    "voice": _orphan(
-        "The live-voice stack reads settings['voice_engine'] (routes/voice.py:"
-        "524, services/local_voice.py:529), never this seat. routes/voice.py:"
-        "901 says so explicitly in a comment."),
+    "voice": Consumer(
+        "agent_friday.services.voice_engine", "_get_live_model", SELECTS,
+        "Consumed THROUGH its flat mirror. core._CAP_FLAT_MAP maps voice -> "
+        "voice_model and _sync_capability_routing keeps the two congruent in "
+        "both directions, so a pick in the picker lands in voice_model. "
+        "_get_live_model() returns settings['voice_model'] or LIVE_MODEL, and "
+        "routes/voice.py:1322 and :1468 call it on the live-session path. "
+        "settings['voice_engine'] is a separate MODE selector (local | gemini "
+        "| auto | gpu tiers) and is not this seat's value.",
+        mirror="voice_model"),
 
     "asr": _orphan(
         "Same as voice: engine choice comes from settings['voice_engine'] and "
@@ -269,6 +286,31 @@ def verify(key, consumer=None):
                        f"stale -- it was renamed or removed.")
 
     literals = _string_constants(tree)
+
+    if consumer.mirror:
+        # Mirror-mediated: the consumer reads the legacy flat key, and
+        # core._sync_capability_routing keeps that key congruent with the seat.
+        # Verify the MIRROR LINK IS REAL rather than taking the claim on trust
+        # -- if _CAP_FLAT_MAP stops mapping this seat, the chain is broken and
+        # the seat is orphaned again with nothing else to notice.
+        try:
+            from agent_friday.core import _CAP_FLAT_MAP
+        except Exception as exc:                            # noqa: BLE001
+            return False, f"could not read core._CAP_FLAT_MAP: {exc}"
+        actual = _CAP_FLAT_MAP.get(key)
+        if actual != consumer.mirror:
+            return False, (
+                f"seat {key!r} claims to be consumed through mirror "
+                f"{consumer.mirror!r}, but core._CAP_FLAT_MAP maps it to "
+                f"{actual!r}. The mirror chain is broken -- either the seat is "
+                f"orphaned again, or the mirror was renamed.")
+        if consumer.mirror not in literals:
+            return False, (
+                f"seat {key!r} is claimed to be read through mirror "
+                f"{consumer.mirror!r} by {consumer.module}.{consumer.symbol}, "
+                f"but {consumer.mirror!r} does not appear in {path}.")
+        return True, f"verified (via mirror {consumer.mirror})"
+
     if key not in literals:
         return False, (f"seat {key!r} names consumer {consumer.module}."
                        f"{consumer.symbol}, but the string {key!r} does not "
