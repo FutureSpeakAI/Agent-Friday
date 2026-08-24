@@ -9,10 +9,22 @@ Transforming it in the browser costs 10-17 s on a cold load (and requires the
 node_modules/@babel/standalone are available the JSX is compiled at build time
 and index.html gets a plain <script> plus no Babel CDN dependency. Without
 node the build falls back to the original in-browser-transform output.
+
+REGRESSION GUARD (2026-08-24): index.html is the file the server serves
+(routes/core_routes.py opens it directly) and it has been hand-edited ahead of
+ui_parts/app.html since 2026-08-18 — app.html says so in its own first eight
+lines. app.html is now a strict SUBSET: every top-level component in it also
+exists in index.html, while eighteen components (the whole conversations
+feature, the model picker, Settings -> Intelligence) exist only in index.html.
+Running this build unguarded therefore DELETES real, shipped code, and does it
+silently. So the build now refuses to write output that drops any top-level
+component the existing index.html defines. Pass --force to override once you
+have read the list it prints.
 """
 import os
 import re
 import subprocess
+import sys
 import tempfile
 
 _repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..')
@@ -87,13 +99,21 @@ precompiled = False
 # app.html is ONE babel script followed by the closing </body></html>; the
 # last </script> in the file is its close (earlier matches are regex literals
 # inside the JS, not tags).
+#
+# The open tag is LOCATED rather than required at offset 0: app.html gained a
+# leading HTML comment on 2026-08-18, and the old `startswith` test silently
+# turned precompilation off from that commit onward — the fallback prints
+# nothing, so the only symptom was a slower, CDN-dependent, offline-broken UI.
+# Any preamble before the tag is preserved verbatim.
+open_idx = app.find(BABEL_OPEN)
 close_idx = app.rfind('</script>')
-if app.startswith(BABEL_OPEN) and close_idx != -1:
-    jsx = app[len(BABEL_OPEN):close_idx]
+if open_idx != -1 and close_idx > open_idx:
+    preamble = app[:open_idx]
+    jsx = app[open_idx + len(BABEL_OPEN):close_idx]
     tail = app[close_idx + len('</script>'):]
     compiled = _precompile_jsx(jsx)
     if compiled is not None:
-        contents['app.html'] = '<script>\n' + compiled + '\n</script>' + tail
+        contents['app.html'] = preamble + '<script>\n' + compiled + '\n</script>' + tail
         # Babel is no longer needed at runtime: drop the CDN loader and its
         # missing-dependency check so the UI works fully offline.
         head = BABEL_CDN_RE.sub('', contents['head.html'])
@@ -102,6 +122,43 @@ if app.startswith(BABEL_OPEN) and close_idx != -1:
         precompiled = True
 
 combined = ''.join(contents[p] + '\n' for p in parts)
+
+# --- Regression guard -------------------------------------------------------
+# Compare top-level component declarations, which survive JSX precompilation
+# unchanged (Babel rewrites the markup inside a function, not the function's
+# name), so this compares like with like whichever branch ran above.
+_FN_RE = re.compile(r'^function ([A-Za-z0-9_]+)', re.MULTILINE)
+
+
+def _components(html: str) -> set:
+    return set(_FN_RE.findall(html))
+
+
+_force = '--force' in sys.argv
+if os.path.exists(output) and not _force:
+    with open(output, 'r', encoding='utf-8') as f:
+        existing = f.read()
+    lost = sorted(_components(existing) - _components(combined))
+    if lost:
+        print(
+            f'REFUSING to write {output}.\n'
+            f'\n'
+            f'The assembled output drops {len(lost)} top-level component(s) that the\n'
+            f'current index.html defines. index.html is the file the server serves and\n'
+            f'it is ahead of ui_parts/app.html; writing this build would delete shipped\n'
+            f'code:\n'
+            f'\n'
+            f'  {", ".join(lost)}\n'
+            f'\n'
+            f'Size: existing {len(existing):,} bytes -> assembled {len(combined):,} bytes.\n'
+            f'\n'
+            f'index.html is the source of truth. Edit it directly. ui_parts/app.html is\n'
+            f'a stale hand-maintained mirror kept only for history; see its header note\n'
+            f'and docs/audits/release-readiness.md.\n'
+            f'\n'
+            f'Re-run with --force if you genuinely intend to discard the components above.'
+        )
+        raise SystemExit(1)
 
 # Write combined output
 with open(output, 'w', encoding='utf-8') as f:
