@@ -47,11 +47,19 @@ KNOWN_ORPHANS = {
     "function_manager": "unbuilt-and-wanted",
     "memory_manager":   "unbuilt-and-wanted",
     "researcher":       "unbuilt-and-wanted",
-    "creative_music":   "dead: music_engine reads settings['music_models']",
-    "voice":            "dead: stack reads settings['voice_engine']",
-    "asr":              "dead: stack reads settings['voice_engine']",
-    "tts":              "dead: stack reads settings['voice_engine']",
+    "creative_music":   "dead: seat AND its music_model mirror are both unread",
+    "asr":              "dead: engine picks by tier, not by model id",
+    "tts":              "dead: engine picks by tier, not by model id",
 }
+
+# Seats that reach their consumer through a legacy flat key rather than by
+# capability name. core._CAP_FLAT_MAP defines the link; _sync_capability_routing
+# keeps the pair congruent. Listed explicitly because MISSING one of these is
+# how 'voice' was wrongly filed as an orphan on 2026-08-23 -- the AST check
+# looked for the capability name, the consumer read the mirror, and the seat
+# looked dead while being perfectly live.
+MIRRORED_SEATS = {"reasoning", "subagent", "creative_image", "creative_music",
+                  "voice"}
 
 # Seats something reads, but only to display. Not assignable either: a choice
 # that changes a badge and nothing else is still a choice that does nothing.
@@ -151,6 +159,40 @@ def test_display_only_seats_are_not_assignable():
         f"Display-only seats are marked assignable: {offered}. A choice that "
         "changes what a badge says and nothing else is still a choice that "
         "does nothing.")
+
+
+def test_mirrored_seats_match_core_cap_flat_map():
+    """The mirror list here must match core's, or the reasoning below is void."""
+    from agent_friday.core import _CAP_FLAT_MAP
+    assert set(_CAP_FLAT_MAP) == MIRRORED_SEATS, (
+        f"core._CAP_FLAT_MAP now maps {sorted(_CAP_FLAT_MAP)} but this file "
+        f"expects {sorted(MIRRORED_SEATS)}. A seat gained or lost a legacy "
+        "flat mirror -- recheck whether it is consumed through it before "
+        "trusting any orphan verdict for it.")
+
+
+@pytest.mark.parametrize("seat", sorted(MIRRORED_SEATS))
+def test_mirrored_seat_orphan_verdicts_account_for_the_mirror(seat):
+    """A mirrored seat called an orphan must say the MIRROR was checked too.
+
+    This is the regression guard for the 2026-08-23 false positive. 'voice'
+    was filed as dead because the AST check looked for the capability name
+    while services/voice_engine.py reads settings['voice_model'] -- the
+    mirror. The seat was live the whole time. A mirrored seat is exactly the
+    case where "no literal in the consumer module" does NOT mean "unread", so
+    declaring one dead requires having looked at the other key and said so.
+    """
+    consumer = rc.CONSUMERS[seat]
+    if consumer.module is not None:
+        return                                  # consumed; nothing to justify
+    from agent_friday.core import _CAP_FLAT_MAP
+    mirror = _CAP_FLAT_MAP[seat]
+    note = consumer.note
+    assert mirror in note or "MIRROR CHECKED" in note.upper(), (
+        f"seat {seat!r} is mirrored to {mirror!r} in core._CAP_FLAT_MAP and is "
+        f"filed as an orphan, but its note never mentions {mirror!r}. Check "
+        f"whether anything reads {mirror!r} for selection before calling this "
+        "seat dead -- that omission is exactly how 'voice' was misfiled.")
 
 
 def test_assignable_seats_are_exactly_the_selecting_ones():
