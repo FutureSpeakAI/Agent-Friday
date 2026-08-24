@@ -1024,6 +1024,60 @@ def chat():
                   f"tools_stripped={_integrity_meta.get('tools_stripped_retry')}, "
                   f"resolved={'yes' if _resolved else 'no'})")
 
+        # ── Source Production Mode: were there any citations AT ALL? ──
+        #
+        # The provenance pass below checks whether each citation is BACKED. It
+        # never asked whether the reply produced any, so with the mode on a
+        # confident unsourced essay passed silently — the toggle promising
+        # something the system did not deliver.
+        #
+        # Enforcement only when the heuristic is confident; see
+        # services/citation_enforcement for exactly what it cannot tell. On a
+        # confident miss the model gets ONE corrective retry through the same
+        # redispatch the tool-integrity ladder uses, and if the retry is still
+        # unsourced the reply ships VISIBLY MARKED rather than quietly.
+        # MEASUREMENT ONLY, DELIBERATELY. Enforcement is written and NOT wired,
+        # because the heuristic that would trigger it cannot do the job. See
+        # services/citation_enforcement and the note below; this is a decision
+        # pending, not an oversight.
+        #
+        # Measured live 2026-08-24 on "what changed in EU AI regulation during
+        # 2024?" with the mode on: five sentences, zero citations, and the
+        # heuristic scored one claim-shaped sentence. The four it missed are
+        # the ones that matter --
+        #   "It shifted the regulatory focus toward a risk-based approach..."
+        #   "It also introduced transparency requirements for GPAI models..."
+        #   "Key shifts included the formalization of rules for systemic risk..."
+        #   "the legislation introduced strict protections for fundamental
+        #    rights..."
+        # -- every one a checkable claim about the world, and not one carrying
+        # a number, an attribution verb or a proper noun the pattern can see.
+        # They are factual because of what they MEAN.
+        #
+        # Adding verbs of enactment (introduced / established / required) would
+        # catch them and would equally catch "the 12b is the better seat",
+        # which is a judgement. Fact and opinion are not separable here on
+        # surface features, so the honest options are a model call or nothing —
+        # and a model call is a latency decision, not a tweak.
+        #
+        # So the mode still does not enforce, and this says so out loud rather
+        # than shipping a trigger that stays silent on the flagship case, which
+        # would leave the same hole while looking fixed. What it does do is
+        # COUNT, which is real: `citation_check` rides in the chat response, so
+        # the gap is measurable per turn instead of invisible.
+        #
+        # The print below is best-effort only — under the tray's pythonw launch
+        # these stdout lines were NOT reaching ~/.friday/server_stderr.log when
+        # checked, so the response field is the signal to rely on, not the log.
+        _cite_meta = None
+        if cite_sources:
+            from agent_friday.services import citation_enforcement as _ce
+            _cite_meta = _ce.assess(reply)
+            _cite_meta["enforced"] = False
+            print("  [CITE] citations=%d claim_sentences=%d/%d — %s"
+                  % (_cite_meta["citations"], _cite_meta["claim_sentences"],
+                     _cite_meta["sentences"], _cite_meta["reason"]))
+
         # ── FR-3: provenance — only executed-tool-result URLs render clickable.
         # A [web:URL] citation not backed by anything this turn's tools
         # actually touched becomes [unverified-web:URL], which the client
@@ -1200,6 +1254,9 @@ def chat():
             "tool_trace": tool_trace,
             "actions": actions,
             "cite_sources": cite_sources,
+            # Counts, not a verdict — the heuristic's own limits are in
+            # services/citation_enforcement. Present only when the mode is on.
+            "citation_check": _cite_meta,
             "session_id": session_id,
             "model": _seat_model,
             "seat": _seat_class,
