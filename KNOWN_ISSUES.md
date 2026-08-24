@@ -351,6 +351,40 @@ Listed because several were long-lived and you may have hit them.
 
 ## 3. Still broken
 
+### Tooling that is silently inert
+
+Three of these found on 2026-08-23/24 while building the role-consumer test. Each is
+the house failure mode applied to a *checker* rather than to a feature: something that
+looks like it is guarding you, and is not.
+
+**The pre-commit hook cannot run from a Linux-side session, and fails closed when it
+tries.** `.githooks/pre-commit` picks its import-smoke interpreter with
+`[ -x "$HERE/../venv/Scripts/python.exe" ]`. Under WSL, a container, or an agent
+sandbox that mount-maps the repo, that test passes — the file exists and the mount
+marks everything executable — and then exec fails with `Exec format error` because it
+is a Windows PE binary. The hook reports `import smoke test FAILED` and blocks the
+commit, having never run the check. The security scanner after it never runs at all.
+Fix is to test the interpreter actually runs (`"$IMPORTPY" -c pass`) rather than
+trusting the `-x` bit.
+
+**Three source files are UTF-8 BOM-prefixed, which Python imports fine and `ast.parse`
+rejects.** `services/creative_engine.py`, `routes/core_routes.py` and
+`services/capability_router.py` begin with U+FEFF. Any tool that reads source as text
+and parses it — a linter, a codemod, an AST-based check — dies on line 1 with
+`invalid non-printable character U+FEFF` while the interpreter itself is perfectly
+happy. Read with `utf-8-sig`, or strip the BOMs. The cost is an afternoon of
+debugging a parser error that points at code containing nothing wrong.
+
+**`services/role_consumers.py` has a known blind spot: mirrored settings keys.** Its
+AST check looks for the *capability* name in the consumer module. When a consumer
+reads the seat through its legacy flat mirror instead — `voice_model` rather than
+`capability_routing.voice` — no literal appears and the seat reads as consumed by
+nothing. This produced a false "dead" verdict on the `voice` seat, which was live the
+whole time. Mirrored seats are now declared explicitly and the mirror link is verified
+against `core._CAP_FLAT_MAP`, but the general lesson stands for any similar check:
+**a consumer reading an aliased name looks identical to no consumer at all.** If you
+add an alias layer anywhere, assume every static check downstream of it now lies.
+
 ### Blocking for a packaged release
 
 **The career pipeline cannot work in a pip install.** `pyproject.toml` packages only
