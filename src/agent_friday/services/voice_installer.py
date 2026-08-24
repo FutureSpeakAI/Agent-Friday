@@ -27,6 +27,23 @@ import time
 _TORCH_CUDA_INDEX = os.environ.get(
     "FRIDAY_TORCH_CUDA_INDEX", "https://download.pytorch.org/whl/cu126")
 
+#: The torch/torchaudio pair this tier installs. PINNED and matched, because
+#: torchaudio links torch's C++ ABI by exact symbol and the two must move
+#: together. Overridable for anyone testing a newer set, but the default is a
+#: pair someone has actually loaded rather than "whatever is newest".
+_TORCH_PIN = os.environ.get("FRIDAY_TORCH_PIN", "2.13.0+cu126")
+_TORCHAUDIO_PIN = os.environ.get("FRIDAY_TORCHAUDIO_PIN", "2.13.0+cu126")
+
+#: Every install writes here, append-only, and survives a restart. The job log
+#: used to live only in memory, last 60 lines, discarded on restart — so an
+#: install that half-failed left literally no record of what pip said. The only
+#: way to reconstruct 2026-08-24 was reading dist-info timestamps.
+def _log_path():
+    from pathlib import Path
+    p = Path(os.path.expanduser("~")) / ".friday" / "voice-install.log"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
 TARGETS = {
     "voice-local-lite": {
         "label": "Tier-1 local voice (CPU) dependencies",
@@ -39,13 +56,37 @@ TARGETS = {
     "voice-local-gpu": {
         "label": "Tier-2 local voice (GPU): torch-CUDA + NVIDIA NeMo",
         "disk_gb": 12.0,
+        # ONE stage, and the pair is PINNED. Both of those are fixes for what
+        # happened on 2026-08-24, which is worth writing down because the
+        # failure was silent and the recovery was not obvious.
+        #
+        # It used to be two stages: `--upgrade torch torchaudio` first, then
+        # nemo_toolkit. Stage one succeeded at 10:31:58 and 10:32:37; stage two
+        # never landed, and the machine was left with a freshly upgraded torch,
+        # NO nemo package at all, and a UI that had said "Downloading NeMo
+        # voice models…". The mic meter still moved, because that is
+        # browser-side, and nothing ever came back, because the tier's models
+        # were never installed. Two separate faults made that possible:
+        #
+        #   1. Splitting the install meant a shared, load-bearing dependency
+        #      (torch — also under sentence-transformers, silero-vad and
+        #      transformers) was mutated BEFORE the thing that needed it was
+        #      known to be installable. One resolver pass either gets a
+        #      consistent set or fails having changed nothing.
+        #   2. `--upgrade` unpinned takes whatever is newest on the index.
+        #      A voice toggle should not be able to decide the torch version
+        #      for the embedder.
+        #
+        # Change the pin deliberately, together, after testing the trio.
         "stages": [
-            # Replace any CPU-only torch with the CUDA build first — NeMo on a
-            # +cpu wheel imports fine and then can never run.
-            ["install", "--upgrade", "torch", "torchaudio",
-             "--index-url", _TORCH_CUDA_INDEX],
-            ["install", "nemo_toolkit[asr,tts]>=2.6"],
+            ["install",
+             "torch==%s" % _TORCH_PIN, "torchaudio==%s" % _TORCHAUDIO_PIN,
+             "nemo_toolkit[asr,tts]>=2.6",
+             "--extra-index-url", _TORCH_CUDA_INDEX],
         ],
+        # Reported success means THIS imports, in a subprocess, after pip is
+        # done. Not that pip exited 0.
+        "verify": ["torch", "torchaudio", "nemo"],
     },
     # Not a pip target: downloads the Tier-1 ASR/TTS checkpoints via the
     # engine's own ensure_ready() (same code path as first voice session).
@@ -73,6 +114,15 @@ def _append_log(line: str):
         _JOB["log"].append(line)
         if len(_JOB["log"]) > 400:  # ring buffer — keep the tail
             del _JOB["log"][:200]
+    # AND to disk, append-only. The ring buffer above is the live view; it is
+    # in memory and dies with the process, which is why the 2026-08-24
+    # half-install left no evidence of what pip actually said and had to be
+    # reconstructed from dist-info timestamps.
+    try:
+        with open(_log_path(), "a", encoding="utf-8") as f:
+            f.write("%s  %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+    except Exception:
+        pass
 
 
 def status() -> dict:
@@ -129,6 +179,59 @@ def _run_pip_stage(args: list) -> int:
             _PROC = None
 
 
+def _verify_imports(modules: list) -> tuple[bool, str]:
+    """Import each module IN A SUBPROCESS and report what actually loaded.
+
+    In a subprocess for two reasons, both learned the hard way. A half-written
+    native library raises a Windows entry-point error that can pop a modal
+    dialog and, in-process, would take the server down with it — so the check
+    runs somewhere expendable, with the error dialog suppressed. And importing
+    torch into the server process would pin the very DLLs a later install needs
+    to replace.
+
+    This is the difference between "pip exited 0" and "the feature works".
+    On 2026-08-24 pip's first stage exited 0, the installer announced
+    "✓ install complete", and the tier had no NeMo in it at all.
+    """
+    if not modules:
+        return True, ""
+    probe = (
+        "import ctypes,sys\n"
+        "try: ctypes.windll.kernel32.SetErrorMode(0x0001|0x0002|0x0004)\n"
+        "except Exception: pass\n"
+        "bad=[]\n"
+        "for m in %r:\n"
+        "    try: __import__(m)\n"
+        "    except BaseException as e: bad.append('%%s: %%s: %%s' %% (m, type(e).__name__, str(e)[:160]))\n"
+        "print('OK' if not bad else 'BAD ' + ' | '.join(bad))\n" % (list(modules),)
+    )
+    try:
+        r = subprocess.run([sys.executable, "-c", probe],
+                           capture_output=True, text=True, timeout=300,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        return False, "verification could not run: %s" % e
+    out = (r.stdout or "").strip().splitlines()
+    line = out[-1] if out else ""
+    if line == "OK":
+        return True, ""
+    if line.startswith("BAD "):
+        return False, line[4:]
+    return False, ("verification produced no verdict (exit %s): %s"
+                   % (r.returncode, (r.stderr or "")[-200:]))
+
+
+def _torch_in_use() -> bool:
+    """Is torch already loaded in THIS process? Then replacing it is unsafe.
+
+    Overwriting c10.dll / c10_cuda.dll while a process holds them open is the
+    likeliest source of the "entry point ??0AcceleratorError@c10@@... could not
+    be located" dialog Stephen saw: both DLLs carry a timestamp between the two
+    pip stages, so something read them mid-replacement.
+    """
+    return "torch" in sys.modules
+
+
 def _run_job(target: str):
     spec = TARGETS[target]
     try:
@@ -148,12 +251,23 @@ def _run_job(target: str):
                     raise RuntimeError("cancelled")
                 if rc != 0:
                     raise RuntimeError(f"pip exited with code {rc} — see log")
+        # VERIFY BEFORE CLAIMING SUCCESS.
+        _verify = spec.get("verify") or []
+        if _verify:
+            _append_log("verifying: importing %s…" % ", ".join(_verify))
+            ok, detail = _verify_imports(_verify)
+            if not ok:
+                raise RuntimeError(
+                    "pip finished but the tier does not load, so it is NOT "
+                    "installed: %s. Your existing setup is unchanged apart "
+                    "from any packages pip replaced — the full pip output is "
+                    "in %s." % (detail, _log_path()))
+            _append_log("verified: %s all import" % ", ".join(_verify))
         with _LOCK:
             _JOB["state"] = "done"
             _JOB["finished"] = time.time()
-        _append_log("✓ install complete — start a voice session to use it "
-                    "(no server restart needed for models; pip installs may "
-                    "need a restart to take effect)")
+        _append_log("✓ install complete and verified — start a voice session "
+                    "to use it (models need no restart; a pip install may)")
     except Exception as e:
         with _LOCK:
             _JOB["state"] = "cancelled" if str(e) == "cancelled" else "error"
@@ -175,6 +289,22 @@ def start(target: str) -> dict:
         ok, why = _disk_ok(TARGETS[target]["disk_gb"])
         if not ok:
             return {"state": "error", "error": why}
+        # REFUSE rather than replace a library this process is holding open.
+        # pip will happily overwrite torch/lib/*.dll underneath a live process;
+        # what the user gets is a native "entry point could not be located"
+        # dialog naming a DLL path, which is unrecoverable-looking and says
+        # nothing about voice. Better to decline with an instruction.
+        if TARGETS[target].get("verify") and _torch_in_use():
+            return {
+                "state": "error",
+                "error": ("Friday is currently using PyTorch (the memory "
+                          "embedder loads it), and installing the GPU voice "
+                          "tier replaces PyTorch's native libraries. Doing "
+                          "that now can break the running app with a Windows "
+                          "'entry point not found' error.\n\n"
+                          "Quit Friday from the tray, run the install, then "
+                          "start Friday again. Nothing has been changed."),
+            }
         _CANCEL.clear()
         _JOB.update({
             "id": _JOB["id"] + 1, "state": "running", "target": target,
