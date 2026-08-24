@@ -195,6 +195,123 @@ installer's model planner reproduced defect H3, the benchmark harness shipped
 the name-shape bug twice, and while fixing a command that exited 0 on failure we
 found `sys.exit(False)`, which is also 0. Treat them as live, not historical.
 
+They kept doing it on 2026-08-23, four times in one session, and the fourth is
+worth writing down as a rule because the tell is specific.
+
+Verifying that `--mmproj` had fixed local vision, the harness asked for a
+description with `max_tokens: 24` and got **empty strings back in ~10 s**. That
+reads exactly like a projector that loaded and produced nothing — a capability
+failure. It was the token budget. gemma4 declares `thinking`, the trace consumed
+the whole allowance, and the answer never started. Raising the budget to 400
+produced *"Red background, circle shape."* and *"Blue background, circle
+shape."* from the same server, same image sizes, same flags.
+
+> **An empty reply plus `finish_reason: length` (or Ollama's
+> `done_reason: length`) is a BUDGET symptom, not a blind model.** Read the
+> finish reason before concluding anything about capability.
+
+### A true observation does not license the conclusion attached to it
+
+The fifth instance that day, and the cleanest statement of the shape, because
+here the observation was not merely true — it was rigorous, and the conclusion
+was still wrong.
+
+A stale `.git/index.lock` was found, zero bytes, 99 minutes old. Before removing
+it the checks were: no `git.exe` running anywhere on the machine, no
+`MERGE_HEAD`/`rebase-*`/`CHERRY_PICK_HEAD`, and an exclusive open
+(`FileShare.None`) that succeeded, proving no process held a handle. All correct.
+Both parties then concluded **"a git process crashed."** Wrong. Ninety minutes
+later three more locks appeared at once — `index.lock`, `HEAD.lock`,
+`objects/maintenance.lock`, seconds apart, all empty — and the commit they
+belonged to had landed perfectly (`6ac2386`, on top of `fbb52fb`, reflog clean).
+
+Nothing had crashed. The agent FUSE mount permits `create` on `.git/` and denies
+`unlink` with `EPERM`, so git writes its lock, does the work, and cannot clean
+up. Verified directly rather than inferred: `touch .git/<probe>` succeeds,
+`rm .git/<probe>` returns *"Operation not permitted"*, and the same file deletes
+instantly from the Windows host. **Every commit through that mount strands its
+locks.** An incident was actually a recurring class.
+
+> **An exclusive-open test proves that nobody holds a file. It proves nothing
+> whatsoever about why the file exists.** "No holder" is compatible with a
+> crash, with a process that finished and could not clean up, and with a file
+> nothing ever held. Establishing the first does not select among the rest.
+
+This is the same defect as the image-bytes comment in `routes/chat.py`, which
+reasoned that image bytes cannot be text-classified by the egress gate,
+*"so there is nothing to gate here."* True premise, and the conclusion does not
+follow from it: the bytes were unclassifiable, the decision to send them was
+always gateable. §1's original bug class is a comparison that discards meaning;
+this is its sibling — a correct measurement carrying a conclusion it cannot
+support. Both survive review because the evidence beneath them is real, and
+reviewers check the evidence.
+
+The habit that catches it is one question: **what else would produce exactly
+this observation?** For the lock, the answer was available in seconds and nobody
+asked it.
+
+**Operationally, until the mount changes:** git operations run from the Windows
+host clean up after themselves; git operations run through the FUSE mount do
+not. Any session committing through the mount will strand locks on every commit,
+and they must be cleared from the host.
+
+The codebase already knew: `routing/ollama_manager.py:287` records the identical
+effect — `num_predict=10` against gemma4:12b returning `response=''` with
+`done_reason='length'`. The knowledge was one file away from the harness that
+needed it, which is the actual lesson. `services/local_vision.py` now reports
+which kind of empty it got, so the next person does not have to know this.
+
+The other three that day: an assertion about shared-model VRAM that failed for a
+reason unrelated to the fix it was testing (`sidekick` displacing the e2b, not
+charge-once); a golden-diff script whose output labels were inverted, read for a
+moment as "the golden already has this key"; and a regenerated golden set whose
+1,151-line diff was CRLF, not content, and nearly got committed that way.
+
+### The corollary for the interface: many warnings at once is wallpaper
+
+The rule above says nothing may claim success it has not verified. This is its
+mirror, and it is a rule about the interface rather than the code:
+
+> **A warning that fires alongside nine others is not a warning. It is
+> wallpaper, and wallpaper is worse than silence, because it trains the reader
+> to ignore the one that matters.**
+
+The evidence for this is already in §1 and was read as being about logging. It
+is not. The career pipeline was dead for seven weeks and ~70 restarts and
+*"logged one warning per boot. Nobody read it."* The tray reported
+`FAILED TO START` on every successful start. In both cases the message was
+present, accurate in its own terms, and ignored — because it was indistinguishable
+from the background.
+
+The same reasoning is why the tool-disclosure line lives in the conversation and
+fires rarely rather than sitting permanently in the interface.
+
+**The test, applied before a warning is allowed to exist:**
+
+1. **Can the person reading it do something that clears it?** If nothing the
+   user can do makes it go away, it is not a warning. It is either an
+   instruction to a developer that leaked into the interface — which belongs in
+   the log — or it is information wearing the wrong colour.
+2. **Does it say what is wrong, why that matters in plain language, and what to
+   do?** If it cannot say what to do, question whether it should exist at all.
+3. **Is it a fault, an unmade choice, or a fact?** Only the first may look like
+   a warning. An optional seat with no model assigned is an available option,
+   not a fault. A fact about the configuration is not yellow.
+
+**Worked example, 2026-08-23.** Settings → Intelligence rendered **thirteen**
+identical amber boxes under "What will not fit right now". Ten of them were one
+arithmetic bug: `hardware_profile.live_display_mib()` summed a WDDM counter that
+is not bounded by physical VRAM (Chrome alone reported 25,808 MiB on a 12,282 MiB
+card), the baseline exceeded the whole card, every GPU budget floored to zero,
+and every seat refused — on a page that said "10.1 GB free of 12 GB" two lines
+above. Four of the boxes then claimed "no model assigned" for roles that *did*
+have models assigned, because the seats had failed to place.
+
+Every one of the ten failed test 1: nothing the user could do cleared any of
+them. Recolouring or grouping them would have shipped a cosmetic fix over a live
+planning fault. **When a warning cannot be cleared by its reader, suspect the
+warning before you restyle it.**
+
 ---
 
 ## 2. Fixed in this release
@@ -287,6 +404,28 @@ prose for models that emit them textually.
 decision to a small specialist like `functiongemma`. That path is unbuilt, so
 `gemma3:4b` cannot be rescued into tool use. The gap is real; it is just much
 narrower than "local Friday cannot act".
+
+**Unbuilt, not parked — checked 2026-08-23.** A recommendation to build the
+delegation path behind an off-by-default flag was made and endorsed; it was
+never implemented, and the endorsement was later remembered as a completion.
+The search that settles it: `function_manager` appears in `src/*.py` on all 22
+local branches, all remote refs, four `.claude` worktrees and an empty stash
+list, and in only six files on every one of them —
+`services/residency_policy.py` (declares the role),
+`core/__init__.py:1661` (default entry, empty model),
+`services/seat_binding.py` (maps it), `routes/intelligence.py:85` (UI label),
+plus comments in `services/model_plan.py` and `setup_brain.py`. **No consumer
+and no flag anywhere.** `local_seats._MIN_USEFUL_GB = 1.5` exists specifically
+to keep `functiongemma:270m` out of seat selection.
+
+Its *purpose* has also changed and should not be restated from the original
+framing. The seat was conceived as an ENABLER for models that cannot emit tool
+calls. `gemma4:12b` demonstrably can — 10/10 emission against the production
+registry on 2026-08-23, median 2.2 s, and it consumes a tool result and reasons
+about it without re-calling. So the seat is no longer load-bearing. As an
+OPTIMISATION — a 270M model triaging whether a tool is needed before a 12B runs
+— it is still worth having, and `functiongemma:270m` emits tool calls in ~358 ms
+on CPU, so the model side was never the obstacle.
 
 Note for anyone reading old comments: `agent.py:93` describes `_call_ollama` as
 "single-shot, no tool loop". That is stale and contradicted by the function's
@@ -385,6 +524,42 @@ cover: web search queries (sent to Brave or DuckDuckGo), Firecrawl, ElevenLabs T
 images and audio sent to Gemini, Google Calendar event content, or a content hash sent to
 `freetsa.org`. Those are real third parties receiving user text, and they are outside the
 guarantee as written.
+
+### The screen capture ignores "Local only", and that one IS undisclosed
+
+The line above ("images and audio sent to Gemini") covers the *fact* of the send. It does
+not cover **when** it happens, and that is the part nobody has been told.
+
+`routes/chat.py:296` fires the vision path on **any** attached image:
+
+```python
+screenshot_b64 = data.get('image') or data.get('screenshot') or None
+if screenshot_b64 and (include_vision or data.get('image') is not None):
+    ...  gclient.models.generate_content(model='gemini-2.5-flash', ...)
+```
+
+It runs at line 296. `model_routing` is not read until line 421. There is no mode check,
+no vault gate, and no egress-gate call on this path — the block's own comment says image
+bytes cannot be text-classified, which is true, and then concludes "there is nothing to
+gate here", which does not follow. The *decision to send at all* is gateable even when
+the bytes are not classifiable.
+
+So: with routing set to **Local only** — whose help text in `routes/intelligence.py` reads
+*"Never leaves the machine. If a local model cannot answer, I say so rather than using the
+cloud"* — attaching an image sends a **screenshot of the user's desktop** to Google.
+A screenshot is not a bounded payload. It contains whatever was on screen: the vault, a
+password manager, a terminal, another person's message.
+
+This is a user-facing control that states a guarantee the code does not keep. It is a
+worse failure than an undocumented egress, because the user has actively chosen the
+setting that promises it will not happen.
+
+**The local alternative now exists.** As of 2026-08-23 `residency_arbiter._spawn` passes
+`--mmproj` when the extracted projector is present, so `gemma4:12b` describes an image
+on-device — verified end to end, not by inspecting the command line: two images, two
+colours, correct answers both times ("Red background, circle shape." / "Blue background,
+circle shape."), `finish_reason: stop`. What is missing is the wiring in `routes/chat.py`
+to prefer that seat over Gemini when the mode says local.
 
 ---
 
