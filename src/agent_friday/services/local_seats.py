@@ -400,4 +400,28 @@ def heal(settings: dict) -> list[str]:
             notes.append(f"{cap}: {value} is not installed - now {fixed}")
             break
 
+    # NESTED SEAT NAMES THE CAPABILITY MAP DOES NOT COVER.
+    #
+    # The loop above only walks capability_routing and its flat mirrors, so a
+    # model named inside any OTHER settings block survived every heal. Found on
+    # this machine 2026-08-24: settings.judgment_gate.model was still
+    # 'gemma4:e2b' long after that model left the daemon.
+    #
+    # That one happens to be harmless at call time, because judgment_gate asks
+    # resolve() and gets a substitute. But the stale value is what the Settings
+    # UI shows Stephen, and a config that displays a model he does not have is
+    # how "I changed it and it did not stick" starts. Repair the record too, not
+    # just the behaviour.
+    for block, role in (("judgment_gate", "judge"),):
+        entry = settings.get(block)
+        if not isinstance(entry, dict):
+            continue
+        value = entry.get("model")
+        if not value or not _is_local_name(value) or value in names:
+            continue
+        fixed = resolve(role, value)
+        if fixed and fixed != value:
+            entry["model"] = fixed
+            notes.append(f"{block}.model: {value} is not installed - now {fixed}")
+
     return notes
