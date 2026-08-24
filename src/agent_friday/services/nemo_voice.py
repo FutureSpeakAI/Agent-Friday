@@ -126,6 +126,31 @@ def gpu_status() -> dict:
                 info["source"] = "torch"
                 info["detail"] = (f"CUDA {info['device']} — "
                                   f"{info['vram_free_gb']}GB free / {info['vram_gb']}GB")
+                # TWO AUTHORITIES THAT DISAGREE BY 9.5 GB.
+                #
+                # Measured on this machine 2026-08-24, same card, same second,
+                # with gemma4:12b resident on llama.cpp:
+                #
+                #     torch.cuda.mem_get_info  ->  10.0 GB free
+                #     nvidia-smi               ->   0.4 GB free
+                #
+                # Neither is lying; they answer different questions. Windows
+                # WDDM lets the driver page GPU memory out to system RAM, so
+                # torch reports what CUDA could *obtain* (after eviction) while
+                # nvidia-smi reports what is genuinely unused right now.
+                #
+                # Believing torch alone is not harmless. Allocating the 3 GB a
+                # NeMo ASR session wants DID succeed against 0.4 GB of real free
+                # memory -- and the resident brain went from 0.30 s to 3.08 s per
+                # turn, a 10.3x slowdown, sustained for as long as the memory was
+                # held, recovering to 0.43 s once released. Nothing crashed. The
+                # cost was invisible and entirely in latency.
+                #
+                # So the gate no longer decides on torch's number alone. It keeps
+                # torch's answer (that IS what allocation will see) and adds the
+                # real figure, so callers can say what it will cost instead of
+                # discovering it as a mysteriously slow Friday.
+                info.update(_contention_probe(info["vram_free_gb"]))
                 return info
             # torch is installed but CPU-only. Do NOT return here: fall through
             # to the nvidia-smi probe so a physical GPU is still detected and
@@ -161,6 +186,46 @@ def gpu_status() -> dict:
         if not info["detail"]:
             info["detail"] = str(e)[:120]
     return info
+
+
+#: What a single-stream NeMo ASR session actually wants resident (GB). Used to
+#: decide whether the GPU tier would be contending with something else rather
+#: than filling idle memory. Matches the 0.6B RNN-T fp16 figure in MIN_VRAM_GB's
+#: note, and is the size that was actually allocated in the 2026-08-24 test.
+_ASR_WORKING_SET_GB = 3.0
+
+
+def _contention_probe(torch_free_gb: float) -> dict:
+    """Ask nvidia-smi what is *genuinely* free, and say whether we'd contend.
+
+    Returns keys merged into ``gpu_status()``. Never raises and never blocks the
+    tier: a machine where the GPU voice models would displace something is still
+    a machine where they RUN. The point is to make the trade visible, not to
+    make it for the user.
+    """
+    out = {"vram_free_real_gb": None, "contended": False, "contention_detail": ""}
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=6)
+        line = (r.stdout or "").strip().splitlines()
+        if not line:
+            return out
+        real = round(int(line[0].strip()) / 1024.0, 1)   # MiB -> GiB
+        out["vram_free_real_gb"] = real
+        if real < _ASR_WORKING_SET_GB:
+            out["contended"] = True
+            out["contention_detail"] = (
+                f"Only {real}GB of VRAM is genuinely free ({torch_free_gb}GB is "
+                f"reachable but the driver would page other work out to get it). "
+                f"GPU voice needs about {_ASR_WORKING_SET_GB}GB, so it will "
+                f"compete with whatever model is loaded. Measured cost on this "
+                f"card: local replies slowed roughly 10x while the voice models "
+                f"were held, and recovered when released.")
+    except Exception:
+        pass
+    return out
 
 
 def gpu_tier_ready() -> bool:
@@ -417,11 +482,18 @@ def nemo_health() -> dict:
                 "deps": deps, "gpu": g, "available": False, "models_ready": False,
             }
         ready = nemo_models_ready()
+        detail = ("NeMo GPU voice ready" if ready
+                  else "NeMo models not downloaded yet (one-time, ~1.5GB)")
+        # The tier runs, but on a card that is already holding a model it runs
+        # at a cost the user cannot see from anywhere else. Say so here rather
+        # than letting it surface as "Friday got slow after I turned voice on".
+        if g.get("contended"):
+            detail += " — note: " + g.get("contention_detail", "GPU memory is contended")
         return {
             "engine": "nvidia-nemo",
             "status": "ok" if ready else "needs_download",
-            "detail": ("NeMo GPU voice ready" if ready
-                       else "NeMo models not downloaded yet (one-time, ~1.5GB)"),
+            "detail": detail,
+            "contended": bool(g.get("contended")),
             "deps": deps, "gpu": g, "available": True, "models_ready": ready,
         }
     except Exception as e:
