@@ -39613,6 +39613,55 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       return next;
     });
   };
+  /* ── Attachments ────────────────────────────────────────────────────────
+     Posts to /api/analyze, which decides LOCALLY whether the file may leave.
+     This function deliberately holds no policy: the mode check, the egress
+     record and the disclosure text all live on the server, because a rule
+     enforced in the browser is a rule anyone can skip by calling the endpoint
+     directly — and this endpoint was reachable with no caller for months.
+     The client's only jobs are to show the file, show the answer, and render
+     whatever disclosure the server attached. */
+  const chatFileRef = React.useRef(null);
+  const [uploading, setUploading] = useState(null);
+  const uploadFile = async (file) => {
+    if (!file) return;
+    setUploading(file.name);
+    const stamp = () => new Date().toLocaleTimeString();
+    setChatMsgs(p => [...p, {
+      role: 'user', text: '📎 ' + file.name +
+        ' (' + (file.size < 1024 ? file.size + ' B'
+              : file.size < 1048576 ? Math.round(file.size / 1024) + ' KB'
+              : (file.size / 1048576).toFixed(1) + ' MB') + ')',
+      time: stamp(),
+    }]);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await apiFetch('/api/analyze', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (d.vision_events && d.vision_events.length) {
+        setChatMsgs(p => [...p, ...d.vision_events.map(ev => ({
+          role: 'system', kind: ev.kind || 'vision_egress',
+          text: ev.text, time: stamp(),
+        }))]);
+      }
+      setChatMsgs(p => [...p, {
+        role: 'friday',
+        text: d.analysis || d.error || 'No analysis came back.',
+        model: d.analysed_by || null,
+        time: stamp(),
+      }]);
+    } catch (e) {
+      setChatMsgs(p => [...p, {
+        role: 'friday',
+        text: 'I could not read ' + file.name + ' — the upload failed: ' + e,
+        time: stamp(),
+      }]);
+    } finally {
+      setUploading(null);
+    }
+  };
+
   const sendChat = async (overrideMsg, opts) => {
     const m = (overrideMsg || chatIn).trim();
     if (!m) return;
@@ -41152,6 +41201,21 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     onMouseOver: e => e.currentTarget.style.color = '#00d4ff',
     onMouseOut: e => e.currentTarget.style.color = 'rgba(255,255,255,0.45)'
   }, "\u21BA refresh list"))), /*#__PURE__*/React.createElement("input", {
+    /* The composer has invited "Type, speak, or drop a file" since before
+       there was anywhere to drop one: /api/analyze has existed for months
+       with no caller and no file input anywhere in the UI. */
+    ref: chatFileRef,
+    type: "file",
+    accept: ".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.py,.js,.html,.css,.json,.ts,.tsx,.yaml,.yml,.toml",
+    style: { display: 'none' },
+    onChange: e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) uploadFile(f); }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    disabled: !!uploading,
+    title: uploading ? ('Analysing ' + uploading) : 'Attach an image, PDF or text file',
+    style: { flexShrink: 0, opacity: uploading ? 0.55 : 1 },
+    onClick: () => { if (!uploading && chatFileRef.current) chatFileRef.current.click(); }
+  }, uploading ? '⋯' : '📎'), /*#__PURE__*/React.createElement("input", {
     className: "input",
     style: {
       flex: 1,
