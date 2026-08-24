@@ -4,6 +4,7 @@
       {
         "available_mib": 9997,
         "baseline_mib": 1261,
+        "baseline_source": "measured-idle-floor",
         "compute_class": "consumer-fp8",
         "index": 0,
         "name": "NVIDIA GeForce RTX 4070",

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import platform
 import shutil
@@ -46,6 +47,8 @@ import time
 from pathlib import Path
 
 from agent_friday.core import runtime_dir
+
+_log = logging.getLogger("friday.hardware_profile")
 
 # Windows: never flash a console window for a probe (same flag the rest of the
 # tree guards on; see routing/ollama_manager.py).
@@ -244,8 +247,31 @@ DEFAULT_VRAM_BASELINE_MIB = {"windows": 1024, "darwin": 512, "linux": 256}
 # breaks screens -- being wrong upward only costs a seat.
 MIN_DISPLAY_RESERVE_MIB = {"windows": 2560, "darwin": 1024, "linux": 512}
 
+# The most of a dedicated card a DESKTOP may plausibly be holding. Above this
+# the reading is not describing a compositor, and refresh_display_reserve()
+# discards it rather than budgeting against it. Deliberately loose: the failure
+# this catches reported 26,463 MiB on a 12,282 MiB card, so a tight bound buys
+# nothing and would start rejecting real multi-monitor draws.
+MAX_DISPLAY_FRACTION = 0.5
+
 _DISPLAY_CACHE: tuple = (0.0, None)
 _DISPLAY_TTL_S = 20.0
+
+# Rejected display readings, newest per GPU index, for anyone asking why the
+# budget looks the way it does. Populated by refresh_display_reserve() and
+# surfaced through residency_policy.gpu_budgets() into
+# /api/residency/status -> budgets[].baseline_rejected.
+_DISPLAY_REJECTIONS: dict = {}
+
+
+def display_rejections() -> dict:
+    """Readings discarded as physically impossible, newest per GPU index.
+
+    Empty is the healthy state. A non-empty entry means the WDDM counter is
+    reporting something that is not resident VRAM, and the budget below it is
+    running on the cached floor instead of a live measurement.
+    """
+    return {k: dict(v) for k, v in _DISPLAY_REJECTIONS.items()}
 
 
 def live_display_mib(os_family: str) -> int | None:
@@ -325,6 +351,17 @@ def effective_baseline_mib(gpu: dict, os_family: str) -> int:
     floor = (measured if isinstance(measured, int) and measured >= 0
              else DEFAULT_VRAM_BASELINE_MIB.get(os_family, 512))
     reserve = gpu.get("vram_display_reserve_mib")
+    # A reserve at or above the card's own capacity is not a large reading, it
+    # is a broken one -- the desktop cannot hold the whole card and leave the
+    # driver running. refresh_display_reserve() rejects these at the source and
+    # says so in the log; this is the same rule applied again on the way OUT, so
+    # a profile written by an older build (or hand-edited) cannot drive the
+    # budget to zero and refuse every seat in silence. Still pure: the test is a
+    # comparison between two fields of the profile it was handed.
+    total = gpu.get("vram_total_mib")
+    if (isinstance(reserve, int) and isinstance(total, int) and total > 0
+            and reserve >= total):
+        return floor
     if isinstance(reserve, int) and reserve > floor:
         return reserve
     return floor
@@ -346,9 +383,67 @@ def refresh_display_reserve(profile: dict) -> dict:
     live = live_display_mib(fam)
     if live is None:
         return profile
+
+    # ── Physical sanity, because the counter is not bounded by the card ──────
+    #
+    # `\GPU Process Memory(*)\Dedicated Usage` counts COMMITTED allocations, not
+    # what is resident on the device, and WDDM lets a process commit far more
+    # than the GPU has. Measured on this box 2026-08-23: Chrome alone reported
+    # 25,808 MiB across four counter instances on a 12,282 MiB card, for a total
+    # of 26,459 MiB. An earlier sample of 13,831 MiB had already been written
+    # into the in-memory profile, which drove `gpu_budgets` to
+    # max(0, 12282 - 1024 - 13831) = 0 and produced ten refusals in Settings ->
+    # Intelligence while the same page showed 10.1 GB free.
+    #
+    # The ceiling comes from the PROFILE, not a fresh probe. An earlier version
+    # of this guard re-read `nvidia-smi` for a tighter bound; it was tighter and
+    # it was wrong, because it judged the profile it was editing against a
+    # different machine reading, and under test it rejected a perfectly good
+    # 2,778 MiB compositor by comparing it to the developer's real card. A rule
+    # that needs the machine to evaluate cannot be exercised without one.
+    #
+    # MAX_DISPLAY_FRACTION is the judgement: a desktop compositor holding more
+    # than half a dedicated GPU is not a large measurement, it is a broken one.
+    # Above that we cannot tell what the number means, so we refuse to use it.
+    # When the profile does not state a total we cannot judge at all, and an
+    # unjudgeable reading is accepted rather than silently dropped.
+    #
+    # A broken reading is DISCARDED, not scaled. Scaling would invent a number;
+    # discarding falls back to the cached idle floor, which is what
+    # `live_display_mib` returning None already means. And it is LOUD: silently
+    # flooring to something plausible is how this comes back in six months with
+    # nobody able to see it happening.
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
     for g in profile.get("gpus", []):
+        idx = g.get("index")
+        total = g.get("vram_total_mib")
+        ceiling = (int(total * MAX_DISPLAY_FRACTION)
+                   if isinstance(total, int) and total > 0 else None)
+        if ceiling is not None and live > ceiling:
+            rejection = {
+                "raw_mib": live,
+                "ceiling_mib": ceiling,
+                "gpu_total_mib": total,
+                "kept_mib": effective_baseline_mib(g, fam),
+                "source": "wddm-dedicated-usage-counter",
+                "at": stamp,
+            }
+            _DISPLAY_REJECTIONS[idx] = rejection
+            g["vram_display_reserve_rejected"] = rejection
+            _log.error(
+                "GPU %s display reserve reading discarded as impossible: the "
+                "WDDM counter reports %d MiB held by the desktop on a %d MiB "
+                "card, above the %d MiB ceiling (%.0f%% of the card). Falling "
+                "back to %d MiB. The counter measures committed allocations, "
+                "not resident VRAM; a browser can commit more than the card "
+                "physically has, so this reading is not usable.",
+                idx, live, total, ceiling, MAX_DISPLAY_FRACTION * 100,
+                rejection["kept_mib"])
+            continue
         g["vram_display_reserve_mib"] = live
-        g["vram_display_reserve_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        g["vram_display_reserve_at"] = stamp
+        g.pop("vram_display_reserve_rejected", None)
+        _DISPLAY_REJECTIONS.pop(idx, None)
     return profile
 
 

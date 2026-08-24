@@ -4,6 +4,7 @@
       {
         "available_mib": 23140,
         "baseline_mib": 400,
+        "baseline_source": "measured-idle-floor",
         "compute_class": "consumer-fp8",
         "index": 0,
         "name": "NVIDIA GeForce RTX 4090",
@@ -12,6 +13,7 @@
       {
         "available_mib": 10958,
         "baseline_mib": 300,
+        "baseline_source": "measured-idle-floor",
         "compute_class": "consumer-fp8",
         "index": 1,
         "name": "NVIDIA GeForce RTX 4070",

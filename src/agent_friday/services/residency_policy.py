@@ -362,7 +362,7 @@ def gpu_budgets(profile: dict) -> list:
     out = []
     for g in profile.get("gpus") or []:
         baseline = effective_baseline_mib(g, fam)
-        out.append({
+        row = {
             "index": g["index"],
             "name": g.get("name"),
             "total_mib": g["vram_total_mib"],
@@ -370,7 +370,28 @@ def gpu_budgets(profile: dict) -> list:
             "available_mib": max(
                 0, g["vram_total_mib"] - VRAM_RESERVE_MIB - baseline),
             "compute_class": g.get("compute_class"),
-        })
+        }
+        # When the live display-reserve reading was discarded as impossible,
+        # say so HERE rather than only in the log. A budget computed from a
+        # cached floor instead of a live measurement is a different claim from
+        # one computed from a measurement, and the difference has to be visible
+        # to whoever is asking why a seat did not fit.
+        rejected = g.get("vram_display_reserve_rejected")
+        if rejected:
+            row["baseline_source"] = "cached-floor (live reading discarded)"
+            row["baseline_rejected"] = rejected
+        elif isinstance(g.get("vram_display_reserve_mib"), int):
+            # NOT necessarily sampled this cycle. `refresh_display_reserve` is
+            # the only writer and it does not always run -- it is skipped under
+            # test, and it declines to overwrite when the probe cannot answer --
+            # so this field may be carried over from an earlier plan. Calling it
+            # "live" would be the same unverified claim this module keeps
+            # catching elsewhere. The timestamp says how old it actually is.
+            row["baseline_source"] = "display-reserve"
+            row["baseline_sampled_at"] = g.get("vram_display_reserve_at")
+        else:
+            row["baseline_source"] = "measured-idle-floor"
+        out.append(row)
     return out
 
 
@@ -1304,6 +1325,40 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
                 "fill %s" % (", ".join(entry.get("modalities") or []) or "none",
                              role)))
             continue
+        # R11, second sentence: "One model may hold several roles and is
+        # counted ONCE against the budget." The rule was documented and never
+        # implemented. Each override was costed independently, so `gemma4:12b`
+        # -- already pinned as interactive_brain -- was charged its full 7,750
+        # MiB again for `orchestrator`, again for `sidekick`, and again for
+        # `sidekick_fast`, against the 884 MiB left after itself. Three roles
+        # the user had assigned were refused for want of memory that the model
+        # they name is already occupying, and two of them then collected an R11
+        # "no model assigned" on top, for a total of five refusals describing
+        # one model that was loaded and working.
+        #
+        # A second role on an already-placed model loads nothing: it is the
+        # same weights, on the same device, in the same process. It therefore
+        # inherits that placement wholesale -- including its context, because
+        # one loaded instance has one context and pretending otherwise would
+        # budget for a window that does not exist -- and is charged 0 MiB so
+        # `_finish` and `retained_mib` count the weights once.
+        #
+        # `sorted(seats)` rather than dict order so the seat that gets named as
+        # the holder is the same one on every run, fixture and machine.
+        holder = next((r for r in sorted(seats)
+                       if r != role and (seats.get(r) or {}).get("model_id") == model_id),
+                      None)
+        if holder is not None:
+            shared = dict(seats[holder])
+            shared["vram_mib"] = 0
+            shared["shares_model_with"] = holder
+            # R7 still holds: the context is explicit. It is explicitly the
+            # holder's, and says so rather than looking independently chosen.
+            shared["num_ctx_from"] = holder
+            shared["from_override"] = True
+            seats[role] = shared
+            continue
+
         cur = seats.get(role)
         cap = max(free.values()) if free else 0
         headroom = cap + ((cur or {}).get("vram_mib") or 0)
