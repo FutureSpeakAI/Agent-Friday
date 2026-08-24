@@ -309,6 +309,55 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         pass
 
 
+def record_binary_egress(provider: str, field: str, *, action: str,
+                         reason: str, byte_len: int = 0,
+                         log_path: Path | None = None) -> dict:
+    """Record a send whose PAYLOAD this gate cannot classify.
+
+    Images, audio and other binary leave without passing `_gate_text`, because
+    there is no text to tier. `routes/chat.py` drew the wrong conclusion from
+    that true premise for a long time:
+
+        "image/camera BYTES cannot be text-classified by the egress gate ...
+         so there is nothing to gate here"
+
+    The bytes are not classifiable. **The decision to send them is**, and it is
+    the decision that belongs in the ledger. Without this, a screenshot of the
+    user's desktop went to Gemini leaving no trace in the one file that is
+    supposed to enumerate everything that left — while a four-word prompt to
+    the same provider was logged in full.
+
+    This does not inspect, redact or block. It states, in the same record and
+    the same format as every text decision, that a binary payload left (or was
+    withheld) and why. Tier is reported as UNCLASSIFIABLE rather than borrowing
+    a text tier it did not earn.
+    """
+    entry = {
+        "ts": time.time(),
+        "provider": provider,
+        "field": field,
+        "tier": "UNCLASSIFIABLE",
+        "action": action,
+        "reason": reason,
+        "bytes": int(byte_len or 0),
+    }
+    _dlog.log(
+        logging.INFO if action == "allow" else logging.WARNING,
+        "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
+        "ALLOW" if action == "allow" else "BLOCK",
+        provider, field, entry["bytes"], reason,
+    )
+    dest = log_path or _DEFAULT_LOG
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with _LOG_LOCK:
+            with open(dest, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+    return entry
+
+
 # ── The judgment appeal (§5.3–§5.5) ───────────────────────────────────────────
 
 def _run_appeals(appeals: list, gated: list, provider: str, field: str,

@@ -284,6 +284,22 @@ def chat_template_path(model_id: str) -> Path:
     return target_dir() / (safe_filename(model_id)[:-5] + ".template.jinja")
 
 
+def projector_path(model_id: str) -> Path:
+    """Where `extract` puts the vision tower, if the model shipped one.
+
+    The mirror of `chat_template_path`, and it exists for the same reason. The
+    extractor has written this file since the projector work landed -- see
+    MEDIA_PROJECTOR above, which even reports it in the result as `projector`
+    -- but nothing ever read it back. `gemma4-12b.mmproj.gguf`, 160 MB, sat
+    beside the weights while the seat serving those weights answered
+    "image input is not supported" to every picture (measured 2026-08-23).
+
+    Existence is the caller's business: a text-only model has no projector and
+    that is not an error.
+    """
+    return target_dir() / (safe_filename(model_id)[:-5] + ".mmproj.gguf")
+
+
 def ensure_chat_template(model_id: str, family_source: str | None = None) -> dict:
     """Make sure this seat has a chat template, borrowing one if it has none.
 

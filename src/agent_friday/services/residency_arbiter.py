@@ -643,6 +643,27 @@ class LlamaServerBackend:
                 cmd += ["--chat-template-file", str(tmpl)]
         except Exception:
             pass
+        # The vision tower, by exactly the same argument as the template above,
+        # and this is the THIRD time this shape of bug has been found here.
+        # `gguf_extract.extract` has always copied the projector out beside the
+        # weights and reported it; `_spawn` never passed it on. So a seat with
+        # `gemma4-12b.mmproj.gguf` sitting 160 MB away in the same directory
+        # answered llama.cpp's own
+        #   "image input is not supported - hint: ... you may need to provide
+        #    the mmproj"
+        # to every image (measured 2026-08-23, two images, two colours).
+        #
+        # That is the same misdiagnosis in a new costume: a model that CAN see
+        # looking like a model that cannot, because a file next to it was never
+        # handed over. A text-only model simply has no projector here, so a
+        # missing file is a normal outcome and not a failure.
+        try:
+            from agent_friday.services import gguf_extract as _gx
+            proj = _gx.projector_path(model_id)
+            if proj.exists():
+                cmd += ["--mmproj", str(proj)]
+        except Exception:
+            pass
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
