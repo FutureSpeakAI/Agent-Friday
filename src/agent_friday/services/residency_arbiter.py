@@ -944,9 +944,17 @@ class Arbiter:
         """
         from agent_friday.services import context_budget
         hwp.refresh_display_reserve(self.profile)
+        _cloud = ()
+        try:
+            from agent_friday.core import _load_settings as _ls
+            from agent_friday.services import seat_binding as _sb
+            _cloud = _sb.cloud_seats_from_settings(_ls() or {})
+        except Exception:
+            pass
         self.plan = rp.plan(self.profile, self.entries, overrides,
                             overhead_tokens=context_budget.overhead_tokens(),
-                            image_model=_configured_image_model())
+                            image_model=_configured_image_model(),
+                            cloud_roles=_cloud)
         self.planned_at = time.time()
         return self.plan
 
