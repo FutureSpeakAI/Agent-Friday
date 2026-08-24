@@ -39055,14 +39055,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // B1/B2: rehydrated history keeps model/seat badges and system lines; the
   // server persists `timestamp` while live messages carry `time` — map it so
   // reloaded messages don't render a blank clock.
+  // Ask for THIS thread only. The unfiltered load is what merged two
+  // conversations into one window when voice mode remounted the chat surface:
+  // chat_history.json is a single flat list and voice turns used to carry no
+  // conversation id at all. Depending on convId also reloads on thread switch.
   useEffect(() => {
-    fetch('/api/chat/history').then(r => r.json()).then(d => {
+    const q = convId ? '?conversation_id=' + encodeURIComponent(convId) : '';
+    fetch('/api/chat/history' + q).then(r => r.json()).then(d => {
       if (d.messages) setChatMsgs(d.messages.map(m => ({
         ...m,
         time: m.time || (m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '')
       })));
     }).catch(() => {});
-  }, []);
+  }, [convId]);
   const dismissedNotifIds = useRef(new Set());
   const _notifPost = (url, id) => {
     if (!id) return;
