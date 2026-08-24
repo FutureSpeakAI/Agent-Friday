@@ -195,15 +195,15 @@ CONSUMERS: dict[str, Consumer] = {
     "researcher": _orphan(
         "WORKING ROLE. No reader. Long commissions run on the subagent seat."),
 
-    "creative_music": _orphan(
-        "MIRROR CHECKED TOO, and it is also dead. core._CAP_FLAT_MAP maps "
-        "creative_music -> music_model, so the seat does reach that key -- but "
-        "nothing READS music_model for selection. Every caller passes model= "
-        "explicitly (services/creations.py:438 hardcodes 'lyria-clip'; the "
-        "agent tool takes it as a parameter) and resolve_music_model() falls "
-        "back to the DEFAULT_MUSIC_MODEL constant. settings['music_models'] is "
-        "a friendly-id -> API-string override TABLE, not a selection. So both "
-        "the seat and its mirror are inert."),
+    "creative_music": Consumer(
+        "agent_friday.services.music_engine", "_seat_model", SELECTS,
+        "WIRED 2026-08-24. resolve_music_model() now consults the seat when no "
+        "model is passed explicitly. Previously inert in both directions: "
+        "every caller passed model= (services/creations.py:438 hardcodes "
+        "'lyria-clip') and resolution fell through to the DEFAULT_MUSIC_MODEL "
+        "constant, while the music_model mirror was written and never read. "
+        "settings['music_models'] remains a friendly-id -> API-string override "
+        "TABLE, which is a different thing from a selection."),
 
     "voice": Consumer(
         "agent_friday.services.voice_engine", "_get_live_model", SELECTS,

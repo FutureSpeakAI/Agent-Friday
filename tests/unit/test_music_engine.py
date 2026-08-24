@@ -5,19 +5,69 @@ ALLOWED, real-person harm BLOCKED), the Scene-DNA audio-layer prompt composition
 cloud feature-detection, and the demo-mode graceful degradation (which writes a
 real artifact + signs provenance rather than failing).
 """
+from unittest.mock import patch
+
+import pytest
+
 import agent_friday.core as core
 from agent_friday.services import music_engine as me
 
 
+@pytest.fixture
+def seat():
+    """Pin capability_routing.creative_music for one test.
+
+    resolve_music_model() consults the seat when no model is passed, so any
+    assertion about the no-argument default is otherwise a read of whatever
+    is in the developer's own settings.json.
+    """
+    def _set(model):
+        return patch("agent_friday.core._load_settings",
+                     return_value={"capability_routing":
+                                   {"creative_music": {"model": model}}})
+    return _set
+
+
 # ── Model resolution ────────────────────────────────────────────────────────
-def test_resolve_music_model_maps_friendly_ids():
+def test_resolve_music_model_maps_friendly_ids(seat):
     assert me.resolve_music_model("lyria-clip") == "lyria-3-clip-preview"
     assert me.resolve_music_model("lyria-pro") == "lyria-3-pro-preview"
-    assert me.resolve_music_model(None) == "lyria-3-clip-preview"  # default
+    with seat("lyria-clip"):
+        assert me.resolve_music_model(None) == "lyria-3-clip-preview"
 
 
 def test_resolve_music_model_passthrough_raw_id():
     assert me.resolve_music_model("lyria-3-pro-preview") == "lyria-3-pro-preview"
+
+
+# ── The seat actually selects (it did not, before 2026-08-24) ───────────────
+def test_seat_drives_the_default_model(seat):
+    """A model chosen in the picker is what generation uses."""
+    with seat("lyria-pro"):
+        assert me.resolve_music_model(None) == "lyria-3-pro-preview"
+
+
+def test_explicit_request_still_beats_the_seat(seat):
+    """The seat is the DEFAULT, not an override."""
+    with seat("lyria-pro"):
+        assert me.resolve_music_model("lyria-clip") == "lyria-3-clip-preview"
+
+
+def test_seat_accepts_a_raw_api_id(seat):
+    """A real Lyria id the friendly table doesn't list passes through.
+
+    Dropping it back to the constant would be the silent substitution this
+    seat was wired up to end.
+    """
+    with seat("lyria-3-pro-preview"):
+        assert me.resolve_music_model(None) == "lyria-3-pro-preview"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "total-garbage", None])
+def test_empty_or_junk_seat_falls_back_safely(seat, bad):
+    """An unset or nonsense seat must not break generation."""
+    with seat(bad):
+        assert me.resolve_music_model(None) == "lyria-3-clip-preview"
 
 
 # ── Harm-floor safety: open by default, blocks only real-person harm ─────────

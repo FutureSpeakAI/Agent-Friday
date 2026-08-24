@@ -47,7 +47,6 @@ KNOWN_ORPHANS = {
     "function_manager": "unbuilt-and-wanted",
     "memory_manager":   "unbuilt-and-wanted",
     "researcher":       "unbuilt-and-wanted",
-    "creative_music":   "dead: seat AND its music_model mirror are both unread",
     "asr":              "dead: engine picks by tier, not by model id",
     "tts":              "dead: engine picks by tier, not by model id",
 }

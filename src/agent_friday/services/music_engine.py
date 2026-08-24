@@ -78,21 +78,49 @@ def _settings_overrides() -> Dict[str, str]:
         return {}
 
 
+def _seat_model() -> str:
+    """The music model Stephen chose, from capability_routing.creative_music.
+
+    This seat was declared, defaulted, mirrored to `music_model` and rendered
+    in the picker while NOTHING read it: every caller passed model= explicitly
+    and this function fell through to a constant, so choosing a music model
+    changed a stored value and nothing else (see services/role_consumers.py).
+    """
+    try:
+        from agent_friday.core import _load_settings
+        cr = (_load_settings() or {}).get("capability_routing") or {}
+        return ((cr.get("creative_music") or {}).get("model") or "").strip()
+    except Exception:
+        return ""
+
+
 def resolve_music_model(requested: Optional[str] = None) -> str:
     """Resolve a friendly/UI music model id to the real Lyria 3 API model string.
-    settings override → built-in table → raw-id passthrough → default."""
+    explicit request → settings override → SEAT → built-in table → default.
+
+    An explicit `requested` still wins: a caller naming a model is answering a
+    narrower question than the seat, and the seat is the DEFAULT rather than an
+    override.
+    """
     key = (requested or "").strip().lower()
     overrides = _settings_overrides()
     if key and key in overrides:
         return overrides[key]
     if not key:
-        key = DEFAULT_MUSIC_MODEL
+        key = _seat_model().lower() or DEFAULT_MUSIC_MODEL
         if key in overrides:
             return overrides[key]
     if key in _MUSIC_MODEL_MAP:
         return _MUSIC_MODEL_MAP[key]
-    if requested and re.match(r"^lyria[\w.\-]*$", key):
-        return requested.strip()
+    # Raw-id passthrough. Applies to a seat value as well as an explicit
+    # request: the seat may legitimately hold a real API id like
+    # `lyria-3-pro-preview` that the friendly table does not list, and
+    # dropping it back to the default would be the silent substitution this
+    # seat was wired up to end. Anything not matching the lyria shape falls
+    # through to the default, so a junk seat value cannot break generation.
+    if key and re.match(r"^lyria[\w.\-]*$", key):
+        # Explicit requests keep their original casing, exactly as before.
+        return requested.strip() if requested else key
     return _MUSIC_MODEL_MAP[DEFAULT_MUSIC_MODEL]
 
 
