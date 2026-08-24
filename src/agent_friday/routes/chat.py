@@ -1074,9 +1074,70 @@ def chat():
             from agent_friday.services import citation_enforcement as _ce
             _cite_meta = _ce.assess(reply)
             _cite_meta["enforced"] = False
-            print("  [CITE] citations=%d claim_sentences=%d/%d — %s"
-                  % (_cite_meta["citations"], _cite_meta["claim_sentences"],
-                     _cite_meta["sentences"], _cite_meta["reason"]))
+            # ROUTING (item 4).
+            #
+            # A vault turn is checked ON THIS MACHINE or not at all. Sending a
+            # reply built from vault material to a cloud model to ask whether
+            # it makes claims would leak exactly the content the vault exists
+            # to keep here, and it would do it inside the feature whose whole
+            # purpose is trustworthiness.
+            #
+            # `_vault_local_only()` is the standing "vault content never goes
+            # to the cloud" setting; `_routed_local` says this turn was served
+            # on-device. Either makes the check local-only. That is broader
+            # than "this turn definitely read the vault", and deliberately so:
+            # the safe direction is to over-restrict a one-word check.
+            _cite_local_only = bool(_vault_local_only()) or bool(_routed_local)
+            if _cite_meta["citations"]:
+                # The reply already cited. Nothing to judge, nothing to spend.
+                # This is also item 4's other half: a cloud-served turn was
+                # told to cite on the first pass and did, so no second call
+                # happens at all.
+                _cite_meta["judge"] = {"decided": False, "claims": False,
+                                       "reason": "reply already cites; no judge needed",
+                                       "seconds": 0.0, "via": None}
+                _needs = False
+            else:
+                _j = _ce.judge_claims(reply, local_only=_cite_local_only,
+                                      settings=settings)
+                _cite_meta["judge"] = _j
+                _cite_meta["judge_local_only"] = _cite_local_only
+                # Fall back to the regex ONLY when no model could answer. A
+                # failed judge must never read as "clean" — that is the silent
+                # pass this whole feature exists to remove.
+                _needs = _j["claims"] if _j["decided"] else _cite_meta["confident"]
+                if not _j["decided"]:
+                    _cite_meta["fallback"] = "regex"
+
+            if _needs:
+                print("  [CITE] unsourced; retrying once (judge=%s)"
+                      % (_cite_meta["judge"].get("via") or "regex"))
+                try:
+                    _r2, _t2 = _redispatch_for_integrity(_ce.RETRY_INSTRUCTION)
+                    _a2 = _ce.assess(_r2 or "")
+                    _cite_meta["retried"] = True
+                    _cite_meta["after_retry"] = _a2
+                    if _r2 and _a2["citations"]:
+                        reply = _r2
+                        tool_trace = (tool_trace or []) + (_t2 or [])
+                        _cite_meta["resolved"] = True
+                        _cite_meta["enforced"] = True
+                    else:
+                        # Keep the better answer and say plainly it is
+                        # unchecked. Marking beats suppressing: the content may
+                        # be right, and the user is owed the distinction rather
+                        # than a blank.
+                        if _r2:
+                            reply = _r2
+                            tool_trace = (tool_trace or []) + (_t2 or [])
+                        reply = (reply or "") + _ce.UNSOURCED_NOTICE
+                        _cite_meta["resolved"] = False
+                        _cite_meta["enforced"] = True
+                except Exception as _cee:
+                    print(f"  [CITE] retry failed, marking unsourced: {_cee}")
+                    reply = (reply or "") + _ce.UNSOURCED_NOTICE
+                    _cite_meta["resolved"] = False
+                    _cite_meta["enforced"] = True
 
         # ── FR-3: provenance — only executed-tool-result URLs render clickable.
         # A [web:URL] citation not backed by anything this turn's tools

@@ -471,6 +471,22 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
 
 ### Other open defects
 
+- **Friday does not search when asked to search.** Measured 2026-08-24: the prompt
+  *"Search the web for the latest on the EU AI Act and tell me what changed, citing your
+  sources"* returned a confident five-sentence answer with an **empty `tool_trace`** and
+  two `[web:...]` citations for pages it had never fetched. The provenance layer caught
+  the citations and rendered them inert, which is the layer working — but it is treating
+  a symptom. This is upstream of the whole Source Production Mode effort and probably
+  matters more than the citation guard: a citation check cannot fix an answer that was
+  never researched. Cause not yet established; the seat is cloud on the `smart` route, so
+  it is not the local-tool-calling gap of §3.
+- **`print()` from the chat path may not reach the log under the tray launch.** The
+  `[CITE]` diagnostics added on 2026-08-24 appear on stdout when the server is run in a
+  console and were **absent from `~/.friday/server_stderr.log`** on a tray-launched
+  (pythonw) run, while `[PROVENANCE]` and `[INTEGRITY]` lines from the same function were
+  present. Not chased to a cause. The consequence is the one §1 opens with: a diagnostic
+  you believe is being recorded and is not. Prefer the structured logger or the response
+  payload over `print()` for anything you intend to rely on later.
 - **The `egress_mode` setting is read by nothing.** Settings → Privacy → EGRESS GATE
   (Audit/Enforce) is a dead control. The direction is safe — the gate always enforces —
   but a privacy toggle that does nothing is a credibility problem regardless.
