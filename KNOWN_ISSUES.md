@@ -307,6 +307,54 @@ charge-once); a golden-diff script whose output labels were inverted, read for a
 moment as "the golden already has this key"; and a regenerated golden set whose
 1,151-line diff was CRLF, not content, and nearly got committed that way.
 
+### An install that could never succeed reports as an install that was interrupted
+
+Stephen clicked the optional GPU voice download on 2026-08-24. It ran for a
+while, then Windows put up a dialog about a missing symbol in `c10_cuda.dll`
+and his GPU stack was broken — torch had moved, torchaudio had not.
+
+The obvious reading is "the download was interrupted, try again". That reading
+is wrong, and retrying would have broken it a second time. The target was
+`nemo_toolkit[asr,tts]`. The `tts` extra depends on `pyopenjtalk`, a Japanese
+text-to-speech frontend that publishes no Windows wheel. pip therefore tried to
+build it from source and stopped at
+
+    CMake Error: CMAKE_C_COMPILER not set, after EnableLanguage
+
+cmake is on this machine; MSVC is not. So the tier was **uninstallable as
+specified on any stock Windows box** — not slow, not flaky, not unlucky.
+It had never worked and could not work.
+
+Two things make this worth naming as a class rather than logging as a bug:
+
+**A dependency that must compile is a different risk class from one that
+downloads.** Every other package in that command was a wheel: fetch, unzip,
+done. One entry in one extra silently changed the operation from "download
+files" to "require a C toolchain", and nothing in the settings UI, the
+installer, or the pin list distinguished the two. The install list was read as
+homogeneous when it was not.
+
+**pip is not transactional.** It had already replaced torch before it reached
+the package that could not build, and it does not roll back. So a failure at
+step N leaves the machine in a state no version of the code ever intended —
+which is why the symptom (`c10_cuda.dll`) pointed at torch, a package that was
+entirely innocent, and why the first diagnosis of it was wrong.
+
+The general form: **a failure partway through a non-transactional install
+produces a state that looks like a different bug than the one that occurred.**
+Read the resolver output, not the crash.
+
+What this cost: a confident and incorrect ABI diagnosis from me, which was
+caught only because Stephen said *verify by loading the GPU speech stack, not
+by checking a version string*. Loading it showed torch, torchaudio,
+sentence_transformers and silero_vad all imported fine with CUDA available.
+`nemo` was simply absent. The version strings had told a story the import
+statements contradicted.
+
+Fixed in `efc7d01`: the extra is dropped (NeMo is wanted for ASR; TTS already
+comes from the Tier-1 Piper path on CPU), the torchaudio pin is corrected to a
+version that exists, and the whole set is dry-run before anything installs.
+
 ### The corollary for the interface: many warnings at once is wallpaper
 
 The rule above says nothing may claim success it has not verified. This is its
