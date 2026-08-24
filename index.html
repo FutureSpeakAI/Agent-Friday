@@ -34680,7 +34680,14 @@ function ModelBrowser({
   };
   const provOptions = (mc.providers || []).filter(p => !['local-voice', 'nemo-local'].includes(p.type));
   const fmtCtx = c => !c ? '—' : c >= 1e6 ? c / 1e6 + 'M' : c >= 1e3 ? Math.round(c / 1e3) + 'K' : String(c);
-  const fmtPrice = m => m.free ? 'free' : m.price_in == null ? 'unpriced' : `$${m.price_in} in / $${m.price_out ?? '—'} out per 1M`;
+  // Two pricing models share this row. Token-priced providers report
+  // price_in/price_out per 1M; Higgsfield charges per GENERATION in
+  // credits and leaves both null, so the old formatter called every one of
+  // them 'unpriced'. credits === null means the vendor's estimate failed:
+  // say 'cost unknown' rather than 0 or a guess. The spread here is ~150x
+  // (z_image 0.15, seedance_2_0 22.5) between adjacent rows.
+  const fmtCredits = c => c == null ? 'cost unknown' : `${c} credit${c === 1 ? '' : 's'}/gen`;
+  const fmtPrice = m => m.credits !== undefined && m.price_in == null && !m.free ? fmtCredits(m.credits) : m.free ? 'free' : m.price_in == null ? 'unpriced' : `$${m.price_in} in / $${m.price_out ?? '—'} out per 1M`;
   const modIcons = m => {
     const mods = m.modalities || [];
     return (mods.includes('image') ? '🖼 ' : '') + (mods.includes('video') ? '🎬 ' : '') + (mods.includes('vision') ? '👁 ' : '');

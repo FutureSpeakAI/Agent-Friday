@@ -179,6 +179,45 @@ DEFAULT_PROVIDERS = [
         "enabled": True,
     },
     {
+        # Higgsfield — cloud generation across image, video, 3D and audio.
+        #
+        # `models` is DELIBERATELY EMPTY and must stay that way. Higgsfield's
+        # catalogue is ~120 models that change without notice, so the list is
+        # enumerated at runtime by services/higgsfield_catalog into the shared
+        # discovery cache and REPLACES these statics — the same hosted-native
+        # path Anthropic uses (model_catalog._model_entries_for). A hardcoded
+        # lineup here is how the prior spec came to name `soul/standard` and
+        # `dop/standard`, neither of which exists on the live account: the list
+        # was stale before it was built.
+        #
+        # No models cached yet → the provider still renders, dimmed, with an
+        # honest hint. It never invents a model it has not seen.
+        "name": "higgsfield",
+        "label": "Higgsfield",
+        "type": "higgsfield",
+        "base_url": "https://mcp.higgsfield.ai/mcp",
+        # Auth is MCP OAuth 2.1 (PKCE) — tokens live encrypted in
+        # ~/.friday/mcp_oauth/higgsfield.oauth.enc, never an env var. `none`
+        # here means "no API key to add in Settings", NOT "no credential
+        # required"; availability is probed against the live connector in
+        # is_provider_available() below.
+        "auth": {"type": "none"},
+        # Cloud by construction. `higgsfield` is deliberately absent from
+        # routing.provider_descriptors.LOCAL_CAPABLE_ADAPTERS so the egress
+        # gate can never classify a Higgsfield call as local.
+        "classification": "cloud",
+        "models": [],
+        # Declared from what was measured on the live account, and no more:
+        # image/video/3D generation plus audio (one music model, the rest
+        # speech). 3D IS present — it appears via the MCP catalogue even
+        # though the Higgsfield CLI's `model list` has no 3D type at all.
+        "capabilities": ["image", "video", "3d", "music", "speech"],
+        "roles": [ROLE_CREATIVE],
+        "cost_per_1k": {},
+        "model_meta": {},
+        "enabled": True,
+    },
+    {
         "name": "google-gemini",
         "label": "Google (Gemini)",
         "type": "google",
@@ -516,6 +555,21 @@ class ProviderRegistry:
             try:
                 from agent_friday.services.nemo_voice import gpu_tier_ready
                 return gpu_tier_ready()
+            except Exception:
+                return False
+        # Higgsfield authenticates through the MCP connector's OAuth, not an
+        # env var, so "available" means the connector is actually reachable
+        # and authorized right now. Asserting availability from the descriptor
+        # alone is exactly how a config file comes to claim a capability the
+        # system cannot deliver.
+        if p.get("type") == "higgsfield":
+            try:
+                from agent_friday.services import agent as _agent
+                mgr = getattr(_agent, "_MCP_MANAGER", None)
+                if mgr is None:
+                    return False
+                sp = (getattr(mgr, "servers", {}) or {}).get("higgsfield")
+                return sp is not None and bool(getattr(sp, "tools", None))
             except Exception:
                 return False
         auth = p.get("auth", {})

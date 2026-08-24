@@ -469,6 +469,12 @@ def api_models_search():
                 "context_window": m.get("context_window"),
                 "price_in": m.get("price_in"), "price_out": m.get("price_out"),
                 "free": bool(m.get("free")),
+                # Per-generation cost, for providers that charge that way
+                # (Higgsfield credits) rather than per token. Passed through as
+                # None when unknown so the browser can say "cost unknown"
+                # instead of implying free; this list is where a 0.15-credit
+                # and a 22.5-credit model sit one click apart.
+                "credits": m.get("credits"),
                 "supports_tools": m.get("supports_tools"),
                 "modalities": m.get("modalities") or ["text"],
                 "local": is_local,

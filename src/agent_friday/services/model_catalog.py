@@ -43,6 +43,16 @@ except Exception:  # pragma: no cover - router always importable in practice
 # models. Their models (whisper/piper/nemo ids) never enter the role lists.
 VOICE_ENGINE_PROVIDER_TYPES = ("local-voice", "nemo-local")
 
+# Providers whose OWN live catalog replaces their shipped statics (spec A2).
+# These have native, non-OpenAI-compatible APIs, so the generic api-discovery
+# sweep does not cover them; a dedicated module writes their list into the
+# shared discovery cache instead:
+#   anthropic  → services/hosted_catalog.refresh()
+#   higgsfield → services/higgsfield_catalog.refresh()
+# A provider listed here ships an EMPTY `models` list on purpose — what the
+# picker offers is what the provider was last seen to actually have.
+HOSTED_NATIVE_TYPES = ("anthropic", "higgsfield")
+
 
 # ── Context-window lookup (decision D3) ──────────────────────────────────────
 # Real per-model context windows have been fetched and cached by
@@ -224,7 +234,7 @@ def _discovered_models(provider: dict):
     share the same disk cache; theirs is written by
     services/hosted_catalog.refresh() (POST /api/models/refresh) instead of
     the generic discovery sweep."""
-    hosted_native = provider.get("type") == "anthropic"
+    hosted_native = provider.get("type") in HOSTED_NATIVE_TYPES
     if (provider.get("discovery") or {}).get("mode") != "api" and not hosted_native:
         return [], False
     try:
@@ -293,6 +303,12 @@ def _model_entries_for(provider: dict, registry) -> list:
             hint = f"Add {needs_key} in Settings → Providers"
         elif engine_backend:
             hint = "Run the Voice Setup Wizard to enable this engine"
+        elif ptype == "higgsfield":
+            # Degrade honestly. The connector being down is a different fact
+            # from the account having no models, and the row says which —
+            # rather than presenting the last enumeration as a live list.
+            hint = ("Higgsfield connector not connected — authorize it in "
+                    "Settings → Connectors")
 
     # Live-discovered models (OpenRouter's 300+, HF router's warm set, …) merge
     # AFTER the statics: statics keep their declared order (and any model_meta
@@ -305,7 +321,7 @@ def _model_entries_for(provider: dict, registry) -> list:
     # shipped statics — new ids (claude-opus-5, claude-haiku-4-5, …) surface
     # as curated picker entries with zero code changes. No cache → statics,
     # each flagged catalog_stale so the UI can say "showing built-in list".
-    hosted_native = ptype == "anthropic"
+    hosted_native = ptype in HOSTED_NATIVE_TYPES
     hosted_fallback = False
     if hosted_native:
         if disc_by_id:
@@ -332,6 +348,16 @@ def _model_entries_for(provider: dict, registry) -> list:
                 m["short"] = disc["label"][:16]
             if disc.get("modalities"):
                 m["modalities"] = list(disc["modalities"])
+            # A hosted-native catalog classifies its OWN models — Higgsfield
+            # knows which of its ids generate images, which are post-processors
+            # (roles: []), and which are speech rather than music. Without
+            # this the enumerated entries inherited the provider's blanket
+            # roles and an upscaler would have been offered as your image
+            # generation model.
+            if isinstance(disc.get("roles"), list):
+                m["roles"] = list(disc["roles"])
+            if disc.get("note") and not m.get("note"):
+                m["note"] = disc["note"]
         m.update({k: v for k, v in (meta.get(mid) or {}).items() if v is not None})
         # Respect an explicit `roles: []` (e.g. Lyria — picked in the Studio
         # Music panel via `music_model`, never via the creative_model picker).
@@ -371,6 +397,14 @@ def _model_entries_for(provider: dict, registry) -> list:
                 "source": "discovery",
                 "catalog_stale": bool(disc_stale),
             })
+            # Per-model generation constraints (aspect ratios, durations,
+            # resolutions, required inputs) as the provider publishes them —
+            # a picker that offers a duration field for a model with no
+            # duration parameter is guessing. Additive; absent for providers
+            # that publish nothing.
+            for extra in ("constraints", "kind", "note"):
+                if disc.get(extra) is not None and entry.get(extra) is None:
+                    entry[extra] = disc[extra]
             if entry.get("cost_per_1k") is None and disc.get("price_in") is not None:
                 # Blended per-1K display figure from the per-1M wire prices.
                 try:
