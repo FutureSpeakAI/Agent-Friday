@@ -45,7 +45,6 @@ KNOWN_ORPHANS = {
     "orchestrator":     "unbuilt-and-wanted",
     "sidekick_fast":    "unbuilt-and-wanted",
     "function_manager": "unbuilt-and-wanted",
-    "memory_manager":   "unbuilt-and-wanted",
     "researcher":       "unbuilt-and-wanted",
     "asr":              "dead: engine picks by tier, not by model id",
     "tts":              "dead: engine picks by tier, not by model id",
