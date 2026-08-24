@@ -125,18 +125,84 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
         base = ollama_url().rstrip("/")
     except Exception:
         base = "http://localhost:11434"
+    daemon_names: set = set()
     try:
         with urllib.request.urlopen(f"{base}/api/tags", timeout=4) as r:
             raw = json.loads(r.read().decode()).get("models", [])
         for m in raw:
             n = m.get("name")
-            if n and n not in seen:
+            if not n:
+                continue
+            # Recorded even when the store already listed it: the daemon having
+            # the name is what makes it callable without a live llama.cpp seat.
+            daemon_names.add(n)
+            if n not in seen:
                 seen.add(n)
                 rows.append((n, float(m.get("size") or 0) / 1e9))
     except Exception as e:
         _log.debug("could not read the Ollama inventory: %s", e)
 
     rows = [t for t in rows if "embed" not in t[0].lower()]
+
+    # A GGUF ON DISK IS NOT A SEAT A CALLER CAN REACH.
+    #
+    # The union above is right in principle -- Friday's own runtime models are
+    # real and the Arbiter can serve them -- but "can be served" and "is being
+    # served" are different claims, and this function's callers act on the
+    # second one. `local_call` dispatches by NAME: it asks `seat_endpoint()`
+    # for a live llama.cpp seat and, finding none, falls through to the Ollama
+    # daemon. A model that exists only in Friday's store therefore resolves to
+    # a name the daemon has never heard of.
+    #
+    # Measured on this machine 2026-08-24. `resolve()` returned 'gemma4:e2b'
+    # for judge, orchestrator, sidekick, interactive_brain, function_manager
+    # and memory_manager. `seat_endpoint('gemma4:e2b')` was None and Ollama's
+    # /api/tags did not list it, so every one of those calls produced
+    #
+    #     local_call HTTP 404 from gemma4:e2b: model 'gemma4:e2b' not found
+    #
+    # dozens of times in a burst -- and each 404 escalated to the cloud. A
+    # trivial question ("what is two plus two") answered on claude-opus-5 in
+    # 46-59s, while the seat that WAS up, gemma4:12b on port 8090, answered the
+    # same thing in 1.45s. That is Stephen's long-standing "it took forever
+    # then kicked back to the cloud, which I do not want", and the cause was
+    # never the router: it was this list promising a model nothing could call.
+    #
+    # So a Friday-store model counts as installed only while it has a live
+    # endpoint. Daemon models are unaffected -- being in /api/tags already means
+    # the daemon will serve them on request. This deliberately does NOT try to
+    # spawn a seat: that would evict whatever is resident, which is not a
+    # decision a name-resolution helper gets to make.
+    store_only = {n for n, _ in _friday_store()}
+    try:
+        from agent_friday.services.local_call import seat_endpoint
+    except Exception:
+        seat_endpoint = None
+    if seat_endpoint is not None and store_only:
+        keep, dropped = [], []
+        for name, size in rows:
+            if name in store_only and name not in daemon_names:
+                try:
+                    live = bool(seat_endpoint(name))
+                except Exception:
+                    live = False
+                if not live:
+                    dropped.append(name)
+                    continue
+            keep.append((name, size))
+        if dropped and keep:
+            # Only when it changes the answer, and only once per set.
+            sig = ("unreachable", tuple(sorted(dropped)))
+            if sig not in _ANNOUNCED:
+                _ANNOUNCED.add(sig)
+                _log.info("local_seats: %d model(s) on disk have no live seat "
+                          "and no daemon entry, so they are not offered: %s",
+                          len(dropped), ", ".join(sorted(dropped)))
+        # Never strip the list to nothing: an empty result means "unknown" to
+        # every caller, which is a worse lie than the one being fixed.
+        if keep:
+            rows = keep
+
     rows.sort(key=lambda t: t[1])
     if rows:
         _CACHE.update(at=now, rows=rows)
@@ -217,7 +283,36 @@ def resolve(role: str, configured: str | None = None) -> str | None:
     # over his own Gemma-4-E4B (6.33 GB). Prefer text; fall back to vision
     # only when there is nothing else.
     text_only = [t for t in useful if not _looks_vision(t[0])] or useful
-    pick = text_only[-1][0] if role in _WANTS_LARGE else text_only[0][0]
+
+    # A SEAT THAT IS ALREADY UP BEATS A SMALLER ONE THAT IS NOT.
+    #
+    # The size ordering answers "which is cheapest to run", but that is the
+    # wrong question when one candidate is ALREADY RUNNING. Substituting for a
+    # missing model is a repair, and a repair should land on the seat that
+    # costs nothing to reach rather than the one that happens to be smallest.
+    #
+    # Measured 2026-08-24, healing the six roles that pointed at the absent
+    # gemma4:e2b: size ordering chose SmolLM3-3B (1.9 GB, not loaded, would
+    # need pulling into memory) while gemma4:12b was live on port 8090 and
+    # answering in 1.45s. The smaller model is also markedly weaker for judging
+    # and reasoning, so the cheap-looking choice was worse on both axes.
+    #
+    # Live seats first, then the existing rule inside each group, so nothing
+    # about the vision/text or large/small preferences changes.
+    try:
+        from agent_friday.services.local_call import seat_endpoint
+
+        def _live(name: str) -> bool:
+            try:
+                return bool(seat_endpoint(name))
+            except Exception:
+                return False
+
+        live = [t for t in text_only if _live(t[0])]
+    except Exception:
+        live = []
+    pool = live or text_only
+    pick = pool[-1][0] if role in _WANTS_LARGE else pool[0][0]
     _announce(role, wanted, pick)
     return pick
 
