@@ -184,13 +184,16 @@ CONSUMERS: dict[str, Consumer] = {
         "-- 'a role in the residency contract that nothing consults'. It only "
         "bites models that cannot call tools themselves."),
 
-    "memory_manager": _orphan(
-        "WORKING ROLE, unbuilt and wanted -- and its consumer ALREADY RUNS. "
-        "services/memory_dreaming.py performs nightly consolidation on a "
-        "schedule (scheduler.py:786) and selects no model at all: the module "
-        "contains zero seat references. liveness_audit.py:12 records it "
-        "running 'nightly, on schedule, green, and consolidated 0 durable "
-        "facts from 215 turns'. Wiring this seat has a waiting caller."),
+    "memory_manager": Consumer(
+        "agent_friday.services.memory_proposals", "seat", SELECTS,
+        "WIRED 2026-08-24. memory_proposals.propose() runs fact extraction on "
+        "the assigned seat, pinned with no provider fallback. Stephen had "
+        "ALREADY assigned this seat (a local Gemma-4-E4B on arbiter-local) and "
+        "nothing read it, while memory_dreaming's six regexes consolidated 0 "
+        "durable facts from 215 turns (liveness_audit.py:12). MANUAL ONLY for "
+        "now: propose() is run by hand and its output waits for approve() "
+        "before anything reaches user_model. The nightly regex pass in "
+        "memory_dreaming is unchanged."),
 
     "researcher": _orphan(
         "WORKING ROLE. No reader. Long commissions run on the subagent seat."),
