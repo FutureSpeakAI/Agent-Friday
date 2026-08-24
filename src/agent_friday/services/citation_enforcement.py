@@ -41,12 +41,18 @@ If this ever needs to be right rather than roughly right, the answer is a model
 call, not a longer regex — and that is a design decision with its own latency
 cost, not a tweak to this file.
 
-STATUS, 2026-08-24: THE HEURISTIC IS NOT GOOD ENOUGH TO ENFORCE ON, and
-`routes/chat.py` therefore uses it to MEASURE ONLY. `RETRY_INSTRUCTION` and
-`UNSOURCED_NOTICE` below are written, reviewed and unwired, waiting on a
-decision about the claim judgement.
+STATUS, 2026-08-24 (second pass): the heuristic is now the FALLBACK, not the
+trigger. `judge_claims()` asks a model the one question the regex cannot
+answer, and `routes/chat.py` enforces on its verdict; the regex decides only
+when no model could answer. A judge that fails never reads as "clean" — the
+caller falls through to the regex rather than to silence, because a silent pass
+is the exact defect this module exists to remove.
 
-The evidence, measured rather than argued. Asked "what changed in EU AI
+Why the regex stays at all: it is free, it runs on every cited turn to produce
+the counts, and it is the only thing left when the seat is cold and the vault
+forbids a cloud call. It is a floor, not a decision.
+
+The evidence that settled it, measured rather than argued. Asked "what changed in EU AI
 regulation during 2024?" with the mode on, the reply came back with five
 sentences and zero citations, and this module scored ONE claim-shaped sentence.
 The four it missed:
@@ -188,6 +194,99 @@ def assess(reply: str) -> dict:
     out["reason"] = ("%d of %d sentences carry two or more claim markers and "
                      "the reply cites nothing" % (len(claims), len(sentences)))
     return out
+
+
+#: The claim question, asked of a model. Deliberately narrow: it judges ONE
+#: thing and returns one word, so the answer is cheap, parseable, and hard to
+#: wander off. The distinction it is asked for is exactly the one the regex
+#: cannot make -- assertion about the world versus judgement, plan, or talk
+#: about the conversation.
+CLAIM_JUDGE_PROMPT = (
+    "You are a fact-checking gate. Below is an assistant's reply.\n\n"
+    "Decide ONE thing: does it assert checkable facts about the world — events, "
+    "figures, dates, what an organisation or law or person did — that a "
+    "skeptical reader could demand a source for?\n\n"
+    "Answer CLAIMS if it does.\n"
+    "Answer NONE if it is only: a greeting, a question, an opinion or "
+    "recommendation, a plan, an apology, or the assistant describing its own "
+    "actions, limits, or this conversation.\n\n"
+    "Reply with exactly one word: CLAIMS or NONE.\n\n"
+    "--- REPLY ---\n%s\n--- END ---"
+)
+
+
+def judge_claims(reply: str, *, local_only: bool, settings=None,
+                 timeout: float = 60.0) -> dict:
+    """Ask a model whether the reply asserts checkable facts.
+
+    `local_only` is not a preference. When the turn touched the vault the check
+    MUST run on this machine: a vault claim verified by a cloud model has
+    already left, and the verification defeats the thing it was verifying.
+
+    Returns {decided, claims, via, seconds, reason}. `decided` False means no
+    model could answer and the caller should fall back to the regex — never
+    that the reply was clean.
+    """
+    import time as _t
+    t0 = _t.time()
+    txt = (reply or "").strip()
+    if not txt:
+        return {"decided": False, "claims": False, "via": None,
+                "seconds": 0.0, "reason": "empty reply"}
+    prompt = CLAIM_JUDGE_PROMPT % txt[:6000]
+
+    # Local first whenever the vault is involved; local first anyway when a
+    # seat is resident, because this is a one-word answer and does not need a
+    # frontier model.
+    try:
+        from agent_friday.services import local_vision as _lv
+        cap = _lv.capability(settings)
+        if cap.get("ok"):
+            import json as _j
+            import urllib.request as _rq
+            body = {"model": cap["model"], "max_tokens": 600, "temperature": 0,
+                    "messages": [{"role": "user", "content": prompt}]}
+            req = _rq.Request(cap["endpoint"].rstrip("/") + "/chat/completions",
+                              data=_j.dumps(body).encode(), method="POST",
+                              headers={"Content-Type": "application/json"})
+            with _rq.urlopen(req, timeout=timeout) as r:
+                d = _j.loads(r.read().decode())
+            out = (((d.get("choices") or [{}])[0].get("message") or {})
+                   .get("content") or "").upper()
+            if "CLAIMS" in out or "NONE" in out:
+                return {"decided": True, "claims": "CLAIMS" in out,
+                        "via": "local:" + str(cap["model"]),
+                        "seconds": round(_t.time() - t0, 1),
+                        "reason": "judged on-device"}
+    except Exception as e:
+        _local_err = str(e)[:120]
+    else:
+        _local_err = "no local seat available"
+
+    if local_only:
+        return {"decided": False, "claims": False, "via": None,
+                "seconds": round(_t.time() - t0, 1),
+                "reason": "vault turn: cloud check forbidden, and the local "
+                          "check was unavailable (%s)" % _local_err}
+
+    # Cloud, only when the vault is not involved.
+    try:
+        from agent_friday.services.model_router import _call_claude
+        out = (_call_claude([{"role": "user", "content": prompt}],
+                            system="Answer with exactly one word.",
+                            temperature=0) or "").upper()
+        if "CLAIMS" in out or "NONE" in out:
+            return {"decided": True, "claims": "CLAIMS" in out, "via": "cloud",
+                    "seconds": round(_t.time() - t0, 1),
+                    "reason": "judged in the cloud"}
+    except Exception as e:
+        return {"decided": False, "claims": False, "via": None,
+                "seconds": round(_t.time() - t0, 1),
+                "reason": "no judge available (local: %s; cloud: %s)"
+                          % (_local_err, str(e)[:120])}
+    return {"decided": False, "claims": False, "via": None,
+            "seconds": round(_t.time() - t0, 1),
+            "reason": "judge answered neither CLAIMS nor NONE"}
 
 
 #: Handed to the model on the second attempt. Concrete about what was wrong,

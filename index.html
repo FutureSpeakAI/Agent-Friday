@@ -32847,17 +32847,22 @@ function SettingsTabModels({
     onChange: () => save({
       cite_sources: !s.cite_sources
     }),
-    /* The honest description, and the honest number. Every citation is
-       checked against the URLs an executed tool actually touched this turn;
-       one that is not backed renders inert instead of clickable. Measured
-       2026-08-24 over four turns of the same question: 18.7s / 18.8s with the
-       mode off, 18.9s / 19.2s with it on — the checking is a regex over the
-       reply, so it costs nothing you can feel. The last sentence is the part
-       that must stay until it is no longer true. */
+    /* The honest description, and the honest numbers, remeasured 2026-08-24
+       after the model judge was wired. Same question, same seat:
+         mode off ................. 27.4s, 21.1s
+         on, answer already cites .. 22.1s  (no judge call at all)
+         on, answer uncited ........ 35.7s  (judge 8.6s + a second answer)
+       So the cost is not a flat overhead — it is zero when the answer does its
+       job and roughly twelve seconds when it does not. Saying "adds ~12s"
+       flatly would be as misleading as the "costs nothing" it replaces. */
     desc: "Cites every factual claim inline, and checks each citation against " +
-          "what was actually retrieved this turn — unbacked ones render as " +
-          "flagged, not clickable. Adds no measurable time (measured +0.3s of " +
-          "19s). It does NOT yet force a citation when the answer gives none."
+          "what was actually retrieved — unbacked ones render flagged, not " +
+          "clickable. If an answer arrives with no citations, a model judges " +
+          "whether it makes factual claims and Friday asks again; still " +
+          "unsourced and it ships visibly marked. Costs nothing when the " +
+          "answer already cites (measured 22s against a 21–27s baseline) and " +
+          "about 12s more when it has to be corrected (36s). Turns touching " +
+          "the vault are judged on this machine only, never in the cloud."
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Streaming Responses",
     value: s.stream_responses !== false,
@@ -40965,7 +40970,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   }, /*#__PURE__*/React.createElement("button", {
     onClick: toggleCiteSources,
     title: agentSettings.cite_sources
-      ? 'Cited mode ON — every citation is checked against what a tool actually retrieved this turn; unbacked ones render flagged, not clickable. It does not yet force a citation when none is given. Click to turn off.'
+      ? 'Cited mode ON — citations are checked against what a tool actually retrieved; unbacked ones render flagged. An uncited answer is judged, asked again, and marked if it stays unsourced (about 12s more when that happens; nothing when it does not). Click to turn off.'
       : 'Turn on Source Production Mode — inline citations, each checked against what was actually retrieved.',
     style: {
       cursor: 'pointer',
