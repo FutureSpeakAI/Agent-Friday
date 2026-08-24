@@ -501,3 +501,92 @@ def test_a_budget_below_the_whole_sweep_says_it_is_extrapolating():
     layers, basis = rp.n_cpu_moe_for_budget(1_000)
     assert basis == "extrapolated"
     assert layers > 28
+
+
+# ── R11: one model, several roles, charged once ──────────────────────────────
+#
+# Every golden above plans with NO overrides, so `_apply_overrides` — the whole
+# path Stephen's settings travel through — was uncovered. That is not incidental
+# to the bug these tests pin: R11's second sentence ("One model may hold several
+# roles and is counted ONCE against the budget") was documented from the start
+# and never implemented, and nothing failed, because nothing ever supplied an
+# override. Measured live 2026-08-23: `gemma4:12b` pinned as interactive_brain
+# was charged its full 7,750 MiB again for orchestrator, again for sidekick and
+# again for sidekick_fast, producing five of thirteen refusals in Settings →
+# Intelligence about a model that was loaded and answering.
+
+def _plan_with_overrides(key, overrides):
+    profile = fx.ALL_PROFILES[key]
+    return rp.plan(profile, fx.catalog(profile), overrides)
+
+
+def test_a_second_role_on_a_seated_model_is_free():
+    plan = _plan_with_overrides("P1", {"interactive_brain": "gemma4:12b",
+                                       "orchestrator": "gemma4:12b"})
+    brain = plan["seats"]["interactive_brain"]
+    orch = plan["seats"]["orchestrator"]
+    assert orch["model_id"] == "gemma4:12b"
+    assert orch["vram_mib"] == 0, "the same weights were charged twice"
+    assert orch["shares_model_with"] == "interactive_brain"
+    # One loaded instance has one context; the sharing seat may not claim a
+    # window that does not exist, and has to say where its number came from.
+    assert orch["num_ctx"] == brain["num_ctx"]
+    assert orch["num_ctx_from"] == "interactive_brain"
+    assert brain["vram_mib"] > 0, "the holder still pays for the weights"
+
+
+def test_sharing_a_model_across_roles_is_not_refused_for_memory():
+    """The refusal this fix removes: three roles naming the model already
+    pinned, each told there is no room for memory it is itself occupying."""
+    plan = _plan_with_overrides("P1", {"interactive_brain": "gemma4:12b",
+                                       "orchestrator": "gemma4:12b",
+                                       "sidekick_fast": "gemma4:12b"})
+    vram = [r for r in plan["refusals"] if r["rule_id"] == "R3"]
+    assert not [r for r in vram
+                if r["role"] in ("orchestrator", "sidekick_fast")], vram
+    # And R11 must not then report them empty: they are filled.
+    unassigned = {r["role"] for r in plan["refusals"] if r["rule_id"] == "R11"}
+    assert "orchestrator" not in unassigned
+    assert "sidekick_fast" not in unassigned
+
+
+def test_a_shared_model_is_counted_once_against_the_pinned_total():
+    """R11 is a budget rule before it is a display rule. Three roles on one
+    model must not read as three models' worth of pinned VRAM.
+
+    The added roles are deliberately the WORKING roles, which the base plan
+    leaves empty. An earlier version of this test also overrode `sidekick` and
+    failed at 7814 vs 9689 — correctly, and not because of charge-once: naming
+    the brain's model for `sidekick` displaces the 1,875 MiB e2b that the base
+    plan puts there, so the two plans were not comparable. Keep the comparison
+    to roles that add nothing but themselves.
+    """
+    one = _plan_with_overrides("P1", {"interactive_brain": "gemma4:12b"})
+    three = _plan_with_overrides("P1", {"interactive_brain": "gemma4:12b",
+                                        "orchestrator": "gemma4:12b",
+                                        "sidekick_fast": "gemma4:12b"})
+    assert three["pinned_vram_mib"] == one["pinned_vram_mib"]
+
+
+def test_the_holder_named_is_stable_across_runs():
+    """Whichever seat is reported as holding the weights has to be the same
+    one every time, or a plan diff becomes unreadable noise."""
+    ov = {"interactive_brain": "gemma4:12b", "orchestrator": "gemma4:12b",
+          "sidekick": "gemma4:12b", "sidekick_fast": "gemma4:12b"}
+    holders = {tuple(sorted(
+        (r, (s or {}).get("shares_model_with"))
+        for r, s in _plan_with_overrides("P1", ov)["seats"].items()
+        if (s or {}).get("shares_model_with")))
+        for _ in range(5)}
+    assert len(holders) == 1, holders
+
+
+def test_two_different_models_are_still_charged_separately():
+    """The guard against over-correcting: charge-once keys on the MODEL, not
+    on the fact that a seat is already occupied."""
+    plan = _plan_with_overrides("P1", {"interactive_brain": "gemma4:12b",
+                                       "sidekick": "gemma4:e2b"})
+    side = plan["seats"].get("sidekick") or {}
+    if side.get("model_id") == "gemma4:e2b":
+        assert side.get("shares_model_with") is None
+        assert side["vram_mib"] > 0

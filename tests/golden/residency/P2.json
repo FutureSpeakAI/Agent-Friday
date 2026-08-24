@@ -4,6 +4,7 @@
       {
         "available_mib": 6264,
         "baseline_mib": 900,
+        "baseline_source": "measured-idle-floor",
         "compute_class": "consumer-fp8",
         "index": 0,
         "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
