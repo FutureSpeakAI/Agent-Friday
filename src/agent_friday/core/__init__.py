@@ -2230,9 +2230,26 @@ def _settings_system_prefix(settings, personality):
         'casual':       'Tone: relaxed and conversational, like a trusted colleague.',
         'technical':    'Tone: precise and technical; use exact terminology and code where helpful.',
     }.get(settings.get('communication_style', 'professional'), '')
-    sources_hint = ('Always cite the source (workspace, wiki, trust graph, vision, etc.) inline when you draw on it.'
-                    if settings.get('include_sources', True) else
-                    'You may omit source citations unless the user asks.')
+    # TWO SETTINGS ABOUT CITATIONS, ONE PROMPT. `include_sources` (default
+    # True) put a vague "always cite the source inline" here; `cite_sources`
+    # (Source Production Mode, default False) appends CITATION_INSTRUCTIONS —
+    # the strict bracket grammar the UI can actually parse and the provenance
+    # layer can actually check — later in the same prompt. Opposite defaults,
+    # same subject, and the specific one arrived last, so in practice
+    # cite_sources already won whenever it was on. Nothing said so anywhere.
+    #
+    # Made explicit rather than left to ordering: cite_sources is the control.
+    # When it is on, this softer hint is SUPPRESSED, because two instructions
+    # about the same duty is how a model gets told to cite "(source: wiki)" in
+    # prose that no parser recognises and no provenance check can verify.
+    # `include_sources` keeps its old meaning only in the mode's absence:
+    # mention where something came from, conversationally, uncounted.
+    if settings.get('cite_sources', False):
+        sources_hint = ''
+    else:
+        sources_hint = ('Always cite the source (workspace, wiki, trust graph, vision, etc.) inline when you draw on it.'
+                        if settings.get('include_sources', True) else
+                        'You may omit source citations unless the user asks.')
     priorities = settings.get('news_priorities') or []
     priority_hint = ('News and topic priorities (descending): ' + ', '.join(priorities) + '.') if priorities else ''
 
