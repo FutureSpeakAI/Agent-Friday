@@ -127,6 +127,121 @@ _SEAT_FOR_ROLE = {
 }
 
 
+def _gb(mib):
+    try:
+        v = float(mib) / 1024.0
+    except Exception:
+        return None
+    return ("%.1f" % v).rstrip("0").rstrip(".") + " GB"
+
+
+def _pretty_model(mid: str) -> str:
+    """`hf.co/HauhauCS/Gemma-4-E4B-...:Q4_K_M` -> `Gemma 4 E4B`.
+
+    The server-side twin of index.html's prettyModel, and it exists because
+    these strings now appear inside SENTENCES rather than in a monospace list.
+    A raw tag is tolerable as a row in a table and is not tolerable in
+    "X does not fit the card for Memory keeper".
+    """
+    import re as _re
+    if not mid:
+        return ""
+    s = str(mid)
+    s = _re.sub(r"^hf\.co/", "", s, flags=_re.I)
+    s = _re.sub(r"^[^/]+/", "", s)
+    s = _re.sub(r":(Q\d[^:]*|f?p?\d{1,2}|latest)$", "", s, flags=_re.I)
+    s = _re.sub(r"-(GGUF|QAT|AWQ|GPTQ)$", "", s, flags=_re.I)
+    s = _re.sub(r"-(Uncensored|HauhauCS|Balanced|Aggressive|Instruct|Chat)\b", "",
+                s, flags=_re.I)
+    s = _re.sub(r"[-_]+", " ", s)
+    s = _re.sub(r"\s+", " ", s).strip()
+    return s[:44] + "…" if len(s) > 46 else s
+
+
+def _humanise_refusal(r: dict, role_label) -> dict:
+    """Turn one planner refusal into something a person can act on.
+
+    Every surviving warning owes the reader three things: what is wrong, why
+    that matters in plain words, and what to do about it. The panel used to
+    render `prettyModel(model) + " for " + role + " — " + explanation`, which
+    put the planner's own arithmetic on screen: "override needs 7814 MiB but
+    only 0 MiB is available on the largest GPU after the other pinned seats".
+    Every word true, and it tells someone who is not the author of the
+    residency policy nothing they can do.
+
+    If a rule cannot say what to do, it says so rather than inventing advice.
+    That is deliberate: a fabricated remedy is worse than an admitted gap,
+    because the reader spends their evening on it.
+    """
+    rid = (r.get("rule_id") or "").upper()
+    who = role_label or (r.get("role") or "a seat")
+    model = _pretty_model(r.get("model") or "")
+    need = _gb(r.get("need_mib") or r.get("vram_mib"))
+    have = _gb(r.get("headroom_mib"))
+    raw = r.get("explanation") or ""
+
+    if rid == "R3":
+        return {
+            "title": "%s does not fit the card for %s" % (model or "That model", who),
+            "why": ("There is not enough free video memory for it beside the "
+                    "models already loaded."
+                    + (" It needs about %s and about %s is free." % (need, have)
+                       if need and have else "")),
+            "action": ("Choose a smaller model for %s, or give a larger seat "
+                       "a smaller model to free the card." % who),
+            "severity": "problem",
+        }
+    if rid == "R6" and "not installed" in raw:
+        return {
+            "title": "%s is not available to this seat" % (model or "That model"),
+            "why": ("%s is filled by a model running on this machine, and this "
+                    "one is not one of them." % who),
+            "action": ("Pick a local model for %s, or leave it empty." % who),
+            "severity": "problem",
+        }
+    if rid == "R6":
+        return {
+            "title": "%s cannot do the job %s needs" % (model or "That model", who),
+            "why": raw or "The model does not have the right capabilities.",
+            "action": "Choose a different model for this seat.",
+            "severity": "problem",
+        }
+    if rid == "R5":
+        return {
+            "title": "Image generation cannot run on this machine",
+            "why": "There is no GPU available to hold an image model.",
+            "action": "Images will be generated in the cloud instead.",
+            "severity": "info",
+        }
+    if rid == "R2":
+        return {
+            "title": "%s would use too much system memory" % (model or "That model"),
+            "why": raw or "It would push system memory past its safe ceiling.",
+            "action": "Choose a smaller model, or close other applications.",
+            "severity": "problem",
+        }
+    if rid == "R8":
+        return {
+            "title": "Not enough free disk to load %s" % (model or "that model"),
+            "why": raw or "Loading it would take free disk below the floor.",
+            "action": "Free some disk space, then try again.",
+            "severity": "problem",
+        }
+    if rid == "R11":
+        return {
+            "title": "%s has no model yet" % who,
+            "why": "This seat is yours to choose. Friday will not pick one for you.",
+            "action": "Pick a model for it, or leave it empty — it is optional.",
+            "severity": "choice",
+        }
+    return {
+        "title": "%s could not be seated" % who,
+        "why": raw or "The planner refused this placement.",
+        "action": "",
+        "severity": "problem",
+    }
+
+
 def _costs_rollup():
     """What has actually been served, per provider and per model.
 
@@ -221,6 +336,7 @@ def api_intelligence():
     # ── Residency: what is actually loaded, and what a change would cost ──
     seats, budgets, refusals, resident = {}, {}, [], set()
     pinned = {}
+    _planned_at = None
     try:
         # Reuse the residency route's own view rather than re-deriving it, so
         # this surface and /api/residency/status can never disagree.
@@ -231,6 +347,11 @@ def api_intelligence():
         budgets = st.get("budgets") or {}
         refusals = st.get("refusals") or []
         pinned = st.get("pinned_vram_mib") or {}
+        try:
+            from agent_friday.services.residency_arbiter import get_arbiter as _ga
+            _planned_at = getattr(_ga(), "planned_at", None)
+        except Exception:
+            pass
         for k in ("resident_ollama", "resident_llama_server"):
             v = st.get(k)
             if isinstance(v, dict):
@@ -316,13 +437,26 @@ def api_intelligence():
     # nothing was asked for; R1-R10 mean something could not be done. Rendering
     # both as "unset" loses the only distinction that matters to the person
     # looking at it.
+    #
+    # Prefer the ACTIONABLE refusal when a role has more than one. First-wins
+    # picked whichever the planner happened to append first, which for a role
+    # with a failed assignment was sometimes the R11 -- so the row said "this
+    # seat is yours to choose" about a seat that already had a model and a
+    # concrete reason it would not fit. R11 now only fires for genuinely
+    # unassigned roles, so this is belt and braces rather than the fix, but a
+    # role can still carry both an R3 and an R6 and the R11 is never the more
+    # useful of any pair.
     refusal_for = {}
     try:
         from agent_friday.services.residency_arbiter import get_arbiter
         _arb = get_arbiter()
-        for _r in ((getattr(_arb, "plan", None) or {}).get("refusals") or []):
+        for _r in ((_arb.plan_fresh() if _arb else None) or {}).get("refusals") or []:
             _role = _r.get("role")
-            if _role and _role not in refusal_for:
+            if not _role:
+                continue
+            _prev = refusal_for.get(_role)
+            if _prev is None or (_prev.get("rule_id") == "R11"
+                                 and _r.get("rule_id") != "R11"):
                 refusal_for[_role] = _r
     except Exception:
         pass
@@ -367,7 +501,24 @@ def api_intelligence():
         })
 
     # ── The machine ──────────────────────────────────────────────────────────
+    # Humanised, and grouped by severity so the page can render a fault as a
+    # fault and a choice as a choice. `raw` is kept for anyone debugging the
+    # planner; nothing renders it.
+    _label_for_role = {}
+    for _k, _l, _a, _b, _c in ROLE_SPEC:
+        _label_for_role[_SEAT_FOR_ROLE.get(_k, _k)] = _l
+    problems, choices, infos = [], [], []
+    for _r in (refusals or []):
+        _h = _humanise_refusal(_r, _label_for_role.get(_r.get("role")))
+        _h["rule_id"] = _r.get("rule_id")
+        _h["role"] = _r.get("role")
+        _h["raw"] = _r.get("explanation")
+        {"problem": problems, "choice": choices, "info": infos}[
+            _h["severity"]].append(_h)
+
     machine = {"vram": None, "ram": None, "refusals": refusals,
+               "problems": problems, "choices": choices, "notes": infos,
+               "planned_at": _planned_at,
                "resident": sorted(resident), "pinned_vram_mib": pinned}
     try:
         from agent_friday.services import gpu_headroom

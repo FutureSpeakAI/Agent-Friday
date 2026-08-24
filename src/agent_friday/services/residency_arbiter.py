@@ -868,11 +868,62 @@ class Arbiter:
                                else rc.gguf_models())
         self.state = STATE_DEFAULT
         self.plan = None
+        self.planned_at = None          # when self.plan was computed
         self.lease = None
         self.transitions = []           # audit trail, with timings
         self._lock = threading.Lock()
+        self._replan_lock = threading.Lock()
 
     # ── planning ────────────────────────────────────────────────────────────
+
+    #: How stale a plan may be before a reader gets a fresh one. Matched to
+    #: hardware_profile's display-reserve cache (20 s) because that probe is the
+    #: expensive part of replanning; a shorter TTL would spawn PowerShell more
+    #: often than the sampler can answer, and a longer one re-opens the gap this
+    #: exists to close.
+    PLAN_MAX_AGE_S = 20.0
+
+    def plan_fresh(self, max_age_s: float | None = None):
+        """The plan, recomputed if it has gone stale. Never raises.
+
+        `self.plan` is computed once at boot and then only on an explicit
+        replan or a seat change. Settings -> Intelligence rendered that snapshot
+        under the heading "WHAT WILL NOT FIT RIGHT NOW", which was false in the
+        way that matters: measured 2026-08-23, the panel showed refusals
+        computed at 15:45 against a card with ~10 GB free, while the card had
+        1 GB free and the settings the refusals referred to had since been
+        rewritten by seat_binding.apply(). One payload, two moments -- the roles
+        section read current settings, the refusal section read a plan from
+        boot -- and they disagreed on four of six entries.
+
+        Readers get a plan or they get nothing; a stale plan presented as
+        current is worse than an empty list, because it is confidently wrong
+        about the machine in front of the user.
+        """
+        ttl = self.PLAN_MAX_AGE_S if max_age_s is None else max_age_s
+        fresh = (self.plan is not None and self.planned_at is not None
+                 and (time.time() - self.planned_at) < ttl)
+        if fresh:
+            return self.plan
+        # Non-blocking: if another thread is already replanning, use what we
+        # have rather than queueing a second sample behind it. A poll every few
+        # seconds must never stack.
+        if not self._replan_lock.acquire(blocking=False):
+            return self.plan
+        try:
+            from agent_friday.core import _load_settings
+            from agent_friday.services import residency_catalog as _rc
+            from agent_friday.services import seat_binding as _sb
+            self.entries = _rc.installed_entries(self.profile)
+            return self.compute_plan(
+                _sb.overrides_from_settings(_load_settings() or {}))
+        except Exception as e:
+            _log = __import__("logging").getLogger("friday.residency")
+            _log.warning("replan on read failed, serving the plan from %s: %s",
+                         self.planned_at, e)
+            return self.plan
+        finally:
+            self._replan_lock.release()
 
     def compute_plan(self, overrides=None):
         """Plan against the LIVE prompt overhead and the LIVE display draw.
@@ -896,6 +947,7 @@ class Arbiter:
         self.plan = rp.plan(self.profile, self.entries, overrides,
                             overhead_tokens=context_budget.overhead_tokens(),
                             image_model=_configured_image_model())
+        self.planned_at = time.time()
         return self.plan
 
     def preview(self, assignments):
