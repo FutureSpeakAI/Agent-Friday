@@ -39659,6 +39659,18 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         text: '⚙ ' + ev.text,
         time: new Date().toLocaleTimeString()
       }))]);
+      // Vision egress. An image going to a cloud provider is disclosed in the
+      // TURN, not only in the egress log — same rule as the tool-disclosure
+      // line, and it fires only when an image was actually sent or withheld.
+      // Its own `kind` because these are not seat changes and must not borrow
+      // that tooltip: a notice that misdescribes itself is the thing this
+      // whole line of work exists to remove.
+      if (d.vision_events && d.vision_events.length) setChatMsgs(p => [...p, ...d.vision_events.map(ev => ({
+        role: 'system',
+        kind: ev.kind || 'vision_egress',
+        text: ev.text,
+        time: new Date().toLocaleTimeString()
+      }))]);
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback (2026-08-14), plus the fallback chain.
       setChatMsgs(p => [...p, {

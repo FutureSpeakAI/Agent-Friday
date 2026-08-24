@@ -286,31 +286,118 @@ def chat():
                 "sources": [], "tool_trace": [{"tool": "open_path", "result": _open_reply}],
             })
 
-        # Vision capture (Gemini, designer role). Accept either `screenshot`
-        # (legacy) or `image` (Camera Mode frames). If an image is sent at all,
-        # use it — no need for the explicit includeVision flag.
-        # NOTE: image/camera BYTES cannot be text-classified by the egress gate —
-        # the documented caveat. The instruction prompt is fixed (no user text),
-        # so there is nothing to gate here; the tradeoff is stated in the Data
-        # Security Guarantee, not hidden.
+        # ── Vision capture. THE ROUTING MODE IS CHECKED BEFORE THE SEND. ──
+        #
+        # Accept either `screenshot` (legacy) or `image` (Camera Mode frames).
+        #
+        # This block used to run unconditionally, at this line, while
+        # `model_routing` was not read until ~120 lines below. So a user on
+        # **Local only** — help text: "Never leaves the machine. If a local
+        # model cannot answer, I say so rather than using the cloud" — had a
+        # screenshot of their DESKTOP sent to Google on every image. Not a
+        # picture they chose: whatever was on screen, including the vault, a
+        # terminal, or someone else's message. A control that promises the
+        # opposite of what it does is worse than an undocumented egress,
+        # because the user made a decision on the strength of it.
+        #
+        # The old comment reasoned: image bytes cannot be text-classified by
+        # the egress gate, "so there is nothing to gate here". True premise,
+        # false conclusion. The BYTES are unclassifiable; the DECISION TO SEND
+        # THEM is entirely gateable, and that is what was missing.
+        #
+        # Three things now hold:
+        #   1. local_only never reaches Gemini. It describes the image on the
+        #      resident seat or says plainly that it could not.
+        #   2. Every send — local or cloud — is recorded in the egress ledger
+        #      via record_binary_egress, so an image appears in the same file
+        #      that already logs a four-word prompt to the same provider.
+        #   3. A cloud send is disclosed IN THE TURN, not only in a document.
+        #      Same rule as the tool-disclosure line: rare, and where he is
+        #      looking.
         screenshot_b64 = data.get('image') or data.get('screenshot') or None
+        _vision_events = []
         if screenshot_b64 and (include_vision or data.get('image') is not None):
+            _routing_mode = str(((settings_early.get('model_routing') or {})
+                                 .get('mode') or 'smart')).lower()
+            _mime = 'image/jpeg' if data.get('image') else 'image/png'
+            _is_screen = data.get('screenshot') is not None
+            _what = 'a screenshot of your desktop' if _is_screen else 'the camera frame'
             try:
-                from google import genai
-                from google.genai import types
-                gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-                img_bytes = base64.b64decode(screenshot_b64)
-                mime = 'image/jpeg' if data.get('image') else 'image/png'
-                vision_resp = gclient.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[
-                        "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
-                        types.Part.from_bytes(data=img_bytes, mime_type=mime),
-                    ],
-                )
-                vision_description = vision_resp.text
-            except Exception as ve:
-                vision_description = f"[Vision unavailable: {ve}]"
+                _img_len = len(base64.b64decode(screenshot_b64))
+            except Exception:
+                _img_len = 0
+            _prefer_local = _routing_mode in ('local_only', 'local_preferred')
+
+            def _record(provider, action, reason):
+                try:
+                    from agent_friday.services.egress_gate import record_binary_egress
+                    record_binary_egress(provider, 'vision_image',
+                                         action=action, reason=reason,
+                                         byte_len=_img_len)
+                except Exception as _ee:
+                    print(f"  [VISION] egress record failed: {_ee}")
+
+            # 1 ── local first when the mode asks for local.
+            if _prefer_local:
+                try:
+                    from agent_friday.services import local_vision as _lv
+                    _res = _lv.describe(screenshot_b64, mime=_mime,
+                                        settings=settings_early)
+                except Exception as _lve:
+                    _res = {"ok": False, "text": None,
+                            "reason": f"local vision raised {_lve}"}
+                if _res.get("ok"):
+                    vision_description = _res["text"]
+                    _record('local:' + str(_res.get('model')), 'allow',
+                            'described on-device; nothing left the machine')
+                elif _routing_mode == 'local_only':
+                    # The promise is kept by REFUSING, and by saying so. This
+                    # is the "I say so rather than using the cloud" half of the
+                    # mode's own help text, which had no implementation.
+                    vision_description = (
+                        "[I could not look at that image without leaving the "
+                        "machine, and you have chosen Local only, so I did "
+                        "not send it. Reason: %s]" % _res.get("reason"))
+                    _record('gemini', 'block',
+                            'local_only: image withheld from the cloud (%s)'
+                            % _res.get("reason"))
+                    _vision_events.append({
+                        "kind": "vision_withheld",
+                        "text": "🔒 I did not describe that image. Local only "
+                                "is on and the local seat could not do it — %s."
+                                % _res.get("reason"),
+                        "ts": _time.time(),
+                    })
+                    screenshot_b64 = None      # nothing may send it later
+
+            # 2 ── cloud, only when the mode permits it, and never silently.
+            if screenshot_b64 and vision_description is None:
+                try:
+                    from google import genai
+                    from google.genai import types
+                    gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
+                    img_bytes = base64.b64decode(screenshot_b64)
+                    vision_resp = gclient.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=[
+                            "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                            types.Part.from_bytes(data=img_bytes, mime_type=_mime),
+                        ],
+                    )
+                    vision_description = vision_resp.text
+                    _record('gemini', 'allow',
+                            'routing mode %s permits cloud vision' % _routing_mode)
+                    _vision_events.append({
+                        "kind": "vision_cloud",
+                        "text": "👁 %s went to Google (Gemini) to be described. "
+                                "Switch to Local only in Settings → "
+                                "Intelligence to keep images on this machine."
+                                % _what.capitalize(),
+                        "ts": _time.time(),
+                    })
+                except Exception as ve:
+                    vision_description = f"[Vision unavailable: {ve}]"
+                    _record('gemini', 'error', f'cloud vision failed: {ve}')
 
         settings = _load_settings()
         personality = _load_agent_personality()
@@ -1117,6 +1204,11 @@ def chat():
             "model": _seat_model,
             "seat": _seat_class,
             "seat_events": _seat_events,
+            # An image reaching a cloud provider, or being withheld because the
+            # mode forbids it, is disclosed in the turn. Empty on every turn
+            # without an image, which is nearly all of them — a disclosure that
+            # fires constantly is wallpaper (KNOWN_ISSUES.md §1).
+            "vision_events": _vision_events,
             "fallback_chain": _fallback_chain,
             # Present only when his chosen local seat could not answer and the
             # cloud did instead. The client renders it as a system line so the
