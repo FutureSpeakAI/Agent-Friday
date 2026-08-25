@@ -420,9 +420,43 @@ def _accounts_with(service: str) -> list:
     return out
 
 
-def merged_gmail(limit_per_account: int = 15) -> dict:
+# HOW FAR BACK "recent" REACHES, in days.
+#
+# This was hardcoded to 1 inside the query string, which made `limit` a lie:
+# asking for 50 messages from an account that had received 6 in the last 24
+# hours returns 6, and the inbox then reports that as the account's whole
+# state. The reported symptom (2026-08-24) was the Work account looking far
+# emptier than it is -- consistent with steadier traffic spread over a week
+# rather than arriving in daily bursts, though the window is the defect either
+# way: a 24-hour cap that no caller asked for and none could change.
+#
+# Settable rather than merely widened: the right window depends on how much
+# mail an account gets, which is not a thing this module can know.
+_DEFAULT_GMAIL_WINDOW_DAYS = 7
+
+
+def _gmail_window_days(override: int | None = None) -> int:
+    """Days of history a Gmail fetch covers. Caller > settings > default."""
+    if override:
+        try:
+            return max(1, int(override))
+        except Exception:
+            pass
+    try:
+        from agent_friday.core import _load_settings
+        v = (_load_settings() or {}).get("gmail_window_days")
+        if v:
+            return max(1, int(v))
+    except Exception:
+        pass
+    return _DEFAULT_GMAIL_WINDOW_DAYS
+
+
+def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
     """Recent Gmail across all gmail-enabled accounts, each thread badged with the
-    account it came from. Returns {accounts:[...], messages:[...], errors:[...]}."""
+    account it came from. Returns {accounts:[...], messages:[...], errors:[...]}.
+
+    `days` overrides the configured window (see `_gmail_window_days`)."""
     _migrate_legacy_if_needed()
     from agent_friday.services.calendar_engine import _fetch_gmail_recent  # legacy single-account
     messages, errors, used = [], [], []
@@ -434,7 +468,7 @@ def merged_gmail(limit_per_account: int = 15) -> dict:
                            "error": "needs_reauth"})
             continue
         used.append(_public_record(rec))
-        for m in _gmail_for_creds(creds, limit_per_account):
+        for m in _gmail_for_creds(creds, limit_per_account, days=days):
             if "error" in m:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": m["error"]})
                 continue
@@ -447,7 +481,7 @@ def merged_gmail(limit_per_account: int = 15) -> dict:
     return {"accounts": used, "messages": messages, "errors": errors}
 
 
-def _gmail_for_creds(creds, limit: int) -> list:
+def _gmail_for_creds(creds, limit: int, days: int | None = None) -> list:
     try:
         from googleapiclient.discovery import build
     except Exception as e:
@@ -455,7 +489,8 @@ def _gmail_for_creds(creds, limit: int) -> list:
     try:
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         seen, out = set(), []
-        for q in ("is:unread newer_than:1d", "newer_than:1d"):
+        window = "newer_than:%dd" % _gmail_window_days(days)
+        for q in (f"is:unread {window}", window):
             resp = svc.users().messages().list(userId="me", q=q, maxResults=limit).execute()
             for ref in resp.get("messages", []):
                 mid = ref.get("id")

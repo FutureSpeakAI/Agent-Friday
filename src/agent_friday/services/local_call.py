@@ -150,6 +150,107 @@ def seat_endpoint(model: str) -> str | None:
     return good
 
 
+def _daemon_tags() -> set:
+    """Model names the Ollama daemon will actually serve, or an empty set."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{ollama_url()}/api/tags", timeout=4) as r:
+            rows = (_json.loads(r.read().decode()) or {}).get("models") or []
+        return {m.get("name") for m in rows if m.get("name")}
+    except Exception:
+        return set()
+
+
+def describe_dispatch(model: str, daemon_tags: set | None = None) -> dict:
+    """Where a call to `model` would ACTUALLY land, right now.
+
+    `call()` picks between two destinations and says nothing about which, so a
+    seat that quietly died reads exactly like a seat that is working: the same
+    function, the same model name, an answer either way. Measured on this
+    machine 2026-08-24 — the pinned `gemma4:12b` seat on :8090 died with the
+    11:49 restart and was never respawned, `endpoints.json` went on naming
+    :8090 for the rest of the day, and every local role silently resolved to an
+    Ollama tag instead. Nothing in the log said so, because nothing was asked to.
+
+    Returns the same decision `call()` makes, as data:
+      route     — "seat" | "daemon" | "unreachable"
+      endpoint  — the base URL those requests go to
+      answering — what that endpoint says it is holding (the seat's own
+                  /v1/models id, not the name we asked for)
+    """
+    tags = _daemon_tags() if daemon_tags is None else daemon_tags
+    base = seat_endpoint(model)
+    if base:
+        return {"model": model, "route": "seat", "endpoint": base,
+                "answering": _model_on(base) or model}
+    if model in tags:
+        return {"model": model, "route": "daemon", "endpoint": ollama_url(),
+                "answering": model}
+    return {"model": model, "route": "unreachable",
+            "endpoint": ollama_url(), "answering": None}
+
+
+def _model_on(base: str) -> str | None:
+    """The id a server reports for itself. The server, not our record of it."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{base.rstrip('/')}/models", timeout=2) as r:
+            rows = (_json.loads(r.read().decode()) or {})
+        for m in (rows.get("models") or rows.get("data") or []):
+            mid = m.get("id") or m.get("name")
+            if mid:
+                return str(mid)
+    except Exception:
+        pass
+    return None
+
+
+def log_dispatch_table(models, expect_up=None) -> list:
+    """One line per model naming the endpoint and the model answering on it.
+
+    Called at boot so an unreachable seat is a thing somebody can see in the
+    log rather than a thing inferred hours later from a latency complaint.
+    Logs — not prints: the tray sends the server's stdout to DEVNULL, which is
+    why the Arbiter's own boot messages have never been readable.
+
+    `expect_up` names the models the plan says should be reachable RIGHT NOW —
+    the pinned and resident seats. Only those warn. A leased seat is supposed
+    to be absent until something takes a lease, and a check that cries about
+    the normal case is one people learn to scroll past, which would leave this
+    no better than the silence it replaces.
+
+    Pass model names only. Non-LLM seats (`faster-whisper`, `kokoro`, the
+    ComfyUI image seat) are not reachable at an OpenAI-style endpoint by
+    design, so reporting on them here says nothing true.
+    """
+    tags, rows = _daemon_tags(), []
+    expect_up = set(expect_up or ())
+    for model in dict.fromkeys(m for m in models if m):
+        row = describe_dispatch(model, daemon_tags=tags)
+        rows.append(row)
+        if row["route"] == "seat":
+            answering = row["answering"]
+            # A seat answering as something else is worse than no seat: the
+            # caller gets a fluent reply from a model it did not choose.
+            drift = ("" if answering == model
+                     else f" (server calls itself {answering!r})")
+            _log.info("local dispatch: %s -> llama.cpp seat %s%s",
+                      model, row["endpoint"], drift)
+        elif row["route"] == "daemon":
+            _log.info("local dispatch: %s -> Ollama daemon %s",
+                      model, row["endpoint"])
+        elif model in expect_up:
+            # The failure this exists to surface: the plan says this seat is up,
+            # and nothing is serving it. Every call 404s and escalates to the
+            # cloud (see commit 8a30831).
+            _log.warning("local dispatch: %s is UNREACHABLE — the plan has it "
+                         "up, but there is no llama.cpp seat and no Ollama "
+                         "tag; calls will 404 and escalate to the cloud", model)
+        else:
+            _log.info("local dispatch: %s is not loaded (on demand)", model)
+    return rows
+
+
 def call(system: str, user: str, model: str, *, json_mode: bool = False,
          max_tokens: int = 2048, timeout: int = DEFAULT_TIMEOUT_S,
          num_ctx: int | None = None) -> str:

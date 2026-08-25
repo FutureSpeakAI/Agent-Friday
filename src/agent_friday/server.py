@@ -269,6 +269,48 @@ def _residency_boot():
         # A failed boot leaves the seats bound and the machine usable; the
         # arbiter reports DEGRADED rather than the server refusing to start.
         print(f"  Residency: boot failed, seats still bound ({e})")
+        # LOGGED as well as printed. Everything above goes to stdout, which the
+        # tray sends to DEVNULL, so a boot that failed has never left a trace
+        # anybody could find -- and on 2026-08-24 that cost an afternoon of every
+        # local call quietly going to Ollama instead of the pinned seat.
+        logging.getLogger("friday.residency").warning(
+            "residency boot failed, seats still bound: %s", e)
+
+    # WHERE DO LOCAL CALLS ACTUALLY GO. Not where the plan says; where the
+    # sockets are. A seat that never came up is indistinguishable at the call
+    # site from one that is working, so the answer is written down once, at
+    # boot, naming the endpoint and the model answering on it.
+    try:
+        from agent_friday.services.local_call import log_dispatch_table
+        # LLM seats only. `stt`, `tts` and `image` are a cpu-service and a
+        # ComfyUI process; they are not reachable at an OpenAI-style endpoint
+        # by design, so probing them would report three permanent failures and
+        # teach everyone to ignore the line.
+        _llm = {"llama-server", "ollama"}
+        seats = [s for s in ((arb.plan or {}).get("seats") or {}).values()
+                 if isinstance(s, dict) and s.get("model_id")
+                 and s.get("backend") in _llm]
+        wanted = [s["model_id"] for s in seats]
+        # Only pinned/resident seats are supposed to be up at boot. A leased
+        # seat is absent until something leases it, which is not a fault.
+        expect_up = {s["model_id"] for s in seats
+                     if s.get("status") in ("pinned", "resident")}
+        rows = log_dispatch_table(wanted, expect_up=expect_up)
+        # MODELS, not seats. `log_dispatch_table` dedupes by name, and roles
+        # share models heavily -- on 2026-08-25 twelve plan roles used four
+        # distinct local models. Calling the deduped count "seats" made a
+        # normal seat map look like it had halved, and cost a session chasing
+        # a regression that was only ever a label.
+        reachable = sum(1 for r in rows if r["route"] in ("seat", "daemon"))
+        blind = [r["model"] for r in rows
+                 if r["route"] == "unreachable" and r["model"] in expect_up]
+        print("  Residency dispatch: %d/%d local model(s) reachable across "
+              "%d LLM seat(s)%s"
+              % (reachable, len(rows), len(seats),
+                 (", UNREACHABLE: " + ", ".join(sorted(blind))) if blind else ""))
+    except Exception as e:
+        logging.getLogger("friday.residency").warning(
+            "could not audit local dispatch: %s", e)
 
 
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────

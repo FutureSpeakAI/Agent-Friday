@@ -126,6 +126,26 @@ def _endpoint_alive(base: str) -> bool:
         return False
 
 
+def _tail(path, lines: int = 12) -> str:
+    """The last few lines of a seat's log, for an exception message.
+
+    Empty string when there is nothing to say, so callers can concatenate it
+    unconditionally and a missing log never turns a real error into a
+    formatting one.
+    """
+    if not path:
+        return ""
+    try:
+        raw = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    kept = [ln for ln in raw.splitlines() if ln.strip()][-lines:]
+    if not kept:
+        return ""
+    sep = chr(10) + "  "
+    return sep + sep.join(kept)
+
+
 def _publish_endpoints(procs: dict, drop=()) -> None:
     """Write the live seat->port map where OTHER processes can read it.
 
@@ -747,15 +767,49 @@ class LlamaServerBackend:
             pass
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                cwd=str(Path(binary).parent))
+        # THE SEAT'S OWN BANNER, KEPT. This was stdout=DEVNULL/stderr=DEVNULL,
+        # which threw away the only place llama.cpp ever states what it
+        # actually did: the context it settled on, the KV cache type, whether
+        # the mmproj loaded, and the reason it refused to start. That is how a
+        # seat serving 32,768 of a 262,144 native window went unnoticed -- the
+        # number was printed at load and discarded in the same breath. Same
+        # disease as the Arbiter's own boot messages disappearing into the
+        # tray's DEVNULL; this is the other half of it.
+        #
+        # A FILE, never a pipe: nothing here drains the seat's output, and a
+        # pipe that fills blocks the model mid-generation. The child inherits
+        # its own handle, so closing ours after the spawn leaks nothing.
+        log_path = None
+        try:
+            import re as _re
+            log_path = (runtime_dir() / "logs" /
+                        ("llama-%s-%d.log"
+                         % (_re.sub(r"[^A-Za-z0-9._-]", "_", str(model_id)), port)))
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "ab", buffering=0) as _fh:
+                _fh.write(("\n=== %s  %s  port %d ===\n"
+                           % (time.strftime("%Y-%m-%dT%H:%M:%S"), model_id,
+                              port)).encode())
+                proc = subprocess.Popen(cmd, stdout=_fh,
+                                        stderr=subprocess.STDOUT,
+                                        cwd=str(Path(binary).parent))
+        except Exception:
+            # Never let logging cost a seat. If the file cannot be opened we
+            # are back to the old behaviour, which worked -- silently.
+            log_path = None
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    cwd=str(Path(binary).parent))
         t0 = time.time()
         while time.time() - t0 < timeout:
             if proc.poll() is not None:
+                # The reason is in the banner we now keep. Putting the tail in
+                # the exception is the difference between "exited 1" and a
+                # diagnosis -- the same argument as logging the 400 body.
                 raise TransitionError(
-                    "%s exited %s loading %s"
-                    % (Path(binary).parent.name, proc.returncode, model_id))
+                    "%s exited %s loading %s%s"
+                    % (Path(binary).parent.name, proc.returncode, model_id,
+                       _tail(log_path)))
             try:
                 with urllib.request.urlopen(
                         "http://127.0.0.1:%d/health" % port, timeout=3) as r:
@@ -847,10 +901,22 @@ class LlamaServerBackend:
             except Exception:
                 pass
 
-        if report["adopted"] or report["reaped"]:
-            reaped = set(report["reaped"])
-            _publish_endpoints(self.procs, drop={
-                m for m, (pid, _port) in live.items() if pid in reaped})
+        # UNCONDITIONALLY, and the condition it replaces is the bug. This used
+        # to publish only `if report["adopted"] or report["reaped"]`, so the
+        # one case that most needs the file rewritten -- nothing running at all
+        # -- was the one case that left it untouched. Observed 2026-08-24: the
+        # pinned gemma4:12b seat died with the 11:49 restart, the survey came
+        # back empty, nothing was adopted or reaped, and endpoints.json went on
+        # naming :8090 for the rest of the day, hours after the last process
+        # listening there had exited. `_serves` caught it at every call, so
+        # nothing was misrouted -- but a record that is wrong and merely
+        # disbelieved is still wrong, it is the first artefact anyone debugging
+        # this reads, and every reader paid a failing probe for it. Publishing
+        # here prunes it: foreign entries survive only while they answer
+        # /health, so this stays a merge and never becomes a clobber.
+        reaped = set(report["reaped"])
+        _publish_endpoints(self.procs, drop={
+            m for m, (pid, _port) in live.items() if pid in reaped})
         for line in report["adopted"]:
             print(f"  [arbiter] adopted {line}")
         if report["reaped"]:

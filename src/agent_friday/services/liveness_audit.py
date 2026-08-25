@@ -419,10 +419,26 @@ def _probe_seat_drift():
         if not isinstance(s, dict) or not s.get("model_id"):
             continue
         claimed = str(s.get("status") or "")
+        # OWNED IS NOT THE SAME QUESTION AS REACHABLE, and asking the wrong one
+        # turned three working seats into an alarm. Observed 2026-08-25: the
+        # seat map put `sidekick_fast` and `memory_manager` on TwIL-LM3 with
+        # `backend: ollama`, and the embedder on embeddinggemma:300m served by
+        # the daemon. `owned_endpoint` only knows llama-server processes the
+        # Arbiter spawned, so all three came back None and were reported
+        # ORPHANED -- "the plan says resident, nothing is serving it" -- while
+        # every one of them was answering on :11434.
+        #
+        # A false orphan is worse here than no probe: this report exists to be
+        # believed, and it was about to cost somebody an afternoon looking for
+        # seats that were never missing. So ask where calls actually land.
         try:
-            live = bool(owned_endpoint(s["model_id"]))
+            from agent_friday.services.local_call import describe_dispatch
+            live = describe_dispatch(s["model_id"])["route"] in ("seat", "daemon")
         except Exception:
-            live = False
+            try:
+                live = bool(owned_endpoint(s["model_id"]))
+            except Exception:
+                live = False
         if claimed in ("resident", "pinned") and not live:
             out.append(_result(
                 "seat: %s" % role, tier="residency", status=ORPHANED,

@@ -218,24 +218,83 @@ def test_a_seat_bound_to_fridays_own_model_is_not_healed_away(monkeypatch):
     assert settings["orchestrator_model"] == "gemma4:e2b"
 
 
-def test_both_stores_are_merged_without_duplicates(monkeypatch):
-    """functiongemma:270m lives in BOTH. It is one seat, not two."""
+def _daemon_returning(monkeypatch, payload):
+    """Stub Ollama's /api/tags with a fixed inventory."""
     import json as _json
-
-    payload = {"models": [{"name": "functiongemma:270m", "size": 3e8},
-                          {"name": "qwen3.5:9b", "size": 6.59e9}]}
 
     class _R:
         def read(self): return _json.dumps(payload).encode()
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
+    monkeypatch.setattr(seats.urllib.request, "urlopen", lambda *a, **k: _R())
+
+
+def _seats_live(monkeypatch, live_names):
+    """Stub `seat_endpoint` so reachability is decided by the test, not the host.
+
+    `installed()` imports this from `local_call` at call time, so the patch has
+    to land on the DEFINING module. Patching `seats.seat_endpoint` would bind a
+    name nothing reads and the test would pass or fail on whatever happens to be
+    listening on the developer's machine.
+    """
+    from agent_friday.services import local_call
+    monkeypatch.setattr(
+        local_call, "seat_endpoint",
+        lambda m: "http://127.0.0.1:8090/v1" if m in live_names else None)
+
+
+def test_both_stores_are_merged_without_duplicates(monkeypatch):
+    """functiongemma:270m lives in BOTH. It is one seat, not two."""
+    _daemon_returning(monkeypatch,
+                      {"models": [{"name": "functiongemma:270m", "size": 3e8},
+                                  {"name": "qwen3.5:9b", "size": 6.59e9}]})
     monkeypatch.setattr(seats, "_friday_store",
                         lambda: [("functiongemma:270m", 0.30), ("gemma4:12b", 7.38)])
-    monkeypatch.setattr(seats.urllib.request, "urlopen", lambda *a, **k: _R())
+    # gemma4:12b exists only in Friday's store, so the reachability filter added
+    # in 8a30831 would drop it and this test would be measuring that filter
+    # instead of the merge it is named for. Give it a live seat and the subject
+    # is the union again.
+    _seats_live(monkeypatch, {"gemma4:12b"})
     names = [n for n, _ in seats.installed(force=True)]
     assert names.count("functiongemma:270m") == 1
     assert {"gemma4:12b", "qwen3.5:9b"} <= set(names)
+
+
+# ── reachability: "on disk" and "callable right now" are different claims ────
+#
+# The filter these cover is what broke the merge test above, and it had no test
+# of its own -- so the only signal it existed was an unrelated failure. That is
+# the same shape of defect as the one it was written to fix.
+
+def test_a_store_model_with_no_live_seat_is_not_offered(monkeypatch):
+    """A GGUF on disk that nothing is serving resolves to a 404, not a model."""
+    _daemon_returning(monkeypatch, {"models": [{"name": "qwen3.5:9b", "size": 6.59e9}]})
+    monkeypatch.setattr(seats, "_friday_store", lambda: [("gemma4:e2b", 7.16)])
+    _seats_live(monkeypatch, set())
+    names = {n for n, _ in seats.installed(force=True)}
+    assert "gemma4:e2b" not in names, (
+        "a model with no seat and no daemon entry was offered as installed; "
+        "every call to it 404s and escalates to the cloud (commit 8a30831)")
+    assert "qwen3.5:9b" in names, "the daemon's own models must be unaffected"
+
+
+def test_a_store_model_with_a_live_seat_is_offered(monkeypatch):
+    """The filter drops unreachable seats, not Friday's runtime as a category."""
+    _daemon_returning(monkeypatch, {"models": []})
+    monkeypatch.setattr(seats, "_friday_store", lambda: [("gemma4:12b", 7.38)])
+    _seats_live(monkeypatch, {"gemma4:12b"})
+    names = {n for n, _ in seats.installed(force=True)}
+    assert "gemma4:12b" in names
+
+
+def test_a_daemon_model_is_offered_without_any_llama_seat(monkeypatch):
+    """Being in /api/tags already means the daemon will serve it on request."""
+    _daemon_returning(monkeypatch, {"models": [{"name": "qwen3:8b", "size": 5.2e9}]})
+    monkeypatch.setattr(seats, "_friday_store", lambda: [])
+    _seats_live(monkeypatch, set())
+    names = {n for n, _ in seats.installed(force=True)}
+    assert "qwen3:8b" in names
 
 
 def test_a_manifest_entry_whose_file_is_gone_does_not_count(monkeypatch, tmp_path):

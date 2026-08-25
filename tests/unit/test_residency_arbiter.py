@@ -420,3 +420,42 @@ def test_publish_survives_a_corrupt_endpoints_file(ep_file):
     ra._publish_endpoints({"gemma4:12b": (object(), 8090)})
     assert _written(ep_file["path"]) == {
         "gemma4:12b": "http://127.0.0.1:8090/v1"}
+
+
+# ── a boot that finds nothing must still correct the file ───────────────────
+#
+# `adopt_or_reap` used to publish only `if report["adopted"] or report["reaped"]`,
+# so the one situation that most needs the record rewritten — nothing running at
+# all — was the one situation that left it alone. Observed 2026-08-24: the
+# pinned gemma4:12b seat died with the 11:49 restart, the survey came back
+# empty, nothing was adopted or reaped, and endpoints.json went on naming :8090
+# for the rest of the day, hours after the last process listening there exited.
+#
+# `_serves` caught it at every call so nothing was misrouted, but a stale record
+# still cost every reader a failing probe, and it is the artefact anyone
+# debugging this reads first — it said the seat was up when it was long gone.
+
+def test_a_boot_that_finds_no_seats_prunes_the_dead_record(ep_file, monkeypatch):
+    _seed(ep_file["path"], {"gemma4:12b": "http://127.0.0.1:8090/v1"})
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    monkeypatch.setattr(ra, "_llama_server_pids", lambda: set())
+
+    be = ra.LlamaServerBackend(binary="/nonexistent")
+    report = be.adopt_or_reap({"gemma4:12b"})
+
+    assert report == {"adopted": [], "reaped": []}
+    assert _written(ep_file["path"]) == {}, (
+        "a seat that is gone was left advertised on :8090")
+
+
+def test_a_boot_that_finds_nothing_still_keeps_a_live_foreign_seat(ep_file, monkeypatch):
+    """Pruning is not clobbering. Another process's working seat must survive."""
+    _seed(ep_file["path"], {"gemma4:e4b": "http://127.0.0.1:8091/v1",
+                            "gemma4:12b": "http://127.0.0.1:8090/v1"})
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    monkeypatch.setattr(ra, "_llama_server_pids", lambda: set())
+
+    ra.LlamaServerBackend(binary="/nonexistent").adopt_or_reap(set())
+
+    assert _written(ep_file["path"]) == {
+        "gemma4:e4b": "http://127.0.0.1:8091/v1"}
