@@ -160,6 +160,13 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     except Exception as _e:
         print(f"  [conversations] could not persist turn to {cid}: {_e}")
     # Legacy mirror — see the note above.
+    # Stamp the mirror row with its thread so /api/chat/history can be filtered
+    # per conversation instead of returning every thread merged into one window.
+    for _m in (user_msg, friday_msg):
+        try:
+            _m.setdefault('conversation_id', cid)
+        except Exception:
+            pass
     CHAT_HISTORY.append(user_msg)
     CHAT_HISTORY.append(friday_msg)
 
@@ -1354,7 +1361,30 @@ def chat_history():
     except Exception:
         pass
     messages = _load_chat_history()
-    return jsonify({"status": "ok", "messages": messages, "count": len(messages)})
+    # Per-thread history. Without a conversation_id the response is unchanged
+    # (every thread, as before) so existing callers keep working. With one, the
+    # caller gets only that thread plus untagged legacy rows written before
+    # conversations existed -- which is what stops a voice session and a separate
+    # text thread from rendering interleaved in the same chat window.
+    #
+    # Untagged rows belong to MAIN, not to everyone. Every one of the ~500 rows
+    # this file already held predates conversation stamping, so letting `None`
+    # match any _cid made a brand-new thread answer with the entire archive --
+    # the caller could not tell a fresh chat from the old one. Main inherits the
+    # untagged past because that is the thread it was actually typed into.
+    _cid = (request.args.get('conversation_id') or '').strip()
+    if _cid:
+        try:
+            from agent_friday.services import conversations as _convs
+            _is_main = (_cid == _convs.MAIN_ID)
+        except Exception:
+            _is_main = False
+        messages = [m for m in messages
+                    if m.get('conversation_id') == _cid
+                    or (_is_main and not m.get('conversation_id'))
+                    or m.get('pinned')]
+    return jsonify({"status": "ok", "messages": messages,
+                    "count": len(messages), "conversation_id": _cid or None})
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
