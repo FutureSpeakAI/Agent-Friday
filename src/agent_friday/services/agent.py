@@ -338,8 +338,16 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
-    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Returns up to 500000 chars.",
+    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Extracts real text from PDF and .docx files (never raw bytes). Returns up to 500000 chars.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
+    {"name": "search_files", "description": "Find files by name on the local filesystem — the tool for 'find my resume in Downloads' or 'what's the latest report in Documents'. Searches Documents, Downloads, Desktop, and Friday's creations by default (configurable in Settings). Never searches the vault. Set content_query to also search inside extractable text (md/txt now; PDF/docx once read; hollow for other binary formats). Returns paths, names, sizes, and modified times, newest first by default.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Filename substring/fuzzy match, e.g. 'resume' or 'cv'. Leave blank to list a root's newest files."},
+         "root": {"type": "string", "description": "Restrict to one root: documents, downloads, desktop, creations, or a configured extra root. Default: search all of them."},
+         "content_query": {"type": "string", "description": "Optional: also search inside file text for this phrase."},
+         "newest_first": {"type": "boolean", "description": "Sort newest-modified first. Default true."},
+         "limit": {"type": "integer", "description": "Max results. Default 20."},
+     }, "required": []}},
     {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically.",
      "input_schema": {"type": "object", "properties": {
          "path": {"type": "string", "description": "Absolute or home-relative path"},
@@ -553,6 +561,26 @@ def _tool_browse_web(inp):
     return f"{header}\n{text}{tail}"
 
 
+def _suggest_near_miss(p: Path) -> str:
+    """WO-14 item 4: on file-not-found, name up to 3 similar filenames in the
+    same directory instead of a bare dead end (the 09:18 failure — Friday
+    guessed 'resume.pdf', it did not exist, and she had nothing better to
+    offer than asking Stephen for the exact name she should have been able
+    to find herself)."""
+    try:
+        import difflib
+        parent = p.parent
+        if not parent.is_dir():
+            return ""
+        names = [f.name for f in parent.iterdir() if f.is_file()]
+        matches = difflib.get_close_matches(p.name, names, n=3, cutoff=0.4)
+        if matches:
+            return f" Similar files here: {', '.join(matches)}"
+    except Exception:
+        pass
+    return ""
+
+
 def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
@@ -562,16 +590,48 @@ def _tool_read_file(inp):
     except Exception as e:
         return f"Invalid path {raw!r}: {e}"
     if not p.exists():
-        return f"File not found: {p}"
+        return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
         return f"Not a file: {p}"
     try:
-        text = p.read_text(encoding='utf-8', errors='replace')
-        _log_context("file_read", {"path": str(p), "bytes": len(text)})
-        limit = 500_000
-        return text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
+        from agent_friday.services.file_extraction import extract_text
+        result = extract_text(p)
     except Exception as e:
         return f"Read error: {e}"
+    if result.text is None:
+        return f"Could not read {p.name}: {result.error}"
+    text = result.text
+    # WO-17 read-time feeder: the ONLY place a granted file's content becomes
+    # sendable to a cloud consumer. No flag travels with this result — the
+    # gate looks the path up in the grant ledger right here, at the moment
+    # the file is actually read.
+    try:
+        from agent_friday.services import file_grants as _fg
+        _fg.on_file_read(p, text)
+    except Exception:
+        pass
+    _log_context("file_read", {"path": str(p), "bytes": len(text)})
+    limit = 500_000
+    out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
+    if result.truncated:
+        out += "\n...[extraction truncated to the first pages of this document]"
+    return out
+
+
+def _tool_search_files(inp):
+    inp = inp or {}
+    from agent_friday.services.file_search import search_files
+    try:
+        result = search_files(
+            query=inp.get('query') or '',
+            root=inp.get('root') or None,
+            content_query=inp.get('content_query') or '',
+            newest_first=inp.get('newest_first', True),
+            limit=inp.get('limit', 20),
+        )
+    except Exception as e:
+        return json.dumps({"error": f"search_files failed: {e}"})
+    return json.dumps(result, default=str)
 
 
 def _tool_write_file(inp):
@@ -3433,6 +3493,7 @@ CLAUDE_TOOL_HANDLERS = {
     "search_web": _tool_search_web,
     "browse_web": _tool_browse_web,
     "read_file": _tool_read_file,
+    "search_files": _tool_search_files,
     "write_file": _tool_write_file,
     "write_clipboard": _tool_write_clipboard,
     "query_trust_graph": _tool_query_trust_graph,
@@ -3748,6 +3809,7 @@ CLAUDE_TOOL_HANDLERS.update({
 TOOL_RINGS: dict[str, int] = {
     # Ring 0 — READ (local reads, no mutation, always allowed)
     "read_file":            0,
+    "search_files":         0,   # read-only enumeration; no new reach over read_file
     "read_wiki":            0,
     "search_wiki":          0,
     "query_trust_graph":    0,

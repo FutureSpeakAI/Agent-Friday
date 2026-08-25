@@ -291,6 +291,7 @@ _VOICE_LIVE_TOOLS = [
 # reported failure needs it.
 _VOICE_SHARED_TOOLS = (
     "read_file",
+    "search_files",
     "write_file",
     "open_path",
     "search_email",
