@@ -39055,13 +39055,20 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // B1/B2: rehydrated history keeps model/seat badges and system lines; the
   // server persists `timestamp` while live messages carry `time` — map it so
   // reloaded messages don't render a blank clock.
-  // Ask for THIS thread only. The unfiltered load is what merged two
-  // conversations into one window when voice mode remounted the chat surface:
-  // chat_history.json is a single flat list and voice turns used to carry no
-  // conversation id at all. Depending on convId also reloads on thread switch.
+  // Legacy bootstrap ONLY -- and it must never win a race against a real
+  // thread. Once a conversation is selected, openConversation() owns this
+  // transcript from /api/conversations/<id>/messages, which is correctly
+  // threaded. chat_history.json is a single flat list of every turn ever
+  // written and none of the rows in it are tagged, so it answers ANY
+  // conversation_id with ALL of it -- asking it per-thread is what refilled a
+  // brand-new chat with the previous conversation and made "+ New Chat" look
+  // like it did nothing. Two guards, because either fetch can land first:
+  // don't ASK once we have a thread, and don't APPLY a reply that arrived
+  // after one showed up.
   useEffect(() => {
-    const q = convId ? '?conversation_id=' + encodeURIComponent(convId) : '';
-    fetch('/api/chat/history' + q).then(r => r.json()).then(d => {
+    if (convId) return;
+    fetch('/api/chat/history').then(r => r.json()).then(d => {
+      if (convIdRef.current) return;
       if (d.messages) setChatMsgs(d.messages.map(m => ({
         ...m,
         time: m.time || (m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '')
