@@ -303,9 +303,18 @@ class NeverSendBlocked(RuntimeError):
 
 def _redact_placeholder(tier: int) -> str:
     name = Tier.NAMES.get(tier, f"TIER_{tier}")
+    # WO-1 (2026-08-25): the placeholder used to state only WHAT happened
+    # (withheld) and never WHAT TO DO about it, so a model with no honesty
+    # directive (or one that had just been redacted for the same reason —
+    # see REFUSAL_HONESTY_DIRECTIVE above) filled the gap with a plausible
+    # invented answer instead of reporting the withholding. The behavioral
+    # instruction is now IN the placeholder itself, so it survives even when
+    # nothing else in the prompt tells the model how to react.
     return (
         f"[EGRESS-GATE: {name} content withheld — did not leave your device. "
-        f"Run this on a local seat to process it without redaction.]"
+        f"Do not retry the call, invent the content, or describe what it "
+        f"might have said. Tell the user this specific item was withheld by "
+        f"the privacy gate and can be read on a local seat.]"
     )
 
 
@@ -739,10 +748,15 @@ _MESSAGE_WITHHELD = ("[EGRESS-GATE: message withheld — it stayed on this "
 # What the model sees in place of a SENSITIVE tool result. An empty string
 # (what _gate_text returns for SENSITIVE) would read as "the tool returned
 # nothing" and send the agent loop into pointless retries; this marker lets it
-# report the withholding and move on.
+# report the withholding and move on. WO-1 (2026-08-25): states the behavioral
+# instruction explicitly, same reasoning as _redact_placeholder above — a
+# model with no other honesty context still knows not to invent the result.
 _TOOL_RESULT_WITHHELD = ("[tool result withheld by egress gate — SENSITIVE "
                          "content stays on this device; use a local model to "
-                         "work with it]")
+                         "work with it. Do not retry the call, invent the "
+                         "content, or describe what it might have said. Tell "
+                         "the user this specific item was withheld by the "
+                         "privacy gate and can be read on a local seat.]")
 
 
 # What the model sees in place of a single withheld JSON field. Short on

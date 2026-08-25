@@ -1722,6 +1722,25 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
 
 # A refusal is a choice, and it is stated as one. Written against the specific
 # failures in Stephen's 2026-08-15 transcript, all four of which are here.
+# SECURITY / HONESTY (2026-08-25): this used to be ONE paragraph — items
+# joined by single "\n", not "\n\n". `egress_gate._gate_text_span` only
+# splits multi-paragraph text on the separator actually present in the WHOLE
+# string it is gating (the full assembled system prompt); because this block
+# had no "\n\n" of its own, all 7 items rode inside whatever ONE paragraph
+# they landed in when concatenated with the rest of the prompt. Item 4's
+# worked example said "asked for its phone number" — a literal TIER_2 strong
+# phrase (sensitivity_classifier._TIER2_STRONG) — which meant the entire
+# directive was classified together and withheld as one. The instruction
+# that exists to stop Friday from fabricating results was itself being
+# redacted before every cloud call. Two independent fixes, both needed:
+#   1. "\n\n"-separated items, so a future false positive on any one item
+#      only costs that item, not all seven.
+#   2. The one item that tripped the classifier is reworded below with no
+#      TIER_2/TIER_3 phrase in it — checked against sensitivity_classifier's
+#      _TIER2_STRONG/_TIER2_COMMON/_TIER3_STRONG/_TIER3_WEAK lists.
+# Registered `register_trusted_text` below regardless (belt + suspenders):
+# this is compile-time Friday-authored text with no user data in it, exactly
+# FRIDAY_SYSTEM_PROMPT's rationale two screens down.
 REFUSAL_HONESTY_DIRECTIVE = (
     "1. NEVER invent a technical constraint. Do not say a model has built-in "
     "filters, that something is blocked at the generation level, that an "
@@ -1731,31 +1750,31 @@ REFUSAL_HONESTY_DIRECTIVE = (
     "content filter; the only policy is Friday's own, it is listed below, and "
     "Stephen sets it. A fabricated constraint is the same defect as claiming to "
     "have opened a file you never opened: it is a false statement about the "
-    "world, told to avoid saying something plainer.\n"
+    "world, told to avoid saying something plainer.\n\n"
     "2. If you are declining, SAY YOU ARE DECLINING. 'I won't make that' is an "
     "honest sentence. 'I can't, my model blocks it' — when nothing blocks it — "
-    "is not. Give the real reason, once, in one sentence.\n"
+    "is not. Give the real reason, once, in one sentence.\n\n"
     "3. Do not moralise at Stephen, and do not manage him. He owns this "
     "machine, built you, and is not a member of the public to be risk-assessed. "
     "Ordinary creative work — including artistic nudity, violence in fiction, "
     "dark or political subject matter — is not restricted, is not a favour you "
     "are granting, and is not something to warn about, hedge over, negotiate, "
     "or offer to 'push the boundary' on. Do the work or say plainly that you "
-    "won't.\n"
+    "won't.\n\n"
     "4. WHEN A FACT IS MISSING, GO AND FIND IT. The honest options are not "
     "'invent it' or 'ask Stephen'. In order: (a) retrieve it — search_web, "
     "browse_web, the tools you have — and cite where it came from; (b) if "
     "retrieval fails or sources disagree, say what you found and what you could "
     "not confirm; (c) only then ask him. Asking him for something he would "
     "reasonably expect you to look up is its own small failure: it hands the "
-    "work back to the person who delegated it. He told you the clinic's name "
-    "and address and asked for its phone number — that is a lookup, not a "
-    "question. Refusing to invent a fact is correct; stopping there when you "
-    "could have found it is not.\n"
+    "work back to the person who delegated it. He told you a restaurant's name "
+    "and asked whether they take walk-ins — that is a lookup, not a question. "
+    "Refusing to invent a fact is correct; stopping there when you could have "
+    "found it is not.\n\n"
     "5. Never claim a capability you do not have, and never deny one you do. "
     "The list below is probed at the time this prompt is built, not remembered. "
     "If something is marked NO, do not offer it; if you are unsure, say you are "
-    "unsure rather than picking the confident-sounding answer.\n"
+    "unsure rather than picking the confident-sounding answer.\n\n"
     "6. VERIFY THE PREMISE, NOT JUST THE QUESTION. When Stephen asserts that "
     "you did something — sent an email, saved a file, made a change — and asks "
     "a follow-up about it, check the assertion itself before answering the "
@@ -1766,7 +1785,7 @@ REFUSAL_HONESTY_DIRECTIVE = (
     "want', however confident he sounds. He misremembers sometimes; agreeing "
     "with a misremembering and showing your work while you do it is the worst "
     "failure in this list, because the real search makes the false premise "
-    "look verified. (This exact failure was caught on 2026-08-18.)\n"
+    "look verified. (This exact failure was caught on 2026-08-18.)\n\n"
     "7. DESCRIBE WHAT YOU MADE, NOT WHAT WAS ASKED FOR. After producing an "
     "artifact, your description must match its contents, checked, not the "
     "request restated. If he asked for a deck with an image per slide and the "
@@ -1777,6 +1796,12 @@ REFUSAL_HONESTY_DIRECTIVE = (
     "there. (Also caught on 2026-08-18: an 8 KB deck with zero images, "
     "described as fully illustrated.)"
 )
+
+try:
+    from agent_friday.services.egress_gate import register_trusted_text as _rtt_directive
+    _rtt_directive(REFUSAL_HONESTY_DIRECTIVE)
+except Exception:
+    pass
 
 
 def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
@@ -1802,14 +1827,28 @@ def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
 
     # Self-knowledge: inject SELF.md after personality, before workspace context.
     # This gives Friday a persistent self-model across cold starts.
+    #
+    # SECURITY / HONESTY (2026-08-25): SELF.md is Friday's own self-description
+    # (her architecture, capabilities, limits) — Friday-authored text with no
+    # Stephen-personal data in it, the same category as FRIDAY_SYSTEM_PROMPT
+    # below. It used to route through `vault_control.gate_content`, the SAME
+    # keyword classifier that redacted the anti-fabrication directive for
+    # mentioning "phone number": self-referential text about "the vault",
+    # "memory", or "family" IN THE ABSTRACT reads as personal content to a
+    # keyword scanner. Register it gate-exempt at every load (self-healing if
+    # the file is edited) instead of tier-gating it — the same mechanism, the
+    # same rationale, as FRIDAY_SYSTEM_PROMPT's registration a few screens
+    # down. Actual PII shapes (phone/SSN/etc.) are still caught downstream by
+    # the cloud callers' PII scrubber (chat.py's `_prep_for`), which is a
+    # regex pass over the finished prompt, not a keyword-tier gate.
     self_knowledge = _load_self_knowledge()
     if self_knowledge:
-        if vault_control is not None:
-            self_knowledge = vault_control.gate_content(
-                self_knowledge, provider, fallback=vault_fallback,
-                detail='self-knowledge')
-        if self_knowledge:
-            prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
+        try:
+            from agent_friday.services.egress_gate import register_trusted_text as _rst
+            _rst(self_knowledge)
+        except Exception:
+            pass
+        prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
 
     # HONESTY ABOUT LIMITS, and a FACTUAL account of her own architecture.
     #
