@@ -1862,7 +1862,7 @@ _WORKSPACE_LABELS = {
     'contacts': 'Contacts', 'content': 'Content', 'messages': 'Messages',
     'calendar': 'Calendar', 'family': 'Family',
     'futurespeak': 'FutureSpeak', 'settings': 'Settings',
-    'marketplace': 'Marketplace',
+    'marketplace': 'Marketplace', 'workflows': 'Workflows',
 }
 
 
