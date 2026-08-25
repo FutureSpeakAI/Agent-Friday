@@ -18,9 +18,11 @@ ModelInfo shape (spec §6.3):
 """
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -29,6 +31,13 @@ _log = logging.getLogger("friday.model_discovery")
 
 CACHE_DIR = Path.home() / ".friday" / "cache" / "models"
 CACHE_SCHEMA = 1
+
+#: Boot-window retry for connector-backed providers that are not up yet.
+#: 10 attempts, 30 s apart — five minutes of grace, which comfortably covers
+#: MCP connector startup (and its OAuth refresh) without ever blocking boot,
+#: since this runs on the discovery daemon thread.
+_BOOT_RETRY_ATTEMPTS = 10
+_BOOT_RETRY_INTERVAL_S = 30.0
 DEFAULT_TTL_S = 86400
 
 _FETCH_LOCK = threading.Lock()
@@ -331,13 +340,61 @@ def refresh_all_stale(force: bool = False) -> list:
         return results
     with _FETCH_LOCK:
         for prov in providers:
-            if (prov.get("discovery") or {}).get("mode") != "api":
+            mode = (prov.get("discovery") or {}).get("mode")
+            if mode not in ("api", "mcp"):
                 continue
             name = prov.get("name", "")
             if not force and not cache_is_stale(read_cache(name)):
                 continue
-            results.append(refresh_models(prov))
+            if mode == "mcp":
+                results.append(_refresh_via_module(prov))
+            else:
+                results.append(refresh_models(prov))
     return results
+
+
+def _refresh_via_module(prov: dict) -> dict:
+    """Refresh a provider that enumerates over a connector rather than an
+    HTTP /models endpoint, by delegating to the module its descriptor names.
+
+    Keeps the sweep declarative: a provider says how it enumerates and the
+    sweep obeys, rather than the sweep carrying a list of provider names.
+    """
+    name = prov.get("name", "")
+    module = (prov.get("discovery") or {}).get("module") or ""
+    if not module or not re.fullmatch(r"[a-z0-9_]+", module):
+        return {"status": "error", "provider": name,
+                "error": f"descriptor names no usable discovery module ({module!r})"}
+    try:
+        mod = importlib.import_module(f"agent_friday.services.{module}")
+        return mod.refresh()
+    except Exception as e:
+        # Never let one provider's connector take the whole sweep down.
+        _log.warning("mcp discovery refresh failed for %s: %s", name, e)
+        return {"status": "error", "provider": name,
+                "error": f"{type(e).__name__}: {e}"[:200]}
+
+
+def next_sweep_delay(results, attempts: int) -> float:
+    """Seconds to wait before the next background sweep.
+
+    Connector-backed providers (Higgsfield over MCP) are usually NOT ready
+    when the first sweep runs ~3 s after boot: MCP servers start
+    asynchronously, so the sweep finds no manager and reports `unavailable`.
+    Waiting the full hour would leave the picker empty for the entire first
+    session after a restart — a catalogue that looks broken when it is merely
+    early.
+
+    So: while something is still coming up, retry on a short cadence for a
+    bounded window; otherwise settle into the hourly steady state. `error` is
+    deliberately NOT retried fast — that is a real failure, not a slow start,
+    and hammering it would neither fix it nor tell anyone.
+    """
+    waiting = any(isinstance(r, dict) and r.get("status") == "unavailable"
+                  for r in (results or []))
+    if waiting and attempts < _BOOT_RETRY_ATTEMPTS:
+        return _BOOT_RETRY_INTERVAL_S
+    return 3600.0
 
 
 def ensure_background_refresh(initial_delay_s: float = 3.0) -> bool:
@@ -353,12 +410,18 @@ def ensure_background_refresh(initial_delay_s: float = 3.0) -> bool:
 
     def _loop():
         time.sleep(initial_delay_s)
+        attempts = 0
         while True:
+            results = []
             try:
-                refresh_all_stale()
+                results = refresh_all_stale() or []
             except Exception as e:
                 _log.warning("background model discovery sweep failed: %s", e)
-            time.sleep(3600)
+            attempts += 1
+            delay = next_sweep_delay(results, attempts)
+            if delay >= 3600:
+                attempts = _BOOT_RETRY_ATTEMPTS   # steady state reached
+            time.sleep(delay)
 
     threading.Thread(target=_loop, name="friday-model-discovery",
                      daemon=True).start()
