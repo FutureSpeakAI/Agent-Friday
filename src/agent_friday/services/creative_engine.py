@@ -122,6 +122,23 @@ def _configured_image_model() -> str | None:
     except Exception:
         return None
 
+
+def _configured_video_model() -> str | None:
+    """The video model the user's creative seat actually names.
+
+    Video has no flat settings key — it is picked through
+    `capability_routing.creative_video` only (the UI writes it there directly),
+    so this deliberately does not fall back to `creative_model`, which holds an
+    IMAGE id.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+        cr = (s.get("capability_routing") or {}).get("creative_video") or {}
+        return cr.get("model")
+    except Exception:
+        return None
+
 # Voice / text models that must NEVER be used for creative output.
 _FORBIDDEN_CREATIVE = (
     "gemini-2.5-flash", "gemini-2.5-pro",
@@ -664,6 +681,22 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     except Exception as _li_err:                 # never break the cloud path
         log.warning("local image dispatch skipped: %s", _li_err)
 
+    # ── Higgsfield-seated image models. ───────────────────────────────────
+    # Checked BEFORE `is_available()` for the same reason the local branch is:
+    # that function asks whether the *Gemini* client is configured, and a
+    # Higgsfield generation must not be refused for want of a Google
+    # credential it never uses. Membership is decided by the enumerated
+    # catalogue, so this only fires for ids Friday has actually seen the
+    # provider offer — the picker and the dispatcher read the same list.
+    try:
+        from agent_friday.services import higgsfield_generate as _hf
+        _requested_hf = model or _configured_image_model()
+        if _hf.is_higgsfield_model(_requested_hf):
+            return _hf.generate("image", prompt, model=_requested_hf,
+                                aspect_ratio=aspect_ratio, n=n)
+    except Exception as _hf_err:                 # never break the cloud path
+        log.warning("higgsfield image dispatch skipped: %s", _hf_err)
+
     if not is_available():
         if allow_demo:
             return _demo_creation("image", prompt, model or DEFAULT_IMAGE_MODEL,
@@ -810,6 +843,27 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
         allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
+
+    # ── Higgsfield-seated video models. ───────────────────────────────────
+    # Before the `is_available()` Gemini check, for the same reason as the
+    # image path: a Seedance or Kling generation must not be refused for want
+    # of a Google credential it never touches. Only fires for ids the
+    # enumerated catalogue actually carries.
+    try:
+        from agent_friday.services import higgsfield_generate as _hf
+        _requested_hf = model or _configured_video_model()
+        if _hf.is_higgsfield_model(_requested_hf):
+            _extra = {}
+            if duration_seconds:
+                # Only models that publish a `duration` parameter get one —
+                # sending it to a model without it is a guess at the API.
+                if "duration" in (_hf.model_constraints(_requested_hf) or {}):
+                    _extra["duration"] = int(duration_seconds)
+            return _hf.generate("video", prompt, model=_requested_hf,
+                                aspect_ratio=aspect_ratio, extra=_extra)
+    except Exception as _hf_err:                 # never break the cloud path
+        log.warning("higgsfield video dispatch skipped: %s", _hf_err)
+
     if not is_available():
         if allow_demo:
             return _demo_creation("video", prompt, model or DEFAULT_VIDEO_MODEL,

@@ -164,10 +164,99 @@ def _window(model_id: str) -> int:
 #: searching keep Friday able to ground an answer; writing and navigation keep
 #: her able to finish a task she has been given. A turn that can neither look
 #: something up nor say where it got it is worse than a turn with fewer tools.
+#:
+#: The membership rule, so the next person does not have to guess at it: a tool
+#: belongs here if FRIDAY_SYSTEM_PROMPT makes an explicit capability PROMISE
+#: about it, or if its absence makes the model narrate instead of act.
+#:
+#:   * The prompt's "WHAT YOU CAN DO ON THIS COMPUTER" section says of the
+#:     browser and file tools: "NEVER tell the user you can't open a browser
+#:     tab, a website, a file, or an app — you can, and these tools are how."
+#:     Trimming open_url, open_path, navigate, read_file or write_file while
+#:     that sentence stands turns the prompt into an instruction to lie.
+#:   * spawn_task is how any job longer than ~10s gets done, and the prompt
+#:     tells the model to reach for it by name. Without it the model says
+#:     "Started — track it in the task tray" over a task that was never
+#:     started. That is the reported failure mode, verbatim.
+#:
+#: `write_wiki` was listed here and HAS NEVER EXISTED in the registry — the
+#: wiki write path is propose_wiki_update / correct_wiki. The entry was inert
+#: from the day it was written, so the docstring's "writing ... keeps her able
+#: to finish a task" was never actually enforced. Resolved to the real name.
 _ESSENTIAL_TOOLS = frozenset({
-    "search_web", "browse_web", "read_wiki", "search_wiki", "write_wiki",
-    "query_calendar", "search_email", "open_path", "navigate",
+    # Ground an answer.
+    "search_web", "browse_web", "read_file", "read_wiki", "search_wiki",
+    "query_calendar", "search_email",
+    # Finish the task.
+    "write_file", "propose_wiki_update", "open_url", "open_path", "navigate",
+    "run_command", "spawn_task",
 })
+
+
+def _surface_override(kept: list, dropped: list) -> str:
+    """The authoritative statement of what this seat can actually call.
+
+    THE CRUX OF THIS MODULE, and the part it was missing.
+
+    `FRIDAY_SYSTEM_PROMPT` names ~35 tools in its "== AVAILABLE TOOLS =="
+    section, tells the model to "use these tools proactively", and — for the
+    browser and file tools — that it must NEVER say it cannot do those things
+    ("you can, and these tools are how"). That block is a COMPILE-TIME
+    CONSTANT. It knows nothing about trimming and never has.
+
+    So a trimmed turn shipped a prompt naming tools the request did not carry.
+    A model in that position does the only thing left to it: it announces the
+    action and nothing happens. Measured on this machine 2026-08-24 against the
+    live registry — every local seat is served at 32,768 and the assembled
+    system prompt alone is ~13,550 tokens, so ~3.5k of transcript is enough to
+    start dropping core tools, and ~8k drops `spawn_task` itself.
+
+    This is the same defect the LIVE VOICE path fixed the same day with
+    `_voice_tool_surface_note` — there the prompt advertised the ~30-tool text
+    toolbox while the Live API was handed nine. Same disease, different cause:
+    voice lost tools to an API shape, text loses them to arithmetic. The note
+    is appended LAST by every caller, so it wins over the constant above it.
+
+    Whichever list is shorter gets printed. Naming what is GONE and naming what
+    REMAINS are equally true, and the cheaper sentence is the one that still
+    fits when the budget is the reason we are here in the first place.
+    """
+    # Coerce before formatting. A registry entry with no "name" yields None,
+    # and `"  • " + None` raises — which two of the three callers swallow into
+    # "return the tools untrimmed", quietly restoring the exact overflow this
+    # module exists to prevent. A malformed tool must not cost the seat.
+    kept = [str(n) for n in (kept or []) if n]
+    dropped = [str(n) for n in (dropped or []) if n]
+    head = "\n=== TOOL SURFACE ON THIS SEAT (OVERRIDES ANY TOOL LIST ABOVE) ===\n"
+    if not kept:
+        return (
+            head +
+            "You have NO callable tools this turn. Every tool named in the "
+            "'== AVAILABLE TOOLS ==' section above is unavailable here, "
+            "including the browser, file and calendar tools that section says "
+            "you must never deny. Do not announce, promise or describe any "
+            "action that needs a tool. Answer from what is already in this "
+            "conversation, and say plainly that you cannot do the rest on "
+            "this seat.\n")
+    body = [head,
+            "This seat could not hold the whole toolbox, so the "
+            "'== AVAILABLE TOOLS ==' list above is NOT accurate for this "
+            "turn. What follows is.\n"]
+    if len(dropped) <= len(kept):
+        body.append("These %d tools are NOT loaded and CANNOT be called, "
+                    "whatever the section above says about them:\n" % len(dropped))
+        body.extend("  • " + n + "\n" for n in dropped)
+    else:
+        body.append("You can call EXACTLY these %d tools and nothing else:\n"
+                    % len(kept))
+        body.extend("  • " + n + "\n" for n in kept)
+    body.append(
+        "\nTHE RULE: never announce an action you cannot actually take. The "
+        "instruction above to never tell the user you can't open a page, a "
+        "file or an app does NOT apply to any tool missing here — for those, "
+        "saying so plainly is the honest answer. Say which tool you are "
+        "missing and offer to do it on a larger-context seat.\n")
+    return "".join(body)
 
 
 def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
@@ -191,12 +280,20 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
         return tools, None
 
     window = _window(model_id)
+    # The generation reserve is a fixed 4,608 tokens, which is a sane reserve
+    # for a 32k seat and LARGER THAN THE WHOLE WINDOW of a small one. Unclamped,
+    # a 4,096-token seat carrying a zero-token prompt computed a NEGATIVE budget
+    # and dropped every tool it had, then blamed the prompt for it. Scale the
+    # reserve to the seat: on every window Friday actually serves (32,768 and
+    # up) `window // 4` exceeds 4,608, so this is a no-op there and only bites
+    # where the flat number was nonsense.
+    headroom = min(_GEN_HEADROOM, max(0, window // 4))
     # Tools may take their share of the window OR whatever the prompt and the
     # answer's headroom leave free — whichever is smaller. The share keeps
     # tools from crowding out conversation; the remainder keeps the sum an
     # actual request.
     budget = min(int(window * share),
-                 window - int(prompt_cost or 0) - _GEN_HEADROOM)
+                 window - int(prompt_cost or 0) - headroom)
 
     core = [t for t in tools if not str(t.get("name") or "").startswith(_CONNECTOR_PREFIX)]
     connectors = [t for t in tools if str(t.get("name") or "").startswith(_CONNECTOR_PREFIX)]
@@ -211,9 +308,19 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     # otherwise dropped connectors and kept every core tool regardless. So its
     # only lever was connectors. Measured on this machine 2026-08-24 via
     # /api/residency/status: tool_tokens 47,579 and system_prompt_tokens 13,626
-    # against a 32,768-token seat. Friday's OWN tools do not fit the window by
-    # themselves; dropping connectors cannot save a request that is already
-    # over on core.
+    # against a 32,768-token seat.
+    #
+    # CORRECTION, remeasured 2026-08-24 against the registry itself: that
+    # 47,579 is the WHOLE registry — Friday's own 67 tools are ~11,131 tokens
+    # of it and the ~64 connectors are the other ~36,448. Friday's own tools DO
+    # fit a 32,768 window by themselves, comfortably. The original sentence here
+    # read a combined number as a core-only one.
+    #
+    # The change it justified is still right, for the real reason: the budget is
+    # the whole request. Core (11,131) + the assembled system prompt (13,550)
+    # + the generation reserve (4,608) is 29,289 of 32,768, so roughly 3.5k
+    # tokens of transcript — a few turns — is enough to put core over. Core has
+    # to be droppable. It just is not the tool definitions that push it there.
     #
     # Three real failures came from this in one morning — 38,232 and 38,713
     # tokens into 32,768, twice on a briefing chain and once on a
@@ -231,16 +338,36 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
         # The prompt alone has eaten the window. Report it as such: this is not
         # a tools problem and pretending otherwise sends the caller round a
         # loop that cannot terminate.
-        return [], (
-            "No tools were loaded: the request itself is about %s tokens "
-            "against %s's %s-token window, before any tool definitions. "
-            "Shorten the input or use a larger-context seat."
-            % (f"{int(prompt_cost or 0):,}", model_id, f"{window:,}"))
+        #
+        # Name the RIGHT cause. With prompt_cost=0 this used to announce a
+        # request "about 0 tokens" that had somehow overflowed the seat — a
+        # sentence that is both false and unactionable. A zero-token prompt
+        # that leaves no budget means the WINDOW is too small, full stop.
+        if int(prompt_cost or 0) <= 0:
+            why = ("No tools were loaded: %s's %s-token window has no room for "
+                   "tool definitions once the generation reserve is set aside. "
+                   "Use a larger-context seat." % (model_id, f"{window:,}"))
+        else:
+            why = ("No tools were loaded: the request itself is about %s tokens "
+                   "against %s's %s-token window, before any tool definitions. "
+                   "Shorten the input or use a larger-context seat."
+                   % (f"{int(prompt_cost or 0):,}", model_id, f"{window:,}"))
+        # Say it to the MODEL too, not only to Stephen. An empty tool array
+        # under a prompt that still names thirty-five tools is the exact
+        # condition that produces a confident announcement and no action.
+        return [], why + _surface_override([], [t.get("name") for t in tools])
 
+    # Connectors are named by COUNT, not individually: the prompt above refers
+    # to them only in the abstract ("plus any MCP connectors"), so it makes no
+    # per-tool promise there is anything to correct, and naming sixty-odd of
+    # them would spend the very budget this branch is trying to reclaim. The
+    # rule against announcing what you cannot call still has to be stated.
     note = (f"{len(connectors)} connector tools are not loaded on this seat: "
             f"their definitions cost about {conn_cost:,} tokens and "
             f"{model_id} has a {window:,}-token window. Ask me on a "
-            f"larger-context seat if you need them.")
+            f"larger-context seat if you need them. None of them can be "
+            f"called this turn, so do not offer or announce anything that "
+            f"depends on one — say plainly that it is not available here.")
 
     sig = (model_id, len(connectors))
     if sig not in _ANNOUNCED:
@@ -260,8 +387,24 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     # seat 400 — "an honest 400 beats a silent trip to the cloud", which was
     # right about the cloud and wrong about the 400: on a vault turn there IS
     # no cloud to fall back to, so the honest 400 is simply the work not
-    # happening. Trim core too, cheapest-value-first, and keep what a turn
-    # cannot function without.
+    # happening. Trim core too, essential-first, and keep what a turn cannot
+    # function without.
+    #
+    # WHAT WAS ACTUALLY DECIDING THIS. The sort below reads
+    # "(not essential, token cost)", so outside the essential set the ONLY
+    # criterion was schema size — cheapest survives. Nobody chose that; it is
+    # the same shape as the residency planner's "largest model on disk wins".
+    # Measured on the live registry: at a 20k prompt the eight tools dropped
+    # were exactly the eight most expensive schemas — content_create_post,
+    # generate_music, generate_image, compose_timeline, creative_project,
+    # annotate_calendar_events, speak_text, generate_video — while
+    # get_career_pipeline (40 tokens) and type_text (60) survived to the end.
+    # A job-search lookup outranking every creative tool and `spawn_task` is a
+    # verdict on description length, not on usefulness.
+    #
+    # Size stays as the TIEBREAK — within one tier, cheaper first genuinely
+    # fits more tools — but it no longer outranks the essential set, which is
+    # now large enough to cover every capability the prompt promises by name.
     kept, kept_cost = [], 0
     for t in sorted(core, key=lambda x: (str(x.get("name")) not in _ESSENTIAL_TOOLS,
                                          _tokens([x]))):
@@ -271,12 +414,21 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
         kept.append(t)
         kept_cost += c
 
-    dropped = len(core) - len(kept)
+    kept_names = [t.get("name") for t in kept]
+    dropped_names = [t.get("name") for t in core if t.get("name") not in set(kept_names)]
+    dropped = len(dropped_names)
+    # A COUNT IS NOT A DISCLOSURE.
+    #
+    # This note used to say "I am working with 53 of my 67 tools" and stop
+    # there. The model was told HOW MANY it had lost and never WHICH, under a
+    # prompt that still named them all and told it to use them proactively.
+    # "53 of 67" is not something a model can act on; the names are.
     note = (f"This seat is small, so I am working with {len(kept)} of my "
             f"{len(core)} tools plus none of the {len(connectors)} connectors. "
             f"{model_id} has a {window:,}-token window and the full set costs "
             f"about {core_cost + conn_cost:,}. If I need something I do not "
-            f"have here, ask me on a larger-context seat.")
+            f"have here, ask me on a larger-context seat."
+            + _surface_override(kept_names, dropped_names))
     _log.warning("%s: core tools trimmed %d -> %d (~%d of ~%d tokens) to fit a "
                  "%d-token window with a ~%d-token prompt",
                  model_id, len(core), len(kept), kept_cost, core_cost,
