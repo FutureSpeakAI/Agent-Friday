@@ -2365,8 +2365,20 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             wiki_text = '\n'.join(
                 f"[{r['file']}]: {r['excerpt'][:300]}" for r in wiki_results
             )
-            # Wiki is generally public docs, but may surface family/health → classify.
-            add(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}", classify(wiki_text, _T1))
+            # Wiki is Stephen's personal corpus — family, health, finance,
+            # professional. FAIL-CLOSED (2026-08-25): the fallback here was _T1,
+            # so a classifier miss meant the excerpt travelled to the cloud in
+            # full. That is what made the contact-PII gap fatal rather than
+            # merely wrong: two real files in ~/.friday/wiki rated TIER_1 and
+            # gate_content handed them to Anthropic verbatim.
+            #
+            # _T2 matches this section's actual neighbours. Every other personal
+            # section here is already unconditionally _T2 (RECENT MEMORIES,
+            # ACTIVE TASKS, TRUST NETWORK), and — decisively — the SAME wiki
+            # content loaded through the smart-context path below already uses
+            # classify(..., _T2). One corpus was travelling under two different
+            # policies depending on which loader reached it first.
+            add(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}", classify(wiki_text, _T2))
             sources_consulted.append('wiki')
 
     if 'epistemic' in needs:
@@ -2413,6 +2425,20 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     if _ctx_found:
         ctx_block = '\n\n'.join(f"[{path}]\n{content}" for path, content in _ctx_found[:2])
         # Project/code context — public unless the file itself carries PII.
+        #
+        # DELIBERATELY still _T1, unlike the wiki section above (2026-08-25).
+        # "Match your neighbours" resolves differently here because the
+        # neighbours differ: this sits in the code-context layer beside MATCHED
+        # SKILLS and EPISTEMIC STATE, which are _T1, not beside the personal
+        # corpus. Measured before changing it: all 8 real AGENTS.md /
+        # .friday-context.md files under ~/Projects and ~/Desktop classify
+        # TIER_1, and none carries detectable PII. Fail-closing would therefore
+        # withhold 8 of 8 benign coding documents from the cloud on every coding
+        # turn — total capability loss for zero measured privacy gain, and the
+        # exact over-redaction shape this file's history keeps repeating.
+        # Genuine secrets are still caught: _API_KEY_RE and the Layer 1a contact
+        # patterns run on this text like any other.
+        # Flip the fallback to _T2 if that trade ever stops being right.
         add(f"\n== PROJECT CONTEXT FILES ==\n{ctx_block}", classify(ctx_block, _T1))
         sources_consulted.append('context_files')
 
