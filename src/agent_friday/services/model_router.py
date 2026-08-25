@@ -193,7 +193,17 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
                                       seat="cloud")
     except Exception:
         pass
-    return "".join(parts).strip()
+    _text = "".join(parts).strip()
+    # WO-17 provider-echo: this is Anthropic's OWN completion, so replaying it
+    # back to Anthropic in a later turn's history must not redact it — that
+    # would be pure loss of text the provider itself just produced. Registers
+    # nothing that did not already leave the device once, in this direction.
+    try:
+        from agent_friday.services.egress_gate import register_provider_echo
+        register_provider_echo(_text, "anthropic")
+    except Exception:
+        pass
+    return _text
 
 
 def resolve_workspace_temperature(workspace, explicit=None):
