@@ -472,10 +472,16 @@ def _scene_dna_from_context(context: Dict[str, Any]) -> Optional[Dict[str, Any]]
 def _exec_text_stage(stage, prompt, context):
     """Single-shot text generation, routed through the user's provider with the
     stage's workspace (→ temperature) applied. Returns the produced text."""
-    from agent_friday.services.model_router import _generate_text, _get_friday_system_prompt
+    from agent_friday.services.model_router import (
+        _gated_vault_control, _generate_text, _get_friday_system_prompt,
+        _predict_route_provider)
     ws = stage.get("workspace") or ""
     try:
-        system = _get_friday_system_prompt(keywords=prompt[:400], workspace=ws)
+        _kw = prompt[:400]
+        system = _get_friday_system_prompt(
+            keywords=_kw, workspace=ws,
+            provider=_predict_route_provider(keywords=_kw, workspace=ws),
+            vault_control=_gated_vault_control())
     except Exception:
         system = None
     temperature = stage.get("temperature")

@@ -51,8 +51,10 @@ from agent_friday.services.code_engine import (
     _safe_project_path,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 code_bp = Blueprint('code', __name__)
@@ -529,7 +531,10 @@ def code_plan():
         "Keep changes minimal and focused on the task."
     )
     try:
-        system = _get_friday_system_prompt(keywords=instruction, workspace='code')
+        system = _get_friday_system_prompt(
+            keywords=instruction, workspace='code',
+            provider=_predict_route_provider(keywords=instruction, workspace='code'),
+            vault_control=_gated_vault_control())
     except Exception:
         system = None
     try:
