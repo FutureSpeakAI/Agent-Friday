@@ -225,3 +225,63 @@ def test_capability_router_nemo_unlock_hint():
     assert res["provider"] == "nvidia-nemo"
     if not res["available"]:
         assert "voice-local-gpu" in (res["unlock_hint"] or "")
+
+
+# ── the spoken-reply cap ──────────────────────────────────────────────────────
+# Regression for 2026-08-25: the local voice handler called _generate_agent with
+# no max_tokens, inheriting its TEXT default of 16,384. llama.cpp counts the
+# requested generation against the window, so a voice turn asked gemma4:12b for
+# 13,669 (prompt) + 11,131 (67 tool schemas) + 16,384 (reply) = 41,184 against a
+# served 32,768 and got "500 Context size has been exceeded". A vault-touching
+# turn may not retry on a cloud provider, so that 500 was the entire turn — no
+# tool ran. The same request at 300 succeeded in 19s. "Voice can't call tools"
+# and "voice drones on" were one defect: an unset spoken-reply length.
+
+def test_voice_reply_cap_never_returns_unlimited():
+    from agent_friday.routes.voice import _voice_reply_cap
+    # 0 is how "unset" is stored in settings today. It must NOT mean unlimited.
+    assert _voice_reply_cap({}) > 0
+    assert _voice_reply_cap({"voice_max_tokens": 0}) > 0
+    assert _voice_reply_cap({"voice_max_tokens": None}) > 0
+
+
+def test_voice_reply_cap_leaves_room_for_prompt_and_tools():
+    """The default cap must fit beside the voice prompt AND the tool registry.
+
+    Measured on the seat Friday actually serves: prompt 13,567 real tokens,
+    tool schemas 11,539 real tokens, window 32,768.
+    """
+    from agent_friday.routes.voice import _voice_reply_cap
+    assert _voice_reply_cap({}) + 13_567 + 11_539 < 32_768
+
+
+def test_voice_reply_cap_honors_setting_but_clamps():
+    from agent_friday.routes.voice import _voice_reply_cap
+    assert _voice_reply_cap({"voice_max_tokens": 500}) == 500
+    # A cap bigger than the seat can hold is the same bug with a nicer name.
+    assert _voice_reply_cap({"voice_max_tokens": 16384}) <= 2048
+
+
+# ── the voice path must carry an authenticated session ────────────────────────
+# Regression for 2026-08-25: Stephen asked local voice for the news and was told
+# it was prohibited "even though we were using local". The VAULT allowed it and
+# logged so (`[VAULT] ALLOW provider=cloud tier=TIER_1 check_action:search_news`).
+# What actually refused was governance ring policy: ring 2 is every network tool,
+# `is_auth = ctx["authenticated"] or ctx["is_background_task"]`, and the local
+# voice handler passed NO session_ctx at all — so the gate saw {} and denied
+# search_news and search_web with "ring-2 network op requires authenticated
+# session". Friday relayed a governance refusal and it read as a vault refusal.
+# routes/chat.py had always passed this; voice was the only tool-using surface
+# that did not, which is why the same question worked in text chat.
+
+def test_ring2_network_tool_denied_without_session_ctx():
+    from agent_friday.services.agent import _governance_check
+    ok, reason = _governance_check("search_news", {}, None)
+    assert ok is False
+    assert "authenticated" in reason
+
+
+def test_ring2_network_tool_allowed_with_authenticated_ctx():
+    from agent_friday.services.agent import _governance_check
+    ok, _reason = _governance_check("search_news", {}, {"authenticated": True})
+    assert ok is True
