@@ -601,15 +601,18 @@ def _tool_read_file(inp):
     if result.text is None:
         return f"Could not read {p.name}: {result.error}"
     text = result.text
-    # WO-17 read-time feeder: the ONLY place a granted file's content becomes
-    # sendable to a cloud consumer. No flag travels with this result — the
-    # gate looks the path up in the grant ledger right here, at the moment
-    # the file is actually read.
-    try:
-        from agent_friday.services import file_grants as _fg
-        _fg.on_file_read(p, text)
-    except Exception:
-        pass
+    # WO-17 read-time feeder is registered in _hook_file_grant_registration
+    # (a POST-tool hook, priority 96), not here. Found live 2026-08-25: this
+    # used to call file_grants.on_file_read(p, text) at THIS point, before
+    # _hook_pii_scrub (priority 95) ran — so it registered the RAW text while
+    # the egress gate ultimately sees the PII-SCRUBBED text (phone/email/
+    # address replaced with [PII:...] placeholders). Any paragraph containing
+    # a phone number or address therefore never matched its registered span
+    # and fell through to normal classification — the grant looked live
+    # (ledger entry, check_grant='active') while the summary/skills section
+    # of a real CV stayed withheld. Registration must happen on the exact
+    # string that will actually reach the gate, which is only known after
+    # the scrub hook runs.
     _log_context("file_read", {"path": str(p), "bytes": len(text)})
     limit = 500_000
     out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
@@ -5454,6 +5457,29 @@ def _hook_pii_scrub(ctx, result):
     return _pii_redact(result)
 
 
+def _hook_file_grant_registration(ctx, result):
+    """WO-17 read-time feeder. Post, priority 96 — AFTER pii_scrub (95).
+
+    Must run after the scrub, not before: registration has to match the
+    EXACT string that later reaches the egress gate. read_file's raw
+    extraction is scrubbed for PII first (phone/email/address → [PII:...]
+    placeholders); registering the pre-scrub text left every paragraph that
+    happened to contain a phone number or address permanently unmatched,
+    which is how a granted CV's summary section stayed withheld after the
+    grant was created (found live 2026-08-25, see _tool_read_file's note).
+    """
+    try:
+        from agent_friday.services import file_grants as _fg
+        path = (ctx.input or {}).get("path")
+        if path:
+            p = Path(path).expanduser().resolve()
+            if p.is_file():
+                _fg.on_file_read(p, result)
+    except Exception:
+        pass
+    return result
+
+
 def _hook_cost_attribution(ctx, result):
     """Attribute spend to the active workspace / scheduled run. Post, priority 80.
 
@@ -5488,6 +5514,9 @@ def _register_builtin_tool_hooks():
                               priority=80)
     _hooks.register_post_hook(_hook_audit_log, name="audit_log", priority=90)
     _hooks.register_post_hook(_hook_pii_scrub, name="pii_scrub", priority=95)
+    _hooks.register_post_hook(_hook_file_grant_registration,
+                              name="file_grant_registration", priority=96,
+                              tools={"read_file"})
 
 
 _register_builtin_tool_hooks()
