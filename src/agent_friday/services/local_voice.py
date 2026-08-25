@@ -653,8 +653,19 @@ class LocalVoiceEngine:
                                    "(pip install -e .[voice-local-lite])")
                 return False
             try:
-                self._get_asr().load(progress=progress)
-                self._get_tts().load(progress=progress)
+                # TTS FIRST on the GPU tier. Both halves must load, and the
+                # NeMo TTS pair is ~200MB against a 2.4GB ASR checkpoint — so
+                # loading ASR first meant a broken TTS was discovered only
+                # after several minutes of GPU work that then got thrown away
+                # on the fallback. Fail on the cheap half. (Tier-1 keeps the
+                # original order: Whisper is the slow half there and TTS cannot
+                # fail in a way this reordering would catch.)
+                if self.active_tier() == "gpu":
+                    self._get_tts().load(progress=progress)
+                    self._get_asr().load(progress=progress)
+                else:
+                    self._get_asr().load(progress=progress)
+                    self._get_tts().load(progress=progress)
                 self._ready = True
                 self.last_error = ""
             except Exception as e:  # pragma: no cover - real model load only

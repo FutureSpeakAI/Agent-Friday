@@ -30,8 +30,22 @@ from agent_friday.services.nemo_voice import (
 
 def test_nemo_deps_status_shape():
     d = nemo_deps_status()
-    assert set(d) == {"nemo", "torch"}
+    # nltk belongs here: FastPitch's g2p imports it, and its absence surfaced
+    # as NeMo's "unsafe target" SECURITY error rather than a missing module,
+    # which kept GPU voice silent while health reported it ready (2026-08-25).
+    assert set(d) == {"nemo", "torch", "nltk"}
     assert all(isinstance(v, bool) for v in d.values())
+
+
+def test_nemo_deps_installed_requires_g2p(monkeypatch):
+    """torch+NeMo present but nltk missing must NOT count as installed."""
+    import agent_friday.services.nemo_voice as nv
+    monkeypatch.setattr(nv, "nemo_deps_status",
+                        lambda: {"nemo": True, "torch": True, "nltk": False})
+    assert nv.nemo_deps_installed() is False
+    monkeypatch.setattr(nv, "nemo_deps_status",
+                        lambda: {"nemo": True, "torch": True, "nltk": True})
+    assert nv.nemo_deps_installed() is True
 
 
 def test_nemo_deps_installed_is_bool():

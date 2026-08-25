@@ -49,6 +49,12 @@ voice-local-lite = [
 # a dedicated installer step with the correct CUDA index URL, not a blind pip dep.
 voice-local-gpu = [
     "nemo_toolkit[asr,tts]>=2.6",
+    # FastPitch's English g2p (EnglishG2p) imports nltk, and nemo_toolkit's
+    # tts extra does NOT pull it in. Without it NeMo's config allow-list fails
+    # to import the target and reports it as an "unsafe target" security error
+    # rather than a missing module, so GPU voice goes silent with a message
+    # that sends you looking in entirely the wrong place. (2026-08-25)
+    "nltk>=3.8",
 ]
 creative = ["pillow>=10.0"]            # image post-processing / thumbnails
 # Timeline composition (Layer 1 Â§3). imageio-ffmpeg bundles an ffmpeg binary so a
