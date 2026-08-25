@@ -33,6 +33,7 @@ process orb on every generation, metadata sidecar + signed provenance per file.
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -48,6 +49,8 @@ from agent_friday.services.creative_engine import (
     _orb_start, _orb_update, _orb_fail, _defer, _safe_remove,
     _save_bytes, _file_record, _write_metadata, _notify, _timestamp,
 )
+
+_log = logging.getLogger("friday.music_engine")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -66,6 +69,48 @@ _MUSIC_MODEL_MAP = {
 }
 DEFAULT_MUSIC_MODEL = "lyria-clip"
 CLIP_MAX_SECONDS = 30
+
+#: Fallback length for a Higgsfield music model that requires `duration` when
+#: the caller names none. `sonilo_music` declares duration REQUIRED (unlike
+#: every video model, where it is optional), so omitting it is a submit error
+#: rather than a provider default. 30 s matches CLIP_MAX_SECONDS — the clip
+#: length Friday already means by "a music clip" — so the default length does
+#: not silently change with the provider.
+HIGGSFIELD_DEFAULT_MUSIC_SECONDS = CLIP_MAX_SECONDS
+
+
+def _hf_music_extra(model_id: str, duration_seconds=None) -> dict:
+    """Model-specific params for a Higgsfield music submit.
+
+    Only sends `duration` to models that publish one, read from the
+    enumerated constraints rather than assumed — and supplies the default
+    when the model requires it and the caller gave nothing.
+    """
+    try:
+        from agent_friday.services import higgsfield_generate as _hf
+        spec = (_hf.model_constraints(model_id) or {}).get("duration")
+    except Exception:
+        spec = None
+    if not spec:
+        return {}
+    try:
+        seconds = int(duration_seconds) if duration_seconds else None
+    except (TypeError, ValueError):
+        seconds = None
+    if seconds is None:
+        if not spec.get("required") and spec.get("default") is None:
+            return {}                     # optional and unasked — let it be
+        seconds = spec.get("default") or HIGGSFIELD_DEFAULT_MUSIC_SECONDS
+    # Respect a published range rather than letting the vendor reject it.
+    lo, hi = spec.get("min"), spec.get("max")
+    try:
+        if lo is not None:
+            seconds = max(int(lo), seconds)
+        if hi is not None:
+            seconds = min(int(hi), seconds)
+    except (TypeError, ValueError):
+        pass
+    return {"duration": int(seconds)}
 
 
 def _settings_overrides() -> Dict[str, str]:
@@ -262,6 +307,27 @@ def generate_music(prompt: str, *,
     allowed, reason = check_music_safety(full_prompt, lyrics)
     if not allowed:
         return {"status": "blocked", "reason": reason}
+
+    # ── Higgsfield-seated music models. ───────────────────────────────────
+    # This branch sits BEFORE resolve_music_model() deliberately, and that
+    # function is left untouched.
+    #
+    # resolve_music_model ends with a Lyria-shaped passthrough whose
+    # fall-through is unconditional (music_engine.py:121-124), so ANY
+    # non-Lyria id becomes lyria-3-clip-preview. Routing a Higgsfield pick
+    # through it would call Google, return a Lyria track, and report success
+    # — silent substitution, reachable from a settings toggle. Branching
+    # first means the guard keeps doing its real job (surviving a junk seat
+    # value) for the Lyria ids it was written for, bit-for-bit unchanged.
+    try:
+        from agent_friday.services import higgsfield_generate as _hf
+        _requested_hf = model or _seat_model()
+        if _hf.is_higgsfield_model(_requested_hf):
+            return _hf.generate("audio", full_prompt, model=_requested_hf,
+                                extra=_hf_music_extra(_requested_hf,
+                                                      duration_seconds))
+    except Exception as _hf_err:                 # never break the Lyria path
+        _log.warning("higgsfield music dispatch skipped: %s", _hf_err)
 
     api_model = resolve_music_model(model)
     # Clip model caps at 30 s; the pro model takes a full song.
