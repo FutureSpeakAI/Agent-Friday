@@ -85,13 +85,40 @@ def nemo_deps_status() -> dict:
         # nemo_toolkit installs the importable package `nemo`.
         "nemo": _module_installed("nemo") or _module_installed("nemo_toolkit"),
         "torch": _module_installed("torch"),
+        # FastPitch's English tokenizer instantiates EnglishG2p, whose module
+        # imports nltk. `nemo_toolkit[asr,tts]` does NOT pull it in, and its
+        # absence is the entire reason GPU voice was silent (see below).
+        "nltk": _module_installed("nltk"),
     }
 
 
 def nemo_deps_installed() -> bool:
-    """True when the minimum Tier-2 stack (torch + NeMo) is importable."""
+    """True when the minimum Tier-2 stack (torch + NeMo + g2p) is importable.
+
+    ``nltk`` is in this list because of a real, reproduced failure, and the way
+    it failed is worth keeping written down.
+
+    FastPitch's checkpoint config names its g2p as
+    ``nemo.collections.tts.torch.g2ps.EnglishG2p``. NeMo resolves that path
+    through an allow-list; the resolver imports the target, and the import
+    raised ``ModuleNotFoundError: No module named 'nltk'``. An import error is
+    indistinguishable from a disallowed target to that code, so the allow-list
+    reported the target as unsafe and NeMo raised:
+
+        UnsafeTargetError: Instantiation of unsafe target
+        'nemo.collections.tts.torch.g2ps.EnglishG2p' is blocked ...
+        to prevent potential arbitrary code execution.
+
+    A missing pip package was therefore reported as a SECURITY refusal — which
+    is why this read as "GPU voice is broken" rather than "one dependency is
+    missing" for as long as it did. Meanwhile the tier gate consulted only
+    torch/NeMo/CUDA/VRAM, all of which passed, so health cheerfully reported
+    "NeMo GPU voice ready" while the TTS half could not load at all. Checking
+    it here is what makes that claim honest. (Fixed 2026-08-25; installing nltk
+    made TTS load in 52s and synthesise 3.3s of audio in 0.96s.)
+    """
     d = nemo_deps_status()
-    return bool(d["nemo"] and d["torch"])
+    return bool(d["nemo"] and d["torch"] and d["nltk"])
 
 
 def gpu_status() -> dict:
@@ -243,16 +270,36 @@ def nemo_models_ready() -> bool:
 
     NeMo/HF cache layout varies; we treat "any .nemo file under NEMO_DIR" as
     downloaded. Conservative — a false "not ready" just re-checks the cache.
+
+    NEMO_DIR is only where the loaders POINT HF_HOME, and they do that with
+    ``setdefault`` — so when HF_HOME is already set in the environment (or the
+    checkpoints were fetched by anything that did not go through ``load()``),
+    the files land in the ordinary HF cache instead and this returned False
+    with 2.5GB of correctly-downloaded models sitting on disk. Check both.
     """
+    def _has_ckpt(root):
+        try:
+            if not root.exists():
+                return False
+            for p in root.rglob("*"):
+                if p.is_file() and p.suffix in (".nemo", ".ckpt"):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if _has_ckpt(NEMO_DIR):
+        return True
+    # The default HF hub cache, and an explicit HF_HOME if one is set.
+    roots = []
     try:
-        if not NEMO_DIR.exists():
-            return False
-        for p in NEMO_DIR.rglob("*"):
-            if p.is_file() and p.suffix in (".nemo", ".ckpt"):
-                return True
-        return False
+        env_home = os.environ.get("HF_HOME")
+        if env_home:
+            roots.append(Path(env_home) / "hub")
+        roots.append(Path.home() / ".cache" / "huggingface" / "hub")
     except Exception:
-        return False
+        pass
+    return any(_has_ckpt(r) for r in roots)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -462,10 +509,23 @@ def nemo_health() -> dict:
         deps = nemo_deps_status()
         g = gpu_status()
         if not nemo_deps_installed():
+            # Name the ACTUAL missing piece. "Opt-in to the GPU tier" is useless
+            # advice to someone who already opted in and is missing one wheel —
+            # and in the nltk case NeMo's own error blamed an unsafe target, so
+            # the honest name is the only way anyone finds it.
+            _missing = [k for k in ("torch", "nemo", "nltk") if not deps.get(k)]
+            if deps.get("nemo") and deps.get("torch") and not deps.get("nltk"):
+                _detail = ("NeMo GPU voice can't synthesise: `nltk` is missing, "
+                           "which FastPitch needs for grapheme-to-phoneme. NeMo "
+                           "reports this as an 'unsafe target' error, not a "
+                           "missing module. Fix: pip install nltk")
+            else:
+                _detail = ("NeMo GPU voice not installed (missing: "
+                           + ", ".join(_missing) + ") — opt-in "
+                           "`.[voice-local-gpu]` + a torch-CUDA wheel")
             return {
                 "engine": "nvidia-nemo", "status": "missing",
-                "detail": "NeMo GPU voice not installed — opt-in "
-                          "`.[voice-local-gpu]` + a torch-CUDA wheel",
+                "detail": _detail,
                 "deps": deps, "gpu": g, "available": False, "models_ready": False,
             }
         if not g.get("cuda"):

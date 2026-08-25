@@ -21,16 +21,27 @@ def test_local_voice_provider_registered():
     assert set(p["capabilities"]) == {"asr", "tts"}
 
 
-def test_nemo_provider_registered_and_gpu_gated():
+def test_nemo_provider_registered_and_gpu_gated(monkeypatch):
     from agent_friday.services.provider_registry import get_provider_registry
     reg = get_provider_registry()
     p = reg.get_provider("nvidia-nemo")
     assert p is not None and p["enabled"] is True
     assert p["type"] == "nemo-local"
     assert set(p["capabilities"]) == {"asr", "tts"}
-    # Enabled but availability is gated on the GPU stack (torch+NeMo+CUDA+VRAM);
-    # absent in CI → reported unavailable, so it never blocks Tier-1.
+    # Availability is gated on the GPU stack (torch+NeMo+nltk+CUDA+VRAM).
+    #
+    # This used to assert a flat False "because CI has no GPU stack", which
+    # made the test a statement about the MACHINE rather than about the gate.
+    # On a developer box with an RTX 4070 and the stack installed it failed
+    # permanently — and a test that is red for a correct reason is a test
+    # nobody reads, which is how it sat red while GPU voice was genuinely
+    # broken for an unrelated reason (missing nltk). Assert the GATE: whatever
+    # gpu_tier_ready() says, availability must say the same, both ways.
+    import agent_friday.services.nemo_voice as nv
+    monkeypatch.setattr(nv, "gpu_tier_ready", lambda: False)
     assert reg.is_provider_available("nvidia-nemo") is False
+    monkeypatch.setattr(nv, "gpu_tier_ready", lambda: True)
+    assert reg.is_provider_available("nvidia-nemo") is True
 
 
 def test_asr_tts_capabilities_exist():
