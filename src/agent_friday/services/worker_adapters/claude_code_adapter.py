@@ -52,7 +52,9 @@ class ClaudeCodeAdapter(BaseAdapter):
     def _run(self, aid: str, task: "WorkerTask"):
         try:
             from agent_friday.services.agent import _generate_agent
-            from agent_friday.services.model_router import _get_friday_system_prompt
+            from agent_friday.services.model_router import (
+                _gated_vault_control, _get_friday_system_prompt,
+                _predict_route_provider)
 
             coding_system = (
                 "You are a coding sub-agent inside Agent Friday's orchestration engine. "
@@ -62,7 +64,21 @@ class ClaudeCodeAdapter(BaseAdapter):
                 "Return only code and brief explanations — no markdown headers.\n\n"
             )
             try:
-                ctx = _get_friday_system_prompt(provider="auto", workspace="code")
+                # SECURITY (2026-08-25): `provider="auto"` used to be passed
+                # with no `vault_control` at all, so it did nothing —
+                # _build_context_prompt only tier-gates when vault_control is
+                # given (see model_router._get_friday_system_prompt's
+                # docstring: "Defaults keep the legacy ungated behavior").
+                # This is a background orchestration worker like
+                # agent._task_worker, so it gets the same treatment: predict
+                # the destination on the real task prompt (has_tools=True,
+                # this runs through _generate_agent's agentic loop) and gate
+                # for it.
+                ctx = _get_friday_system_prompt(
+                    workspace="code",
+                    provider=_predict_route_provider(
+                        keywords=task.prompt, workspace="code", has_tools=True),
+                    vault_control=_gated_vault_control())
                 system = coding_system + ctx
             except Exception:
                 system = coding_system

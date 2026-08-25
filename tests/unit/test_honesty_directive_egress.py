@@ -27,7 +27,9 @@ def test_directive_survives_in_the_real_assembled_system_prompt():
     """Build the real system prompt (hermetic — no vault/wiki data available
     under the test's isolated home) and gate it for a cloud provider exactly
     as a live call would. The directive must come through unchanged."""
-    prompt = mr._get_friday_system_prompt()
+    # Unredacted at construction time on purpose: this test's own separate
+    # `_gate_text` call below is what simulates the real cloud-egress gate.
+    prompt = mr._get_friday_system_prompt(provider='local', vault_control=None)
     gated = egress_gate._gate_text(prompt, "anthropic", "system")
     assert mr.REFUSAL_HONESTY_DIRECTIVE in gated, (
         "the anti-fabrication directive did not survive cloud egress gating "
@@ -53,7 +55,7 @@ def test_self_knowledge_registered_as_trusted_at_load(monkeypatch):
     has assembled a prompt from it."""
     body = "Friday runs on a local seat when one is available. (test fixture)"
     monkeypatch.setattr(mr, "_load_self_knowledge", lambda: body)
-    prompt = mr._get_friday_system_prompt()
+    prompt = mr._get_friday_system_prompt(provider='local', vault_control=None)
     assert body in prompt
     assert body in egress_gate._TRUSTED_TEXTS
 

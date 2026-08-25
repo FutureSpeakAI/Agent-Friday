@@ -89,7 +89,14 @@ def system_prompt_tokens() -> tuple[int, str]:
     """
     try:
         from agent_friday.services.agent import _get_friday_system_prompt
-        return _tokens(_get_friday_system_prompt()), "measured"
+        # Budget planning wants the WORST-CASE size — the full local/ungated
+        # prompt — not a cloud-redacted one; a gated measurement would
+        # underestimate exactly the seat this budget exists to protect.
+        # Nothing here is ever sent anywhere, so 'local'/None is correct on
+        # its own terms, not a placeholder chosen only to satisfy the
+        # now-required provider/vault_control arguments.
+        return _tokens(_get_friday_system_prompt(
+            provider='local', vault_control=None)), "measured"
     except Exception:
         return MEASURED_SYSTEM_PROMPT_TOKENS, "recorded"
 
