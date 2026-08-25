@@ -259,7 +259,7 @@ _OVERRIDE_PARAS: set = set()
 _OVERRIDE_MAX = 20000
 
 
-def register_override_text(text: str, origin: str = "") -> None:
+def register_override_text(text: str, origin: str = "", max_len: int = 2000) -> None:
     """Register a never-send-watchlist OVERRIDE for one paragraph's exact text.
 
     Call ONLY from file_grants.py, and ONLY for a paragraph belonging to a
@@ -267,11 +267,16 @@ def register_override_text(text: str, origin: str = "") -> None:
     specific matches shown in the dialog before the button). Exact-match only
     — this cannot be claimed for text that was not itself read from the
     granted file.
+
+    max_len defaults to headline-length (2000) for callers that never pass
+    it; file_grants.py passes a document-sized cap (a granted file's
+    paragraphs are a page of prose, not a headline — see the sibling note on
+    register_public_text for the bug this parameter fixes).
     """
     if not text or not isinstance(text, str):
         return
     t = text.strip()
-    if not t or len(t) > 2000:
+    if not t or len(t) > max_len:
         return
     with _TRUSTED_LOCK:
         if len(_OVERRIDE_PARAS) < _OVERRIDE_MAX:
@@ -345,17 +350,27 @@ def _origin_reason(origin: str) -> str:
     return f"third-party-published{(' origin=' + origin) if origin else ''}"
 
 
-def register_public_text(text: str, origin: str = "") -> None:
+def register_public_text(text: str, origin: str = "", max_len: int = 2000) -> None:
     """Register externally-published text as gate-exempt, by provenance.
 
     Call ONLY from an ingest path, with text that came back from fetching a
     public source. Never from a send path, and never with anything the user
     wrote.
+
+    max_len defaults to 2000 (a headline or a summary, not a document) for
+    every existing caller (news, web_fetch). WO-17 (2026-08-25) found this
+    cap silently swallowing 3 of a 4-page granted CV's paragraphs — the gate
+    splits a tool result on the SAME page-sized "\\n\\n" boundaries this
+    registers, and a resume page routinely runs well past 2000 characters,
+    so the grant looked like it worked (no error, ledger entry created,
+    check_grant returned 'active') while most of the document silently kept
+    gating normally. file_grants.py passes a document-sized max_len; the
+    default is unchanged for every other caller.
     """
     if not text or not isinstance(text, str):
         return
     t = text.strip()
-    if not t or len(t) > 2000:      # a headline or a summary, not a document
+    if not t or len(t) > max_len:
         return
     with _TRUSTED_LOCK:
         if len(_PUBLIC_PARAS) < _PUBLIC_MAX:

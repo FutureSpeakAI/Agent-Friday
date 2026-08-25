@@ -388,13 +388,21 @@ def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
     return GrantCheck(state="none")
 
 
+# A granted paragraph is page-sized prose (extract_text joins pages on
+# "\n\n"), not a headline — register_public_text's 2000-char default is a
+# NEWS constraint that silently dropped 3 of 4 pages of a real CV during
+# end-to-end verification (2026-08-25): the grant looked live (ledger entry,
+# check_grant='active') while most of the document still gated normally.
+_GRANT_SPAN_MAX_LEN = 50_000
+
+
 def _register_grant_spans(text: str, grant_id: str, never_send_override: bool) -> None:
     from agent_friday.services import egress_gate as _eg
     origin = f"user-grant:{grant_id}"
     for p in _split_paragraphs(text):
-        _eg.register_public_text(p, origin=origin)
+        _eg.register_public_text(p, origin=origin, max_len=_GRANT_SPAN_MAX_LEN)
         if never_send_override:
-            _eg.register_override_text(p, origin=origin)
+            _eg.register_override_text(p, origin=origin, max_len=_GRANT_SPAN_MAX_LEN)
 
 
 def _register_deny_spans(text: str) -> None:

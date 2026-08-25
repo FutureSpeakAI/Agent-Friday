@@ -204,6 +204,32 @@ class TestReadTimeFeeder:
         assert out == text
         assert "EGRESS-GATE" not in out
 
+    def test_a_page_sized_paragraph_over_2000_chars_still_registers(self, tmp_path):
+        """Regression pin (found live 2026-08-25 during the end-to-end walk
+        against Stephen's real CV): register_public_text's 2000-char default
+        exists for news headlines, but a granted file's paragraphs are
+        page-sized prose — extract_text joins PDF pages on "\\n\\n", and a
+        real resume page routinely runs 2500-3500 chars. Before this was
+        fixed, 3 of 4 pages of a real CV silently failed to register: the
+        grant LOOKED like it worked (ledger entry created, check_grant
+        returned 'active', no error anywhere) while most of the document
+        still gated normally on the next read. Content-search snippets
+        (file_search._search_content) share this feeder and this bug."""
+        long_para = "Enterprise AI leadership experience. " * 80  # > 2000 chars
+        assert len(long_para) > 2000
+        p = _cv(tmp_path, body=long_para)
+        fg.create_file_grant(str(p))
+        text = p.read_text(encoding="utf-8")
+
+        fg.on_file_read(p, text)
+        out = eg._gate_text(text, "anthropic", "tool_result")
+
+        assert out == text, (
+            "a >2000-char granted paragraph must still register and pass — "
+            "it silently did not before the max_len fix"
+        )
+        assert "EGRESS-GATE" not in out
+
     def test_without_a_grant_the_same_content_is_still_withheld(self, tmp_path):
         """Falsifiability for the case above: the SAME text, from a file that
         was never granted, must not pass — proves the pass came from the
