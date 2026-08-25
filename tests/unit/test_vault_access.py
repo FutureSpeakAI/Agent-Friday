@@ -205,3 +205,36 @@ def test_private_cases_are_falsifiable(vac, monkeypatch):
         "with the classifier neutralised the contact detail should have leaked; "
         "it did not, so these tests are not actually exercising the gate"
     )
+
+
+# ── Context-section fallbacks must stay fail-closed ───────────────────────────
+# The classifier gap above was survivable in most of _build_context_prompt
+# because nearly every personal section is hard-tagged TIER_2. It was FATAL in
+# the wiki section because that one passed a PUBLIC fallback — so a classifier
+# miss did not degrade to "withheld", it degraded to "sent in full". Measured on
+# the real corpus: 90 of 95 files in ~/.friday/wiki reached the cloud in full
+# under the old fallback, 0 under the new one.
+#
+# This is asserted at source level on purpose. The defect is the literal
+# fallback argument, not any behaviour reachable without building a whole
+# context prompt, and a behavioural test would not have caught the original bug.
+class TestContextSectionFallbacks:
+    def _router_source(self):
+        from pathlib import Path
+        p = (Path(__file__).resolve().parent.parent.parent
+             / "src" / "agent_friday" / "services" / "model_router.py")
+        return p.read_text(encoding="utf-8", errors="replace")
+
+    def test_wiki_section_fallback_is_fail_closed(self):
+        src = self._router_source()
+        assert "classify(wiki_text, _T2)" in src, (
+            "the WIKI/BRIEFING DATA section must classify with a PRIVATE "
+            "fallback; with _T1 a classifier miss sends Stephen's personal "
+            "wiki to the cloud in full"
+        )
+        assert "classify(wiki_text, _T1)" not in src
+
+    def test_smart_context_fallback_is_fail_closed(self):
+        # The same corpus via the other loader. These two must not disagree.
+        src = self._router_source()
+        assert "classify(_smart_text, _T2)" in src
