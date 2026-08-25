@@ -281,8 +281,15 @@ def catalog_meta() -> dict:
     names = set(HOSTED_PROVIDERS)
     try:
         from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.services.model_catalog import HOSTED_NATIVE_TYPES
         for prov in get_provider_registry().get_enabled_providers():
             if (prov.get("discovery") or {}).get("mode") == "api":
+                names.add(prov.get("name", ""))
+            # Hosted-native providers (Higgsfield) ship an empty model list and
+            # live entirely off this cache, so a stale cache is exactly what
+            # the banner exists to disclose. Without this they were absent
+            # from the meta and rendered as though freshly fetched.
+            elif prov.get("type") in HOSTED_NATIVE_TYPES:
                 names.add(prov.get("name", ""))
     except Exception:
         pass
