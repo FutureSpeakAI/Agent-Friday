@@ -854,7 +854,9 @@ def _afternoon_briefing_job():
     'briefing ready' notification + News panel pick it up). Mirrors the on-demand
     /api/news/briefing/generate path but runs unattended."""
     from agent_friday.services.news_engine import _gather_live_briefing_context, _notify_briefing
-    from agent_friday.services.model_router import _generate_text, _get_friday_system_prompt
+    from agent_friday.services.model_router import (
+        _gated_vault_control, _generate_text, _get_friday_system_prompt,
+        _predict_route_provider)
     live_context = _gather_live_briefing_context()
     prompt = (
         "Generate a crisp afternoon briefing using the LIVE DATA below plus what "
@@ -863,7 +865,14 @@ def _afternoon_briefing_job():
         "proactive insight. Clean markdown, lead with the most urgent item.\n\n"
         f"{live_context}"
     )
-    system = _get_friday_system_prompt(keywords=prompt, workspace="briefing")
+    # UNATTENDED (2026-08-25): this runs daily at 16:00 with nobody watching —
+    # a gating gap here leaks silently, every day, not once. Gate exactly like
+    # every other briefing call site rather than trusting the egress
+    # classifier alone.
+    system = _get_friday_system_prompt(
+        keywords=prompt, workspace="briefing",
+        provider=_predict_route_provider(keywords=prompt, workspace="briefing"),
+        vault_control=_gated_vault_control())
     content = _generate_text([{"role": "user", "content": prompt}], system=system,
                              temperature=0.4, orb_label="☀️ Afternoon Briefing",
                              workspace="briefing")

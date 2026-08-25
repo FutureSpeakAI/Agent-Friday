@@ -199,14 +199,20 @@ def _run_agent(text: str) -> str:
     from agent_friday.services.agent import _generate_agent
     reply, _trace = _generate_agent(
         [{"role": "user", "content": text}],
-        system=_system_prompt(), workspace="chat")
+        system=_system_prompt(keywords=text), workspace="chat")
     return reply or ""
 
 
-def _system_prompt() -> str:
+def _system_prompt(keywords: str = "") -> str:
     try:
-        from agent_friday.services.model_router import _get_friday_system_prompt
-        return _get_friday_system_prompt(workspace="chat") + "\n\n" + _SYSTEM_HINT
+        from agent_friday.services.model_router import (
+            _gated_vault_control, _get_friday_system_prompt,
+            _predict_route_provider)
+        return _get_friday_system_prompt(
+            keywords=keywords, workspace="chat",
+            provider=_predict_route_provider(
+                keywords=keywords, workspace="chat", has_tools=True),
+            vault_control=_gated_vault_control()) + "\n\n" + _SYSTEM_HINT
     except Exception:
         return _SYSTEM_HINT
 

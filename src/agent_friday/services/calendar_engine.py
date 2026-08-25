@@ -904,10 +904,15 @@ def _day_annotation(day, events):
         try:
             # Both live in services/model_router.py — an UPPER layer — so they
             # must be imported lazily at call time.
-            from agent_friday.services.model_router import _generate_text, _get_friday_system_prompt
+            from agent_friday.services.model_router import (
+                _gated_vault_control, _generate_text, _get_friday_system_prompt,
+                _predict_route_provider)
             titles = "; ".join(f"{e.get('title','')} ({e.get('type','normal')})"
                                for e in events[:8])
-            system = _get_friday_system_prompt(keywords=titles, workspace="chat")
+            system = _get_friday_system_prompt(
+                keywords=titles, workspace="chat",
+                provider=_predict_route_provider(keywords=titles, workspace="chat"),
+                vault_control=_gated_vault_control())
             note = _generate_text([{"role": "user", "content": (
                 "In ONE short sentence (max 22 words), give me a warm, sharp "
                 "heads-up about my day given these events. No preamble.\n\n"

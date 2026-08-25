@@ -1381,8 +1381,22 @@ def _generate_session_summary(date_str, force=False):
             "below.\n\n"
             f"=== CONVERSATION — {date_str} ===\n{transcript}\n=== END ===\n")
         try:
+            # SELF-REFERENTIAL CALL: both _predict_route_provider and
+            # _get_friday_system_prompt live in this same module, so no
+            # import is needed — and no import-cycle risk either.
+            #
+            # `model=` below is a HINT for the cloud leg, not a forced pin —
+            # _generate_text still calls the real router on `prompt` (the
+            # actual transcript-bearing message) to decide local vs cloud, so
+            # predicting on `prompt` here (not the inert 'session summary'
+            # keywords used for context-section selection below) mirrors what
+            # that real routing decision will actually see. Gating the SYSTEM
+            # PROMPT changes what content it carries, never which provider
+            # answers — routing itself is untouched.
             system_prompt = _get_friday_system_prompt(
-                keywords='session summary', workspace='chat')
+                keywords='session summary', workspace='chat',
+                provider=_predict_route_provider(keywords=prompt, workspace='chat'),
+                vault_control=_gated_vault_control())
         except Exception:
             system_prompt = None
         summary = _generate_text(

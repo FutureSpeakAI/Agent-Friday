@@ -44,8 +44,10 @@ from agent_friday.services.calendar_engine import (
     _save_message_state,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 messages_bp = Blueprint('messages', __name__)
@@ -294,8 +296,11 @@ def api_messages_draft():
         + (f"Extra instructions from the user: {instructions}\n" if instructions else "")
     )
     try:
-        system = _get_friday_system_prompt(keywords=subject + " " + snippet,
-                                           workspace="draft")
+        _kw = subject + " " + snippet
+        system = _get_friday_system_prompt(
+            keywords=_kw, workspace="draft",
+            provider=_predict_route_provider(keywords=_kw, workspace="draft"),
+            vault_control=_gated_vault_control())
         draft = _generate_text([{"role": "user", "content": prompt}],
                                system=system, max_tokens=1200, workspace='messages')
         return jsonify({"status": "ok", "draft": draft})

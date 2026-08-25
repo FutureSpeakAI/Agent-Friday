@@ -596,7 +596,9 @@ def run_live_eval(providers: Optional[List[str]] = None,
         return {"ok": False, "mode": "live", "error": "golden corpus is empty"}
 
     try:
-        from agent_friday.services.model_router import _get_friday_system_prompt
+        from agent_friday.services.model_router import (
+            _gated_vault_control, _get_friday_system_prompt)
+        from agent_friday.routing import provider_descriptors as _pd
     except Exception as e:
         return {"ok": False, "mode": "live", "error": f"model_router unavailable: {e}"}
 
@@ -611,13 +613,21 @@ def run_live_eval(providers: Optional[List[str]] = None,
 
     for prov in candidates:
         name = prov.get("name")
+        # The destination provider is KNOWN here, not predicted — this loop
+        # dispatches to each candidate provider explicitly, so gate the
+        # prompt for the provider actually about to receive it rather than
+        # guessing (unlike the other sweep sites, which don't know their
+        # destination until the router decides).
+        _prov_gate = "local" if _pd.adapter_of(prov) == _pd.ADAPTER_OLLAMA else "cloud"
         item_results = []
         errors = []
         unsupported = False
         for item in golden:
             prompt = item.get("prompt", "")
             try:
-                sys_prompt = _get_friday_system_prompt(keywords=prompt, workspace="persona_eval")
+                sys_prompt = _get_friday_system_prompt(
+                    keywords=prompt, workspace="persona_eval",
+                    provider=_prov_gate, vault_control=_gated_vault_control())
                 sys_prompt = apply_prompt_shim(name, sys_prompt)
                 text = _dispatch_provider(prov, prompt, sys_prompt)
                 item_results.append(score_transcript(item, text, threshold=threshold))
