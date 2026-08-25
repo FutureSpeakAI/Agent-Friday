@@ -624,6 +624,28 @@ if __name__ == '__main__':
         print("  ╚════════════════════════════════════════════════════════════╝")
         print()
 
+    # Privacy-layer attestation. The sensitivity classifier declares four layers;
+    # two of them are optional imports that used to fail silently, so the frozen
+    # build ran two layers while its docstring promised four. Report what is
+    # ACTUALLY loaded, every boot, and make a shortfall impossible to miss.
+    try:
+        from agent_friday.services.privacy_layers import report_at_startup, describe
+        _pl = report_at_startup(_vlog)
+        print(f"  Privacy layers: {describe()}")
+        if _pl["missing"]:
+            print()
+            print("  ╔════════════════════════════════════════════════════════════╗")
+            print("  ║  NOTICE: SENSITIVITY CLASSIFIER IS RUNNING DEGRADED       ║")
+            for _name in _pl["missing"]:
+                print(f"  ║  inactive: {_name:<47}║")
+            print("  ║  Egress decisions use the remaining layers only.          ║")
+            print("  ║  See requirements.txt + AgentFriday.spec 'excludes'.      ║")
+            print("  ╚════════════════════════════════════════════════════════════╝")
+            print()
+    except Exception as _pl_err:
+        _vlog.error("privacy-layer self-check FAILED: %s", _pl_err)
+        print(f"  Privacy layers: UNKNOWN (self-check failed: {_pl_err})")
+
     # Session memory: surface the most recent end-of-day summary + prime the
     # emotional arc so cross-session continuity and tone adaptation are ready
     # from the first turn.

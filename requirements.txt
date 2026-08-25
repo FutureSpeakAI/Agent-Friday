@@ -16,7 +16,13 @@ tzdata>=2024.1               # IANA tz database for zoneinfo on Windows (Front P
 requests>=2.31
 psutil>=5.9                   # hardware detection (RAM) for the onboarding Hardware step + /api/health/full (ollama_manager.detect_hardware); degrades to wmic/proc fallback if absent
 pyyaml>=6.0
-sentence-transformers>=2.2   # local embeddings for semantic context pruning (all-MiniLM-L6-v2)
+sentence-transformers>=2.2   # local embeddings for semantic context pruning (all-MiniLM-L6-v2) AND Layer 3 of the
+                             # sensitivity classifier (services/sensitivity_classifier.py::_embedding_tier).
+                             # WARNING - NOT PRESENT IN THE FROZEN BUILD: it is in AgentFriday.spec's `excludes`
+                             # because it drags in torch (4.4 GB measured on-disk vs a 152 MB .exe). So the packaged
+                             # app runs Layers 1a+1b only. That is a deliberate size trade-off, not an oversight;
+                             # services/privacy_layers.py reports the real layer count at startup so the binary can
+                             # never silently claim protection it is not running.
 headroom-ai[all]>=0.22       # Headroom context compression (Tejas Chopra, Apache 2.0) — https://github.com/chopratejas/headroom. Needs the compiled Rust core `headroom._core` for real savings; builds from sdist (Rust + MSVC on Windows). Friday's wrapper (context_compressor.py) degrades gracefully to passthrough if it's missing. See CREDITS.md.
 chromadb>=0.5                 # Persistent cross-session conversation memory (conversation_memory.py) — embeds every chat turn with all-MiniLM-L6-v2 (reuses the sentence-transformers model above; no second download) into a local ChromaDB at ~/.friday/memory/conversations/. Powers the Source Production System: semantic recall + [conversation:date:"quote"] citations. Degrades to a safe no-op if absent.
 faster-whisper>=1.0           # Tier-1 LOCAL voice ASR (services/local_voice.py) — CTranslate2 backend, CPU INT8, NO torch. The default voice engine's "ears". Model checkpoint auto-downloads on first voice activation. Degrades to text/cloud if absent.
@@ -25,3 +31,30 @@ onnxruntime>=1.17             # CPU inference backend for Piper TTS (+ optional 
 pyttsx3>=2.90                 # last-resort offline TTS (Windows SAPI5) when both Gemini and Piper are unavailable — the bottom of the voice fallback chain
 pystray>=0.19                 # system tray icon (friday_tray.py) — the normal Windows launch path; without it the tray entry point dies on import
 pillow>=10.0                  # tray icon rendering (pystray dependency) + image handling
+
+# ── OPTIONAL: Layer 2 of the sensitivity classifier (Presidio NER) ────────────
+# NOT installed by default, and deliberately so. sensitivity_classifier.py has
+# always contained a complete Presidio integration (_load_presidio /
+# _presidio_tier), but `presidio-analyzer` was never listed here, so the layer
+# has never run in any environment - while the module docstring described a
+# "four layer" defence. The code was real; the packaging was not.
+#
+# Measured cost (2026-08-24, this machine):
+#   presidio-analyzer + spaCy + 16 transitive deps ... ~47 MB of wheels
+#   spaCy English model (en_core_web_lg)            ... ~590 MB   (sm: ~12 MB)
+#   torch required?                                 ... NO - unlike Layer 3
+#
+# Presidio's PERSON / LOCATION / DATE_TIME recognisers fire on ordinary prose,
+# and this codebase has three scars from over-broad classification already. So
+# it ships OFF, and even when installed it only OBSERVES:
+#
+#   FRIDAY_PRESIDIO_SHADOW=1    log what it WOULD flag, change no outcomes
+#   FRIDAY_PRESIDIO_ENFORCE=1   let it affect decisions (do not set until the
+#                               shadow log has been reviewed - see
+#                               services/presidio_shadow.py::summarize)
+#
+# To enable observation:
+#   pip install presidio-analyzer
+#   python -m spacy download en_core_web_lg     # or en_core_web_sm to save ~578 MB
+#
+# presidio-analyzer>=2.2      # uncomment to install Layer 2 (shadow mode only by default)

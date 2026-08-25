@@ -1,8 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for Agent Friday (onefile). Excludes the heavy optional ML
-# stack (torch / sentence-transformers / transformers / headroom) — the app
-# degrades gracefully without them (semantic context pruning + Headroom
-# compression fall back to no-ops). Run: pyinstaller AgentFriday.spec
+# stack (torch / sentence-transformers / transformers / headroom). Run:
+# pyinstaller AgentFriday.spec
+#
+# WHAT THE EXCLUSION ACTUALLY COSTS (corrected 2026-08-24). This comment used to
+# say the app "degrades gracefully without them (semantic context pruning +
+# Headroom compression fall back to no-ops)". That list was incomplete in a way
+# that mattered: `sentence_transformers` ALSO backs Layer 3 of the sensitivity
+# classifier (services/sensitivity_classifier.py::_embedding_tier), which is a
+# PRIVACY control, not a performance optimisation. Excluding it means the frozen
+# .exe classifies egress with Layers 1a+1b only - four regexes and two keyword
+# lists - while the classifier docstring advertised four layers. Verified against
+# build/AgentFriday/PYZ-00.toc: `sentence_transformers` 0 hits, `presidio` 0 hits,
+# `sensitivity_classifier` present.
+#
+# The exclusion STAYS: sentence_transformers is 5 MB but pulls torch, measured at
+# 4.4 GB on disk against a 152 MB .exe. Bundling it is not a sane trade for a
+# desktop app. What changes is honesty, not size - services/privacy_layers.py
+# probes the layers at startup and logs a WARNING naming each inactive one, so a
+# packaged build can no longer claim protection it is not running. If you edit
+# this list, re-run that self-check against the built artifact.
 import os
 import sys
 # The package lives under src/ and is NOT pip-installed into site-packages in
@@ -47,6 +64,11 @@ hiddenimports = [
     'agent_friday.services.marketplace', 'agent_friday.services.economy',
     'agent_friday.services.moderation', 'agent_friday.services.defederation',
     'agent_friday.services.capability_router', 'agent_friday.services.demo_mode',
+    # Privacy self-reporting. Pinned explicitly rather than left to
+    # collect_submodules: if these silently fail to bundle, the build loses the
+    # very check that tells you the build lost something.
+    'agent_friday.services.privacy_layers', 'agent_friday.services.presidio_shadow',
+    'agent_friday.services.sensitivity_classifier', 'agent_friday.services.egress_gate',
     'agent_friday.services.compaction', 'agent_friday.services.connectors',
     'agent_friday.cognitive_memory', 'agent_friday.epistemic_engine',
     'agent_friday.dynamic_rings', 'agent_friday.voice_personality',
