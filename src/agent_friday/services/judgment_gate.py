@@ -122,6 +122,36 @@ _NEVER_CACHE: dict[str, Any] = {"mtime": -1.0, "items": []}
 # which is the battery working.
 _PROBE_EXTRA_NEVER: list[str] = []
 
+# ── WO-17 §5: user deny marks — the same registry, opposite sign ──────────────
+# file_grants.py calls register_deny_span() at READ TIME when a file/folder/
+# glob the user has marked never-send is actually read, registering that
+# read's exact paragraphs here. never_send_hits() then blocks any payload
+# (this read's own tool result included) containing that exact text, exactly
+# as it already blocks a watchlist token — so a deny mark withholds the file
+# from cloud consumers using the mechanism that already exists, and a deny
+# beats any grant at any specificity: register_public_text (the grant feeder)
+# is never consulted first, because this check runs inside never_send_hits,
+# which egress_gate checks BEFORE the trusted/public registries.
+_DENY_SPANS: set = set()
+_DENY_LOCK = threading.Lock()
+_DENY_MAX = 20000
+
+
+def register_deny_span(text: str) -> None:
+    """Register one paragraph of a deny-marked file's content as never-send.
+
+    Call ONLY from file_grants.py, for a paragraph read from a path carrying
+    an active user deny mark.
+    """
+    if not text or not isinstance(text, str):
+        return
+    t = text.strip()
+    if not t or len(t) > 2000:
+        return
+    with _DENY_LOCK:
+        if len(_DENY_SPANS) < _DENY_MAX:
+            _DENY_SPANS.add(t)
+
 
 def never_send_tokens() -> list[str]:
     """Stephen's never-send watchlist — an extension of the existing privacy
@@ -164,6 +194,8 @@ def never_send_hits(text: str) -> list[str]:
     hits = [t for t in never_send_tokens() if _token_pattern(t).search(text)]
     low = text.lower()
     hits += [m for m in _VAULT_DOC_MARKERS if m in low]
+    with _DENY_LOCK:
+        hits += [d for d in _DENY_SPANS if d in text]
     return hits
 
 

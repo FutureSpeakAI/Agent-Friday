@@ -242,6 +242,109 @@ _PUBLIC_MAX = 20000          # bounded; oldest-wins eviction is not worth it
 _PUBLIC_ORIGINS: dict = {}
 
 
+# ── WO-17: user-granted file content ──────────────────────────────────────────
+#
+# A SECOND FEEDER of the registry above, not a new mechanism. `file_grants.py`
+# calls register_public_text(paragraph, origin="user-grant:<id>") at READ TIME
+# — when read_file/search_files actually reads a file the user has granted —
+# so a granted file's paragraphs pass through exactly the pipe news does.
+# There is still no send-time exemption API here: nothing accepts a flag on a
+# call, only exact-match lookups against text that was actually read.
+#
+# _OVERRIDE_PARAS is separate and narrower: a file grant may (with an explicit,
+# separately-acknowledged checkbox) override Stephen's own never-send
+# watchlist for THAT file's exact paragraphs only. It is consulted before the
+# never-send floor raises (see _gate_text_span), never before the classifier.
+_OVERRIDE_PARAS: set = set()
+_OVERRIDE_MAX = 20000
+
+
+def register_override_text(text: str, origin: str = "") -> None:
+    """Register a never-send-watchlist OVERRIDE for one paragraph's exact text.
+
+    Call ONLY from file_grants.py, and ONLY for a paragraph belonging to a
+    file grant whose never_send_override was explicitly checked (with the
+    specific matches shown in the dialog before the button). Exact-match only
+    — this cannot be claimed for text that was not itself read from the
+    granted file.
+    """
+    if not text or not isinstance(text, str):
+        return
+    t = text.strip()
+    if not t or len(t) > 2000:
+        return
+    with _TRUSTED_LOCK:
+        if len(_OVERRIDE_PARAS) < _OVERRIDE_MAX:
+            _OVERRIDE_PARAS.add(t)
+            if origin:
+                _PUBLIC_ORIGINS[t] = str(origin)[:500]
+
+
+# ── WO-17: provider-echo ───────────────────────────────────────────────────────
+#
+# The companion rule that keeps a granted file's OWN analysis, written by a
+# cloud provider, from being redacted on its way back to that same provider in
+# a later turn's replayed history. Nothing new ever leaves the device by
+# registering this — it only permits sending a provider text that provider
+# itself already produced. Scoped per-provider: text is not "public", it is
+# "already seen by this one provider".
+_PROVIDER_ECHO: dict = {}   # stripped text -> set of provider names
+_PROVIDER_ECHO_MAX = 20000
+
+
+def register_provider_echo(text: str, provider: str) -> None:
+    """Register a cloud completion as replayable back to the SAME provider.
+
+    Call ONLY with text a provider's own API actually returned, immediately
+    after that call, naming that same provider.
+    """
+    if not text or not isinstance(text, str) or not provider:
+        return
+    t = text.strip()
+    if not t or len(t) > 20000:      # a turn of prose, not an open-ended document
+        return
+    with _TRUSTED_LOCK:
+        if t not in _PROVIDER_ECHO and len(_PROVIDER_ECHO) >= _PROVIDER_ECHO_MAX:
+            return
+        _PROVIDER_ECHO.setdefault(t, set()).add(provider)
+
+
+def _never_send_covered_by_override(text: str) -> bool:
+    """True when EVERY paragraph that trips the never-send floor is covered
+    by a registered file-grant override (WO-17 §3).
+
+    A lookup, not a flag: the caller supplies only `text`, and this checks it
+    against paragraphs that were actually registered by file_grants.py at
+    read time. A payload containing never-send material the override does
+    NOT cover still fails closed below.
+    """
+    try:
+        from agent_friday.services import judgment_gate as _jg
+    except Exception:
+        return False
+    sep = "\n\n" if "\n\n" in text else ("\n" if "\n" in text else None)
+    paras = text.split(sep) if sep else [text]
+    with _TRUSTED_LOCK:
+        for p in paras:
+            ps = p.strip()
+            if not ps:
+                continue
+            if _jg.never_send_hits(p) and ps not in _OVERRIDE_PARAS:
+                return False
+    return True
+
+
+def _origin_reason(origin: str) -> str:
+    """Render an origin string into the egress-log reason, distinguishing WO-17
+    grant/echo provenance from ordinary third-party-published news — the
+    acceptance bar that every grant-passed span be attributable to its grant id."""
+    if origin.startswith("user-grant:"):
+        return f"user-granted origin={origin}"
+    if origin.startswith("provider-echo:"):
+        return f"provider-echo origin={origin}"
+    return f"third-party-published{(' origin=' + origin) if origin else ''}"
+
+
 def register_public_text(text: str, origin: str = "") -> None:
     """Register externally-published text as gate-exempt, by provenance.
 
@@ -596,7 +699,7 @@ def _gate_text_span(text: str, provider: str, field: str,
         _never = _jg.never_send_hits(text)
     except Exception:
         _never = []
-    if _never:
+    if _never and not _never_send_covered_by_override(text):
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
              log_path)
@@ -606,6 +709,16 @@ def _gate_text_span(text: str, provider: str, field: str,
             f"{provider}. Nothing was redacted and sent — the whole call was "
             f"stopped. Use a local model to work with this."
         )
+    elif _never:
+        # WO-17 §3: every never-send-tripping paragraph in this text is
+        # individually covered by a file grant's explicit override — the
+        # floor still applied, it just found consent already on file for the
+        # exact paragraphs it flagged. Fall through to normal gating below,
+        # which still classifies/redacts anything the override does NOT cover.
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             f"never-send material present ({len(_never)} token(s)) but every "
+             f"matching paragraph is covered by a file-grant override",
+             log_path)
 
     with _TRUSTED_LOCK:
         _t_stripped = text.strip()
@@ -619,9 +732,11 @@ def _gate_text_span(text: str, provider: str, field: str,
             return text
         if _t_stripped in _PUBLIC_PARAS:
             _origin = _PUBLIC_ORIGINS.get(_t_stripped, "")
+            _log(provider, field, Tier.PUBLIC, "allow", _origin_reason(_origin), log_path)
+            return text
+        if provider in _PROVIDER_ECHO.get(_t_stripped, ()):
             _log(provider, field, Tier.PUBLIC, "allow",
-                 f"third-party-published{(' origin=' + _origin) if _origin else ''}",
-                 log_path)
+                 _origin_reason(f"provider-echo:{provider}"), log_path)
             return text
     tier = _classify_cloud(text)
     if tier == Tier.PUBLIC:
@@ -643,10 +758,22 @@ def _gate_text_span(text: str, provider: str, field: str,
                 continue
             with _TRUSTED_LOCK:
                 _ps = p.strip()
-                _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS
+                _p_origin = _PUBLIC_ORIGINS.get(_ps, "")
+                _p_echo = provider in _PROVIDER_ECHO.get(_ps, ())
+                _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS or _p_echo
             if _p_trusted:
                 gated.append(p)
                 trusted += 1
+                # WO-17 acceptance: every grant-passed span must be
+                # attributable to its grant id in the egress log, even when
+                # this is a partial (span-level) rescue that never reaches
+                # the whole-field log line below.
+                if _p_echo:
+                    _log(provider, field, Tier.PUBLIC, "allow",
+                         _origin_reason(f"provider-echo:{provider}"), log_path)
+                elif _p_origin.startswith("user-grant:"):
+                    _log(provider, field, Tier.PUBLIC, "allow",
+                         _origin_reason(_p_origin), log_path)
                 continue
             pt = _classify_cloud(p)
             if pt == Tier.PUBLIC:
