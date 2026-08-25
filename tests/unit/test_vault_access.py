@@ -122,3 +122,86 @@ class TestStats:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ── Contact-shaped PII: the 2026-08-25 leak ───────────────────────────────────
+# "emergency contact: 555-1234" classified TIER_1 and vault_access.gate_content
+# handed it to Anthropic verbatim. The cause was not one missing keyword: a
+# phone number, a street address and a masked account tail had NO detector at
+# any layer that ships. Presidio (Layer 2) has never been installed anywhere,
+# and embeddings (Layer 3) are excluded from the frozen .exe AND switched off
+# outright on this path (classify passes use_embeddings=False). So these tests
+# deliberately assert against the DETERMINISTIC layers only — they must hold in
+# the packaged binary, not just on a dev box with sentence-transformers present.
+class TestContactShapedPII:
+    @pytest.mark.parametrize("raw", [
+        "emergency contact: 555-1234",
+        "Call Dana at 555-123-4567",  # pragma: allowlist secret
+        "Sarah Chen (312) 555-0199",
+        "reach me on +1 312 555 0199",
+        "mom: 555.867.5309",  # pragma: allowlist secret
+        "babysitter Kayla, 555-2210",
+        "I live at 1420 Maple Street, Apt 3B, Chicago IL 60614",
+        "ship it to 88 Rowan Ave, Evanston",
+    ])
+    def test_contact_pii_is_withheld_from_cloud(self, vac, raw):
+        out = vac.gate_content(raw, "anthropic")
+        digits = [tok for tok in raw.replace(",", " ").split() if any(c.isdigit() for c in tok)]
+        for tok in digits:
+            assert tok not in out, f"{tok!r} from {raw!r} reached the cloud payload"
+
+    @pytest.mark.parametrize("raw", [
+        "Chase account ending 4417",
+        "policy number BX-99120384",
+        "checking balance is 4,210.55 as of Tuesday",
+        "todo: call the accountant about the account balance",
+    ])
+    def test_financial_shapes_get_nothing(self, vac, raw):
+        # TIER_3 → cloud gets the empty string, not a placeholder.
+        assert vac.gate_content(raw, "anthropic") == ""
+
+    def test_local_still_gets_the_raw_value(self, vac):
+        raw = "emergency contact: 555-1234"
+        assert vac.gate_content(raw, "ollama") == raw
+
+
+# ── Over-correction guards ────────────────────────────────────────────────────
+# The opposite failure has bitten this project repeatedly: CDC flu guidance
+# withheld as medical records, "courtesy" matching "court", "Sovereign Vault"
+# nuking Friday's own system prompt, "family picture-book aesthetic" force-
+# routing a storybook prompt onto a local seat that could not fit the payload.
+# Tightening the classifier must not undo that work, so it is asserted here.
+# These are cloud-path assertions (egress semantics), which is where the
+# loosening was done.
+class TestNotOverRedacted:
+    @pytest.mark.parametrize("benign", [
+        "CDC seasonal flu vaccination guidance for adults",
+        "Thank you for the courtesy of a quick reply",
+        "family picture-book aesthetic, warm palette",
+        "nano banana family of models",
+        "What is the weather going to be like tomorrow?",
+        "Remind me to buy milk on Friday",
+        "the crisis hotline is 1-800-273-8255",   # toll-free is never personal  # pragma: allowlist secret
+    ])
+    def test_benign_text_survives_the_cloud_gate(self, benign):
+        from agent_friday.services.sensitivity_classifier import classify, Tier
+        tier = classify(benign, egress=True, use_presidio=False, use_embeddings=False)
+        assert tier == Tier.PUBLIC, f"over-redacted: {benign!r} rated {Tier.NAMES[tier]}"
+
+
+# ── Falsifiability ────────────────────────────────────────────────────────────
+def test_private_cases_are_falsifiable(vac, monkeypatch):
+    """A passing privacy test is only evidence if it could have failed.
+
+    Neutralise the classifier so everything reads PUBLIC — the exact shape of
+    "someone broke the gate" — and confirm the assertions above stop holding.
+    If this test fails, the tests in this file are vacuous and prove nothing.
+    """
+    monkeypatch.setattr(va, "_sc_classify_legacy", lambda content, **kw: Tier.PUBLIC)
+
+    leaked = vac.gate_content("emergency contact: 555-1234", "anthropic")
+
+    assert "555-1234" in leaked, (
+        "with the classifier neutralised the contact detail should have leaked; "
+        "it did not, so these tests are not actually exercising the gate"
+    )
