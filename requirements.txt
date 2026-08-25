@@ -16,6 +16,15 @@ tzdata>=2024.1               # IANA tz database for zoneinfo on Windows (Front P
 requests>=2.31
 psutil>=5.9                   # hardware detection (RAM) for the onboarding Hardware step + /api/health/full (ollama_manager.detect_hardware); degrades to wmic/proc fallback if absent
 pyyaml>=6.0
+pdfplumber>=0.11            # PDF text extraction for /api/analyze-file. NOT OPTIONAL: the PDF branch of
+                            # routes/core_routes.py::analyze_file has always been written as though this
+                            # were installed, and its ImportError fallback told the USER to run
+                            # `pip install pdfplumber` -- Friday's own dependency, presented as their
+                            # chore. It appeared in no requirements file and in no PyInstaller hidden
+                            # import, so the branch had never run in any environment (found 2026-08-25,
+                            # same shape as the Presidio gap the day before). Pure Python + pdfminer.six,
+                            # no compiled deps, ~5 MB -- there was never a size argument for leaving it out.
+                            # services/capability_preflight.py now fails loudly if it goes missing again.
 sentence-transformers>=2.2   # local embeddings for semantic context pruning (all-MiniLM-L6-v2) AND Layer 3 of the
                              # sensitivity classifier (services/sensitivity_classifier.py::_embedding_tier).
                              # WARNING - NOT PRESENT IN THE FROZEN BUILD: it is in AgentFriday.spec's `excludes`

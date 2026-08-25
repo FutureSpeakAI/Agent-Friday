@@ -529,13 +529,30 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 pass
 
     # Convert the unified Anthropic tool registry → OpenAI function schema once.
+    #
+    # A failure here USED to be swallowed into `oai_tools = None`, which does
+    # not raise, does not log, and does not change anything the user can see --
+    # it just sends the turn with no `tools` key at all. The seat then answers
+    # a request for action with a description of the action, which is
+    # indistinguishable from the model lying. That is the same defect as a
+    # voice surface that was never handed its declarations, arriving by a
+    # different route, so it must be as loud as any other missing capability.
     oai_tools = None
     if tools:
         try:
             from agent_friday.routing.model_router import anthropic_to_openai_tools
             oai_tools = anthropic_to_openai_tools(tools)
-        except Exception:
+        except Exception as _cte:
             oai_tools = None
+            _log.error("LOCAL seat %s: could not convert %d tool schema(s) to "
+                       "OpenAI shape (%s) - THIS TURN RUNS TOOL-FREE and the "
+                       "model will describe actions it cannot take",
+                       model, len(tools or []), _cte, exc_info=True)
+        else:
+            if tools and not oai_tools:
+                _log.error("LOCAL seat %s: tool conversion returned nothing "
+                           "from %d registry entries - THIS TURN RUNS "
+                           "TOOL-FREE", model, len(tools))
 
     try:
         convo = []
@@ -791,13 +808,25 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             pass
 
     # Convert Anthropic tool schemas → OpenAI function-tool schemas.
+    # See the identical block on the local path: a swallowed failure here ships
+    # a tool-free turn silently, and a seat with no tools narrates instead of
+    # acting. Log it loudly rather than discovering it from a user's transcript.
     oai_tools = None
     if tools:
         try:
             from agent_friday.routing.model_router import anthropic_to_openai_tools
             oai_tools = anthropic_to_openai_tools(tools)
-        except Exception:
+        except Exception as _cte:
             oai_tools = None
+            _log.error("provider %s / model %s: could not convert %d tool "
+                       "schema(s) to OpenAI shape (%s) - THIS TURN RUNS "
+                       "TOOL-FREE", pname, model, len(tools or []), _cte,
+                       exc_info=True)
+        else:
+            if tools and not oai_tools:
+                _log.error("provider %s / model %s: tool conversion returned "
+                           "nothing from %d registry entries - THIS TURN RUNS "
+                           "TOOL-FREE", pname, model, len(tools))
 
     orb_id = f"openai-{uuid.uuid4().hex[:8]}"
     try:

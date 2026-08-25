@@ -275,11 +275,27 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     if vault_access:
         # Refuse rather than raise: the caller surfaces this as the reply, and
         # the request was deliberately kept off every cloud provider.
-        return ("This request touches vault-protected data, so it was only "
-                "tried on the local model — which failed ("
+        #
+        # LEAD WITH WHAT FAILED, NOT WITH THE POLICY. This message used to open
+        # "This request touches vault-protected data, so it was only tried on
+        # the local model — which failed (...)". The real cause — a dead seat, a
+        # context overflow — arrived in a parenthesis at the end, after a first
+        # clause that read as a refusal. Users stop at the first clause: Stephen
+        # spent a day believing the vault was blocking him because the sentence
+        # opened by telling him the vault was involved. The vault was working
+        # correctly every time. Cause first, policy second.
+        #
+        # Also: do NOT name Ollama as the thing to check. Friday's local seats
+        # are served by her OWN llama-server (127.0.0.1:8090+), which is a
+        # different process that Ollama's status says nothing about — so the
+        # one remediation this message offered pointed at the wrong daemon.
+        return ("That didn't work: the local model failed ("
                 + "; ".join(errors[-1:]) +
-                "). It was NOT sent to a cloud provider. Check that Ollama "
-                "is running, then retry."), []
+                "). Because this request touches vault-protected data it could "
+                "only run locally, so there was no cloud fallback to try — it "
+                "was NOT sent to any cloud provider. This is a local-model "
+                "problem, not a permissions one: check that the local seat is "
+                "up, then retry."), []
     raise RuntimeError(
         "No model provider could run the agent (tried "
         + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
@@ -1402,10 +1418,51 @@ except Exception:
     pass
 
 
+def _looks_like_local_path(value):
+    """Return a usable local path if `value` names one, else None.
+
+    Deliberately conservative: a file:// URL, a Windows drive path, a UNC path,
+    or a ~/ path. Bare relative strings are NOT treated as paths, because a
+    model that mistypes a domain must not have it silently reinterpreted as a
+    filename.
+    """
+    v = (value or '').strip().strip('"').strip("'")
+    if not v:
+        return None
+    if v.lower().startswith('file:///'):
+        from urllib.parse import unquote
+        return unquote(v[8:]).replace('/', os.sep)
+    if v.lower().startswith('file://'):
+        from urllib.parse import unquote
+        return unquote(v[7:])
+    if v.startswith('~'):
+        return v
+    if v.startswith('\\\\'):          # UNC \\server\\share
+        return v
+    if len(v) > 2 and v[1] == ':' and v[2] in ('\\', '/'):
+        return v
+    return None
+
+
 def _tool_open_url(inp):
     url = ((inp or {}).get('url') or '').strip()
     if not (url.startswith('http://') or url.startswith('https://')):
-        return f"Refusing to open non-http(s) URL: {url!r}"
+        # A LOCAL path is not a bad URL, it is the wrong tool. Friday writes a
+        # briefing to disk and is then asked to show it; open_url refused
+        # (correctly -- it is a web tool) and the model, with no other option
+        # on the voice surface, invented a placeholder http:// URL and opened
+        # that instead. Generating a document and showing it to the user is one
+        # action, so name the tool that completes it rather than stopping at a
+        # refusal. open_path(path, in_browser=true) is the browser-tab form.
+        _local = _looks_like_local_path(url)
+        if _local:
+            return (f"open_url is for web pages only, and {url!r} is a local "
+                    f"path -- so nothing was opened. Call open_path with "
+                    f"path={_local!r} instead (add in_browser=true for a "
+                    f"browser tab). Do NOT substitute a made-up http:// URL: "
+                    f"that opens the wrong thing and reports success.")
+        return (f"Refusing to open non-http(s) URL: {url!r} -- nothing was "
+                f"opened. Do not report that you opened it.")
     ok, why = _validate_url(url)
     if not ok:
         return (f"I did NOT open that link — it appears invalid because {why}. "
@@ -4480,6 +4537,43 @@ TOOL_RINGS.update({
     "knowledge_related": 0,
     "knowledge_communities": 0,
 })
+
+# ══════════════════════════════════════════════════════════════
+#  CAPABILITY PREFLIGHT — a tool whose dependency is missing is REMOVED
+# ══════════════════════════════════════════════════════════════
+#
+# Registration above is unconditional: the ring-3 OS-control tools go into
+# CLAUDE_TOOLS whether or not pyautogui imported, and _cc_check turns every
+# call into "pyautogui not installed" at execution time. That is the
+# present-but-broken shape — the model is handed a screenshot tool, tells the
+# user it is taking a screenshot, and only then learns it cannot.
+#
+# The registry is the single source of truth for every surface (text chat, the
+# local voice brain, and — since 2026-08-25 — the Gemini Live surface, which
+# resolves its filesystem tools out of this same list). So dropping a tool HERE
+# removes it from all of them at once, and the generated surface notes stop
+# naming it in the same edit. Absent beats present-but-broken.
+#
+# services/capability_preflight.py owns the declared inventory and the reason
+# each entry exists. Optional-by-design capabilities (Presidio, torch) never
+# reach missing_tools() — they withhold nothing.
+try:
+    from agent_friday.services import capability_preflight as _cap_preflight
+    _WITHHELD_TOOLS = _cap_preflight.missing_tools()
+    if _WITHHELD_TOOLS:
+        CLAUDE_TOOLS[:] = [t for t in CLAUDE_TOOLS
+                           if t.get("name") not in _WITHHELD_TOOLS]
+        for _wt in _WITHHELD_TOOLS:
+            CLAUDE_TOOL_HANDLERS.pop(_wt, None)
+            TOOL_RINGS.pop(_wt, None)
+        print("  [CAPABILITY] withheld %d tool(s) with missing dependencies: %s"
+              % (len(_WITHHELD_TOOLS), ", ".join(sorted(_WITHHELD_TOOLS))))
+    for _line in _cap_preflight.report():
+        print("  " + _line)
+except Exception as _cpe:   # never let the preflight break the agent import
+    _WITHHELD_TOOLS = frozenset()
+    print("  [CAPABILITY] preflight skipped: %s" % _cpe)
+
 
 # Self-QC + asset tools (inspect_image / inspect_audio / save_output). Added
 # after the storybook E2E test showed the seat generating media it could not

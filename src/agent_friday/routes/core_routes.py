@@ -138,6 +138,23 @@ def serve_friday_live_sw():
     return resp
 
 
+@core_bp.route('/api/health/capabilities')
+def friday_capabilities():
+    """Which declared capabilities can actually run in THIS environment.
+
+    Separate from /api/health because the answer is about the build, not the
+    session: it does not change until something is installed or the app is
+    repackaged. `missing_required` is a list of packaging bugs. `tools_withheld`
+    names the tools that were removed from the registry because of them -- and
+    a withheld tool is offered to no model on any surface, which is the point.
+    """
+    try:
+        from agent_friday.services import capability_preflight as _cp
+        return jsonify(_cp.status())
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
+
+
 @core_bp.route('/api/health')
 def friday_health():
     """Return server uptime and system health snapshot for the demo UI."""
@@ -227,9 +244,23 @@ def friday_health():
                       "detail": str(_e)[:120]}
     _status = _inference.get("status") or "unknown"
 
+    # ── Declared capabilities whose dependency may be absent ─────────────
+    # Same reasoning as _inference above: a capability that is configured is
+    # not a capability that works. This block reports the ones Friday CLAIMS
+    # in her prompt, her tool descriptions or her replies, so a packaging gap
+    # is visible here rather than discovered by a user watching a file fail to
+    # appear on their desktop. See services/capability_preflight.py.
+    _capabilities = {"missing_required": [], "detail": "unavailable"}
+    try:
+        from agent_friday.services import capability_preflight as _cp
+        _capabilities = _cp.status()
+    except Exception as _ce:
+        _capabilities = {"missing_required": [], "detail": str(_ce)[:120]}
+
     return jsonify({
         "status": _status,
         "inference": _inference,
+        "capabilities": _capabilities,
         "configuration": {
             "anthropic_key": bool(core.ANTHROPIC_API_KEY),
             "gemini_key": bool(core.GEMINI_API_KEY),
@@ -1008,6 +1039,13 @@ def analyze_file():
         from google import genai
         from google.genai import types
         from agent_friday.services import egress_gate as _eg
+        try:
+            from agent_friday.services import capability_preflight as _cap_preflight
+        except Exception:
+            # A preflight that cannot import must not cost the user the upload;
+            # the PDF branch below falls back to the honest "no extractable
+            # text" message, which is still true, just less specific.
+            _cap_preflight = None
 
         ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
@@ -1123,7 +1161,34 @@ def analyze_file():
                                     "vision_events": events})
             except ImportError:
                 pass
-            return jsonify({"filename": filename, "type": "pdf", "analysis": f"PDF received ({len(content)//1024}KB). Install pdfplumber for full analysis: pip install pdfplumber"})
+            # No text came back -- either pdfplumber is absent, or the PDF is a
+            # scan with no text layer. Those are DIFFERENT failures and the old
+            # message conflated them, then handed the user a pip command for
+            # Friday's own missing dependency as though it were their chore.
+            # Say which one it is, and say whose problem it is.
+            _pdf_gap = _cap_preflight.explain("pdf_text") if _cap_preflight else ""
+            if _pdf_gap:
+                _analyze_record('none', 'block',
+                                'pdfplumber missing: PDF text extraction '
+                                'unavailable in this build', nbytes)
+                return jsonify({
+                    "filename": filename, "type": "pdf",
+                    "capability_missing": "pdf_text",
+                    "analysis": (
+                        f"I received the PDF ({len(content)//1024}KB) but I "
+                        f"cannot read it. {_pdf_gap} Nothing was sent anywhere "
+                        f"and nothing was analysed. Paste the text you care "
+                        f"about into the chat and I'll work from that."),
+                })
+            return jsonify({
+                "filename": filename, "type": "pdf",
+                "analysis": (
+                    f"I received the PDF ({len(content)//1024}KB) and opened it, "
+                    f"but there is no extractable text in it -- it is most "
+                    f"likely a scan or an image-only export. I did not analyse "
+                    f"anything. If you can export a text PDF, or paste the part "
+                    f"you care about, I can work from that."),
+            })
         elif ext in ANALYZE_TEXT_EXT:
             # Same reasoning as the PDF branch. gate_text below redacts what it
             # can classify, which is a real protection and is not the same
