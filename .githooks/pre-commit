@@ -48,4 +48,19 @@ if [ -n "$IMPORTPY" ]; then
     fi
 fi
 
+# ── Gated-prompt caller check ─────────────────────────────────────────────
+# 2026-08-25: 22 call sites built Friday's system prompt with no provider/
+# vault_control decision, so TIER_2 vault content shipped to the cloud
+# whenever the call routed there. The function's required arguments now make
+# that a TypeError — but only a STATIC scan makes the failure loud at commit
+# time; two of the twenty-two were background jobs that would otherwise not
+# have been re-exercised (and so not have raised) until their own next
+# scheduled run, hours or a day later. Pure AST parse, stdlib only — runs
+# even without the venv, unlike the import smoke test above.
+if ! $PY "$HERE/../scripts/check_gated_prompt_callers.py"; then
+    echo "[pre-commit] gated-prompt caller check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 exec $PY "$SCANNER"

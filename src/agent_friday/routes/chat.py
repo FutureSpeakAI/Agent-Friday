@@ -73,6 +73,7 @@ from agent_friday.services.model_router import (
     _get_friday_system_prompt,
     _get_vault_control,
     _index_chat_turn,
+    _predict_route_provider,
     _vault_cloud_fallback,
     _vault_local_only,
 )  # noqa: E501
@@ -1731,8 +1732,18 @@ def sources_dossier(session_id):
         )
 
         # Vault-aware system prompt per the all-_call_claude-uses-vault rule.
+        #
+        # SECURITY (2026-08-25, sweep followup): found while migrating every
+        # caller to the now-required provider/vault_control params — this one
+        # had neither, same bug class as the 22 other sites fixed the same
+        # day. Predicting on `dossier_prompt` (the real transcript-bearing
+        # content), not the inert 'source dossier' keywords literal used only
+        # for context-section selection, mirrors what the real dispatch call
+        # below actually routes on.
         system_prompt = _get_friday_system_prompt(
-            keywords='source dossier', workspace='chat')
+            keywords='source dossier', workspace='chat',
+            provider=_predict_route_provider(keywords=dossier_prompt, workspace='chat'),
+            vault_control=_get_vault_control() if _vault_local_only() else None)
         markdown = _generate_text(
             [{"role": "user", "content": dossier_prompt}],
             system=system_prompt,

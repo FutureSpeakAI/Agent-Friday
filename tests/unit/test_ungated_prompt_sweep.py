@@ -13,9 +13,17 @@ Closed here: routes/code.py (code_plan), routes/messages.py
 services/channels/manager.py (_system_prompt), services/creative_pipeline.py
 (_exec_text_stage), services/persona_eval.py (run_live_eval),
 services/scheduler.py (_afternoon_briefing_job — UNATTENDED, daily 16:00, the
-worst of this set because a leak there repeats with nobody watching), and
+worst of this set because a leak there repeats with nobody watching),
 services/model_router.py's own self-referential call in
-_generate_session_summary.
+_generate_session_summary, services/worker_adapters/claude_code_adapter.py
+(ClaudeCodeAdapter._run — the ninth site, found during the original sweep's
+own audit and named rather than silently patched or silently dropped, then
+fixed under a follow-up authorization), and routes/chat.py's source-dossier
+builder (the TENTH site — found by accident, as a side effect of making
+provider/vault_control required arguments, not by a fourth manual audit
+pass; see tests/unit/test_gated_prompt_required_args.py and
+scripts/check_gated_prompt_callers.py, which is what should catch an
+eleventh).
 
 INJECTION POINT: `_build_context_prompt`'s "== TODAY'S CONTEXT ==" section
 (model_router.py, sourced from voice_engine._load_live_context()) is
@@ -360,4 +368,115 @@ class TestGenerateSessionSummary:
     def test_falsifiable(self, monkeypatch):
         system = _run_session_summary(monkeypatch, predicted_provider='cloud',
                                       force_ungated=True)
+        assert TIER2_SECRET in system, "ungated reproduction did not leak"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 9. services/worker_adapters/claude_code_adapter.py :: ClaudeCodeAdapter._run
+#    The ninth site — named in the original sweep's report rather than
+#    silently fixed or silently dropped, then fixed under a follow-up
+#    authorization. `provider="auto"` was already being passed here; the
+#    missing piece was `vault_control` (without it, `provider` does nothing
+#    — see _build_context_prompt's "only tier-gates when vault_control is
+#    given"), so this is a genuine ungated-leak site, not just a style gap.
+# ═══════════════════════════════════════════════════════════════════════════
+import types as _types
+from agent_friday.services.worker_adapters.claude_code_adapter import (
+    ClaudeCodeAdapter, _JOBS, _JOBS_LOCK)
+
+
+def _run_claude_code_adapter(monkeypatch, *, predicted_provider, force_ungated=False):
+    captured = {}
+
+    def _fake_generate_agent(messages, system=None, **kw):
+        captured['system'] = system
+        return "done", []
+
+    import agent_friday.services.agent as agent_mod
+    monkeypatch.setattr(agent_mod, "_generate_agent", _fake_generate_agent)
+    monkeypatch.setattr(mr, "_predict_route_provider",
+                        lambda **kw: predicted_provider)
+    if force_ungated:
+        monkeypatch.setattr(mr, "_gated_vault_control", lambda: None)
+
+    adapter = ClaudeCodeAdapter()
+    aid = "test-cca-job"
+    task = _types.SimpleNamespace(task_id="t1", prompt="write a small script")
+    with _JOBS_LOCK:
+        _JOBS[aid] = {}
+    try:
+        adapter._run(aid, task)
+    finally:
+        with _JOBS_LOCK:
+            _JOBS.pop(aid, None)
+    return captured.get('system') or ""
+
+
+class TestClaudeCodeAdapter:
+    def test_cloud_bound_omits_tier2(self, monkeypatch):
+        system = _run_claude_code_adapter(monkeypatch, predicted_provider='cloud')
+        assert TIER2_SECRET not in system
+
+    def test_local_bound_keeps_tier2(self, monkeypatch):
+        system = _run_claude_code_adapter(monkeypatch, predicted_provider='local')
+        assert TIER2_SECRET in system
+
+    def test_falsifiable(self, monkeypatch):
+        system = _run_claude_code_adapter(monkeypatch, predicted_provider='cloud',
+                                          force_ungated=True)
+        assert TIER2_SECRET in system, "ungated reproduction did not leak"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 10. routes/chat.py :: the source-dossier builder
+#     Found by accident (a side effect of the provider/vault_control-required
+#     migration), not by a fourth manual audit pass — see
+#     test_gated_prompt_required_args.py and check_gated_prompt_callers.py,
+#     which is the mechanism that should catch the next one instead.
+# ═══════════════════════════════════════════════════════════════════════════
+import agent_friday.routes.chat as chat_mod
+
+
+class _FakeDossierMem:
+    def available(self):
+        return True
+
+    def get_session(self, session_id):
+        return [{"role": "friday", "text": "The sky is blue.",
+                 "timestamp": "2026-08-25T10:00:00"}]
+
+
+def _run_source_dossier(monkeypatch, *, predicted_provider, force_ungated=False):
+    captured = {}
+
+    def _fake_generate_text(messages, system=None, **kw):
+        captured['system'] = system
+        return "dossier markdown"
+
+    monkeypatch.setattr(chat_mod, "_generate_text", _fake_generate_text)
+    monkeypatch.setattr(chat_mod, "_predict_route_provider",
+                        lambda **kw: predicted_provider)
+    monkeypatch.setattr(chat_mod, "_factcheck_news_citations", lambda md: md)
+    monkeypatch.setattr(chat_mod, "_get_conversation_memory",
+                        lambda: _FakeDossierMem())
+    if force_ungated:
+        monkeypatch.setattr(chat_mod, "_get_vault_control", lambda: None)
+
+    with _app.test_request_context('/api/sources/dossier/2026-08-25'):
+        chat_mod.sources_dossier("2026-08-25")
+    return captured.get('system') or ""
+
+
+class TestSourceDossier:
+    def test_cloud_bound_omits_tier2(self, monkeypatch):
+        system = _run_source_dossier(monkeypatch, predicted_provider='cloud')
+        assert TIER2_SECRET not in system
+
+    def test_local_bound_keeps_tier2(self, monkeypatch):
+        system = _run_source_dossier(monkeypatch, predicted_provider='local')
+        assert TIER2_SECRET in system
+
+    def test_falsifiable(self, monkeypatch):
+        system = _run_source_dossier(monkeypatch, predicted_provider='cloud',
+                                     force_ungated=True)
         assert TIER2_SECRET in system, "ungated reproduction did not leak"

@@ -1818,8 +1818,8 @@ except Exception:
     pass
 
 
-def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
-                              vault_control=None, vault_fallback='redact'):
+def _get_friday_system_prompt(keywords='', workspace='', *, provider,
+                              vault_control, vault_fallback='redact'):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -1829,11 +1829,27 @@ def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
 
     keywords: the user's prompt text; drives smart wiki context routing
     workspace: hint for context selection ('draft', 'task', 'chat', etc.)
-    provider/vault_control/vault_fallback: when a VaultAccessControl is passed,
-        the context (and self-knowledge) is gated for `provider` — a local
-        provider sees everything, a cloud provider (e.g. 'gemini' for the Live
-        voice session) gets TIER_1 in full, TIER_2 redacted, TIER_3 dropped.
-        Defaults keep the legacy ungated behavior for existing callers.
+    provider/vault_control: REQUIRED, keyword-only, no default (2026-08-25).
+        When `vault_control` is a VaultAccessControl, the context (and
+        self-knowledge) is gated for `provider` — a local provider sees
+        everything, a cloud provider (e.g. 'gemini' for the Live voice
+        session) gets TIER_1 in full, TIER_2 redacted, TIER_3 dropped.
+        `provider='cloud', vault_control=None` used to be the DEFAULT, which
+        is "legacy ungated" — every one of 22 call sites found 2026-08-25
+        silently inherited it and shipped raw vault content to whichever
+        cloud provider they routed to. There is no longer a default: decide
+        explicitly, every time. A caller with a genuine reason to skip
+        gating (nothing here is ever sent anywhere — see
+        context_budget.system_prompt_tokens) still passes
+        `vault_control=None` explicitly; the difference is that it now reads
+        as a decision, not an oversight, and `scripts/check_gated_prompt_callers.py`
+        (wired into the pre-commit hook) fails the commit if it's missing
+        rather than waiting for whatever code path happens to call this next
+        — which, for `_generate_session_summary` and
+        `scheduler._afternoon_briefing_job`, could have been hours or a full
+        day away.
+    vault_fallback: 'redact' (default) | 'deny' | 'warn' — see
+        VaultAccessControl.gate_content.
     """
     settings = _load_settings()
     personality = _load_agent_personality()
