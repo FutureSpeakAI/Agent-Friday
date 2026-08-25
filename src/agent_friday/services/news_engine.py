@@ -44,8 +44,10 @@ from agent_friday.services.calendar_engine import (
     _recent_unread_emails,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 # Not visible via the star-import cascade (it is bound in voice_engine, an
@@ -1466,7 +1468,10 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             "Return ONLY JSON, no prose, in exactly this shape:\n" + shape +
             "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
         )
-        system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
+        system = _get_friday_system_prompt(
+            keywords=prompt, workspace='briefing',
+            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+            vault_control=_gated_vault_control())
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=1800,
                              orb_label="📰 Front Page", workspace='news')
@@ -1930,7 +1935,10 @@ def _generate_weekly_digest():
             "Give exactly 5 top_stories when there is enough material.\n\n"
             "THIS WEEK'S STORIES:\n" + story_block
         )
-        system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
+        system = _get_friday_system_prompt(
+            keywords=prompt, workspace='briefing',
+            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+            vault_control=_gated_vault_control())
         # Route through the user's configured provider (same as chat), not a
         # hard-coded Anthropic call — so the digest synthesizes real content on
         # Ollama/OpenAI setups instead of silently falling back to the canned
@@ -2069,7 +2077,10 @@ def _generate_weekly_editorial():
             "Banned sources you ARE drawing from this week: "
             + (", ".join(banned) if banned else "(none currently banned)") +
             "\n\nARTICLES:\n" + article_block)
-        system = (_get_friday_system_prompt(keywords=user, workspace='briefing')
+        system = (_get_friday_system_prompt(
+                      keywords=user, workspace='briefing',
+                      provider=_predict_route_provider(keywords=user, workspace='briefing'),
+                      vault_control=_gated_vault_control())
                   + "\n\n" + directive)
         # Route through the user's configured provider (same as chat). The old
         # bare _call_claude() here had NO fallback, so on a non-Anthropic setup
@@ -2642,7 +2653,10 @@ def _deep_dive_article(url, title=None, refresh=False):
         '  "key_quotes": an array of 2-4 short verbatim quote strings from the article.'
     )
     try:
-        system = _get_friday_system_prompt(keywords=headline, workspace="news")
+        system = _get_friday_system_prompt(
+            keywords=headline, workspace="news",
+            provider=_predict_route_provider(keywords=headline, workspace="news"),
+            vault_control=_gated_vault_control())
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=2000, workspace='news')
     except Exception as e:

@@ -46,8 +46,10 @@ from agent_friday.services.misc_engine import (
     _enrich_calendar_event,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 calendar_bp = Blueprint('calendar', __name__)
@@ -166,8 +168,11 @@ def api_calendar_prep(event_id):
         f"Notes: {target.get('description') or 'none'}\n"
     )
     try:
+        _kw = target.get("title", "") + " " + attendees
         system = _get_friday_system_prompt(
-            keywords=target.get("title", "") + " " + attendees, workspace="task")
+            keywords=_kw, workspace="task",
+            provider=_predict_route_provider(keywords=_kw, workspace="task"),
+            vault_control=_gated_vault_control())
         prep = _generate_text([{"role": "user", "content": prompt}],
                               system=system, max_tokens=1400, workspace='calendar')
         cache[event_id] = prep
@@ -200,7 +205,10 @@ def api_calendar_quick_add():
         f"Request: {text}"
     )
     try:
-        system = _get_friday_system_prompt(keywords=text, workspace="task")
+        system = _get_friday_system_prompt(
+            keywords=text, workspace="task",
+            provider=_predict_route_provider(keywords=text, workspace="task"),
+            vault_control=_gated_vault_control())
         raw = _generate_text([{"role": "user", "content": prompt}],
                              system=system, max_tokens=400, workspace='calendar')
         m = re.search(r"\{.*\}", raw, re.S)

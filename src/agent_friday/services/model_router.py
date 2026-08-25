@@ -2242,6 +2242,47 @@ def _vault_cloud_fallback():
         return 'redact'
 
 
+def _predict_route_provider(keywords='', workspace='', has_tools=False):
+    """Predict, BEFORE dispatch, which provider a generation call will land
+    on — so its system prompt can be gated for that provider instead of built
+    ungated and left to the egress gate alone (2026-08-25: background tasks
+    were doing exactly that, and the egress gate's keyword classifier is a
+    known-incomplete second line of defense, not the intended first one).
+
+    This is a genuine second call into the SAME router `_generate_text` /
+    `_generate_agent` consult moments later with the same inputs. That is
+    safe, not a source of drift: routing is a pure function of settings +
+    messages + task_context, and nothing between "build the prompt" and
+    "dispatch it" changes either. Defaults to 'cloud' — the stricter gate —
+    if routing cannot be determined at all.
+    """
+    try:
+        from agent_friday.routing.model_router import get_router
+        settings = _load_settings()
+        routing_cfg = settings.get('model_routing') or {}
+        messages = [{"role": "user", "content": keywords}] if keywords else []
+        route = get_router(routing_cfg).route(messages, task_context={
+            "has_tools": has_tools,
+            "workspace": workspace or '',
+            "cloud_model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+            "is_background_task": True,
+        }) or {}
+        return route.get('provider', 'cloud')
+    except Exception:
+        return 'cloud'
+
+
+def _gated_vault_control():
+    """`_get_vault_control()` gated by the standing setting, or None.
+
+    The one-liner every caller of `_get_friday_system_prompt` needs before it
+    can pass a real `vault_control` — pulled out so the background-task /
+    briefing / draft call sites (previously ungated — see
+    `_predict_route_provider`) don't each hand-roll the same check.
+    """
+    return _get_vault_control() if _vault_local_only() else None
+
+
 def _build_context_prompt(message, workspace='', workspace_context=None,
                           vision_description=None, provider='cloud',
                           vault_control=None, vault_fallback='redact'):

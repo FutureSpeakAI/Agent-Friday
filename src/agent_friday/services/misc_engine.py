@@ -47,8 +47,10 @@ from agent_friday.services.agent import (
 )  # noqa: E501
 from agent_friday.services.model_router import (
     CAREER_OPS_DIR,
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 
@@ -243,7 +245,10 @@ def _spawn_draft_task(mode, prompt_text, context=''):
             # Load full vault/wiki context — Friday MUST know the user's contacts,
             # his name, his boss, his family, etc. when writing on his behalf.
             _task_log(task_id, 'Loading vault context…')
-            full_system = _get_friday_system_prompt(prompt_text, workspace='draft')
+            full_system = _get_friday_system_prompt(
+                prompt_text, workspace='draft',
+                provider=_predict_route_provider(keywords=prompt_text, workspace='draft'),
+                vault_control=_gated_vault_control())
             full_system += f"\n\n== DRAFT WRITING INSTRUCTIONS ==\n{_system}"
             draft_text = _generate_text(
                 [{"role": "user", "content": _full_prompt}],

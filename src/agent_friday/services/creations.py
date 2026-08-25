@@ -34,8 +34,10 @@ from agent_friday.core import (
     process_update,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 # The notifications engine lives at the TOP of the service import chain, so it
@@ -380,7 +382,10 @@ def _choose_daily_mode(date_str):
         'logline for that mode>", "title": "<a real title>"}'
     )
     try:
-        system = _get_friday_system_prompt(keywords=prompt, workspace="creation")
+        system = _get_friday_system_prompt(
+            keywords=prompt, workspace="creation",
+            provider=_predict_route_provider(keywords=prompt, workspace="creation"),
+            vault_control=_gated_vault_control())
         raw = _generate_text([{"role": "user", "content": prompt}], system=system,
                              max_tokens=600, orb_label="🎲 Choosing today's creation",
                              workspace="creation")
@@ -503,7 +508,10 @@ def generate_daily_creation(force=False):
             prompt = _build_daily_creation_prompt(date_str)
         # Vault-aware system prompt is REQUIRED for every Claude call so Friday
         # actually knows the user and their world.
-        system = _get_friday_system_prompt(keywords=prompt, workspace="creation")
+        system = _get_friday_system_prompt(
+            keywords=prompt, workspace="creation",
+            provider=_predict_route_provider(keywords=prompt, workspace="creation"),
+            vault_control=_gated_vault_control())
         try:
             raw = _generate_text(
                 [{"role": "user", "content": prompt}],

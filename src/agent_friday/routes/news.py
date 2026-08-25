@@ -44,8 +44,10 @@ from agent_friday.services.calendar_engine import (
     _google_credentials,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 from agent_friday.services.news_engine import (
     BANNED_SOURCES_FILE,
@@ -365,7 +367,10 @@ def generate_briefing():
             f"{live_context}"
         )
         # ALL generation calls must carry Friday's vault/wiki context.
-        system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
+        system = _get_friday_system_prompt(
+            keywords=prompt, workspace='briefing',
+            provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
+            vault_control=_gated_vault_control())
         # Route through the user's configured provider (Ollama / OpenAI / cloud)
         # like the chat path does — NOT a hard-coded Anthropic call — so the
         # briefing works on whatever provider chat already works on, instead of

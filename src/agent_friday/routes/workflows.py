@@ -62,8 +62,10 @@ from agent_friday.services.misc_engine import (
     _spawn_draft_task,
 )  # noqa: E501
 from agent_friday.services.model_router import (
+    _gated_vault_control,
     _generate_text,
     _get_friday_system_prompt,
+    _predict_route_provider,
 )  # noqa: E501
 
 workflows_bp = Blueprint('workflows', __name__)
@@ -543,7 +545,10 @@ def content_draft():
     try:
         # Route through the user's configured provider (Ollama / OpenAI / cloud)
         # like the chat path, not a hard-coded Gemini/Anthropic call.
-        system = _get_friday_system_prompt(keywords=title, workspace='content')
+        system = _get_friday_system_prompt(
+            keywords=title, workspace='content',
+            provider=_predict_route_provider(keywords=title, workspace='content'),
+            vault_control=_gated_vault_control())
         draft_text = _generate_text(
             [{"role": "user", "content": prompt}],
             system=system, max_tokens=1600,
