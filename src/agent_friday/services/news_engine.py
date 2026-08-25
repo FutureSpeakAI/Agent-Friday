@@ -684,6 +684,46 @@ def _news_items_from_archive(categories, limit_per, banned=None, boosted=None):
     return items
 
 
+def _register_news_provenance(items):
+    """Register live-feed article text as third-party published (egress §5.7).
+
+    Ingest-side, exactly like the Edition digest's _pub() above and
+    web_fetch._register_spans: this text earns its exemption because Friday
+    RETRIEVED it from a public news feed, not because a caller asserted it was
+    public. There is deliberately no send-time API, so the exemption cannot be
+    claimed by labelling a payload -- a spoofer would have to get their text
+    into a feed Friday subscribes to first, and even then only that exact
+    string is exempt.
+
+    Registers the SNIPPET as well as the title. Registering titles alone --
+    all the digest path ever did -- exempted the headline and withheld the
+    article body, which is the part carrying the information. That is why
+    voice could call search_news and never read the answer back: the tool
+    returns title AND snippet, and the classifier judged the snippet on its
+    own words. News is wall-to-wall people, deaths, illnesses and money, so it
+    reads as private -- CDC flu guidance classified TIER_3 and was dropped
+    outright. Those keyword rules exist to keep Stephen's health, legal and
+    financial affairs on this machine. A CDC press release is none of them.
+
+    Returns `items` so callers can wrap a return statement. Never raises:
+    losing a registration costs recall, not safety -- the text simply gates on
+    its own content again, which is today's behaviour.
+    """
+    try:
+        from agent_friday.services.egress_gate import register_public_text
+    except Exception:
+        return items
+    for it in items or []:
+        try:
+            origin = it.get("source") or "news-feed"
+            for text in (it.get("title"), it.get("snippet")):
+                if text:
+                    register_public_text(text, origin=origin)
+        except Exception:
+            pass  # one malformed item must not cost the rest their provenance
+    return items
+
+
 def _fetch_news_items(categories=None, limit_per=4):
     """Live magazine feed: structured news items across enabled categories.
 
@@ -703,7 +743,8 @@ def _fetch_news_items(categories=None, limit_per=4):
         categories = [c for c in NEWS_CATEGORIES
                       if prefs["categories_enabled"].get(c, True)]
     if _network_is_offline():
-        return _news_items_from_archive(categories, limit_per, banned, boosted)
+        return _register_news_provenance(
+            _news_items_from_archive(categories, limit_per, banned, boosted))
     items, idx = [], 0
     for cat in categories:
         meta = NEWS_CATEGORIES.get(cat)
@@ -751,8 +792,8 @@ def _fetch_news_items(categories=None, limit_per=4):
     if not items:
         cached = _news_items_from_archive(categories, limit_per, banned, boosted)
         if cached:
-            return cached
-    return items
+            return _register_news_provenance(cached)
+    return _register_news_provenance(items)
 
 
 def _gather_live_briefing_context():

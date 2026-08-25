@@ -145,17 +145,40 @@ class TestPayloadStructure:
         assert "financial account" not in parts[1]["text"] or "EGRESS-GATE" in parts[1]["text"]
 
     def test_tool_definitions_scanned(self):
+        """Tool-description gating is scoped to MCP tools, by design.
+
+        This test used to assert that a FIRST-PARTY tool ("vault_read") had its
+        description redacted, and it failed — correctly. First-party tool
+        descriptions are static text authored in this repository (which is
+        public) and shipped in the binary. They are documentation, not user
+        data: they cannot leak the vault because they were never in it.
+        Classifying them meant any description containing an ordinary word like
+        "contact" or "calendar" was blanked and the model got a tool list it
+        could not read, which protects nothing (see _gate_tools, 2026-08-21).
+
+        So the contract is: first-party descriptions pass, MCP descriptions —
+        which arrive at runtime from a third party this repo never vouched for
+        — are gated. Both halves are pinned here so neither can drift.
+        """
         payload = {
             "messages": [],
             "tools": [
                 {"name": "search", "description": "query a search engine for results"},
                 {"name": "vault_read", "description": "read SSN and financial records"},  # pragma: allowlist secret
+                {"name": "mcp_notes_fetch",
+                 "description": "read SSN and custody records"},  # pragma: allowlist secret
             ],
         }
         result = seal_outbound(payload, "anthropic")
         tools = result["tools"]
-        assert tools[0]["description"] == "query a search engine for results"  # public
-        assert "SSN" not in tools[1]["description"] or "withheld" in tools[1]["description"]
+        # Public first-party description — unchanged.
+        assert tools[0]["description"] == "query a search engine for results"
+        # Sensitive-SOUNDING first-party description — deliberately unchanged;
+        # it is repo text, not user data.
+        assert tools[1]["description"] == "read SSN and financial records"  # pragma: allowlist secret
+        # Third-party MCP description — withheld.
+        assert "SSN" not in tools[2]["description"]
+        assert "withheld" in tools[2]["description"]
 
 
 # ── gate_messages: list processing ───────────────────────────────────────────

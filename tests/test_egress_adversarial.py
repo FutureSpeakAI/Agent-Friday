@@ -581,18 +581,53 @@ class TestSealOutboundSystemPrompt:
 
 class TestSealOutboundTools:
     def test_sensitive_tool_description_withheld(self, tmp_path):
+        """Gating is scoped to MCP tools — see test_egress_gate.py for why.
+
+        This asserted a first-party description ("vault_read") was withheld and
+        failed: first-party descriptions are static repo text, not user data,
+        and _gate_tools deliberately stopped classifying them on 2026-08-21.
+        The third-party half of that contract is what actually protects
+        anything, so it is what gets asserted here.
+        """
         payload = {
             "messages": [],
             "tools": [
                 {
                     "name": "vault_read",
                     "description": "reads SSN and financial records from the vault",  # pragma: allowlist secret
-                }
+                },
+                {
+                    "name": "mcp_store_read",
+                    "description": "reads SSN and custody records from the vault",  # pragma: allowlist secret
+                },
             ],
         }
         result = seal_outbound(payload, "anthropic", log_path=tmp_path / "eg.jsonl")
-        desc = result["tools"][0]["description"]
-        assert "SSN" not in desc or "withheld" in desc
+        # First-party: repo text, deliberately untouched.
+        assert result["tools"][0]["description"].startswith("reads SSN")
+        # Third-party MCP: withheld.
+        desc = result["tools"][1]["description"]
+        assert "SSN" not in desc and "withheld" in desc
+
+    def test_mcp_tool_description_withheld_in_openai_shape(self, tmp_path):
+        """The OpenAI function shape nests name/description under "function".
+
+        The gate read the top level only, so every openai-compatible cloud
+        provider received MCP descriptions the Anthropic path withheld.
+        """
+        payload = {
+            "messages": [],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "mcp_store_read",
+                    "description": "reads SSN and custody records from the vault",  # pragma: allowlist secret
+                },
+            }],
+        }
+        result = seal_outbound(payload, "openrouter", log_path=tmp_path / "eg.jsonl")
+        desc = result["tools"][0]["function"]["description"]
+        assert "SSN" not in desc and "withheld" in desc
 
     def test_public_tool_description_passes(self, tmp_path):
         payload = {
