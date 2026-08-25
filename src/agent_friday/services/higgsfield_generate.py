@@ -47,6 +47,15 @@ _TERMINAL = ("completed", "failed", "nsfw", "canceled")
 #: the output can still be rescued by hand.
 _MAX_WAITS = 40
 
+class EgressBlocked(Exception):
+    """The egress gate refused an argument before it left the machine.
+
+    Distinct from a transport failure: nothing was submitted, nothing was
+    charged, and the caller must say so rather than reporting a generic
+    outage.
+    """
+
+
 _UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}"
     r"-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b")
@@ -64,7 +73,24 @@ def _call(tool: str, arguments: dict, timeout: float = 120.0):
     if mgr is None:
         raise RuntimeError("MCP manager not initialized — the Higgsfield "
                            "connector is not running")
-    raw = mgr.call(MCP_SERVER, tool, dict(arguments), timeout=timeout)
+    arguments = dict(arguments)
+    # Higgsfield is a REMOTE MCP server: every prompt sent here is cloud
+    # egress. The tool-loop path gates these through agent._mcp_gate_args
+    # ("the single egress choke point for remote MCP tool calls"), but this
+    # module calls mgr.call directly and so bypassed it — a hole opened by
+    # the dispatch branch in 5379e8d and inherited by every caller since.
+    # Gating HERE covers image, video and music in one place rather than
+    # asking three call sites to remember.
+    gate = getattr(_agent, "_mcp_gate_args", None)
+    if gate is not None:
+        ok, explanation = gate(MCP_SERVER, tool, arguments)
+        if not ok:
+            # Refused outright, never submitted partially redacted: a
+            # half-gated prompt is a different request than the one that was
+            # asked for.
+            raise EgressBlocked(explanation or
+                                "blocked by the egress gate before submission")
+    raw = mgr.call(MCP_SERVER, tool, arguments, timeout=timeout)
     if isinstance(raw, (dict, list)):
         return raw
     text = str(raw or "").strip()
@@ -268,6 +294,12 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
 
     try:
         reply = _call(tool, {"params": params}, timeout=180.0)
+    except EgressBlocked as e:
+        # Nothing left the machine and nothing was charged. Reported as
+        # `blocked`, matching creative_engine's content-policy shape, so the
+        # caller never renders this as a provider outage.
+        return {"status": "blocked", "provider": "higgsfield",
+                "model": model, "prompt": prompt, "reason": str(e)[:300]}
     except Exception as e:
         return {"status": "unavailable", "provider": "higgsfield",
                 "model": model, "prompt": prompt,
