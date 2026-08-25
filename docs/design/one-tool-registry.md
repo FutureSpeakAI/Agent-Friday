@@ -3,13 +3,12 @@
 **Date:** 2026-08-25
 **Branch:** `higgsfield-integration`
 **Status:** design, with the first increment BUILT (§7). The rest is specified, not built.
-**Commit state (2026-08-25 09:50):** §7.4–§7.6 are committed. §7.1–§7.3 — the voice
-tool-surface work — are BUILT AND RUNNING but deliberately **not committed**, because
-`routes/voice.py` is simultaneously held by another session's governance-ring and
-audio-threading work (§2.2). The pair `voice_engine.py` + `routes/voice.py` cannot be
-split: committing the former alone would declare fifteen tools to the Live API while
-the latter's surface note still named nine, which is this document's defect inverted.
-Sequencing is Stephen's call.
+**Commit state (2026-08-25 10:25):** all of §7 is committed — §7.4–§7.6 as `b1fe0d0`,
+§7.1–§7.3 as `50b98ce`. The parallel session's governance-ring fix landed alongside as
+`e4a3b3c` (see §2.2 and §9a). The voice pair could not be split: `routes/voice.py`
+imports `_voice_tool_names` from `voice_engine.py`, so committing the latter alone would
+have left HEAD with an `ImportError` and an unregistered voice blueprint — verified by
+parsing HEAD and diffing it against the seventeen symbols the import names.
 **Scope:** the tool surface across all four model/modality combinations — local model
 and cloud model, text and voice — and specifically how local filesystem action works
 for a cloud model given the egress gate.
@@ -538,10 +537,38 @@ Verified live against the running process (**MEASURED**):
 * `GET /api/health/capabilities` → `"missing_required": []`, `"tools_withheld": []`,
   `pdf_text` present. The §7.4 code is executing in the live server.
 * `friday.local_call — local dispatch: gemma4:12b -> llama.cpp seat http://127.0.0.1:8090/v1`
-  — the seat now **respawns at boot** (PID 5912, parented to the server), with
+  — the seat came up with the server (PID 5912, **parented to it**), with
   `--cache-type-k q8_0 --cache-type-v q8_0`.
 * `http://127.0.0.1:8090/v1/models` returns `gemma4:12b`, capabilities
   `["completion","multimodal"]`.
+
+**Correction to how `:8090` behaves** (Stephen, 2026-08-25, superseding the working
+assumption used earlier in the day). The seat is a **child of the Friday server**, not an
+independent process. It died with the tray tree and came back on its own this boot. The
+earlier characterisation — "it does not come back with the app" — was true of *some*
+restarts but is **not structural**, so nothing here should be designed as a workaround
+for it, and §7 does not contain one. What §1.5 depended on was narrower and still holds:
+`_tool_search_wiki` never consults a seat at all, so its result could not have been
+affected either way.
+
+**The thesis confirmed from the other direction.** After the restart the boot audit
+reports both the endpoint *and* the identity each seat actually answers with:
+
+```
+gemma4:12b  ->  seat http://127.0.0.1:8090/v1   answering: gemma4:12b
+TwIL-LM3    ->  Ollama daemon :11434            answering: TwIL-LM3
+```
+
+and `search_news` now runs from voice with **zero denials and real headlines** — the
+tool that §2.2's unpassed `session_ctx` had been denying as "requires authenticated
+session". Reported separately, closing the gap fixed the symptom. That is worth more
+than the diagnosis: it is the first evidence that the rule in §3 pays out rather than
+merely explains.
+
+Note also what the audit line *is*: an endpoint paired with the identity actually
+answering on it. That is the seat-layer analogue of R7 — a receipt, not a
+configuration reading. The recurring failure in this codebase is treating "configured"
+as "working", and `answering:` is the field that makes the difference checkable.
 
 **What this invalidates:** one conclusion, and it is a conclusion about the *present*,
 not about the transcript. "The running process does not contain yesterday's voice fixes,
@@ -611,10 +638,33 @@ failures were in `test_residency_arbiter.py`, `test_ollama_manager.py`,
 pre-existing and all in other sessions' territory, and all named plainly by the summary
 line that was already on its way.
 
-Both errors share a shape with the bugs above: **a plausible inference presented with
-more confidence than its evidence carried.** Neither changed a line of code, because
-both were caught before anything was built on them. That is the only reason they are a
-footnote rather than a fifth section.
+**"Stage by name, not `git add -A`" — followed, and it did not prevent the thing it was
+meant to prevent.** Two commits in this sequence (`50b98ce`, and the earlier voice pair)
+carried another session's in-flight work in `routes/voice.py` along with mine. The rule
+was followed literally each time: files were named individually, the tree was never
+swept. But `git add <path>` stages a **whole file**, so naming files prevents
+*cross-file* sweeps and does nothing at all about *within-file* ones — and
+`routes/voice.py` was the most contended file in the repo that day, held by two sessions
+at once.
+
+The second time, the collision was identified in advance, stated plainly, and then
+committed anyway because `voice.py` imports `_voice_tool_names` from `voice_engine.py`
+and would not import without it. Shipping with attribution in the commit message was
+judged better than blocking a restart that a dozen fixes were waiting on. That trade may
+well have been right; **documenting a sweep is not the same as avoiding one**, and the
+message said so while the action still did it.
+
+The mitigation, for next time and written down because it was not obvious under time
+pressure: `git add -p` is unavailable non-interactively, but a subset of a file *can* be
+staged with `git diff -- <file>`, filtered to one's own hunks, piped through
+`git apply --cached`, and verified with `git diff --cached` before committing. That is
+the tool that was missing. "Stage by name" is necessary and was never sufficient.
+
+Both errors above share a shape with the bugs this document describes: **a plausible
+inference presented with more confidence than its evidence carried.** Neither changed a
+line of code, because both were caught before anything was built on them. The third is
+different in kind — it changed the repository, twice — and is recorded here because a
+rule that fails the same way twice is a rule with a gap in it, not a discipline problem.
 
 ---
 
