@@ -37650,11 +37650,27 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           };
           v.usePlayerWorklet = true;
           window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: AudioWorklet PCM player active (ctxRate=' + v.audioCtx.sampleRate + ', srcRate=' + PCM_OUT_RATE + ') — continuous resampling + jitter buffer on the audio thread; no per-chunk scheduling drift');
+        } else {
+          // audioWorklet missing entirely. This branch used to fall through in
+          // SILENCE — no warning, no log — straight onto the legacy scheduler.
+          console.warn('[voice] AudioContext.audioWorklet is unavailable — using the legacy per-chunk BufferSource scheduler, which is KNOWN to rasp progressively over long replies.');
         }
       } catch (err) {
         v.usePlayerWorklet = false;
         console.warn('[voice] AudioWorklet player unavailable — falling back to per-chunk BufferSource scheduling:', err);
       }
+      // WHICH PLAYBACK PATH IS LIVE — logged unconditionally, not behind
+      // FRIDAY_VOICE_DEBUG. "Raspy and hollow, getting worse as she reads"
+      // is the exact signature of the legacy branch (per-chunk createBuffer
+      // resets the browser's resampler at every chunk boundary, and playCursor
+      // accumulates scheduling error), and the two paths are audibly different.
+      // Deciding between them was previously impossible without turning on a
+      // debug flag and reproducing, so a report of rasp could not be answered.
+      // One line, once per session, so it always can be.
+      console.log('[voice] playback path=' + (v.usePlayerWorklet ? 'AudioWorklet ring buffer (good)' : 'legacy per-chunk scheduler (known progressive rasp)')
+        + ' ctxRate=' + v.audioCtx.sampleRate + 'Hz srcRate=' + PCM_OUT_RATE + 'Hz'
+        + ' pinned=' + (v.audioCtx.sampleRate === PCM_OUT_RATE)
+        + (v.audioCtx.sampleRate === PCM_OUT_RATE ? '' : ' — NOT pinned, so every chunk is resampled ' + PCM_OUT_RATE + '→' + v.audioCtx.sampleRate));
       const _voiceAmpLoop = () => {
         if (!v.audioCtx) {
           window._fridayHoloAmplitude = 0;
