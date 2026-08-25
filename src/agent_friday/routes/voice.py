@@ -44,6 +44,10 @@ from agent_friday.core import (
     _network_status,
     _ollama_available,
     login_required,
+    process_log,
+    process_register,
+    process_remove,
+    process_update,
     sock,
 )  # noqa: E501
 from agent_friday.services.agent import (
@@ -68,6 +72,7 @@ from agent_friday.services.voice_engine import (
     LIVE_MODEL_FALLBACK2,
     _VOICE_LIVE_TOOLS,
     _build_voice_live_tools,
+    _voice_tool_names,
     _get_live_model,
     _get_live_voice,
     _get_voice_language,
@@ -359,6 +364,50 @@ def _compose_final_voice_error(attempt_errors, key_source):
 # tts_pause lands while she's speaking, the fetch blocks with dead air, and the
 # turn resumes incoherently — the on-stage "freeze then stutter". The contract
 # is announce → act → confirm, one action at a time.
+#: Default ceiling on a SPOKEN reply, in tokens. ~300 tokens is ~225 words is
+#: ~90 seconds of speech — a generous backstop, not the target (the target is
+#: the LENGTH paragraph in the voice prompt, which asks for under 60 words).
+_VOICE_REPLY_TOKENS_DEFAULT = 300
+
+
+def _voice_reply_cap(settings=None) -> int:
+    """How many tokens a single spoken turn may generate.
+
+    THIS IS NOT ONLY A BREVITY DIAL — it is what keeps the local seat alive.
+
+    The local voice path called ``_generate_agent`` without a cap, so it
+    inherited that function's TEXT default of 16,384. llama.cpp counts the
+    requested generation against the context window, so a voice turn asked the
+    seat for:
+
+        13,669 (voice prompt = the full text-chat system prompt)
+      + 11,131 (all 67 tool schemas, which the tool budgeter passed as fitting)
+      + 16,384 (the unset reply cap)
+      = 41,184 tokens against a served window of 32,768
+
+    and gemma4:12b answered ``500 Context size has been exceeded`` (measured
+    2026-08-25, reproduced on demand). Because a vault-touching turn is
+    forbidden from retrying on a cloud provider, that 500 was the whole turn:
+    Friday could not call a single tool. The identical request with this cap at
+    300 succeeded in 19 seconds and called tools normally.
+
+    So "voice can't call tools" and "voice drones on" were ONE defect wearing
+    two faces — an unset spoken-reply length. Keep this small. A voice reply
+    that needs thousands of tokens is a background task, not a spoken turn.
+    """
+    try:
+        s = settings if settings is not None else (_load_settings() or {})
+        n = int(s.get("voice_max_tokens") or 0)
+    except Exception:
+        n = 0
+    # 0 means "unset" in settings today (the Gemini path reads it the same way)
+    # and MUST NOT mean "unlimited" here, which is the bug above.
+    if n <= 0:
+        return _VOICE_REPLY_TOKENS_DEFAULT
+    # A cap larger than the seat can hold is the same defect with a nicer name.
+    return max(64, min(n, 2048))
+
+
 VOICE_TOOL_CHOREOGRAPHY = (
     "TOOL CHOREOGRAPHY (voice): Before EVERY tool call, first finish speaking "
     "one short sentence announcing what you're about to do — for example "
@@ -369,6 +418,142 @@ VOICE_TOOL_CHOREOGRAPHY = (
     "result. One action at a time — finish announcing and confirming each "
     "before starting the next.\n\n"
 )
+
+
+def _voice_tool_surface_note():
+    """The authoritative list of tools the LIVE VOICE session actually has.
+
+    The voice system prompt is assembled from ``_get_friday_system_prompt()`` --
+    the TEXT-CHAT prompt -- whose "== AVAILABLE TOOLS ==" section advertises the
+    full text toolbox (read_file, write_file, run_command, browse_web,
+    search_email, draft_email, open_path, learn_skill, query_trust_graph,
+    get_briefing, the OS-control ring ...). The Live API is handed only
+    ``_VOICE_LIVE_TOOLS``. Every tool named in the prompt but absent from that
+    list is uncallable, and a voice model that believes it has a tool it cannot
+    invoke does the one thing left to it: it narrates the action ("Pulling those
+    numbers up now.") and nothing happens. That is indistinguishable from a lie.
+
+    This block is appended LAST, after the text-chat context, so it wins: it
+    replaces the advertised inventory with the real one and says plainly what to
+    do about everything else.
+    """
+    try:
+        # Generated from the RESOLVED surface -- the native table plus whatever
+        # of _VOICE_SHARED_TOOLS actually resolved out of the text registry --
+        # so this block cannot name a tool the Live API was not handed, which
+        # is the whole failure it exists to prevent.
+        names = _voice_tool_names()
+    except Exception:
+        names = []
+    header = (
+        "\n\n=== VOICE TOOL SURFACE (OVERRIDES ANY TOOL LIST ABOVE) ===\n"
+    )
+    if not names:
+        return (
+            header +
+            "You have NO callable tools in this voice session. Any tool named "
+            "earlier in this prompt is unavailable here. Never announce an action "
+            "you cannot perform - say plainly that you can't do it in voice and "
+            "offer to handle it in text chat instead.\n\n"
+        )
+    return (
+        header +
+        "This is a LIVE VOICE session. The tool list in the '== AVAILABLE TOOLS =='\n"
+        "section above describes the TEXT CHAT surface and does NOT apply here.\n"
+        "In voice you can call EXACTLY these " + str(len(names)) +
+        " tools, and nothing else:\n"
+        + "".join("  \u2022 " + n + "\n" for n in names) +
+        "\n"
+        "Anything named in that section but NOT in the list above - running "
+        "shell commands, browsing a URL's full text, drafting email, editing "
+        "the wiki, learning skills, the trust graph, briefings, the clipboard, "
+        "or mouse and keyboard control - is NOT callable in voice.\n\n"
+        "THE RULE: never announce an action you cannot actually take. If the user "
+        "asks for something outside the list above, say so in one plain sentence "
+        "(\"I can't draft email from voice mode - want me to start that as a "
+        "background task instead?\") and offer the nearest thing you CAN do. "
+        "Saying 'pulling that up now' or 'checking my records' when no tool ran "
+        "is a fabrication, exactly as bad as inventing the result.\n\n"
+        "THE FILE TOOLS ARE REAL AND THEY RUN ON THIS MACHINE. read_file, "
+        "write_file and open_path reach the user's actual disk - absolute paths "
+        "(C:\\...) or ~/ paths. Writing a briefing to the desktop and then "
+        "opening it is TWO calls, write_file then open_path with in_browser=true; "
+        "open_url is for web pages only and will refuse a local path. Never "
+        "invent an http:// URL to stand in for a file you just wrote. If a call "
+        "comes back with an error or a refusal, report THAT - do not describe the "
+        "file as though it appeared.\n\n"
+        "screenshot needs Computer Control switched on in Settings. If it comes "
+        "back denied, say the permission is off and offer to walk the user to the "
+        "toggle. Do not say you took one.\n\n"
+        "FOR ANYTHING SUBSTANTIAL, USE spawn_task. Research, analysis, drafting, "
+        "monitoring, or any multi-step job belongs in a background task. Call "
+        "spawn_task with a clear title and a full instruction, then tell the user "
+        "it is running in the Task Tray. Do not narrate the work as though you are "
+        "doing it inline - in voice you are not.\n\n"
+    )
+
+
+def _voice_orb_start(fname):
+    """Register the process orb for one live-voice tool call.
+
+    The orb is the user-visible EXECUTION RECEIPT. The text agent loop has
+    emitted one per tool call for a long time (services/agent.py
+    ``_orb_tool_trace``); the Gemini Live path emitted none, which meant the
+    strongest signal the user had -- "no orb appeared, so nothing ran" -- was
+    not actually load-bearing on this surface. It is now: every call that
+    reaches ``_voice_tool_run`` registers one, so an announced action with no
+    orb is narration, provably.
+
+    Returns the orb id, or None if registration failed (callers treat None as
+    "no orb" and carry on -- a receipt that cannot be written must never cost
+    the user the action).
+    """
+    try:
+        from agent_friday.services.agent import _tool_orb_meta
+        category, icon, _label = _tool_orb_meta(fname)
+    except Exception:
+        category, icon = "default", "⚡"
+    orb_id = f"voice-{uuid.uuid4().hex[:8]}"
+    try:
+        process_register(orb_id, name="Friday (voice)", label=fname,
+                         category=category, icon=icon, steps=[],
+                         model=_get_live_model())
+        return orb_id
+    except Exception:
+        return None
+
+
+def _voice_orb_finish(orb_id, fname, fargs, result, duration_ms):
+    """Close the orb with the call's outcome, tier-redacted.
+
+    Status is classified by the SAME sentinels the text path uses, so a denied
+    or failed voice tool reads as denied or failed in the tray rather than as a
+    success. Args and results go through ``_tier_safe_summary`` because
+    /api/processes is readable without the vault.
+    """
+    if not orb_id:
+        return
+    try:
+        from agent_friday.services.agent import (_tool_call_status,
+                                                 _tier_safe_summary)
+        status = _tool_call_status(result)
+        process_log(orb_id, f"tool {fname} -> {status} ({int(duration_ms)}ms)")
+        process_update(orb_id, progress=1.0,
+                       status="completed" if status == "ok" else "error",
+                       step={"type": "tool", "name": fname, "status": status,
+                             "args": _tier_safe_summary(fargs, kind="args"),
+                             "result": _tier_safe_summary(result, kind="result"),
+                             "duration_ms": int(duration_ms),
+                             "ts": _time.time()},
+                       result=_tier_safe_summary(result, limit=400, kind="result"))
+    except Exception:
+        pass
+    # Leave it on screen briefly so a sub-second tool call is still SEEN --
+    # an orb that appears and vanishes inside one frame is not a receipt.
+    try:
+        threading.Timer(6.0, lambda: process_remove(orb_id)).start()
+    except Exception:
+        pass
 
 
 def _build_realtime_input_config(types, interruption_mode="auto"):
@@ -841,13 +1026,58 @@ if sock is not None:
                 pass
             return
 
+        # ── Carry the authenticated identity into the turn ──────────────────
+        # Reaching this line MEANS the socket is authenticated: either no
+        # password is set, or the Flask session is logged in, or the origin is
+        # trusted loopback, or the UI token checked out. That fact then has to
+        # travel WITH the turn, because two gates downstream ask for it and the
+        # local voice path never told them:
+        #
+        #   * governance ring policy — `is_auth = ctx["authenticated"] or
+        #     ctx["is_background_task"]`. Ring 2 is EVERY network tool. With no
+        #     session_ctx the gate saw {} and denied search_news, search_web and
+        #     every other network op with "ring-2 network op requires
+        #     authenticated session". Friday, handed a governance refusal, told
+        #     Stephen she was locked out of the news — which he reasonably read
+        #     as the vault refusing him ON A LOCAL SESSION. The vault had
+        #     nothing to do with it and logged ALLOW / TIER_1 on the same call.
+        #   * zero-trust vault check_action — `session_ctx.get("provider",
+        #     "cloud")`. Absent a ctx it evaluated a LOCAL brain as cloud.
+        #
+        # /api/chat has always passed this (routes/chat.py). Voice was the only
+        # tool-using surface that did not, which is exactly why news worked in
+        # text chat and refused in voice.
+        #
+        # Captured HERE, at connect time, and never re-read later: `session` and
+        # `request` are request-context bound, and turns now run on their own
+        # thread where neither is available.
+        _ws_authenticated = bool(
+            (not FRIDAY_PASSWORD) or session.get("authenticated")
+            or _loopback_trusted() or _ui_tok_ok
+        )
+
         done = threading.Event()
+
+        # The thread the user has OPEN, carried by the client on the socket.
+        # A list, not a plain name, because the receive loop rebinds it when he
+        # switches conversations mid-call and _handle_turn must see the change.
+        # None means "no open thread" -- _persist_voice_turn falls back to Main
+        # explicitly for that case rather than sending everyone there.
+        _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
+
+        # Turns now run on their own thread (see _spawn_turn), so audio frames
+        # and the loop's heartbeats reach ws.send() concurrently. A WebSocket
+        # frame is not atomic across threads; two interleaved sends corrupt
+        # both. One lock, held only for the send itself.
+        _send_lock = threading.Lock()
 
         def _send(obj):
             if done.is_set():
                 return False
             try:
-                ws.send(json.dumps(obj))
+                payload = json.dumps(obj)
+                with _send_lock:
+                    ws.send(payload)
                 return True
             except ConnectionClosed:
                 done.set()
@@ -934,9 +1164,27 @@ if sock is not None:
             "VOICE conversation with ON-DEVICE speech-to-text and "
             "text-to-speech. Speak like a person: natural, warm, contractions.\n"
             "NEVER use markdown — no asterisks, headers, or bullets; this is read "
-            "aloud. Keep replies conversational and reasonably concise; use short, "
-            "clear sentences with natural pauses. Go deeper only when asked to "
-            "explain or 'tell me about' something.\n"
+            "aloud. An asterisk is SPOKEN as 'asterisk', so a bulleted list is "
+            "unlistenable. Numbered points must be said the way a person says "
+            "them: 'first … second …', inside ordinary sentences.\n"
+            # LENGTH. This is the local path's ONLY brevity control that the
+            # model itself can honour, and it has to be concrete: "reasonably
+            # concise" produced 183-word answers to "how does your vault work"
+            # (measured 2026-08-25) — 73 seconds of uninterruptible speech for
+            # one question. Even frontier speech-to-speech models still need an
+            # explicit "avoid long answers" line; no model choice removes this.
+            "LENGTH — THIS IS SPOKEN, SO LENGTH IS TIME. Answer in ONE to THREE "
+            "short sentences, under about 60 spoken words. That is the DEFAULT "
+            "for every turn, including questions about yourself, your systems, "
+            "the vault, or how you work. Give the single most useful answer, "
+            "then STOP and let him respond — a voice reply is a turn in a "
+            "conversation, not a briefing. Never deliver a list, a walkthrough, "
+            "or a multi-paragraph explanation unless he explicitly asks you to "
+            "go deep ('walk me through', 'give me the full version', 'go on'), "
+            "and even then deliver it in chunks and stop for his reply between "
+            "them. If the honest answer is genuinely long, say the headline in "
+            "one sentence and offer the detail: 'The short version is X — want "
+            "the long one?'\n"
             + ("Your reasoning also runs locally, so you CAN discuss private "
                "vault content — it never leaves the machine.\n\n"
                if _is_local_brain else "\n")
@@ -957,14 +1205,31 @@ if sock is not None:
         vad = VADEndpointer(silence_ms=int(settings.get("voice_silence_ms") or 800))
         turn_log = []
         _turn_lock = threading.Lock()
+        # ── Barge-in on the LOCAL path ──────────────────────────────────────
+        # The client has always sent {"type":"barge"} when Stephen hits Escape
+        # or talks over her; /ws/live acts on it, and this handler dropped it on
+        # the floor — it decoded only audio/conversation/text/end, so `barge`
+        # fell through every branch and vanished. Worse, it could not have been
+        # read anyway: _handle_turn ran INLINE in the receive loop, so for the
+        # whole think-and-speak window (20s+ on a local seat) nothing called
+        # ws.receive() at all. Local voice was not "hard to interrupt", it was
+        # structurally uninterruptible — which is the real reason she reads as
+        # droning next to Gemini, whose prompt actually asks for LONGER answers.
+        #
+        # Two pieces, both needed: this flag, which _speak checks between
+        # sentences, and running each turn on its own thread (below) so the loop
+        # stays free to receive the barge that sets it.
+        _barge = threading.Event()
 
         def _speak(text):
             """Synthesize `text` sentence-by-sentence → 24 kHz PCM16 → audio frames.
 
             Per-sentence so Friday starts speaking the first sentence while later
-            ones are still being synthesized (the key latency mitigation)."""
+            ones are still being synthesized (the key latency mitigation). The
+            per-sentence boundary is also the barge-in checkpoint: one sentence
+            is the worst-case delay between Stephen interrupting and silence."""
             for sentence in split_sentences(text):
-                if done.is_set():
+                if done.is_set() or _barge.is_set():
                     return
                 try:
                     pcm = engine.synthesize(sentence)
@@ -985,6 +1250,9 @@ if sock is not None:
             user_text = (user_text or "").strip()
             if not user_text or done.is_set():
                 return
+            # A new turn clears the previous turn's barge. Without this the
+            # first interruption would mute every reply that followed it.
+            _barge.clear()
             with _turn_lock:
                 _send({"type": "input_transcript", "text": user_text})
                 _send({"type": "status", "text": "thinking"})
@@ -1018,7 +1286,10 @@ if sock is not None:
                         [{"role": "user", "content": user_text}],
                         system=system_prompt,
                         model=_brain,
+                        max_tokens=_voice_reply_cap(settings),
                         temperature=settings.get("temperature"),
+                        session_ctx={"authenticated": _ws_authenticated,
+                                     "provider": _prov},
                         workspace=settings.get("active_workspace") or "",
                     )
                 except Exception as e:
@@ -1032,7 +1303,8 @@ if sock is not None:
                        "user_text": user_text, "agent_text": reply})
                 turn_log.append((user_text, reply))
                 try:
-                    _persist_voice_turn(user_text, reply)
+                    _persist_voice_turn(user_text, reply,
+                                        conversation_id=_open_cid[0])
                 except Exception:
                     pass
                 # Deterministic voice actions (open/navigate), same as the Gemini path.
@@ -1042,6 +1314,18 @@ if sock is not None:
                         _send({"type": "action", "actions": _vacts})
                 except Exception:
                     pass
+
+        def _spawn_turn(user_text):
+            """Run a turn OFF the receive loop so the socket stays readable.
+
+            Calling _handle_turn inline blocked ws.receive() for the entire
+            think-and-speak window, so a barge sent while she was talking was
+            not merely ignored — it could not be delivered until she had already
+            finished. _turn_lock still serialises turns, so this changes the
+            ordering of nothing; it only stops the loop from going deaf.
+            """
+            threading.Thread(target=_handle_turn, args=(user_text,),
+                             daemon=True).start()
 
         _last_hb = _time.time()
         try:
@@ -1083,10 +1367,25 @@ if sock is not None:
                         except Exception as e:
                             print(f"[voice-local] ASR failed: {e}")
                         if text:
-                            _handle_turn(text)
+                            _spawn_turn(text)
+                elif t == "barge":
+                    # Escape, or talking over her. The client has always sent
+                    # this; this path never listened for it. Stop speaking at
+                    # the next sentence boundary and tell the client, using the
+                    # SAME {"type":"interrupted"} frame /ws/live sends, because
+                    # that is what re-opens the browser's playback gate. Sending
+                    # anything else here leaves the gate shut and the next reply
+                    # inaudible.
+                    _barge.set()
+                    _send({"type": "interrupted"})
+                    _send({"type": "status", "text": "listening"})
+                elif t == "conversation":
+                    # He switched threads while the mic was live. Voice follows
+                    # the conversation on screen, so retarget from here on.
+                    _open_cid[0] = (msg.get("id") or "").strip() or None
                 elif t == "text" and msg.get("text"):
                     # Typed/queued turn (e.g. News Anchor "read me the Front Page").
-                    _handle_turn(msg["text"])
+                    _spawn_turn(msg["text"])
                 elif t == "end":
                     # Flush any buffered speech, then close.
                     utterance = vad.flush()
@@ -1348,9 +1647,10 @@ if sock is not None:
             _vp = get_voice_personality()
             _vp.affective_dialog = live_affective
             system_instruction = _vp.build_system_instruction(
-                voice_prefix + full_ctx, affective_dialog=live_affective)
+                voice_prefix + full_ctx + _voice_tool_surface_note(),
+                affective_dialog=live_affective)
         except Exception:
-            system_instruction = voice_prefix + full_ctx
+            system_instruction = voice_prefix + full_ctx + _voice_tool_surface_note()
         if live_proactive is None:
             live_proactive = _model_is_25
         live_proactive = bool(live_proactive)
@@ -1442,14 +1742,28 @@ if sock is not None:
         # Default on; settable via voice_tools. The deterministic _voice_actions_for
         # path still runs every turn as a belt-and-suspenders fallback for nav/open.
         live_voice_tools = live_settings.get("voice_tools", True)
+        if not live_voice_tools:
+            _log.warning("voice live tools DISABLED by settings['voice_tools'] - "
+                         "Friday will have no callable tools this session")
         if live_voice_tools:
             try:
                 _vtools = _build_voice_live_tools(types)
                 if _vtools:
                     live_cfg_kwargs["tools"] = _vtools
-                    _vlog(f'voice tools enabled: {len(_VOICE_LIVE_TOOLS)} declarations')
+                    # Log the RESOLVED names, not the native table's length --
+                    # an undercount here is how a surface drifts unnoticed.
+                    _vnames = _voice_tool_names()
+                    _vlog(f'voice tools enabled: {len(_vnames)} declarations')
+                    _log.info("voice live tools enabled: %d declarations (%s)",
+                              len(_vnames), ", ".join(_vnames))
+                else:
+                    _log.warning("voice live tools: builder returned NOTHING - "
+                                 "this session runs tool-free and will narrate "
+                                 "actions it cannot take")
             except Exception as _te:
                 _vlog(f'voice tools build failed (continuing tool-free): {_te}')
+                _log.error("voice live tools build FAILED (continuing tool-free): %s",
+                           _te, exc_info=True)
 
         # Session resumption: ask Gemini to emit resumption handles. A single Live
         # session is capped (~10-15 min of audio, plus a context-window cap); when
@@ -1464,6 +1778,12 @@ if sock is not None:
         # live_cfg_kwargs (affective/proactive stripped per endpoint+model).
 
         done = threading.Event()
+
+        # The thread the user has OPEN, carried by the client on the socket, and
+        # rebound below if he switches conversations mid-call. Same contract as
+        # /ws/voice-local. None means "no open thread", which
+        # _persist_voice_turn resolves to Main as an explicit fallback.
+        _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
 
         def _safe_send(obj):
             if done.is_set():
@@ -1569,7 +1889,8 @@ if sock is not None:
                 if not user_text and not agent_text:
                     return
                 try:
-                    _persist_voice_turn(user_text, agent_text)
+                    _persist_voice_turn(user_text, agent_text,
+                                        conversation_id=_open_cid[0])
                 except Exception as e:
                     print(f'[live] persist_voice_turn error: {e}')
                 _safe_send({
@@ -1665,7 +1986,20 @@ if sock is not None:
                                 fargs = {}
                             fid = getattr(fc, 'id', None)
                             _vlog(f'TOOL CALL: {fname}({fargs})')
+                            # Unconditional: _vlog is gated behind
+                            # FRIDAY_VOICE_DEBUG and the tray DEVNULLs stdio,
+                            # so without this a voice tool call (or its
+                            # failure) is invisible after the fact.
+                            _log.info("voice tool call: %s(%s)", fname, fargs)
                             _safe_send({"type": "status", "text": f"⚙ {fname}"})
+                            # PROCESS ORB -- the execution receipt. Every text
+                            # tool call registers one (services/agent.py
+                            # _orb_tool_trace); the live voice path registered
+                            # none, so "no orb appeared" could not distinguish
+                            # a tool that never ran from one that ran silently.
+                            # Now it can: an orb is proof of execution, and its
+                            # absence is proof of narration.
+                            _orb_id, _orb_t0 = _voice_orb_start(fname), _time.time()
                             try:
                                 result = await asyncio.to_thread(
                                     _voice_tool_run, fname, fargs, _safe_send)
@@ -1691,6 +2025,10 @@ if sock is not None:
                                 result = _gated
                             except Exception as _ge:
                                 _vlog(f'tool-result gating unavailable: {_ge}')
+                                _log.warning("voice tool-result gating unavailable: %s", _ge)
+                            _log.info("voice tool result: %s -> %d chars", fname, len(result or ''))
+                            _voice_orb_finish(_orb_id, fname, fargs, result,
+                                              (_time.time() - _orb_t0) * 1000.0)
                             _kw = {"name": fname, "response": {"result": result}}
                             if fid is not None:
                                 _kw["id"] = fid
@@ -1704,6 +2042,8 @@ if sock is not None:
                                 _vlog(f'sent {len(frs)} tool response(s) back to Gemini')
                             except Exception as _se:
                                 _vlog(f'send_tool_response failed: {_se}')
+                                _log.error("voice send_tool_response failed: %s", _se,
+                                           exc_info=True)
 
                     # reader()/writer() are bound to ONE Gemini session via `sess`
                     # and stop on either `done` (browser closed — terminal) or
@@ -1799,6 +2139,11 @@ if sock is not None:
                                     # Short manual cooldown only.
                                     if (_time.time() - _last_barge_ts[0]) > 0.5:
                                         await _fire_barge(sess, 'client request')
+                                elif t == 'conversation':
+                                    # He switched threads while the mic was
+                                    # live. Voice follows the conversation on
+                                    # screen, so retarget from here on.
+                                    _open_cid[0] = (msg.get('id') or '').strip() or None
                                 elif t == 'speaking':
                                     # Client playback transition — the precise
                                     # barge window. A closed→open transition is
@@ -1981,6 +2326,8 @@ if sock is not None:
                                             return
                                     except Exception as e:
                                         _vlog(f'recv processing ERROR: {type(e).__name__}: {e}')
+                                        _log.error("voice recv processing error: %s: %s",
+                                                   type(e).__name__, e, exc_info=True)
                                         traceback.print_exc()
                                 # session.receive() iterator ends after a turn; re-enter to keep listening
                                 _vlog(f'receive iterator completed (after {_gemini_chunks_received} chunks), re-entering for next turn')
