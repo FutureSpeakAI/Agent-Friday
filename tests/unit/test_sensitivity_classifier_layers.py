@@ -80,6 +80,9 @@ class TestAggregationAndDefaults:
 
     def test_most_sensitive_wins(self, monkeypatch):
         # regex→0, keyword→PRIVATE, presidio→SENSITIVE ⇒ SENSITIVE
+        # Presidio only contributes to the aggregate under FRIDAY_PRESIDIO_ENFORCE;
+        # by default it runs in shadow mode and influences nothing (see below).
+        monkeypatch.setenv("FRIDAY_PRESIDIO_ENFORCE", "1")
         monkeypatch.setattr(sc, "_embedding_tier", lambda t: (0, 0.0))
         monkeypatch.setattr(sc, "_local_llm_tier", lambda t: 0)
         monkeypatch.setattr(sc, "_presidio_tier", lambda t: Tier.SENSITIVE)
@@ -87,10 +90,25 @@ class TestAggregationAndDefaults:
 
     def test_two_private_signals_escalate(self, monkeypatch):
         # keyword PRIVATE + presidio PRIVATE → escalate to SENSITIVE
+        monkeypatch.setenv("FRIDAY_PRESIDIO_ENFORCE", "1")
         monkeypatch.setattr(sc, "_embedding_tier", lambda t: (0, 0.0))
         monkeypatch.setattr(sc, "_local_llm_tier", lambda t: 0)
         monkeypatch.setattr(sc, "_presidio_tier", lambda t: Tier.PRIVATE)
         assert classify("my home address") == Tier.SENSITIVE
+
+    def test_presidio_does_not_influence_by_default(self, monkeypatch):
+        """SHADOW MODE IS THE DEFAULT.
+
+        Without FRIDAY_PRESIDIO_ENFORCE, a Presidio verdict of SENSITIVE must
+        change nothing. This is the guard on the whole shadow-mode design: if
+        it ever fails, Presidio has silently started making decisions, and the
+        measured 50% false-positive rate on benign prompts becomes live.
+        """
+        monkeypatch.delenv("FRIDAY_PRESIDIO_ENFORCE", raising=False)
+        monkeypatch.setattr(sc, "_embedding_tier", lambda t: (0, 0.0))
+        monkeypatch.setattr(sc, "_local_llm_tier", lambda t: 0)
+        monkeypatch.setattr(sc, "_presidio_tier", lambda t: Tier.SENSITIVE)
+        assert classify("the weather tomorrow") == Tier.PUBLIC
 
     def test_embedding_semantic_flag(self, monkeypatch):
         # Even with no keyword/regex hit, a high-similarity embedding → SENSITIVE.
