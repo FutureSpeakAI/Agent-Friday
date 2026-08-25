@@ -12,6 +12,34 @@ Architecture:
 These are separate by design. The router can be wrong or bypassed; the gate is
 the last line of defense and cannot be bypassed without modifying this module.
 
+ENVELOPE COVERAGE (audited 2026-08-24). The gate's promise is "nothing
+sensitive leaves this device", which only equals "scan the messages" if every
+prose-bearing field of the payload is gated. Currently gated:
+
+  system (string AND block-list form)      messages[].content (string)
+  content[].text                           content[].tool_result
+  content[].tool_use.input (values)        tools[].description   (mcp_* only)
+  tools[].input_schema / .parameters prose (mcp_* only, description/title)
+
+both in the Anthropic top-level shape and the OpenAI ``function``-nested shape.
+
+NOT gated, and deliberately so: image and document blocks (binary — a text
+classifier cannot judge them; record_binary_egress accounts for them instead),
+and schema machinery — types, ``required``, property names, ``enum`` values —
+because redacting an enum member makes a tool uncallable rather than private.
+
+WHERE A REAL PII LIBRARY WOULD HELP (Presidio and friends are under separate
+evaluation; nothing here presumes that decision). The classifier is keyword-
+and pattern-driven, and the deterministic identifier scrub (core._scrub_pii,
+run at §5.5 step 1) covers only ``system``/``messages``/``prompt``. The tool
+paths added on 2026-08-24 therefore get the TIER gate but not the scrub, so
+they fail closed — an argument containing one email address is withheld whole
+rather than having the address masked and the rest preserved. That is safe but
+blunt. A real entity recogniser would let all these paths mask spans instead of
+withholding fields, which is a capability win, not a safety one; the safety
+property does not depend on it. If one is adopted, the seams are _gate_text
+(span decisions) and _scrub_all (identifier masking) — not new call sites.
+
 Default: REDACT on uncertainty — fail-closed, not fail-open.
 Local providers bypass this gate; data stays on-device. "Local" is decided by
 the provider REGISTRY's egress classification (classification: "local" + a
@@ -489,6 +517,50 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
 
 def _gate_text(text: str, provider: str, field: str,
                log_path: Path | None = None) -> str:
+    """Gate a text string for a cloud provider, rescuing JSON field-wise.
+
+    This is the wrapper every caller reaches. It runs the span-wise gate below
+    and, if that withheld something from a JSON payload, descends into the
+    structure instead of surrendering the whole result.
+
+    THE BUG THIS FIXES (found 2026-08-24). The span-wise rescue splits on blank
+    lines and newlines. `json.dumps` emits ONE LINE with no separators, so for
+    every JSON-returning tool the rescue never engaged: a single incidental
+    phrase anywhere in the result replaced the ENTIRE payload with a
+    125-character notice. Measured — a 636-character news result came back as
+    125 characters, which is why voice could call search_news and never read
+    the answer back.
+
+    Deliberately placed HERE rather than at the tool-result call site, because
+    the callers that need it do not share one. The voice leg gates its tool
+    results by calling this function directly (routes/voice.py), the text-chat
+    leg arrives via _gate_tool_result, and workers via gate_worker_payload.
+    Fixing the wrapper fixes all three without touching any of them.
+
+    Whole-value first, descend second: a payload that passes as a whole costs
+    exactly one classification, so nothing on the common path slows down. The
+    field-wise walk is paid only by results that would otherwise have been
+    destroyed outright — the same bargain the span pass already makes.
+
+    Policy is unchanged and fail-closed: every field is judged by exactly the
+    rules the whole value would have been, a field that cannot be salvaged is
+    still withheld, and non-JSON text keeps its previous behaviour exactly.
+    """
+    whole = _gate_text_span(text, provider, field, log_path)
+    if whole == text:
+        return whole                      # nothing withheld — no need to descend
+    parsed = _try_json(text)
+    if parsed is None:
+        return whole                      # not JSON; the span pass already ran
+    gated = _gate_json_value(parsed, provider, field, log_path)
+    try:
+        return json.dumps(gated, default=str)
+    except (TypeError, ValueError):
+        return whole                      # unserialisable → keep the safe answer
+
+
+def _gate_text_span(text: str, provider: str, field: str,
+                    log_path: Path | None = None) -> str:
     """Gate a single text string for a cloud provider.
 
     Multi-paragraph fields are gated SPAN-WISE: only the offending paragraphs
@@ -645,6 +717,9 @@ def _gate_messages(messages: list, provider: str,
                 elif isinstance(part, dict) and part.get("type") == "tool_result":
                     new_parts.append(_gate_tool_result(
                         part, provider, f"message[{i}].content[{j}]", log_path))
+                elif isinstance(part, dict) and part.get("type") == "tool_use":
+                    new_parts.append(_gate_tool_use(
+                        part, provider, f"message[{i}].content[{j}]", log_path))
                 else:
                     new_parts.append(part)
             gated.append({**msg, "content": new_parts})
@@ -668,6 +743,57 @@ _MESSAGE_WITHHELD = ("[EGRESS-GATE: message withheld — it stayed on this "
 _TOOL_RESULT_WITHHELD = ("[tool result withheld by egress gate — SENSITIVE "
                          "content stays on this device; use a local model to "
                          "work with it]")
+
+
+# What the model sees in place of a single withheld JSON field. Short on
+# purpose: a result with many private fields should stay readable, not turn
+# into a wall of identical notices.
+_FIELD_WITHHELD = "[withheld by egress gate]"
+
+
+def _try_json(text: str):
+    """Parse a tool result as JSON, or return None if it is not JSON.
+
+    Only containers count. A bare JSON scalar ("42", or a quoted string) has no
+    fields to descend into, so treating it as structured buys nothing and would
+    only re-serialise it into a different shape than it arrived in.
+    """
+    t = (text or "").lstrip()
+    if not t or t[0] not in "{[":
+        return None            # cheap reject before paying for a parse
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
+
+
+def _gate_json_value(node, provider: str, field: str,
+                     log_path: Path | None = None):
+    """Gate every string VALUE in a parsed JSON tool result; keep every key.
+
+    Keys are structure, not content — gating them would corrupt the result into
+    something the model cannot read. Numbers, booleans and null carry no prose
+    for a classifier to judge and pass through untouched.
+
+    Calls the SPAN gate, not the wrapper: descending is already happening here,
+    structurally, over the parsed object. Routing back through the wrapper
+    would let a string field that happens to look like JSON start a second
+    descent, and reentrancy is not something the last security boundary in the
+    codebase should have to reason about.
+    """
+    if isinstance(node, str):
+        if not node:
+            return node
+        g = _gate_text_span(node, provider, field, log_path)
+        return g if g else _FIELD_WITHHELD
+    if isinstance(node, dict):
+        return {k: _gate_json_value(v, provider, f"{field}.{k}", log_path)
+                for k, v in node.items()}
+    if isinstance(node, list):
+        return [_gate_json_value(v, provider, f"{field}[{i}]", log_path)
+                for i, v in enumerate(node)]
+    return node
 
 
 def _gate_tool_result(part: dict, provider: str, field: str,
@@ -698,6 +824,186 @@ def _gate_tool_result(part: dict, provider: str, field: str,
     return part
 
 
+# What the model sees in place of a withheld tool ARGUMENT value.
+_ARG_WITHHELD = "[withheld by egress gate]"
+
+
+# ── Tool-definition classification cache ──────────────────────────────────────
+# Tool DEFINITIONS are static: first-party descriptions ship in the binary, and
+# an MCP server's description + schema are fixed at registration and re-sent,
+# byte-identical, on every single cloud call. Classifying them per call is pure
+# repeat work, and it is not free. Measured 2026-08-24, 112 MCP tools with six
+# schema properties each, steady state (classifier models already warm, so this
+# excludes the ~25s one-time lazy load that dominates any first measurement):
+#
+#     before this cache, gating descriptions only          2,930 ms per call
+#     with this cache, gating descriptions AND schema        700 ms per call
+#
+# — 4.2x faster while classifying 7x more text (784 strings vs 112). Without
+# the cache the same widened coverage would have cost ~19s per call, which is
+# what makes this a prerequisite for the schema gating rather than a nicety.
+#
+# Scoped deliberately to tool-definition text and NOTHING else. User content —
+# messages, tool arguments, tool results — is never cached: it is unbounded,
+# it is the sensitive material, and holding it in a module-level dict for the
+# life of the process is exactly the sort of quiet copy this gate exists to
+# prevent. The never-send check is also left OUTSIDE the cache (it runs on
+# every call, in _gate_text) because that list can change at runtime and a
+# floor that a stale cache can hold open is not a floor.
+_TOOL_TIER_CACHE: dict[str, int] = {}
+_TOOL_TIER_LOCK = threading.Lock()
+_TOOL_TIER_MAX = 8192
+
+
+def _classify_tool_text(text: str) -> int:
+    """_classify_cloud for static tool-definition prose, memoised by exact text."""
+    with _TOOL_TIER_LOCK:
+        hit = _TOOL_TIER_CACHE.get(text)
+    if hit is not None:
+        return hit
+    tier = _classify_cloud(text)
+    with _TOOL_TIER_LOCK:
+        if len(_TOOL_TIER_CACHE) >= _TOOL_TIER_MAX:
+            _TOOL_TIER_CACHE.clear()  # bounded; a rebuild costs one slow call
+        _TOOL_TIER_CACHE[text] = tier
+    return tier
+
+
+def _gate_tool_prose(text: str, provider: str, field: str,
+                     log_path: Path | None = None) -> str:
+    """Gate one static tool-definition string (a description or schema title).
+
+    Tool prose is short, single-paragraph, and author-written, so the span-wise
+    paragraph logic in _gate_text buys nothing here — but the never-send floor
+    still applies, and it is re-checked on every call rather than cached.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        _never = _jg.never_send_hits(text)
+    except Exception:
+        _never = []
+    if _never:
+        _log(provider, field, Tier.SENSITIVE, "block",
+             f"never-send material present ({len(_never)} token(s)) — payload blocked",
+             log_path)
+        raise NeverSendBlocked(
+            f"This payload contains material on your never-send list "
+            f"({len(_never)} match(es) in {field}), so I did not send it to "
+            f"{provider}. Nothing was redacted and sent — the whole call was "
+            f"stopped. Use a local model to work with this."
+        )
+    if _classify_tool_text(text) > Tier.PUBLIC:
+        _log(provider, field, Tier.PRIVATE, "redact", "sensitive-tool-prose",
+             log_path)
+        return ""
+    _log(provider, field, Tier.PUBLIC, "allow", "public-tool-prose", log_path)
+    return text
+
+
+def _tool_view(tool: dict) -> tuple[dict, str]:
+    """Return (the dict actually holding name/description, the schema key).
+
+    Two wire shapes carry the same tool. Anthropic puts name/description/
+    input_schema at the top level; the OpenAI function shape nests
+    name/description/parameters under ``function`` (built by
+    routing.model_router.anthropic_to_openai_tools).
+
+    The gate used to read the top level only, so on every openai-compatible
+    CLOUD provider — openai, openrouter, any openai-shaped cloud seat — the
+    name came back "" , failed the ``mcp_`` prefix test, and the description
+    travelled ungated. The Anthropic path withheld the very same string. That
+    is not a policy difference, it is the gate reading the wrong envelope
+    (found 2026-08-24).
+    """
+    inner = tool.get("function")
+    if isinstance(inner, dict) and ("name" in inner or "description" in inner):
+        return inner, "parameters"
+    return tool, "input_schema"
+
+
+def _gate_schema_prose(node, provider: str, field: str,
+                       log_path: Path | None = None):
+    """Gate the PROSE inside a third-party tool schema, and only the prose.
+
+    An MCP server authors its input schema as well as its description, and the
+    schema is prose-bearing: ``description`` and ``title`` on every property,
+    nested arbitrarily deep. Only the top-level description was ever replaced,
+    so everything a server wrote into its schema reached the cloud verbatim.
+
+    Deliberately narrow: types, ``required`` lists, property NAMES and ``enum``
+    VALUES are machinery, not prose. Redacting an enum member does not make a
+    tool private, it makes it uncallable — the model must send the exact string
+    back. A withheld description degrades capability; a withheld enum destroys
+    it. So structure is copied through untouched and only the two prose keys
+    are gated.
+    """
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            if k in ("description", "title") and isinstance(v, str) and v:
+                g = _gate_tool_prose(v, provider, f"{field}.{k}", log_path)
+                out[k] = g if g else _ARG_WITHHELD
+            else:
+                out[k] = _gate_schema_prose(v, provider, f"{field}.{k}", log_path)
+        return out
+    if isinstance(node, list):
+        return [_gate_schema_prose(v, provider, f"{field}[{i}]", log_path)
+                for i, v in enumerate(node)]
+    return node
+
+
+def _gate_arg_values(node, provider: str, field: str,
+                     log_path: Path | None = None):
+    """Gate every STRING VALUE inside a tool_use argument object.
+
+    Argument names are chosen by whoever wrote the tool, so there is no key
+    whitelist to gate against — which is exactly how this was missed. The gate
+    walked dict keys named content/text/system/prompt; a server whose argument
+    is called ``q`` or ``body`` fell straight through. Here every string value
+    at any depth is gated and every KEY is preserved, so the object keeps the
+    shape the provider expects.
+    """
+    if isinstance(node, str):
+        if not node:
+            return node
+        g = _gate_text(node, provider, field, log_path)
+        return g if g else _ARG_WITHHELD
+    if isinstance(node, dict):
+        return {k: _gate_arg_values(v, provider, f"{field}.{k}", log_path)
+                for k, v in node.items()}
+    if isinstance(node, list):
+        return [_gate_arg_values(v, provider, f"{field}[{i}]", log_path)
+                for i, v in enumerate(node)]
+    return node  # ints, bools, None — nothing for a text classifier to judge
+
+
+def _gate_tool_use(part: dict, provider: str, field: str,
+                   log_path: Path | None = None) -> dict:
+    """Gate the arguments of an assistant tool_use block replayed in history.
+
+    The agent loop echoes each assistant tool_use back into the conversation
+    (services/agent.py) so the next turn has the context. Those arguments are
+    real user data — what was written to the vault, who a message was
+    addressed to — and they were neither tier-gated (``tool_use`` is not one of
+    the block types _gate_messages handled) nor PII-scrubbed (``input`` is not
+    one of the keys _scrub_all recurses into).
+
+    On a same-provider turn this re-sends what that provider itself authored.
+    The leak is a history assembled against one seat and replayed to another:
+    a local seat that falls back to cloud carries its own tool calls with it.
+
+    ``id``/``name``/``type`` are left alone. Anthropic pairs tool_use to
+    tool_result by id, so touching them would turn a redaction into a 400.
+    """
+    inp = part.get("input")
+    if not isinstance(inp, (dict, list, str)):
+        return part
+    return {**part, "input": _gate_arg_values(
+        inp, provider, f"{field}.tool_use.input", log_path)}
+
+
 def _gate_tools(tools: list, provider: str,
                 log_path: Path | None = None) -> list:
     """Redact tool descriptions that could carry third-party context.
@@ -725,20 +1031,41 @@ def _gate_tools(tools: list, provider: str,
         if not isinstance(tool, dict):
             gated.append(tool)
             continue
-        name = tool.get("name") or ""
-        desc = tool.get("description", "")
-        if not (desc and name.startswith("mcp_")):
+        # Read whichever envelope this tool arrived in (Anthropic top-level or
+        # OpenAI function-nested) so the same policy applies to both.
+        holder, schema_key = _tool_view(tool)
+        name = holder.get("name") or ""
+        if not name.startswith("mcp_"):
             gated.append(tool)
             continue
-        if _classify_cloud(desc) > Tier.PUBLIC:
+
+        new_holder = dict(holder)
+        changed = False
+
+        desc = holder.get("description", "")
+        if desc and _classify_tool_text(desc) > Tier.PUBLIC:
             _log(provider, "tool.description", Tier.PRIVATE,
                  "redact", "sensitive-tool-desc", log_path)
-            gated.append({**tool, "description": (
+            new_holder["description"] = (
                 f"{name}: description withheld by the egress gate because it "
                 f"contained content classified as private. The tool is still "
-                f"callable; its parameters are unchanged.")})
-        else:
+                f"callable; its parameters are unchanged.")
+            changed = True
+
+        schema = holder.get(schema_key)
+        if isinstance(schema, dict):
+            gated_schema = _gate_schema_prose(
+                schema, provider, f"tool[{name}].{schema_key}", log_path)
+            if gated_schema != schema:
+                new_holder[schema_key] = gated_schema
+                changed = True
+
+        if not changed:
             gated.append(tool)
+        elif holder is tool:
+            gated.append(new_holder)
+        else:
+            gated.append({**tool, "function": new_holder})
     return gated
 
 
@@ -896,11 +1223,27 @@ def seal_outbound(
         ) from e
 
     # ── §5.5 steps 2-4: classify, judge, verify ──
-    # System prompt
-    if "system" in sealed and isinstance(sealed["system"], str):
-        sealed["system"] = _gate_text(
-            sealed["system"], provider, "system", log_path
-        )
+    # System prompt. Anthropic accepts it as a plain string OR as a list of
+    # text blocks — the shape prompt caching requires, because cache_control
+    # rides on the block. Gating only the string form meant adopting block-form
+    # caching would have silently un-gated the system prompt: the scrub still
+    # ran (it recurses "text" keys) so identifiers were masked, but the TIER
+    # gate never saw it and prose like a custody discussion travelled whole.
+    # Nothing builds it that way today; this covers it before anything does.
+    if "system" in sealed:
+        _sys = sealed["system"]
+        if isinstance(_sys, str):
+            sealed["system"] = _gate_text(_sys, provider, "system", log_path)
+        elif isinstance(_sys, list):
+            _blocks = []
+            for _k, _b in enumerate(_sys):
+                if isinstance(_b, dict) and _b.get("type") == "text":
+                    _blocks.append({**_b, "text": _gate_text(
+                        _b.get("text", ""), provider, f"system[{_k}].text",
+                        log_path)})
+                else:
+                    _blocks.append(_b)
+            sealed["system"] = _blocks
 
     # Message history (Anthropic format: list of dicts)
     if "messages" in sealed and isinstance(sealed["messages"], list):
