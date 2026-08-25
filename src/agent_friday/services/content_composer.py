@@ -73,9 +73,19 @@ def _gate_prompt(prompt: str, provider: str = COMPOSE_PROVIDER) -> str:
 
 
 def _friday_prompt() -> str:
-    """SOUL.md + user model + heuristics via the standard system prompt."""
-    from agent_friday.services.model_router import _get_friday_system_prompt
-    return _get_friday_system_prompt(workspace="content")
+    """SOUL.md + user model + heuristics via the standard system prompt.
+
+    Composition always rides the fixed cloud rail (COMPOSE_PROVIDER —
+    there is no local leg here to route around), so the prompt is gated for
+    that provider directly rather than predicted: TIER_2 vault/self-knowledge
+    sections are redacted before `_generate` ever sees them, the same
+    boundary `_gate_prompt` already applies to the user-authored post body.
+    """
+    from agent_friday.services.model_router import (
+        _gated_vault_control, _get_friday_system_prompt)
+    return _get_friday_system_prompt(
+        workspace="content", provider=COMPOSE_PROVIDER,
+        vault_control=_gated_vault_control())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

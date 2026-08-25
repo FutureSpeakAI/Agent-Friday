@@ -556,6 +556,78 @@ def _voice_orb_finish(orb_id, fname, fargs, result, duration_ms):
         pass
 
 
+# What the live.text path sends to Gemini in place of a withheld/blocked
+# typed message. Local to voice.py — egress_gate._MESSAGE_WITHHELD is worded
+# for a chat *turn* ("their last message"); this is worded for a live voice
+# reply reading it back to the user who just typed it.
+_LIVE_TEXT_WITHHELD = ("[message withheld — this contained sensitive content "
+                       "that stays on this device; switch to a local model to "
+                       "discuss it]")
+
+# What either voice-egress path sends when the gate module itself could not
+# be reached at all (import failure). Distinct from a normal gate verdict so
+# the log/behavior difference is visible if it ever fires.
+_GATE_UNREACHABLE_TOOL = ("[tool result withheld — the privacy gate could not "
+                          "be reached, so nothing was sent to the cloud]")
+_GATE_UNREACHABLE_TEXT = ("[message withheld — the privacy gate could not be "
+                          "reached, so nothing was sent to the cloud]")
+
+
+def _gate_voice_tool_result(result: str, fname: str) -> str:
+    """Gate a voice tool result before it reaches Gemini. FAIL-CLOSED.
+
+    Every exit is either the gated text or an explanatory withheld
+    placeholder — NEVER the raw `result` passed in. This is the fix for N-1
+    (2026-08-25): the previous version wrapped the whole gate call in one
+    broad `except Exception: <log and fall through>`, and `_gate_text` raises
+    `egress_gate.NeverSendBlocked` for never-send material BY DESIGN (see its
+    docstring) — so the gate's strongest verdict was exactly the case that
+    fell through to the pre-gate, ungated `result`. A gate that fails open on
+    its own escalation is worse than no gate.
+    """
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as _ie:
+        _log.error("voice tool-result gating module unavailable for %s: %s — "
+                  "withholding rather than sending ungated", fname, _ie)
+        return _GATE_UNREACHABLE_TOOL
+    try:
+        gated = _eg._gate_text(result, "google-gemini", f"live.tool.{fname}")
+        if result and not gated:
+            gated = _eg._TOOL_RESULT_WITHHELD
+        return gated
+    except _eg.NeverSendBlocked as _nb:
+        _log.warning("voice tool-result NEVER-SEND blocked for %s: %s", fname, _nb)
+        return _eg._TOOL_RESULT_WITHHELD
+    except Exception as _ge:
+        _log.warning("voice tool-result gating unavailable for %s: %s — "
+                    "withholding rather than sending ungated", fname, _ge)
+        return _eg._TOOL_RESULT_WITHHELD
+
+
+def _gate_voice_text(text: str) -> str:
+    """Gate a typed message before it reaches Gemini over live.text.
+    FAIL-CLOSED — same shape and same fix as `_gate_voice_tool_result` (N-1's
+    sibling: the old code had a bare `except Exception: pass` here, which
+    left the ungated typed message to be sent as-is)."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as _ie:
+        _log.error("voice live.text gating module unavailable: %s — "
+                  "withholding rather than sending ungated", _ie)
+        return _GATE_UNREACHABLE_TEXT
+    try:
+        gated = _eg._gate_text(text, "google-gemini", "live.text")
+        return gated if gated else _LIVE_TEXT_WITHHELD
+    except _eg.NeverSendBlocked as _nb:
+        _log.warning("voice live.text NEVER-SEND blocked: %s", _nb)
+        return _LIVE_TEXT_WITHHELD
+    except Exception as _ge:
+        _log.warning("voice live.text gating unavailable: %s — withholding "
+                    "rather than sending ungated", _ge)
+        return _LIVE_TEXT_WITHHELD
+
+
 def _build_realtime_input_config(types, interruption_mode="auto"):
     """Build the Live API RealtimeInputConfig.
 
@@ -2015,17 +2087,12 @@ if sock is not None:
                             # Run the same gate as the text-chat path; a fully
                             # withheld result becomes an explanatory marker so
                             # the model reports the withholding instead of
-                            # retrying the tool.
-                            try:
-                                from agent_friday.services import egress_gate as _eg
-                                _gated = _eg._gate_text(result, "google-gemini",
-                                                        f"live.tool.{fname}")
-                                if result and not _gated:
-                                    _gated = _eg._TOOL_RESULT_WITHHELD
-                                result = _gated
-                            except Exception as _ge:
-                                _vlog(f'tool-result gating unavailable: {_ge}')
-                                _log.warning("voice tool-result gating unavailable: %s", _ge)
+                            # retrying the tool. Fail-closed — see
+                            # `_gate_voice_tool_result`'s docstring for the N-1
+                            # bug this replaced (a broad `except` that let a
+                            # NeverSendBlocked verdict fall through to the
+                            # ungated result).
+                            result = _gate_voice_tool_result(result, fname)
                             _log.info("voice tool result: %s -> %d chars", fname, len(result or ''))
                             _voice_orb_finish(_orb_id, fname, fargs, result,
                                               (_time.time() - _orb_t0) * 1000.0)
@@ -2120,13 +2187,11 @@ if sock is not None:
                                     # Typed turns are cloud egress like any chat
                                     # message — gate them, and never forward an
                                     # emptied string (Gemini treats it as noise).
-                                    _txt = msg['text']
-                                    try:
-                                        from agent_friday.services import egress_gate as _eg2
-                                        _g = _eg2._gate_text(_txt, "google-gemini", "live.text")
-                                        _txt = _g if _g else _eg2._MESSAGE_WITHHELD
-                                    except Exception:
-                                        pass
+                                    # Fail-closed — see `_gate_voice_text`'s
+                                    # docstring for the N-1-sibling bug this
+                                    # replaced (a bare `except: pass` that let
+                                    # the ungated typed message through).
+                                    _txt = _gate_voice_text(msg['text'])
                                     await sess.send_realtime_input(text=_txt)
                                 elif t == 'barge':
                                     # EXPLICIT interrupt from the client (Escape

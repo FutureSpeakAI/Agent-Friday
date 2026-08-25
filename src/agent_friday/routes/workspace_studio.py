@@ -10,7 +10,11 @@ from agent_friday.services.workspace_studio import (
     revert_customization,
     workspace_chat_turn,
 )
-from agent_friday.services.model_router import _get_friday_system_prompt
+from agent_friday.services.model_router import (
+    _gated_vault_control,
+    _get_friday_system_prompt,
+    _predict_route_provider,
+)
 
 ws_studio_bp = Blueprint('ws_studio', __name__)
 
@@ -55,7 +59,10 @@ def ws_chat_post(ws_id):
         return jsonify({"status": "error", "message": "message required"}), 400
     label = (data.get('label') or ws_id).strip()
     try:
-        system = _get_friday_system_prompt(keywords=message, workspace=ws_id)
+        system = _get_friday_system_prompt(
+            keywords=message, workspace=ws_id,
+            provider=_predict_route_provider(keywords=message, workspace=ws_id),
+            vault_control=_gated_vault_control())
     except Exception:
         system = None
     try:

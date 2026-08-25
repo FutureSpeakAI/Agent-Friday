@@ -60,8 +60,10 @@ from agent_friday.core import (
 from agent_friday.services.model_router import (
     _call_ollama,
     _call_openai,
+    _gated_vault_control,
     _get_friday_system_prompt,
     _get_vault_control,
+    _predict_route_provider,
     _seal_or_block,
 )  # noqa: E501
 from agent_friday.services import tool_hooks as _hooks
@@ -2240,7 +2242,29 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         messages = [{"role": "user", "content": prompt}]
         # Load full vault/wiki context so the agent knows the user's context.
         _task_log(task_id, 'Loading vault context…')
-        system = _get_friday_system_prompt(prompt, workspace='task') + (
+        # SECURITY (2026-08-25): this prompt used to be built with NO
+        # vault_control at all, so _get_friday_system_prompt fell through to
+        # its "legacy ungated" default and every TIER_2 vault/self-knowledge
+        # section rode into the system prompt in the clear. For a task that
+        # then routes to a cloud model, the egress gate's field-wise keyword
+        # classifier was the ONLY thing standing between that raw personal
+        # context and Anthropic — the same classifier that already has a
+        # documented TIER_2 gap. chat.py and voice.py never rely on the gate
+        # alone: they pre-decide the provider and gate the prompt itself
+        # (routes/chat.py:698, routes/voice.py:1159), so cloud calls see only
+        # TIER_1. This does the same for background tasks.
+        #
+        # `_generate_agent` below routes again internally to pick the actual
+        # model — deliberately not duplicated for the LOG line at
+        # `_log_route` — but routing is a pure function of settings +
+        # `messages` and nothing here mutates either between this call and
+        # that one, so predicting it a second time, only to decide how to
+        # gate the prompt, is safe and cannot land on a different answer.
+        _task_provider = _predict_route_provider(
+            keywords=prompt, workspace='task', has_tools=True)
+        system = _get_friday_system_prompt(
+            prompt, workspace='task', provider=_task_provider,
+            vault_control=_gated_vault_control()) + (
             "\n\n== BACKGROUND TASK MODE ==\n"
             "You are operating as an autonomous background task. Take initiative, "
             "use available tools, and produce a concrete, useful result the user can read.\n\n"
