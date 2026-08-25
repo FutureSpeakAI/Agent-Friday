@@ -224,7 +224,13 @@ def remove_google_account(account_id):
 @google_accounts_bp.route("/api/google/accounts/gmail")
 def google_accounts_gmail():
     limit = request.args.get("limit", default=15, type=int)
-    return jsonify({"status": "ok", **ga.merged_gmail(limit_per_account=min(limit, 50))})
+    # `days` was fixed at 1 inside the query, which capped the inbox at a
+    # 24-hour window no matter what `limit` asked for. Omitted here means the
+    # configured default, not the old hardcoded day.
+    days = request.args.get("days", default=None, type=int)
+    return jsonify({"status": "ok",
+                    **ga.merged_gmail(limit_per_account=min(limit, 50),
+                                      days=min(days, 90) if days else None)})
 
 
 @google_accounts_bp.route("/api/google/accounts/calendar")
