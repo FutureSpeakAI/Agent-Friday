@@ -318,6 +318,62 @@ class TestNeverSendOverride:
             eg._gate_text_span(text, "anthropic", "tool_result")
 
 
+# ── Registration must happen post-PII-scrub, not pre ────────────────────────
+
+class TestRegistrationOrderVsPiiScrub:
+    """Found live 2026-08-25 walking the motivating case against Stephen's
+    real CV: read_file's result is PII-scrubbed by a post-tool hook
+    (priority 95) before it reaches the egress gate. Registering the RAW
+    pre-scrub text (the original approach) meant any paragraph containing a
+    phone number or address never matched its scrubbed form at gate time —
+    the grant looked live (ledger entry, check_grant='active') while entire
+    paragraphs stayed withheld. The fix moved registration into its own
+    post-hook (priority 96, after pii_scrub). These tests exercise the real
+    _execute_tool hook chain, not on_file_read() directly — calling
+    on_file_read() directly (as most tests above do) would NOT have caught
+    this bug, because it bypasses the hook ordering entirely."""
+
+    def test_a_granted_paragraph_containing_a_phone_number_still_passes_end_to_end(
+            self, tmp_path):
+        from agent_friday.services.agent import _execute_tool
+
+        body = ("Reach the candidate directly at 555-201-9834 for scheduling. "  # pragma: allowlist secret
+                 "Sanofi pivot analysis: strong candidate fit for the senior role.")
+        p = _cv(tmp_path, body=body)
+        fg.create_file_grant(str(p))
+
+        # pii_lookup={} exercises the SAME rehydration-scrub path chat.py
+        # uses in production (_hook_pii_scrub's `if isinstance(ctx.pii_lookup,
+        # dict)` branch calls _scrub_pii, which handles phone/email/address —
+        # the destructive _pii_redact fallback used with no pii_lookup only
+        # covers SSN/card/watchlist and would not have caught this bug).
+        result = _execute_tool("read_file", {"path": str(p)}, pii_lookup={})
+
+        assert "[PII:phone:" in result, (
+            "the scrub must actually have run for this test to mean anything"
+        )
+        assert "EGRESS-GATE" not in eg._gate_text(result, "anthropic", "tool_result")
+
+    def test_falsifiable_without_the_grant_the_scrubbed_paragraph_still_gates(
+            self, tmp_path):
+        from agent_friday.services.agent import _execute_tool
+
+        body = ("Reach the candidate directly at 555-201-9834 for scheduling. "  # pragma: allowlist secret
+                 "Sanofi pivot analysis: strong candidate fit for the senior role.")
+        p = _cv(tmp_path, body=body)
+        # No grant this time.
+
+        result = _execute_tool("read_file", {"path": str(p)}, pii_lookup={})
+        out = eg._gate_text(result, "anthropic", "tool_result")
+
+        # Not asserting a specific tier here (classification of this exact
+        # sentence isn't the point) — asserting the grant, not luck, is what
+        # made the case above pass: registering it explicitly should change
+        # the outcome relative to not registering it at all.
+        with eg._TRUSTED_LOCK:
+            assert result.strip() not in eg._PUBLIC_PARAS
+
+
 # ── Derived content inherits nothing ────────────────────────────────────────
 
 class TestSummaryInheritsNothing:

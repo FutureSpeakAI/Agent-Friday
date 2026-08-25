@@ -214,14 +214,17 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         if result.text is None:
             continue
         text = result.text[: _MAX_CONTENT_BYTES]
-        # WO-17 interaction: a content search reads the file exactly like
-        # read_file does, so it feeds the same read-time grant registry — a
-        # granted file's snippet passes the gate too, not just a full read.
-        try:
-            from agent_friday.services import file_grants as _fg
-            _fg.on_file_read(path, text)
-        except Exception:
-            pass
+        # WO-17 KNOWN GAP (2026-08-25): a content-search snippet does NOT yet
+        # feed the grant registry. It used to call file_grants.on_file_read
+        # here, before this handler's JSON result is PII-scrubbed by the
+        # generic post-tool hook — the same order-of-operations bug fixed for
+        # read_file in _hook_file_grant_registration (see agent.py). Doing
+        # the equivalent fix here needs a JSON-aware post-hook that re-walks
+        # results[].snippet against results[].path after scrubbing, which is
+        # real additional work, not a one-line move. Until then: a granted
+        # file's full read passes; its content-search snippet still gates
+        # normally. Safe (fails toward gating, not toward leaking) but
+        # incomplete — do not remove this comment when closing the gap.
         idx = text.lower().find(cq)
         if idx == -1:
             continue
