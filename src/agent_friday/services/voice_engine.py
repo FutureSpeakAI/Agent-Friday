@@ -250,7 +250,89 @@ _VOICE_LIVE_TOOLS = [
      "confirmed=true after they agree. Workspaces: {workspace_ids}.",
      {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'."),
       "confirmed": ("boolean", "True if the user asked for this workspace or has agreed to the switch.")}, ["workspace"]),
+    ("spawn_task",
+     "Start a long-running background task (a 'workflow') that keeps working "
+     "while the conversation continues — deep research, multi-step analysis, "
+     "drafting a long brief, or anything that takes more than about ten "
+     "seconds. THIS IS THE ONLY WAY to do work in voice that outlives the "
+     "current turn: if the user asks you to research, investigate, analyse, "
+     "compile, monitor, or write something substantial, call this tool rather "
+     "than describing what you are about to do. Progress appears in the user's "
+     "Task Tray (bottom-right). Optionally chain a follow-up with on_complete.",
+     {"name": ("string", "Short human-readable task title, e.g. 'Research the Zelda short film'."),
+      "prompt": ("string", "The full instruction the background agent should execute."),
+      "description": ("string", "Optional one-line subtitle shown in the Task Tray."),
+      "on_complete_spawn": ("string", "Optional title of a follow-up task to auto-start when this one succeeds."),
+      "on_complete_prompt": ("string", "Optional full instruction for that follow-up task.")},
+     ["name", "prompt"]),
 ]
+
+
+# ── Tools BORROWED VERBATIM from the text registry ────────────────────────
+#
+# The hand-written table above is the voice surface's original sin: it is a
+# SECOND inventory, maintained by hand, of tools that already exist in
+# `services.agent.CLAUDE_TOOLS`. Two lists drift, and drift is what the user
+# hears as a lie -- the system prompt is assembled from the TEXT prompt, which
+# advertises read_file / write_file / open_path / screenshot, while the Live
+# API was handed nine declarations that contain none of them. Friday then did
+# the only thing left to her: announced the action and nothing happened.
+#
+# These names are not redeclared here. They are RESOLVED out of CLAUDE_TOOLS at
+# build time -- name, description and JSON schema verbatim -- so a change to the
+# text registry reaches voice in the same edit, and a tool that is removed from
+# the registry (because its dependency is missing, say) disappears from voice
+# rather than lingering as a promise. Execution goes through `_execute_tool`,
+# the single choke point, so ring policy, the vault gate, the sandbox, rate
+# limiting, receipts and the audit log all apply exactly as they do in text.
+#
+# run_command is deliberately NOT here. Shell execution driven by a speech
+# recogniser is a different risk class from reading a file, and nothing in the
+# reported failure needs it.
+_VOICE_SHARED_TOOLS = (
+    "read_file",
+    "write_file",
+    "open_path",
+    "search_email",
+    "screenshot",
+)
+
+
+def _voice_shared_tool_specs():
+    """Resolve _VOICE_SHARED_TOOLS out of the text registry.
+
+    Returns a list of (name, description, input_schema) for the names that are
+    ACTUALLY registered. A name that is absent -- never added, or dropped
+    because its dependency is missing -- is silently skipped here and therefore
+    never declared to Gemini and never named in the surface note. Absent beats
+    present-but-broken: the model is told the truth either way.
+    """
+    try:
+        from agent_friday.services.agent import CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS
+    except Exception as e:  # pragma: no cover - import-time failure
+        _log.error("voice shared tools unavailable (registry import failed): %s", e)
+        return []
+    by_name = {t.get("name"): t for t in CLAUDE_TOOLS if isinstance(t, dict)}
+    out = []
+    for name in _VOICE_SHARED_TOOLS:
+        entry = by_name.get(name)
+        if not entry or name not in CLAUDE_TOOL_HANDLERS:
+            _log.warning("voice shared tool %r is not in the text registry - "
+                         "not declaring it to the Live session", name)
+            continue
+        out.append((name, entry.get("description") or name,
+                    entry.get("input_schema") or {"type": "object", "properties": {}}))
+    return out
+
+
+def _voice_tool_names():
+    """Every tool name this voice session can actually call, native + shared.
+
+    The ONE function both the Live declarations and the system-prompt surface
+    note are built from, so the prompt can never name a tool the API was not
+    given.
+    """
+    return [t[0] for t in _VOICE_LIVE_TOOLS] + [n for n, _d, _s in _voice_shared_tool_specs()]
 
 
 def _navigate_tool_description(desc):
@@ -295,7 +377,65 @@ def _build_voice_live_tools(types):
                                     properties=schema_props,
                                     required=list(required) or None),
         ))
+
+    # Tools borrowed from the text registry, rendered from their OWN JSON
+    # schema so the declaration Gemini receives is the declaration Claude
+    # receives. A schema this renderer cannot express is skipped WITH A LOG and
+    # therefore never declared -- it must not arrive as a silently truncated
+    # tool the model then calls with arguments the handler does not understand.
+    for name, desc, schema in _voice_shared_tool_specs():
+        try:
+            rendered = _json_schema_to_genai(types, schema, _type_map)
+        except Exception as e:
+            _log.error("voice shared tool %r: schema could not be rendered for "
+                       "the Live API (%s) - NOT declaring it", name, e)
+            continue
+        decls.append(types.FunctionDeclaration(
+            name=name, description=desc, parameters=rendered))
+
     return [types.Tool(function_declarations=decls)] if decls else []
+
+
+def _json_schema_to_genai(types, schema, type_map):
+    """Render one JSON-Schema object as a google.genai Schema.
+
+    Deliberately narrow: object / string / integer / number / boolean / array
+    of those, plus `enum` and `description`. Anything richer raises, and the
+    caller drops the tool rather than declaring a lossy version of it.
+    """
+    if (schema or {}).get("type") not in (None, "object"):
+        raise ValueError("top-level schema must be an object")
+    props = {}
+    for pname, pspec in ((schema or {}).get("properties") or {}).items():
+        props[pname] = _json_schema_leaf(types, pspec, type_map, pname)
+    return types.Schema(
+        type=types.Type.OBJECT,
+        properties=props or None,
+        required=list((schema or {}).get("required") or []) or None,
+    )
+
+
+def _json_schema_leaf(types, spec, type_map, pname):
+    spec = spec or {}
+    jtype = spec.get("type") or "string"
+    kwargs = {}
+    if spec.get("description"):
+        kwargs["description"] = spec["description"]
+    if spec.get("enum"):
+        kwargs["enum"] = [str(v) for v in spec["enum"]]
+    if jtype == "array":
+        return types.Schema(
+            type=types.Type.ARRAY,
+            items=_json_schema_leaf(types, spec.get("items") or {}, type_map,
+                                    pname + "[]"),
+            **kwargs)
+    if jtype == "object":
+        # Nested free-form objects have no faithful rendering here; refuse
+        # rather than flatten it to a string the handler cannot parse.
+        raise ValueError("nested object property %r is not supported" % pname)
+    if jtype not in type_map:
+        raise ValueError("unsupported type %r on property %r" % (jtype, pname))
+    return types.Schema(type=type_map[jtype], **kwargs)
 
 
 def _voice_tool_run(name, args, send_client):
@@ -379,6 +519,28 @@ def _voice_tool_run(name, args, send_client):
             return _tool_search_web(args)
         if name == "search_wiki":
             return _tool_search_wiki(args)
+        if name == "spawn_task":
+            # Voice's one durable-work primitive. The Live model is told (in the
+            # shared system prompt) to delegate anything longer than a turn; before
+            # this existed the prompt advertised spawn_task while the Live tool
+            # surface omitted it, so Friday narrated "starting that now" and no
+            # workflow was ever created.
+            from agent_friday.services.agent import _tool_spawn_task
+            _payload = {"name": args.get("name"),
+                        "prompt": args.get("prompt"),
+                        "description": args.get("description")}
+            _oc_spawn = (args.get("on_complete_spawn") or "").strip()
+            _oc_prompt = (args.get("on_complete_prompt") or "").strip()
+            if _oc_spawn and _oc_prompt:
+                _payload["on_complete"] = {"spawn": _oc_spawn, "prompt": _oc_prompt,
+                                           "with_context": True}
+            res = _tool_spawn_task(_payload)
+            try:
+                send_client({"type": "task_spawned",
+                             "name": args.get("name") or "Background task"})
+            except Exception:
+                pass
+            return res
         if name == "query_calendar":
             return _tool_query_calendar(args)
         if name == "check_email":
@@ -397,11 +559,33 @@ def _voice_tool_run(name, args, send_client):
                 except Exception:
                     pass
             return res
+
+        # ── Tools borrowed from the text registry ──────────────────────────
+        # Executed through _execute_tool, the single choke point, so the
+        # PreToolUse chain (confirmation -> governance/ring -> vault -> sandbox
+        # -> rate limit) and the PostToolUse chain (audit, PII scrub, receipts)
+        # run exactly as they do for a typed turn. The tool runs LOCALLY; only
+        # its RESULT crosses to Google, and the caller in routes/voice.py gates
+        # that result through egress_gate before it is sent back -- so a cloud
+        # model can read a PDF in Downloads without the vault ever leaving.
+        if name in dict((n, d) for n, d, _sc in _voice_shared_tool_specs()):
+            from agent_friday.services.agent import _execute_tool
+            return _execute_tool(name, args, session_ctx={
+                # The live socket is authenticated before the session opens
+                # (routes/voice.py rejects unauthenticated connects), which is
+                # what ring 2 asks for. Ring 3 still consults the Computer
+                # Control grant independently, so a screenshot with CC off
+                # comes back as an honest deny, not a silent nothing.
+                "authenticated": True,
+                "surface": "voice-live",
+            })
     except Exception as e:
         _log.error("Voice tool %r raised %s: %s", name, type(e).__name__, e, exc_info=True)
         return (f"I ran into a problem using the {name} tool: {type(e).__name__}. "
                 f"Please try again, or ask me a different way.")
-    return f"I don't have a tool called '{name}' available in voice mode."
+    return (f"TOOL CALL FAILED - there is no tool called '{name}' in voice mode, "
+            f"so nothing ran and there is no result. Tell the user plainly that "
+            f"you could not do it. Do not describe an outcome: there isn't one.")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1000,7 +1184,7 @@ def _load_live_context() -> str:
     return "\n\n".join(parts)
 
 
-def _persist_voice_turn(user_text, agent_text):
+def _persist_voice_turn(user_text, agent_text, conversation_id=None):
     """Log a completed voice turn to the context log and chat history.
 
     Voice turns are saved as event types `voice_user` and `voice_agent` so
@@ -1016,24 +1200,63 @@ def _persist_voice_turn(user_text, agent_text):
         if agent_text:
             _log_context("voice_agent", {"text": agent_text})
     now_iso = datetime.now().isoformat()
+    # Voice turns used to land in the global CHAT_HISTORY list with NO
+    # conversation key at all, while text chat writes to a real conversation and
+    # only mirrors here. GET /api/chat/history returns this flat list unfiltered,
+    # so a voice session and an unrelated text thread rendered interleaved in one
+    # window. Address voice to a real conversation and stamp the mirror rows so
+    # history can be filtered per thread.
+    #
+    # `conversation_id` is the thread OPEN on screen, carried from the client on
+    # the voice socket. Speaking is a way of typing into the conversation you are
+    # looking at, so a voice turn belongs where the user is. Passing None here --
+    # a caller with genuinely no open thread, e.g. the scheduler or a channel --
+    # still falls back to Main, but resolve() makes that an explicit fallback for
+    # callers that have nothing rather than the destination for everyone. The old
+    # unconditional resolve(None) is why talking while a non-Main thread was open
+    # filed the exchange out of sight.
+    try:
+        from agent_friday.services import conversations as _conv
+        _cid = _conv.resolve(conversation_id)
+    except Exception:
+        _conv, _cid = None, None
+    user_msg = friday_msg = None
     if user_text:
-        CHAT_HISTORY.append({
+        user_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': now_iso,
             'role': 'user',
             'text': user_text,
             'pinned': False,
             'via': 'voice',
-        })
+            'conversation_id': _cid,
+        }
+        CHAT_HISTORY.append(user_msg)
     if agent_text:
-        CHAT_HISTORY.append({
+        friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': now_iso,
             'role': 'friday',
             'text': agent_text,
             'pinned': False,
             'via': 'voice',
-        })
+            'conversation_id': _cid,
+        }
+        CHAT_HISTORY.append(friday_msg)
+    if _conv is not None and _cid:
+        for _m in (user_msg, friday_msg):
+            if not _m:
+                continue
+            try:
+                _conv.append(_cid, {"id": _m['id'], "role": _m['role'],
+                                    "text": _m['text'], "pinned": False,
+                                    "meta": {"kind": "turn", "via": "voice"}})
+            except Exception as _ce:
+                print(f'  [voice] could not persist turn to {_cid}: {_ce}')
+        try:
+            _conv.prune(_cid)
+        except Exception:
+            pass
     try:
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
