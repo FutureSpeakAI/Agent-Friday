@@ -439,9 +439,10 @@ They pin, among others:
 
 ### 9.4 Known gaps
 
-- **Music and speech need their panels pointed at the new entries.** The catalogue carries
-  them correctly; the Studio Music panel and the voice surface still read their old
-  sources. Image, video and 3D need nothing.
+- **Music and speech panels must NOT be repointed at the catalogue until §9.5 lands.**
+  The catalogue carries `sonilo_music` and the four TTS models correctly, but repointing
+  the panels today would produce silent substitution — the exact defect this work exists
+  to end. Mechanism and fix in §9.5. Image, video and 3D need nothing.
 - **No 3D viewer** (Q-C7): a picked 3D model writes a GLB to disk and nothing renders it.
 - **Cost is carried, not yet drawn.** Entries carry `credits`; the picker does not display
   them yet — that is an `app.html` change, deliberately deferred while another session
@@ -460,7 +461,47 @@ They pin, among others:
   `gate_content("emergency contact: 555-1234", "anthropic")` returns the phone number
   verbatim. Same classifier that makes the egress "SSN" symptom appear under load.
 
-### 9.5 One regression this work caused, and its fix
+### 9.5 The music blocker: every Higgsfield music id silently becomes Lyria
+
+**Do not point the Studio Music panel at the Higgsfield catalogue before fixing this.**
+
+`services/music_engine.resolve_music_model()` ends with a Lyria-shaped passthrough
+(`music_engine.py:121`):
+
+```python
+if key and re.match(r"^lyria[\w.\-]*$", key):
+    return requested.strip() if requested else key
+return _MUSIC_MODEL_MAP[DEFAULT_MUSIC_MODEL]      # music_engine.py:124
+```
+
+That guard exists for a good reason — it stops a junk seat value breaking generation. But
+its fall-through is unconditional, so **any non-Lyria id becomes `lyria-3-clip-preview`**.
+Pick `sonilo_music` in the picker and `generate_music()` calls **Google, not Higgsfield**,
+returns a Lyria track, and reports success. Nothing anywhere says a substitution occurred.
+That is the silent-substitution class of defect the seat work was built to eliminate, and
+it would be reintroduced by a one-line settings change.
+
+**The fix does not touch the Lyria guard at all** — it branches before it, exactly as
+`creative_engine.generate_image` does (`creative_engine.py:672-681`):
+
+1. In `generate_music()` (`music_engine.py:238`), after `check_music_safety` and **before**
+   `resolve_music_model()`, add the membership check:
+   `higgsfield_generate.is_higgsfield_model(model or _seat_model())` → dispatch via
+   `higgsfield_generate.generate("audio", full_prompt, model=..., extra={"duration": ...})`.
+2. `sonilo_music` declares `duration` **required** (§3.8), so supply a default when the
+   caller gives none — unlike video, it cannot be omitted.
+3. Leave `resolve_music_model()` untouched. Lyria behaviour stays bit-for-bit identical.
+
+Cost: ~25 lines plus tests. The dispatch half already exists and is tested —
+`higgsfield_generate.generate()` takes `kind="audio"` today.
+
+**The voice/TTS surface is a separate, larger problem** and is not a "repoint" either: the
+`asr`/`tts` seats are orphans by design — the local voice engine selects by *tier*
+(`settings['voice_engine']`, cpu/gpu) and by provider entry, never by model id. Wiring the
+four Higgsfield TTS models in means giving the voice stack a model-id path it has never
+had. Scope that before promising it.
+
+### 9.6 One regression this work caused, and its fix
 
 `test_models_refresh_route.py::test_refresh_route_all_providers` asserted
 `set(results) == set(HOSTED_PROVIDERS)`. Adding Higgsfield to the refresh-all sweep put a
