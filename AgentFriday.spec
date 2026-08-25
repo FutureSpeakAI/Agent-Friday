@@ -78,6 +78,13 @@ hiddenimports = [
     'agent_friday.people_graph', 'agent_friday.source_trust_graph',
     # third-party that hooks can miss
     'flask_sock', 'feedparser', 'bs4', 'yaml', 'requests', 'colorama',
+    # PDF text extraction. Pinned explicitly because the analyze-file route
+    # imports it INSIDE a try/except, which collect_submodules cannot see --
+    # exactly how it came to be absent from every environment until 2026-08-25.
+    'pdfplumber', 'pdfminer', 'pdfminer.high_level',
+    # The capability preflight itself. If this fails to bundle, the build
+    # loses the check that reports what else the build lost.
+    'agent_friday.services.capability_preflight',
     'pyautogui', 'pynput', 'pynput.keyboard', 'pynput.mouse',
     'pynacl', 'nacl', 'nacl.signing', 'nacl.public',
 ]
