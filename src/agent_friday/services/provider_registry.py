@@ -207,6 +207,13 @@ DEFAULT_PROVIDERS = [
         # gate can never classify a Higgsfield call as local.
         "classification": "cloud",
         "models": [],
+        # Enumerated over the MCP connector, not an HTTP /models endpoint.
+        # Declaring it here (rather than special-casing the name inside the
+        # sweep) is what lets model_discovery.refresh_all_stale populate this
+        # catalogue on boot: without it the provider had no discovery mode,
+        # the sweep skipped it, and the picker stayed empty until someone
+        # POSTed /api/models/refresh by hand.
+        "discovery": {"mode": "mcp", "module": "higgsfield_catalog"},
         # Declared from what was measured on the live account, and no more:
         # image/video/3D generation plus audio (one music model, the rest
         # speech). 3D IS present — it appears via the MCP catalogue even
