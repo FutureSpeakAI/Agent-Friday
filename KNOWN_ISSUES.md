@@ -608,9 +608,10 @@ evict anything but does not create headroom on the card either.
 
 Setup asks for a Claude key, and the setup wizard stores whatever key it is given
 **encrypted on that machine**, where it is used until somebody replaces it. As of
-v5.6.1 the key is verified before self-repair is armed, so a dead key is caught at
+v5.6.2 the key is verified before self-repair is armed, so a dead key is caught at
 the moment it is pasted rather than twenty minutes later — but that is the only
-thing that changed.
+thing that changed. (This landed after the `v5.6.1` tag was cut and did not reach
+that published artifact; see `v5.6.2` in `CHANGELOG.md`.)
 
 **There is no notion of a borrowed key.** Nothing records whose account a key
 belongs to, and nothing distinguishes "my key" from "a key I was given". The
