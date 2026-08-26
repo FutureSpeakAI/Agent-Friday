@@ -2561,7 +2561,12 @@ def _wiki_title_index():
     titles under 4 chars are skipped to avoid spurious matches."""
     now = _time.time()
     cache = _WIKI_INDEX_CACHE
-    if cache["titles"] and (now - cache["at"]) < _WIKI_INDEX_TTL:
+    # Same shape of bug as local_seats.installed(): gating the hit on a TRUTHY
+    # result made the empty case uncacheable, so a wiki with no matching pages
+    # re-walked both trees with rglob("*") on every call instead of once every
+    # two minutes. Gate on the timestamp — "we looked and found nothing" is an
+    # answer worth remembering for as long as any other. (2026-08-26)
+    if cache["at"] and (now - cache["at"]) < _WIKI_INDEX_TTL:
         return cache["titles"]
     out, seen = [], set()
     for root in (WIKI_DIR, FRIDAY_DIR / "wiki"):

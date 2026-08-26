@@ -99,6 +99,17 @@ def _seal_or_block(payload, provider):
 
     Nothing leaves the device when the gate can't verify it.
     """
+    # HARD CEILING, BEFORE THE GATE (2026-08-26). Caching makes the common
+    # case cheap; only a limit makes a catastrophe impossible, and these are
+    # different guarantees. This is the one chokepoint every cloud provider
+    # already passes through, so it is the only place the ceiling can be
+    # enforced once. Raises rather than trimming: a silent trim is how an
+    # overrun becomes invisible again.
+    try:
+        from agent_friday.services import prompt_cache as _pc
+        _pc.check_call_size(payload, provider)
+    except (ImportError, AttributeError):
+        pass
     try:
         from agent_friday.services import egress_gate as _eg
         operational = _eg.gate_operational()
@@ -160,6 +171,13 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     # Egress gate: runs after payload assembly, before the HTTP call — via the
     # shared fail-closed wrapper (R3: one enforcement point for all providers).
     kwargs = _seal_or_block(kwargs, "anthropic")
+    # Prompt-cache breakpoints, applied last so no gating path can drop them.
+    # A wrong breakpoint costs a cache miss, never a wrong answer.
+    try:
+        from agent_friday.services import prompt_cache as _pc
+        kwargs = _pc.apply_anthropic_cache(kwargs)
+    except Exception:
+        pass
     _t0 = _time.time()
     try:
         resp = client.messages.create(**kwargs)
@@ -2397,16 +2415,6 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
 
     add(FRIDAY_SYSTEM_PROMPT, _T1)
 
-    # ── A6: authoritative clock (Incident 2, F3). TIER_1 BY CONTRACT — the
-    # previous date injections lived in TIER_2 sections that vault gating
-    # redacts for cloud seats, leaving those seats with no date at all and
-    # models doing their own (wrong) weekday arithmetic. ──
-    try:
-        from agent_friday.services.clock import clock_context_block
-        add(clock_context_block(), _T1)
-    except Exception:
-        pass
-
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never
     # answer cold — Friday is a personal agent, not a generic chatbot.
@@ -2632,6 +2640,31 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             sources_consulted.append('wiki_smart')
     except Exception as _e:
         add(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})", _T1)
+
+    # ── A6: authoritative clock (Incident 2, F3). TIER_1 BY CONTRACT — the
+    # previous date injections lived in TIER_2 sections that vault gating
+    # redacts for cloud seats, leaving those seats with no date at all and
+    # models doing their own (wrong) weekday arithmetic. ──
+    #
+    # ORDERED LAST, 2026-08-26. Content unchanged, position changed. It renders
+    # `%Y-%m-%d %H:%M` — minute resolution — and used to sit at position 2, so
+    # every turn that crossed a minute boundary changed a byte ~2,500 tokens in
+    # and invalidated the prompt cache on BOTH backends from there down.
+    # Measured on the local seat's own log (~/.friday/runtime/logs/
+    # llama-gemma4_12b-8090.log): the hourly job re-processed 25,366 tokens in
+    # 16.3 s every single hour, while the immediately-following call in the same
+    # slot re-processed 430 tokens in 0.7 s. Same prompt, one minute apart in
+    # the clock line. `services/prompt_cache.VOLATILE_MARKER` splits the cloud
+    # payload on this header, so everything above it is what gets cached.
+    #
+    # Its authority, TIER_1 status and drop class are untouched — render
+    # position is orthogonal to both, and last is if anything the stronger
+    # position for an instruction the model must not override.
+    try:
+        from agent_friday.services.clock import clock_context_block
+        add(clock_context_block(), _T1)
+    except Exception:
+        pass
 
     # Assemble. With a vault_control + cloud provider this gates by tier
     # (TIER_1 in full, TIER_2 redacted, TIER_3 dropped). Otherwise it's a

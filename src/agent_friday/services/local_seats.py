@@ -61,6 +61,10 @@ def _looks_vision(name: str) -> bool:
 
 _CACHE: dict = {"at": 0.0, "rows": []}
 _CACHE_TTL_S = 30.0
+#: An empty inventory means "unknown", not "nothing installed" (see the
+#: docstring), so it is re-checked sooner than a populated one — but it IS
+#: cached, because producing it is the expensive case.
+_EMPTY_TTL_S = 5.0
 
 # So a substitution is logged once, not once per call in a grinding loop.
 _ANNOUNCED: set = set()
@@ -101,7 +105,25 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     "unknown", never as "nothing is installed".
     """
     now = time.time()
-    if not force and _CACHE["rows"] and (now - _CACHE["at"]) < _CACHE_TTL_S:
+    # NEGATIVE RESULTS ARE CACHED TOO, on a shorter clock (2026-08-26).
+    #
+    # This used to read `if _CACHE["rows"] and ...`, and the write below was
+    # `if rows: _CACHE.update(...)`. Together those made an EMPTY answer
+    # uncacheable — and empty is precisely the state that costs the most to
+    # produce: no daemon means `urlopen(/api/tags)` runs to its 4-second
+    # timeout, and every caller pays it again immediately. It is the same
+    # defect as an import failure cached as `None` when `None` also means "not
+    # yet attempted": one value carrying two meanings, so the expensive path
+    # reruns forever. It bites hardest on a machine with nothing installed yet
+    # — a fresh install, or the cloud-first 8 GB setup — which is the machine
+    # least able to absorb it. `installed()` is on the chat path
+    # (routes/chat.py, seat-still-exists check).
+    #
+    # The short TTL keeps the useful half of the old behaviour: "unknown"
+    # should be re-asked sooner than a known-good inventory, just not on
+    # every single call.
+    ttl = _CACHE_TTL_S if _CACHE["rows"] else _EMPTY_TTL_S
+    if not force and _CACHE["at"] and (now - _CACHE["at"]) < ttl:
         return list(_CACHE["rows"])
 
     # FRIDAY'S OWN STORE COUNTS AS INSTALLED.
@@ -204,8 +226,7 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
             rows = keep
 
     rows.sort(key=lambda t: t[1])
-    if rows:
-        _CACHE.update(at=now, rows=rows)
+    _CACHE.update(at=now, rows=rows)
     return list(rows)
 
 
