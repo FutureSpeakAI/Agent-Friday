@@ -358,6 +358,32 @@ foreach ($f in $sourcePs1) {
     [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$toks, [ref]$errs)
     Check "parses: $($f.Name)" (($errs -eq $null) -or ($errs.Count -eq 0))
 }
+# --- Every literal Write-Log level is one Write-Log accepts ----------------
+#
+# Write-Log's -Level carries a ValidateSet. A level outside it is not a bad log
+# line - it is a ParameterBindingValidationException that kills the installer
+# at that statement. Write-Log 'PLAN' shipped in a 5.6.1 build candidate and
+# took the install down on step 3 of 16, before a single file was copied. It
+# parsed perfectly, because ValidateSet is enforced at run time.
+#
+# Nothing else in this suite would have caught it: the step it was in is one
+# nobody had reached yet.
+$validLevels = @('INFO','WARN','FAIL','OK','HEAL','CMD','DATA')
+$badLevels   = @()
+foreach ($f in $sourcePs1) {
+    $text = Get-Content -LiteralPath $f.FullName -Raw
+    foreach ($m in [regex]::Matches($text, "Write-Log\s+[^\r\n]*?'([A-Za-z]+)'\s*(?:\r?\n|$|\|)")) {
+        $lvl = $m.Groups[1].Value
+        # Only judge tokens that look like a level (short, all caps). Anything
+        # else in that position is a message string, not a level.
+        if ($lvl -cmatch '^[A-Z]{2,5}$' -and $validLevels -notcontains $lvl) {
+            $badLevels += "$($f.Name): '$lvl'"
+        }
+    }
+}
+Check "every Write-Log level is in the ValidateSet" ($badLevels.Count -eq 0) `
+      ($badLevels -join '; ')
+
 foreach ($j in @('sources.json','healing.json')) {
     $ok = $true
     try { $null = Get-Content (Join-Path $Root $j) -Raw | ConvertFrom-Json } catch { $ok = $false }
