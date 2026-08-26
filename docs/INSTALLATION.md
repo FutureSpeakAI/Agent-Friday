@@ -28,22 +28,22 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 ## Option 0: Download the Packaged App (No Python Required)
 
 The fastest path on Windows needs no Python, Git, or terminal at all: download
-`AgentFriday.exe` from the
-[GitHub Releases page](https://github.com/FutureSpeakAI/Agent-Friday/releases)
-and run it. SmartScreen may warn on first launch — see the SmartScreen note
-below for the one-click bypass.
+`AgentFriday-Setup-5.6.0.zip` from the
+[GitHub Releases page](https://github.com/FutureSpeakAI/Agent-Friday/releases),
+unzip it anywhere, and double-click **Install Agent Friday.cmd**. SmartScreen
+may warn on first launch — see the SmartScreen note below for the one-click
+bypass.
 
-> ⚠️ **The published binary is behind the source, and the gap includes security
-> fixes.** As of 2026-08-25 the newest release asset is **v5.4.0, built 6 July
-> 2026**. It therefore predates every egress-gate fix made on 24–25 August —
-> among them the classifier gaining its first phone/address/account-number
-> regexes, the wiki context section that failed *open* on a classifier miss, and
-> the voice path that failed open at its strongest verdict. It also predates
-> 5.5.0 entirely.
+> ⚠️ **5.6.0 publishes the Windows installer only — there is no 5.6.0 `.exe`.**
+> The newest published `AgentFriday.exe` is **v5.4.0, built 6 July 2026**. It
+> predates every egress-gate fix made on 24–25 August — among them the
+> classifier gaining its first phone/address/account-number regexes, the wiki
+> context section that failed *open* on a classifier miss, and the voice path
+> that failed open at its strongest verdict — and it predates 5.5.0 entirely.
+> The `dist/AgentFriday.exe` in a checkout is that same 6 July build.
 >
-> If you are evaluating Friday's privacy behaviour, **run from source until a
-> newer release is published.** The `dist/AgentFriday.exe` in a checkout is the
-> same 6 July build and is not a substitute.
+> **Do not treat either as a current build.** Use the 5.6.0 installer zip above,
+> or run from source.
 
 The steps that follow are the from-source path, recommended for developers and
 anyone who wants to read or modify the code they run.
@@ -53,7 +53,7 @@ anyone who wants to read or modify the code they run.
 This matters more than a packaging detail usually would, so it is stated up
 front rather than buried:
 
-| | **`AgentFriday.exe`** (PyInstaller, one file) | **`AgentFriday-Setup-5.5.0.zip`** (Windows installer) |
+| | **`AgentFriday.exe`** (PyInstaller, one file) | **`AgentFriday-Setup-5.6.0.zip`** (Windows installer) |
 |---|---|---|
 | What it is | A single frozen binary | An embedded CPython plus a source payload and a wheelhouse |
 | Sensitivity classifier | **Layers 1a + 1b only** — regex and keyword | Layers 1a + 1b, **plus Layer 3** (embeddings) if the memory tier installs |
