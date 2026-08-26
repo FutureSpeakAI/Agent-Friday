@@ -223,6 +223,136 @@ class TestMergedViews:
         assert any(e["account_id"] == bad["id"] for e in out["errors"])
 
 
+class TestTaskWrites:
+    """complete_task/create_task/update_task/delete_task — account_id is never
+    inferred (unlike the read-side merged_* helpers above), and each call
+    reaches the Tasks API v1 in the expected shape."""
+
+    class FakeExec:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def execute(self):
+            return self._payload
+
+    class FakeTasksSvc:
+        def __init__(self):
+            self.patch_calls = []
+            self.insert_calls = []
+            self.delete_calls = []
+
+        def tasks(self):
+            return self
+
+        def patch(self, tasklist, task, body):
+            self.patch_calls.append((tasklist, task, body))
+            return TestTaskWrites.FakeExec({
+                "id": task, "title": body.get("title", "Existing"),
+                "status": body.get("status", "needsAction"), "due": body.get("due", "")})
+
+        def insert(self, tasklist, body):
+            self.insert_calls.append((tasklist, body))
+            return TestTaskWrites.FakeExec({
+                "id": "new-task-1", "title": body.get("title"),
+                "status": "needsAction", "due": body.get("due", "")})
+
+        def delete(self, tasklist, task):
+            self.delete_calls.append((tasklist, task))
+            return TestTaskWrites.FakeExec(None)
+
+    def _patch_build(self, monkeypatch, svc):
+        import googleapiclient.discovery as discovery
+        monkeypatch.setattr(discovery, "build",
+                            lambda name, version, credentials, cache_discovery: svc)
+
+    def test_complete_task_requires_explicit_account_id(self):
+        # No account given -> a clear error, never a guess at which account
+        # (unlike list_tasks, which fans out across all of them).
+        result = ga.complete_task(account_id="", tasklist_id="tl1", task_id="t1")
+        assert result.get("error")
+        assert "account_id" in result["error"]
+
+    def test_complete_task_requires_explicit_tasklist_id(self):
+        result = ga.complete_task(account_id="acc1", tasklist_id="", task_id="t1")
+        assert result.get("error")
+        assert "tasklist_id" in result["error"]
+
+    def test_complete_task_patches_status_completed_on_the_named_account(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="p3@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        svc = self.FakeTasksSvc()
+        self._patch_build(monkeypatch, svc)
+        result = ga.complete_task(account_id=rec["id"], tasklist_id="tl1", task_id="t1")
+        assert result["status"] == "completed"
+        assert svc.patch_calls == [("tl1", "t1", {"status": "completed"})]
+        assert result["account_id"] == rec["id"]
+
+    def test_complete_task_never_touches_a_different_accounts_credentials(self, monkeypatch):
+        good = ga.upsert_account(FakeCreds(), label="Good", email="good3@example.com")
+        bad = ga.upsert_account(FakeCreds(), label="Bad", email="bad3@example.com")
+        seen = []
+
+        def fake_creds_for(aid):
+            seen.append(aid)
+            return object()
+
+        monkeypatch.setattr(ga, "credentials_for", fake_creds_for)
+        self._patch_build(monkeypatch, self.FakeTasksSvc())
+        ga.complete_task(account_id=good["id"], tasklist_id="tl1", task_id="t1")
+        assert seen == [good["id"]]
+        assert bad["id"] not in seen
+
+    def test_create_task_requires_a_title(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="ct@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        result = ga.create_task(account_id=rec["id"], title="")
+        assert result.get("error")
+
+    def test_create_task_inserts_into_default_list_when_unspecified(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="ct2@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        svc = self.FakeTasksSvc()
+        self._patch_build(monkeypatch, svc)
+        result = ga.create_task(account_id=rec["id"], title="Buy milk",
+                                due="2026-09-01T00:00:00Z")
+        assert result["id"] == "new-task-1"
+        assert svc.insert_calls == [
+            ("@default", {"title": "Buy milk", "due": "2026-09-01T00:00:00Z"})]
+
+    def test_update_task_with_no_fields_is_an_error_not_a_silent_noop(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="ut@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        result = ga.update_task(account_id=rec["id"], tasklist_id="tl1", task_id="t1")
+        assert result.get("error")
+
+    def test_update_task_patches_only_the_given_fields(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="ut2@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        svc = self.FakeTasksSvc()
+        self._patch_build(monkeypatch, svc)
+        ga.update_task(account_id=rec["id"], tasklist_id="tl1", task_id="t1", title="Renamed")
+        assert svc.patch_calls == [("tl1", "t1", {"title": "Renamed"})]
+
+    def test_delete_task_requires_all_three_ids(self):
+        result = ga.delete_task(account_id="acc1", tasklist_id="", task_id="t1")
+        assert result.get("error")
+
+    def test_delete_task_deletes_from_the_named_account_and_list(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="dt@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        svc = self.FakeTasksSvc()
+        self._patch_build(monkeypatch, svc)
+        result = ga.delete_task(account_id=rec["id"], tasklist_id="tl1", task_id="t1")
+        assert result["deleted"] is True
+        assert svc.delete_calls == [("tl1", "t1")]
+
+    def test_write_fails_cleanly_when_account_needs_reauth(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Stale", email="stale2@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: None)
+        result = ga.complete_task(account_id=rec["id"], tasklist_id="tl1", task_id="t1")
+        assert result.get("error") == "needs_reauth"
+
+
 class TestReadDocOrSheet:
     def test_reads_a_doc_by_walking_paragraph_runs(self, monkeypatch):
         rec = ga.upsert_account(FakeCreds(), label="Work", email="doc@example.com")

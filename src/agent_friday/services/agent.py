@@ -396,8 +396,38 @@ CLAUDE_TOOLS = [
          "account_id": {"type": "string", "description": "From a prior search_drive hit's account_id; omit to auto-try all connected accounts."},
          "mime_type": {"type": "string", "description": "From a prior search_drive hit's mime_type; skips an extra lookup if provided."},
      }, "required": ["file_id"]}},
-    {"name": "list_tasks", "description": "List open Google Tasks across every connected Google account (built-in read-only integration). If the result says 'not connected', offer the one-time OAuth connection; a per-account error (e.g. this account never granted Tasks access) is reported specifically, not as 'not connected'.",
+    {"name": "list_tasks", "description": "List open Google Tasks across every connected Google account (built-in read-only integration). If the result says 'not connected', offer the one-time OAuth connection; a per-account error (e.g. this account never granted Tasks access) is reported specifically, not as 'not connected'. Each task includes account_id and tasklist_id — pass those into complete_task/update_task/delete_task, don't guess them.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "complete_task", "description": "Mark one Google Task completed, in one specific account's tasklist (built-in write integration). account_id and tasklist_id are required — get them from a prior list_tasks call, never guessed; a write to the wrong account is a different class of mistake than a read from the wrong one. Fails with a clear per-account error if that account hasn't granted write-capable Tasks access yet.",
+     "input_schema": {"type": "object", "properties": {
+         "task_id": {"type": "string"},
+         "tasklist_id": {"type": "string", "description": "From the task's tasklist_id in a prior list_tasks result."},
+         "account_id": {"type": "string", "description": "From the task's account_id in a prior list_tasks result."}},
+      "required": ["task_id", "tasklist_id", "account_id"]}},
+    {"name": "create_task", "description": "Create a new Google Task in one specific connected account (built-in write integration). account_id is required — pick it from list_tasks or the connected-accounts list, never guessed.",
+     "input_schema": {"type": "object", "properties": {
+         "title": {"type": "string"},
+         "account_id": {"type": "string", "description": "Which connected account to create it in — required, never guessed."},
+         "tasklist_id": {"type": "string", "description": "Defaults to the account's default list if omitted."},
+         "notes": {"type": "string"},
+         "due": {"type": "string", "description": "RFC3339 timestamp, e.g. 2026-09-01T00:00:00Z"}},
+      "required": ["title", "account_id"]}},
+    {"name": "update_task", "description": "Update a Google Task's title/notes/due/status in one specific account's tasklist (built-in write integration). account_id and tasklist_id are required — get them from a prior list_tasks call, never guessed. To just mark something done, prefer complete_task.",
+     "input_schema": {"type": "object", "properties": {
+         "task_id": {"type": "string"},
+         "tasklist_id": {"type": "string", "description": "From the task's tasklist_id in a prior list_tasks result."},
+         "account_id": {"type": "string", "description": "From the task's account_id in a prior list_tasks result."},
+         "title": {"type": "string"},
+         "notes": {"type": "string"},
+         "due": {"type": "string"},
+         "status": {"type": "string", "description": "'needsAction' or 'completed'."}},
+      "required": ["task_id", "tasklist_id", "account_id"]}},
+    {"name": "delete_task", "description": "Permanently delete a Google Task from one specific account's tasklist (built-in write integration). This cannot be undone. account_id and tasklist_id are required — get them from a prior list_tasks call, never guessed.",
+     "input_schema": {"type": "object", "properties": {
+         "task_id": {"type": "string"},
+         "tasklist_id": {"type": "string", "description": "From the task's tasklist_id in a prior list_tasks result."},
+         "account_id": {"type": "string", "description": "From the task's account_id in a prior list_tasks result."}},
+      "required": ["task_id", "tasklist_id", "account_id"]}},
     {"name": "search_contacts", "description": "Search the user's Google Contacts across every connected account by name, email, or phone substring (built-in read-only integration). Omit query to list recent contacts.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
     {"name": "read_wiki", "description": "Read a markdown file from the personal wiki at ~/wiki/. Use a relative path like 'professional/job-search.md'.",
@@ -1192,6 +1222,73 @@ def _tool_list_tasks(_inp):
         lambda ga: ga.merged_tasks(max_results=50),
         "tasks",
     )
+
+
+def _tool_complete_task(inp):
+    """Mark one Google Task completed in one specific account/tasklist.
+    Never fans out — account_id/tasklist_id are required, unlike list_tasks."""
+    inp = inp or {}
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception as e:
+        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+    result = ga.complete_task(
+        account_id=(inp.get('account_id') or '').strip(),
+        tasklist_id=(inp.get('tasklist_id') or '').strip(),
+        task_id=(inp.get('task_id') or '').strip(),
+    )
+    return json.dumps(result, default=str)
+
+
+def _tool_create_task(inp):
+    """Create a Google Task in one specific connected account."""
+    inp = inp or {}
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception as e:
+        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+    result = ga.create_task(
+        account_id=(inp.get('account_id') or '').strip(),
+        title=(inp.get('title') or '').strip(),
+        tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",
+        notes=(inp.get('notes') or '').strip(),
+        due=(inp.get('due') or '').strip(),
+    )
+    return json.dumps(result, default=str)
+
+
+def _tool_update_task(inp):
+    """Patch a Google Task's fields in one specific account/tasklist."""
+    inp = inp or {}
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception as e:
+        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+    result = ga.update_task(
+        account_id=(inp.get('account_id') or '').strip(),
+        tasklist_id=(inp.get('tasklist_id') or '').strip(),
+        task_id=(inp.get('task_id') or '').strip(),
+        title=(inp.get('title') or '').strip() or None,
+        notes=inp.get('notes') if inp.get('notes') is not None else None,
+        due=(inp.get('due') or '').strip() or None,
+        status=(inp.get('status') or '').strip() or None,
+    )
+    return json.dumps(result, default=str)
+
+
+def _tool_delete_task(inp):
+    """Permanently delete a Google Task from one specific account/tasklist."""
+    inp = inp or {}
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception as e:
+        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+    result = ga.delete_task(
+        account_id=(inp.get('account_id') or '').strip(),
+        tasklist_id=(inp.get('tasklist_id') or '').strip(),
+        task_id=(inp.get('task_id') or '').strip(),
+    )
+    return json.dumps(result, default=str)
 
 
 def _tool_search_contacts(inp):
@@ -3511,6 +3608,10 @@ CLAUDE_TOOL_HANDLERS = {
     "search_drive": _tool_search_drive,
     "read_doc": _tool_read_doc,
     "list_tasks": _tool_list_tasks,
+    "complete_task": _tool_complete_task,
+    "create_task": _tool_create_task,
+    "update_task": _tool_update_task,
+    "delete_task": _tool_delete_task,
     "search_contacts": _tool_search_contacts,
     "read_wiki": _tool_read_wiki,
     "search_wiki": _tool_search_wiki,
@@ -3847,6 +3948,10 @@ TOOL_RINGS: dict[str, int] = {
     "search_drive":         2,
     "read_doc":             2,
     "list_tasks":           2,
+    "complete_task":        2,   # writes to Google, same ring as calendar writes
+    "create_task":          2,
+    "update_task":          2,
+    "delete_task":          2,   # irreversible — also gated by _ALWAYS_CONFIRM
     "search_contacts":      2,
     "draft_email":          2,
     "open_url":             2,
@@ -5022,7 +5127,7 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
 #
 # `write_file` and `navigate` stay gated: one creates persistent state, the
 # other moves the UI out from under him mid-task.
-_ALWAYS_CONFIRM = {"write_file", "navigate"}
+_ALWAYS_CONFIRM = {"write_file", "navigate", "delete_task"}
 _OPTIONAL_CONFIRM = {"open_url", "open_path"}
 
 
