@@ -121,6 +121,8 @@ for b in bad:
     $r = Invoke-Native -FilePath $exe -Arguments @('-c', $py, $json) -TimeoutSeconds 300
     if ($r.ExitCode -ne 0) {
         Write-Log "Import probe itself failed (exit $($r.ExitCode)) - treating tier as not installed." 'FAIL'
+        Set-VerifyDetail ("The import probe itself exited $($r.ExitCode). Output:`n" +
+                          [string]$r.StdOut + "`n" + [string]$r.StdErr)
         return $false
     }
     if ($r.StdOut -match 'MISSING_COUNT=(\d+)') {
@@ -129,12 +131,23 @@ for b in bad:
             Write-Log "All $($Modules.Count) module(s) import cleanly." 'OK'
             return $true
         }
+        $missing = @()
         foreach ($line in ($r.StdOut -split "`r?`n")) {
-            if ($line -like 'MISSING *') { Write-Log $line 'FAIL' }
+            if ($line -like 'MISSING *') { Write-Log $line 'FAIL'; $missing += $line }
+        }
+        # Hand the healer the module names, not just the fact that something
+        # failed. Without this it is asked to diagnose "imports failed" with no
+        # import named, and install_missing_dependency - the one remediation
+        # that fixes this exactly - is not reachable by inference.
+        if ($missing.Count -gt 0) {
+            Set-VerifyDetail (("$($missing.Count) of $($Modules.Count) module(s) " +
+                               "did not import in Friday's own interpreter:`n") +
+                              ($missing -join "`n"))
         }
         return $false
     }
     Write-Log 'Import probe produced no verdict line - treating as failure.' 'FAIL'
+    Set-VerifyDetail 'The import probe produced no verdict line at all.'
     return $false
 }
 

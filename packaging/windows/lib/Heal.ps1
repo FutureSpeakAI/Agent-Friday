@@ -125,7 +125,7 @@ function Get-DefaultHealConfig {
         model              = 'claude-sonnet-5'
         api_url            = 'https://api.anthropic.com/v1/messages'
         api_version        = '2023-06-01'
-        max_tokens         = 700
+        max_tokens         = 1500
         max_total_heals    = 12
         max_total_minutes  = 25
         request_timeout_s  = 60
@@ -738,6 +738,27 @@ Diagnose and call propose_remediation once.
         CostUsd       = $cost
     }
 
+    # A response cut off at max_tokens leaves a PARTIAL tool input: `diagnosis`
+    # is populated (often with a stray closing tag, which is the visible tell)
+    # and `remediation` - written after it - is empty or absent. That reached
+    # the menu gate as an empty id and was refused as "not on the menu", which
+    # is the correct outcome for the wrong reason: nothing was proposed, so
+    # nothing should run, but it is not a model that went off-menu and it
+    # should not cost her one of twelve repairs.
+    #
+    # Observed on 2026-08-25, on the first execution of this loop: two heals
+    # spent on truncated responses at max_tokens = 700.
+    $stopReason = ''
+    if ($resp.PSObject.Properties.Name -contains 'stop_reason') { $stopReason = [string]$resp.stop_reason }
+    if ($stopReason -eq 'max_tokens') {
+        $script:HealTotalUsed--     # nothing was proposed; do not charge for it
+        $event.Refused = "The diagnosis was cut off at the token limit before it named a remediation."
+        Add-HealEvent $event
+        Write-Log ("Self-repair: response truncated at max_tokens ($($script:HealConfig.max_tokens)); " +
+                   "no remediation was named. Not counted against the repair budget.") 'HEAL'
+        return $false
+    }
+
     if (-not $use) {
         $event.Refused = 'The model did not call the tool, so no remediation was available.'
         Add-HealEvent $event
@@ -759,6 +780,12 @@ Diagnose and call propose_remediation once.
     Write-Log "Self-repair chose: $id  [$($event.Parameters)]" 'HEAL'
 
     # --- The gate. An id that is not a key in the menu does not run. -----
+    if (-not $id) {
+        $event.Refused = 'The model named no remediation at all.'
+        Add-HealEvent $event
+        Write-Log 'Self-repair: no remediation id returned. Nothing was run.' 'HEAL'
+        return $false
+    }
     if (-not $script:Remediations.Contains($id)) {
         $event.Refused = "Remediation id '$id' is not on the menu. Refused without running anything."
         Add-HealEvent $event

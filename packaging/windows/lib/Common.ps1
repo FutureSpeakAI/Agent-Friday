@@ -450,6 +450,34 @@ function Invoke-Native {
 
 function Set-StepTotal { param([int] $Total) $script:StepTotal = $Total }
 
+function Clear-VerifyDetail { $script:VerifyDetail = '' }
+
+function Set-VerifyDetail {
+    <#  What a -Verify block learned about WHY it failed.
+
+        Invoke-Step only sees $true/$false from a Verify block, so the detail a
+        verifier already computed used to die in the log. That mattered more
+        than it looks: when pip exits 0 and the import check fails, the healer
+        was handed "The command reported no error, but the check afterwards
+        still failed: every core module imports in Friday's own interpreter" -
+        a sentence with no module name in it. Asked to diagnose that, the model
+        reasonably guessed the ._pth file, because "silent success, broken
+        imports" IS the classic .pth symptom when you cannot see which import
+        broke. It burned two of the twelve repairs on a correct answer to the
+        wrong question.
+
+        Test-ModulesImportable knew it was feedparser the whole time. #>
+    param([string] $Text)
+    $script:VerifyDetail = [string]$Text
+}
+
+function Get-VerifyDetail {
+    if (Get-Variable -Name VerifyDetail -Scope Script -ErrorAction SilentlyContinue) {
+        return [string]$script:VerifyDetail
+    }
+    return ''
+}
+
 function New-StepResult {
     # A PSCustomObject rather than a `class`. PowerShell 5.1 scopes classes to
     # the file that defines them and does not reliably surface them through
@@ -542,6 +570,7 @@ function Invoke-Step {
         # ---- 3. PROVE it ---------------------------------------------------
         $ok = $false
         $verifyThrew = ''
+        Clear-VerifyDetail
         try { $ok = [bool](& $Verify) }
         catch { $ok = $false; $verifyThrew = $_.Exception.Message }
 
@@ -555,9 +584,16 @@ function Invoke-Step {
         $detail = "check did not pass"
         if ($VerifyDescription) { $detail = $VerifyDescription }
         if ($verifyThrew) { $detail = "$detail ($verifyThrew)" }
+        $vd = Get-VerifyDetail
+        if ($vd) { $detail = "$detail`n$vd" }
         Write-Log "$Id : NOT VERIFIED - $detail" 'FAIL'
         if ($actionThrew -eq $null -and -not $lastErrorText) {
             $lastErrorText = "The command reported no error, but the check afterwards still failed: $detail"
+        }
+        elseif ($vd) {
+            # The action DID say something, but the verifier knows more about
+            # the end state than the command does. Both go to the healer.
+            $lastErrorText = "$lastErrorText`n`nWhat the check found afterwards:`n$vd"
         }
         $result.LastError = $lastErrorText
 
