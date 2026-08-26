@@ -86,14 +86,25 @@ EMBEDDER = {"id": "all-MiniLM-L6-v2", "mib": 90,
 #: card it wants. Getting that backwards made the first version of this planner
 #: hand a 12 GiB card the 4B model, which is defect H3 in the release audit —
 #: the exact bug this module exists to prevent, reproduced by the fix for it.
+#: Ordered by `vram_gib` ascending, because `plan()` takes ``gpu_fits[-1]`` —
+#: the largest that fits. Insert in the right place or the pick changes.
 BRAIN_MODELS = (
     {"id": "gemma3:4b", "gib": 3.3, "min_ram_gib": 8, "vram_gib": 3.5,
      "tools": False,
-     "note": "chat only — lacks native tool calling, so Friday disables tools "
-             "for local turns rather than let it narrate calls it never made"},
+     "note": "chat only — no native tool calling. Friday still passes it the "
+             "tool registry (services/agent.py:_via_ollama does not gate on "
+             "capability), so it can NARRATE a call it never made; "
+             "tool_integrity.find_pseudo_toolcalls catches that after the fact "
+             "rather than preventing it. Prefer qwen3:4b on any card that "
+             "holds it"},
+    {"id": "qwen3:4b", "gib": 2.5, "min_ram_gib": 8, "vram_gib": 3.6,
+     "tools": True,
+     "note": "the smallest seat that keeps its tools — 2.5 GB on disk, less "
+             "than gemma3:4b, and Qwen3 ships native tool calling. This is the "
+             "tier an 8 GiB card lands on"},
     {"id": "qwen3:8b", "gib": 5.2, "min_ram_gib": 16, "vram_gib": 6.0,
      "tools": True,
-     "note": "first tier where local turns keep their tools"},
+     "note": "first tier where local turns keep their tools with room to spare"},
     {"id": "gemma4:12b", "gib": 7.5, "min_ram_gib": 24, "vram_gib": 9.5,
      "tools": True,
      "note": "measured 49-54 tok/s on a 12 GiB card, ~20.5 s cold load"},
@@ -326,7 +337,16 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
             pick, placement = gpu_fits[-1], "GPU"
             caveat = ""
         else:
-            pick, placement = ram_fits[0], "CPU"
+            # Smallest useful — but at the SAME RAM tier prefer the model that
+            # can call tools. qwen3:4b and gemma3:4b are both min_ram_gib 8 and
+            # qwen3:4b is the smaller download, so taking ram_fits[0] on tuple
+            # order alone handed every GPU-less machine the one model in this
+            # table that cannot call tools. An AMD card reads as no card
+            # (detect_gpus shells nvidia-smi and nothing else), so this was not
+            # a rare path.
+            pick = min(ram_fits, key=lambda m: (m["min_ram_gib"],
+                                                not m["tools"], m["gib"]))
+            placement = "CPU"
             caveat = (" Generation speed on CPU is unmeasured — expect this to "
                       "be usable for short exchanges and slow for long ones.")
         # Prefer something already on disk that fits, over anything we would

@@ -98,7 +98,13 @@ def test_cpu_only_gets_the_smallest_useful_model_not_the_largest(ram):
     strength of a number nobody has.
     """
     t = tiers(mp.plan(profile(ram, 100, 0)))
-    assert t["brain"]["models"][0]["id"] == "gemma3:4b"
+    # qwen3:4b is both the smallest download in the table (2.5 GiB) and the
+    # smallest seat that can call tools. Before it existed this assertion read
+    # gemma3:4b, which was the smallest — and the only model here that cannot
+    # call tools. Every GPU-less machine got it, including AMD cards, which
+    # read as no card at all because detect_gpus only shells nvidia-smi.
+    assert t["brain"]["models"][0]["id"] == "qwen3:4b"
+    assert t["brain"]["models"][0]["tools"] is True
     assert "unmeasured" in t["brain"]["reason"]
 
 
@@ -188,7 +194,11 @@ def test_free_space_after_install_is_never_negative(args):
 # ── Already-installed models ─────────────────────────────────────────────────
 
 def test_does_not_propose_downloading_what_is_already_there():
-    installed = ["embeddinggemma:300m", "functiongemma:270m", "gemma3:4b"]
+    # qwen3:4b, not gemma3:4b: the planner deliberately declines to settle for
+    # an installed model that cannot call tools (see the two tool_incapable
+    # tests below), so gemma3:4b no longer demonstrates this property — it
+    # demonstrates the opposite one.
+    installed = ["embeddinggemma:300m", "functiongemma:270m", "qwen3:4b"]
     p = mp.plan(profile(16, 100, 0), installed=installed)
     assert p["download"] == []
     assert tiers(p)["vault"]["status"] == "ready"
@@ -225,12 +235,59 @@ def test_tool_incapable_branch_on_a_cpu_only_machine():
     """
     p = mp.plan(profile(32, 200, 0), installed=["gemma3:4b"])
     brain = tiers(p)["brain"]
-    # On CPU the planner picks the smallest useful model, which IS gemma3:4b —
-    # so here the installed copy legitimately wins and there is nothing to
-    # download. The tool caveat must not fire when no better option existed.
-    assert brain["status"] == "ready"
-    assert brain["models"] == []
-    assert "cannot call tools" not in brain["reason"]
+    # This test used to assert the opposite, and the comment explaining why is
+    # worth keeping: on CPU the planner took the smallest model, which WAS
+    # gemma3:4b, so the installed copy won and no caveat fired. That made "no
+    # GPU" mean "no tools" — silently. qwen3:4b is smaller AND tool-capable, so
+    # the caveat now fires on CPU exactly as it already did on GPU.
+    assert brain["status"] == "install"
+    assert brain["models"][0]["id"] == "qwen3:4b"
+    assert brain["models"][0]["tools"] is True
+    assert "cannot call tools" in brain["reason"]
+    assert "gemma3:4b" in brain["reason"], "should name what it declined to use"
+
+
+def test_an_eight_gib_card_lands_on_a_tool_capable_seat():
+    """The RTX 4060 case, pinned, because it is the first non-author hardware.
+
+    8,188 MiB of card minus the 2.5 GiB display reserve and R3's 1 GiB leaves
+    4.5 GiB usable — which held gemma3:4b and nothing else, so the smallest
+    supported card was also the only one whose local seat could not call tools.
+    qwen3:4b fits in the same envelope, downloads 0.8 GiB LESS, and keeps them.
+    """
+    p = mp.plan(profile(16, 200, 8188 / 1024), installed=[], conversational=[])
+    brain = tiers(p)["brain"]
+    assert p["vram_usable_gib"] == 4.5
+    assert brain["models"][0]["id"] == "qwen3:4b"
+    assert brain["models"][0]["tools"] is True
+
+
+def test_a_twelve_gib_card_is_unchanged_by_the_small_card_fix():
+    """Adding a rung below must not move the rung above it.
+
+    BRAIN_MODELS is ordered by vram_gib because plan() takes gpu_fits[-1]; an
+    entry inserted in the wrong place silently changes what every larger card
+    gets. 12 GiB got qwen3:8b before qwen3:4b existed and must still.
+    """
+    p = mp.plan(profile(32, 200, 12282 / 1024), installed=[], conversational=[])
+    assert tiers(p)["brain"]["models"][0]["id"] == "qwen3:8b"
+
+
+def test_brain_models_is_ordered_by_vram_so_largest_that_fits_is_meaningful():
+    """plan() takes gpu_fits[-1]. That is only "the largest" if the table is sorted."""
+    v = [m["vram_gib"] for m in mp.BRAIN_MODELS]
+    assert v == sorted(v), f"BRAIN_MODELS out of order: {v}"
+
+
+def test_every_tool_capable_rung_is_reachable_by_some_card():
+    """A rung nothing can select is a rung that does not exist."""
+    for m in mp.BRAIN_MODELS:
+        if not m["tools"]:
+            continue
+        card = m["vram_gib"] + mp.DISPLAY_RESERVE_GIB + mp.GPU_OVERHEAD_GIB
+        p = mp.plan(profile(32, 200, card), installed=[], conversational=[])
+        assert tiers(p)["brain"]["models"][0]["id"] == m["id"], (
+            f"{m['id']} needs a {card:.1f} GiB card to be picked and was not")
 
 
 def test_an_embedding_model_is_never_offered_as_a_brain():
@@ -266,7 +323,7 @@ def test_conversational_filter_does_not_hide_an_installed_brain():
     no longer downloads anything, so the same property is pinned on the brain,
     which does.
     """
-    p = mp.plan(profile(32, 200, 0), installed=["gemma3:4b"], conversational=[])
+    p = mp.plan(profile(32, 200, 0), installed=["qwen3:4b"], conversational=[])
     assert tiers(p)["brain"]["status"] == "ready"
     assert p["download"] == []
 
