@@ -3,7 +3,45 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.1**
+
+---
+
+## [5.6.1] — 2026-08-25
+
+**This release exists because the installer had never been run** — not
+recently, but *ever*, on any machine, including the one it was written on.
+There was no `AgentFriday` folder in `%LOCALAPPDATA%` to prove otherwise and
+the self-repair loop had executed exactly zero times. It was then run end to
+end in an isolated profile, and four things broke.
+
+No new features. Everything here is about the first twenty minutes on a machine
+that is not the author's. Full notes in `RELEASE_NOTES.md`.
+
+### Fixed
+
+- **`Write-Log 'PLAN'` killed the install at step 3 of 16.** An invalid log
+  level aborted the run outright under `Set-StrictMode`. Now covered by a test
+  in `packaging/windows/tests/Test-Installer.ps1`.
+- **One missing known folder cost all four shortcuts.** A single unresolvable
+  path took the whole shortcut step down with it rather than the one shortcut.
+- **The self-repair healer was diagnosing blind**, and paying for truncated
+  answers.
+
+### Changed
+
+- **The local-model default is now a question, not a flag.** Asked once, before
+  the twenty minutes of downloading rather than after. This matters most on an
+  8 GB card, where the old default was actively wrong in a counterintuitive
+  way: Windows and the residency layer leave ~4.5 GiB of an 8,188 MiB card, and
+  `ModelRouter._route_vault` pins vault turns *on-device with no cloud
+  fallback* — so a struggling local model fails those turns outright, while
+  having **no** local model routes them to Claude via the `redact` branch and
+  works. Zero local models is safer than one that struggles.
+
+### Added
+
+- A test that stops a dependency which phones home from being added quietly.
 
 ---
 
