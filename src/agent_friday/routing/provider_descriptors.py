@@ -249,6 +249,40 @@ def auth_headers(prov: dict | None, api_key: str | None = None) -> dict:
 # shape. OpenRouter ships ENABLED (T1, spec §12.1); the rest are one-click
 # templates (enabled: False) that Settings can switch on.
 
+# ── Where a person without a key goes to get one ────────────────────────────
+#
+# The console page that ISSUES the credential, not the marketing homepage and
+# not a docs index: someone who has decided to use a provider wants the form,
+# and one more hop is where people give up.
+#
+# This table exists because the Providers panel used to ask for a key by
+# naming the environment variable it would be stored under — "needs
+# ANTHROPIC_API_KEY". That sentence is complete only if you already have the
+# key. Stephen installed Friday on Janet's laptop on 2026-08-26 and had to
+# open a code editor to put a Gemini key in, because nothing anywhere in the
+# product connected "Friday needs a key" to "here is where keys come from".
+#
+# Applied in `normalize_descriptor`, so it reaches built-ins, the JSON files
+# in ~/.friday/providers/, and anything typed into Add Provider alike. A
+# descriptor that names its own `signup_url` keeps it; an unknown provider
+# that names none is left empty rather than sent somewhere invented.
+SIGNUP_URLS = {
+    "anthropic":   "https://console.anthropic.com/settings/keys",
+    "openai":      "https://platform.openai.com/api-keys",
+    "google-gemini": "https://aistudio.google.com/app/apikey",
+    "openrouter":  "https://openrouter.ai/keys",
+    "huggingface": "https://huggingface.co/settings/tokens",
+    "groq":        "https://console.groq.com/keys",
+    "together":    "https://api.together.xyz/settings/api-keys",
+    "fireworks":   "https://fireworks.ai/account/api-keys",
+    "mistral":     "https://console.mistral.ai/api-keys",
+    "deepseek":    "https://platform.deepseek.com/api_keys",
+    "xai":         "https://console.x.ai",
+    "perplexity":  "https://www.perplexity.ai/settings/api",
+    "cohere":      "https://dashboard.cohere.com/api-keys",
+}
+
+
 def _mk(name, label, base_url, env_key, *, aliases=(), enabled=False,
         priority=50, discovery_parser="openai", discovery=True, models=(),
         extra_headers=None, features=None, rate_limit_style="none",
@@ -375,6 +409,19 @@ def normalize_descriptor(data: dict) -> dict:
     if not auth:
         auth = {"type": "none"}
     d["auth"] = auth
+
+    # A descriptor that demands a key carries the page that issues one. Its
+    # own value always wins — the table is a convenience for the providers
+    # Friday ships, not an override of what a descriptor's author said. An
+    # unknown provider with no link keeps an empty string: honest, and the UI
+    # simply renders no button. Guessing a URL would be worse than none.
+    if auth.get("type") == "env_var":
+        d["signup_url"] = (d.get("signup_url")
+                           or SIGNUP_URLS.get(d.get("name") or "", ""))
+    else:
+        # Ollama, ComfyUI, the in-process voice engines: no account exists to
+        # sign up for, and a button there teaches the wrong thing.
+        d.pop("signup_url", None)
 
     # Classification: alias, default cloud, demote unearned "local".
     claimed = str(d.get("classification") or d.get("egress_classification")

@@ -34289,7 +34289,7 @@ function ProviderRow({
     style: {
       color: '#f59e0b'
     }
-  }, "needs ", envKey))), /*#__PURE__*/React.createElement("span", {
+  }, "needs a key"))), /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'rgba(255,255,255,0.3)',
       fontSize: 11
@@ -34325,8 +34325,20 @@ function ProviderRow({
     value: keyDraft,
     onChange: e => setKeyDraft(e.target.value),
     onClick: e => e.stopPropagation(),
-    placeholder: prov.available ? envKey + ' configured — paste to replace' : 'Paste ' + envKey + ' (stored encrypted)'
-  }), /*#__PURE__*/React.createElement("button", {
+    placeholder: prov.available ? 'Key saved — paste a new one to replace it' : 'Paste your API key — it is encrypted on this computer'
+  }), prov.signup_url && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11,
+      color: '#7dd3fc',
+      whiteSpace: 'nowrap'
+    },
+    title: 'Opens ' + prov.signup_url,
+    onClick: e => {
+      e.stopPropagation();
+      window.open(prov.signup_url, '_blank', 'noopener');
+    }
+  }, "Get a key ↗"), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,
