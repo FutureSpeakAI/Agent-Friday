@@ -1,327 +1,212 @@
-# Agent Friday v5.5.0 — release candidate
+# Agent Friday v5.6.1
 
-*2026-08-21 · FutureSpeak.AI*
+*2026-08-25 · FutureSpeak.AI*
 
-This release fixes a large number of things that were quietly broken and
-documents a set that still are. Most of what follows had been failing for weeks
-without announcing itself, and nearly all of it was found by *using* Friday
-rather than by reading her.
+**This release exists because the installer had never been run.**
 
-There is no new headline feature. The installer is new because the old one
-could not install; the tutorial is new because nobody had ever walked a stranger
-through a first conversation. `KNOWN_ISSUES.md` is new and is the most useful
-file in this release.
+Not "had not been run recently" — had never been run, by anyone, on any
+machine, including the one it was written on. There was no `AgentFriday`
+folder in `%LOCALAPPDATA%` anywhere to prove otherwise, and the self-repair
+loop had executed exactly zero times.
 
----
+So it was run, end to end, in an isolated profile. Four things broke. All four
+are fixed below, and each entry says whether it was found by executing the
+code or by reading it, because on this particular release that distinction is
+the whole point.
 
-## The pattern behind most of these fixes
-
-Friday's dominant failure mode is confident wrongness, and her second is hiding
-her own injuries. She did not crash. She reported success.
-
-- The server spawned its child with `stderr=DEVNULL`. Six overnight startup
-  failures left no trace anywhere; the cause was a one-line import error.
-- A whole API surface failed to register for **seven weeks and ~70 restarts**,
-  logging one warning per boot that nobody read. `/api/health` returned 200
-  throughout.
-- Every voice conversation's wiki distillation was discarded for weeks. The task
-  routed to a model that was not resident, received HTTP 404, and reported
-  **"Task complete."**
-- The system tray reported `FAILED TO START` on every *successful* start,
-  because it waited 30 seconds against a measured 143-second boot.
-- Local voice transcribed speech, emitted `status: thinking`, and never spoke.
-  The readiness gate certified the microphone and the speaker and never asked
-  whether the brain between them existed.
-- An MCP subsystem with ~99 registered tools reported itself dead for the life
-  of every process.
-
-The rule that follows from it, now written into `KNOWN_ISSUES.md`:
-
-> **Nothing in Friday may claim success it has not verified.**
-
-Two specific bug classes are named there, because both recurred repeatedly and
-both are greppable. The first is a comparison that discards the part of the
-value carrying the meaning — a name's prefix instead of the name, a number's
-magnitude instead of its sign. Nine instances were found. The second is an
-assertion loose enough to accept a failure mode it wasn't testing for. The third
-is evidence about a component that isn't in the path: two models were
-benchmarked, real numbers produced, a seating plan built on them and an
-installer written to download them, and nothing in the codebase loads either
-one.
-
-Worth stating plainly, because it shows the class is live rather than tidied
-up: **the pattern appeared three times inside the fixes for itself.** The
-installer's model planner reproduced the exact defect it was written to prevent.
-The benchmark harness written to investigate the others shipped the same bug
-twice. And while fixing a command that computed a correct failure and exited 0,
-we found `cmd_health` returning a bool — `sys.exit(False)` is `0`, so a failed
-health check had been reporting success.
+Everything here is about the **first twenty minutes on a machine that is not
+the author's**. There is no new feature.
 
 ---
 
-## Fixed
+## If you are installing on an 8 GB card
 
-**Startup and process integrity**
+Short version: **you no longer need to know anything.** Run the installer and
+answer the question it asks.
 
-- The server could not start at all — a module-level use-before-definition.
-  A ~3.5s import check is now wired into launch, pre-commit and CI.
-- Child stdout and stderr are captured to `~/.friday/server_stderr.log`. The
-  tray distinguishes "failed to start (exit N)" from "stopped", and its health
-  wait went from 30s to 300s against a measured ~143s cold start.
-- Blueprint registration failures are tiered: a required module failing exits
-  loudly, an optional one starts but announces in the log, a notification, and
-  `~/.friday/startup-report.json`. `GET /api/startup-report` serves it. Proved
-  by fault injection, not the happy path.
-- Any background task whose reply is a provider error is marked failed and
-  reported as failed, instead of being summarised verbatim as a completed task.
+The longer version is worth reading once, because the old default was actively
+wrong here and not obviously so.
 
-**Correctness**
+An 8 GB card is not a smaller version of a 12 GB card. Windows takes 2.5 GiB
+for the display and the residency layer reserves 1 GiB more, so an 8,188 MiB
+card has **4.5 GiB** left — 44% of the card gone, against 29% on a 12 GiB one.
 
-- `tool_results.append` was indented inside an `except` in `_call_claude_agent`,
-  so on the normal path tool results were never appended at all.
-- Chat turns died on request bodies containing non-ASCII UTF-8, and on empty
-  messages. Both now handled; tracebacks reach the log rather than a stderr that
-  does not exist under `pythonw`.
-- Creation filenames used a fourteen-digit timestamp that matched the
-  credit-card detector, so the tool result naming a successful render was
-  withheld from the model. Friday could not see her own output and reported
-  working videos as blocked.
-- `/api/mcp/status` read the manager by value at import, pinning it to `None`.
-- `friday doctor` reported a model installed when a *sibling tag* was installed.
-- CLI commands now propagate exit codes. `friday models --install` computed a
-  correct failure, printed it, and exited 0; no command in the file propagated
-  one.
+Left alone, the old installer downloaded a local model into that space. That
+produced the *worse* of the two possible configurations, for a reason that is
+genuinely counterintuitive:
 
-**Privacy and safety**
+- With **no local model**, a turn that touches your private notes takes the
+  `redact` branch and routes to Claude. It works.
+- With **a local model present**, `ModelRouter._route_vault` forces those
+  turns on-device and does **not** fall back to the cloud. A seat that is
+  cold, slow, or dead fails the turn outright.
 
-- Tool descriptions were run through the content classifier and blanked, so on
-  cloud-fallback turns the model received a list of tools it could not read. A
-  tool named `remember_contact` had its description removed for saying it stores
-  phone numbers. Gating is now scoped to third-party MCP tools.
-- TIER-2 sensitivity over-triggered on ordinary words. "family picture-book
-  aesthetic" was rated PRIVATE and force-routed to a local seat that could not
-  hold the payload, killing the turn.
-- The secret scanner blocked a correct config read (`api_key=core.GEMINI_API_KEY`)
-  and a code comment. A scanner that flags correct code teaches people it cries
-  wolf. Fixed with a carve-out so no known key shape is ever exempted.
-- Package import no longer prints the *names* of secrets loaded from launch
-  scripts — including `FRIDAY_PASSWORD` — to stdout on every command and test
-  run.
-- Tag `v4.4.0` and 93 local `archive/*` tags were deleted. All 42 origin tags
-  were audited; `v4.4.0` was the only one carrying pre-scrub content.
-
-**Install**
-
-- The one-line installer cloned `friday-desktop.git`, which does not exist. The
-  repository is `Agent-Friday.git`. Every fresh install died at the clone.
-- Both installers ran `setup_wizard.py` from the wrong directory.
-- All three installers and `friday update` regenerated `index.html` from a dead
-  mirror, deleting 17 components that exist only in the served file and silently
-  downgrading to CDN Babel. No shipped code path writes `index.html` any more.
+Having zero local models is *safer* than having one that struggles. The
+installer now knows that.
 
 ---
 
-## New
+## What changed
 
-**`friday models`** detects RAM, disk and GPU and reports what your machine can
-run *before* downloading anything. Every refusal names its rule and shows the
-arithmetic, and it downloads **only models something actually loads**.
+### 1. The installer asks, once, instead of assuming
 
-Two things worth stating plainly, because the first version of this got both
-wrong:
+Immediately after the key — before twenty minutes of downloading, not after —
+setup asks how you want Friday to think:
 
-**Memory needs no GPU.** It runs on `all-MiniLM-L6-v2` through
-sentence-transformers, a declared pip dependency, so it arrives with the install
-rather than as a model download.
+```
+    1. Use your Claude key.
+       Nothing extra to download.
 
-**Tools do not work on a local brain today, on any machine.** `function_manager`
-exists as a role in the residency contract and nothing in the chat path consults
-it, so a local model has no function seat to delegate to. A local-only Friday
-converses and remembers; she does not act. Tools need a cloud key. This is a
-missing wire, not a hardware limit — see `KNOWN_ISSUES.md`.
+    2. Also download a model that runs on this laptop.
+       About 2.5 GB more now, and a longer wait.
+```
 
-`friday models --install` verifies each model against the daemon's own inventory
-after downloading. A pull that exits zero having fetched no weights is reported
-as failed.
+The default comes from your actual card, read with `nvidia-smi` before Python
+exists. Under ~5 GiB usable it recommends option 1 and says why. Above it, it
+recommends option 2. Pressing Enter takes the recommendation, and either
+answer can be changed later from Settings → Models.
 
-**`docs/TUTORIAL.md`** takes a stranger from clone to one working conversation
-and stops.
+`-SkipOllama` still works and still forces option 1. It is no longer something
+anyone has to remember.
 
-**`KNOWN_ISSUES.md`** lists what is broken, what is unverified, and what leaves
-your machine.
+### 2. A local model, when you do add one, can call tools
 
----
+`BRAIN_MODELS` gains **qwen3:4b**. On an 8 GiB card this replaces `gemma3:4b`,
+and it is a strict improvement in both directions that matter: it is **2.5 GB
+instead of 3.3 GB**, and Qwen3 ships native tool calling.
 
-## Not verified
+Until now the smallest supported card was also the only one whose local seat
+could not call tools. The CPU-only path had the same problem for a different
+reason — it picked by table order, so *every* machine without an NVIDIA card
+got the one tool-incapable model. (An AMD card reads as no card at all:
+`detect_gpus` shells `nvidia-smi` and nothing else.) It now breaks that tie
+toward tool calling.
 
-This section is separate from "known issues" on purpose. Nothing here is a claim
-that something works.
+*Verified by executing the planner across four hardware profiles.* A 4060
+lands on qwen3:4b, a 4070 still lands on qwen3:8b, and both CPU-only cases now
+land on a tool-capable seat.
 
-**Proven on a clean Ubuntu machine, from a fresh clone of the pushed branch:**
-`friday --help` lists `models`; the tutorial is present; free space reads 9 GiB
-against a ground truth of 8.8; every refusal shows its arithmetic; a real
-`qwen3:8b` pull was verified against the daemon's inventory and exited 0; the
-venv instructions resolve the PATH problem.
+While there: the planner used to tell you `gemma3:4b` meant Friday "disables
+tools for local turns". She does not. `services/agent.py:_via_ollama` passes
+the tool registry with no capability check, and `find_pseudo_toolcalls`
+catches a narrated call *after the fact* rather than preventing it. The
+mitigation is real. The sentence describing it was not, and now matches.
 
-**Not proven, and needing a Windows machine:**
+### 3. One missing folder no longer costs every shortcut
 
-- Whether the planner correctly declines to re-propose already-installed models
-  against a real inventory.
-- The secret-name fix against actual launch scripts. The clean box had none, so
-  that pass proved only that nothing crashed.
-- Any GPU branch of the planner against real `nvidia-smi` output.
+*Found by running it.* `[Environment]::GetFolderPath()` returns an **empty
+string** when the folder it names does not exist, and `Join-Path` refuses an
+empty path. `Install-Shortcuts` resolved the Start Menu directory at the top
+of the function, so one empty lookup threw before the first shortcut was
+attempted — and took the desktop icon down with it.
 
-**Not proven, and needing one conversation:**
+Because the step is optional, this surfaced as one calm line: *"Skipped this
+part — Friday will still work without it."* Eleven lines later the same screen
+said **"There is an Agent Friday icon on the desktop. Double-click it,"** and
+pointed at a Start menu folder that had also not been created.
 
-- **Local voice is fixed in code and unproven in practice.** The local session
-  now pins a resident brain and refuses to start when none exists, and the code
-  compiles and is tested. But nobody has spoken to Friday, received a spoken
-  answer, and confirmed from the egress log that nothing left the machine. Until
-  someone does, treat local voice as unproven. The proof is one conversation
-  plus a look at `~/.friday/friday.log` for an egress line during the turn — if
-  the gate logs nothing, nothing left.
+An installer that finishes by naming two things that are not there has failed
+in the only way that matters to the person reading it.
 
-**Not proven, and unmeasured:**
+- Known folders now fall back to the `%USERPROFILE%` / `%APPDATA%` path and
+  return empty rather than throwing.
+- Each destination is resolved separately. A folder we cannot find costs the
+  shortcuts that live in it and nothing else.
+- **The closing screen now reads what was actually created** and says that —
+  the desktop icon if it exists, otherwise the Start menu folder, otherwise
+  the full path to `Agent Friday.cmd`. Same for the uninstaller.
 
-- CPU generation throughput, for any model. The planner says so where it
-  recommends a CPU brain.
-- 8 GB VRAM. The hardware fixture representing it carries measurements copied
-  from a 12 GB card.
-- The KV-cache slope the entire seat-planning model rests on. It is inferred
-  from two anchors taken on two different backends, and a directly measured
-  slope on one model was an order of magnitude away from it.
+Honest about the trigger: the empty path came from a redirected `%APPDATA%` in
+the test harness, which is not a state a normal laptop is in. A profile
+mid-provision, a roaming profile, or an unfinished OneDrive Known Folder Move
+produce the identical empty string on a real machine, and the blast radius was
+every shortcut plus a closing screen that contradicted itself.
 
-**Structurally broken and deliberately not fixed here:** a wheel install cannot
-run the career pipeline. `data/` and `skills/` are top-level directories that
-are not packaged. Installing from a clone avoids it entirely. Resolving it
-properly means deciding what the skills system *is*, which is a product decision
-and not something to answer inside a bug fix.
+### 4. Self-repair works — and did not, the first time it ran
 
----
+The Claude-powered repair loop (12 repairs, 25 minutes, a fixed 13-item menu,
+validators that refuse anything off it) had never executed. It was run against
+a deliberately induced failure. **It failed twice before it worked.**
 
-## Before this is announced
+**It was being asked to diagnose blind.** `Invoke-Step` sent the *action's*
+output and the step's *static* description. When pip exits 0 and a module is
+missing — the most likely way this install fails — the model received:
 
-**Do not publish or announce a release until these are rotated.** The reason is
-specific rather than ceremonial: the repository is already public, and drawing
-attention to it while these are live is the one outcome the tag cleanup existed
-to prevent.
+> "The command reported no error, but the check afterwards still failed: every
+> core module imports in Friday's own interpreter"
 
-1. **The Google / Gemini API key.**
-2. **`FRIDAY_PASSWORD`** — it derives the key protecting the credential store.
-   Check `services/credential_store.py` for a re-key path first, or you will
-   lock yourself out of your own vault.
-3. **The Discord invite** `discord.gg/f2VM6qNk` — revoke and reissue. It was
-   public in tag `v4.4.0` until today. Deleting the tag does not purge GitHub's
-   object store; forks, PR refs and caches persist independently, so revoking
-   the invite is what actually closes it.
+No module is named in that sentence. The verifier had computed `MISSING
+feedparser: ModuleNotFoundError` and written it to the log, and the log is not
+what gets sent. Claude twice proposed repairing the interpreter's `.pth` file
+— a good answer, because "pip succeeded, imports fail" *is* the classic `.pth`
+symptom when you cannot see which import failed. It was answering the only
+question it was asked.
 
-Also worth doing before an announcement: `FRIDAY_SECRET_KEY` currently ships as
-a known default string, which means forgeable sessions on any exposed instance.
+A verify block can now hand its detail back. Same failure, same key, same
+model:
 
----
+| | repairs spent | chose | outcome |
+|---|---|---|---|
+| before | 2 | `repair_python_pth` ×2 | step **failed** |
+| after | 1 | `install_missing_dependency [package=feedparser]` | **verified** |
 
-*The known-issues file is long. That is the argument for this release, not
-against it — it is shorter than the list of things that work.*
+`install_missing_dependency` was on the menu the whole time and was not
+reachable by inference.
 
----
+**And a truncated answer was charged as a repair.** The tool input is written
+diagnosis-first, so at `max_tokens = 700` a long diagnosis ran out of budget
+before the field naming the remediation. The partial input arrived with an
+empty id, was refused as "not on the menu" — correct outcome, wrong reason —
+and had already spent one of twelve. Truncation is now detected via
+`stop_reason`, nothing runs, nothing is charged, and the log says the answer
+was cut off. `max_tokens` raised to 1500.
 
-<details>
-<summary>Previous release — v5.4.0</summary>
+*Verified by forcing `max_tokens = 40`: the guard fires and the counter stays
+at zero.*
 
-# Agent Friday v5.4.0 — "Second Brain"
-
-*Release date: 2026-07-06 · FutureSpeak.AI · Asimov's Mind*
-
-Friday has always *kept* your knowledge — a wiki, memories, a soul file, a
-learning loop. As of this release she **connects** it, and you can fly
-through it.
-
----
-
-## The Knowledge Galaxy
-
-Open the new 🌌 **Knowledge** workspace (or hit **Galaxy** in the Wiki) and
-your knowledge base renders as a living galaxy: every wiki page a star,
-every link and cross-mention a filament of light, your wiki sections
-clustered into named, glowing constellations. The camera flies in from deep
-space while your constellations ignite one by one — then it's yours: orbit,
-zoom, hover a star to trace its connections, double-click to open the page
-in the Wiki. Search lights up a constellation. When Friday learns something
-new — a fact consolidated by overnight memory dreaming, a skill promoted by
-the learning loop — a new star ignites, live.
-
-It holds its frame rate on real GPUs, degrades gracefully on weak ones, and
-the whole experience runs with zero network — stars, physics, bloom, and
-data are all local.
-
-## The graph underneath
-
-Two tiers, spec'd in `docs/KNOWLEDGE_SYSTEM_SPEC.md`:
-
-- **Tier A — structural, always on, no LLM.** The wiki *is* the graph:
-  `[[wikilinks]]`, markdown links, and title-mentions become edges;
-  communities come from your own organization; the layout is computed
-  server-side and deterministically. Rebuilds in milliseconds on every wiki
-  save. A structural query engine answers "how is X related to Y?" with
-  actual link paths and tells the agent exactly which 2–3 pages are worth
-  opening — no LLM call, no waiting, works offline.
-- **Tier B — semantic, opt-in, sovereign.** Microsoft-GraphRAG-style entity
-  and relationship extraction across the wiki, SOUL.md, conversation memory,
-  and cognitive memory, with LLM-written community reports and local
-  embeddings. **Local-only by default** — nothing leaves your machine unless
-  you explicitly enable gated-cloud mode, and even then: content classified
-  TIER_2/3 is pinned to local models in *every* mode, a failed egress-gate
-  self-test disables cloud indexing outright, and anything derived from
-  sensitive sources is AES-256-GCM vault-encrypted at rest. An adversarial
-  test suite plants fake SSNs and health data in the corpus and proves they
-  never reach a cloud-eligible call.
-
-New agent tools ride the graph too: `knowledge_query` (structural answers +
-reading shortlists), `knowledge_related`, and `knowledge_communities` — all
-Ring 0, instant, offline.
-
-Control it under **Settings → Knowledge Graph**: indexing mode, which
-corpora to index, constellation grouping, nightly reindex (03:30, right
-after memory dreaming), and manual rebuild buttons.
-
-## Voice: Gemini Live fluidity
-
-The Tier-3 cloud voice got a tuning pass verified against Google's current
-Live API documentation:
-
-- **Barge-in by default.** Speak over Friday and she stops within a frame —
-  the old default silently disabled interruption entirely. Open-speaker
-  setups keep an explicit no-interruption opt-out.
-- **No more progressive rasp.** The playback worklet now runs on a 120 ms
-  jitter cushion (re-primed after any underrun) with an anti-wrap ring
-  guard — hours-long calls stay clean.
-- **Hours-long sessions.** Context-window compression is on by default,
-  removing the ~15-minute session cap; combined with session resumption and
-  reconnect draining, multi-hour conversations carry full context.
-
-## Also in this release
-
-- Offline-first hardening: web fonts and MediaPipe now load asynchronously —
-  a dead or stalling network can no longer block first paint.
-- `/api/knowledge-graph/*` — nine new endpoints, documented in
-  `docs/API.md`; SSE event stream for live graph updates.
-- 78 new backend tests including the adversarial egress suite, plus a
-  Playwright spec asserting the galaxy mounts, holds its fps floor, and
-  click-through to the Wiki works.
+The menu gate itself was never the problem and is unchanged. It refused
+everything it should have.
 
 ---
 
-**Install:** download `AgentFriday.exe` below (Windows, no Python needed),
-or `pip install -e .` from source — see `docs/INSTALLATION.md`.
+## What was rehearsed, and what was not
 
-**Upgrade note:** the knowledge graph builds itself on first open of the
-Knowledge workspace; no migration steps. Your wiki is never modified — the
-graph is a derived index you can delete or rebuild at any time.
+| | |
+|---|---|
+| **Rehearsed** | A cold install into an empty profile, start to finish: preflight, app copy, embedded Python, pip core / screen-control / voice+PDF+privacy / memory tiers, shortcuts, uninstaller registration, the closing report. 11 minutes. |
+| **Rehearsed** | The self-repair loop against a real induced failure, with a real key: fail → diagnose → validate → remediate → re-verify → pass. Both before and after the fix. |
+| **Rehearsed** | The truncation guard, by forcing a tiny token budget. |
+| **Rehearsed** | The planner, executed across four hardware profiles. |
+| **Not rehearsed** | Ollama install and the model pull. Deliberately skipped — the rehearsal machine has a live Ollama serving another Friday, and a pull would have written into its shared model store. |
+| **Not rehearsed** | The interactive prompts, including the new question. `Read-Host -AsSecureString` reads the console directly and ignores redirected stdin, so a scripted run cannot answer it. The branch logic was executed; the typing was not. |
+| **Not rehearsed** | `qwen3:4b` on an actual 8 GB card. Its `vram_gib` is derived from the artifact, not measured, and is marked as such. |
+| **Not rehearsed** | The setup wizard, and first launch. |
 
 ---
 
-*Every capability in this release is governed by Asimov's cLaws, gated by the
-sovereign egress classifier, and provable via Ed25519 content credentials.
-Friday distributes; you own.*
+## Known, unchanged
 
-</details>
+- **No residency seat is assigned on non-reference hardware.** Seed VRAM
+  measurements are keyed by machine fingerprint and only the author's 4070 is
+  present, so `interactive_brain` stays unfilled — silently, because the
+  refusal is recorded inside the branch that never runs. Impact under
+  cloud-first is nil; once you add a local model, every local turn pays a cold
+  load. Unfixed.
+- **`packaging/windows/assets/` is empty.** No `friday.ico` exists in the
+  repo, so every shortcut gets the default icon. Cosmetic; noted so it is not
+  rediscovered.
+- **A deep install path costs the privacy tier.** spaCy's native modules hit
+  the 260-character limit and `presidio_analyzer` fails to load. A normal
+  `%LOCALAPPDATA%` path is nowhere near it. Also: a single failure in that
+  tier reports voice and PDF as skipped too, even when both installed fine.
+
+---
+
+**Install:** download `AgentFriday-Setup-5.6.1.zip` below, unzip it anywhere,
+and double-click **Install Agent Friday.cmd**. No Python, no git, no Ollama
+needed first. Per-user throughout — no administrator, no `Program Files`, no
+`HKLM`.
+
+There is no `.exe` build in this release. The one that used to be published
+ran **two** of the four privacy layers rather than all four, which is a
+security difference and not a packaging one. See `docs/INSTALLATION.md`.
