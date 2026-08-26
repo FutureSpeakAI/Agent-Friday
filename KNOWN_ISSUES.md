@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-08-21, for v5.5.0-rc.**
+**As of 2026-08-26, for v5.6.2.**
 
 This file lists what is broken, what is unverified, and what we do not know. It is
 maintained because a defect you can read about is cheaper than one you discover, and
