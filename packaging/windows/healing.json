@@ -32,7 +32,14 @@
 
   "api_url": "https://api.anthropic.com/v1/messages",
   "api_version": "2023-06-01",
-  "max_tokens": 700,
+  "max_tokens": 1500,
+  "_max_tokens_note": [
+    "Was 700. The tool input is written diagnosis-first, so a long diagnosis",
+    "truncated the remediation field and the call arrived with nothing to run.",
+    "Seen twice on the first real execution of this loop, 2026-08-25. A",
+    "truncated response is now detected via stop_reason and does not count",
+    "against max_total_heals."
+  ],
   "request_timeout_s": 60,
 
   "max_total_heals": 12,
