@@ -84,8 +84,16 @@ def test_gpu_gets_the_largest_model_that_fits_not_the_smallest():
     assert pick["id"] != "gemma3:4b"
     assert pick["tools"] is True
 
-    big = tiers(mp.plan(profile(32, 60, 24)))
-    assert big["brain"]["models"][0]["id"] == "gemma4:12b"
+    # A 24 GiB card used to get gemma4:12b — the same model a 16 GiB card got,
+    # because gemma4:12b was the top of the table and "largest that fits" has
+    # nothing to reach for once it runs out of rungs. That is not a fit
+    # calculation, it is a missing ladder.
+    big = tiers(mp.plan(profile(64, 60, 24)))
+    assert big["brain"]["models"][0]["id"] == "qwen3:32b"
+
+    # And the rung below must be genuinely different, or the ladder is decorative.
+    mid = tiers(mp.plan(profile(32, 60, 16)))
+    assert mid["brain"]["models"][0]["id"] == "qwen3:14b"
 
 
 @pytest.mark.parametrize("ram", [32, 64, 128])
@@ -257,20 +265,117 @@ def test_an_eight_gib_card_lands_on_a_tool_capable_seat():
     """
     p = mp.plan(profile(16, 200, 8188 / 1024), installed=[], conversational=[])
     brain = tiers(p)["brain"]
-    assert p["vram_usable_gib"] == 4.5
+    # 5.5, not 4.5: only DISPLAY_RESERVE_GIB comes off the card now. The extra
+    # GiB that used to be subtracted here is the model's own runtime overhead,
+    # and it is already inside every `vram_gib` — taking it off both sides was
+    # the double count.
+    assert p["vram_usable_gib"] == 5.5
     assert brain["models"][0]["id"] == "qwen3:4b"
     assert brain["models"][0]["tools"] is True
 
 
-def test_a_twelve_gib_card_is_unchanged_by_the_small_card_fix():
-    """Adding a rung below must not move the rung above it.
+def test_the_reference_card_gets_the_model_measured_to_run_on_it():
+    """The 12 GiB rung, and why this assertion changed.
 
-    BRAIN_MODELS is ordered by vram_gib because plan() takes gpu_fits[-1]; an
-    entry inserted in the wrong place silently changes what every larger card
-    gets. 12 GiB got qwen3:8b before qwen3:4b existed and must still.
+    It used to read `qwen3:8b`, and it was wrong — provably, against a
+    measurement taken on the very card it describes. `gemma4:12b` runs fully
+    resident on the reference RTX 4070: `residency_catalog.SEED_MEASUREMENTS`
+    has it at 7,718 MiB with a 32k window at 100% GPU, 49-54 tok/s, and
+    nvidia-smi puts total card occupancy at 8,745 MiB against 7,023 MiB of
+    weights. The planner refused it anyway, because `vram_gib` was hand-written
+    as 9.5 — about 2 GiB above the measured footprint — and then another 1.0
+    GiB came off the card as `GPU_OVERHEAD_GIB`. Two counts of the same
+    overhead demanded a 13.0 GiB card for a model measured to run in 11.0.
+
+    So this test now asserts the machine gets the model its owner actually
+    runs on it. `vram_gib` is computed from the download size rather than
+    typed, which is what stops the figure drifting from reality again.
     """
     p = mp.plan(profile(32, 200, 12282 / 1024), installed=[], conversational=[])
-    assert tiers(p)["brain"]["models"][0]["id"] == "qwen3:8b"
+    assert tiers(p)["brain"]["models"][0]["id"] == "gemma4:12b"
+
+
+def test_no_rung_is_hand_written_so_none_can_drift_from_its_download_size():
+    """`vram_gib` is derived, and that is the whole defence against the above."""
+    for m in mp.BRAIN_MODELS:
+        assert m["vram_gib"] == mp._footprint_gib(m["gib"]), m["id"]
+
+
+def test_a_bigger_card_gets_a_bigger_model_all_the_way_up():
+    """The ladder must actually climb.
+
+    Before the upper rungs existed, 16, 24 and 32 GiB cards all received
+    gemma4:12b — a 7.5 GB model on a 32 GiB card, with 22 GiB idle. Someone
+    who bought the hardware could not tell it was being ignored, because the
+    planner reported a confident, correct-looking fit every time.
+    """
+    picks = [tiers(mp.plan(profile(128, 300, v)))["brain"]["models"][0]["id"]
+             for v in (8, 12, 16, 24)]
+    assert len(set(picks)) == len(picks), f"ladder stalls: {picks}"
+
+    sizes = [next(m["vram_gib"] for m in mp.BRAIN_MODELS if m["id"] == p)
+             for p in picks]
+    assert sizes == sorted(sizes), f"ladder not monotonic: {list(zip(picks, sizes))}"
+
+
+def test_a_tool_incapable_model_cannot_be_selected_on_any_hardware():
+    """The hard gate, swept rather than spot-checked.
+
+    `gemma3:4b` was the shipped default until a person noticed. A rule that
+    depends on someone noticing is not a rule, so this sweeps the whole
+    hardware range instead of testing the one case that was reported.
+    """
+    incapable = {m["id"] for m in mp.BRAIN_MODELS if not m["tools"]}
+    assert incapable, "this test is vacuous if every row is tool-capable"
+    for ram in (8, 16, 32, 64, 128):
+        for vram in (0, 4, 6, 8, 10, 12, 16, 24, 32, 48):
+            p = mp.plan(profile(ram, 300, vram), installed=list(incapable))
+            brain = tiers(p)["brain"]
+            for m in brain.get("models", []):
+                assert m["id"] not in incapable, f"{m['id']} at {ram}/{vram}"
+                assert m["tools"] is True
+            for a in brain.get("alternatives", []):
+                assert a["tools"] is True, f"{a['id']} offered at {ram}/{vram}"
+
+
+def test_the_plan_offers_the_other_rungs_rather_than_deciding_silently():
+    """A 24 GiB card should see what else it could run, with a marked default."""
+    brain = tiers(mp.plan(profile(64, 300, 24)))["brain"]
+    alts = brain["alternatives"]
+    ids = [a["id"] for a in alts]
+    assert "qwen3:32b" in ids and "qwen3:8b" in ids
+    assert [a["id"] for a in alts if a["default"]] == ["qwen3:32b"]
+    # Every offer carries its provenance, so nothing reads as measured when it
+    # is arithmetic.
+    assert all(a["basis"] for a in alts)
+
+
+def test_unmeasured_rungs_say_so():
+    """Several of these fits are derived. The table must not imply otherwise."""
+    by_id = {m["id"]: m for m in mp.BRAIN_MODELS}
+    assert "MEASURED" in by_id["gemma4:12b"]["basis"]
+    for mid in ("qwen3:14b", "qwen3:32b"):
+        assert "UNMEASURED" in by_id[mid]["basis"], mid
+
+
+def test_tool_capability_is_verified_against_the_daemon_not_the_table():
+    """`verify_tool_capability` asks the artifact, and separates "no" from "unknown"."""
+    ok, why = mp.verify_tool_capability(
+        "qwen3:32b", show_fn=lambda m: {"capabilities": ["completion", "tools"]})
+    assert ok is True and "can call tools" in why
+
+    bad, why = mp.verify_tool_capability(
+        "gemma3:4b", show_fn=lambda m: {"capabilities": ["completion"]})
+    assert bad is False and "CANNOT" in why
+
+    # No daemon is not a failed model. None, never False.
+    unknown, why = mp.verify_tool_capability(
+        "qwen3:32b", show_fn=lambda m: (_ for _ in ()).throw(OSError("refused")))
+    assert unknown is None and "unverified" in why
+
+    # A daemon too old to report capabilities is also unknown, not a refusal.
+    old, why = mp.verify_tool_capability("qwen3:32b", show_fn=lambda m: {})
+    assert old is None and "unverified" in why
 
 
 def test_brain_models_is_ordered_by_vram_so_largest_that_fits_is_meaningful():
@@ -284,8 +389,13 @@ def test_every_tool_capable_rung_is_reachable_by_some_card():
     for m in mp.BRAIN_MODELS:
         if not m["tools"]:
             continue
-        card = m["vram_gib"] + mp.DISPLAY_RESERVE_GIB + mp.GPU_OVERHEAD_GIB
-        p = mp.plan(profile(32, 200, card), installed=[], conversational=[])
+        # +0.1 because usable VRAM is rounded to a tenth of a GiB, so a card
+        # sitting exactly on a rung can land ~50 MiB under it. That rounding
+        # errs toward refusing, which is the right direction; this test just
+        # should not claim a precision the planner does not have.
+        card = m["vram_gib"] + mp.DISPLAY_RESERVE_GIB + 0.1
+        p = mp.plan(profile(max(32, m["min_ram_gib"] * 2), 300, card),
+                    installed=[], conversational=[])
         assert tiers(p)["brain"]["models"][0]["id"] == m["id"], (
             f"{m['id']} needs a {card:.1f} GiB card to be picked and was not")
 

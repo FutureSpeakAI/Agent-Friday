@@ -672,7 +672,15 @@ def _try_import(mod: str) -> bool:
         return False
 
 
-BUNDLED_MODEL = "gemma3:4b"   # Google's open Gemma 3 4B-IT — Friday's default local brain
+#: The model `friday doctor` tells you to pull if you have none.
+#:
+#: qwen3:4b, not gemma3:4b. This is defect H3 and it outlived two fixes to the
+#: planner because it lives here rather than there: gemma3:4b has NO native
+#: tool calling, so `doctor` was instructing people to install the one model in
+#: the ladder that cannot use Friday's tools — while `model_plan` refused to
+#: select it. qwen3:4b is the floor of that ladder: smaller on disk (2.50 GB
+#: against 3.34) and tool-capable. See services/model_plan._pickable().
+BUNDLED_MODEL = "qwen3:4b"
 
 
 def _ollama_probe(timeout: float = 2.0):

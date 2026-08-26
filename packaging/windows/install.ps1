@@ -319,18 +319,42 @@ function Get-CardVramGib {
 
 Say-Step 'How Friday should think'
 
-# The threshold mirrors services/model_plan.py: DISPLAY_RESERVE_GIB (2.5) plus
-# GPU_OVERHEAD_GIB (1.0) come off the card before a model sees any of it. That
-# arithmetic is duplicated here ONLY to choose a default answer a human can
-# override on the next line - model_plan remains the authority on which model
-# is actually installed, and it runs later against the real hardware profile.
+# The threshold mirrors services/model_plan.py, where DISPLAY_RESERVE_GIB (2.5)
+# is what comes off the card before a model sees any of it. A model's own KV
+# cache, projector and CUDA context are NOT deducted here: they live inside each
+# model's own footprint in model_plan's ladder. Subtracting them in both places
+# is the double count that used to make this installer refuse, on a 12 GiB card,
+# the model that runs fully resident on a 12 GiB card.
+#
+# This arithmetic is duplicated here ONLY to choose a default answer and to name
+# the tier - model_plan remains the authority on which model is actually
+# installed, and it runs later against the real hardware profile.
 $cardGib   = Get-CardVramGib
 $usableGib = $null
-if ($null -ne $cardGib) { $usableGib = [math]::Round($cardGib - 3.5, 1) }
+if ($null -ne $cardGib) { $usableGib = [math]::Round($cardGib - 2.5, 1) }
 
-# Under ~5 GiB usable there is room for a small seat but not a comfortable one,
-# and the failure mode above is the one that bites. Default to the key.
-$localIsComfortable = ($null -ne $usableGib -and $usableGib -ge 5.0)
+# The ladder, as model_plan.BRAIN_MODELS computes it: the model's own footprint
+# on the card (download size converted to GiB, plus the 1.7 GiB of runtime
+# overhead measured on the reference card), and the download it costs.
+$brainLadder = @(
+    @{ Id = 'qwen3:4b';   Needs =  4.03; Gb =  2.50; Says = 'a small model - good for quick questions, weaker at long multi-step jobs' },
+    @{ Id = 'qwen3:8b';   Needs =  6.57; Gb =  5.23; Says = 'a solid everyday model' },
+    @{ Id = 'gemma4:12b'; Needs =  8.74; Gb =  7.56; Says = 'the model Friday is tuned and measured against' },
+    @{ Id = 'qwen3:14b';  Needs = 10.34; Gb =  9.28; Says = 'a strong model that handles multi-step work well' },
+    @{ Id = 'qwen3:32b';  Needs = 20.51; Gb = 20.20; Says = 'the largest Friday offers - closest to a cloud model for tools and multi-step work' }
+)
+$brainPick = $null
+if ($null -ne $usableGib) {
+    foreach ($rung in $brainLadder) {
+        if ($usableGib -ge $rung.Needs) { $brainPick = $rung }
+    }
+}
+
+# Comfortable means a card that can hold something better than the floor. On a
+# card that only just fits the smallest model, the key is the better default:
+# the small seat is genuinely weaker at exactly the multi-step tool work people
+# ask Friday for, and it can be added later in a couple of clicks.
+$localIsComfortable = ($null -ne $brainPick -and $brainPick.Id -ne 'qwen3:4b')
 $localWanted = $localIsComfortable
 
 if ($SkipOllama) {
@@ -349,8 +373,13 @@ else {
         Say '  Friday could not find a graphics card she knows how to measure,'
         Say '  so running a model on this laptop would be slow.'
     } else {
-        Say ("  This laptop has a {0} GB graphics card. After Windows takes its" -f $cardGib)
-        Say ("  share, about {0} GB of that is left for Friday." -f $usableGib)
+        Say ("  This computer has a {0} GB graphics card. After the display takes" -f $cardGib)
+        Say ("  its share, about {0} GB of that is left for Friday." -f $usableGib)
+        if ($null -ne $brainPick) {
+            Say ''
+            Say ("  That is enough for {0} - {1}." -f $brainPick.Id, $brainPick.Says)
+            Say ("  It is a {0} GB download." -f $brainPick.Gb)
+        }
     }
     Say ''
     Say '  There are two ways to run her, and you can change your mind later.'
@@ -366,7 +395,7 @@ else {
     Say '       and lets her read your private notes back to you.'
     Say ''
     if ($localIsComfortable) {
-        Say '  This laptop has room for both, so 2 is the usual choice here.'
+        Say '  This computer has room for both, so 2 is the usual choice here.'
         $prompt = '  Which would you like? [1/2, default 2]'
     } else {
         Say '  On a card this size Friday recommends 1. A model squeezed onto a'
@@ -625,7 +654,7 @@ if ($ollamaOutcome.Installed) {
     Say-Detail 'Friday works out what this laptop can handle first, then downloads only that.'
     Say-Detail 'Between about 2.5 and 7.5 GB depending on the card. This is the longest wait.'
 
-    Set-HealAllowedModelTags @('gemma3:4b','qwen3:4b','qwen3:8b','gemma4:12b',
+    Set-HealAllowedModelTags @('gemma3:4b','qwen3:4b','qwen3:8b','gemma4:12b','qwen3:14b','qwen3:32b',
                               'embeddinggemma','nomic-embed-text')
 
     $before = @(Get-OllamaInstalledModels)

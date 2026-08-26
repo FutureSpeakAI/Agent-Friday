@@ -79,44 +79,187 @@ VAULT_MODELS = ()
 EMBEDDER = {"id": "all-MiniLM-L6-v2", "mib": 90,
             "via": "sentence-transformers (a pip dependency)"}
 
-#: Local conversational brains, smallest first. `min_ram_gib` is what the model
-#: needs resident; `vram_gib` is what it needs on a card to be fast rather than
-#: merely possible.
-#: `vram_gib` is what the MODEL needs (weights plus KV headroom), NOT the size of
-#: card it wants. Getting that backwards made the first version of this planner
-#: hand a 12 GiB card the 4B model, which is defect H3 in the release audit —
-#: the exact bug this module exists to prevent, reproduced by the fix for it.
-#: Ordered by `vram_gib` ascending, because `plan()` takes ``gpu_fits[-1]`` —
-#: the largest that fits. Insert in the right place or the pick changes.
-BRAIN_MODELS = (
-    {"id": "gemma3:4b", "gib": 3.3, "min_ram_gib": 8, "vram_gib": 3.5,
-     "tools": False,
-     "note": "chat only — no native tool calling. Friday still passes it the "
-             "tool registry (services/agent.py:_via_ollama does not gate on "
-             "capability), so it can NARRATE a call it never made; "
-             "tool_integrity.find_pseudo_toolcalls catches that after the fact "
-             "rather than preventing it. Prefer qwen3:4b on any card that "
-             "holds it"},
-    {"id": "qwen3:4b", "gib": 2.5, "min_ram_gib": 8, "vram_gib": 3.6,
-     "tools": True,
-     "note": "the smallest seat that keeps its tools — 2.5 GB on disk, less "
-             "than gemma3:4b, and Qwen3 ships native tool calling. This is the "
-             "tier an 8 GiB card lands on"},
-    {"id": "qwen3:8b", "gib": 5.2, "min_ram_gib": 16, "vram_gib": 6.0,
-     "tools": True,
-     "note": "first tier where local turns keep their tools with room to spare"},
-    {"id": "gemma4:12b", "gib": 7.5, "min_ram_gib": 24, "vram_gib": 9.5,
-     "tools": True,
-     "note": "measured 49-54 tok/s on a 12 GiB card, ~20.5 s cold load"},
+#: What a loaded model costs on the card BEYOND its own weights: the KV cache at
+#: the tool-seat context, the multimodal projector, and CUDA's own context.
+#:
+#: MEASURED, on the reference RTX 4070 (12,282 MiB) with `gemma4:12b`:
+#:
+#:     nvidia-smi card occupancy   8,745 MiB
+#:     weights                     7,023 MiB
+#:     difference                  1,722 MiB   = 1.68 GiB, rounded up to 1.7
+#:
+#: THIS CONSTANT REPLACES A DOUBLE COUNT, and the double count is why this
+#: module used to refuse the configuration its own author was running.
+#: `vram_gib` was hand-written per model and already carried ~2 GiB of unstated
+#: padding: `gemma4:12b` was entered as 9.5 against a footprint the daemon's
+#: own /api/ps measures at 7,718 MiB (7.54 GiB) at the 32k tool-seat context
+#: (residency_catalog.SEED_MEASUREMENTS). Then `GPU_OVERHEAD_GIB = 1.0` was
+#: subtracted from the CARD as well. Together they demanded a 13.0 GiB card for
+#: a model measured to run in 11.0 — so a 12 GiB card was handed `qwen3:8b`
+#: while `gemma4:12b` sat on that very card working. Overhead is now counted
+#: ONCE, here, from a measurement.
+RUNTIME_OVERHEAD_GIB = 1.7
+
+#: A caution about generalising the KV half of that figure. `residency_catalog`
+#: has `gemma4:12b` at 7,718 MiB with a 32k window and 7,814 MiB with a 131k
+#: one — 96 MiB for four times the context. That flatness is a property of that
+#: family's attention, NOT a general result. A dense full-attention model pays
+#: materially more per token of context, so for every other row below the KV
+#: term is DERIVED rather than measured, and `basis` says so.
+
+#: Local conversational brains, smallest first. This is the whole ladder: what
+#: `plan()` can offer, and nothing else.
+#:
+#: `gib`         download size, exactly as the Ollama registry manifest reports
+#:               it (decimal GB — the field name is legacy; the conversion to
+#:               real GiB happens in `_footprint_gib`, not here).
+#: `min_ram_gib` what the model needs resident to run on the processor.
+#: `vram_gib`    COMPUTED, never typed: the model's own footprint on the card,
+#:               weights plus `RUNTIME_OVERHEAD_GIB`. Hand-writing this figure
+#:               is the defect described above, so it is derived from the
+#:               download size and cannot drift from it again.
+#: `tools`       whether the model calls tools natively. A HARD REQUIREMENT for
+#:               selection — see `_pickable()`. Not a preference, not a
+#:               tie-break.
+#: `basis`       where the numbers came from, so a reader can tell a
+#:               measurement from an inference without leaving the file.
+#:
+#: Sizes and tool capability were read from the registry on 2026-08-26 WITHOUT
+#: downloading any weights: the manifest gives exact layer sizes, and the
+#: template blob is a few KB. Ollama decides tool capability by whether the
+#: template consumes `.Tools`, so reading the template answers the same
+#: question the daemon would. Where a model embeds its template in the GGUF
+#: rather than carrying a template layer, that probe cannot see it and returns
+#: a FALSE NEGATIVE; those rows were confirmed against a daemon's `/api/show`
+#: `capabilities` array instead — the same check `verify_tool_capability()`
+#: runs after every install, so a wrong flag here is caught rather than shipped.
+#:
+#: Ordered by `vram_gib` ascending, because the GPU pick is `[-1]` — the
+#: largest that fits. The sort below enforces that rather than trusting whoever
+#: edits the tuple next.
+_BRAINS = (
+    {"id": "qwen3:4b", "gib": 2.50, "min_ram_gib": 8, "tools": True,
+     "basis": "size + tools from the registry; footprint derived",
+     "note": "the smallest seat that keeps its tools. Real work, but a small "
+             "agent: on published function-calling suites this size class "
+             "holds up on single calls and falls apart across a multi-turn "
+             "exchange, which is the failure you cannot see happening"},
+    {"id": "gemma3:4b", "gib": 3.34, "min_ram_gib": 8, "tools": False,
+     "basis": "size + tools from the registry",
+     "note": "chat only — no native tool calling, so `_pickable()` can never "
+             "select it. It stays in this table so the planner can still "
+             "RECOGNISE it when it is already installed and say why it "
+             "declined to use it"},
+    {"id": "qwen3:8b", "gib": 5.23, "min_ram_gib": 16, "tools": True,
+     "basis": "size + tools from the registry; footprint derived",
+     "note": "the first seat with room to spare rather than room exactly"},
+    {"id": "gemma4:12b", "gib": 7.56, "min_ram_gib": 24, "tools": True,
+     "basis": "size from the registry; tools and footprint MEASURED on the "
+              "reference 12 GiB card",
+     "note": "measured 49-54 tok/s and a ~20.5 s cold load on a 12 GiB card, "
+             "fully resident. The best-evidenced row in this table"},
+    {"id": "qwen3:14b", "gib": 9.28, "min_ram_gib": 32, "tools": True,
+     "basis": "size + tools from the registry; footprint derived, UNMEASURED",
+     "note": "what a 16 GiB card is for. Nobody has run this one here, so its "
+             "speed is unknown — the fit is arithmetic, not experience"},
+    {"id": "qwen3:32b", "gib": 20.20, "min_ram_gib": 64, "tools": True,
+     "basis": "size + tools from the registry; footprint derived, UNMEASURED",
+     "note": "the top consumer rung: a 24 GiB card holds it fully resident. "
+             "This is where multi-turn tool use stops being a gamble. "
+             "Unmeasured here — the fit is arithmetic, not experience"},
 )
+
+
+def _footprint_gib(dl_gb: float) -> float:
+    """What a model occupies on a card: weights plus measured runtime overhead.
+
+    `dl_gb` is decimal GB, the registry's unit; VRAM is quoted in GiB. Treating
+    one as the other is a 7% error in the direction that overpromises, which is
+    the same class of mistake `_mib_to_gib` exists to prevent, so the
+    conversion is written out rather than assumed.
+    """
+    return round(dl_gb / 1.073741824 + RUNTIME_OVERHEAD_GIB, 2)
+
+
+BRAIN_MODELS = tuple(
+    dict(m, vram_gib=_footprint_gib(m["gib"]))
+    for m in sorted(_BRAINS, key=lambda m: _footprint_gib(m["gib"]))
+)
+
+
+def _pickable(models) -> list:
+    """The subset a plan is ALLOWED to select. Tool calling is the gate.
+
+    THE RULE, in one place so it cannot be forgotten in another: Friday hands
+    the tool registry to whatever local model is seated — `_via_ollama` does
+    not gate on capability — so a model that cannot call tools receives the
+    registry anyway and can narrate a call it never made.
+    `tool_integrity.find_pseudo_toolcalls` catches that only AFTER the fact.
+
+    Which is why this is a filter and not a tie-break. `gemma3:4b` was the
+    shipped default for exactly as long as it took a person to notice by hand.
+    A rule that depends on someone noticing is not a rule.
+    """
+    return [m for m in models if m["tools"]]
+
+
+def verify_tool_capability(model_id: str, show_fn=None) -> tuple[bool | None, str]:
+    """Ask the DAEMON whether an installed model can call tools.
+
+    (True, why) capable · (False, why) not · (None, why) could not check.
+
+    The table above carries a `tools` flag that a human typed. This asks the
+    artifact instead: Ollama's `/api/show` returns a `capabilities` array, and
+    `"tools"` in it is the daemon's own answer to the question Friday's chat
+    path depends on. Same move as `local_seats` reading `is_embedding` and
+    `residency_catalog.detect_moe` reading `expert_count` — ask the thing what
+    it is rather than inferring from its name.
+
+    None is deliberately distinct from False: no daemon is not a failed model,
+    and reporting it as one would repeat the mistake this codebase keeps
+    making, where an absent component reads as a negative result.
+    """
+    if show_fn is None:
+        def show_fn(mid):
+            import json
+            import urllib.request
+            req = urllib.request.Request(
+                "http://127.0.0.1:11434/api/show",
+                data=json.dumps({"model": mid}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read())
+    try:
+        info = show_fn(model_id) or {}
+    except Exception as e:
+        return None, (f"could not ask the daemon about {model_id} "
+                      f"({type(e).__name__}), so tool calling is unverified")
+    caps = info.get("capabilities")
+    if caps is None:
+        return None, (f"this daemon does not report capabilities for "
+                      f"{model_id}, so tool calling is unverified")
+    if "tools" in caps:
+        return True, f"the daemon reports {model_id} can call tools ({', '.join(caps)})"
+    return False, (f"the daemon reports {model_id} CANNOT call tools "
+                   f"(capabilities: {', '.join(caps) or 'none'}). Friday would "
+                   f"still hand it the tool registry, so it could describe "
+                   f"actions it never took.")
+
 
 #: Windows reserves the most; residency_policy.ram_budget() is authoritative and
 #: this mirrors it so the installer can explain a refusal before the app exists.
 OS_RESERVE_GIB = {"windows": 6.0, "linux": 4.0, "darwin": 4.0}
 RAM_CEILING = 0.75          # rule R2
 FREE_DISK_FLOOR_GIB = 10.0  # rule R8
-DISPLAY_RESERVE_GIB = 2.5   # a desktop needs its own VRAM; R3 adds ~1 GiB more
-GPU_OVERHEAD_GIB = 1.0      # rule R3
+
+#: A desktop needs its own VRAM: compositor, browser, whatever is on screen.
+#: This comes off the CARD, and it is now the only thing that does — a model's
+#: own overhead lives inside its `vram_gib` (see RUNTIME_OVERHEAD_GIB), where it
+#: is counted exactly once.
+DISPLAY_RESERVE_GIB = 2.5   # rule R3
+
+#: What a local image model needs on the card, on top of the display reserve.
+IMAGE_MODEL_GIB = 6.0       # rule R5
 
 
 def _ram_available_gib(total_gib: float, os_family: str) -> float:
@@ -126,8 +269,13 @@ def _ram_available_gib(total_gib: float, os_family: str) -> float:
 
 
 def _usable_vram_gib(vram_gib: float) -> float:
-    """VRAM left for a model once the desktop and R3 overhead are taken."""
-    return round(max(0.0, vram_gib - DISPLAY_RESERVE_GIB - GPU_OVERHEAD_GIB), 1)
+    """VRAM left for a model once the desktop has taken its share.
+
+    Only the display reserve comes off here. A model's own KV cache, projector
+    and CUDA context are already inside its `vram_gib`; taking them off the
+    card as well is the double count this module used to make.
+    """
+    return round(max(0.0, vram_gib - DISPLAY_RESERVE_GIB), 1)
 
 
 def _mib_to_gib(d: dict, *names) -> float | None:
@@ -300,11 +448,21 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
     # Largest that FITS, not smallest that is affordable. GPU is preferred over
     # RAM because a model spilling to CPU is a different product experience, and
     # the user should be told which one they are getting.
+    #
+    # TWO DIFFERENT QUESTIONS, kept apart on purpose:
+    #   *_fits     — what this machine could hold. Includes tool-incapable
+    #                models, because the planner still needs to RECOGNISE one
+    #                that is already installed and say why it declined it.
+    #   *_pickable — what may actually be chosen. Tool calling is a hard gate;
+    #                see `_pickable()`.
+    # Collapsing these two is how `gemma3:4b` became a shipped default.
     gpu_fits = [m for m in BRAIN_MODELS if vram_usable >= m["vram_gib"]]
     ram_fits = [m for m in BRAIN_MODELS
                 if ram_avail >= m["min_ram_gib"] * RAM_CEILING]
+    gpu_pickable = _pickable(gpu_fits)
+    ram_pickable = _pickable(ram_fits)
     affordable = gpu_fits or ram_fits
-    if not affordable:
+    if not (gpu_pickable or ram_pickable):
         if n["ram_gib"] and ram_avail <= 0:
             reason = (f"{n['ram_gib']:.0f} GiB RAM x {RAM_CEILING} ceiling "
                       f"- {OS_RESERVE_GIB.get(n['os_family'], 4.0):.0f} GiB reserved "
@@ -316,9 +474,18 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
                       f"usable VRAM; the smallest local brain needs "
                       f"{BRAIN_MODELS[0]['min_ram_gib'] * RAM_CEILING:.1f} GiB RAM "
                       f"or {BRAIN_MODELS[0]['vram_gib']} GiB VRAM.")
+        # A machine that can hold a model but no TOOL-CAPABLE model is refused
+        # for a different reason than one that can hold nothing, and saying so
+        # is the difference between "buy more card" and "this is fine".
+        if affordable:
+            reason = (f"the only local models this machine can hold "
+                      f"({', '.join(m['id'] for m in affordable)}) cannot call "
+                      f"tools, and Friday will not seat one that cannot: she "
+                      f"hands the tool registry to whatever is seated, so such "
+                      f"a model can describe actions it never took.")
         tiers.append({
             "id": "brain", "name": "Local conversational brain",
-            "status": "refused", "rule": "R2",
+            "status": "refused", "rule": "tools" if affordable else "R2",
             "reason": reason + " Friday still works: vault memory and tools run "
                                "locally, and conversation uses a cloud provider "
                                "if you add a key.",
@@ -333,9 +500,13 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
         # this table (see KNOWN_ISSUES.md §4) — so handing someone a 12B on CPU
         # because their RAM technically holds it would be picking the option
         # most likely to be unusable, on the strength of a number nobody has.
-        if gpu_fits:
-            pick, placement = gpu_fits[-1], "GPU"
-            caveat = ""
+        if gpu_pickable:
+            pick, placement = gpu_pickable[-1], "GPU"
+            # Headroom is worth stating on a big card: it is the difference
+            # between "your hardware was used" and "a number went past".
+            head = round(vram_usable - pick["vram_gib"], 1)
+            caveat = (f" Leaves about {head:.1f} GiB of the card spare, which "
+                      f"goes to a larger context window." if head >= 2.0 else "")
         else:
             # Smallest useful — but at the SAME RAM tier prefer the model that
             # can call tools. qwen3:4b and gemma3:4b are both min_ram_gib 8 and
@@ -344,8 +515,7 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
             # table that cannot call tools. An AMD card reads as no card
             # (detect_gpus shells nvidia-smi and nothing else), so this was not
             # a rare path.
-            pick = min(ram_fits, key=lambda m: (m["min_ram_gib"],
-                                                not m["tools"], m["gib"]))
+            pick = min(ram_pickable, key=lambda m: (m["min_ram_gib"], m["gib"]))
             placement = "CPU"
             caveat = (" Generation speed on CPU is unmeasured — expect this to "
                       "be usable for short exchanges and slow for long ones.")
@@ -364,7 +534,7 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
             # silently buying that. (An earlier version of this comment claimed
             # Friday disables tools for the turn. She does not; see the note on
             # gemma3:4b in BRAIN_MODELS, and KNOWN_ISSUES.md §3.)
-            if pick["tools"] and not local_pick["tools"]:
+            if not local_pick["tools"]:
                 caveat += (f" ({local_pick['id']} is already installed and would "
                            f"save the download, but cannot call tools.)")
             else:
@@ -377,6 +547,15 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
         note_others = (f" Also already installed and possibly suitable: "
                        f"{', '.join(others[:4])}. Set one in Settings -> Intelligence "
                        f"if you prefer it." if others else "")
+        # Every OTHER rung this machine could also run, so the caller can offer
+        # a choice instead of announcing a decision. Smaller means faster and a
+        # shorter download; the default stays the largest that fits.
+        fitting = gpu_pickable if gpu_pickable else ram_pickable
+        alternatives = [
+            {"id": m["id"], "gib": m["gib"], "vram_gib": m["vram_gib"],
+             "tools": m["tools"], "basis": m["basis"], "note": m["note"],
+             "default": m["id"] == pick["id"]}
+            for m in fitting]
         tiers.append({
             "id": "brain", "name": "Local conversational brain",
             "status": "ready" if have_it else "install",
@@ -384,10 +563,12 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
                        + ("already installed." if have_it
                           else f"{pick['gib']} GiB.")
                        + caveat + note_others),
+            "basis": pick["basis"],
+            "alternatives": alternatives,
             "models": [] if have_it else [
                 {"id": pick["id"], "role": "brain", "gib": pick["gib"],
                  "why": "answers you without touching a cloud provider",
-                 "tools": pick["tools"]}],
+                 "tools": pick["tools"], "basis": pick["basis"]}],
         })
 
     # ── Tier 3: local image generation. GPU or nothing. ──
@@ -401,14 +582,13 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
                        "Cloud image generation still works with a key."),
             "models": [],
         })
-    elif vram_usable < 6.0:
+    elif vram_usable < IMAGE_MODEL_GIB:
         tiers.append({
             "id": "image", "name": "Local image generation", "status": "refused",
             "rule": "R5",
             "reason": (f"{n['vram_gib']:.0f} GiB card, but {DISPLAY_RESERVE_GIB} GiB "
-                       f"goes to your desktop and {GPU_OVERHEAD_GIB} GiB to seat "
-                       f"overhead, leaving {vram_usable:.1f} GiB. Image models need "
-                       f"about 6 GiB."),
+                       f"goes to your desktop, leaving {vram_usable:.1f} GiB. "
+                       f"Image models need about {IMAGE_MODEL_GIB:.0f} GiB."),
             "models": [],
         })
     else:
@@ -458,6 +638,11 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
         "tiers": tiers,
         "download": to_download,
         "download_gib": total_gib,
+        # GB subtracted from GiB. Deliberate, and stated rather than hidden:
+        # the download figures are decimal GB and free disk is GiB, so this
+        # over-states what the download costs by about 7%. That errs toward
+        # warning too early, which is the right direction for a disk check —
+        # unlike `_mib_to_gib`'s original bug, which erred the other way.
         "disk_after_gib": round(n["disk_free_gib"] - total_gib, 1),
         # Only meaningful if something is actually going to be downloaded —
         # otherwise it warns about the consequences of an install that isn't
@@ -551,12 +736,24 @@ def render(p: dict) -> str:
     for t in p["tiers"]:
         out.append(f"  {mark[t['status']]} {t['name']}")
         out.append(f"        {t['reason']}")
+        # Show the whole rung list, not just the pick. Someone who would rather
+        # have speed than size cannot choose an option they were never shown,
+        # and the default is only a default if the alternatives are visible.
+        alts = t.get("alternatives") or []
+        if len(alts) > 1:
+            out.append("        This machine can also run:")
+            for a in reversed(alts):
+                flag = "*" if a["default"] else " "
+                out.append(f"        {flag} {a['id']:<14}{a['gib']:>6.2f} GB "
+                           f"download   needs {a['vram_gib']:.2f} GiB on the card")
+            out.append("        (* = what Friday will install. Change it in "
+                       "Settings -> Intelligence.)")
     out.append("")
     if p["download"]:
-        out.append(f"  Download: {p['download_gib']:.2f} GiB "
+        out.append(f"  Download: {p['download_gib']:.2f} GB "
                    f"({len(p['download'])} model(s))")
         for m in p["download"]:
-            out.append(f"    - {m['id']:24} {m['gib']:>5.2f} GiB  {m['why']}")
+            out.append(f"    - {m['id']:24} {m['gib']:>5.2f} GB  {m['why']}")
     else:
         out.append("  Nothing to download.")
     if p["disk_warning"]:

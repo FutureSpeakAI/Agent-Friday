@@ -321,14 +321,23 @@ Ollama enables local model routing — required for vault access to private data
    To pull one by hand instead:
 
 ```bash
-ollama pull qwen3:4b     # smallest seat that keeps its tools — 2.5 GB
-ollama pull qwen3:8b     # 5.2 GB; needs ~6 GB usable VRAM
-ollama pull gemma4:12b   # 7.5 GB; needs ~9.5 GB usable VRAM
+ollama pull qwen3:4b     # 2.50 GB; needs a  ~7 GB card
+ollama pull qwen3:8b     # 5.23 GB; needs a ~10 GB card
+ollama pull gemma4:12b   # 7.56 GB; needs a ~12 GB card
+ollama pull qwen3:14b    # 9.28 GB; needs a ~13 GB card
+ollama pull qwen3:32b    # 20.20 GB; needs a ~24 GB card
 ```
 
-   "Usable" VRAM is your card minus what the desktop and runtime overhead take
-   — 3.5 GB on Windows. An 8 GB card has about 4.5 GB usable, which lands on
-   `qwen3:4b`.
+   Those card sizes are the model's own footprint plus 2.5 GB for the desktop.
+   A model's footprint is its weights plus about 1.7 GB of runtime overhead —
+   KV cache at Friday's tool-seat context, the multimodal projector, and CUDA's
+   own context. That 1.7 GB is measured: `gemma4:12b` occupies 8,745 MiB of a
+   12 GB card against 7,023 MiB of weights.
+
+   Two of these rungs are measured and three are arithmetic. `gemma4:12b` has
+   been run and timed on a 12 GB card; `qwen3:14b` and `qwen3:32b` have not
+   been run here, so their fit is calculated rather than observed. The table in
+   `services/model_plan.py` marks which is which.
 
 Friday auto-detects Ollama at `http://localhost:11434`. To use a different URL, set it in `~/.friday/settings.json`:
 

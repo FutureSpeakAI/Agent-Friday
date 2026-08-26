@@ -84,9 +84,16 @@ class TestRecommendModels:
 
     # Small tier (vram>=6 OR ram>=16) ────────────────────────────────────────-
 
-    def test_small_unlocked_by_vram_6(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=6, ram_gb=0))
+    def test_small_unlocked_by_vram_10(self, mgr):
+        """10, not 6. qwen3:8b needs a 9.07 GiB card by model_plan's arithmetic
+        — its own 6.57 GiB footprint plus the 2.5 GiB display reserve. The old
+        threshold offered it to a 6 GB card that cannot hold it."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=10, ram_gb=0))
         assert any(r["tier"] == "small" for r in recs)
+
+    def test_small_not_offered_to_a_card_that_cannot_hold_it(self, mgr):
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=6, ram_gb=0))
+        assert not any(r["tier"] == "small" for r in recs)
 
     def test_small_unlocked_by_ram_16(self, mgr):
         recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=16))
@@ -98,9 +105,37 @@ class TestRecommendModels:
 
     # Medium tier (vram>=8 OR ram>=32) ───────────────────────────────────────-
 
-    def test_medium_unlocked_by_vram_8(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=8, ram_gb=0))
+    def test_medium_unlocked_by_vram_13(self, mgr):
+        """13, not 8. qwen3:14b needs a 12.84 GiB card. Recommending it at 8
+        was the most overclaiming row in this table."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=13, ram_gb=0))
         assert any(r["tier"] == "medium" for r in recs)
+
+    def test_medium_not_offered_to_an_eight_gig_card(self, mgr):
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=8, ram_gb=0))
+        assert not any(r["tier"] == "medium" for r in recs)
+
+    def test_every_vram_suggestion_actually_fits_that_card(self, mgr):
+        """The invariant behind both fixes, checked against the one ladder.
+
+        A suggestion the card cannot hold is worse than no suggestion: the user
+        downloads gigabytes and gets a model that spills to the processor, with
+        nothing anywhere saying why it is slow.
+        """
+        from agent_friday.services import model_plan as mp
+        footprint = {m["id"]: m["vram_gib"] for m in mp.BRAIN_MODELS}
+        for vram in (0, 4, 6, 8, 10, 12, 13, 16, 24, 32, 48):
+            for r in mgr.recommend_models(hardware=self._hw(vram_gb=vram, ram_gb=0)):
+                need = footprint.get(r["name"])
+                # The `tiny` row is the unconditional floor, the same role
+                # model_plan's CPU pick plays — it is offered as "the smallest
+                # thing that works at all", not as a claim about this card. The
+                # VRAM-gated tiers are the ones making a fit claim.
+                if need is None or vram == 0 or r["tier"] == "tiny":
+                    continue
+                assert vram - mp.DISPLAY_RESERVE_GIB >= need, (
+                    f"{r['name']} suggested for a {vram} GiB card but needs "
+                    f"{need + mp.DISPLAY_RESERVE_GIB:.2f} GiB")
 
     def test_medium_unlocked_by_ram_32(self, mgr):
         recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=32))

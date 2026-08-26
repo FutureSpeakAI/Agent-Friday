@@ -61,6 +61,39 @@ def _resolves(tags: set, model_id: str) -> bool:
     return any(t == model_id or t.startswith(model_id + "-") for t in tags)
 
 
+def _check_tools(result, wanted: dict, say) -> None:
+    """Confirm with the DAEMON that this model can call tools. Never fatal.
+
+    `model_plan` carries a `tools` flag that a human typed, and the cost of it
+    being wrong is not an error message — it is Friday handing the tool
+    registry to a model that cannot use it, which produces an assistant that
+    NARRATES actions it never took. `tool_integrity.find_pseudo_toolcalls`
+    catches that after the fact; catching it here means catching it once,
+    during the install, instead of every time the user asks for something.
+
+    Three outcomes, kept distinct:
+      * daemon says yes  — nothing to report.
+      * daemon says no   — the table is WRONG. Say so loudly. The download
+                           still succeeded, so this is not a failed install; it
+                           is a defect in the ladder that must not stay quiet.
+      * no answer        — unverified. Silent, because a daemon that will not
+                           answer is not evidence about a model, and this
+                           codebase has repeatedly turned an absent component
+                           into a false negative.
+    """
+    if not wanted.get("tools"):
+        return
+    try:
+        from agent_friday.services.model_plan import verify_tool_capability
+        ok, why = verify_tool_capability(result.model_id)
+    except Exception:
+        return
+    if ok is False:
+        result.detail += f" — BUT {why}"
+        say(f"  [!!]  {result.model_id} — the model table says this model can "
+            f"call tools and the daemon disagrees. {why}")
+
+
 def install(plan: dict,
             *,
             pull_fn: Callable[[str], tuple] | None = None,
@@ -98,6 +131,7 @@ def install(plan: dict,
         if _resolves(before, mid):
             r.ok, r.detail = True, "already installed"
             say(f"  [ok]  {mid} — already installed")
+            _check_tools(r, m, say)
             continue
 
         say(f"  ...   {mid} ({m['gib']:.2f} GiB) — {m['why']}")
@@ -117,6 +151,7 @@ def install(plan: dict,
             r.ok = True
             r.detail = f"verified present after pull ({r.seconds}s)"
             say(f"  [ok]  {mid} — installed and verified ({r.seconds}s)")
+            _check_tools(r, m, say)
         elif code == 0:
             r.detail = ("pull reported success but the model is NOT in the "
                         "daemon's inventory afterwards — treating as failed")
