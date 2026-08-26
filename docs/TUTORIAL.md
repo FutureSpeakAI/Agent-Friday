@@ -145,7 +145,7 @@ and an 8 GB NVIDIA card you'll see something close to this:
         Runs on your processor, no graphics card needed. Arrives with the
         install rather than as a separate download.
   GET  Local conversational brain
-        gemma3:4b on GPU. 3.3 GiB.
+        qwen3:4b on GPU. 2.5 GiB.
   NO   Local image generation
         8 GiB card, but 2.5 GiB goes to your desktop and 1.0 GiB to seat
         overhead, leaving 4.5 GiB. Image models need about 6 GiB.
@@ -290,27 +290,32 @@ service over the internet. Here's the honest picture of each.
 
 **Everything on your laptop, no key, nothing sent anywhere:**
 
-- Conversation — she runs a model called `gemma3:4b` on your graphics card
+- Conversation — she runs a model called `qwen3:4b` on your graphics card
+- **Her tools** — reading files, searching the web, her calendar. `qwen3:4b`
+  can call tools, and they run through the same registry and the same vault
+  gate the cloud path uses
 - Her memory — remembering things, finding them later, building up a picture
   of what matters to you
 - Everything you write to her stays on the machine
 
 **What a Claude key adds:**
 
-- **Tools. This is the real difference.** Reading files, searching the web,
-  working with your calendar. Friday can only use her tools through a cloud
-  model at the moment — running them from a local model hasn't been built yet.
-  So this isn't about your laptop being too small; a bigger one wouldn't change
-  it.
+- **Tools that hold together over a long job.** Local tool use is built and it
+  works — the local loop calls the same tools, under the same vault gate and the
+  same governance rings as the cloud one. What a Claude key buys is a model that
+  keeps its footing across many steps rather than a few. One older model in
+  Friday's table, `gemma3:4b`, cannot call tools at all; the ones she picks for
+  a graphics card can.
 - **Sharper conversation** on complicated questions and long documents.
 
 **What a Google Gemini key adds:** talking to Friday out loud, and making
 images and video. Without it those don't work.
 
-**So, plainly:** with no keys you get a private assistant who talks and
-remembers. With a Claude key you get one who also *does things*. With both you
-get one you can talk to out loud. Each is real; they're different products, and
-you can move between them whenever you like.
+**So, plainly:** with no keys you get a private assistant who talks, remembers,
+and can use her tools — all of it on your machine. With a Claude key those same
+tools hold up over longer, harder jobs. With both you get one you can talk to
+out loud. Each is real; they're different products, and you can move between
+them whenever you like.
 
 You can add or change keys any time in **Settings → Providers**. Nothing you've
 set up gets lost.

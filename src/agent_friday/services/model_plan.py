@@ -357,9 +357,13 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
         if local_fit:
             local_pick = local_fit[-1] if gpu_fits else local_fit[0]
             # ...but not if going local costs tool calling. A model that cannot
-            # call tools is a materially different product — Friday disables
-            # tools for the whole turn rather than let it narrate calls it never
-            # made — and saving a download is not worth silently losing that.
+            # call tools is a materially different product — `_via_ollama` does
+            # NOT gate on capability, so it is handed the registry anyway and can
+            # narrate a call it never made, with tool_integrity.find_pseudo_toolcalls
+            # catching that only after the fact. Saving a download is not worth
+            # silently buying that. (An earlier version of this comment claimed
+            # Friday disables tools for the turn. She does not; see the note on
+            # gemma3:4b in BRAIN_MODELS, and KNOWN_ISSUES.md §3.)
             if pick["tools"] and not local_pick["tools"]:
                 caveat += (f" ({local_pick['id']} is already installed and would "
                            f"save the download, but cannot call tools.)")

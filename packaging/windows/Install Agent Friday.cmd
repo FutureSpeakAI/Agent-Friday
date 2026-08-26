@@ -15,7 +15,7 @@ rem  leaves nothing behind when the process ends.
 rem
 rem  Nothing in here needs administrator rights. If Windows asks you to
 rem  approve an administrator prompt while running this, something is wrong -
-rem  stop and ask Stephen.
+rem  decline it and stop. Nothing this installer does needs it.
 rem ======================================================================
 
 title Agent Friday - Setup
@@ -28,7 +28,7 @@ if errorlevel 1 (
   echo   Setup could not start.
   echo.
   echo   This computer does not seem to have Windows PowerShell, which
-  echo   Windows normally includes. Please tell Stephen.
+  echo   Windows normally includes. Friday cannot be installed without it.
   echo.
   pause
   exit /b 1

@@ -920,7 +920,7 @@ Diagnose and call propose_remediation once.
         $event.VerifiedAfter = 'n/a - the model concluded nothing on the menu would help'
         Add-HealEvent $event
         Say-Problem -What $script:HealGiveUpMessage `
-                    -WhatToDo 'If this keeps happening, send Stephen the report file named at the end of this window.'
+                    -WhatToDo 'If this keeps happening, the install report named at the end of this window records what was tried and why it did not work.'
         return $false
     }
 

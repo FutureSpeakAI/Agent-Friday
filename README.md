@@ -30,7 +30,14 @@ Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, a
 
 ## Quick Start
 
-**Easiest (Windows):** download `AgentFriday.exe` from the [latest GitHub release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest) and run it — no Python required. Or install from source:
+**Easiest (Windows):** download the `AgentFriday-Setup-*.zip` attached to the [latest GitHub release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest), unzip it anywhere, and double-click **Install Agent Friday.cmd**. No Python, Git or terminal needed.
+
+> **The `AgentFriday.exe` on the releases page is not a current build.** It was
+> built on 6 July 2026 and predates every egress-gate fix made since — see
+> [docs/INSTALLATION.md](docs/INSTALLATION.md#option-0-download-the-packaged-app-no-python-required)
+> for what that means. Use the installer zip, or run from source.
+
+Or install from source:
 
 ```bash
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
@@ -51,18 +58,30 @@ resolving it means deciding what the skills system *is*, which is deliberately
 not being answered inside a bug fix. See
 [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §3.
 
-**No API key? No problem.** Agent Friday ships a bundled local model — **`gemma3:4b`**
-(Google's open Gemma 3 4B, ~3.3 GB on disk, needs **16 GB system RAM**). The installers
-auto-install Ollama and pull it, so **chat works fully offline with zero cloud keys**.
-At that floor, local chat works but local *tool use* does not — `gemma3:4b` lacks native
-tool calling, so Friday disables tools for the turn rather than let the model narrate
-calls it never made. On first run, Friday
-greets you by voice and walks you through setup. Cloud keys are *optional upgrades* for
-sharper reasoning, image/video generation, and richer voice — add them any time in
-Settings (creative/voice degrade gracefully with a clear notice until you do).
+**No API key? No problem — but which way you run her is now a question you get asked.**
+Friday can talk with no cloud key at all, through a model running on your own machine via
+Ollama. Nothing is bundled: the model is downloaded during setup, and the Windows installer
+asks first and sizes the answer to your graphics card. On a card with room it downloads one.
+On a small card it recommends the Claude key instead and downloads nothing — a model
+squeezed onto a small card is slower than the key and can stall on long answers. Either way
+you can change your mind later in **Settings → Models**.
 
-> Bigger machine? Upgrade the local brain: `ollama pull gemma3:12b` (or `gemma3:27b`)
-> and set it in Settings → Models.
+Which model you get is decided by your hardware, not by a default in a config file: the
+planner takes the largest brain that fits your card, from `qwen3:4b` (2.5 GB) up to
+`gemma4:12b` (7.5 GB, measured at 49–54 tok/s on a 12 GB card). Run `friday models` to see
+what your machine can hold, and the arithmetic behind anything it refuses.
+
+**One honest limit at the bottom of the range.** `gemma3:4b` has no native tool calling,
+and Friday does **not** gate the local path on that capability — it passes the tool registry
+to whatever model is seated, so a model that cannot call tools can still *narrate* a call it
+never made. `tool_integrity.find_pseudo_toolcalls` catches that after the fact rather than
+preventing it. `qwen3:4b`, `qwen3:8b` and `gemma4:12b` all do have native tool calling and
+use tools fully offline, with no key. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §3.
+
+On first run, Friday greets you by voice and walks you through setup. Cloud keys are
+*optional upgrades* for sharper reasoning, image/video generation, and richer voice — add
+them any time in Settings (creative/voice degrade gracefully with a clear notice until you
+do).
 
 **Adding cloud keys (optional).** The recommended way is `friday setup` — it
 stores each key **encrypted** via the credential store (DPAPI/AES-256-GCM),
@@ -122,8 +141,10 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, i
   reserves 6 GB for the OS and takes 75% of the remainder, so at 8 GB the arithmetic
   resolves to zero available and **every model seat is refused**. Earlier versions of this
   README claimed 8 GB; that was wrong and the code always disagreed with it.
-- **~16 GB free disk** — roughly 6 GB consumed (`gemma3:4b` ~3.3 GB, embeddings ~90 MB,
-  venv and dependencies ~2–3 GB) against a 10 GB free-space floor the planner enforces.
+- **~16 GB free disk** — roughly 5–10 GB consumed (a local brain of 2.5–7.5 GB depending
+  on your card, embeddings ~90 MB, venv and dependencies ~2–3 GB) against a 10 GB
+  free-space floor the planner enforces. Choosing the cloud key instead of a local model
+  takes the brain out of that figure entirely.
 - **Ollama** — effectively required, not optional. It is the zero-key default and the only
   local inference path on macOS and Linux ([ollama.com](https://ollama.com), auto-installed
   by the installers).

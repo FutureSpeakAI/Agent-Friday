@@ -110,8 +110,9 @@ Set-StepTotal 16
 # =========================================================================
 
 Say-Banner -Version $Version
-Say 'This sets up Friday on this laptop. It takes about 20 minutes, most of'
-Say 'which is downloading. You can leave it running.'
+Say 'This sets up Friday on this laptop. Most of it is downloading, so how'
+Say 'long it takes depends on the internet connection more than on the'
+Say 'computer. You can leave it running.'
 Say ''
 Say 'Nothing else on the computer is changed. Everything Friday needs goes'
 Say 'into one folder, and there is an uninstaller that removes it.'
@@ -360,8 +361,9 @@ else {
     Say '       private notes stay on this laptop and are never sent.'
     Say ''
     Say '    2. Also download a model that runs on this laptop.'
-    Say '       About 2.5 GB more now, and a longer wait. Lets her work with'
-    Say '       no internet, and lets her read your private notes back to you.'
+    Say '       A few gigabytes more now - how many depends on what this card'
+    Say '       can hold - and a longer wait. Lets her work with no internet,'
+    Say '       and lets her read your private notes back to you.'
     Say ''
     if ($localIsComfortable) {
         Say '  This laptop has room for both, so 2 is the usual choice here.'
@@ -383,6 +385,7 @@ else {
         Say-Ok 'Friday will download a local model as well. That is the long wait later on.'
     } else {
         Say-Ok 'Friday will use your Claude key. Nothing extra to download.'
+        Say-Detail 'On a fast connection the rest of setup takes ten to fifteen minutes.'
         Say-Detail 'To add a local model later: open Friday, then Settings -> Models.'
     }
 }
@@ -496,7 +499,7 @@ $null = Invoke-Step -Id 'python.pip' -Title 'Getting ready to install Friday''s 
 $null = Invoke-Step -Id 'deps.core' -Title 'Installing the parts Friday cannot run without' `
     -HumanFailure ('Some of Friday''s parts would not install. She cannot start without them, ' +
                    'so setup has stopped rather than leave you with something half-working.') `
-    -HumanFix 'Check the internet connection and run this again. If it stops here twice, send Stephen the report file named at the end of this window.' `
+    -HumanFix 'Check the internet connection and run this again. If it stops here twice, the install report named at the end of this window says which part failed.' `
     -VerifyDescription 'every core module imports in Friday''s own interpreter' `
     -Action {
         Say-Working 'This takes a few minutes.'
@@ -526,7 +529,12 @@ $null = Invoke-Step -Id 'deps.control' -Title 'Installing the part that lets Fri
 # recommended (measured 2026-08-24: TIER_2 where regex returns TIER_3, and 6 of
 # 12 benign prompts escalated). The always-on part of the gate is Layers 1a+1b,
 # which are built in and install nothing. Do not restore the old title.
-$null = Invoke-Step -Id 'deps.recommended' -Title 'Installing voice, PDF reading and privacy-filter evaluation' `
+#
+# The word "trial" in the current title is load-bearing for the same reason:
+# it says on screen that this filter is measured and not in force. Do not
+# quietly promote it to "privacy filter" - that is the claim the note above
+# exists to prevent.
+$null = Invoke-Step -Id 'deps.recommended' -Title 'Installing voice, PDF reading, and a trial privacy filter' `
     -Optional `
     -VerifyDescription 'the recommended modules import' `
     -Action {
@@ -615,7 +623,7 @@ if ($ollamaOutcome.Installed) {
     Set-StepTotal 17     # this step only exists when there is an Ollama to use
     Say-Step 'Downloading Friday''s local brain'
     Say-Detail 'Friday works out what this laptop can handle first, then downloads only that.'
-    Say-Detail 'Usually about 3 GB. This is the longest wait.'
+    Say-Detail 'Between about 2.5 and 7.5 GB depending on the card. This is the longest wait.'
 
     Set-HealAllowedModelTags @('gemma3:4b','qwen3:4b','qwen3:8b','gemma4:12b',
                               'embeddinggemma','nomic-embed-text')
@@ -663,7 +671,8 @@ $shortcutsCreated = @()
 
 $null = Invoke-Step -Id 'shortcuts.launchers' -Title 'Creating the shortcuts' `
     -HumanFailure 'Setup could not create the shortcut to start Friday.' `
-    -HumanFix 'Run this again. If it happens twice, tell Stephen - everything else installed correctly.' `
+    -HumanFix ('Everything else installed correctly. Run this again to retry just the shortcut; if it fails ' +
+               'twice, open the Agent Friday folder in the Start menu and start her from there instead.') `
     -VerifyDescription 'the launcher scripts exist' `
     -Action {
         Copy-Item -LiteralPath (Join-Path $Here 'lib') -Destination $ToolsDir -Recurse -Force
@@ -850,7 +859,7 @@ if ($haveStartMenu) {
 }
 Say '  Your notes are kept unless you ask it to remove those too.'
 Say ''
-Say "  $($script:C.Grey)For Stephen: $(Join-Path $LogDir 'LAST-INSTALL-REPORT.md')$($script:C.Reset)"
+Say "  $($script:C.Grey)Install report: $(Join-Path $LogDir 'LAST-INSTALL-REPORT.md')$($script:C.Reset)"
 Say ''
 
 if (-not $Unattended) {
