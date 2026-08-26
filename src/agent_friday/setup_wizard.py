@@ -211,6 +211,69 @@ def _save_config(config: dict):
     SETTINGS_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
+# -- Routing mode follows the provider you picked ------------------------
+
+# Providers whose answer means "run it on this machine".
+_LOCAL_PROVIDER_IDS = ("ollama", "local", "ollama-local")
+
+
+def _default_routing() -> dict | None:
+    """DEFAULT_SETTINGS' model_routing block, or None if unreadable.
+
+    None is a real answer and callers must honour it. _save_config writes
+    settings.json with a raw json.dumps and no merge, and
+    core._load_settings_raw replaces top-level keys wholesale rather than
+    deep-merging them -- so persisting a PARTIAL model_routing would delete
+    ollama_url, vault_local_only, fallback_to_cloud and the rest. A silent
+    reset wearing the shape of a fix. If the defaults cannot be read, write
+    nothing.
+    """
+    try:
+        from agent_friday.core import DEFAULT_SETTINGS
+        block = (DEFAULT_SETTINGS or {}).get("model_routing")
+        return dict(block) if block else None
+    except Exception:
+        return None
+
+
+def _routing_block_for(provider_id: str, existing: dict,
+                       previous_provider: str | None = None) -> dict | None:
+    """The complete model_routing block this provider choice implies.
+
+    The wizard asks "Choose your primary AI provider" and offers Ollama
+    (local) as one of three answers. It wrote that answer to `provider` and
+    never touched `model_routing.mode` -- and `mode` is what actually routes
+    a turn. So every fresh install landed on the factory `cloud_only`
+    whatever was answered, including by someone who had just chosen to run
+    on their own machine.
+
+    That stayed invisible while routes/chat.py silently rescued keyless
+    turns onto Ollama. Scoping that rescue out of cloud_only (Janet chose
+    cloud only on 2026-08-26 and was answered locally anyway) makes this
+    gap load-bearing in the other direction: without this, someone who
+    picked a local model and gave no cloud key would be told to add one.
+
+    An answer already on disk is left alone unless the provider changed in
+    THIS run. Setup is not the only place mode can be set -- Settings ->
+    Intelligence writes it too -- and recomputing a value the user has
+    already chosen, on every run, is the shape of the seat-binding defect
+    of 2026-08-24. Changing the provider answer, though, IS an instruction.
+    """
+    base = _default_routing()
+    if base is None:
+        return None
+    base.update(existing or {})
+
+    provider_changed = (previous_provider is None
+                        or previous_provider != provider_id)
+    if (existing or {}).get("mode") and not provider_changed:
+        return base
+
+    base["mode"] = ("local_preferred"
+                    if provider_id in _LOCAL_PROVIDER_IDS else "cloud_only")
+    return base
+
+
 # ── Key Validation ────────────────────────────────────────────────
 
 def _validate_anthropic(key: str):
@@ -1062,6 +1125,16 @@ def main():
         config.setdefault("tts_voice", "Aoede")
         config.setdefault("preferred_scene_index", 0)
         config.setdefault("connectors", {})
+
+    # The provider answer has to reach the thing that routes a turn.
+    # `provider` alone never did -- see _routing_block_for.
+    _routing = _routing_block_for(
+        config.get("provider") or "anthropic",
+        (existing.get("model_routing") or {}),
+        previous_provider=existing.get("provider"),
+    )
+    if _routing is not None:
+        config["model_routing"] = _routing
 
     # Defaults that server expects
     config.setdefault("subagent_model", "claude-sonnet-5")
