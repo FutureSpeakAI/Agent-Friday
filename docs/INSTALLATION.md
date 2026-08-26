@@ -28,13 +28,19 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 ## Option 0: Download the Packaged App (No Python Required)
 
 The fastest path on Windows needs no Python, Git, or terminal at all: download
-`AgentFriday-Setup-5.6.0.zip` from the
-[GitHub Releases page](https://github.com/FutureSpeakAI/Agent-Friday/releases),
+the `AgentFriday-Setup-*.zip` attached to the
+[latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest),
 unzip it anywhere, and double-click **Install Agent Friday.cmd**. SmartScreen
 may warn on first launch — see the SmartScreen note below for the one-click
 bypass.
 
-> ⚠️ **5.6.0 publishes the Windows installer only — there is no 5.6.0 `.exe`.**
+> ⚠️ **Take the newest zip, and do not go back for an older one.** `5.6.1` was
+> tagged a few hours before the API-key pre-flight it was written to add, so the
+> published `5.6.1` zip promises a self-repair loop it cannot verify a key for;
+> `5.6.0` is older still. Both are superseded by `5.6.2`. See
+> [RELEASE_NOTES.md](../RELEASE_NOTES.md).
+
+> ⚠️ **The releases page also carries an `AgentFriday.exe`. It is not current.**
 > The newest published `AgentFriday.exe` is **v5.4.0, built 6 July 2026**. It
 > predates every egress-gate fix made on 24–25 August — among them the
 > classifier gaining its first phone/address/account-number regexes, the wiki
@@ -42,8 +48,8 @@ bypass.
 > that failed open at its strongest verdict — and it predates 5.5.0 entirely.
 > The `dist/AgentFriday.exe` in a checkout is that same 6 July build.
 >
-> **Do not treat either as a current build.** Use the 5.6.0 installer zip above,
-> or run from source.
+> **Do not treat either as a current build.** Use the installer zip above, or
+> run from source.
 
 The steps that follow are the from-source path, recommended for developers and
 anyone who wants to read or modify the code they run.
@@ -53,7 +59,7 @@ anyone who wants to read or modify the code they run.
 This matters more than a packaging detail usually would, so it is stated up
 front rather than buried:
 
-| | **`AgentFriday.exe`** (PyInstaller, one file) | **`AgentFriday-Setup-5.6.0.zip`** (Windows installer) |
+| | **`AgentFriday.exe`** (PyInstaller, one file) | **`AgentFriday-Setup-*.zip`** (Windows installer) |
 |---|---|---|
 | What it is | A single frozen binary | An embedded CPython plus a source payload and a wheelhouse |
 | Sensitivity classifier | **Layers 1a + 1b only** — regex and keyword | Layers 1a + 1b, **plus Layer 3** (embeddings) if the memory tier installs |
@@ -230,7 +236,7 @@ XML, and Friday reads it with the standard library. There is deliberately no
 
 ## Step 4: Configure API Keys
 
-Cloud keys are **optional** — with Ollama + `gemma3:4b`, chat runs fully local with no key at all. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted per provider under `~/.friday/providers/keys/` (vault-passphrase or Windows DPAPI protection).** One honest caveat: the setup wizard has historically also written keys and the vault passphrase as plaintext `SET` lines into launch scripts, and those plaintext values *override* the encrypted store at import. Treat any `start.bat` or `friday_startup.vbs` on your machine as containing live secrets. See KNOWN_ISSUES.md §7.
+Cloud keys are **optional in principle, and asked about in practice.** Friday can chat with no key at all through a local model on Ollama, but since 5.6.1 the Windows installer asks which way you want to run her and recommends the key on a graphics card too small to hold a model comfortably — so a zero-key install is a choice you make, not the default you fall into. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted per provider under `~/.friday/providers/keys/` (vault-passphrase or Windows DPAPI protection).** One honest caveat: the setup wizard has historically also written keys and the vault passphrase as plaintext `SET` lines into launch scripts, and those plaintext values *override* the encrypted store at import. Treat any `start.bat` or `friday_startup.vbs` on your machine as containing live secrets. See KNOWN_ISSUES.md §7.
 
 ### Option A: Setup Wizard (Recommended)
 
@@ -258,7 +264,7 @@ export GEMINI_API_KEY=AIza...
 
 | Key | Source | Required |
 |-----|--------|----------|
-| *(none)* | Ollama + `gemma3:4b` | Default — fully local, zero keys |
+| *(none)* | Ollama + a local model | Fully local, zero keys — offered by the installer when your card has room |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) | Optional (sharper reasoning) |
 | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/) | Optional (TTS, creative, voice) |
 | `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai/) | Optional (hundreds of models via one key) |
@@ -301,16 +307,28 @@ Ollama enables local model routing — required for vault access to private data
 
 1. Download from [ollama.com](https://ollama.com/)
 2. Install and start the Ollama service
-3. Pull a model. **The installers already pull `gemma3:4b` (the bundled zero-key
-   default), so if you used `install.{sh,ps1,bat}` you can skip this.** These are
-   optional larger alternatives:
+3. Pull a model — or better, let Friday choose one. `friday models` reads your
+   RAM, VRAM and disk and tells you the largest brain that fits, with the
+   arithmetic behind anything it refuses; `friday models --install` then pulls
+   exactly that. The Windows installer runs the same planner, so if you used it
+   you can skip this step.
+
+   The legacy `scripts/install.{sh,ps1,bat}` do something different and older:
+   they pull `gemma3:4b` unconditionally, without consulting the planner. That
+   model has **no native tool calling** — prefer `qwen3:4b`, which is smaller
+   (2.5 GB against 3.3 GB) and keeps its tools.
+
+   To pull one by hand instead:
 
 ```bash
-ollama pull gemma3:4b    # bundled default — auto-installed; needs 16 GB system RAM
-ollama pull qwen3:14b    # general purpose (8+ GB VRAM)
-ollama pull qwen3:8b     # lighter alternative (6+ GB VRAM)
-ollama pull qwen3:4b     # minimal (runs on CPU)
+ollama pull qwen3:4b     # smallest seat that keeps its tools — 2.5 GB
+ollama pull qwen3:8b     # 5.2 GB; needs ~6 GB usable VRAM
+ollama pull gemma4:12b   # 7.5 GB; needs ~9.5 GB usable VRAM
 ```
+
+   "Usable" VRAM is your card minus what the desktop and runtime overhead take
+   — 3.5 GB on Windows. An 8 GB card has about 4.5 GB usable, which lands on
+   `qwen3:4b`.
 
 Friday auto-detects Ollama at `http://localhost:11434`. To use a different URL, set it in `~/.friday/settings.json`:
 
@@ -385,7 +403,7 @@ Friday works without it — compression falls back to passthrough.
 
 ### sentence-transformers download on first chat
 
-The context pruner downloads the `all-MiniLM-L6-v2` model (~80MB) on first use. This is a one-time download. If behind a proxy, set `HTTP_PROXY`/`HTTPS_PROXY` environment variables.
+The context pruner downloads the `all-MiniLM-L6-v2` model (~90 MB) on first use. This is a one-time download, and it is not the 2.5 GB memory tier — that is a separate, announced, skippable step in the Windows installer. If behind a proxy, set `HTTP_PROXY`/`HTTPS_PROXY` environment variables.
 
 ### Port 3000 already in use
 

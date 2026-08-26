@@ -523,7 +523,7 @@ function Invoke-Step {
         [Parameter(Mandatory)][scriptblock] $Action,
         [Parameter(Mandatory)][scriptblock] $Verify,
         [string]      $HumanFailure = 'A part of the setup did not finish.',
-        [string]      $HumanFix     = 'Run the installer again. If it stops in the same place, send Stephen the log file named at the end of this window.',
+        [string]      $HumanFix     = 'Run the installer again. If it stops in the same place, the install report named at the end of this window says which part failed and why.',
         [string]      $VerifyDescription = '',
         [switch]      $Optional,
         [switch]      $Quiet,
@@ -727,7 +727,7 @@ function Complete-Install {
         $cost   = ($heals | Measure-Object -Property CostUsd      -Sum).Sum
         [void]$lines.Add('### Cost of self-repair')
         [void]$lines.Add('')
-        [void]$lines.Add("Input tokens: $inTok  Â·  Output tokens: $outTok")
+        [void]$lines.Add("Input tokens: $inTok  ·  Output tokens: $outTok")
         [void]$lines.Add(("Approximate cost: **`${0:N4}** USD, charged to the Anthropic key entered during setup." -f $cost))
         [void]$lines.Add('')
         [void]$lines.Add('That figure is an estimate from a rate table baked into the installer at build')

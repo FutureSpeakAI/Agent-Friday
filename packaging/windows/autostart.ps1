@@ -84,7 +84,8 @@ if ($on) {
     } else {
         Say ''
         Say-Note 'That did not work - Friday will not start automatically.'
-        Say '        Everything else is unaffected. Try again, or tell Stephen.'
+        Say '        Everything else is unaffected. Try again, or just open Friday'
+        Say '        from the desktop when you want her.'
     }
 }
 

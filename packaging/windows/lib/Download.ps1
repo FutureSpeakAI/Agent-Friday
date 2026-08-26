@@ -152,8 +152,8 @@ function Assert-FileHash {
                            "download was interrupted, but it can also mean something on the " +
                            "network interfered with it.") `
                     -WhatToDo ("Check the internet connection and run the installer again. " +
-                               "If it happens twice, tell Stephen before continuing - do not " +
-                               "click past this one.")
+                               "If it happens twice, stop rather than try a third time - a file " +
+                               "that keeps arriving wrong is worth looking into before it is used.")
         Complete-Install -Failed -FailedStep 'download.integrity'
         exit 1
     }

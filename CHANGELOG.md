@@ -1,4 +1,4 @@
-# Changelog — Agent Friday / Asimov's Mind
+# Changelog — Agent Friday
 
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD

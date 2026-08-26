@@ -216,12 +216,12 @@ function Show-ManualOllamaInstruction {
     <#  The graceful continue. This is the wording she sees. It names one
         thing to do, one place to do it, and says plainly what she loses
         until she does - no exit codes, no "see the log". #>
-    Say-Note 'One piece could not install itself.'
+    Say-Note 'One part could not be installed automatically.'
     Say ''
     Say '  Friday needs a free program called Ollama to run AI on this laptop'
     Say '  instead of over the internet. Setup could not install it for you.'
     Say ''
-    Say "  $($script:C.Bold)To finish this part later:$($script:C.Reset) go to  https://ollama.com/download"
+    Say "  $($script:C.Bold)To finish this part later:$($script:C.Reset) go to https://ollama.com/download"
     Say '  click Download for Windows, run it, then start Friday again.'
     Say ''
     Say '  Everything else is being set up now. Friday will still work with'
