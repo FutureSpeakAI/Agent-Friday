@@ -263,12 +263,33 @@ class OllamaManager:
         hw = hardware or self.detect_hardware()
         vram = hw.get("vram_gb", 0)
         ram = hw.get("ram_gb", 0)
+        # THE VRAM THRESHOLDS COME FROM services/model_plan.BRAIN_MODELS, which
+        # is the one place the arithmetic lives. They are the card size each
+        # model needs — its own footprint (weights + measured runtime overhead)
+        # plus the 2.5 GiB display reserve — rounded UP to a whole GiB, because
+        # rounding down here is how a suggestion becomes an overclaim:
+        #
+        #     qwen3:8b    9.07 GiB card  ->  10
+        #     qwen3:14b  12.84 GiB card  ->  13
+        #     qwen3:32b  23.01 GiB card  ->  24
+        #
+        # They used to read 6, 8 and 24, and the first two were simply wrong:
+        # `vram >= 8` offered qwen3:14b to an 8 GB card that cannot hold it,
+        # and `vram >= 6` offered qwen3:8b to a 6 GB card that cannot either.
+        # Neither accounted for the display reserve or the KV cache, which is
+        # the same "largest that fits" mistake the residency planner made when
+        # it seated a 26B model on a 12 GiB card.
+        #
+        # The RAM thresholds are deliberately left as they were. They are a
+        # judgement about running on the PROCESSOR, where throughput is
+        # unmeasured for every model here, and they are not what this fix is
+        # about.
         recs = []
         if vram >= 24 or ram >= 64:
             recs.append({"name": "qwen3:32b", "task": "code, research, complex reasoning", "tier": "large"})
-        if vram >= 8 or ram >= 32:
+        if vram >= 13 or ram >= 32:
             recs.append({"name": "qwen3:14b", "task": "general purpose, code, analysis", "tier": "medium"})
-        if vram >= 6 or ram >= 16:
+        if vram >= 10 or ram >= 16:
             recs.append({"name": "qwen3:8b", "task": "chat, simple tasks, fast response", "tier": "small"})
         recs.append({"name": "qwen3:4b", "task": "quick lookups, formatting, status checks", "tier": "tiny"})
         return recs
