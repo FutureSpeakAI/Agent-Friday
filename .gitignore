@@ -173,3 +173,22 @@ playwright-report/
 # Local diagnostics only — never committed; this repo is public.
 tests/app/scenarios/transcript.json
 tests/app/scenarios/sent-messages.json
+
+# Root-level scratch files, by SHAPE rather than by name (2026-08-25).
+#
+# This repo is PUBLIC. On 2026-08-25 the root held _msgws_raw.txt,
+# _msgws_full.txt, _messages_ui_dump.txt, _triage_tail.txt, _triage_tail2.txt
+# and _orig_bytes.tmp -- ~90 KB of dumps from a live message-triage session --
+# none of them ignored, so a single `git add -A` would have published them.
+# Naming each one only ever catches the files someone already thought of, so
+# the rule is the shape: a leading underscore at the repo root means scratch.
+#
+# Scoped to the root with a leading slash on purpose, so package sources like
+# src/agent_friday/**/_internal.py are unaffected. Verified with `git ls-files`
+# that nothing tracked matches. packaging/windows/build-installer.ps1 carries
+# the same patterns so these never reach the installer payload either.
+/_*
+*.tmp
+*.bak
+*.orig
+*.rej

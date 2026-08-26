@@ -108,18 +108,63 @@ function Get-PayloadExcludes {
     )
 }
 
+function Get-PayloadExcludePatterns {
+    <#  SECURITY BOUNDARY, by SHAPE rather than by name.
+
+        Get-PayloadExcludes above is an exact-name list, which means it only
+        ever catches the scratch files someone already thought of. On
+        2026-08-25 the repo root held _msgws_raw.txt, _msgws_full.txt,
+        _messages_ui_dump.txt, _triage_tail.txt, _triage_tail2.txt and
+        _orig_bytes.tmp -- ~90 KB of dumps from a live message-triage session,
+        none of them gitignored and none of them named in the list, so all six
+        would have been copied into the shipped payload. pyinstaller_build.log
+        was in the same position: gitignored, therefore absent from a clean
+        clone, but present in the working tree this script actually reads.
+
+        These patterns are matched against ROOT-LEVEL entries only (the copy
+        loop below enumerates $RepoRoot, not the tree), so '_*' cannot reach a
+        package's __init__.py or any other underscore-prefixed real source
+        further down. Nothing tracked at root matches any of these -- verified
+        with `git ls-files` before adding them.
+
+        If you add a scratch file at the repo root, name it with a leading
+        underscore and it will never ship.
+    #>
+    return @(
+        '_*',            # leading-underscore scratch/dump convention
+        '*.tmp', '*.log', # transient output; pyinstaller_build.log lived here
+        '*.bak', '*.orig', '*.rej'  # editor and merge-conflict leftovers
+    )
+}
+
 Say-Step 'Copying the application'
 $excludes = Get-PayloadExcludes
 $excludeSet = @{}
 foreach ($e in $excludes) { $excludeSet[$e.ToLowerInvariant()] = $true }
 
+$excludePatterns = Get-PayloadExcludePatterns
+
 $copied = 0
 $skippedSensitive = @()
+$skippedScratch = @()
 foreach ($item in (Get-ChildItem -LiteralPath $RepoRoot -Force)) {
     $name = $item.Name.ToLowerInvariant()
     if ($excludeSet.ContainsKey($name)) {
         if ($name -match 'start|startup|\.env|secret|config\.yaml|commit') { $skippedSensitive += $item.Name }
         Write-Log "Excluded from payload: $($item.Name)"
+        continue
+    }
+    # Shape-based exclusion. Deliberately AFTER the exact-name list so the
+    # sensitive-file accounting above is unchanged, and deliberately loud: a
+    # scratch file that reaches a build is worth seeing in the log, because the
+    # alternative is finding it in a published artifact.
+    $matchedPattern = $null
+    foreach ($pat in $excludePatterns) {
+        if ($name -like $pat) { $matchedPattern = $pat; break }
+    }
+    if ($matchedPattern) {
+        $skippedScratch += $item.Name
+        Write-Log "Excluded from payload (scratch pattern '$matchedPattern'): $($item.Name)"
         continue
     }
     Copy-Item -LiteralPath $item.FullName -Destination $Payload -Recurse -Force
@@ -160,6 +205,10 @@ Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -ErrorAction SilentlyC
 if ($skippedSensitive.Count -gt 0) {
     Say-Note ("Kept out of the artifact on purpose: " + ($skippedSensitive -join ', '))
     Write-Log "Sensitive files excluded: $($skippedSensitive -join ', ')" 'OK'
+}
+if ($skippedScratch.Count -gt 0) {
+    Say-Note ("Scratch files left out of the artifact: " + ($skippedScratch -join ', '))
+    Write-Log "Scratch files excluded by pattern: $($skippedScratch -join ', ')" 'OK'
 }
 
 # --- Prove the payload is actually there ---------------------------------
