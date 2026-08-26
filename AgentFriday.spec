@@ -20,6 +20,23 @@
 # probes the layers at startup and logs a WARNING naming each inactive one, so a
 # packaged build can no longer claim protection it is not running. If you edit
 # this list, re-run that self-check against the built artifact.
+#
+# STALENESS WARNING (2026-08-25). The TOC references above describe the build in
+# build/AgentFriday/, which is dated 2026-07-06 and therefore predates every
+# privacy and file module added since: file_extraction, file_grants, file_search,
+# privacy_layers and presidio_shadow are all absent from that PYZ, and so is
+# pdfplumber. Do NOT read that TOC as evidence about the current tree -- it is
+# evidence about July. Verified instead by running collect_submodules directly
+# against this spec's sys.path setup: 291 modules enumerated, all five present.
+# Re-run the real build before making any claim about the .exe.
+#
+# THIS IS ALSO NOT THE SHIPPING INSTALLER. packaging/windows/ builds the actual
+# 5.5.0 artifact (AgentFriday-Setup-5.5.0.zip) from a source payload plus an
+# embedded CPython and a wheelhouse; it does not use PyInstaller at all. The two
+# paths have DIFFERENT privacy properties -- the installer installs
+# sentence-transformers (memory tier) and presidio-analyzer (recommended tier),
+# neither of which this spec bundles. Check which one you are reasoning about
+# before quoting a layer count.
 import os
 import sys
 # The package lives under src/ and is NOT pip-installed into site-packages in
@@ -82,6 +99,20 @@ hiddenimports = [
     # imports it INSIDE a try/except, which collect_submodules cannot see --
     # exactly how it came to be absent from every environment until 2026-08-25.
     'pdfplumber', 'pdfminer', 'pdfminer.high_level',
+    # NOTE: .docx extraction deliberately needs NO hiddenimport. file_extraction
+    # ._extract_docx() reads the archive with stdlib zipfile + XML rather than
+    # python-docx, so there is no third-party dependency to pin and none to add
+    # to requirements.txt. Verified 2026-08-25 -- do not "fix" this by adding
+    # python-docx.
+    # Local file discovery + the grant ledger (WO-14 / WO-17). Verified on
+    # 2026-08-25 that collect_submodules('agent_friday') DOES enumerate all
+    # three (291 modules collected), so these lines are belt-and-braces rather
+    # than a fix. They are here because collect_submodules returns [] silently
+    # if the sys.path.insert above ever regresses, and the failure mode of
+    # losing file_grants is that grants stop being read -- which fails safe on
+    # egress but silently breaks a feature the user paid attention to.
+    'agent_friday.services.file_extraction', 'agent_friday.services.file_grants',
+    'agent_friday.services.file_search',
     # The capability preflight itself. If this fails to bundle, the build
     # loses the check that reports what else the build lost.
     'agent_friday.services.capability_preflight',
@@ -96,6 +127,17 @@ excludes = [
     'torch', 'torchvision', 'torchaudio', 'sentence_transformers', 'transformers',
     'scipy', 'sklearn', 'matplotlib', 'tensorflow', 'headroom', 'headroom_ai',
     'tokenizers', 'safetensors', 'accelerate', 'datasets', 'sympy',
+    # Tier-2 NeMo GPU voice (2026-08-25). These are NOT dependencies of this
+    # build and never were -- nothing imports them. They arrive in the dev venv
+    # only because services/voice_installer.py installs nemo_toolkit at the
+    # USER'S request at runtime, and PyInstaller then sweeps whatever is sitting
+    # in site-packages. Left unexcluded they are dead weight twice over: NeMo
+    # requires torch, which is excluded above, so a frozen build could not run
+    # Tier-2 voice even with NeMo bundled. services/nemo_voice.py only ever
+    # probes for them with find_spec and degrades honestly when absent, which is
+    # the correct answer in a frozen build.
+    'nemo', 'nemo_toolkit', 'lightning', 'pytorch_lightning', 'lightning_fabric',
+    'torchmetrics',
 ]
 
 _icon = 'assets/icons/futurespeak.ico'

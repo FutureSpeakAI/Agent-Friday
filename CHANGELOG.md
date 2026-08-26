@@ -7,6 +7,160 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased] — targeting 5.6.0
+
+Two days (24–25 August) that were mostly spent finding out that things this
+project already claimed were not true. Four of those things were live security
+defects in the egress gate — the mechanism the whole product rests on. They are
+listed first and in plain language, because a sovereignty tool whose users are
+not told when its gate was leaking has nothing left to sell.
+
+### Security — the gate was leaking, in four separate ways
+
+All four are fixed. All four were live in shipped code. None of them were
+theoretical, and the first three were found by measuring against real data
+rather than test fixtures.
+
+- **The classifier had no phone, address, or account-number regex — ever.**
+  Not a regression: there had *never* been one. Phone numbers in every common
+  shape, street addresses, masked account tails ("Chase account ending 4417")
+  and issued identifiers ("policy number BX-99120384") classified as **TIER_1
+  (public)** and were sent to cloud providers verbatim. Seventeen of twenty
+  realistic vault shapes classified TIER_1 in both the routing and egress
+  paths. These shapes were nominally covered by Layer 2 (Presidio, which was
+  installed in no environment) and Layer 3 (embeddings, excluded from the
+  frozen build *and* disabled outright in the vault path) — so **the shipped
+  binary had no detector for them at all.** The only thing between "emergency
+  contact: 555-1234" and a cloud provider was the literal phrase "phone
+  number" happening to appear nearby. Now covered by Layer 1a regexes, which
+  are mode-independent and so fix routing and egress together.
+
+- **The wiki context section failed OPEN.** This is what made the gap above
+  fatal rather than merely wrong. Nearly every personal section of the context
+  prompt is hard-tagged TIER_2, so a classifier miss still results in the
+  content being withheld. The wiki/briefing section was the exception: it
+  passed a TIER_1 fallback, so a miss degraded to *sent in full* rather than
+  *withheld*. Measured against the real corpus: **of 95 files in
+  `~/.friday/wiki`, 90 reached the cloud in full under the old fallback. Zero
+  do now.** The same corpus was already travelling fail-closed by the other
+  loader — one body of personal data under two different policies depending on
+  which code path reached it first.
+
+- **Voice egress failed open at the strongest verdict.** `routes/voice.py`
+  wrapped the gate in one broad `except`, so `NeverSendBlocked` — the gate's
+  most severe result, the one that means *never send this* — fell through to
+  the **pre-gate, ungated payload being sent to Google.** On both the
+  tool-result and typed-text legs. Both now fail closed through extracted,
+  directly-tested helpers: every exit is either gated text or a withheld
+  placeholder, never the raw value.
+
+- **Background tasks skipped vault gating entirely.** Task workers and a batch
+  of briefing/draft/compose sites built their system prompts through
+  `_get_friday_system_prompt` with no `provider` or `vault_control` — the
+  function's own documented "legacy ungated" default — so TIER_2 vault content
+  rode into prompts in the clear. 22 call sites in total. They now predict the
+  destination provider and gate accordingly. The parameters are now **required**,
+  and a pre-commit static check enforces it, because two of the 22 were
+  background jobs that would not have raised until their next scheduled run.
+
+- **The anti-fabrication directive was itself being redacted.** The honesty
+  directive — the instruction that stops Friday inventing tool results and
+  narrating over failures — was one 3,583-character paragraph whose items were
+  joined by single newlines. The egress gate splits on `\n\n`; having none of
+  its own, the whole directive rode inside one merged paragraph and was
+  **withheld as a unit from every cloud call**, tripped by a worked example that
+  contained the words "asked for its phone number". So the instruction against
+  fabrication was deleted from the prompt by the privacy filter — which is the
+  mechanism behind a morning of fabricated file reads, invented task
+  confirmations, and claimed actions that never happened. Fixed by
+  paragraph-splitting the directive, rewording the item that tripped the
+  classifier, and registering it (and `SELF.md`) as trusted text, since neither
+  was ever the user's data. The withheld-content placeholders now say what to
+  do — don't retry, don't invent it, tell the user — instead of only what
+  happened.
+
+### Documentation — we were claiming protections the binary does not provide
+
+- **`THREAT_MODEL.md` said "four-layer classifier". It shipped two.** The
+  document now states, per layer, what is in force and in which build, and
+  explains that **Presidio was evaluated and deliberately rejected** rather than
+  merely missing: measured 2026-08-24, it scored TIER_2 where the existing regex
+  returns TIER_3, and escalated 6 of 12 entirely benign prompts — *"What is the
+  weather going to be like tomorrow?"* among them. It is installed by the
+  Windows installer and runs **observe-only**; enforcement needs an explicit
+  `FRIDAY_PRESIDIO_ENFORCE=1` and is not recommended.
+- The egress guarantee now names its own limits, including the fact that a file
+  grant is a deliberate hole, and that the classifier is only as good as its
+  patterns.
+- New [docs/FILE_GRANTS.md](docs/FILE_GRANTS.md) documenting the permission
+  model properly.
+- `docs/INSTALLATION.md` now states plainly that the `.exe` and the Windows
+  installer **are not equivalent privacy products**, and that no model is
+  downloaded behind the user's back.
+
+### Fixed — the honesty report was itself over-reporting
+
+- `privacy_layers` counted a layer as active if its module merely **imported**.
+  Since the Windows installer *does* install `presidio-analyzer`, a fresh
+  install printed **"4/4 layers active"** while Presidio was deliberately inert.
+  The module written to stop the docstring overstating protection was
+  reproducing the same bug one level up. A layer now counts as active only if it
+  can actually influence a decision.
+
+### Added
+
+- **Local file discovery.** `search_files` on both the text and voice surfaces:
+  searches Documents, Downloads, Desktop and Friday's creations by name, or
+  inside extractable text. Never searches the vault.
+- **Real text extraction.** PDFs via `pdfplumber`, `.docx` via stdlib zip+XML.
+  Friday no longer hands a model raw bytes, and says so honestly when a PDF has
+  no text layer rather than guessing at its contents.
+- **User-granted cloud permissions for files** — content-pinned, HMAC'd,
+  append-only ledger at `~/.friday/privacy/file_grants.jsonl`, with four
+  endpoints under `/api/privacy/`. File grants pin a SHA-256 and may be
+  permanent; folder and glob grants must expire within 30 days; deny beats
+  grant; no model on any surface can create one; a corrupted ledger can only
+  tighten. See [docs/FILE_GRANTS.md](docs/FILE_GRANTS.md).
+- **KV cache quantization on the local seat**, with automatic fallback to f16
+  when the server does not support `--cache-type-k/v`.
+- **Configurable Gmail window** — `gmail_window_days` setting and a `?days=`
+  override, replacing a hardcoded window.
+- **Boot audit for seats** — startup now names the resolved endpoint and the
+  model actually answering, instead of the model that was requested.
+- The llama-server banner now goes to `runtime/logs/` instead of being
+  discarded.
+
+### Changed — packaging
+
+- `pdfplumber` promoted from an optional extra to a **core dependency** in
+  `pyproject.toml`. It was already marked "NOT OPTIONAL" in `requirements.txt`;
+  the two manifests disagreed, so a lean `pip install -e .` produced a Friday
+  whose PDF branch told the *user* to install Friday's own dependency.
+- `nemo`, `nemo_toolkit`, `lightning`, `pytorch_lightning`, `lightning_fabric`
+  and `torchmetrics` added to the PyInstaller `excludes`. Nothing imports them;
+  they arrive in a dev venv only because the Tier-2 voice installer puts them
+  there at the user's request, and PyInstaller then sweeps whatever is in
+  site-packages. They are dead weight twice over, since NeMo needs torch, which
+  is already excluded.
+- `file_extraction`, `file_grants` and `file_search` pinned explicitly in the
+  spec (belt-and-braces — `collect_submodules` was verified to enumerate them).
+- `.docx` support deliberately adds **no** dependency.
+
+### Contributor-facing
+
+- Pre-commit hook now runs `scripts/check_gated_prompt_callers.py`. See
+  [CONTRIBUTING.md](CONTRIBUTING.md) for why the required arguments exist and
+  why passing `provider='cloud', vault_control=None` to silence it *is* the bug.
+- **`index.html` is the UI source of truth, not `ui_parts/`.** They have
+  diverged: 18 top-level components, including the whole conversations feature,
+  exist only in the built file. `build_ui.py` now refuses a build that would
+  drop components. JSX precompilation was also silently disabled from 18 August
+  until 25 August.
+- The forensics snapshotter is a Windows scheduled task (`AgentFridayForensics`);
+  `ops/forensics-down.ps1` stops it.
+
+---
+
 ## [5.5.0] - 2026-08-21
 
 A release that fixes things that were quietly broken and documents what still

@@ -56,6 +56,38 @@ class TestDescribeHonesty:
         """Windows consoles are cp1252; a log line must not raise on encode."""
         pl.describe().encode("cp1252")
 
+    def test_probe_reasons_are_ascii_safe(self, monkeypatch):
+        """The reason strings print in the startup banner too, not just describe()."""
+        monkeypatch.setattr(pl, "_module_available", lambda m: True)
+        for detail in pl.probe_layers().values():
+            detail["reason"].encode("cp1252")
+
+    def test_installed_presidio_is_not_active_while_observe_only(self, monkeypatch):
+        """Importable != in force.
+
+        The Windows installer ships presidio-analyzer in its recommended tier,
+        so find_spec succeeds on a fresh install. But classify() only consults
+        Presidio under FRIDAY_PRESIDIO_ENFORCE=1; otherwise it is observe-only
+        and changes no outcome. Reporting it as an active layer would overstate
+        the protection in force -- the one thing this module exists to prevent.
+        """
+        monkeypatch.delenv("FRIDAY_PRESIDIO_ENFORCE", raising=False)
+        monkeypatch.setattr(
+            pl, "_module_available", lambda m: True if m == "presidio_analyzer" else False
+        )
+        probed = pl.probe_layers()["presidio"]
+        assert probed["active"] is False
+        assert "OBSERVE-ONLY" in probed["reason"]
+        assert "presidio" in pl.self_check()["missing"]
+        assert "DEGRADED" in pl.describe()
+
+    def test_enforced_presidio_counts_as_active(self, monkeypatch):
+        """The other direction: explicitly enforcing it does make it a layer."""
+        monkeypatch.setenv("FRIDAY_PRESIDIO_ENFORCE", "1")
+        monkeypatch.setattr(pl, "_module_available", lambda m: True)
+        assert pl.probe_layers()["presidio"]["active"] is True
+        assert pl.self_check()["ok"] is True
+
     def test_report_at_startup_warns_when_degraded(self, caplog):
         with caplog.at_level("INFO"):
             chk = pl.report_at_startup()

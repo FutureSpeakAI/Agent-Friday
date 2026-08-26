@@ -15,12 +15,52 @@ family details — as part of a prompt or conversation history.
 
 **Defence:** The **Egress Gate** (`services/egress_gate.py`) runs immediately
 before every outbound cloud HTTP call, after payload assembly. It classifies all
-content using a four-layer locally-running classifier:
+content using a locally-running classifier that *declares* four layers. **How
+many are actually in force depends on how you installed Friday, and it is
+usually two.** This section used to say "four-layer" flatly. That was wrong in
+every environment that has ever existed, and for a product that sells data
+sovereignty it was the worst possible thing to be wrong about. What follows is
+what actually runs.
 
-  1. Regex — structured PII tokens (SSN, CC numbers, API keys, routing numbers)
-  2. Presidio NER — contextual entity detection (names, dates, medical terms)
-  3. Embedding similarity — semantic proximity to curated sensitive exemplars
-  4. Local LLM — optional Ollama pass for ambiguous spans
+| Layer | What it does | Actually in force? |
+|---|---|---|
+| **1a — Regex** | Structured tokens: SSN, card numbers, API keys, routing numbers, phone/address/account-tail shapes | **Always.** No dependency. |
+| **1b — Keyword** | Strong phrases plus context-gated keyword tiers | **Always.** No dependency. |
+| **2 — Presidio NER** | Names, dates, medical/financial entities | **No, by default** — see below. |
+| **3 — Embedding** | MiniLM semantic similarity to curated sensitive exemplars | **Only if `sentence-transformers` is present.** Installed by the Windows installer's *memory* tier; **excluded from the PyInstaller `.exe` on purpose.** |
+| **4 — Local LLM** | Ollama adjudication of ambiguous spans | **No** — opt-in per call (`use_llm=True`), off by default. |
+
+So the honest summary: **the frozen `.exe` runs Layers 1a+1b only** — four
+regexes and two keyword lists. A full Windows installer run additionally gets
+Layer 3.
+
+**Presidio was evaluated and deliberately rejected.** It is not a missing
+feature or an unfinished one. Measured on 2026-08-24:
+
+- it returned **TIER_2 where the existing regex returns TIER_3** — weaker than
+  what was already shipping, on real PII;
+- it **escalated 6 of 12 entirely benign prompts**, including *"What is the
+  weather going to be like tomorrow?"* and *"Remind me to buy milk on Friday"*,
+  because its `DATE_TIME` and `LOCATION` recognisers fire on ordinary prose.
+
+Enforcing that would withhold roughly half of normal conversation from the
+cloud while making PII detection *worse*. The Windows installer still installs
+`presidio-analyzer` so the evidence can keep accumulating, but it runs in
+**shadow mode**: it logs what it *would* have flagged (entity type, offsets,
+score, and a salted hash — never the matched text) and changes no decision.
+Enforcement requires setting `FRIDAY_PRESIDIO_ENFORCE=1` explicitly, and we
+do not recommend it. Because of this, `privacy_layers` reports Layer 2 as
+**inactive even when it imports** — a layer that cannot change an outcome is
+not a protection.
+
+**Verify it yourself rather than trusting this table.** Friday probes its own
+layers at every boot and prints the result; a shortfall prints a boxed
+`SENSITIVITY CLASSIFIER IS RUNNING DEGRADED` notice. Or ask directly:
+
+```
+python -c "from agent_friday.services.privacy_layers import describe; print(describe())"
+# Sensitivity classifier: 3/4 layers active (source checkout). DEGRADED - not running: presidio.
+```
 
 Default on uncertainty: **REDACT** (fail-closed). Anything the gate cannot
 confidently classify as PUBLIC is withheld from cloud providers. The gate never
@@ -28,9 +68,26 @@ sends content to cloud to determine if it is sensitive — all classification ru
 locally.
 
 **Guarantee:** No content above TIER_1 (PUBLIC) leaves your device to cloud
-providers via the normal call path. The model router is an optimization; the
-egress gate is the enforcement boundary and cannot be bypassed without modifying
-`services/egress_gate.py`.
+providers via the normal call path — **except content you have explicitly
+granted**, which is a deliberate exception added in 5.6.0 and described in
+[docs/FILE_GRANTS.md](docs/FILE_GRANTS.md). The model router is an
+optimization; the egress gate is the enforcement boundary and cannot be
+bypassed without modifying `services/egress_gate.py`.
+
+**Scope of that guarantee — read this if you are deciding whether to trust
+Friday with a vault.** The gate is an enforcement boundary, not a proof. Three
+honest limits:
+
+1. **It is only as good as its classifier**, which on a frozen build is two
+   layers of pattern matching. Novel PII shapes it has no rule for will pass.
+   Between 2026-08-24 and 2026-08-25 the classifier had **no phone, address, or
+   account-number regex at all**, and real contact details reached the cloud.
+   That is fixed; it is also the kind of thing that can recur.
+2. **A grant is a real hole, on purpose.** Granted file content is registered as
+   sendable and crosses the wire. The design reasoning is in FILE_GRANTS.md.
+3. **Only the user can open it.** No model on any surface can create a grant —
+   there is no grant tool in `CLAUDE_TOOLS`, so a prompt-injected model cannot
+   widen its own reach, and a spoken "yes" cannot create one either.
 
 ---
 

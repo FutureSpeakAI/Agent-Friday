@@ -18,7 +18,15 @@ For the real answer at runtime:
 
   Layer 1 — Regex:     Structured tokens — SSN, CC, routing numbers, API keys.
   Layer 2 — Presidio:  Optional NER via presidio-analyzer. Catches names, dates,
-                        medical/financial entities that regex misses.
+                        medical/financial entities that regex misses. INSTALLED
+                        BY THE WINDOWS INSTALLER BUT OBSERVE-ONLY: measured on
+                        2026-08-24 it escalated 6 of 12 benign prompts ("what is
+                        the weather going to be like tomorrow?") and scored
+                        TIER_2 where the existing regex returns TIER_3. So it is
+                        shadow-logged, not enforced, unless FRIDAY_PRESIDIO_ENFORCE=1
+                        — and privacy_layers therefore reports it INACTIVE even
+                        when it imports, because a layer that cannot change an
+                        outcome is not a protection.
   Layer 3 — Embedding: Semantic similarity to curated sensitive exemplars using
                         the same all-MiniLM-L6-v2 model as the context pruner.
   Layer 4 — Local LLM: Optional Ollama pass for ambiguous spans. Only runs when

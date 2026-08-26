@@ -354,7 +354,14 @@ $null = Invoke-Step -Id 'deps.control' -Title 'Installing the part that lets Fri
     -Action { Install-PyAutoGuiFamily -InstallRoot $InstallRoot -WheelhouseDir $WheelhouseDir } `
     -Verify { Test-ModulesImportable -InstallRoot $InstallRoot -Modules @('pyautogui') }
 
-$null = Invoke-Step -Id 'deps.recommended' -Title 'Installing voice, PDF reading and the privacy filter' `
+# NOTE (2026-08-25): this step used to be titled '... and the privacy filter',
+# which overstated what installing presidio-analyzer buys. Presidio runs
+# OBSERVE-ONLY -- it logs what it would have flagged and changes no egress
+# decision unless FRIDAY_PRESIDIO_ENFORCE=1 is set explicitly, which is not
+# recommended (measured 2026-08-24: TIER_2 where regex returns TIER_3, and 6 of
+# 12 benign prompts escalated). The always-on part of the gate is Layers 1a+1b,
+# which are built in and install nothing. Do not restore the old title.
+$null = Invoke-Step -Id 'deps.recommended' -Title 'Installing voice, PDF reading and privacy-filter evaluation' `
     -Optional `
     -VerifyDescription 'the recommended modules import' `
     -Action {
