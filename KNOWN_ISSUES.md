@@ -604,6 +604,35 @@ evict anything but does not create headroom on the card either.
 
 ---
 
+## 3b. One key per machine, and no way to tell whose it is
+
+Setup asks for a Claude key, and the setup wizard stores whatever key it is given
+**encrypted on that machine**, where it is used until somebody replaces it. As of
+v5.6.1 the key is verified before self-repair is armed, so a dead key is caught at
+the moment it is pasted rather than twenty minutes later — but that is the only
+thing that changed.
+
+**There is no notion of a borrowed key.** Nothing records whose account a key
+belongs to, and nothing distinguishes "my key" from "a key I was given". The
+consequences are real for the common case of one person setting another person up:
+
+- Everything that install does is billed to whoever owns the key, and shares that
+  account's rate limits. Heavy use at one end slows the other.
+- Revoking the key stops every install using it. **There is no way to revoke one
+  machine's access** without revoking it for all of them, and no list of which
+  machines are using it.
+- The owner cannot see which install spent what. Usage from all of them is
+  indistinguishable at the account level.
+
+The installer now says this out loud at the point the key is entered, because
+saying it is cheap and key management is not. That is the whole mitigation.
+
+**If you are setting someone else up:** giving them their own key is the only
+clean answer today. If you give them yours, plan on it staying on their machine
+until one of you replaces it.
+
+---
+
 ## 4. Unverified — we do not know
 
 Listed separately from "broken" on purpose. These are not claims that things work.

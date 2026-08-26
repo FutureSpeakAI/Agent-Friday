@@ -195,7 +195,46 @@ else {
     Say '  (You will be asked for your keys properly in a few minutes either'
     Say '   way. This is only about letting setup fix itself.)'
     Say ''
-    $entered = Read-Host '  Claude key (or press Enter to skip)' -AsSecureString
+    # Up to three goes. A key that does not work is worth catching HERE, where
+    # the fix is to paste a different one, rather than twenty minutes later at
+    # the first failure - which is where it used to surface.
+    $entered = $null
+    for ($try = 1; $try -le 3; $try++) {
+        $entered = Read-Host '  Claude key (or press Enter to skip)' -AsSecureString
+        if (-not $entered -or $entered.Length -eq 0) { $entered = $null; break }
+
+        Say ''
+        Say-Working 'Checking that key works.'
+        $check = Test-AnthropicKey -ApiKey $entered
+
+        if ($check.Verdict -eq 'ok') {
+            Say-Ok 'That key works.'
+            break
+        }
+
+        if ($check.Verdict -eq 'unknown') {
+            # FAIL OPEN. Our pre-flight could not reach the API; that is not
+            # evidence against her key, and setup does not get to stop over it.
+            Say-Note ("Setup could not check the key - " + $check.Message + " Carrying on with it anyway.")
+            Add-InstallWarning "The self-repair key could not be verified before use: $($check.Message)"
+            break
+        }
+
+        # rejected / no_credit - the API said so plainly.
+        Say ''
+        Say-Problem -What $check.Message `
+                    -WhatToDo $(if ($check.Verdict -eq 'no_credit') {
+                        'Add credit to that account, or use a different key. You can also press Enter to carry on without self-repair - setup works fine without it.'
+                    } else {
+                        'Check you copied the whole key, then paste it again. You can also press Enter to carry on without self-repair - setup works fine without it.'
+                    })
+        $entered = $null
+        if ($try -eq 3) {
+            Say-Note 'Carrying on without self-repair.'
+            break
+        }
+        Say ''
+    }
 
     if ($entered -and $entered.Length -gt 0) {
         Say ''
@@ -212,7 +251,18 @@ else {
             try { $env:ANTHROPIC_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) }
             finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }
             Say-Ok 'Thank you. Setup will fix small problems on its own if it can.'
-            Write-Log 'Self-repair: consented.' 'HEAL'
+            Say ''
+            # Said out loud because there is no per-person key management: the
+            # key is stored on THIS machine and used until it is replaced, and
+            # whoever owns it pays for what Friday does here. If it belongs to
+            # someone else, revoking it stops this install with no way to revoke
+            # only this one. See KNOWN_ISSUES.md.
+            Say '  One thing worth knowing: this key is saved on this computer,'
+            Say '  encrypted, and used until you replace it. Whoever owns the key'
+            Say '  pays for what Friday does here - so if it is not yours, and'
+            Say '  they change it, Friday stops until you are given the new one.'
+            Say '  You can replace it any time in Settings.'
+            Write-Log 'Self-repair: consented. Key verified before arming.' 'HEAL'
         } else {
             Say-Ok 'Understood - setup will not use it.'
             Write-Log 'Self-repair: key supplied, consent DECLINED.' 'HEAL'
