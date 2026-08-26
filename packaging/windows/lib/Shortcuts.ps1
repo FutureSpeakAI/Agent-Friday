@@ -35,7 +35,7 @@ function Get-SpecialDir {
 
         Found on 2026-08-25, on the first cold install anyone had ever run.
         The trigger there was a redirected %APPDATA% in a test harness, which
-        is not something Janet will have. A profile mid-provision, a roaming
+        is not something a normal profile will have. A profile mid-provision, a roaming
         profile, or a OneDrive Known Folder Move that has not finished are, and
         they produce exactly the same empty string. #>
     param([Parameter(Mandatory)][string] $Name, [string] $Fallback = '')
