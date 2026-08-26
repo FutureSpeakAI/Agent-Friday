@@ -17,6 +17,27 @@ the whole point.
 Everything here is about the **first twenty minutes on a machine that is not
 the author's**. There is no new feature.
 
+## Why this version exists
+
+Two changes, and they are the point of the release:
+
+1. **The installer asks about local models instead of assuming.** One question,
+   straight after the key, with a default read off your actual graphics card.
+   Nobody has to know that `-SkipOllama` exists any more.
+2. **The small-card default can call tools.** An 8 GiB card used to land on the
+   one model in the table without native tool calling. It now lands on one that
+   has it — and downloads *less*.
+
+Everything else below is a defect the first cold install turned up on the way.
+
+> **If you downloaded a 5.6.1 zip before this release was published:** replace
+> it. That build shipped a bundled `CHANGELOG.md` that still read *"Current
+> version: 5.6.0"* and had no 5.6.1 section, so the changelog inside the
+> download contradicted the download. Nothing else differed — the installer
+> code, the planner and the payload were identical — but a file that describes
+> the product disagreeing with the product is the exact defect class this
+> release is about, so it does not get a pass. The published asset is correct.
+
 ---
 
 ## If you are installing on an 8 GB card
