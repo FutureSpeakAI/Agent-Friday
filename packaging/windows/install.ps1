@@ -769,10 +769,35 @@ if ($warns.Count -gt 0) {
     Say '  you ask her what she can do on this laptop.'
     Say ''
 }
-Say '  There is an Agent Friday icon on the desktop. Double-click it.'
+# Say what is actually there. This screen used to promise a desktop icon and a
+# Start menu folder unconditionally - on the same screen that had just reported
+# 'Putting Friday on the desktop' as skipped. Someone told to double-click an
+# icon that is not there concludes the install failed, which is the one
+# impression a finished install must not leave. Design rule 1 applies to the
+# closing screen as much as to a step.
+$desktopLnk = ''
+try { $d = Get-DesktopDir; if ($d) { $desktopLnk = Join-Path $d 'Agent Friday.lnk' } } catch { }
+$haveDesktop   = ($desktopLnk -and (Test-Path -LiteralPath $desktopLnk))
+$haveStartMenu = $false
+try { $sm = Get-StartMenuDir; $haveStartMenu = ($sm -and (Test-Path -LiteralPath $sm)) } catch { }
+
+if ($haveDesktop) {
+    Say '  There is an Agent Friday icon on the desktop. Double-click it.'
+} elseif ($haveStartMenu) {
+    Say '  Setup could not put an icon on the desktop, so open the Start menu'
+    Say '  and look for the Agent Friday folder instead.'
+} else {
+    Say '  Setup could not create the shortcuts, so start her from this folder:'
+    Say "    $(Join-Path $InstallRoot 'Agent Friday.cmd')"
+}
 Say '  The first start takes a minute or two - she is waking up, not stuck.'
 Say ''
-Say "  To remove her: Start menu -> Agent Friday -> Uninstall Agent Friday."
+if ($haveStartMenu) {
+    Say "  To remove her: Start menu -> Agent Friday -> Uninstall Agent Friday."
+} else {
+    Say '  To remove her, run:'
+    Say "    $(Join-Path $InstallRoot 'Uninstall Agent Friday.cmd')"
+}
 Say '  Your notes are kept unless you ask it to remove those too.'
 Say ''
 Say "  $($script:C.Grey)For Stephen: $(Join-Path $LogDir 'LAST-INSTALL-REPORT.md')$($script:C.Reset)"
