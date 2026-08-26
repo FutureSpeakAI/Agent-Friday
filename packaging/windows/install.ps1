@@ -284,11 +284,11 @@ $localWanted = $localIsComfortable
 
 if ($SkipOllama) {
     $localWanted = $false
-    Write-Log 'Local model declined: -SkipOllama.' 'PLAN'
+    Write-Log 'Local model declined: -SkipOllama.' 'INFO'
     Say-Detail 'Using your Claude key only (asked for with -SkipOllama).'
 }
 elseif ($Unattended) {
-    Write-Log "Unattended: local model = $localWanted (card $cardGib GiB, usable $usableGib GiB)." 'PLAN'
+    Write-Log "Unattended: local model = $localWanted (card $cardGib GiB, usable $usableGib GiB)." 'INFO'
     if ($localWanted) { Say-Detail 'Unattended: this card has room, so a local model will be downloaded.' }
     else              { Say-Detail 'Unattended: Claude key only - no local model will be downloaded.' }
 }
@@ -328,7 +328,7 @@ else {
     elseif ($pick -eq '1') { $localWanted = $false }
     # anything else, including Enter, keeps the hardware-derived default
 
-    Write-Log "Local model wanted = $localWanted (card=$cardGib GiB, usable=$usableGib GiB, answered='$pick')" 'PLAN'
+    Write-Log "Local model wanted = $localWanted (card=$cardGib GiB, usable=$usableGib GiB, answered='$pick')" 'INFO'
     if ($localWanted) {
         Say-Ok 'Friday will download a local model as well. That is the long wait later on.'
     } else {
