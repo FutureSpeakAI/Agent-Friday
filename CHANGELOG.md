@@ -3,11 +3,11 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.5.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.0**
 
 ---
 
-## [Unreleased] — targeting 5.6.0
+## [5.6.0] — 2026-08-25
 
 Two days (24–25 August) that were mostly spent finding out that things this
 project already claimed were not true. Four of those things were live security
