@@ -772,37 +772,89 @@ def step_scene(total: int, existing_idx: int) -> int:
         console.print("  [red]Enter 0–13.[/red]")
 
 
+def _connected_google_accounts() -> list:
+    """Google accounts that are ACTUALLY signed in, from the real store.
+
+    services/google_accounts.py behind credential_store is where a connected
+    account lives. This step used to read its own `connectors` block out of
+    config.yaml instead -- a key nothing in the tree consults -- so the dot it
+    drew had no relationship to whether Gmail worked.
+
+    Never raises: this is a status line in an installer, and a missing
+    optional import must not take the last step of a fresh install with it.
+    """
+    try:
+        from agent_friday.services.google_accounts import list_accounts
+        return [a.get("email") or a.get("id") for a in (list_accounts() or [])]
+    except Exception:
+        return []
+
+
 def step_connectors(total: int, existing: dict) -> dict:
+    """Report what is connected. Do not claim what is not.
+
+    This step used to offer "Enable Gmail?" and, on yes, write
+    {"enabled": True} into config.yaml and print "(Full Gmail setup runs on
+    first use via the UI)". It performed no OAuth, opened no browser and
+    created no account. The key it wrote is read by nothing. On the next run
+    it drew a green dot beside a service that had never been connected.
+
+    Stephen, installing Friday on Janet's laptop 2026-08-26: "The connect
+    services portion of the installer, once the gui comes up, should be
+    interactive. I could not click to connect my accounts and would like to."
+    He could not -- and the step implied he had.
+
+    Actually clicking to connect is gated on Friday shipping its own Google
+    OAuth client (docs/design/google-oauth-onboarding.md). Until that is
+    decided a new user has no OAuth client at all, and the most useful thing
+    this step can do is be accurate about where the flow lives, rather than
+    send them toward a screen that will ask them for a JSON file.
+    """
     _clear()
     _header(9, total, "CONNECT SERVICES  (optional)")
+
+    signed_in = _connected_google_accounts()
+    google_live = bool(signed_in)
+
     console.print(
-        "  Friday can connect to external services via connectors.\n"
-        "  [dim]Available now: Gmail, Google Calendar. More coming in v5.[/dim]\n"
+        "  Friday can read your mail and calendar once a Google account is\n"
+        "  connected. Connecting happens inside Friday, not here.\n"
     )
 
     connected = {}
     for cid, cname, cdesc in CONNECTORS:
-        is_connected = existing.get(cid, {}).get("enabled", False)
-        coming = "(v5)" in cdesc
-        if coming:
+        if "(v5)" in cdesc:
             console.print(f"  [dim]○  {cname}  — {cdesc}[/dim]")
             continue
-        marker = "[green]●[/green]" if is_connected else "○"
+        # The dot reflects the account store, not a preference file. An
+        # unconnected service shows as unconnected however keen the answers.
+        marker = "[green]●[/green]" if google_live else "○"
         console.print(f"  {marker}  [bold white]{cname}[/bold white]  [dim]{cdesc}[/dim]")
-        connected[cid] = {"enabled": is_connected}
+        connected[cid] = {"enabled": google_live}
 
     console.print()
-    if not Confirm.ask("  Configure a connector now?", default=False):
-        return existing
+    if google_live:
+        console.print("  [green]Already connected:[/green] "
+                      + ", ".join(str(e) for e in signed_in))
+        console.print("  [dim]Manage these in Friday: "
+                      "Settings → Connectors.[/dim]\n")
+        return connected
 
-    for cid, cname, cdesc in CONNECTORS:
-        if "(v5)" in cdesc:
-            continue
-        if Confirm.ask(f"  Enable {cname}?", default=False):
-            connected[cid] = {"enabled": True}
-            console.print(f"  [dim](Full {cname} setup runs on first use via the UI)[/dim]")
+    console.print(
+        "  [dim]Nothing is connected yet, and this installer cannot connect it\n"
+        "  for you — signing in needs a browser and a running Friday.[/dim]\n"
+        "  When Friday opens: [bold]Settings → Connectors → + Add Account[/bold].\n"
+    )
+    console.print(
+        "  [dim]Everything else works without it. Mail and calendar simply\n"
+        "  stay quiet until you do.[/dim]\n"
+    )
 
-    return connected
+    # Nothing is asked, because there is nothing here that answering changes.
+    # An "Enable Gmail?" prompt whose only effect is a boolean no reader
+    # consults spends the person's attention and then misreports the result
+    # back to them.
+    return existing if existing else connected
 
 
 def step_summary(config: dict, quick: bool) -> bool:
