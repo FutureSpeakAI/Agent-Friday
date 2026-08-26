@@ -22,8 +22,54 @@ $script:UninstallRegKey     = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\U
 $script:AutostartRegRun     = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $script:AutostartValueName  = 'AgentFriday'
 
-function Get-DesktopDir     { return [Environment]::GetFolderPath('Desktop') }
-function Get-StartMenuDir   { return (Join-Path ([Environment]::GetFolderPath('Programs')) $script:StartMenuFolderName) }
+function Get-SpecialDir {
+    <#  A known folder, or '' - never a throw, and never a silent wrong answer.
+
+        [Environment]::GetFolderPath() returns an EMPTY STRING when the folder
+        it names does not physically exist, and Join-Path refuses an empty
+        -Path with a ParameterBindingValidationException. Because
+        Get-StartMenuDir was evaluated at the top of Install-Shortcuts, one
+        empty lookup threw before the first shortcut was attempted and took all
+        four down together - including the desktop icon, which is the one thing
+        the closing screen tells her to double-click.
+
+        Found on 2026-08-25, on the first cold install anyone had ever run.
+        The trigger there was a redirected %APPDATA% in a test harness, which
+        is not something Janet will have. A profile mid-provision, a roaming
+        profile, or a OneDrive Known Folder Move that has not finished are, and
+        they produce exactly the same empty string. #>
+    param([Parameter(Mandatory)][string] $Name, [string] $Fallback = '')
+    $d = ''
+    try { $d = [Environment]::GetFolderPath($Name) } catch { $d = '' }
+    if ($d) { return $d }
+    if ($Fallback) {
+        try {
+            if (-not (Test-Path -LiteralPath $Fallback)) {
+                New-Item -ItemType Directory -Force -Path $Fallback -ErrorAction Stop | Out-Null
+            }
+            Write-Log "GetFolderPath('$Name') was empty; using $Fallback" 'WARN'
+            return $Fallback
+        } catch {
+            Write-Log "GetFolderPath('$Name') was empty and $Fallback is unusable: $($_.Exception.Message)" 'WARN'
+        }
+    }
+    Write-Log "GetFolderPath('$Name') was empty and no fallback worked." 'WARN'
+    return ''
+}
+
+function Get-DesktopDir {
+    $fb = ''
+    if ($env:USERPROFILE) { $fb = Join-Path $env:USERPROFILE 'Desktop' }
+    return (Get-SpecialDir -Name 'Desktop' -Fallback $fb)
+}
+
+function Get-StartMenuDir {
+    $fb = ''
+    if ($env:APPDATA) { $fb = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
+    $programs = Get-SpecialDir -Name 'Programs' -Fallback $fb
+    if (-not $programs) { return '' }
+    return (Join-Path $programs $script:StartMenuFolderName)
+}
 
 function New-Shortcut {
     <# Returns the .lnk path on success, $null on failure. Callers verify. #>
@@ -76,27 +122,41 @@ function Install-Shortcuts {
     $launcher  = Join-Path $InstallRoot 'Agent Friday.cmd'
     $uninst    = Join-Path $InstallRoot 'Uninstall Agent Friday.cmd'
     $autotog   = Join-Path $InstallRoot 'Start Friday when I sign in.cmd'
+
+    # Each destination is resolved and checked on its own. A folder we cannot
+    # find costs the shortcuts that live in it and nothing else - it used to
+    # cost all four, because one Join-Path on an empty string threw before the
+    # first one was attempted.
+    $desktop   = Get-DesktopDir
     $startMenu = Get-StartMenuDir
 
-    $p = New-Shortcut -LinkPath (Join-Path (Get-DesktopDir) 'Agent Friday.lnk') `
-                      -TargetPath $launcher -WorkingDirectory $InstallRoot `
-                      -Description 'Start Agent Friday' -IconLocation $IconPath
-    if ($p) { $created += $p }
+    if ($desktop) {
+        $p = New-Shortcut -LinkPath (Join-Path $desktop 'Agent Friday.lnk') `
+                          -TargetPath $launcher -WorkingDirectory $InstallRoot `
+                          -Description 'Start Agent Friday' -IconLocation $IconPath
+        if ($p) { $created += $p }
+    } else {
+        Write-Log 'No usable Desktop folder; the desktop shortcut was not created.' 'WARN'
+    }
 
-    $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Agent Friday.lnk') `
-                      -TargetPath $launcher -WorkingDirectory $InstallRoot `
-                      -Description 'Start Agent Friday' -IconLocation $IconPath
-    if ($p) { $created += $p }
+    if ($startMenu) {
+        $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Agent Friday.lnk') `
+                          -TargetPath $launcher -WorkingDirectory $InstallRoot `
+                          -Description 'Start Agent Friday' -IconLocation $IconPath
+        if ($p) { $created += $p }
 
-    $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Uninstall Agent Friday.lnk') `
-                      -TargetPath $uninst -WorkingDirectory $InstallRoot `
-                      -Description 'Remove Agent Friday from this computer'
-    if ($p) { $created += $p }
+        $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Uninstall Agent Friday.lnk') `
+                          -TargetPath $uninst -WorkingDirectory $InstallRoot `
+                          -Description 'Remove Agent Friday from this computer'
+        if ($p) { $created += $p }
 
-    $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Start Friday when I sign in.lnk') `
-                      -TargetPath $autotog -WorkingDirectory $InstallRoot `
-                      -Description 'Turn the automatic start on or off'
-    if ($p) { $created += $p }
+        $p = New-Shortcut -LinkPath (Join-Path $startMenu 'Start Friday when I sign in.lnk') `
+                          -TargetPath $autotog -WorkingDirectory $InstallRoot `
+                          -Description 'Turn the automatic start on or off'
+        if ($p) { $created += $p }
+    } else {
+        Write-Log 'No usable Start Menu folder; those shortcuts were not created.' 'WARN'
+    }
 
     return $created
 }
