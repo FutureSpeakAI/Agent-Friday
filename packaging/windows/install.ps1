@@ -102,7 +102,8 @@ try {
 # made fifteen of them, so the last three announced themselves as "[13/12]",
 # "[14/12]", "[15/12]". The models step is conditional on Ollama being present,
 # so the total is bumped by one at that point rather than assumed here.
-Set-StepTotal 15
+# Bumped 15 -> 16 when step 2b ("How Friday should think") was added.
+Set-StepTotal 16
 
 # =========================================================================
 #  Welcome
@@ -219,6 +220,120 @@ else {
     } else {
         Say-Ok 'No problem - carrying on without it.'
         Write-Log 'Self-repair: no key supplied.' 'HEAL'
+    }
+}
+
+# =========================================================================
+#  Step 2b - Cloud key only, or a local model as well?
+#
+#  This question exists so that -SkipOllama stops being something the person
+#  running the installer has to KNOW about. Before it, the default on a small
+#  card was to pull a local model, and on an 8 GiB card that produced the worse
+#  of the two configurations rather than the better one:
+#
+#    * with NO local model, a vault-touching turn takes the `redact` branch and
+#      routes to Claude. It works.
+#    * with a local model present, ModelRouter._route_vault force-routes those
+#      turns on-device and does NOT fall back to cloud. If that seat is slow,
+#      cold or dead, the turn fails outright.
+#
+#  So on a machine that cannot comfortably hold a seat, "no local model" is not
+#  a degraded install. It is the safer one, and it should be what happens when
+#  nobody answers.
+# =========================================================================
+
+function Get-CardVramGib {
+    <#  Total VRAM of the largest NVIDIA card, or $null if we cannot tell.
+
+        nvidia-smi rather than the app's own hardware_profile because Friday's
+        Python does not exist yet at this point in the install - the whole
+        value of asking here is that it comes BEFORE twenty minutes of
+        downloading, not after it. AMD and Intel cards read as $null, which is
+        the same answer detect_gpus gives (it shells nvidia-smi and nothing
+        else), so the two agree about what they cannot see. #>
+    try {
+        $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+        if (-not $smi) { return $null }
+        $out = & nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        $best = 0
+        foreach ($line in @($out)) {
+            $t = ("$line").Trim()
+            if ($t -match '^[0-9]+$') { $v = [int]$t; if ($v -gt $best) { $best = $v } }
+        }
+        if ($best -le 0) { return $null }
+        return [math]::Round($best / 1024.0, 1)
+    } catch { return $null }
+}
+
+Say-Step 'How Friday should think'
+
+# The threshold mirrors services/model_plan.py: DISPLAY_RESERVE_GIB (2.5) plus
+# GPU_OVERHEAD_GIB (1.0) come off the card before a model sees any of it. That
+# arithmetic is duplicated here ONLY to choose a default answer a human can
+# override on the next line - model_plan remains the authority on which model
+# is actually installed, and it runs later against the real hardware profile.
+$cardGib   = Get-CardVramGib
+$usableGib = $null
+if ($null -ne $cardGib) { $usableGib = [math]::Round($cardGib - 3.5, 1) }
+
+# Under ~5 GiB usable there is room for a small seat but not a comfortable one,
+# and the failure mode above is the one that bites. Default to the key.
+$localIsComfortable = ($null -ne $usableGib -and $usableGib -ge 5.0)
+$localWanted = $localIsComfortable
+
+if ($SkipOllama) {
+    $localWanted = $false
+    Write-Log 'Local model declined: -SkipOllama.' 'PLAN'
+    Say-Detail 'Using your Claude key only (asked for with -SkipOllama).'
+}
+elseif ($Unattended) {
+    Write-Log "Unattended: local model = $localWanted (card $cardGib GiB, usable $usableGib GiB)." 'PLAN'
+    if ($localWanted) { Say-Detail 'Unattended: this card has room, so a local model will be downloaded.' }
+    else              { Say-Detail 'Unattended: Claude key only - no local model will be downloaded.' }
+}
+else {
+    Say ''
+    if ($null -eq $cardGib) {
+        Say '  Friday could not find a graphics card she knows how to measure,'
+        Say '  so running a model on this laptop would be slow.'
+    } else {
+        Say ("  This laptop has a {0} GB graphics card. After Windows takes its" -f $cardGib)
+        Say ("  share, about {0} GB of that is left for Friday." -f $usableGib)
+    }
+    Say ''
+    Say '  There are two ways to run her, and you can change your mind later.'
+    Say ''
+    Say '    1. Use your Claude key.'
+    Say '       Nothing extra to download. She can do everything she does'
+    Say '       best - talking, searching, writing, files, voice. Your'
+    Say '       private notes stay on this laptop and are never sent.'
+    Say ''
+    Say '    2. Also download a model that runs on this laptop.'
+    Say '       About 2.5 GB more now, and a longer wait. Lets her work with'
+    Say '       no internet, and lets her read your private notes back to you.'
+    Say ''
+    if ($localIsComfortable) {
+        Say '  This laptop has room for both, so 2 is the usual choice here.'
+        $prompt = '  Which would you like? [1/2, default 2]'
+    } else {
+        Say '  On a card this size Friday recommends 1. A model squeezed onto a'
+        Say '  small card is slower than the key and can stall on long answers -'
+        Say '  and you can add one later in a couple of clicks.'
+        $prompt = '  Which would you like? [1/2, default 1]'
+    }
+    Say ''
+    $pick = ("" + (Read-Host $prompt)).Trim()
+    if     ($pick -eq '2') { $localWanted = $true  }
+    elseif ($pick -eq '1') { $localWanted = $false }
+    # anything else, including Enter, keeps the hardware-derived default
+
+    Write-Log "Local model wanted = $localWanted (card=$cardGib GiB, usable=$usableGib GiB, answered='$pick')" 'PLAN'
+    if ($localWanted) {
+        Say-Ok 'Friday will download a local model as well. That is the long wait later on.'
+    } else {
+        Say-Ok 'Friday will use your Claude key. Nothing extra to download.'
+        Say-Detail 'To add a local model later: open Friday, then Settings -> Models.'
     }
 }
 
@@ -419,9 +534,12 @@ if ($DepsOnly) {
 
 $ollamaOutcome = @{ Installed = $false; Method = 'skipped'; WeInstalledIt = $false }
 
-if ($SkipOllama) {
-    Write-Log 'Ollama step skipped by request (-SkipOllama).'
+if (-not $localWanted) {
+    # Not a skipped step - a chosen configuration. Step 2b explains why this is
+    # the safer answer on a small card rather than the lesser one.
+    Write-Log "Ollama step not run: local model not wanted (SkipOllama=$SkipOllama)."
     Say-Step 'Skipping the local model engine'
+    Say-Detail 'You chose to run Friday on your Claude key. Nothing to install here.'
 } else {
     Say-Step 'Setting up the part that runs AI on this laptop'
     Say-Detail 'This is what lets Friday work without sending anything to the internet.'
@@ -444,12 +562,13 @@ if ($SkipOllama) {
 $modelTagsPulled = @()
 
 if ($ollamaOutcome.Installed) {
-    Set-StepTotal 16     # this step only exists when there is an Ollama to use
+    Set-StepTotal 17     # this step only exists when there is an Ollama to use
     Say-Step 'Downloading Friday''s local brain'
     Say-Detail 'Friday works out what this laptop can handle first, then downloads only that.'
     Say-Detail 'Usually about 3 GB. This is the longest wait.'
 
-    Set-HealAllowedModelTags @('gemma3:4b','qwen3:8b','gemma4:12b','embeddinggemma','nomic-embed-text')
+    Set-HealAllowedModelTags @('gemma3:4b','qwen3:4b','qwen3:8b','gemma4:12b',
+                              'embeddinggemma','nomic-embed-text')
 
     $before = @(Get-OllamaInstalledModels)
 
@@ -480,8 +599,10 @@ if ($ollamaOutcome.Installed) {
 
     if ($after.Count -gt 0) { Say-Ok 'Friday can now run on this laptop without the internet.' }
     else { Say-Note 'No local model was downloaded. Friday will need an internet AI key to talk.' }
+} elseif ($localWanted) {
+    Write-Log 'Skipping model download - Ollama is not working.'
 } else {
-    Write-Log 'Skipping model download - no working Ollama.'
+    Write-Log 'Skipping model download - Claude key only, by choice.'
 }
 
 # =========================================================================
