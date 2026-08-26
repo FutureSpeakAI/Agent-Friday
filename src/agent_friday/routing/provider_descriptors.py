@@ -201,26 +201,103 @@ def provider_env_keys(prov: dict | None) -> list:
     return out
 
 
-def provider_api_key(prov: dict | None) -> str | None:
-    """Resolve a provider's API key: env chain first (primary + aliases), then
-    the encrypted credential store by provider name. Returns None when the
-    provider needs no key (auth.type != env_var) or none is configured.
+def _stored_key(prov: dict | None) -> str | None:
+    """The key saved through the product, or None. Never raises.
 
-    Keys NEVER come from the descriptor itself or settings.json.
+    A locked or corrupt store must not take a working environment key down
+    with it -- that would turn a recoverable problem into a dead provider.
     """
-    p = prov or {}
-    auth = p.get("auth") or {}
-    if auth.get("type", "env_var") != "env_var":
+    try:
+        from agent_friday.services.credential_store import get_provider_key
+        return get_provider_key((prov or {}).get("name", "")) or None
+    except Exception:
         return None
-    for env in provider_env_keys(p):
+
+
+def _env_key(prov: dict | None) -> str | None:
+    """The key the ambient environment supplies, or None."""
+    for env in provider_env_keys(prov or {}):
         val = os.environ.get(env)
         if val:
             return val
-    try:
-        from agent_friday.services.credential_store import get_provider_key
-        return get_provider_key(p.get("name", ""))
-    except Exception:
+    return None
+
+
+def provider_api_key(prov: dict | None) -> str | None:
+    """Resolve a provider's API key: the SAVED key first, then the environment.
+
+    Returns None when the provider needs no key (auth.type != env_var) or
+    none is configured. Keys NEVER come from the descriptor or settings.json.
+
+    THE ORDER IS THE FEATURE, AND IT USED TO BE THE OTHER WAY ROUND.
+
+    Environment-first made a swapped key silently revert on the next launch,
+    because the two halves of the product write to different places:
+
+        setup wizard -> config.yaml + settings.json + START.BAT (never the store)
+        Settings UI  -> encrypted credential store              (never start.bat)
+
+    and Friday re-bootstraps her environment from start.bat every launch
+    (_bootstrap_env_from_launch_scripts). So the wizard's first key outlived
+    every replacement: paste a new one in Settings, watch it work -- the hot
+    reload sets os.environ live -- restart, and the dead key from start.bat
+    is back in front of it, with the panel still reporting "connected".
+
+    Stephen, 2026-08-26: "we need to fix the installer so the Friday that
+    ships to users can swap API keys from the settings menu". Swapping was
+    the half that did not survive, and a user cannot tell a key that never
+    worked from one that stopped.
+
+    A key saved through the product is a deliberate, later instruction. An
+    environment variable is ambient configuration. That is the same
+    distinction `model_router._chosen_seat` draws between an explicit binding
+    and an untouched factory default, and `seat_binding` draws between "a
+    value he changed" and "the factory value".
+
+    Safe to flip: with an empty store the two rules are identical, and the
+    store was unreachable for anthropic/google-gemini until the Providers tab
+    was wired on 2026-08-26 -- this machine's store held only atlascloud and
+    firecrawl. And nothing shadows silently in either direction now, because
+    /api/providers reports `key_source`: a start.bat rotation that does not
+    take is visible rather than baffling.
+    """
+    p = prov or {}
+    if (p.get("auth") or {}).get("type", "env_var") != "env_var":
         return None
+    return _stored_key(p) or _env_key(p)
+
+
+def provider_key_source(prov: dict | None) -> str:
+    """Which source is actually supplying this provider's key.
+
+    "settings" | "environment" | "none". Exists so neither source can shadow
+    the other invisibly -- the failure this whole module's precedence rule
+    used to produce.
+    """
+    p = prov or {}
+    if (p.get("auth") or {}).get("type", "env_var") != "env_var":
+        return "none"
+    if _stored_key(p):
+        return "settings"
+    if _env_key(p):
+        return "environment"
+    return "none"
+
+
+def mask_key(key: str | None) -> str:
+    """Enough of a key to recognise it. Never enough to use it.
+
+    A user with two keys needs to tell them apart -- that is the whole job.
+    Four trailing characters do it; anything more is a courtesy to whoever
+    reads the screenshot. Keys too short to mask safely return the ellipsis
+    alone rather than leaking a meaningful fraction of themselves.
+    """
+    k = (key or "").strip()
+    if not k:
+        return ""
+    if len(k) < 12:
+        return "…"
+    return "…" + k[-4:]
 
 
 def auth_headers(prov: dict | None, api_key: str | None = None) -> dict:
