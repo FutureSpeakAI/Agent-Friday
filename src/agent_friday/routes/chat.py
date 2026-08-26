@@ -777,9 +777,71 @@ def chat():
         # "ANTHROPIC_API_KEY is not set" — the outer handler turns that into
         # "[Friday offline]", so the chat silently dies and every holographic orb /
         # scene-state cue that rides on a live turn never fires. When Ollama is
-        # healthy, run the turn locally instead of crashing. Only triggers when the
-        # alternative is a guaranteed failure, so it can't regress a working setup.
+        # healthy, run the turn locally instead of crashing.
+        #
+        # CLOUD ONLY MEANS CLOUD ONLY.
+        #
+        # This branch used to justify itself with "only triggers when the
+        # alternative is a guaranteed failure, so it can't regress a working
+        # setup". That premise is true on the machine it was written on and
+        # false on a new one. The author always has a key and only ever loses
+        # it for a moment. Someone who has just installed Friday has never had
+        # one — so the net is not a net, it is the route: every turn, forever,
+        # with no setting able to switch it off, because this test never read
+        # `mode`.
+        #
+        # Measured on Janet's laptop 2026-08-26, the first install of Friday by
+        # someone who did not write her. She found the routing mode, set it to
+        # cloud only, and was still answered on-device. The router had already
+        # decided correctly one line above — both lines, same turn, in order:
+        #
+        #   [ROUTER] chose cloud/claude-sonnet-5 | Routing mode is cloud_only
+        #   [ROUTER] No Anthropic key; Ollama healthy — routing chat to local
+        #            model gemma3:4b
+        #
+        # The mirror image was fixed on 2026-08-18: a local seat that fails
+        # refuses the cloud rather than quietly crossing the line, and says so
+        # ("LOCAL ONLY MEANS LOCAL ONLY", below). Only the direction the author
+        # travels had been treated. This is the other direction, and it is the
+        # one a new user meets first.
+        #
+        # Refusing costs her an answer she did not want: a turn she asked to
+        # keep off this machine, answered on it. Saying why — and where the key
+        # goes — is worth more than a reply from a model she declined.
         if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
+            _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
+            if _mode == 'cloud_only':
+                print("  [ROUTER] No Anthropic key and mode is cloud_only — "
+                      "refusing the local fallback and asking for a key")
+                _no_key_msg = (
+                    "I'm set to **cloud only**, and there's no cloud AI key on "
+                    "this computer yet — so there's nothing for me to think "
+                    "with. I haven't sent this anywhere.\n\n"
+                    "Add a key in **Settings → Providers**. Anthropic's Claude "
+                    "is what I use by default; the panel there has a button "
+                    "through to the signup page and takes the key straight "
+                    "from you — nothing to edit by hand.\n\n"
+                    "If you would rather I ran on this laptop instead, switch "
+                    "to **Smart** in Settings → Intelligence and I will use a "
+                    "local model whenever there is no key."
+                )
+                user_msg = {
+                    'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                    'role': 'user', 'text': message, 'pinned': False, 'sources': [],
+                }
+                friday_msg = {
+                    'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                    'role': 'friday', 'text': _no_key_msg, 'pinned': False,
+                    'sources': [],
+                }
+                _persist_turn(_conv_id_from(data), user_msg, friday_msg)
+                _save_chat_history(CHAT_HISTORY)
+                return jsonify({
+                    "response": _no_key_msg, "user_msg": user_msg,
+                    "friday_msg": friday_msg, "sources": [], "tool_trace": [],
+                    "model": None, "seat": "cloud",
+                    "cloud_only_no_key": True,
+                })
             try:
                 from agent_friday.routing.ollama_manager import get_manager
                 _om = get_manager((settings.get('model_routing') or {}).get(

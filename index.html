@@ -35479,6 +35479,21 @@ function SettingsWS() {
     label: 'Intelligence',
     ico: '🧠'
   }, {
+    // SettingsTabProviders has existed and worked since the provider registry
+    // landed: it lists every provider, takes a key straight from the person
+    // sitting there, and POSTs it to /api/providers/<name>/key. It had no
+    // entry in this array and no branch in the render chain below, so nothing
+    // could reach it. A complete feature, unreferenced.
+    //
+    // Stephen, after installing Friday on Janet's laptop 2026-08-26: "It
+    // appears there is no way to add API keys in Friday's settings menu. I
+    // had to launch a Claude Code session on Janet's laptop to add a Gemini
+    // API key." He was right — and the panel he needed was already written.
+    // The author never missed it, because the author edits the file.
+    id: 'providers',
+    label: 'Providers',
+    ico: '\u{1F511}'
+  }, {
     id: 'work',
     label: 'Work',
     ico: '\u{1F4CB}'
@@ -35581,7 +35596,10 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, null), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, null), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
+    s: s,
+    save: save
+  }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
     s: s,
     save: save
   }), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
