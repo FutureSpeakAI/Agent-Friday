@@ -6276,7 +6276,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     client = get_anthropic_client()
     if client is None:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → API Keys) or as an environment variable, then restart the server."
+            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Providers) or as an environment variable, then restart the server."
         )
 
     if pii_lookup is None:

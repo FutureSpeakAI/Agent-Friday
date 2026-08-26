@@ -6,7 +6,7 @@ All configuration lives in `~/.friday/settings.json`. Settings can be updated vi
 
 ## API Keys
 
-API keys are stored encrypted in Friday's credential store (one encrypted file per provider under `~/.friday/providers/keys/`), never as plaintext in `settings.json`. The recommended way to add keys is through the **setup wizard** (first-run) or **Settings → API Keys** in the UI.
+API keys are stored encrypted in Friday's credential store (one encrypted file per provider under `~/.friday/providers/keys/`), never as plaintext in `settings.json`. The recommended way to add keys is through the **setup wizard** (first-run) or **Settings → Providers** in the UI.
 
 You can also supply keys as environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the stored credentials.
 
@@ -30,7 +30,7 @@ Each of the other built-in providers has its own env-var key — see [Providers]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `orchestrator_model` | string | `claude-sonnet-5` | Model for the main agent brain. Pick from Settings → Models (catalog-driven via `GET /api/models`): Claude Sonnet 5 / Opus 4.8 / 4.7 / 4.6 / Sonnet 4.6 / Fable 5, GPT-4o family, or any installed Ollama model. |
+| `orchestrator_model` | string | `claude-sonnet-5` | Model for the main agent brain. Pick from Settings → Intelligence (catalog-driven via `GET /api/models`): Claude Sonnet 5 / Opus 4.8 / 4.7 / 4.6 / Sonnet 4.6 / Fable 5, GPT-4o family, or any installed Ollama model. |
 
 ---
 

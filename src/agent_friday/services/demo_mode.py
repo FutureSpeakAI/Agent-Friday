@@ -66,7 +66,7 @@ _CANNED = {
         "yet, so this is a canned reply. With a provider connected I'd answer your "
         "message using your chosen reasoning model and your private vault context, "
         "and I could run tools (calendar, news, code, web) to actually get it done.\n\n"
-        "Open Settings → AI Providers (or re-run setup) and add one API key to go live."
+        "Open Settings → Providers (or re-run setup) and add one API key to go live."
     ),
     "briefing": (
         "[DEMO] Your morning briefing would appear here — top headlines on your "

@@ -52,7 +52,7 @@ notification if a connector you rely on goes down.
 **Data sent:** Lightweight presence/status checks. For Google: a token
 validity check (no email or calendar content). For MCP: a TCP connection test.
 
-**Disable:** Disconnect the connector in Settings → MCP Connectors / Account &
+**Disable:** Disconnect the connector in Settings → Connectors / Account &
 Security.
 
 ---
@@ -68,7 +68,7 @@ themselves make outbound network calls as part of their tool implementations.
 Friday server only communicates with them over local stdio.
 
 **Disable:** Remove entries from `~/.friday/mcp_servers.json` or toggle them
-off in Settings → MCP Connectors.
+off in Settings → Connectors.
 
 ---
 

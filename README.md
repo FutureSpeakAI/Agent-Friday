@@ -64,7 +64,7 @@ Ollama. Nothing is bundled: the model is downloaded during setup, and the Window
 asks first and sizes the answer to your graphics card. On a card with room it downloads one.
 On a small card it recommends the Claude key instead and downloads nothing — a model
 squeezed onto a small card is slower than the key and can stall on long answers. Either way
-you can change your mind later in **Settings → Models**.
+you can change your mind later in **Settings → Intelligence**.
 
 Which model you get is decided by your hardware, not by a default in a config file: the
 planner takes the largest brain that fits your card, from `qwen3:4b` (2.5 GB) up to

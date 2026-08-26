@@ -89,7 +89,7 @@ path is covered by `tests/unit/test_nemo_voice.py` and
 2. **Detect:** `friday health` → expect
    `Local voice (Tier-2 · NeMo GPU): needs_download` (deps + GPU detected, models
    not yet fetched) and a `Hardware: GPU=… VRAM=…GB` line.
-3. **Select:** Settings → Audio & Voice → Voice Engine → **Local GPU (NeMo)**.
+3. **Select:** Settings → Voice → Voice Engine → **Local GPU (NeMo)**.
 4. **First activation:** click the mic. Expect the one-time download orb, then
    `live (GPU/NeMo)`. Models land in `~/.friday/models/nemo/`.
 5. **Round-trip:** speak a sentence → live transcript → Friday replies in NeMo

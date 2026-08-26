@@ -454,7 +454,7 @@ def _client():
     if not is_available():
         raise RuntimeError(
             "No Gemini API key configured. Creative generation needs GEMINI_API_KEY "
-            "(set via Settings → API Keys or as an environment variable).")
+            "(set via Settings → Providers or as an environment variable).")
     from google import genai  # lazy — import-safe without the SDK
     return genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
 
@@ -463,7 +463,7 @@ def _unavailable(kind: str) -> Dict[str, Any]:
     return {
         "status": "unavailable",
         "message": (f"{kind} generation needs a Gemini API key. Set GEMINI_API_KEY "
-                    f"via Settings → API Keys or as an environment variable, then try again."),
+                    f"via Settings → Providers or as an environment variable, then try again."),
     }
 
 
