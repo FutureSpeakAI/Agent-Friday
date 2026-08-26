@@ -55,16 +55,27 @@ from agent_friday.services.calendar_engine import (
 # surfaced per-account like any other live API error, never silently. Each
 # account must be reconnected (Settings -> Connectors -> Google -> the same
 # Add Account flow) to pick up the new scopes.
+#
+# 2026-08-26: Tasks upgraded from read-only to read/write (TASKS_RW replaces
+# TASKS_READ in the requested set) so complete_task/create_task/update_task/
+# delete_task have something to call. Same reconnection rule as above applies
+# — checked live against accounts.json on this machine before this line
+# landed: every currently-connected account holds only tasks.readonly, so
+# every task-writing tool call will 403 with a clear per-account error until
+# each account is reconnected. TASKS_READ is kept below only so old tokens
+# are still recognized/loadable; it is no longer requested for new
+# connections.
 GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly"
 CALENDAR_RW = "https://www.googleapis.com/auth/calendar"
 DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
 DOCS_READ = "https://www.googleapis.com/auth/documents.readonly"
 SHEETS_READ = "https://www.googleapis.com/auth/spreadsheets.readonly"
-TASKS_READ = "https://www.googleapis.com/auth/tasks.readonly"
+TASKS_READ = "https://www.googleapis.com/auth/tasks.readonly"  # legacy grant; no longer requested
+TASKS_RW = "https://www.googleapis.com/auth/tasks"
 CONTACTS_READ = "https://www.googleapis.com/auth/contacts.readonly"
 USERINFO_EMAIL = "https://www.googleapis.com/auth/userinfo.email"
 GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, DOCS_READ, SHEETS_READ,
-                       TASKS_READ, CONTACTS_READ, USERINFO_EMAIL]
+                       TASKS_RW, CONTACTS_READ, USERINFO_EMAIL]
 
 # Legacy single-account scopes (what google_token.json was consented for).
 _LEGACY_SCOPES = [GMAIL_READ, "https://www.googleapis.com/auth/calendar.readonly"]
@@ -774,12 +785,135 @@ def _tasks_for_creds(creds, max_results: int) -> list:
                     "due": t.get("due", ""),
                     "status": t.get("status", "needsAction"),
                     "list": tl.get("title", ""),
+                    # Required by complete_task/update_task/delete_task — the
+                    # Tasks API needs the tasklist id, not just its title, to
+                    # address a task. Carrying it here means a write never has
+                    # to re-fetch tasklists() to find it.
+                    "tasklist_id": tl.get("id", ""),
                 })
                 if len(out) >= max_results:
                     return out
         return out
     except Exception as e:
         return [{"error": f"Tasks fetch failed: {e}"}]
+
+
+# ── writes ───────────────────────────────────────────────────────────────────
+# Every write below takes an EXPLICIT account_id — never inferred, never
+# fanned out across accounts like the reads above. A read from the wrong
+# account is a wrong answer; a write to the wrong account is a task created,
+# completed, or deleted on someone else's list. Each function also requires
+# tasklist_id (except create_task, which may default to "@default") since
+# the Tasks API addresses a task by (tasklist, task), not by task id alone.
+def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None) -> dict:
+    """Create (task_id=None) or patch (task_id given) one task."""
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return {"error": f"google-api-python-client not installed: {e}"}
+    try:
+        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        if task_id:
+            result = svc.tasks().patch(tasklist=tasklist_id, task=task_id, body=body).execute()
+        else:
+            result = svc.tasks().insert(tasklist=tasklist_id, body=body).execute()
+        return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
+                "status": result.get("status", "needsAction"), "due": result.get("due", "")}
+    except Exception as e:
+        return {"error": f"Tasks write failed: {e}"}
+
+
+def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return {"error": f"google-api-python-client not installed: {e}"}
+    try:
+        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
+        return {"deleted": True, "id": task_id}
+    except Exception as e:
+        return {"error": f"Tasks delete failed: {e}"}
+
+
+def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict) -> dict:
+    """Shared account-resolution + audit wrapper for complete/update/create."""
+    if not account_id:
+        return {"error": "account_id is required for a task write — call "
+                         "list_tasks first to find it. Never guessed."}
+    if not tasklist_id:
+        return {"error": "tasklist_id is required for a task write — call "
+                         "list_tasks first to find it."}
+    creds = credentials_for(account_id)
+    if not creds:
+        return {"error": "needs_reauth", "account_id": account_id}
+    result = _write_task_for_creds(creds, tasklist_id, body, task_id)
+    ok = "error" not in result
+    cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
+                   success=ok, error=None if ok else result.get("error"))
+    if ok:
+        result["account_id"] = account_id
+    return result
+
+
+def complete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
+    """Mark one task completed, in the one account/tasklist named. No fan-out."""
+    if not task_id:
+        return {"error": "task_id is required."}
+    return _one_task_write(account_id, tasklist_id, task_id, {"status": "completed"})
+
+
+def update_task(account_id: str, tasklist_id: str, task_id: str, *,
+                title: str | None = None, notes: str | None = None,
+                due: str | None = None, status: str | None = None) -> dict:
+    """Patch one task's fields, in the one account/tasklist named."""
+    if not task_id:
+        return {"error": "task_id is required."}
+    body = {}
+    if title is not None:
+        body["title"] = title
+    if notes is not None:
+        body["notes"] = notes
+    if due is not None:
+        body["due"] = due
+    if status is not None:
+        body["status"] = status
+    if not body:
+        return {"error": "No fields to update (title/notes/due/status all empty)."}
+    return _one_task_write(account_id, tasklist_id, task_id, body)
+
+
+def create_task(account_id: str, title: str, tasklist_id: str = "@default",
+                notes: str = "", due: str = "") -> dict:
+    """Create a new task in the one account named. tasklist_id defaults to the
+    account's default list — "@default" is a Tasks API alias, not a lookup."""
+    title = (title or "").strip()
+    if not title:
+        return {"error": "title is required."}
+    body = {"title": title}
+    if notes:
+        body["notes"] = notes
+    if due:
+        body["due"] = due
+    return _one_task_write(account_id, tasklist_id or "@default", None, body)
+
+
+def delete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
+    """Permanently delete one task from the one account/tasklist named."""
+    if not account_id or not tasklist_id or not task_id:
+        return {"error": "account_id, tasklist_id, and task_id are all "
+                         "required for a task delete — call list_tasks first "
+                         "to find them. Never guessed."}
+    creds = credentials_for(account_id)
+    if not creds:
+        return {"error": "needs_reauth", "account_id": account_id}
+    result = _delete_task_for_creds(creds, tasklist_id, task_id)
+    ok = "error" not in result
+    cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
+                   success=ok, error=None if ok else result.get("error"))
+    if ok:
+        result["account_id"] = account_id
+    return result
 
 
 def search_contacts(query: str = "", max_results: int = 15) -> dict:
