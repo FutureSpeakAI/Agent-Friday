@@ -4787,6 +4787,16 @@ try:
 except Exception as _ete:  # never let optional deps break the agent import
     print(f"  [ELEVENLABS] registration skipped: {_ete}")
 
+# Interactive CLI sessions (spawn_interactive_session / send_to_session /
+# read_session_output) — Ring 3, same tier as Computer Control. See
+# services/interactive_sessions.py's module docstring for the full security
+# posture (recursion guard, buffer cap, boot-time orphan reap).
+try:
+    from agent_friday.services import interactive_sessions as _interactive_sessions
+    _interactive_sessions.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS)
+except Exception as _ise:  # never let optional deps break the agent import
+    print(f"  [SESSIONS] registration skipped: {_ise}")
+
 
 _GOVERNANCE_KEY: bytes | None = None
 
@@ -5127,7 +5137,7 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
 #
 # `write_file` and `navigate` stay gated: one creates persistent state, the
 # other moves the UI out from under him mid-task.
-_ALWAYS_CONFIRM = {"write_file", "navigate", "delete_task"}
+_ALWAYS_CONFIRM = {"write_file", "navigate", "delete_task", "spawn_interactive_session"}
 _OPTIONAL_CONFIRM = {"open_url", "open_path"}
 
 
@@ -6361,6 +6371,21 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         except Exception:
             pass
 
+    # ── Per-task cloud ceiling (2026-08-26). ──
+    # `max_iters` defaults to 999 and nothing else here bounds spend: at the
+    # measured median of ~91,000 input tokens per iteration that is a
+    # theoretical 90M tokens on one task. The incident that prompted this —
+    # a crash-fallback re-sending a blown-context turn — billed ~1.43M. The
+    # ceiling is charged in the shared egress chokepoint, so it also covers
+    # any cloud call a TOOL makes from inside this loop, not just the loop's
+    # own iterations. Entered here and released in the `finally` below.
+    _budget = None
+    try:
+        from agent_friday.services import prompt_cache as _pc
+        _budget = _pc.task_budget(label=orb_label or "agent task").__enter__()
+    except Exception:
+        _budget = None
+
     try:
         iter_count = 0
         for _ in range(max_iters):
@@ -6431,6 +6456,19 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         if isinstance(_t, dict) else _t
                         for _t in _tl
                     ]
+            except Exception:
+                pass
+            # Prompt-cache breakpoints (2026-08-26), applied last — after the
+            # gate and after schema normalisation — so nothing downstream can
+            # drop them. This loop is where Friday's cloud bill actually lives:
+            # every iteration re-sends the full tool tier (~14k tokens) plus the
+            # entire accrued transcript, and the transcript is append-only here,
+            # which is exactly the shape an incremental cache reads at 0.1x.
+            # Modelled on 14 days of real calls in ~/.friday/costs.db: an 80%
+            # cut to the input line, which is ~99% of the spend.
+            try:
+                from agent_friday.services import prompt_cache as _pc
+                kwargs = _pc.apply_anthropic_cache(kwargs)
             except Exception:
                 pass
             _t0 = _time.time()
@@ -6567,6 +6605,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         _orb_safe(process_update, orb_id, status='error', label='Error', progress=1.0)
         raise
     finally:
+        if _budget is not None:
+            try:
+                _budget.__exit__(None, None, None)
+            except Exception:
+                pass
         # ── B4: one model_invocation ledger event per agent-loop completion. ──
         _ledger_model_invocation(
             model or ANTHROPIC_MODEL_DEFAULT, "anthropic", "cloud",
