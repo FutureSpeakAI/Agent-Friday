@@ -3,7 +3,38 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.1**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.2**
+
+---
+
+## [5.6.2] — 2026-08-26
+
+**The published `v5.6.1` artifact does not contain the API-key check.** The
+commit that adds it (`d272a61`) landed a few hours after the `v5.6.1` tag was
+cut, so the zip anyone actually downloaded promises self-repair on a bad key
+and does not deliver the check that was supposed to catch one. This release
+is that fix, published. If you have a `5.6.1` install, replace it — everything
+else in it is unchanged and confirmed unaffected (see below).
+
+### Added
+
+- **`Test-AnthropicKey`**: one request at `max_tokens = 1`, made the moment
+  the key is entered — before self-repair is armed, and while the person who
+  typed it is still looking at the screen. `200` → ok. `401`/`403` → rejected.
+  A `400` naming credit → no_credit. Everything else — no network, a 5xx, a
+  timeout, an unrelated `400` — is `unknown`, logged, and **fails open**: an
+  optional pre-flight must never be the thing that blocks setup.
+- **`KNOWN_ISSUES.md` §3b**, "One key per machine, and no way to tell whose it
+  is." The installer now says, at the point a key is entered, that a shared
+  key carries no notion of whose machine is using it and no way to revoke one
+  install without revoking all of them.
+
+### Confirmed unaffected
+
+- **The local-model question (Step 2b) and the `qwen3:4b` small-card default
+  are already in the published `v5.6.1` artifact.** Checked directly against
+  the tagged tree, not assumed from the commit graph — this release does not
+  touch either.
 
 ---
 
