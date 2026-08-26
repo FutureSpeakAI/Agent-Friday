@@ -1098,8 +1098,47 @@ def _strip_html(raw: str) -> str:
     return raw.strip()
 
 
+# In-process TTL cache for _load_live_context(). It is called on EVERY chat
+# turn and every voice turn to build the `== TODAY'S CONTEXT ==` block, and it
+# does five file reads, a sorted directory listing and two JSON parses each
+# time — for content whose inputs (the latest briefing, the career tracker, the
+# trust graph, personality) change on the order of hours, not turns. Same
+# reasoning as the 45s cache on the Gmail merge in services/message_triage.py:
+# short enough to still feel live, long enough that a burst of turns pays for
+# it once. Monotonic clock so a system time change cannot freeze it.
+# (2026-08-26)
+_LIVE_CTX_TTL_S = 60.0
+_live_ctx_lock = threading.Lock()
+_live_ctx_cache = {"text": None, "at": 0.0}
+
+
+def invalidate_live_context() -> None:
+    """Drop the cached TODAY'S CONTEXT block — call after writing a briefing."""
+    with _live_ctx_lock:
+        _live_ctx_cache["at"] = 0.0
+
+
 def _load_live_context() -> str:
-    """Build a concise context summary string for the Friday Live system prompt."""
+    """Build a concise context summary string for the Friday Live system prompt.
+
+    Cached for _LIVE_CTX_TTL_S. The empty string is cached like any other
+    result: "we looked and there is nothing to say today" is an answer, and
+    treating it as a miss would make the cheapest case the most expensive one.
+    """
+    now = _time.monotonic()
+    with _live_ctx_lock:
+        if (_live_ctx_cache["text"] is not None
+                and (now - _live_ctx_cache["at"]) < _LIVE_CTX_TTL_S):
+            return _live_ctx_cache["text"]
+    text = _build_live_context()
+    with _live_ctx_lock:
+        _live_ctx_cache["text"] = text
+        _live_ctx_cache["at"] = _time.monotonic()
+    return text
+
+
+def _build_live_context() -> str:
+    """Uncached body of _load_live_context()."""
     parts = [f"TODAY: {date.today().isoformat()}"]
 
     # Latest briefing (plain-text excerpt)

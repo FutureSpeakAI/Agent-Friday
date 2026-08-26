@@ -90,9 +90,20 @@ def price_for(model):
     return {"in": 0.0, "out": 0.0}
 
 
-def cost_for(model, input_tokens, output_tokens):
+#: Anthropic prompt-cache multipliers on the INPUT rate. A cache read bills at
+#: a tenth of the input price; writing a cache entry costs a quarter more than
+#: sending the tokens plain, which is why the break-even is two requests and why
+#: the 5-minute TTL is the right default for interactive turns.
+CACHE_READ_MULT = 0.1
+CACHE_WRITE_MULT = 1.25
+
+
+def cost_for(model, input_tokens, output_tokens,
+             cache_read_tokens=0, cache_write_tokens=0):
     p = price_for(model)
     return round((input_tokens / 1000.0) * p["in"]
+                 + (cache_read_tokens / 1000.0) * p["in"] * CACHE_READ_MULT
+                 + (cache_write_tokens / 1000.0) * p["in"] * CACHE_WRITE_MULT
                  + (output_tokens / 1000.0) * p["out"], 6)
 
 
@@ -190,6 +201,18 @@ def _conn():
             for idx, col in (("idx_cost_ts", "ts"), ("idx_cost_ws", "workspace"),
                              ("idx_cost_prov", "provider")):
                 _CONN.execute(f"CREATE INDEX IF NOT EXISTS {idx} ON cost_calls({col})")
+            # ── Prompt-cache columns (2026-08-26). ──
+            # Anthropic reports cached input SEPARATELY from `input_tokens`:
+            # a cache hit shows up as `cache_read_input_tokens` and the row's
+            # `input_tokens` counts only the uncached remainder. Without these
+            # columns the ledger would show the bill falling and be unable to
+            # say why — and a caching change that cannot be measured is a
+            # hypothesis, not a saving. Added by migration so an existing
+            # costs.db keeps its history.
+            _cols = {r[1] for r in _CONN.execute("PRAGMA table_info(cost_calls)")}
+            for _c in ("cache_read_tokens", "cache_write_tokens"):
+                if _c not in _cols:
+                    _CONN.execute(f"ALTER TABLE cost_calls ADD COLUMN {_c} INT DEFAULT 0")
             _CONN.commit()
         return _CONN
 
@@ -223,14 +246,16 @@ def flush():
         conn.executemany(
             "INSERT INTO cost_calls (ts, provider, model, input_tokens, "
             "output_tokens, cost_usd, duration_ms, workspace, kind, "
-            "schedule_id, run_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+            "schedule_id, run_id, cache_read_tokens, cache_write_tokens) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         conn.commit()
     return len(rows)
 
 
 def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
            session_ctx=None, workspace=None, kind=None, schedule_id=None,
-           run_id=None, cost_usd=None):
+           run_id=None, cost_usd=None, cache_read_tokens=0,
+           cache_write_tokens=0):
     """Record one model call. Buffered; flushed off the hot path.
 
     ``cost_usd`` overrides the locally computed price — used when the provider
@@ -243,13 +268,16 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
     try:
         input_tokens = int(input_tokens or 0)
         output_tokens = int(output_tokens or 0)
+        cache_read_tokens = int(cache_read_tokens or 0)
+        cache_write_tokens = int(cache_write_tokens or 0)
         attr = _resolve_attr(session_ctx, {
             "workspace": workspace, "kind": kind,
             "schedule_id": schedule_id, "run_id": run_id})
         if cost_usd is not None:
             cost = round(float(cost_usd), 6)
         else:
-            cost = cost_for(model, input_tokens, output_tokens)
+            cost = cost_for(model, input_tokens, output_tokens,
+                            cache_read_tokens, cache_write_tokens)
             if cost == 0.0 and provider:
                 # Enrichment tier: the pricing service knows discovery-cache and
                 # descriptor prices for models the static PRICING table doesn't.
@@ -264,7 +292,8 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
         row = (_time.time(), provider or "", model or "", input_tokens,
                output_tokens, cost, int(duration_ms or 0),
                attr.get("workspace") or "", attr.get("kind") or "chat",
-               attr.get("schedule_id"), attr.get("run_id"))
+               attr.get("schedule_id"), attr.get("run_id"),
+               cache_read_tokens, cache_write_tokens)
         with _BUFFER_LOCK:
             _BUFFER.append(row)
             over = len(_BUFFER) >= 50
@@ -308,13 +337,18 @@ def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None)
         return 0.0
     in_tok = _get(usage, "input_tokens", "prompt_tokens")
     out_tok = _get(usage, "output_tokens", "completion_tokens")
+    # Anthropic prompt caching: `input_tokens` excludes both of these, so a
+    # row without them understates the call and hides whether caching worked.
+    cache_read = _get(usage, "cache_read_input_tokens")
+    cache_write = _get(usage, "cache_creation_input_tokens")
     reported = _get(usage, "cost")  # OpenRouter usage accounting (USD)
     try:
         cost_usd = float(reported) if reported not in (0, None, "") else None
     except (TypeError, ValueError):
         cost_usd = None
     return record(provider, model, in_tok, out_tok, duration_ms=duration_ms,
-                  session_ctx=session_ctx, kind=kind, cost_usd=cost_usd)
+                  session_ctx=session_ctx, kind=kind, cost_usd=cost_usd,
+                  cache_read_tokens=cache_read, cache_write_tokens=cache_write)
 
 
 # ── Queries ──────────────────────────────────────────────────────────────────
@@ -342,9 +376,11 @@ def summary(rng="today", frm=None, to=None):
     with _CONN_LOCK:
         cur = conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(input_tokens),0), "
-            "COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost_usd),0) "
+            "COALESCE(SUM(output_tokens),0), COALESCE(SUM(cost_usd),0), "
+            "COALESCE(SUM(cache_read_tokens),0), "
+            "COALESCE(SUM(cache_write_tokens),0) "
             "FROM cost_calls WHERE ts>=? AND ts<=?", (start, end))
-        n, itok, otok, total = cur.fetchone()
+        n, itok, otok, total, crtok, cwtok = cur.fetchone()
 
         def _group(col):
             rows = conn.execute(
@@ -358,6 +394,14 @@ def summary(rng="today", frm=None, to=None):
             "range": rng, "from": start, "to": end,
             "total_usd": round(total, 4), "total_calls": n,
             "input_tokens": itok, "output_tokens": otok,
+            # The prompt-cache receipt. `cache_hit_rate` is the share of all
+            # input tokens that were served from cache at 0.1x — the one number
+            # that says whether the breakpoints are landing. A rate near zero
+            # with caching enabled means the prefix is being broken upstream,
+            # not that caching is unavailable.
+            "cache_read_tokens": crtok, "cache_write_tokens": cwtok,
+            "cache_hit_rate": (round(crtok / (itok + crtok + cwtok), 4)
+                               if (itok + crtok + cwtok) else 0.0),
             "by_provider": _group("provider"),
             "by_workspace": _group("workspace"),
             "by_model": _group("model"),
