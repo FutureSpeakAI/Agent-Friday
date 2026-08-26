@@ -120,6 +120,113 @@ function Initialize-Healing {
     return $true
 }
 
+function Test-AnthropicKey {
+    <#  One cheap round-trip to find out whether this key actually works.
+
+        WHY THIS EXISTS
+        ---------------
+        Initialize-Healing used to check only that the key was NON-EMPTY. So a
+        key that was malformed, revoked, or simply out of credit produced an
+        installer that promised self-repair at step 2 and revealed - twenty
+        minutes later, at the first failure, to someone with no idea what any
+        of it means - that the promise was empty. The failure surfaced as far
+        as possible from the mistake that caused it.
+
+        One request at max_tokens = 1 costs a fraction of a cent and moves that
+        discovery to the moment she pastes the key, where the fix is obvious.
+
+        It deliberately uses the MESSAGES endpoint and the model healing will
+        actually use, not a free metadata endpoint. A key with no credit
+        authenticates perfectly well - it fails when you ask it to think, which
+        is the case worth catching.
+
+        FAILS OPEN. A verdict is only 'rejected' or 'no_credit' when the API
+        said so plainly. Anything else - no network, a 5xx, a timeout, a
+        proxy - returns 'unknown', and the caller warns and carries on. Setup
+        must never be blocked by its own optional pre-flight check.
+
+        Returns @{ Verdict = 'ok'|'rejected'|'no_credit'|'unknown'; Message }
+        The response body is inspected in memory and NEVER logged: an auth
+        failure body can echo request headers on some proxies. #>
+    param(
+        [Parameter(Mandatory)] $ApiKey,
+        [hashtable] $Config = $null
+    )
+    if (-not $Config) { $Config = Get-DefaultHealConfig }
+
+    Initialize-Tls
+    $bstr = [IntPtr]::Zero
+    $client = $null
+    try {
+        $body = @{
+            model      = [string]$Config.model
+            max_tokens = 1
+            messages   = @(@{ role = 'user'; content = 'hi' })
+        } | ConvertTo-Json -Depth 6 -Compress
+
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ApiKey)
+        $key  = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+
+        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+        $client = New-Object System.Net.Http.HttpClient
+        # Short: this is a pre-flight, not the install. If the API is slow we
+        # would rather warn and move on than make her watch a spinner.
+        $client.Timeout = [TimeSpan]::FromSeconds(20)
+
+        $req = New-Object System.Net.Http.HttpRequestMessage('POST', [string]$Config.api_url)
+        $req.Headers.Add('x-api-key', $key)
+        $req.Headers.Add('anthropic-version', [string]$Config.api_version)
+        $req.Content = New-Object System.Net.Http.StringContent($body, [System.Text.Encoding]::UTF8, 'application/json')
+
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        $code = [int]$resp.StatusCode
+        $text = ''
+        try { $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() } catch { }
+
+        if ($resp.IsSuccessStatusCode) {
+            Write-Log 'Key check: the key works.' 'HEAL'
+            return @{ Verdict = 'ok'; Message = '' }
+        }
+
+        if ($code -eq 401 -or $code -eq 403) {
+            Write-Log "Key check: HTTP $code - key not accepted." 'HEAL'
+            return @{ Verdict = 'rejected'
+                      Message = 'That key was not accepted.' }
+        }
+
+        # A 400 is ambiguous. "credit balance is too low" is the one case worth
+        # naming; every other 400 is our request being wrong, not her key, and
+        # blocking on it would punish her for our bug.
+        if ($code -eq 400 -and $text -match '(?i)credit') {
+            Write-Log 'Key check: HTTP 400 - account is out of credit.' 'HEAL'
+            return @{ Verdict = 'no_credit'
+                      Message = 'That key works, but the account behind it has no credit left.' }
+        }
+
+        if ($code -eq 429) {
+            # The key authenticated; the account is just busy. Not a reason to
+            # refuse it, and not a reason to claim it is fine either.
+            Write-Log 'Key check: HTTP 429 - key authenticated but rate limited.' 'HEAL'
+            return @{ Verdict = 'unknown'
+                      Message = 'The account is busy right now, so this could not be confirmed.' }
+        }
+
+        Write-Log "Key check: HTTP $code - inconclusive, failing open." 'HEAL'
+        return @{ Verdict = 'unknown'
+                  Message = 'The check did not complete.' }
+    }
+    catch {
+        Write-Log "Key check could not run ($($_.Exception.GetType().Name)) - failing open." 'HEAL'
+        return @{ Verdict = 'unknown'
+                  Message = 'The check could not reach the internet.' }
+    }
+    finally {
+        if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+        if ($client) { try { $client.Dispose() } catch { } }
+        Remove-Variable -Name key -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-DefaultHealConfig {
     return @{
         model              = 'claude-sonnet-5'
