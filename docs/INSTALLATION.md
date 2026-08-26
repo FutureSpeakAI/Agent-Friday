@@ -33,6 +33,18 @@ The fastest path on Windows needs no Python, Git, or terminal at all: download
 and run it. SmartScreen may warn on first launch — see the SmartScreen note
 below for the one-click bypass.
 
+> ⚠️ **The published binary is behind the source, and the gap includes security
+> fixes.** As of 2026-08-25 the newest release asset is **v5.4.0, built 6 July
+> 2026**. It therefore predates every egress-gate fix made on 24–25 August —
+> among them the classifier gaining its first phone/address/account-number
+> regexes, the wiki context section that failed *open* on a classifier miss, and
+> the voice path that failed open at its strongest verdict. It also predates
+> 5.5.0 entirely.
+>
+> If you are evaluating Friday's privacy behaviour, **run from source until a
+> newer release is published.** The `dist/AgentFriday.exe` in a checkout is the
+> same 6 July build and is not a substitute.
+
 The steps that follow are the from-source path, recommended for developers and
 anyone who wants to read or modify the code they run.
 
@@ -45,12 +57,12 @@ front rather than buried:
 |---|---|---|
 | What it is | A single frozen binary | An embedded CPython plus a source payload and a wheelhouse |
 | Sensitivity classifier | **Layers 1a + 1b only** — regex and keyword | Layers 1a + 1b, **plus Layer 3** (embeddings) if the memory tier installs |
-| `sentence-transformers` | **Excluded on purpose** (pulls torch: 4.3 GB measured, against a 152 MB binary) | Installed by the *memory* tier (~2.5 GB, announced and skippable) |
+| `sentence-transformers` | **Excluded on purpose** (pulls torch: over 4 GB measured, against a ~152 MB binary) | Installed by the *memory* tier (~2.5 GB, announced and skippable) |
 | `presidio-analyzer` | Not bundled | Installed by the *recommended* tier — but **observe-only**, see below |
 | PDF extraction | Bundled (`pdfplumber` pinned in the spec) | Installed by the *recommended* tier |
 
 Neither build is "the weakened one" by accident. The `.exe` trades Layer 3 for
-not shipping a 4.3 GB tensor library, which is the right trade for a desktop
+not shipping a 4+ GB tensor library, which is the right trade for a desktop
 download. What is **not** acceptable is claiming otherwise, so Friday tells you
 which layers are live at every boot — see the next section.
 

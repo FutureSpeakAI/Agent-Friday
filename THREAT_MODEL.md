@@ -5,6 +5,32 @@ does not defend against, and the guarantees provided by each security mechanism.
 
 ---
 
+## First: which Agent Friday are you running?
+
+**There is no single artifact, and the difference is a security difference, not
+a packaging detail.** Every guarantee below is conditioned on this, so it is
+stated before anything else rather than in a footnote.
+
+| | **`AgentFriday.exe`** | **`AgentFriday-Setup-*.zip`** | **From source** |
+|---|---|---|---|
+| Built by | PyInstaller, one frozen file | Embedded CPython + source payload + wheelhouse (`packaging/windows/`) | Your own `pip install` |
+| Egress classifier | **Layers 1a + 1b only** | 1a + 1b, plus Layer 3 if the memory tier installs | Depends on your extras |
+| `sentence-transformers` (Layer 3) | **Excluded deliberately** — pulls torch, over 4 GB measured against a ~152 MB binary | Installed by the *memory* tier (~2.5 GB, announced, skippable) | `.[local]` or `.[all]` |
+| `presidio-analyzer` (Layer 2) | Not bundled | Installed — but **observe-only**, see §1 | `.[pii]` or `.[all]` — still observe-only |
+
+So the honest one-line summary: **the downloadable `.exe` runs two layers of
+pattern matching.** That is a deliberate trade — not shipping a 4+ GB tensor
+library inside a desktop download — and not a defect. What *would* be a defect
+is letting you believe otherwise, so:
+
+**Do not take this table's word for it.** Friday probes its own layers at every
+boot and prints the result, and prints a boxed `SENSITIVITY CLASSIFIER IS
+RUNNING DEGRADED` notice whenever anything declared is not running. That output
+is generated from the live process, not from this document. If the two ever
+disagree, the boot line is right and this file is stale — please open an issue.
+
+---
+
 ## What We Defend Against
 
 ### 1. Cloud-side exposure of sensitive data

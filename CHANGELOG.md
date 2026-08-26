@@ -100,12 +100,36 @@ rather than test fixtures.
 
 ### Fixed — the honesty report was itself over-reporting
 
-- `privacy_layers` counted a layer as active if its module merely **imported**.
-  Since the Windows installer *does* install `presidio-analyzer`, a fresh
-  install printed **"4/4 layers active"** while Presidio was deliberately inert.
-  The module written to stop the docstring overstating protection was
-  reproducing the same bug one level up. A layer now counts as active only if it
-  can actually influence a decision.
+On 24 August we shipped `services/privacy_layers.py` for one reason: the
+sensitivity classifier's docstring advertised four layers while the process ran
+two, and we wanted a component whose whole job was to refuse to repeat a claim
+it had not checked. It probes at startup and reports what is genuinely loaded.
+
+On 25 August that module was found doing precisely the thing it was written to
+prevent.
+
+It decided a layer was active by asking whether the layer's module could be
+**imported**. That is not the same question as whether the layer does anything.
+The Windows installer *does* install `presidio-analyzer` — a fact the previous
+day's work had itself got wrong — so `find_spec` succeeded, and a fresh install
+printed **"4/4 layers active"** while Presidio sat deliberately inert, because
+`classify()` routes it to observe-only shadow mode unless
+`FRIDAY_PRESIDIO_ENFORCE=1` is set. The module built to stop the docstring
+overstating protection was overstating protection itself, one level up, in
+exactly the same shape: a claim inherited from a plausible proxy rather than
+measured against the thing it actually asserts.
+
+The lesson is the rule, and the rule is now the code: **a layer counts as active
+only if it can change a decision.** Importability is a proxy for that, and the
+proxy fails precisely where it matters most — when a dependency is present but
+deliberately disarmed. The honest form of "is this protection on?" is never "is
+the library installed?", and anything that reports on a safety property deserves
+the same suspicion as the property itself.
+
+- `privacy_layers.probe_layers()` now gates the Presidio layer on
+  `enforcement_enabled()` rather than on `find_spec` alone, and says so in its
+  reason string. Reproduced before fixing; two regression tests, one in each
+  direction.
 
 ### Added
 
