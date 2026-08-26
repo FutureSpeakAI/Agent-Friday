@@ -34139,12 +34139,17 @@ function ProviderRow({
     setBusy('test');
     setTestRes(null);
     try {
+      // ping:true buys a real round trip at max_tokens 1 -- a fraction of
+      // a cent. Without it this only read the model list, which a key with
+      // no credit passes cheerfully, so "works" and "out of credit" looked
+      // identical. Heal.ps1::Test-AnthropicKey has made this argument since
+      // 5.6.2; Settings was doing the thing its docstring warns against.
       const r = await apiFetch('/api/providers/' + prov.name + '/test', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({})
+        body: JSON.stringify({ ping: true })
       });
       setTestRes(await r.json());
     } catch (e) {
@@ -34326,7 +34331,23 @@ function ProviderRow({
     onChange: e => setKeyDraft(e.target.value),
     onClick: e => e.stopPropagation(),
     placeholder: prov.available ? 'Key saved — paste a new one to replace it' : 'Paste your API key — it is encrypted on this computer'
-  }), prov.signup_url && /*#__PURE__*/React.createElement("button", {
+  }), prov.key_masked && /*#__PURE__*/React.createElement("span", {
+    // WHICH key, from WHERE. Two sources can hold a key for one provider:
+    // the encrypted store (this panel) and the environment (start.bat, which
+    // the wizard writes and Friday re-reads every launch). The environment
+    // used to win silently, so a key swapped here came back dead after a
+    // restart with nothing on screen disagreeing. Precedence is fixed; this
+    // is what keeps it legible in both directions.
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: 'rgba(255,255,255,0.45)',
+      whiteSpace: 'nowrap'
+    },
+    title: prov.key_source === 'environment'
+      ? 'This key comes from your environment (start.bat), not from Settings. Saving one here will take over.'
+      : 'This key was saved here, in Settings. It is encrypted on this computer.'
+  }, prov.key_masked, ' ', prov.key_source === 'environment' ? '(from start.bat)' : '(saved here)'), prov.signup_url && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,
@@ -34346,7 +34367,7 @@ function ProviderRow({
     },
     disabled: busy === 'key' || !keyDraft.trim(),
     onClick: saveKey
-  }, "Save key"), prov.available && /*#__PURE__*/React.createElement("button", {
+  }, prov.available ? "Replace key" : "Save key"), prov.available && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,
@@ -34399,7 +34420,24 @@ function ProviderRow({
       fontFamily: 'JetBrains Mono',
       color: testRes.status === 'ok' ? '#00ff80' : testRes.status === 'unauthorized' ? '#f59e0b' : '#ef4444'
     }
-  }, testRes.status === 'ok' ? `✓ OK${testRes.latency_ms != null ? ' · ' + testRes.latency_ms + 'ms' : ''}${testRes.models_seen != null ? ' · ' + testRes.models_seen + ' models' : ''}${testRes.auth === 'valid' ? ' · auth valid' : ''}` : `✗ ${testRes.status}${testRes.detail ? ' — ' + testRes.detail : ''}`)));
+  }, testRes.status === 'ok' ? `✓ OK${testRes.latency_ms != null ? ' · ' + testRes.latency_ms + 'ms' : ''}${testRes.models_seen != null ? ' · ' + testRes.models_seen + ' models' : ''}${testRes.auth === 'valid' ? ' · auth valid' : ''}` : `✗ ${testRes.status}${testRes.detail ? ' — ' + testRes.detail : ''}`),
+  // The verdict in a sentence. "rejected" and "no_credit" are different
+  // problems with different fixes, and calling a broke account an invalid
+  // key sends someone to regenerate the one thing that was never wrong.
+  testRes && testRes.verdict_detail && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      padding: '6px 10px',
+      background: 'rgba(0,0,0,0.3)',
+      borderRadius: 6,
+      fontSize: 11,
+      lineHeight: 1.5,
+      color: testRes.verdict === 'ok' ? '#00ff80'
+        : testRes.verdict === 'rejected' ? '#ef4444'
+        : testRes.verdict === 'no_credit' ? '#f59e0b'
+        : 'rgba(255,255,255,0.55)'
+    }
+  }, testRes.verdict_detail)));
 }
 function AddProviderForm({
   templates,

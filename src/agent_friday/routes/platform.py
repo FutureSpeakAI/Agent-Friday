@@ -133,6 +133,20 @@ def api_providers_list():
         name = p.get("name", "")
         entry = {**p, "available": reg.is_provider_available(name),
                  "origin": reg.provider_origin(name)}
+        # WHICH key is in play, and enough of it to recognise. Two sources can
+        # hold a key for the same provider -- one saved in Settings, one in the
+        # environment from start.bat -- and until 2026-08-26 the environment
+        # silently won, so a key swapped in Settings came back dead after the
+        # next restart with nothing on screen disagreeing. The precedence is
+        # fixed (provider_descriptors.provider_api_key); this is what makes it
+        # legible, in both directions.
+        try:
+            from agent_friday.routing.provider_descriptors import (
+                provider_key_source, provider_api_key, mask_key)
+            entry["key_source"] = provider_key_source(p)
+            entry["key_masked"] = mask_key(provider_api_key(p))
+        except Exception:
+            entry["key_source"], entry["key_masked"] = "none", ""
         # Model count: statics ∪ discovery cache (disk only, no network).
         model_count = len(p.get("models") or [])
         catalog_stale = False
@@ -336,33 +350,56 @@ def api_provider_test(name):
                       latency_ms=int((_t.time() - t0) * 1000),
                       detail=f"{type(e).__name__}: {e}"[:200])
 
-    if do_ping and result["status"] == "ok" and ptype == "openai-compatible":
-        model = body.get("model") or (prov.get("models") or [None])[0]
-        if not model:
+    # A REAL ROUND TRIP, NOT A METADATA READ.
+    #
+    # Everything above this line asks the provider to list its models. A key
+    # with no credit authenticates perfectly well and passes that check --
+    # Heal.ps1::Test-AnthropicKey has said so since 5.6.2 ("it fails when you
+    # ask it to think, which is the case worth catching") -- and the ping that
+    # would have caught it was gated to openai-compatible, so the two
+    # providers Friday ships with by default were the two she could not tell
+    # the truth about.
+    #
+    # Fails open. `unknown` is a real answer and must never block anyone.
+    if do_ping and result["status"] in ("ok", "unauthorized", "error"):
+        _model = body.get("model") or (prov.get("models") or [None])[0]
+        if not _model:
             try:
                 from agent_friday.services.model_discovery import cached_model_ids
-                ids = cached_model_ids(name)
-                model = ids[0] if ids else None
+                _ids = cached_model_ids(name)
+                _model = _ids[0] if _ids else None
             except Exception:
-                model = None
-        if model:
-            try:
-                t0 = _t.time()
-                r = requests.post(
-                    base + "/chat/completions", headers=headers,
-                    json={"model": model, "max_tokens": 1,
-                          "messages": [{"role": "user", "content": "ping"}]},
-                    timeout=30)
-                result["ping"] = {"model": model, "ok": r.status_code < 400,
-                                  "latency_ms": int((_t.time() - t0) * 1000),
-                                  "status": r.status_code}
-            except Exception as e:
-                result["ping"] = {"model": model, "ok": False,
-                                  "error": str(e)[:200]}
+                _model = None
+        from agent_friday.services import key_verdict as _kv
+        _spec = _kv.probe_spec(prov, _model)
+        if _spec is None:
+            result["verdict"] = _kv.UNKNOWN
         else:
-            result["ping"] = {"ok": False,
-                              "error": "no model available to ping — refresh "
-                                       "the model list first"}
+            _hdrs = dict(headers)
+            _url = _spec["url"]
+            if ptype == "anthropic":
+                _hdrs.update({"x-api-key": api_key or "",
+                              "anthropic-version": "2023-06-01"})
+            elif ptype == "google":
+                _url = _url + "?key=" + (api_key or "")
+            try:
+                t1 = _t.time()
+                rp = requests.post(_url, headers=_hdrs, json=_spec["json"],
+                                   timeout=30)
+                # Body read into memory for classification and never logged:
+                # an auth-failure body can echo request headers on some proxies.
+                result["verdict"] = _kv.verdict_for(rp.status_code, rp.text)
+                result["ping"] = {"model": _model,
+                                  "ok": rp.status_code < 400,
+                                  "latency_ms": int((_t.time() - t1) * 1000),
+                                  "status": rp.status_code}
+            except Exception as e:
+                result["verdict"] = _kv.UNKNOWN
+                result["ping"] = {"model": _model, "ok": False,
+                                  "error": f"{type(e).__name__}"[:80]}
+        result["verdict_detail"] = _kv.explain(
+            result["verdict"], prov.get("label") or name)
+
     return jsonify(result)
 
 
