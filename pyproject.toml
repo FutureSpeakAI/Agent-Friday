@@ -29,6 +29,15 @@ dependencies = [
     "psutil>=5.9",
     "anthropic>=0.40",
     "google-genai>=1.0",
+    # PDF text extraction. CORE, not an extra (promoted 2026-08-25 to agree with
+    # requirements.txt, which has called it NOT OPTIONAL since the capability
+    # landed). It was reachable only through the `pdf` extra and `[all]`, so a
+    # lean `pip install -e .` produced a Friday whose PDF branch told the USER to
+    # `pip install pdfplumber` -- Friday's own dependency presented as their
+    # chore. Pure Python plus pdfminer.six, no compiled deps, ~5 MB: there was
+    # never a size argument for leaving it out. The `pdf` extra below is kept as
+    # a no-op alias so existing install scripts that name it do not break.
+    "pdfplumber>=0.11",
 ]
 
 # â”€â”€ Optional capability groups â€” install only what you need â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -76,7 +85,7 @@ pii = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]
 # (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
 keyring = ["keyring>=24.0"]
 windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0", "pystray>=0.19"]  # computer control + global kill-switch + tray icon
-pdf = ["pdfplumber>=0.10"]  # PDF text extraction (routes/core_routes.py)
+pdf = ["pdfplumber>=0.11"]  # retained alias; pdfplumber is now a core dependency
 all = [
     "pyttsx3>=2.90",
     "pillow>=10.0",
@@ -88,9 +97,14 @@ all = [
     "chromadb>=0.5",
     "headroom-ai[all]>=0.22",
     "pynacl>=1.5",
-    "pdfplumber>=0.10",
-    # Egress-gate Layer 2 NER (R4, Fable 5 review): the recommended install
-    # ships with the FULL gate, not a weakened one.
+    "pdfplumber>=0.11",
+    # Egress-gate Layer 2 NER. This comment used to read "the recommended
+    # install ships with the FULL gate, not a weakened one". That is no longer
+    # true and should not be restored: Presidio is installed but runs
+    # OBSERVE-ONLY, because measurement on 2026-08-24 found it scored TIER_2
+    # where the existing regex returns TIER_3 and escalated 6 of 12 benign
+    # prompts. Installing it buys shadow-mode evidence, not enforcement. See
+    # THREAT_MODEL.md and services/privacy_layers.py.
     "presidio-analyzer>=2.2",
     "presidio-anonymizer>=2.2",
     # Computer control + kill-switch: Windows-only (needs X11 headers on Linux)

@@ -26,6 +26,15 @@ Design rules
   The gate degrading is a problem; the gate crashing is a worse one.
 * DECLARED vs LOADED.  ``self_check()`` compares what the classifier claims
   against what is importable and returns the discrepancy explicitly.
+* IMPORTABLE IS NOT IN FORCE.  Added 2026-08-25 after this module reproduced,
+  one level up, the exact bug it was written to prevent. The Windows installer
+  (``packaging/windows/requirements/recommended.txt``) DOES install
+  presidio-analyzer, so ``find_spec`` succeeded and a fresh install printed
+  "4/4 layers active" — while Presidio was deliberately inert, because
+  ``classify()`` only consults it when FRIDAY_PRESIDIO_ENFORCE=1 and otherwise
+  routes it to observe-only shadow mode. A layer that cannot change an outcome
+  is not a protection, whatever `pip` thinks. So a layer counts as active only
+  if it is BOTH importable AND able to influence a decision.
 """
 from __future__ import annotations
 
@@ -79,7 +88,19 @@ def probe_layers() -> Dict[str, dict]:
             if avail is None:
                 active, reason = False, f"probe failed for {mod!r}"
             elif avail:
-                active, reason = True, f"{mod} importable"
+                # Importable. But can it actually change a tier decision?
+                # Presidio cannot unless enforcement is explicitly turned on:
+                # classify() routes it to shadow (observe-only) by default,
+                # having measured it escalating 6 of 12 benign prompts.
+                if name == "presidio" and not enforcement_enabled():
+                    active = False
+                    reason = (
+                        f"{mod} installed but OBSERVE-ONLY - it changes no "
+                        f"outcome (set {ENFORCE_ENV}=1 to enforce; rejected by "
+                        f"measurement 2026-08-24)"
+                    )
+                else:
+                    active, reason = True, f"{mod} importable"
             else:
                 active, reason = False, f"{mod} NOT INSTALLED"
         out[name] = {"label": label, "active": active, "module": mod, "reason": reason}

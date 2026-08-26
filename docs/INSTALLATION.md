@@ -36,6 +36,62 @@ below for the one-click bypass.
 The steps that follow are the from-source path, recommended for developers and
 anyone who wants to read or modify the code they run.
 
+### The two packaged builds are not the same product, privacy-wise
+
+This matters more than a packaging detail usually would, so it is stated up
+front rather than buried:
+
+| | **`AgentFriday.exe`** (PyInstaller, one file) | **`AgentFriday-Setup-5.5.0.zip`** (Windows installer) |
+|---|---|---|
+| What it is | A single frozen binary | An embedded CPython plus a source payload and a wheelhouse |
+| Sensitivity classifier | **Layers 1a + 1b only** — regex and keyword | Layers 1a + 1b, **plus Layer 3** (embeddings) if the memory tier installs |
+| `sentence-transformers` | **Excluded on purpose** (pulls torch: 4.3 GB measured, against a 152 MB binary) | Installed by the *memory* tier (~2.5 GB, announced and skippable) |
+| `presidio-analyzer` | Not bundled | Installed by the *recommended* tier — but **observe-only**, see below |
+| PDF extraction | Bundled (`pdfplumber` pinned in the spec) | Installed by the *recommended* tier |
+
+Neither build is "the weakened one" by accident. The `.exe` trades Layer 3 for
+not shipping a 4.3 GB tensor library, which is the right trade for a desktop
+download. What is **not** acceptable is claiming otherwise, so Friday tells you
+which layers are live at every boot — see the next section.
+
+### What a fresh install actually reports
+
+On first run Friday probes its own privacy layers and prints the result. A
+healthy source install prints something like:
+
+```
+  Privacy layers: Sensitivity classifier: 3/4 layers active (source checkout). DEGRADED - not running: presidio.
+```
+
+and, when anything is inactive, a boxed notice you are meant to read:
+
+```
+  ╔════════════════════════════════════════════════════════════╗
+  ║  NOTICE: SENSITIVITY CLASSIFIER IS RUNNING DEGRADED       ║
+  ║  inactive: presidio                                       ║
+  ║  Egress decisions use the remaining layers only.          ║
+  ╚════════════════════════════════════════════════════════════╝
+```
+
+**Seeing `presidio` listed as inactive is expected and correct**, even after an
+installer run that installed it. Presidio is deliberately not enforced — the
+reasoning is in [THREAT_MODEL.md](../THREAT_MODEL.md#1-cloud-side-exposure-of-sensitive-data),
+and the short version is that measurement found it *worse* than the regex it
+would supplement while escalating half of ordinary conversation.
+
+### Nothing downloads a model behind your back
+
+Two things worth stating explicitly, because both are common in this class of
+tool and neither happens here:
+
+- **Presidio's ~590 MB spaCy model is never fetched.** `AnalyzerEngine()` — the
+  call that would pull it — is only constructed when you opt in with
+  `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`. Both default to
+  off, so a normal install never constructs one.
+- **The embedding model is lazy and announced.** `all-MiniLM-L6-v2` arrives on
+  first use, into `%USERPROFILE%\.cache\huggingface`, and the installer warns
+  about the ~2.5 GB memory tier before starting it and lets you skip it.
+
 ---
 
 ## Step 1: Clone the Repository
@@ -144,7 +200,8 @@ The full install (`.[all]` or `requirements.txt`) includes:
 | `beautifulsoup4` | HTML parsing for web search |
 | `requests` | HTTP requests |
 | `pyyaml` | Skill file parsing |
-| `sentence-transformers` | Embeddings for semantic context pruning — extra: `local` |
+| `pdfplumber` | PDF text extraction for file reading and `search_files` — **core since 5.6.0** |
+| `sentence-transformers` | Embeddings for semantic context pruning **and Layer 3 of the egress classifier** — extra: `local` |
 | `headroom-ai[all]` | Context compression (optional native core) — extra: `compression` |
 
 A lean `pip install -e .` covers everything above **except** the rows marked
@@ -152,6 +209,10 @@ with an extra — those arrive only via `.[all]`, their named extra, or
 `requirements.txt`.
 
 If `headroom-ai` fails to build (missing Rust/MSVC), Friday will still run — compression is disabled gracefully.
+
+**`.docx` reading needs no dependency at all.** A `.docx` is a zip archive of
+XML, and Friday reads it with the standard library. There is deliberately no
+`python-docx` in any requirements file; please don't add one.
 
 ---
 

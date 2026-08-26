@@ -110,6 +110,32 @@ Installed layout on her machine, all under `%LOCALAPPDATA%\AgentFriday`:
 
 ---
 
+## What installing presidio actually buys (read before quoting a layer count)
+
+`requirements/recommended.txt` installs `presidio-analyzer` and
+`presidio-anonymizer`, and the install step verifies they import. **That does
+not mean the egress gate gains a layer.** Presidio runs **observe-only**: it
+logs what it *would* have flagged — entity type, offsets, score and a salted
+hash, never the matched text — and changes no tier decision. Enforcement
+requires `FRIDAY_PRESIDIO_ENFORCE=1`, and is not recommended: measured on
+2026-08-24 it scored TIER_2 where the existing regex returns TIER_3, and
+escalated 6 of 12 entirely benign prompts, including "what is the weather going
+to be like tomorrow?".
+
+Two consequences for anyone working on this installer:
+
+- **`services/privacy_layers.py` deliberately reports Layer 2 as INACTIVE even
+  though the module imports.** That is not a bug to fix. Before 2026-08-25 it
+  reported on importability alone, so a fresh install printed "4/4 layers
+  active" while Presidio was inert — the exact class of overstatement the module
+  exists to prevent.
+- **Nothing here downloads a spaCy model.** Presidio's `AnalyzerEngine()` — the
+  construction that would pull the ~590 MB `en_core_web_lg` — is only reached
+  under `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`, both off by
+  default. Installing the wheels does not construct an analyzer. If you ever
+  make Presidio load eagerly, you will have added a large silent download to a
+  stranger's first run; don't.
+
 ## What was verified on Windows 11, and what was not
 
 ### Verified, on this machine, this session
