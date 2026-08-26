@@ -386,7 +386,7 @@ else {
     } else {
         Say-Ok 'Friday will use your Claude key. Nothing extra to download.'
         Say-Detail 'On a fast connection the rest of setup takes ten to fifteen minutes.'
-        Say-Detail 'To add a local model later: open Friday, then Settings -> Models.'
+        Say-Detail 'To add a local model later: open Friday, then Settings -> Intelligence.'
     }
 }
 

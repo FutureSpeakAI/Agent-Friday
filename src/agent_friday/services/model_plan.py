@@ -375,7 +375,7 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
                  else _conversational_fallback(installed))
         others = _local_alternatives(convo, pick["gib"])
         note_others = (f" Also already installed and possibly suitable: "
-                       f"{', '.join(others[:4])}. Set one in Settings -> Models "
+                       f"{', '.join(others[:4])}. Set one in Settings -> Intelligence "
                        f"if you prefer it." if others else "")
         tiers.append({
             "id": "brain", "name": "Local conversational brain",

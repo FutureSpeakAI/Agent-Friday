@@ -68,7 +68,7 @@ def cc_permission():
             return jsonify({
                 "granted": False,
                 "error": "Computer Control is disabled. Enable it under "
-                         "Settings → Account & Security → Computer Control first.",
+                         "Settings → Privacy & Security → Computer Control first.",
             }), 403
         _CC_KILL.clear()
         _CC_PERMISSION.set()

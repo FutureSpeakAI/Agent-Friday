@@ -141,7 +141,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     client = get_anthropic_client()
     if client is None:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → API Keys) or as an environment variable, then restart the server."
+            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Providers) or as an environment variable, then restart the server."
         )
     if model is None:
         # Same law as the dispatch ladders (2026-08-14): orchestrator_model
@@ -416,7 +416,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     raise RuntimeError(
         "No model provider could generate text (tried "
         + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
-        "wizard (Settings → API Keys) or as an environment variable, configure "
+        "wizard (Settings → Providers) or as an environment variable, configure "
         "an OpenAI-compatible endpoint in Settings, or run Ollama locally, then "
         "restart the server."
     )
