@@ -82,7 +82,12 @@ def probe_layers() -> Dict[str, dict]:
         if always:
             active, reason = True, "built in"
         elif name in _OPT_IN_LAYERS:
-            active, reason = False, "opt-in per call (use_llm=True); off by default"
+            active, reason = False, (
+                "opt-in per call (use_llm=True); off by default. No caller "
+                "enables it today. Its model is resolved from the Ollama "
+                "daemon's own inventory at call time - it is not a hardcoded "
+                "tag, which is how this layer spent its life 404ing silently "
+                "(fixed 2026-08-26)")
         else:
             avail = _module_available(mod)
             if avail is None:
