@@ -192,7 +192,54 @@ was legitimately sent to them (TIER_1 PUBLIC content) may be exposed. The egress
 gate minimizes what cloud providers receive, but cannot protect content that was
 intentionally shared with them.
 
-### 4. Zero-day exploits in dependencies
+### 4. Extraction of the shipped Google OAuth client
+
+**Friday ships a Google OAuth client ID and secret in this public repository,
+on purpose.** If you found it and are about to report it as a leaked
+credential: thank you, and it is deliberate. Here is the reasoning, so you can
+decide whether you disagree rather than having to guess what we intended.
+
+`src/agent_friday/services/google_oauth_client.py` holds
+`BUNDLED_CLIENT_ID` / `BUNDLED_CLIENT_SECRET`. They are also allowlisted **by
+name, with this reasoning attached**, in `.githooks/security_scan.py`
+(`DELIBERATE_PUBLIC_CREDENTIALS`) rather than silenced with a bare pragma.
+
+**Why it is not a secret.** Friday is an installed desktop application.
+[RFC 8252](https://datatracker.ietf.org/doc/html/rfc8252) classifies native
+apps as *public clients* that cannot keep secrets, and
+[Google's own native-app guidance](https://developers.google.com/identity/protocols/oauth2/native-app)
+is written on that assumption. The value ships inside every copy of Friday and
+can be read out of any installation. There is no configuration in which it
+could be confidential.
+
+**What it does not grant.** It identifies the *application*, not a user. It
+reads no mailbox and unlocks no account. Every actual grant still requires that
+person's interactive Google sign-in, on Google's own domain, and the resulting
+refresh token is encrypted on their machine and never transits any server
+Stephen operates.
+
+**What someone can actually do with it.** Two things, both recoverable and
+neither confidential:
+
+1. **Impersonate Friday's consent screen.** Build an app that asks for Google
+   permissions under the name "Agent Friday". This is a phishing/reputation
+   risk, not a data-disclosure one — the victim still has to sign in and
+   approve, and the tokens go to the attacker's app, not to ours.
+2. **Burn the project's user cap.** Google limits an unverified project to 100
+   new users over its lifetime, and that counter cannot be reset. Someone could
+   exhaust it deliberately.
+
+**Mitigation.** Both are fixed by rotating the client, which is a one-line
+change and a release. And (2) is why *bring your own Google sign-in* is a
+first-class path rather than an advanced option: if the shared client is
+exhausted — through ordinary growth or through abuse — every user can still
+connect with a client of their own, and Friday walks them through creating one.
+
+**What would change this.** If Friday ever gains a server component that holds
+tokens on users' behalf, the client stops being a public client and this entry
+stops being true. Nothing here applies to a web deployment.
+
+### 5. Zero-day exploits in dependencies
 
 A supply-chain attack on Flask, Anthropic SDK, sentence-transformers, or another
 dependency could bypass all application-level controls. We mitigate this with
