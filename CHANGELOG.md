@@ -3,7 +3,71 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.2**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.3**
+
+---
+
+## [5.6.3] — 2026-08-26
+
+The first release built for someone who isn't the author. Four things a new
+user actually hits, found by installing Friday on hardware and an account
+that weren't hers.
+
+### Added
+
+- **The local model ladder now scales with the card.** It used to top out at
+  `gemma4:12b` — a 16 GiB card, a 4090, and a 5090 all got handed the same
+  7.5 GB model, because "largest that fits" had nothing left to reach for.
+  Now it runs `qwen3:4b` (2.5 GB) through `qwen3:32b` (20.2 GB) by hardware,
+  and `friday models` shows every rung a machine could run, with the default
+  marked, instead of announcing one decision. Tool calling is now a hard
+  gate on selection rather than a preference — `gemma3:4b` cannot be chosen
+  at any tier because it cannot call tools, and the flag is re-verified
+  against the daemon's own capabilities after every install rather than
+  trusted from a table. **The `qwen3:14b` and `qwen3:32b` fits are
+  UNMEASURED** — arithmetic, not a timed run — and are marked that way in
+  the code and in `friday models`' own output, not just here.
+- **A real arithmetic bug is fixed alongside it.** `vram_gib` was hand-typed
+  per model and already carried ~2 GiB of unstated overhead; a second,
+  separate overhead constant took another 1 GiB off the card on top of that.
+  Together they demanded a 13 GiB card for `gemma4:12b`, a model measured to
+  run fully resident in 11 — so a 12 GiB card was refused the one model
+  built for it. Overhead is now counted once, from a measurement.
+- **API keys are manageable from Settings.** View, replace, and remove any
+  provider's key without touching a launch script. A dead key and an
+  out-of-credit one used to look identical from Settings; `/test` now
+  distinguishes them the same way `Test-AnthropicKey` has since `5.6.2`.
+- **Google connects without a JSON file.** A guided, in-app walkthrough
+  replaces "go create a Cloud project and drop credentials.json here." A
+  one-click path is also built and takes precedence when available, but it
+  ships **inert** — the shared client ID and secret are empty until Stephen
+  mints them for his own Google Cloud project, so today everyone still uses
+  the walkthrough. Full reasoning, including why this had to publish in
+  Production rather than Testing mode, is in the commit and
+  `THREAT_MODEL.md` §4.
+- **Cloud-only mode is now honored everywhere, not just in chat.** A
+  keyless safety net was silently routing cloud-only turns to a local model
+  whenever no Anthropic key was present — correct on a developer machine
+  that always has a key, wrong on the first machine that never did. Fixed
+  across chat, agentic/tool turns, briefings, and scheduled work; the
+  mirror-image bug (local-only turns quietly falling back to the cloud) is
+  fixed at the same time, in the same rule, used by both.
+
+### Fixed
+
+- `cli.BUNDLED_MODEL` still pointed at `gemma3:4b` — `friday doctor` was
+  recommending the one model in the ladder that cannot use Friday's tools.
+  Now derived from the same ladder as everything else.
+- `ollama_manager.recommend_models` was a second, disagreeing model ladder
+  with its own VRAM thresholds; it now shares the planner's arithmetic.
+- The Settings UI could link to provider tabs that don't exist.
+
+### Changed
+
+- Installer documentation pass: `INSTALLATION.md` and `README.md` no longer
+  describe a single bundled model or a fixed RAM floor — both now describe
+  the question the installer actually asks and the ladder it actually
+  offers.
 
 ---
 
