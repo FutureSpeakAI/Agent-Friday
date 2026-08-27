@@ -1,6 +1,6 @@
 {
   "name": "friday-desktop",
-  "version": "5.6.2",
+  "version": "5.6.3",
   "description": "Playwright end-to-end and visual test harness for Agent Friday. The application itself is Python; this file exists only to pin the test tooling.",
   "private": true,
   "scripts": {
