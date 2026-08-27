@@ -351,7 +351,19 @@ def test_the_plan_offers_the_other_rungs_rather_than_deciding_silently():
 
 
 def test_unmeasured_rungs_say_so():
-    """Several of these fits are derived. The table must not imply otherwise."""
+    """Several of these fits are derived. The table must not imply otherwise.
+
+    THIS TEST IS DELIBERATE POLICY, NOT PEDANTRY — please do not delete it to
+    make the table look tidier. Only `gemma4:12b` has ever been loaded and
+    timed here; `qwen3:14b` and `qwen3:32b` fit by arithmetic alone, and a user
+    with a 24 GiB card is told exactly that before they spend 20 GB of
+    bandwidth on it. Saying "calculated, not measured" out loud is worth more
+    than a table that reads as uniformly authoritative, because the alternative
+    is that every row inherits the credibility of the one row that earned it.
+
+    If someone measures 14b or 32b, change the `basis` string to say so and
+    update this test. Do not quietly drop the distinction.
+    """
     by_id = {m["id"]: m for m in mp.BRAIN_MODELS}
     assert "MEASURED" in by_id["gemma4:12b"]["basis"]
     for mid in ("qwen3:14b", "qwen3:32b"):
@@ -615,3 +627,82 @@ def test_vault_failure_is_reported_separately_from_the_count():
     ok, msg = ms.vault_status(report, plan)
     assert ok is False
     assert "NOT working" in msg
+
+
+# ── Defect H3: the default that names a model which cannot call tools ────────
+#
+# H3 was fixed in `cli.BUNDLED_MODEL`, and then found four more times: three
+# shipped defaults in `core.DEFAULT_SETTINGS` and a fallback in the
+# knowledge-graph indexer. All of them said `gemma3:4b`. These tests exist
+# because fixing five copies without removing the copying only resets the clock.
+
+def test_the_bundled_model_can_call_tools():
+    """`friday doctor` tells a user with no model to pull BUNDLED_MODEL.
+
+    That instruction reaches people who are already confused, and it used to
+    name gemma3:4b — the one model in the ladder with no native tool calling.
+    Friday hands the tool registry to whatever is seated regardless, so the
+    result is an assistant that describes actions it never took.
+    """
+    from agent_friday import cli
+    assert cli.BUNDLED_MODEL in mp.TOOL_CAPABLE_IDS
+    assert cli.BUNDLED_MODEL == mp.FLOOR_MODEL, (
+        "BUNDLED_MODEL should be the planner's floor, not a second opinion")
+
+    row = next(m for m in mp.BRAIN_MODELS if m["id"] == cli.BUNDLED_MODEL)
+    assert row["tools"] is True
+
+
+def test_the_floor_is_the_smallest_model_that_keeps_its_tools():
+    """FLOOR_MODEL is derived, so it must track the table rather than a memory."""
+    capable = [m for m in mp.BRAIN_MODELS if m["tools"]]
+    assert mp.FLOOR_MODEL == capable[0]["id"]
+    # Anything cheaper in the table is cheaper precisely because it dropped
+    # the capability, which is not a saving.
+    for m in mp.BRAIN_MODELS:
+        if m["vram_gib"] < capable[0]["vram_gib"]:
+            assert not m["tools"]
+
+
+def test_no_shipped_default_names_a_model_that_cannot_call_tools():
+    """Sweep the REAL settings dict, not a list of places we remembered.
+
+    Walks `core.DEFAULT_SETTINGS` looking for any value that names a model in
+    model_plan's table, and fails if one of them cannot call tools. A sixth
+    copy of H3 fails here whatever key it is added under.
+    """
+    from agent_friday import core
+
+    known = {m["id"]: m for m in mp.BRAIN_MODELS}
+    offenders = []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, f"{path}.{k}")
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                walk(v, f"{path}[{i}]")
+        elif isinstance(node, str) and node in known:
+            if not known[node]["tools"]:
+                offenders.append(f"{path} = {node!r}")
+
+    walk(core.DEFAULT_SETTINGS, "DEFAULT_SETTINGS")
+    assert not offenders, (
+        "shipped default(s) naming a model that cannot call tools: "
+        + "; ".join(offenders)
+        + f". Use model_plan.FLOOR_MODEL ({mp.FLOOR_MODEL}) instead.")
+
+
+def test_the_local_defaults_actually_come_from_the_planner():
+    """Not just tool-capable by luck — sourced, so they move when the ladder does."""
+    from agent_friday import core
+    s = core.DEFAULT_SETTINGS
+    assert s["setup"]["bundled_model"] == mp.FLOOR_MODEL
+    assert s["model_routing"]["local_model"] == mp.FLOOR_MODEL
+    assert s["capability_routing"]["local"]["model"] == mp.FLOOR_MODEL
+
+
+def test_the_indexer_falls_back_to_a_tool_capable_model():
+    from agent_friday.services.knowledge_graph import indexer
+    assert indexer._local_model() in mp.TOOL_CAPABLE_IDS

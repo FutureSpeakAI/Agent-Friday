@@ -203,11 +203,20 @@ class CloudIndexingDisabled(RuntimeError):
 
 
 def _local_model() -> str:
+    """The local model to index with, falling back to model_plan's floor.
+
+    The fallback was `gemma3:4b` in both branches — defect H3 again. Indexing
+    does not itself call tools, so this one was harmless in practice, which is
+    exactly why it survived: a wrong default that never visibly breaks is the
+    kind that is still there years later, waiting to be copied somewhere it
+    matters. Derived from the ladder now, like every other default.
+    """
+    from agent_friday.services.model_plan import FLOOR_MODEL
     try:
         mr = (_load_settings() or {}).get("model_routing") or {}
-        return mr.get("local_model") or "gemma3:4b"
+        return mr.get("local_model") or FLOOR_MODEL
     except Exception:
-        return "gemma3:4b"
+        return FLOOR_MODEL
 
 
 def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
