@@ -187,6 +187,31 @@ BRAIN_MODELS = tuple(
 )
 
 
+#: THE DEFAULT LOCAL MODEL. Import this; do not retype its name.
+#:
+#: Derived — the smallest rung that can call tools — so it moves when the
+#: ladder moves and cannot be left behind by a rename. Every module that needs
+#: "the local model we suggest when the user has none" should read this:
+#: `cli.BUNDLED_MODEL`, the `setup.bundled_model` /`model_routing.local_model` /
+#: `capability_routing.local` defaults in `core`, and the knowledge-graph
+#: indexer's fallback all do.
+#:
+#: WHY THIS EXISTS AS A CONSTANT. Every one of those sites had `gemma3:4b`
+#: typed into it by hand — the one model in this table that cannot call tools.
+#: That is defect H3, and it was found FOUR MORE TIMES after being fixed in
+#: `cli.py`, because a value copied into five files is not a default, it is
+#: five defaults that happen to agree until one of them doesn't. Fixing the
+#: copies without removing the copying just resets the clock.
+#:
+#: `tests/unit/test_model_plan.py::test_no_shipped_default_names_a_model_that_cannot_call_tools`
+#: sweeps the real settings dict and fails if a sixth copy appears.
+FLOOR_MODEL = next(m["id"] for m in BRAIN_MODELS if m["tools"])
+
+#: Every model this planner is willing to seat. For callers that need to
+#: VALIDATE a name rather than choose one.
+TOOL_CAPABLE_IDS = frozenset(m["id"] for m in BRAIN_MODELS if m["tools"])
+
+
 def _pickable(models) -> list:
     """The subset a plan is ALLOWED to select. Tool calling is the gate.
 
@@ -214,6 +239,32 @@ def verify_tool_capability(model_id: str, show_fn=None) -> tuple[bool | None, st
     path depends on. Same move as `local_seats` reading `is_embedding` and
     `residency_catalog.detect_moe` reading `expert_count` — ask the thing what
     it is rather than inferring from its name.
+
+    DO NOT REACH FOR THE TEMPLATE INSTEAD. It is the obvious field, it is one
+    HTTP call cheaper, and it is wrong.
+
+    Ollama derives tool capability by checking whether a model's prompt
+    template consumes `.Tools`, so reading the template looks like asking the
+    same question. It is not, because a model may carry no template LAYER at
+    all — newer families (gemma4, qwen3.5, qwen3-vl, SmolLM3) embed the
+    template in the GGUF itself, and `"template"` then comes back empty or
+    absent. The probe returns False, which reads exactly like "this model
+    cannot call tools".
+
+    Measured on 2026-08-26, against the registry and then against a live
+    daemon:
+
+        model            .Tools in template   /api/show capabilities
+        qwen3:8b         True                 completion, tools, thinking
+        gemma4:12b       False   <-- WRONG    tools, completion, vision, audio
+        qwen3.5:9b       False   <-- WRONG    completion, vision, tools, thinking
+        gemma3:4b        False                (genuinely cannot)
+
+    The ladder above was built with that template probe. Trusting it would
+    have dropped `gemma4:12b` — the ONLY row in this table anyone has actually
+    run and timed — on the grounds that it cannot do the thing it demonstrably
+    does. A capability probe that fails closed on the best-evidenced model is
+    worse than no probe, because its answer looks like diligence.
 
     None is deliberately distinct from False: no daemon is not a failed model,
     and reporting it as one would repeat the mistake this codebase keeps

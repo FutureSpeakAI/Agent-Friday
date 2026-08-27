@@ -1332,6 +1332,12 @@ DEFAULT_AGENT_PERSONALITY = (
     "You give the answer first, then the reasoning. You are honest about uncertainty."
 )
 
+
+# The one place the default local model is decided. `model_plan` imports nothing
+# from `agent_friday` (its only module-level import is `__future__`), so this is
+# free and cannot cycle. See model_plan.FLOOR_MODEL for why it is not retyped.
+from agent_friday.services.model_plan import FLOOR_MODEL as _FLOOR_MODEL  # noqa: E402
+
 DEFAULT_SETTINGS = {
     # NOTE for anyone adding a setting: _load_settings_raw() WHITELISTS against
     # this dict —
@@ -1485,9 +1491,12 @@ DEFAULT_SETTINGS = {
     # User modeling: tracks comm style, domain expertise, and workflow patterns;
     # injects a TIER_1 behavioral summary into the system prompt.
     "user_modeling": {"enabled": True, "inject_prompt": True},
-    # Bundled-model / no-key story. gemma3:4b (Google's open model, ~8GB RAM) is
-    # the default local brain; chat works with zero cloud keys.
-    "setup": {"bundled_model": "gemma3:4b", "no_key_mode": False},
+    # Bundled-model / no-key story. The default local brain is the floor of
+    # model_plan's ladder — the smallest model that can still CALL TOOLS. Chat
+    # works with zero cloud keys. Do not retype the name here: it was
+    # `gemma3:4b`, which cannot call tools, and Friday hands the tool registry
+    # to whatever is seated regardless (defect H3).
+    "setup": {"bundled_model": _FLOOR_MODEL, "no_key_mode": False},
     # Channel bridges (Discord / Telegram). Disabled + allowlist-gated by default;
     # every reply routes through the agent loop + egress gate.
     "channels": {"enabled": False,
@@ -1603,11 +1612,18 @@ DEFAULT_SETTINGS = {
         "task_overrides": {},
         "ollama_url": "http://localhost:11434",
         # Default on-device model (v5): gemma3:4b — Google's open Gemma 3 4B-IT,
-        # runs on ~8GB RAM and is Friday's zero-cloud-key default brain. Picked
+        # Friday's zero-cloud-key default brain, taken from model_plan's ladder
+        # so it cannot drift from what the installer actually installs. Picked
         # for every local route when installed (see model_router._pick_local_model);
-        # if it isn't installed the picker degrades to any installed model. Users
-        # with more RAM can upgrade to gemma3:12b / gemma3:27b for better quality.
-        "local_model": "gemma3:4b",
+        # if it isn't installed the picker degrades to any installed model.
+        #
+        # Users with more card can upgrade — but to qwen3:8b, gemma4:12b,
+        # qwen3:14b or qwen3:32b, which is what `friday models` will offer.
+        # This comment used to recommend gemma3:12b / gemma3:27b. Both were
+        # checked against the registry on 2026-08-26 and NEITHER can call
+        # tools, so that advice pointed users at a bigger version of the exact
+        # problem H3 was about.
+        "local_model": _FLOOR_MODEL,
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
         "cost_tracking": True,
@@ -1686,7 +1702,7 @@ DEFAULT_SETTINGS = {
         "asr":            {"provider": "local-voice-lite", "model": "whisper-small"},
         "tts":            {"provider": "local-voice-lite", "model": "piper-en_US-amy-medium"},
         "embedding":      {"provider": "local",         "model": "all-MiniLM-L6-v2"},
-        "local":          {"provider": "ollama-local",  "model": "gemma3:4b"},
+        "local":          {"provider": "ollama-local",  "model": _FLOOR_MODEL},
     },
     # ── Content pipeline (docs/CONTENT_PIPELINE_SPEC.md) ──
     "content": {

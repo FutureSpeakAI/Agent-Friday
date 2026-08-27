@@ -674,13 +674,16 @@ def _try_import(mod: str) -> bool:
 
 #: The model `friday doctor` tells you to pull if you have none.
 #:
-#: qwen3:4b, not gemma3:4b. This is defect H3 and it outlived two fixes to the
-#: planner because it lives here rather than there: gemma3:4b has NO native
-#: tool calling, so `doctor` was instructing people to install the one model in
-#: the ladder that cannot use Friday's tools — while `model_plan` refused to
-#: select it. qwen3:4b is the floor of that ladder: smaller on disk (2.50 GB
-#: against 3.34) and tool-capable. See services/model_plan._pickable().
-BUNDLED_MODEL = "qwen3:4b"
+#: DERIVED, not typed. This was `gemma3:4b` — defect H3 — and it outlived two
+#: fixes to the planner because it lived here rather than there: gemma3:4b has
+#: no native tool calling, so `doctor` was telling people to install the one
+#: model in the ladder that cannot use Friday's tools, while `model_plan`
+#: refused to select it. Naming the replacement here would have rebuilt the
+#: same trap, so it reads the planner's floor instead.
+#:
+#: `model_plan` imports nothing from `agent_friday`, so this is free and cannot
+#: cycle.
+from agent_friday.services.model_plan import FLOOR_MODEL as BUNDLED_MODEL  # noqa: E402
 
 
 def _ollama_probe(timeout: float = 2.0):
