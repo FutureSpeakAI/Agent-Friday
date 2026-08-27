@@ -248,6 +248,59 @@ def resolve_workspace_temperature(workspace, explicit=None):
         return None
 
 
+_LOCAL_LEGS = ("local",)
+_CLOUD_LEGS = ("cloud", "openai")
+
+
+def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
+    """Drop the fallback legs the user's routing mode forbids.
+
+    Two ladders in this tree -- `_generate_text` below and
+    `services/agent.py::_generate_agent` -- end with the same three lines:
+
+        else:  # cloud / default
+            attempts = [('cloud',  _via_claude, routed_model),
+                        ('openai', _via_openai, None),
+                        ('local',  _via_ollama, None)]
+
+    They carry everything that is not a typed chat turn: briefings, the
+    digest, editorial, scheduled work, subagents, every tool-using agentic
+    turn. On a fresh install with no Anthropic key the first leg raises
+    immediately, the second has no key either, and the third runs a local
+    model -- in cloud_only mode, for the same reason and with the same
+    invisibility as the chat safety net fixed on 2026-08-26. The router's
+    verdict was correct and the ladder below it never asked.
+
+    The mirror was broken too: a local route appended cloud legs, so
+    local_only reached Anthropic whenever a local seat had a bad minute --
+    the defect chat.py already fixed under "LOCAL ONLY MEANS LOCAL ONLY".
+    Only the vault path was protected here, because only the vault path had
+    someone check.
+
+    THE PRIMARY LEG IS NEVER FILTERED. attempts[0] is the router's actual
+    decision, which already honours the mode and already honours an explicit
+    local model id ("the user explicitly chose a local brain" --
+    `_apply_cloud_provider`). Filtering that would break an explicit choice in
+    order to enforce a default, which is the disease rather than the cure.
+    What gets filtered is the drift underneath it: the legs nobody chose,
+    which exist for resilience and were never told what the user asked for.
+
+    Never returns an empty ladder. A resilience rule that can empty itself
+    turns a policy into an outage.
+    """
+    if not attempts:
+        return attempts
+    mode = str(((routing_cfg or {}).get("mode") or "")).lower()
+    if mode == "cloud_only":
+        banned = _LOCAL_LEGS
+    elif mode == "local_only":
+        banned = _CLOUD_LEGS
+    else:
+        return attempts
+    head, tail = attempts[:1], attempts[1:]
+    return head + [a for a in tail if a[0] not in banned]
+
+
 def _health_order(attempts, routed_provider_name=None):
     """Stable-sort a provider-attempt ladder so 'down' providers go last.
 
@@ -396,6 +449,8 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # 5 consecutive failures within cooldown) moves to the END of the ladder —
     # still tried as a last resort (a desktop agent should limp, not refuse),
     # but healthy providers get the request first.
+    # The mode the user chose outranks the resilience ladder.
+    attempts = _mode_filtered_attempts(attempts, routing_cfg)
     attempts = _health_order(attempts, routed_provider_name)
 
     errors = []

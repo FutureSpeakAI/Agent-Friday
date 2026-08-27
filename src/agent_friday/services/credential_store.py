@@ -338,15 +338,50 @@ def _env_key_for_provider(provider: str) -> str | None:
     return None
 
 
+def _came_from_a_launch_script(env_key: str) -> bool:
+    """Did THIS process put that value there, reading start.bat?
+
+    Fails closed: if core cannot tell us, treat the value as the user's own
+    and leave it alone. Trampling an environment variable someone set
+    deliberately would be this same bug pointed the other way.
+    """
+    try:
+        return env_key in (getattr(core, "ENV_FROM_LAUNCH_SCRIPTS", None) or set())
+    except Exception:
+        return False
+
+
 def bootstrap_provider_env() -> int:
     """Decrypt stored provider keys into os.environ under the env var each provider's
     auth expects, so is_provider_available() and the SDK clients see them. Called at
-    server boot, after the launch-script bootstrap. Never overrides a key already set
-    in the environment. Returns the number of keys loaded."""
+    server boot, after the launch-script bootstrap. Returns the number loaded.
+
+    A KEY SAVED IN SETTINGS BEATS ONE START.BAT PUT THERE.
+
+    This used to read "never overrides a key already set in the environment",
+    and start.bat wins the race -- `_bootstrap_env_from_launch_scripts` runs at
+    package import, this runs at server boot. So the stored key was skipped on
+    every boot, and a key swapped in Settings survived exactly until restart:
+    `hot_reload_provider_key` sets os.environ and core.ANTHROPIC_API_KEY live,
+    then the next launch put the dead one back in front of it with the panel
+    still reporting "connected".
+
+    `provider_api_key()` was fixed on 2026-08-26 to read the store first, which
+    covered the probe and the openai-compatible dispatch and NOT
+    `core.get_anthropic_client()` -- which reads os.environ and settings.json
+    and has never consulted the store at all. This is the half that reaches the
+    reader that matters.
+
+    A genuine system environment variable still wins. Someone who sets
+    ANTHROPIC_API_KEY in Windows has done a deliberate thing and knows what it
+    means; only the value we ourselves loaded out of a .bat file gives way.
+    """
     loaded = 0
     for provider in list_provider_keys():
         env_key = _env_key_for_provider(provider)
-        if not env_key or os.environ.get(env_key):
+        if not env_key:
+            continue
+        if os.environ.get(env_key) and not _came_from_a_launch_script(env_key):
             continue
         val = get_provider_key(provider)
         if val:

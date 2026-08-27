@@ -742,6 +742,14 @@ if not _TESTING:
 # started, parse the launch scripts here and fill in anything not already in the
 # environment. os.environ ALWAYS wins (setdefault), so a real env var is never
 # overridden. Best-effort and silent about values — never logs a secret.
+# What THIS process put into the environment from a launch script, as opposed
+# to what the user set in Windows. The difference decides who wins when an
+# explicitly-saved key disagrees with start.bat -- see
+# credential_store.bootstrap_provider_env. Populated by the call below; empty
+# until then, which is the conservative reading.
+ENV_FROM_LAUNCH_SCRIPTS: set = set()
+
+
 def _bootstrap_env_from_launch_scripts():
     repo = Path(__file__).resolve().parents[3]  # __init__.py is src/agent_friday/core/__init__.py → repo root
     # Later files do not override earlier ones (setdefault); start.bat is primary.
@@ -775,6 +783,12 @@ def _bootstrap_env_from_launch_scripts():
                         sources.append(fname)
         except Exception as _be:
             print(f"  [FRIDAY] env bootstrap skipped {fname}: {_be}")
+    # Publish WHICH names came from a launch script. A value this process
+    # read out of start.bat is not the same kind of fact as a variable the
+    # user set in Windows, and until now nothing downstream could tell them
+    # apart -- so a key saved in Settings lost to start.bat on every boot.
+    global ENV_FROM_LAUNCH_SCRIPTS
+    ENV_FROM_LAUNCH_SCRIPTS = set(loaded)
     if loaded:
         # Do NOT name the variables. This runs at package import, so it fires on
         # every CLI command, every test run and the server itself, printing to
