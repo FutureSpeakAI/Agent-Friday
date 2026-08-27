@@ -248,6 +248,15 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     # provider to the end of the ladder — same rule as _generate_text. The
     # vault-forced single-attempt list is untouched (sorting one item is a
     # no-op), so vault guarantees are unaffected.
+    # The mode the user chose outranks the resilience ladder. Without this a
+    # cloud_only machine with no Anthropic key walked cloud -> openai -> LOCAL
+    # for every briefing, scheduled task and subagent turn.
+    try:
+        from agent_friday.services.model_router import _mode_filtered_attempts
+        attempts = _mode_filtered_attempts(attempts, routing_cfg,
+                                           vault_access=vault_access)
+    except Exception:
+        pass
     try:
         from agent_friday.services.model_router import _health_order
         attempts = _health_order(attempts, routed_provider_name)
