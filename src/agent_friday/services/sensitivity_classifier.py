@@ -50,6 +50,11 @@ from typing import Optional
 
 _log = logging.getLogger("friday.privacy.classifier")
 
+#: Below this a model is a toy for adjudication. Mirrors local_seats._MIN_USEFUL_GB:
+#: `functiongemma:270m` is a 270M function-caller and will not return a considered
+#: verdict on an ambiguous span.
+_MIN_SEAT_GB = 1.5
+
 # ── Tier constants ─────────────────────────────────────────────────────────────
 # Mirrored to match vault_access.Tier so callers don't need both imports.
 class Tier:
@@ -485,8 +490,112 @@ def _embedding_tier(text: str) -> tuple[int, float]:
         return 0, 0.0
 
 
+def _llm_seat() -> str | None:
+    """Which installed model adjudicates. None when nothing can.
+
+    This used to be the literal string ``"gemma4:latest"``, POSTed straight to
+    the daemon. That tag is not installed on the reference machine — checked
+    2026-08-26, it returns HTTP 404 — so every call failed, `r.ok` was False,
+    the function returned 0, and the surrounding `except: pass` ate the rest.
+    A hardcoded model name is a dangling pointer the moment someone runs
+    `ollama rm`, and this one had already dangled.
+
+    It is the same defect class as the `gemma3:4b` constants closed in 7da7798:
+    a model NAME written into a module that has no way to know whether the name
+    still resolves. So this resolves instead of naming.
+
+    But "resolve against the installed registry" is not by itself enough, and
+    the first version of this fix proved it — see the comment on `servable`
+    below. There are two local registries and only one of them serves this
+    request.
+
+    The "judge" role is deliberate: adjudicating an ambiguous span is the same
+    kind of work `judgment_gate` does, and it maps onto the `reasoning`
+    capability the user already configures. Note that capability is often a
+    CLOUD model, which is why a servability check rather than a name check is
+    what keeps this layer's never-leaves-the-machine promise.
+    """
+    try:
+        from agent_friday.services import local_seats
+    except Exception as e:
+        _log.debug("Layer 4: could not import local_seats: %s", e)
+        return None
+
+    # WHICH INVENTORY. This is the whole subtlety, and getting it wrong looks
+    # exactly like getting it right.
+    #
+    # There are TWO local model registries on this machine and they do not hold
+    # the same things. `local_seats.installed()` deliberately MERGES them:
+    # Ollama's tags, plus Friday's own llama-server runtime store
+    # (~/.friday/runtime/models/models.json). Resolving against the merged view
+    # returned `gemma4:12b` — which is real, and is a llama-server seat, and is
+    # NOT something Ollama can serve. Measured 2026-08-26: the daemon answered
+    # `{"error":"model 'gemma4:12b' not found"}` with HTTP 404, in 0.0s, which
+    # this function then reported as "no verdict" — indistinguishable from the
+    # model having no opinion.
+    #
+    # That is the SAME failure the hardcoded `gemma4:latest` produced, reached
+    # by a more sophisticated route. Asking a registry is only correct if it is
+    # the registry that will serve the request. This layer POSTs to Ollama, so
+    # it resolves against Ollama.
+    try:
+        from agent_friday.routing.ollama_manager import get_manager
+        servable = {m.get("name") for m in (get_manager().list_models() or ())}
+    except Exception as e:
+        _log.debug("Layer 4: could not read the daemon's inventory: %s", e)
+        return None
+    if not servable:
+        _log.info("Layer 4: the Ollama daemon lists no models — skipping.")
+        return None
+
+    # `installed()` is still the right source for WHICH of those is suitable:
+    # it drops embedding models by capability rather than by name, and returns
+    # (name, size_gb) smallest-first. Intersecting gives "suitable AND
+    # servable by the daemon this layer actually talks to".
+    rows = [(n, g) for n, g in (local_seats.installed() or ())
+            if n in servable and g >= _MIN_SEAT_GB]
+    if not rows:
+        _log.info("Layer 4: no Ollama-servable model is large enough to "
+                  "adjudicate — skipping. Layers 1-3 still run.")
+        return None
+
+    # A configured preference wins when the daemon can actually serve it.
+    try:
+        preferred = local_seats.resolve("judge")
+    except Exception:
+        preferred = None
+    if preferred and preferred in {n for n, _ in rows}:
+        return preferred
+
+    # Otherwise the largest text model. Vision-language tags answer text fine
+    # but are not what anyone means by the adjudicating seat, so they lose —
+    # the same tie-break local_seats applies for the reasoning role.
+    text_rows = [r for r in rows if not local_seats._looks_vision(r[0])] or rows
+    seat = text_rows[-1][0]
+    if preferred and preferred != seat:
+        _log.info("Layer 4: %r is not servable by the Ollama daemon; "
+                  "adjudicating with %r instead.", preferred, seat)
+    return seat
+
+
 def _local_llm_tier(text: str) -> int:
-    """Layer 4: local Ollama pass for ambiguous spans. Never calls cloud."""
+    """Layer 4: local Ollama pass for ambiguous spans. Never calls cloud.
+
+    Returns 0 for "no opinion" — which is also what it returns when no seat is
+    available. Those are the same OUTPUT but not the same EVENT, so the second
+    is logged. An absent component that reads as a legitimate negative result
+    is the failure mode this codebase keeps paying for.
+
+    Note this layer can only ever ESCALATE. `classify()` folds it in through
+    `max(candidates)` and returns early only on SENSITIVE, so switching it on
+    can withhold more, never less. That makes over-redaction the only risk
+    worth measuring here — and this file has four scars from exactly that.
+    """
+    model = _llm_seat()
+    if not model:
+        _log.info("Layer 4 skipped: no local seat available to adjudicate. "
+                  "Classification falls back to layers 1-3.")
+        return 0
     try:
         import requests as _req
         prompt = (
@@ -499,19 +608,42 @@ def _local_llm_tier(text: str) -> int:
         )
         r = _req.post(
             "http://localhost:11434/api/generate",
-            json={"model": "gemma4:latest", "prompt": prompt, "stream": False},
-            timeout=10,
+            json={"model": model, "prompt": prompt, "stream": False,
+                  # REQUIRED, not an optimisation. Every current local seat is
+                  # a thinking model: without this it spends the entire
+                  # num_predict budget emitting "<|channel>thought ..." and
+                  # never reaches the verdict. Measured 2026-08-26 on
+                  # Gemma4-12B-QAT — with `think` unset the reply at
+                  # num_predict=64 was still mid-reasoning; with it set the
+                  # reply was the single word "PRIVATE".
+                  "think": False,
+                  "options": {"temperature": 0, "num_predict": 8}},
+            # A COLD LOAD DOMINATES THIS. Measured: 25.9 s for the first call
+            # (weights off disk) against ~1 s warm. An earlier 20 s ceiling
+            # here timed out on every cold start and returned 0 — which this
+            # layer reports as "no opinion", so a working model looked like a
+            # silent one. Generous enough to survive the load; the layer is
+            # opt-in and reaches ~5% of content, so the worst case is rare.
+            timeout=60,
         )
         if r.ok:
-            word = r.json().get("response", "").strip().upper().split()[0]
-            if "SENSITIVE" in word:
-                return Tier.SENSITIVE
-            if "PRIVATE" in word:
-                return Tier.PRIVATE
-            if "PUBLIC" in word:
-                return Tier.PUBLIC
-    except Exception:
-        pass
+            raw = (r.json().get("response") or "").strip().upper()
+            # Match anywhere in the reply, not just the first token. The
+            # original read `.split()[0]`, which on an empty reply raised
+            # IndexError into the blanket `except` below — indistinguishable
+            # from a network failure — and on "CLASSIFICATION: PRIVATE" looked
+            # at the wrong word entirely.
+            for needle, tier in (("SENSITIVE", Tier.SENSITIVE),
+                                 ("PRIVATE", Tier.PRIVATE),
+                                 ("PUBLIC", Tier.PUBLIC)):
+                if needle in raw:
+                    return tier
+            _log.debug("Layer 4: %s gave no usable verdict (%r)", model, raw[:60])
+        else:
+            _log.info("Layer 4: %s returned HTTP %s — no verdict. This is the "
+                      "shape of a model that is not installed.", model, r.status_code)
+    except Exception as e:
+        _log.debug("Layer 4 call failed (%s): %s", model, type(e).__name__)
     return 0
 
 
