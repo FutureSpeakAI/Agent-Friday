@@ -1006,14 +1006,36 @@ def multi_redirect_uri(cfg, client_type=None):
         return MULTI_DESKTOP_REDIRECT_URI
 
 
+def active_client_kind() -> str:
+    """"byo" | "bundled" | "none" -- which client a connect would use.
+
+    Separate from build_auth_flow so the route can tell the user what is about
+    to happen BEFORE sending them to Google. A person who meets the
+    unverified-app warning unprepared assumes phishing and abandons.
+    """
+    try:
+        from agent_friday.services import google_oauth_client as goc
+        return goc.active_client(discover=_google_client_config)[2]
+    except Exception:
+        return "none"
+
+
 def build_auth_flow(state: str | None = None):
     """Construct an OAuth Flow for a new account connection. Returns
     (flow, redirect_uri, client_type) or raises with a clear message."""
-    cfg, _ = _google_client_config()
+    # Bundled client first-resort, the user's own always winning -- see
+    # services/google_oauth_client.active_client for why that order matters.
+    from agent_friday.services import google_oauth_client as goc
+    cfg, _src, _kind = goc.active_client(discover=_google_client_config)
     if not cfg:
+        # NOT a file path. The message this replaced ("Place a Desktop OAuth
+        # client JSON at ~/.friday/credentials.json") is the wall Janet hit on
+        # 2026-08-26, and it asked a person who wanted her mail summarised to
+        # know what an OAuth client is and where ~/.friday lives on Windows.
         raise RuntimeError(
-            "No Google OAuth client found. Place a Desktop OAuth client JSON at "
-            "~/.friday/credentials.json or set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET."
+            "Friday has no Google sign-in configured yet. Open Settings -> "
+            "Connectors -> Google and choose \"Use my own Google sign-in\" "
+            "to set one up -- Friday walks you through it."
         )
     from google_auth_oauthlib.flow import Flow
     client_type = _google_client_type(cfg) or "installed"

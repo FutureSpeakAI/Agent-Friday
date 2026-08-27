@@ -33794,6 +33794,32 @@ function GoogleAccountsPanel() {
   const [loading, setLoading] = useState(false);
   const [oauth, setOauth] = useState(null);
   const [copied, setCopied] = useState(false);
+  // The consent pre-brief, held between "Add account" and actually opening
+  // Google -- see services/google_oauth_client.consent_prebrief.
+  const [pending, setPending] = useState(null);
+  const [byo, setByo] = useState(null);
+  const [byoId, setByoId] = useState('');
+  const [byoSecret, setByoSecret] = useState('');
+  const openByo = async () => {
+    try {
+      const r = await apiFetch('/api/google/oauth/byo');
+      setByo(await r.json());
+    } catch (e) { setMsg('Could not load the walkthrough.'); }
+  };
+  const saveByo = async () => {
+    try {
+      const r = await apiFetch('/api/google/oauth/byo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: byoId, client_secret: byoSecret })
+      });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        setByo(null); setByoId(''); setByoSecret('');
+        setMsg('Your own Google sign-in is saved. Add an account to use it.');
+      } else setMsg(d.message || 'Could not save that.');
+    } catch (e) { setMsg('Error: ' + e.message); }
+  };
   const refresh = () => apiFetch('/api/google/accounts').then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       setAccounts(d.accounts || []);
@@ -33828,8 +33854,11 @@ function GoogleAccountsPanel() {
       });
       const d = await r.json();
       if (d.status === 'ok' && d.auth_url) {
-        window.open(d.auth_url, '_blank', 'width=600,height=700');
-        setMsg('Complete the OAuth flow in the popup, then click ↻.');
+        // DO NOT open Google yet. Someone who meets "Google hasn't verified
+        // this app" with no warning reads it as phishing and stops -- and
+        // from our side, stopping there is indistinguishable from never
+        // having tried. Show what is coming, then let them press the button.
+        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind });
         setLabel('');
       } else setMsg(d.message || 'Failed to start OAuth.');
     } catch (e) {
@@ -33872,7 +33901,43 @@ function GoogleAccountsPanel() {
       } : x));
     } catch (e) {}
   };
-  return /*#__PURE__*/React.createElement("div", null, oauth && /*#__PURE__*/React.createElement("div", {
+  const _card = { background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.18)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 };
+  const _dim = { fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 };
+  // ── What is about to happen, said before it happens ──────────────────────
+  const prebriefUI = pending && /*#__PURE__*/React.createElement("div", { style: _card },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.85)' } }, pending.brief),
+    /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
+      /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12, color: '#00d4ff' },
+        onClick: () => { window.open(pending.url, '_blank', 'width=600,height=700'); setMsg('Finish in the Google window, then press \u21bb.'); setPending(null); } },
+        'Continue to Google'),
+      /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12 }, onClick: () => setPending(null) }, 'Not now'),
+      pending.kind === 'bundled' && /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12 },
+        onClick: () => { setPending(null); openByo(); } }, 'Use my own Google sign-in instead')));
+  // ── Bring your own: ordered, clickable, ending in a paste field ──────────
+  const byoUI = byo && /*#__PURE__*/React.createElement("div", { style: _card },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, 'Use your own Google sign-in'),
+    /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 10 } },
+      'About ten minutes, once. No warning screen, and no limit on how many people can connect. Nothing to download and no file to save anywhere.'),
+    (byo.steps || []).map(st => /*#__PURE__*/React.createElement("div", { key: st.n, style: { marginBottom: 10 } },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: 'rgba(255,255,255,0.9)' } }, st.n + '. ' + st.do),
+      st.detail && /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginTop: 2 } }, st.detail),
+      st.url && /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 11, color: '#7dd3fc', marginTop: 4 },
+        onClick: () => window.open(st.url, '_blank', 'noopener') }, 'Open this step \u2197'),
+      st.scopes && /*#__PURE__*/React.createElement("div", { style: { marginTop: 6 } },
+        /*#__PURE__*/React.createElement("textarea", { readOnly: true, className: 'input', style: { width: '100%', height: 92, fontSize: 10, fontFamily: 'JetBrains Mono' }, value: st.scopes.join('\n') }),
+        /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 11, marginTop: 4 },
+          onClick: () => { navigator.clipboard && navigator.clipboard.writeText(st.scopes.join('\n')); setMsg('Permissions copied.'); } }, 'Copy all')),
+      st.paste && /*#__PURE__*/React.createElement("div", { style: { marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 } },
+        /*#__PURE__*/React.createElement("input", { className: 'input', style: { fontSize: 11 }, placeholder: 'Client ID', value: byoId, onChange: e => setByoId(e.target.value) }),
+        /*#__PURE__*/React.createElement("input", { className: 'input', type: 'password', style: { fontSize: 11 }, placeholder: 'Client secret', value: byoSecret, onChange: e => setByoSecret(e.target.value) }),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 11, color: '#00d4ff' }, disabled: !byoId.trim() || !byoSecret.trim(), onClick: saveByo }, 'Save'),
+          /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 11 }, onClick: () => setByo(null) }, 'Close'))))));
+  return /*#__PURE__*/React.createElement("div", null, prebriefUI, byoUI, !pending && !byo && /*#__PURE__*/React.createElement("button", {
+    className: 'settings-btn',
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.45)', marginBottom: 10 },
+    onClick: openByo
+  }, 'Use my own Google sign-in \u2192'), oauth && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(0,212,255,0.05)',
       border: '1px solid rgba(0,212,255,0.15)',

@@ -133,8 +133,16 @@ def connect_google_account():
                 _PENDING.pop(s, None)
         session["ga_oauth_state"] = state
         session["ga_oauth_label"] = label
+        from agent_friday.services import google_oauth_client as _goc
+        _kind = ga.active_client_kind()
         resp = {"status": "ok", "auth_url": auth_url, "state": state,
-                "client_type": client_type, "redirect_uri": redirect_uri}
+                "client_type": client_type, "redirect_uri": redirect_uri,
+                # Say what is coming BEFORE they meet it. The unverified-app
+                # screen reads as a phishing warning to anyone who was not
+                # told to expect it, and that single paragraph is probably
+                # worth more than the rest of this feature.
+                "client_kind": _kind,
+                "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (
                 f"A Web OAuth client is in use; register '{redirect_uri}' under "
@@ -155,7 +163,19 @@ def google_account_callback():
 
     err = request.args.get("error")
     if err:
-        return f"<h2>Google authorization failed</h2><p>{err}</p>", 400
+        # `access_denied` rendered to a person who has no idea what it is, at
+        # the exact moment they need to be told there is another way in. The
+        # cap arrives through this branch, so this is where the escape hatch
+        # has to be offered -- not discovered at user 101.
+        from agent_friday.services import google_oauth_client as _goc
+        _code = _goc.classify_error(err, request.args.get("error_description"))
+        _msg = _goc.explain_error(_code)
+        return (
+            "<h2>Google did not finish connecting</h2>"
+            f"<p>{_msg}</p>"
+            "<p>Close this tab and go back to Friday: "
+            "<b>Settings &rarr; Connectors &rarr; Google</b>.</p>"
+        ), 400
     state = request.args.get("state") or session.get("ga_oauth_state")
     with _PENDING_LOCK:
         # Pop (not peek) before doing anything else — single-use, so a
@@ -189,6 +209,37 @@ def google_account_callback():
         )
     except Exception as e:
         return f"<h2>Token exchange failed</h2><p>{e}</p>", 500
+
+
+@google_accounts_bp.route("/api/google/oauth/byo", methods=["GET", "POST", "DELETE"])
+def google_oauth_byo():
+    """The bring-your-own walkthrough, and the paste field it ends in.
+
+    GET serves the ordered steps and the scope list so the UI renders them one
+    card at a time. POST takes the two values Google shows on screen. DELETE
+    forgets them and falls back to the bundled client.
+
+    There is deliberately no file anywhere in this. "Download this JSON and put
+    it in this directory" is what stopped Janet on 2026-08-26.
+    """
+    from agent_friday.services import google_oauth_client as goc
+    if request.method == "GET":
+        return jsonify({
+            "status": "ok",
+            "steps": goc.byo_steps(),
+            "scopes": goc.byo_scopes(),
+            "active": ga.active_client_kind(),
+        })
+    if request.method == "DELETE":
+        return jsonify({"status": "ok", "removed": goc.clear_byo(),
+                        "active": ga.active_client_kind()})
+    body = request.get_json(silent=True) or {}
+    try:
+        goc.save_byo(body.get("client_id"), body.get("client_secret"))
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    # Never echo what was sent -- the response says only that it landed.
+    return jsonify({"status": "ok", "active": ga.active_client_kind()})
 
 
 @google_accounts_bp.route("/api/google/accounts/<account_id>/label", methods=["POST"])

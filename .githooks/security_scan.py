@@ -33,6 +33,41 @@ except Exception:
 # Lines containing any of these markers are skipped entirely.
 LINE_ALLOW_MARKERS = ("pragma: allowlist secret", "nosec", "noqa: secret")
 
+# ── Deliberately public credentials ─────────────────────────────────────────
+# Values that ARE credentials, ARE committed on purpose, and must not be
+# reported as leaks. This is a NAMED list rather than a bare pragma so the
+# reason travels with the exemption: a `# pragma: allowlist secret` on its own
+# tells a reviewer that somebody silenced the scanner, not why they were right
+# to. Same principle as PLACEHOLDER_USERNAMES below -- an explicit list, where
+# adding an entry IS the review.
+#
+# Each key is the assignment target; each value is why it is safe.
+DELIBERATE_PUBLIC_CREDENTIALS = {
+    "BUNDLED_CLIENT_ID": (
+        "Google OAuth client for an INSTALLED app. RFC 8252 and Google's own "
+        "native-app guidance treat these as public clients that cannot keep "
+        "secrets -- the value ships inside every copy of Friday and is "
+        "readable from any install. It identifies the APPLICATION, not a "
+        "user, and grants access to nothing on its own: every real grant "
+        "still needs that person's interactive Google sign-in. "
+        "See THREAT_MODEL.md, 'Shipped Google OAuth client'."
+    ),
+    "BUNDLED_CLIENT_SECRET": (
+        "The other half of the same installed-app client. Called a 'secret' by "
+        "Google's console for historical reasons; it is not one for this "
+        "client type. Same reasoning and same doc reference as above."
+    ),
+}
+
+_ASSIGN_TARGET_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*[:=]")
+
+
+def _is_deliberately_public(text: str) -> bool:
+    """Is this line assigning one of the credentials we ship on purpose?"""
+    m = _ASSIGN_TARGET_RE.match(text)
+    return bool(m and m.group(1) in DELIBERATE_PUBLIC_CREDENTIALS)
+
+
 # Substrings that make a "key = value" match obviously a placeholder, not a real
 # secret. Case-insensitive.
 PLACEHOLDER_VALUES = (
@@ -68,6 +103,8 @@ def _not_placeholder(value: str) -> bool:
 # credential. (Both blocked a commit on 2026-08-21.)
 _CODE_REF_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 _CODE_PUNCT = "`()[]{}"
+# A single unquoted word: a variable name being passed, not a value.
+_BARE_IDENT_RE = re.compile(r"^[A-Za-z_]\w*$")
 
 def _looks_like_code_not_literal(value: str) -> bool:
     v = value.strip().strip(",;").rstrip(")")
@@ -80,7 +117,26 @@ def _looks_like_code_not_literal(value: str) -> bool:
             return False
     if any(c in v for c in _CODE_PUNCT):
         return True
-    return bool(_CODE_REF_RE.match(v))
+    if _CODE_REF_RE.match(v):
+        return True
+    # A BARE IDENTIFIER IS A VARIABLE, NOT A LITERAL.
+    #
+    # _CODE_REF_RE requires a dot, so it exempts `core.GEMINI_API_KEY` and
+    # misses `byoSecret` -- and `client_secret: byoSecret` in index.html
+    # blocked a commit on 2026-08-26. That is a reference being PASSED, which
+    # is the correct pattern this scanner's own comment above defends; the
+    # value it names is nowhere in the diff.
+    #
+    # This is the fifth time a check here could not tell USING a thing from
+    # WRITING ABOUT one (see KNOWN_ISSUES.md and the comments either side).
+    # Crying wolf is not a harmless failure mode: it is how a scanner ends up
+    # routinely bypassed and protecting nothing.
+    #
+    # Safe because the RULES[:7] shape check above already ran -- anything
+    # matching a real key format (sk-, AQ., GOCSPX-, a JWT) has returned False
+    # before reaching here. And a genuine secret is never an unquoted bare
+    # word: `PASSWORD = hunter2` is a NameError, not a credential.
+    return bool(_BARE_IDENT_RE.match(v))
 
 def _real_secret_assignment(value: str) -> bool:
     return _not_placeholder(value) and not _looks_like_code_not_literal(value)
@@ -197,6 +253,8 @@ def detect() -> list:
             continue
         for lineno, text in added_lines(path):
             if any(marker in text for marker in LINE_ALLOW_MARKERS):
+                continue
+            if _is_deliberately_public(text):
                 continue
             for category, rx, validator in RULES:
                 m = rx.search(text)
