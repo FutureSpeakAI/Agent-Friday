@@ -715,6 +715,20 @@ class TestCloudOnlyStillHonoursTheChoice:
     return that made that false in the default mode.
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_global_seat(self, monkeypatch):
+        """_chosen_seat falls back to settings.capability_routing.reasoning.
+
+        Left to the real ~/.friday/settings.json these tests are not testing
+        the router, they are testing whichever model the last test to write
+        settings happened to leave behind — which is exactly how
+        test_no_seat_and_no_override_is_unchanged passed alone and failed in a
+        full run. The seat under test is the one passed in ctx; the global one
+        is stubbed empty so "no seat" means no seat.
+        """
+        import agent_friday.core as core
+        monkeypatch.setattr(core, "_load_settings", lambda: {}, raising=False)
+
     def _patch_ollama(self, monkeypatch, available=False):
         import agent_friday.routing.ollama_manager as om
 
