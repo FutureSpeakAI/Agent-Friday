@@ -1,4 +1,4 @@
-"""A1 — the inverted test default (decision D9).
+﻿"""A1 — the inverted test default (decision D9).
 
 These tests assert the property the inversion buys: with no marker and no
 opt-in, a chat request executes the REAL provider body, so the payload that
@@ -33,8 +33,18 @@ def test_real_call_claude_body_runs_and_builds_a_payload(offline_calls):
     sent = offline_calls["anthropic"][0]
     assert sent["model"] == "claude-sonnet-5"
     assert sent["max_tokens"] == 256
+    # A short system prompt stays a bare string: it is under every model's
+    # minimum cacheable prefix, so prompt_cache declines to spend a breakpoint
+    # that Anthropic would accept and then silently ignore.
     assert sent["system"] == "be brief"
-    assert sent["messages"][0]["content"] == "hello"
+    # The newest message carries the rolling cache breakpoint, so its content
+    # is block form rather than the bare string that was passed in. This
+    # assertion read `== "hello"` and broke when caching landed in 0c47906 --
+    # the payload was right and the test was describing the world before it.
+    content = sent["messages"][0]["content"]
+    assert isinstance(content, list) and len(content) == 1
+    assert content[0]["text"] == "hello"
+    assert content[0]["cache_control"] == {"type": "ephemeral"}
     # temperature is deliberately NOT forwarded (model_router.py:144-153).
     assert "temperature" not in sent
 
