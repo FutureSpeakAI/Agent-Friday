@@ -121,7 +121,22 @@ class MCPServerProcess:
 
     def _spawn(self) -> None:
         full_env = os.environ.copy()
-        full_env.update({k: str(v) for k, v in self.env.items()})
+        # self.env holds connector credentials ENCRYPTED (see
+        # services/connector_secrets) so they are ciphertext everywhere they
+        # can be observed — on disk, in this object, and in the raw-config
+        # route. This is the one place they have to be real: the child process
+        # reads them from its environment. A value that will not decrypt raises
+        # here, where the cause is legible, rather than being handed to the
+        # server as if it were the token.
+        env = self.env
+        try:
+            from agent_friday.services import connector_secrets as _cse
+            env = _cse.decrypt_env(env)
+        except Exception as e:
+            self._log(f"[mcp] {self.name}: credential could not be decrypted "
+                      f"({e}) — reconnect this connector to re-enter it")
+            raise
+        full_env.update({k: str(v) for k, v in env.items()})
         cmd = [self._resolve_command(), *self.args]
         self.proc = subprocess.Popen(
             cmd,
