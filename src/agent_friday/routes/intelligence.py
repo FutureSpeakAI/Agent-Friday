@@ -292,15 +292,52 @@ def _costs_rollup():
     return out
 
 
+#: How long a successful model list is reused. The set of PULLED models changes
+#: when somebody pulls one, not between two renders of a panel that polls on a
+#: timer, so this is short enough to feel live and long enough to stop the poll
+#: paying for the same answer.
+_OLLAMA_OK_TTL_S = 25.0
+#: How long a refusal is remembered. MEASURED on Windows 2026-08-28: connecting
+#: to a closed localhost port costs ~2,005 ms (the stack retries the SYN before
+#: giving up) and a black-holed address costs the full 3,000 ms timeout. Not the
+#: microseconds loopback suggests. With the panel polling and no memory of the
+#: failure, a machine with Ollama switched off paid that on every render against
+#: a client abort of twelve seconds.
+#:
+#: Backoff rather than removal: the daemon can be started at any moment, so the
+#: probe must keep trying — it must simply not re-learn the same "no" at full
+#: price several times a minute.
+_OLLAMA_DOWN_BACKOFF_S = 20.0
+
+#: (checked_at, sizes_or_None). None means the last probe failed.
+_OLLAMA_CACHE = (0.0, None)
+
+
+def reset_ollama_probe_state_for_tests():
+    global _OLLAMA_CACHE
+    _OLLAMA_CACHE = (0.0, None)
+
+
 def _ollama_sizes():
-    """On-disk size per local model — the basis for the wake estimate."""
-    sizes = {}
+    """On-disk size per local model — the basis for the wake estimate.
+
+    Cached both ways. A success is reused briefly; a failure is remembered for
+    longer, because a failure is the expensive one.
+    """
+    global _OLLAMA_CACHE
+    now = time.time()
+    stamp, hit = _OLLAMA_CACHE
+    if hit is not None and (now - stamp) < _OLLAMA_OK_TTL_S:
+        return hit
+    if hit is None and stamp and (now - stamp) < _OLLAMA_DOWN_BACKOFF_S:
+        # Known down, recently. Answer without touching the socket.
+        return {}
     try:
-        import requests
         from agent_friday.routing.ollama_manager import OLLAMA_HOST  # type: ignore
         host = OLLAMA_HOST
     except Exception:
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    sizes = {}
     try:
         import requests
         r = requests.get(f"{host.rstrip('/')}/api/tags", timeout=3)
@@ -308,7 +345,12 @@ def _ollama_sizes():
             if m.get("name"):
                 sizes[m["name"]] = int(m.get("size") or 0)
     except Exception:
-        pass
+        # Record the failure, not an empty success: an empty dict cached as a
+        # hit would look like "Ollama is running and has no models", which is a
+        # different and wronger thing to display.
+        _OLLAMA_CACHE = (now, None)
+        return {}
+    _OLLAMA_CACHE = (now, sizes)
     return sizes
 
 

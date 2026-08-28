@@ -31876,7 +31876,17 @@ function useIntelligence(pollMs) {
      unfinished. Every async surface gets a timeout and a stated failure. */
   const load = React.useCallback(() => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
+    // 30s, not 12. MEASURED 2026-08-28: this route costs ~3.2s on a cold cache
+    // and ~200ms warm on a fast machine with Ollama running, so twelve looked
+    // generous. It is not, because the cold path is where the variance lives:
+    // a machine with the Ollama daemon switched off pays ~2s per refused probe
+    // (Windows retries the SYN before giving up — loopback does not fail fast),
+    // and a slower disk multiplies the catalogue build on top. The panel was
+    // reported as "failing" on an install where it was in fact still working
+    // and being cut off, which is the worst of both: no data AND a wrong cause.
+    // The probe backoff in routes/intelligence.py fixes the repeat cost; this
+    // stops the first, honest, slow render being thrown away.
+    const timer = setTimeout(() => ctrl.abort(), 30000);
     apiFetch('/api/intelligence', { signal: ctrl.signal }).then(r => {
       if (!r.ok) {
         // 401 after a restart is the commonest cause by far: the API token is
@@ -31904,7 +31914,7 @@ function useIntelligence(pollMs) {
     }).catch(e => {
       setErr(e && e.name === 'AbortError'
         ? { kind: 'timeout',
-            what: '/api/intelligence did not answer within 12 seconds.',
+            what: '/api/intelligence did not answer within 30 seconds.',
             fix: 'The server may be busy loading a model. Retry in a moment.' }
         : { kind: 'unreachable',
             what: 'Could not reach the Friday server at all.',
