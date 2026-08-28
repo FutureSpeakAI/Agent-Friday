@@ -36,9 +36,19 @@ DB_PATH = FRIDAY_DIR / "costs.db"
 # Real pricing is input ≠ output. Unknown models fall back to the blended
 # provider_registry rate (used for both directions) or 0 for local/on-device.
 PRICING = {
-    "claude-sonnet-5":            {"in": 0.003, "out": 0.015},
-    "claude-fable-5":             {"in": 0.003, "out": 0.015},
-    "claude-opus-5":            {"in": 0.015, "out": 0.075},
+    # Published USD per 1M, divided by 1000. Checked against Anthropic's price
+    # page 2026-08-28. Opus 5 sat at 0.015/0.075 (a 3x overcharge) and Fable 5
+    # at 0.003/0.015 (a 3.3x undercharge) for the whole 5.6.x line, so the most
+    # expensive model in the lineup was billed as the cheapest and the default
+    # model was billed at triple. Every spend figure downstream inherited both.
+    "claude-fable-5":             {"in": 0.010, "out": 0.050},   # $10 / $50
+    "claude-opus-5":              {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-sonnet-5":            {"in": 0.003, "out": 0.015},   # $3  / $15
+    # `claude-haiku-4-5` is the model id. The dated form is a legacy alias, and
+    # keying ONLY on it meant a canonical-id call missed the table, fell through
+    # the registry fallback (Haiku has no cost_per_1k there) and metered $0 --
+    # which reads as "local, on-device, free" for a cloud call.
+    "claude-haiku-4-5":           {"in": 0.001, "out": 0.005},   # $1  / $5
     "claude-haiku-4-5-20251001":  {"in": 0.001, "out": 0.005},
     "gpt-4o":                     {"in": 0.0025, "out": 0.010},
     "gpt-4o-mini":                {"in": 0.00015, "out": 0.0006},
@@ -63,10 +73,28 @@ PRICING = {
 }
 
 
-def price_for(model):
-    """Return {'in', 'out'} USD-per-1K for a model. Local models → 0."""
+#: Fast mode runs the SAME model at up to 2.5x output tokens/sec and bills at
+#: its own rate -- it is a different price, not a faster same price. Opus 5 and
+#: Opus 4.8 only; every other model ignores the request, so asking for it
+#: elsewhere must not change the bill. Nothing in Friday sets speed='fast'
+#: today: this is the meter being right in advance rather than a bug being
+#: fixed, so that the first caller to want it cannot silently under-bill.
+FAST_PRICING = {
+    "claude-opus-5": {"in": 0.010, "out": 0.050},   # $10 / $50
+}
+
+
+def price_for(model, speed=None):
+    """Return {'in', 'out'} USD-per-1K for a model. Local models → 0.
+
+    ``speed='fast'`` selects the fast-mode rate where one exists. An unrecognised
+    speed is not a licence to invent a rate: it falls back to standard, because
+    a made-up number is worse than a known-conservative one.
+    """
     if not model:
         return {"in": 0.0, "out": 0.0}
+    if speed == "fast" and model in FAST_PRICING:
+        return FAST_PRICING[model]
     if model in PRICING:
         return PRICING[model]
     try:
@@ -99,8 +127,8 @@ CACHE_WRITE_MULT = 1.25
 
 
 def cost_for(model, input_tokens, output_tokens,
-             cache_read_tokens=0, cache_write_tokens=0):
-    p = price_for(model)
+             cache_read_tokens=0, cache_write_tokens=0, speed=None):
+    p = price_for(model, speed=speed)
     return round((input_tokens / 1000.0) * p["in"]
                  + (cache_read_tokens / 1000.0) * p["in"] * CACHE_READ_MULT
                  + (cache_write_tokens / 1000.0) * p["in"] * CACHE_WRITE_MULT
@@ -255,7 +283,7 @@ def flush():
 def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
            session_ctx=None, workspace=None, kind=None, schedule_id=None,
            run_id=None, cost_usd=None, cache_read_tokens=0,
-           cache_write_tokens=0):
+           cache_write_tokens=0, speed=None):
     """Record one model call. Buffered; flushed off the hot path.
 
     ``cost_usd`` overrides the locally computed price — used when the provider
@@ -277,7 +305,7 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
             cost = round(float(cost_usd), 6)
         else:
             cost = cost_for(model, input_tokens, output_tokens,
-                            cache_read_tokens, cache_write_tokens)
+                            cache_read_tokens, cache_write_tokens, speed=speed)
             if cost == 0.0 and provider:
                 # Enrichment tier: the pricing service knows discovery-cache and
                 # descriptor prices for models the static PRICING table doesn't.
