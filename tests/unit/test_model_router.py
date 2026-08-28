@@ -698,3 +698,75 @@ class TestVaultKeywords:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+class TestCloudOnlyStillHonoursTheChoice:
+    """`cloud_only` means "nothing local". It never meant "ignore the picker".
+
+    `_route_basic` returned the default cloud model the instant the mode was
+    cloud_only, before it looked at task_overrides and before it looked at the
+    seat. cloud_only is the FACTORY DEFAULT, so on a stock install the model a
+    user picked was read from disk, shown in the UI, and thrown away at
+    dispatch — the "the model I picked is not the model that answered" report,
+    from a different site than the fallback-ladder fix in services/model_router.
+
+    The comment above the seat lookup says the seat is consulted "BEFORE the
+    speed/size heuristics for every ordinary class". It sits underneath the
+    return that made that false in the default mode.
+    """
+
+    def _patch_ollama(self, monkeypatch, available=False):
+        import agent_friday.routing.ollama_manager as om
+
+        class FakeOllama:
+            def is_available(self):
+                return available
+            def list_models(self):
+                return []
+        monkeypatch.setattr(om, "get_manager", lambda *a, **kw: FakeOllama())
+
+    def test_conversation_seat_survives_dispatch(self, monkeypatch):
+        self._patch_ollama(monkeypatch)
+        r = _router(mode="cloud_only", default_cloud_model="claude-sonnet-5")
+        result = r.route(_msgs("what is 2+2?"), {
+            "conversation_seat": {"model": "claude-opus-5",
+                                  "provider": "anthropic"},
+            # What routes/chat.py actually passes: the GLOBAL orchestrator
+            # model. It is the value that used to win over the seat.
+            "cloud_model": "claude-sonnet-5",
+        })
+        assert result["provider"] == "cloud"
+        assert result["model"] == "claude-opus-5", (
+            "the seat the user bound to this conversation was discarded")
+
+    def test_task_override_survives_dispatch(self, monkeypatch):
+        self._patch_ollama(monkeypatch)
+        r = _router(mode="cloud_only", default_cloud_model="claude-sonnet-5",
+                    task_overrides={TaskType.CODE: {"provider": "cloud",
+                                                    "model": "claude-fable-5"}})
+        result = r.route(_msgs("write a python function to reverse a list"))
+        assert result["task_type"] == TaskType.CODE
+        assert result["model"] == "claude-fable-5", (
+            "a deliberate per-class rule was never consulted in cloud_only")
+
+    def test_a_local_seat_does_not_defeat_cloud_only(self, monkeypatch):
+        """The mode's guarantee is unchanged: nothing runs on this machine.
+
+        Honouring a cloud pick must not become a way to smuggle a local model
+        past cloud_only, so a local binding still yields the cloud default.
+        """
+        self._patch_ollama(monkeypatch, available=True)
+        r = _router(mode="cloud_only", default_cloud_model="claude-sonnet-5")
+        result = r.route(_msgs("what is 2+2?"), {
+            "conversation_seat": {"model": "gemma4:12b",
+                                  "provider": "ollama-local"}})
+        assert result["provider"] == "cloud"
+        assert result["is_local"] is False
+        assert result["model"] == "claude-sonnet-5"
+
+    def test_no_seat_and_no_override_is_unchanged(self, monkeypatch):
+        self._patch_ollama(monkeypatch)
+        r = _router(mode="cloud_only", default_cloud_model="claude-sonnet-5")
+        result = r.route(_msgs("what is 2+2?"))
+        assert result["provider"] == "cloud"
+        assert result["model"] == "claude-sonnet-5"
