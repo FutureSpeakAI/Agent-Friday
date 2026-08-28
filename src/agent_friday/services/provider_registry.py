@@ -70,11 +70,16 @@ DEFAULT_PROVIDERS = [
                    "claude-haiku-4-5-20251001"],
         "capabilities": ["tools", "vision"],
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
+        # Blended (midpoint of in/out) per 1K, kept equal to cost_meter.PRICING
+        # by tests/unit/test_cost_meter.py. This is both the rate the picker
+        # displays and cost_meter.price_for's fallback, so a stale number here
+        # is visible in two places at once.
         "cost_per_1k": {
-            "claude-sonnet-5": 0.030,
             "claude-fable-5": 0.030,
-            "claude-opus-5": 0.075,
-            "claude-haiku-4-5-20251001": 0.005,
+            "claude-opus-5": 0.015,
+            "claude-sonnet-5": 0.009,
+            "claude-haiku-4-5": 0.003,
+            "claude-haiku-4-5-20251001": 0.003,
         },
         "model_meta": {
             "claude-sonnet-5": {"label": "Claude Sonnet 5", "short": "Sonnet 5",

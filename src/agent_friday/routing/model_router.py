@@ -73,12 +73,18 @@ CLOUD_MODEL_FALLBACK_CHAIN = (
 )
 
 
-# Cost estimates per 1K tokens (USD) — used for savings tracking.
+# Blended cost per 1K tokens (USD) — used for savings tracking. The midpoint
+# of cost_meter.PRICING's two directions, which is the same blend model_catalog
+# computes for discovered models. These carried Claude-3-Opus-era numbers until
+# 2026-08-28 (Opus at 0.075/1K, 15x its real input rate), which overstated how
+# much routing locally had saved. cost_meter.PRICING is the source of truth;
+# tests/unit/test_cost_meter.py pins these to it.
 CLOUD_COST_PER_1K = {
-    "claude-sonnet-5": 0.030,
     "claude-fable-5": 0.030,
-    "claude-opus-5": 0.075,
-    "claude-haiku-4-5-20251001": 0.001,
+    "claude-opus-5": 0.015,
+    "claude-sonnet-5": 0.009,
+    "claude-haiku-4-5": 0.003,
+    "claude-haiku-4-5-20251001": 0.003,
 }
 
 
