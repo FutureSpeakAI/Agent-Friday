@@ -60,11 +60,17 @@ _EPHEMERAL = {"type": "ephemeral"}
 #: Anthropic will not cache a prefix shorter than this, per model. A breakpoint
 #: below the floor is accepted and then ignored, so we skip it rather than spend
 #: a breakpoint (there are only 4) on something that cannot hit.
+#: The minimum is NOT monotonic across generations — 512 on the newest models
+#: and 4096 on Haiku 4.5 — so it cannot be guessed from the model's age.
 _MIN_CACHEABLE = {
+    "claude-fable-5": 512,
     "claude-opus-5": 512,
     "claude-sonnet-5": 1024,
-    "claude-fable-5": 1024,
     "claude-sonnet-4-6": 1024,
+    # Same dated-key trap as the pricing table: keyed only on the alias, the
+    # canonical id fell to the 1024 default and we would mark a 2K prefix that
+    # Anthropic then ignores — one of four breakpoints spent on nothing.
+    "claude-haiku-4-5": 4096,
     "claude-haiku-4-5-20251001": 4096,
 }
 _MIN_CACHEABLE_DEFAULT = 1024
@@ -308,8 +314,12 @@ def _mark_last_message(messages):
     tool_result — ``agent.py`` never rewrites it mid-loop), so iteration N+1's
     prompt has iteration N's prompt as an exact prefix. Marking the newest
     message writes a cache the next iteration reads at 0.1x. Anthropic matches
-    the longest previously-cached prefix automatically, so one moving breakpoint
-    is enough; we do not need to leave a trailing one behind.
+    the longest previously-cached prefix automatically — but only by walking
+    back at most 20 content blocks from the breakpoint, so one moving
+    breakpoint is enough ONLY while a turn stays shorter than that. It does not
+    here: eleven parallel tool calls append 22 blocks in one iteration.
+    ``_mark_lookback_anchor`` leaves the trailing breakpoint this docstring
+    used to say was unnecessary.
 
     Measured over 14 days of real calls: this alone accounts for most of the 80%
     reduction, because the median burst runs 5 calls and the expensive ones run
@@ -339,6 +349,89 @@ def _mark_last_message(messages):
     return messages, False
 
 
+#: A breakpoint walks backward at most this many CONTENT BLOCKS looking for a
+#: prior cache entry. Past it the match silently fails: full price, no error.
+LOOKBACK_BLOCKS = 20
+#: Where the anchor goes, in blocks back from the newest, when no message
+#: boundary is available. Inside the window so the rolling breakpoint can still
+#: see it, and far enough behind to extend the pair's reach to ~35 blocks.
+ANCHOR_TARGET_BLOCKS = 15
+
+
+def _flatten_blocks(messages):
+    """[(msg_index, block_index_or_None)] oldest→newest, one entry per block.
+
+    ``None`` marks a message whose content is a bare string — one block, but it
+    has to be promoted to list form before it can carry a breakpoint.
+    """
+    flat = []
+    for mi, m in enumerate(messages):
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, list):
+            flat.extend((mi, bi) for bi in range(len(content)))
+        else:
+            flat.append((mi, None))
+    return flat
+
+
+def _mark_lookback_anchor(messages):
+    """Second breakpoint behind the rolling one, inside the 20-block window.
+
+    The rolling breakpoint alone suffices only while a turn appends fewer blocks
+    than the lookback. Friday's agent loop routinely breaks that: Claude fans
+    out N tools in one assistant message and we answer with N tool_result blocks
+    in one user message, so a single iteration appends 2N blocks. Past eleven
+    parallel tools the previous iteration's entry has fallen out of the window,
+    and every iteration after it silently pays full price — the exact opposite
+    of where this module claims its savings come from.
+
+    Anchoring on a MESSAGE BOUNDARY is preferred: that is where the previous
+    iteration's rolling breakpoint actually sat, so the entry already exists.
+    Only when a single message is itself longer than the window does the anchor
+    land mid-message, which is legal (cache_control rides on any content block,
+    tool_use and tool_result included) and is the only option left.
+    """
+    if not isinstance(messages, list) or not messages:
+        return messages, False
+    flat = _flatten_blocks(messages)
+    total = len(flat)
+    if total <= LOOKBACK_BLOCKS:
+        # The natural prefix match already reaches the previous entry. A second
+        # breakpoint here would buy nothing and burn one of the four allowed.
+        return messages, False
+
+    boundaries = {}          # distance-from-end -> flat index, at message ends
+    for i, (mi, _bi) in enumerate(flat):
+        if i + 1 == total or flat[i + 1][0] != mi:
+            boundaries[total - 1 - i] = i
+    candidates = [d for d in boundaries if 0 < d <= LOOKBACK_BLOCKS]
+    if candidates:
+        pick = boundaries[max(candidates)]
+    else:
+        pick = total - 1 - min(ANCHOR_TARGET_BLOCKS, total - 1)
+
+    mi, bi = flat[pick]
+    out = list(messages)
+    msg = dict(out[mi])
+    content = msg.get("content")
+    if bi is None:
+        if not isinstance(content, str) or not content:
+            return messages, False
+        msg["content"] = [{"type": "text", "text": content,
+                           "cache_control": _EPHEMERAL}]
+    else:
+        if not isinstance(content, list) or bi >= len(content):
+            return messages, False
+        block = content[bi]
+        if not isinstance(block, dict) or "cache_control" in block:
+            return messages, False
+        new_content = list(content)
+        new_content[bi] = {**block, "cache_control": _EPHEMERAL}
+        msg["content"] = new_content
+    out[mi] = msg
+    return out, True
+
+
 def apply_anthropic_cache(kwargs):
     """Add ``cache_control`` breakpoints to an assembled Anthropic payload.
 
@@ -348,9 +441,9 @@ def apply_anthropic_cache(kwargs):
     understands block-form ``system`` (``egress_gate.seal_outbound``), so the
     order is a choice about robustness, not about safety.
 
-    Three breakpoints of the four Anthropic allows: tools, system, newest
-    message. The fourth is left free deliberately — a caller with a better
-    per-case boundary can still add one.
+    All four breakpoints Anthropic allows: tools, system, newest message, and
+    an anchor behind the newest that keeps the previous iteration's entry
+    inside the 20-block lookback window.
 
     Every failure mode here is a cache miss, never a wrong answer: if a
     breakpoint lands somewhere unstable the call runs at today's price.
@@ -373,6 +466,11 @@ def apply_anthropic_cache(kwargs):
             out["messages"], hit = _mark_last_message(out["messages"])
             if hit:
                 marked.append("messages")
+            # The fourth breakpoint, reserved for exactly this until the
+            # 20-block lookback was measured against the loop's fan-out shape.
+            out["messages"], hit = _mark_lookback_anchor(out["messages"])
+            if hit:
+                marked.append("anchor")
         if not marked:
             return kwargs
         _log.debug("prompt cache breakpoints: %s", "+".join(marked))

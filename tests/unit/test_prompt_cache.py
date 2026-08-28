@@ -151,3 +151,113 @@ class TestCeiling:
         except pc.TaskBudgetExceeded:
             pass
         assert pc.current_budget() is None
+
+
+def _count_blocks(messages):
+    """Content blocks, the unit Anthropic's lookback actually counts."""
+    n = 0
+    for m in messages:
+        c = m.get("content")
+        n += len(c) if isinstance(c, list) else 1
+    return n
+
+
+def _marked_positions(messages):
+    """Block indexes (from the END, 0 = newest) carrying a cache breakpoint."""
+    flat = []
+    for m in messages:
+        c = m.get("content")
+        flat.extend(c if isinstance(c, list) else [{"type": "text", "text": c}])
+    return [len(flat) - 1 - i for i, b in enumerate(flat)
+            if isinstance(b, dict) and "cache_control" in b]
+
+
+def _agent_loop_turn(tool_calls):
+    """One agent-loop iteration that fans out `tool_calls` tools in parallel.
+
+    This is the shape that breaks a single rolling breakpoint: Claude emits N
+    tool_use blocks in one assistant message and we answer with N tool_result
+    blocks in one user message, so a single iteration appends 2N content blocks.
+    Eleven parallel tools is 22 — past the lookback in one step.
+    """
+    return [
+        {"role": "assistant",
+         "content": [{"type": "tool_use", "id": f"t{i}", "name": "f",
+                      "input": {}} for i in range(tool_calls)]},
+        {"role": "user",
+         "content": [{"type": "tool_result", "tool_use_id": f"t{i}",
+                      "content": "r" * 400} for i in range(tool_calls)]},
+    ]
+
+
+class TestLookbackWindow:
+    """A breakpoint walks back at most 20 content blocks to find a prior entry.
+
+    A single rolling breakpoint on the newest message is NOT enough when one
+    turn appends more than 20 blocks, which is exactly what the agent loop does
+    whenever Claude fans out more than ten tools at once. The previous
+    iteration's entry falls out of the window and the next request silently
+    misses — full price, no error, nothing in the logs.
+    """
+
+    def test_a_long_turn_gets_an_anchor_inside_the_window(self):
+        msgs = [{"role": "user", "content": "start"}]
+        msgs += _agent_loop_turn(11)          # +22 blocks in one iteration
+        out = pc.apply_anthropic_cache(
+            {"model": "claude-sonnet-5", "messages": msgs})
+        assert _count_blocks(out["messages"]) > 20
+        marks = _marked_positions(out["messages"])
+        assert 0 in marks, "the rolling breakpoint on the newest block is gone"
+        assert len(marks) >= 2, (
+            "one breakpoint cannot span a turn longer than the 20-block "
+            "lookback — an anchor is needed behind it")
+        anchor = sorted(m for m in marks if m > 0)[0]
+        assert anchor <= 20, (
+            f"anchor sits {anchor} blocks back, outside the lookback window")
+
+    def test_a_short_turn_is_left_alone(self):
+        """Below the window the natural prefix match already works.
+
+        Spending a second breakpoint here would buy nothing and burn one of the
+        four the API allows.
+        """
+        msgs = [{"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": "again"}]
+        out = pc.apply_anthropic_cache(
+            {"model": "claude-sonnet-5", "messages": msgs})
+        assert _marked_positions(out["messages"]) == [0]
+
+    def test_never_more_than_four_breakpoints(self):
+        """Four is the hard API limit; a fifth is a 400, not a missed cache."""
+        msgs = [{"role": "user", "content": "start"}]
+        msgs += _agent_loop_turn(11)
+        out = pc.apply_anthropic_cache({
+            "model": "claude-sonnet-5", "system": _sys(),
+            "tools": _tools(), "messages": msgs})
+        total = (sum(1 for b in out["system"] if "cache_control" in b)
+                 + sum(1 for t in out["tools"] if "cache_control" in t)
+                 + len(_marked_positions(out["messages"])))
+        assert total <= 4, f"{total} breakpoints — the API allows 4"
+
+
+class TestMinimumCacheablePrefix:
+    def test_canonical_haiku_id_carries_its_real_minimum(self):
+        """Same dated-key bug as the pricing table, in a second file.
+
+        `claude-haiku-4-5` needs 4096 tokens before a prefix caches at all.
+        Keyed only on the dated alias, the canonical id fell to the 1024
+        default, so we would mark a 2K-token prefix, Anthropic would ignore it,
+        and one of four breakpoints was spent on nothing.
+        """
+        assert pc._min_cacheable("claude-haiku-4-5") == 4096
+        assert (pc._min_cacheable("claude-haiku-4-5")
+                == pc._min_cacheable("claude-haiku-4-5-20251001"))
+
+    def test_fable_shares_the_opus_5_floor(self):
+        """512, not 1024 — a conservative wrong number is still a wrong number.
+
+        It costs every prefix between the two: marked, cacheable, and skipped.
+        """
+        assert pc._min_cacheable("claude-fable-5") == 512
+        assert pc._min_cacheable("claude-opus-5") == 512
