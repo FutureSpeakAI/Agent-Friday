@@ -109,7 +109,12 @@ class TestWorkflowChains:
         import agent_friday.services.agent as agent_mod
         spawned = {}
 
-        def fake_spawn(name, prompt, description='', on_complete=None, chain=None, chain_step=0):
+        # **kw so this double does not have to be edited every time the
+        # real _spawn_task gains an argument. It grew `model` (the
+        # chain/step seat) and this stood still, so the test failed on a
+        # product change that was correct.
+        def fake_spawn(name, prompt, description='', on_complete=None,
+                       chain=None, chain_step=0, **kw):
             spawned.update(name=name, prompt=prompt, chain=chain, chain_step=chain_step)
             return "next-task-id"
 

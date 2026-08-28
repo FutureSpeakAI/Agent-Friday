@@ -152,8 +152,10 @@ class TestIsolation:
             return object() if aid == good["id"] else None
 
         monkeypatch.setattr(ga, "credentials_for", fake_creds_for)
+        # **kw: _gmail_for_creds gained `days` and this double did not.
         monkeypatch.setattr(ga, "_gmail_for_creds",
-                            lambda creds, limit: [{"subject": "hi", "timestamp": "2026"}])
+                            lambda creds, limit, **kw: [
+                                {"subject": "hi", "timestamp": "2026"}])
         out = ga.merged_gmail()
         assert any(m["account_id"] == good["id"] for m in out["messages"])
         assert any(e["account_id"] == bad["id"] for e in out["errors"])
@@ -165,7 +167,8 @@ class TestMergedViews:
         rec = ga.upsert_account(FakeCreds(), label="Work", email="w@example.com")
         monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
         monkeypatch.setattr(ga, "_gmail_for_creds",
-                            lambda creds, limit: [{"subject": "x", "timestamp": "2026-01-01"}])
+                            lambda creds, limit, **kw: [
+                                {"subject": "x", "timestamp": "2026-01-01"}])
         out = ga.merged_gmail()
         assert out["messages"][0]["account_label"] == "Work"
         assert out["messages"][0]["account_id"] == rec["id"]
