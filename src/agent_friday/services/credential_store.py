@@ -169,6 +169,26 @@ def protect(data: bytes) -> tuple[bytes, str]:
     return data, "plaintext"
 
 
+def looks_protected(blob: bytes) -> str | None:
+    """Which mechanism wrote this blob: 'vault' | 'dpapi' | None.
+
+    None means the bytes carry no envelope — which `unprotect` treats as
+    plaintext, correctly, because that is how a plaintext-host credential is
+    stored. Callers that KNOW a value was encrypted need to tell those two
+    cases apart: a blob that should be protected and is not is either corrupt
+    or came from another machine, and passing it through as if it were the
+    secret hands garbage to whatever consumes it.
+    """
+    try:
+        if _HAS_VC and _vc.is_encrypted(blob):
+            return "vault"
+        if blob[:len(_DPAPI_MAGIC)] == _DPAPI_MAGIC:
+            return "dpapi"
+    except Exception:
+        pass
+    return None
+
+
 def unprotect(blob: bytes) -> bytes:
     """Inverse of protect(). Auto-detects the protection method from the blob."""
     if _HAS_VC and _vc.is_encrypted(blob):

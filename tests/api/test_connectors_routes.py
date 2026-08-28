@@ -89,11 +89,17 @@ def test_mcp_connect_then_disconnect(client, server_module):
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
 
-    # Persisted: enabled with the token in env (home is a temp dir under test).
+    # Persisted: enabled, with the token ENCRYPTED AT REST in env (home is a
+    # temp dir under test). This used to assert the plaintext token came back
+    # verbatim, which is exactly the property that made the file worth stealing.
+    from agent_friday.services import connector_secrets as cse
     cfg = json.loads(agent_svc.MCP_SERVERS_FILE.read_text(encoding="utf-8"))
     gh = cfg["servers"]["github"]
     assert gh["enabled"] is True
-    assert gh["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_testtoken"
+    stored = gh["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    assert "ghp_testtoken" not in json.dumps(cfg), (
+        "the connector token is on disk in plaintext")
+    assert cse.decrypt_value(stored) == "ghp_testtoken"
 
     # The status endpoint must NOT echo the secret value back, only that it's set.
     status = client.get("/api/connectors/github").get_json()["connector"]
@@ -106,8 +112,12 @@ def test_mcp_connect_then_disconnect(client, server_module):
     assert d.status_code == 200
     cfg2 = json.loads(agent_svc.MCP_SERVERS_FILE.read_text(encoding="utf-8"))
     assert cfg2["servers"]["github"]["enabled"] is False
-    # Token is retained so reconnecting is one click.
-    assert cfg2["servers"]["github"]["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_testtoken"
+    # Token is retained so reconnecting is one click — still encrypted, and
+    # still decrypting to the value that was entered.
+    assert cse.decrypt_value(
+        cfg2["servers"]["github"]["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"]
+    ) == "ghp_testtoken"
+    assert "ghp_testtoken" not in json.dumps(cfg2)
 
 
 def test_oauth_connect_is_one_click(client):

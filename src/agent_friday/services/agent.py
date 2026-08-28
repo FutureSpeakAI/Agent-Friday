@@ -5731,6 +5731,17 @@ def _load_mcp_servers() -> dict:
             print(f"  [MCP] {MCP_SERVERS_FILE} is not a JSON object — "
                   f"no MCP servers loaded")
             return {"servers": {}}
+        # Connector credentials are protected at rest. What is returned here is
+        # STILL ENCRYPTED and is meant to be: this object is what
+        # GET /api/mcp/servers hands to the browser. Only the spawn path
+        # decrypts. Anything written before encryption shipped is upgraded on
+        # the way past — once per process, and only when there is something to
+        # upgrade.
+        try:
+            from agent_friday.services import connector_secrets as _cse
+            data = _cse.migrate_config_file(MCP_SERVERS_FILE, data)
+        except Exception as _e:
+            print(f"  [MCP] credential migration skipped: {_e}")
         return data
     except Exception as e:
         # Loud, not silent: returning {} here disables every connector, and a
@@ -5741,11 +5752,31 @@ def _load_mcp_servers() -> dict:
 
 
 def _save_mcp_servers(cfg: dict) -> dict:
-    """Persist the MCP server config (full replace of the servers map)."""
+    """Persist the MCP server config (full replace of the servers map).
+
+    Secret env values are encrypted on the way to disk. encrypt_config is
+    idempotent, so a config that came back from the browser already encrypted
+    passes through untouched rather than being wrapped a second time.
+    """
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if "servers" not in cfg:
         cfg = {"servers": cfg}
+    try:
+        from agent_friday.services import connector_secrets as _cse
+        cfg = _cse.encrypt_config(cfg)
+    except Exception as _e:
+        # Refuse rather than silently writing the token in the clear: this
+        # function is the only thing standing between a pasted credential and
+        # a readable file, and a caller that sees an error can say so.
+        raise RuntimeError(
+            "refusing to save connector config: credentials could not be "
+            f"encrypted ({_e})") from _e
     MCP_SERVERS_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    try:
+        from agent_friday.services import credential_store as _cs
+        _cs.harden_permissions(MCP_SERVERS_FILE)
+    except Exception:
+        pass
     return cfg
 
 
