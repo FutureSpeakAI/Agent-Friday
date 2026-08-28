@@ -1966,6 +1966,12 @@ def _load_settings():
     return _apply_offline_routing_overlay(_load_settings_raw())
 
 
+#: Settings blocks merged FIELD BY FIELD rather than replaced wholesale.
+#: Everything else in a delta overwrites its key, which is correct for scalars
+#: and lists and catastrophic for a config block a caller only partly edited.
+_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing")
+
+
 def _save_settings(data):
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     # Invalidate BEFORE and AFTER the write.
@@ -2027,11 +2033,17 @@ def _save_settings(data):
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
-        if (k == "capability_routing" and isinstance(v, dict)
+        if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
                 and isinstance(existing.get(k), dict)):
-            # Deep-merge per capability: a partial routing delta (the wizard and
-            # Settings sections send only the caps they edited) must not reset
-            # every untouched capability back to defaults.
+            # Deep-merge per key: a partial delta (the wizard and the Settings
+            # sections send only the fields they edited) must not reset every
+            # untouched sibling back to defaults.
+            #
+            # `model_routing` joined `capability_routing` here on 2026-08-28.
+            # It had the identical defect and a worse blast radius: a UI that
+            # saved {"model_routing": {"vault_local_only": ...}} replaced the
+            # whole block, silently resetting `mode` — so changing a privacy
+            # switch could move every future turn to a different provider.
             base = {ck: (dict(cv) if isinstance(cv, dict) else cv)
                     for ck, cv in existing[k].items()}
             base.update(v)

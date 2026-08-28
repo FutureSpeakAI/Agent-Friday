@@ -33576,9 +33576,21 @@ function SettingsTabPrivacy({
     }
   }, armMsg), /*#__PURE__*/React.createElement(StToggle, {
     label: "Local-Only Mode",
-    value: !!s.vault_local_only,
+    // model_routing.vault_local_only is the key the SERVER gates on, and it
+    // defaults to on when absent. This read a bare top-level key of the same
+    // name — which does not exist — so the switch showed OFF on every install whose
+    // settings had never been hand-edited, while the gate was in fact ON. It
+    // then wrote that same top-level key, which nothing reads. Inert in both
+    // directions: the display lied and the click did nothing.
+    // The spread is load-bearing: _save_settings deep-merges this block, but an
+    // older build on the same settings file does not, and dropping `mode` here
+    // would move every future turn to a different provider.
+    value: (s.model_routing || {}).vault_local_only !== false,
     onChange: () => save({
-      vault_local_only: !s.vault_local_only
+      model_routing: {
+        ...(s.model_routing || {}),
+        vault_local_only: (s.model_routing || {}).vault_local_only === false
+      }
     }),
     desc: "Force all AI processing to local models. Cloud providers receive no vault data."
   })), /*#__PURE__*/React.createElement(StSection, {
