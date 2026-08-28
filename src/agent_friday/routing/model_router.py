@@ -547,6 +547,25 @@ class ModelRouter:
                 return True
         return False
 
+    def _is_local_choice(self, model_id, provider=None) -> bool:
+        """True if this model/provider pair would run on this machine.
+
+        Three ways to be local and all three must be checked: an explicitly
+        local provider name, an entry under a local-type provider in the
+        registry (which catches custom Ollama tags like `claude-x:latest` that
+        the name heuristic reads as cloud), and the name heuristic itself.
+        """
+        if (provider or "").strip().lower() in self._LOCAL_PROVIDERS:
+            return True
+        if not model_id:
+            return False
+        if self._is_registry_local(model_id):
+            return True
+        try:
+            return provider_family(model_id) == "local"
+        except Exception:
+            return False
+
     def _apply_cloud_provider(self, result, ctx):
         """Retag a 'cloud' decision by RESOLVING the model to the provider that
         actually owns it (registry-first, GAP-4 fix), so the server dispatches
@@ -658,18 +677,53 @@ class ModelRouter:
         has_tools = bool(ctx.get("has_tools"))
         workspace = ctx.get("workspace", "")
 
+        task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace)
+
         if mode == "cloud_only":
-            model = ctx.get("cloud_model") or self.config.get(
+            # cloud_only means NOTHING RUNS ON THIS MACHINE. It never meant
+            # "ignore the picker", but that is what it did: this branch used to
+            # return the default cloud model here, above both the task_overrides
+            # lookup and the seat lookup. cloud_only is the factory default, so
+            # on a stock install the model a user chose was read from disk,
+            # rendered in the UI, and discarded at dispatch.
+            #
+            # (Distinct from the cloud_only fix in services/model_router, which
+            # filtered LOCAL LEGS out of the fallback ladder. That one was about
+            # where a failed call retries; this one is about where the first
+            # call goes.)
+            #
+            # The mode's guarantee is untouched: a local choice is still refused
+            # here and still yields the cloud default, exactly as before.
+            default_cloud = ctx.get("cloud_model") or self.config.get(
                 "default_cloud_model", DEFAULT_CLOUD_MODEL
             )
+            overrides = self.config.get("task_overrides", {})
+            if task_type in overrides:
+                override = overrides[task_type]
+                model = override.get("model") or default_cloud
+                if self._is_local_choice(model, override.get("provider")):
+                    model = default_cloud
+                return {
+                    "provider": "cloud",
+                    "model": model,
+                    "task_type": task_type,
+                    "reason": f"User override for {task_type} (cloud_only)",
+                }
+            if task_type != TaskType.VOICE:
+                _m, _p = self._chosen_seat(ctx)
+                if _m and not self._is_local_choice(_m, _p):
+                    return {
+                        "provider": "cloud",
+                        "model": _m,
+                        "task_type": task_type,
+                        "reason": f"Seat bound to {_m} (cloud_only)",
+                    }
             return {
                 "provider": "cloud",
-                "model": model,
+                "model": default_cloud,
                 "task_type": "cloud_only",
                 "reason": "Routing mode is cloud_only",
             }
-
-        task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace)
 
         # His explicit seat is consulted BEFORE the speed/size heuristics for
         # every ordinary class. Voice keeps its own pipeline and the vault
