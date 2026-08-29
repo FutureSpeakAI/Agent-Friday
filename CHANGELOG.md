@@ -3,11 +3,160 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.4**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.5**
+
+---
+
+## [5.6.5] — 2026-08-29
+
+**If you have ever upgraded Agent Friday in place, read the first item. Your
+install may have been reporting a version it was not running.**
+
+### Fixed
+
+- **In-place upgrades never delivered any code, and said they had.** Re-running
+  a newer installer over an existing install replaced nothing at all. The
+  installer printed "Friday is installed", wrote the new version number into
+  `install-manifest.json`, and exited 0, while every file of Friday's own code
+  on disk remained the previous release.
+
+  `Invoke-Step` runs a step's `-Verify` block *before* its action and skips the
+  action when verify passes. The `app.copy` verify asked only whether four
+  files — `cli.py`, `server.py`, `setup_wizard.py`, `index.html` — *existed*.
+  Any previous install satisfies that, so the copy short-circuited every time.
+  The one line in the log that said so was `app.copy : verify passed before
+  action - already in place, nothing to do.`
+
+  Measured on a real 5.6.3 → 5.6.4 upgrade from the two published zips:
+  **0 of 489 files updated**. `install-manifest.json` read `5.6.4` beside a
+  `pyproject.toml` that still read `5.6.3`. `connector_secrets.py`, the only
+  file new in 5.6.4, was absent — so `GET /api/mcp/servers` on that "5.6.4"
+  install still returned connector credentials to the browser in plaintext,
+  which is the precise exposure 5.6.4 announced it had closed. Every other
+  5.6.4 fix was equally absent.
+
+  **This defect shipped with the installer itself.** It is present in 5.6.0
+  through 5.6.4 identically, so no in-place upgrade has ever delivered code.
+  Anyone whose install came from an upgrade rather than a fresh install has
+  been running the version they first installed.
+
+  The `app.copy` verify now also requires the installed `pyproject.toml`
+  version to equal the version being installed. An older install reports an
+  older version and is replaced; an install too old to have a readable
+  `pyproject.toml` reports nothing and is also replaced — so this repairs an
+  upgrade from *any* prior release, not only from 5.6.4. The fast path
+  survives for the case it was for: re-running the *same* installer, where
+  skipping is correct.
+
+  **What to do.** Download the 5.6.5 zip and run it over your existing
+  install. It will replace the app files this time and keep everything under
+  `~/.friday` — notes, settings, conversations, connected accounts. Then check
+  `friday status`. If you had connected Airtable, Gmail, GitHub or any other
+  credentialed MCP server on an install that only *believed* it was 5.6.4,
+  treat those tokens as having been readable and rotate them.
+
+- **`friday update` pointed at a repository that does not exist, from the one
+  place that could not use it.** The packaged install deliberately ships no
+  `.git`, so every installer user hits the "not a git repository" branch —
+  and that branch printed `github.com/FutureSpeakAI/friday-desktop`, which
+  returns 404. The repository is `Agent-Friday`. The command now prints the
+  correct releases URL, shows the installed version beside the running one,
+  gives the three steps that actually update a packaged install, and says
+  plainly that an in-place upgrade before 5.6.5 may not have applied.
+
+- **The uninstaller addressed the author by name.** Its closing line read
+  `For Stephen: …LAST-UNINSTALL-REPORT.md` on every machine it ran on. It now
+  reads `Details:`.
+
+### Corrections to the 5.6.4 release notes
+
+Everything in this section is a documentation fix. No behaviour changed.
+
+- **The known-issue test count was wrong: seven claimed, sixteen measured.**
+  A full-suite run on a clean `v5.6.4` checkout fails 16 tests, not 7. The
+  5.6.4 notes named five `test_residency_arbiter`, `test_gate_harness_integrity`
+  and `test_local_image`. Of those, the five `test_residency_arbiter` and
+  `test_local_image` do fail; **`test_gate_harness_integrity` passes** and
+  should not have been listed. Unnamed and also failing: five
+  `test_routing_resolver`, `test_model_router::test_local_preferred_uses_local_when_available`,
+  `test_model_plan::test_the_indexer_falls_back_to_a_tool_capable_model`,
+  `test_nemo_voice::test_nemo_models_ready_false_when_uncached`, and two
+  `test_egress_adversarial::test_tier2_keyword_batch` cases.
+
+  The distinction the old note missed is **isolation versus whole-suite**.
+  Run their own files alone, only the two `test_egress_adversarial` cases
+  fail, and they fail identically at `v5.6.3` and `v5.6.4` — those two are
+  genuinely deterministic and pre-existing. The other thirteen pass in
+  isolation and fail only in a whole-suite run, so they are order- and
+  environment-dependent rather than attributable to a release. `v5.6.3` fails
+  the same *number* (16) with a partly different *membership*: it fails four
+  that `v5.6.4` does not (`test_ambient_predictive_routes`, two
+  `test_google_accounts`, `test_inverted_provider_default`) and passes the
+  five `test_routing_resolver` that `v5.6.4` fails. All nine of those pass in
+  isolation at both tags. The count is stable; which tests make it up is not.
+
+  These remain test defects rather than product defects, and that part of the
+  old note stands.
+
+- **The `cloud_only` guarantee was stated too strongly.** 5.6.4 said "a *local*
+  model chosen under `cloud_only` is still refused." It is not. `_is_local_choice`
+  guards a `task_overrides` entry and a bound seat, but not the model handed in
+  as the turn's chosen model, which is the path the picker uses — so picking a
+  local model while in `cloud_only` runs it on-device.
+
+  That behaviour is deliberate, not a bug: `routing/model_router.py` has said
+  since before this release that "the model picker is authoritative … the user
+  explicitly chose a local brain", and `test_registry_local_claude_name_never_cloud`
+  asserts exactly it. It also fails safe — on-device is the more contained
+  destination, not the leakier one. So the sentence is corrected rather than
+  the code.
+
+  **What `cloud_only` actually promises:** Friday will not choose a local model
+  on her own, and will not fall back to one when a cloud call fails. It does
+  not override a local model you pick yourself; that runs on your machine. If
+  you want the mode to be the last word regardless of the picker, that is a
+  behaviour change and is not in this release.
+
+- **The pricing fix was filed under Performance and understated.** It belongs
+  under Fixed, because it is a correctness defect with a bill attached: Opus 5
+  was metered at $15/$75 per MTok against a real $5/$25, so **the model Friday
+  defaults to was charged at three times its real price**, and Fable 5 at
+  $3/$15 against a real $10/$50 was charged as the cheapest model in the
+  lineup when it is the most expensive. Both errors flowed into the Cost &
+  Usage panel, the daily and monthly budget tripwires, and the per-schedule
+  breakdown. Separately, `claude-haiku-4-5` priced at exactly $0 because the
+  table was keyed only on the dated id — a cloud call that read as free. See
+  the 5.6.4 entry for the full account.
+
+- **"A partial settings write no longer resets its siblings" was too broad.**
+  The deep merge covers two named blocks, `capability_routing` and
+  `model_routing`, out of the 20 top-level blocks a live `settings.json`
+  carries. Every other block — `cost_budget`, `tool_hooks`, `qa_gates`,
+  `context_pruning` and the rest — is still replaced wholesale by a partial
+  write. The two that were fixed are the two with a known blast radius; the
+  general case is open.
+
+- **A privacy fix shipped in 5.6.4 undocumented.** The sensitivity classifier's
+  Layer 4 POSTed a hardcoded `gemma4:latest` to Ollama, a tag that was never
+  installed, so every call 404'd and the layer returned 0 — which is also its
+  value for "no opinion", so a dead layer and an unopinionated one were
+  indistinguishable and nothing ever surfaced it. Resolving the name against
+  the merged local registry was not enough either, because that registry
+  includes models served by llama-server that Ollama cannot answer for; it now
+  intersects the two and takes the largest model Ollama actually serves.
 
 ---
 
 ## [5.6.4] — 2026-08-29
+
+> **Four statements in this entry were corrected in 5.6.5** — the known-issue
+> test count (seven claimed, sixteen measured), the `cloud_only` guarantee, the
+> filing and severity of the pricing fix, and the breadth of the partial-write
+> fix. The original text is kept below as published; see **Corrections to the
+> 5.6.4 release notes** in 5.6.5 for what each one should have said.
+>
+> **Also: if you reached 5.6.4 by upgrading in place, you did not receive any
+> of it.** Installers before 5.6.5 skipped the file copy entirely. See 5.6.5.
 
 Six defects found by watching a second install behave, plus the cost work that
 matters the moment you stop running models locally. Everything here was live in
@@ -27,6 +176,12 @@ matters the moment you stop running models locally. Everything here was live in
   chosen under `cloud_only` is still refused, and `_is_local_choice` checks all
   three ways a model can be local, including a custom Ollama tag that the name
   heuristic reads as cloud.
+
+  > **Corrected in 5.6.5.** That last sentence is wrong. `_is_local_choice`
+  > guards a task override and a bound seat, but not the turn's chosen model —
+  > which is the path the picker uses. A local model picked under `cloud_only`
+  > runs on-device. The behaviour is deliberate and fails safe; the sentence
+  > was not. See 5.6.5 for what the mode actually promises.
 
   This is a different site from the `cloud_only` work in 5.6.3, which filtered
   local legs out of the *fallback ladder*. That one governs where a failed call
@@ -50,6 +205,11 @@ matters the moment you stop running models locally. Everything here was live in
   `vault_cloud_fallback` and `ollama_url` — a privacy switch silently moving
   every future turn to a different provider. `model_routing` now deep-merges
   too, via a named list rather than a second hardcoded key.
+
+  > **Narrower than the heading suggests; corrected in 5.6.5.** The named list
+  > holds two blocks out of the 20 a live `settings.json` carries. Every other
+  > block — `cost_budget`, `tool_hooks`, `qa_gates`, `context_pruning` and the
+  > rest — is still replaced wholesale by a partial write.
 
 ### Security
 
@@ -80,6 +240,13 @@ matters the moment you stop running models locally. Everything here was live in
 - **The cost meter charges what Anthropic charges.** Three separate places
   guessed at prices; all three now read one table.
 
+  > **Misfiled and understated; corrected in 5.6.5.** This is a Fixed-section
+  > defect, not a performance note. Opus 5 — Friday's default — was metered at
+  > $15/$75 per MTok against a real $5/$25 and so billed at **three times** its
+  > real price; Fable 5 was billed as the cheapest model in the lineup when it
+  > is the most expensive; and `claude-haiku-4-5` metered at exactly $0. The
+  > Cost & Usage panel and both budget tripwires inherited all three.
+
 - **`/api/intelligence` stops paying to re-learn that Ollama is off.**
   Connecting to a *closed* localhost port on Windows costs ~2,005 ms — the
   stack retries the SYN before giving up — not the microseconds loopback
@@ -107,6 +274,26 @@ with GPU load — they assert on the *last* call made, and `chat_completion`
 legitimately issues a seat-release call afterwards when the display is under
 its memory reserve, so they fail whenever the card is busy. All of these are
 test defects, not product defects, and none is introduced by this release.
+
+> **The count is wrong; corrected in 5.6.5.** A full-suite run on a clean
+> `v5.6.4` checkout fails **16**, not seven, and `test_gate_harness_integrity`
+> — named here — passes. See 5.6.5 for the measured list and for the
+> isolation-versus-whole-suite distinction this paragraph is missing.
+
+### Privacy
+
+- **Layer 4 of the sensitivity classifier asks a model that exists.** It
+  POSTed a hardcoded `gemma4:latest` to Ollama — a tag never installed here —
+  so every call 404'd and the layer returned 0, which is also its value for
+  "no opinion". A dead layer and an unopinionated one were indistinguishable,
+  and nothing ever surfaced it. Resolving the name against the merged local
+  registry was not sufficient either: that view includes models served by
+  llama-server which Ollama cannot answer for, so the daemon still 404'd. It
+  now intersects the two registries and takes the largest model Ollama
+  actually serves.
+
+  *(This shipped in 5.6.4 and was omitted from its notes; recorded here in
+  5.6.5.)*
 
 ---
 

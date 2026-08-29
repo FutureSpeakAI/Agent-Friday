@@ -1,148 +1,189 @@
-# Agent Friday v5.6.3
+# Agent Friday v5.6.5
 
-*2026-08-26 · FutureSpeak.AI*
+*2026-08-29 · FutureSpeak.AI*
 
-**The first release built for someone who isn't the author.**
+**If you have ever upgraded Agent Friday in place, this release is not
+optional, and your install has probably been reporting a version it was not
+running.**
 
-`5.6.0` through `5.6.2` fixed what broke when the installer was finally run
-for the first time. This one fixes what broke when Friday was finally
-*used* by someone on her own hardware, her own account, and her own
-graphics card — a 5090, not the reference 4070. Four things, in the order
-a new user hits them.
-
----
-
-## What's new, if you're installing for the first time
-
-### 1. The local model ladder scales with your hardware now
-
-It used to top out at `gemma4:12b`. A 16 GiB card, a 4090, and a 5090 all
-got handed the same 7.5 GB model, because "the largest that fits" had
-nothing left to reach for once the table ran out of rows. That's not a fit
-calculation — it's a missing ladder, and it reported a confident,
-correct-looking answer every single time.
-
-The ladder now runs:
-
-```
-     8 GiB  qwen3:4b     2.50 GB       16 GiB  qwen3:14b    9.28 GB
-    10 GiB  qwen3:8b     5.23 GB       24 GiB  qwen3:32b   20.20 GB
-    12 GiB  gemma4:12b   7.56 GB
-```
-
-`friday models` (and the installer) now shows you every rung your machine
-could run, with the recommended default marked, instead of announcing one
-decision and hiding the rest. **`qwen3:14b` and `qwen3:32b` are marked
-UNMEASURED** — their fit is arithmetic, derived from the Ollama registry's
-own manifests, not a timed run on real hardware. `gemma4:12b` remains the
-best-evidenced row in the table: 49–54 tok/s, ~20.5s cold load, measured on
-the reference card. **This marking is deliberate and should not be quietly
-resolved by a future release** — when someone measures `qwen3:14b` or
-`qwen3:32b` for real, that's when the marking changes, not before.
-
-Tool calling is now a **hard gate**, not a preference: `gemma3:4b` cannot
-be selected at any tier, on any card, because it cannot call tools and
-Friday does not stop passing it the tool registry — it can only narrate a
-call it never made. The flag itself is re-checked against the daemon's own
-`capabilities` array after every install rather than trusted from a table,
-so a wrong entry here is caught, not shipped quietly.
-
-**A real arithmetic bug came out at the same time.** `vram_gib` was
-hand-typed per model and already carried about 2 GiB of unstated overhead
-padding. A separate overhead constant then took another 1 GiB off the
-card, on top of that. Together, the two counts demanded a 13 GiB card for
-`gemma4:12b` — a model measured to run fully resident in 11. **A 12 GiB
-card was being refused the one model built for a 12 GiB card.** Overhead
-is now counted exactly once, from a measurement, and `vram_gib` is
-computed from the download size instead of typed by hand — it cannot
-drift from it again.
-
-`cli.BUNDLED_MODEL` and `ollama_manager.recommend_models` were both
-independent, disagreeing model tables. Both now derive from the same
-ladder as everything else, so `friday doctor` no longer recommends the one
-model in the system that can't use Friday's tools.
-
-### 2. API keys are manageable from Settings — for real, this time
-
-View, replace, and remove any provider's key from the running app, no
-launch script required. This closes a bug where a *replaced* key didn't
-survive a restart: the setup wizard wrote keys to `start.bat` and the
-encrypted credential store, Settings wrote only to the store, and Friday
-re-bootstraps her environment from `start.bat` on every launch — so the
-wizard's original key silently outlived every replacement typed into
-Settings, while the panel kept reporting "connected." A saved key is now
-treated as a deliberate, later instruction, and no longer shadowed by
-ambient environment configuration.
-
-`/test` now tells a rejected key apart from one that's simply out of
-credit — the same distinction `Test-AnthropicKey` has drawn at install
-time since `5.6.2`, now available for any key, any time, from Settings.
-
-### 3. Google connects without a JSON file
-
-Setting up Google used to mean creating your own Google Cloud project and
-dropping a `credentials.json` file into a folder before anything would
-work — a wall for anyone who isn't a developer. A guided, in-app
-walkthrough replaces that as the default path.
-
-**Say plainly what this does and does not include.** A one-click path is
-also built, and takes precedence when it's available — but it ships
-**inert**. The shared client ID and secret are empty until Stephen mints
-them under his own Google Cloud project; shipping half a client (an ID
-with no secret) would be worse than not shipping one, marching someone
-through a warning screen toward an error. So today, everyone still uses
-the walkthrough. When a client is minted, one-click activates with no
-further release needed — nothing about *that* is inert, only the
-credential is missing right now.
-
-### 4. Cloud-only mode is honored everywhere, not just in chat
-
-A keyless safety net was silently routing cloud-only turns to a local
-model whenever no Anthropic key was present. Correct instinct on a
-developer machine that always has a key close at hand; wrong on the first
-machine that never did. Fixed across typed chat, agentic/tool turns,
-briefings, and scheduled work — and the mirror-image bug, local-only turns
-quietly falling back to the cloud when a local seat had a bad minute, is
-fixed by the same rule, in one place, used by both directions.
+Everything here is either that defect, the one escape hatch that should have
+let you out of it, or a correction to something 5.6.4 told you that was not
+true. No feature work.
 
 ---
 
-## Also in this release
+## 1. In-place upgrades never delivered any code, and said they had
 
-- **Installer documentation pass.** `README.md` and `INSTALLATION.md` no
-  longer describe a single bundled model or a fixed 16 GB RAM floor as if
-  that were the only path — both now describe the question the installer
-  actually asks and the ladder it actually offers.
-- **A Settings UI fix**: links that pointed at provider tabs which don't
-  exist no longer do.
+Re-running a newer installer over an existing install replaced **nothing**.
+The installer printed "Friday is installed", wrote the new version number into
+`install-manifest.json`, and exited 0 — while every file of Friday's own code
+on disk stayed at the previous release.
+
+`Invoke-Step` runs a step's `-Verify` block *before* its action, and skips the
+action when verify passes. The `app.copy` verify asked only whether four files
+existed: `cli.py`, `server.py`, `setup_wizard.py`, `index.html`. Any earlier
+install satisfies that. So the copy short-circuited, every time, with one line
+in the log to show for it:
+
+```
+app.copy : verify passed before action - already in place, nothing to do.
+```
+
+Measured on a real 5.6.3 → 5.6.4 upgrade run from the two published zips:
+
+| | |
+|---|---|
+| Files updated | **0 of 489** |
+| `install-manifest.json` | `5.6.4` |
+| `pyproject.toml` on disk | `5.6.3` |
+| `connector_secrets.py` (new in 5.6.4) | **absent** |
+| `GET /api/mcp/servers` | returned connector tokens **in plaintext** |
+
+That last row is the point. 5.6.4's headline security fix was that connector
+credentials stop being handed to the browser. On an install that had upgraded
+into "5.6.4", they were still handed to the browser, because the code that
+stops it was never copied. Every other 5.6.4 fix was missing the same way.
+
+**This shipped with the installer itself.** 5.6.0 through 5.6.4 all carry it
+identically. No in-place upgrade this project has ever published delivered
+code. If your install came from an upgrade rather than a fresh install, you
+have been running the version you *first* installed.
+
+### The fix
+
+The `app.copy` verify now also requires the installed `pyproject.toml` version
+to equal the version being installed. An older install reports an older
+version and gets replaced. An install too old to have a readable
+`pyproject.toml` reports nothing, mismatches, and also gets replaced — so this
+repairs an upgrade from **any** prior release, not just from 5.6.4. The fast
+path survives only for what it was for: re-running the *same* installer, where
+skipping really is correct.
+
+### What you should do
+
+1. Download `AgentFriday-Setup-5.6.5.zip` below and run it over your existing
+   install. It keeps everything under `~/.friday` — notes, wiki, settings,
+   conversations, connected accounts.
+2. Run `friday status` and confirm the version it reports is 5.6.5.
+3. **If you connected Airtable, Gmail, GitHub or any other credentialed MCP
+   server while on an install that only believed it was 5.6.4, treat those
+   tokens as having been readable, and rotate them.** They sat in
+   `~/.friday/mcp_servers.json` in the clear and were served by
+   `GET /api/mcp/servers` on request.
+
+A fresh install was never affected, and neither was anyone running from a git
+checkout.
+
+---
+
+## 2. `friday update` pointed at a repository that does not exist
+
+A packaged install deliberately ships no `.git`, so every installer user hits
+the "not a git repository" branch of `friday update`. That branch printed
+`https://github.com/FutureSpeakAI/friday-desktop`, which returns **404**. The
+repository is `Agent-Friday`.
+
+So the one command that could have told an affected user what to do sent them
+to a dead link. It now prints the correct releases URL, shows the version the
+installer recorded beside the version actually running, gives the three steps
+that update a packaged install, and states plainly that an in-place upgrade
+before 5.6.5 may never have applied.
+
+---
+
+## 3. The uninstaller addressed the author by name
+
+Its closing line read `For Stephen: …LAST-UNINSTALL-REPORT.md`, on every
+machine it ran on. It now reads `Details:`.
+
+---
+
+## Corrections to the 5.6.4 notes
+
+Documentation only — no behaviour changed by any of these.
+
+- **The known-issue test count was wrong: seven claimed, sixteen measured.**
+  `test_gate_harness_integrity`, named there as failing, passes. The five
+  `test_residency_arbiter` and `test_local_image` do fail. Also failing and
+  unnamed: five `test_routing_resolver`, one `test_model_router`, one
+  `test_model_plan`, one `test_nemo_voice`, two `test_egress_adversarial`.
+
+  The distinction 5.6.4 missed is **isolation versus whole-suite**. Running
+  their own files alone, only the two `test_egress_adversarial` cases fail,
+  identically at `v5.6.3` and `v5.6.4` — those two are deterministic and
+  genuinely pre-existing. The other thirteen pass in isolation and fail only
+  in a whole-suite run: order- and environment-dependent, not attributable to
+  a release. `v5.6.3` fails the same *number* with a partly different
+  *membership*. The count is stable; the roster is not. Still test defects,
+  not product defects.
+
+- **`cloud_only` does not refuse a local model you pick.** 5.6.4 said it did.
+  `_is_local_choice` guards a task override and a bound seat, but not the
+  turn's chosen model — which is the path the picker uses. The behaviour is
+  deliberate and long-standing, and it fails safe (on-device is the more
+  contained destination), so the sentence is corrected rather than the code.
+
+  **What `cloud_only` actually promises:** Friday will not pick a local model
+  on her own, and will not fall back to one when a cloud call fails. It does
+  not override a local model you choose yourself — that runs on your machine.
+
+- **The pricing fix was filed under Performance. It is a Fixed-section defect
+  with a bill attached.** Opus 5 — Friday's default — was metered at $15/$75
+  per MTok against a real $5/$25, so it was **charged at three times its real
+  price**. Fable 5 was billed as the cheapest model in the lineup when it is
+  the most expensive. `claude-haiku-4-5` metered at exactly $0. The Cost &
+  Usage panel and both budget tripwires inherited all three.
+
+- **"A partial settings write no longer resets its siblings" is narrower than
+  it sounds.** The deep merge covers two blocks out of the 20 a live
+  `settings.json` carries. The rest are still replaced wholesale.
+
+- **A privacy fix shipped in 5.6.4 undocumented** — the sensitivity
+  classifier's Layer 4 was POSTing a model tag that was never installed, so it
+  404'd on every call and returned "no opinion" indistinguishably from a
+  working layer. Now recorded in the 5.6.4 changelog entry.
+
+---
+
+## Known issues
+
+Sixteen unit tests fail a whole-suite run on this line. Two
+(`test_egress_adversarial::test_tier2_keyword_batch`) are deterministic and
+pre-existing. The other fourteen pass when their own file is run alone and
+fail only under the full suite — they are order- and environment-dependent.
+All are test defects, not product defects. See the Corrections section above
+for the breakdown, and `KNOWN_ISSUES.md` for the standing list.
+
+The two `test_ollama_manager` assertions noted in 5.6.4 assert on the *last*
+call made; `chat_completion` legitimately issues a seat-release afterwards
+when the display is under its memory reserve, so they track free VRAM rather
+than correctness.
 
 ---
 
 ## How this was verified
 
-Same discipline as `5.6.1` and `5.6.2`, because it keeps finding real
-problems before a stranger does:
-
-1. Built with `packaging\windows\build-installer.ps1` from a **clean,
-   detached git worktree** at the `v5.6.3` tag.
-2. The built zip was **opened and inspected** — not trusted from the build
-   log — for the model ladder, the `UNMEASURED` markings, the key-test
-   distinction, the Google walkthrough, and the cloud-only routing fix.
-3. Published, then the **published asset was re-downloaded** and the same
-   checks, plus a full hash comparison against the local build, were run
-   again against the file a stranger would actually receive.
+1. Built with `packaging\windows\build-installer.ps1` from a **clean git
+   worktree** at the `v5.6.5` tag.
+2. **A fresh install** from the built zip, on an isolated root and profile.
+3. **A real in-place upgrade**, 5.6.3 → 5.6.5, from the *published* 5.6.3 zip,
+   then every file in the resulting install byte-compared against the 5.6.5
+   tag. This is the same procedure that proved the defect, run again to prove
+   the fix.
+4. Published, then the **published asset re-downloaded** and its SHA-256
+   compared against the local build.
 
 ---
 
 ## Install
 
-Download `AgentFriday-Setup-5.6.3.zip` below, unzip it anywhere, and
-double-click **Install Agent Friday.cmd**. No Python, no git, no Ollama
-needed first. Per-user throughout — no administrator, no `Program Files`,
-no `HKLM`.
+Download `AgentFriday-Setup-5.6.5.zip` below, unzip it anywhere, and
+double-click **Install Agent Friday.cmd**. No Python, no git, no Ollama needed
+first. Per-user throughout — no administrator, no `Program Files`, no `HKLM`.
 
-There is no `.exe` build in this release, or in `5.6.0`–`5.6.2`. **Older
-`.exe` releases on this repository's release page — `v4.4.0` through
-`v5.4.0` — predate this week's security work entirely and run only two of
-Friday's four privacy layers even on the day each was built. Do not treat
-any of them as current.** See `docs/INSTALLATION.md`.
+Running it over an existing install is now a real upgrade, and keeps your data.
+
+There is no `.exe` build in this release, or in `5.6.0`–`5.6.4`. **Older
+`.exe` releases on this repository's release page — `v4.5.0` through `v5.4.0`
+— predate this month's security work entirely. Do not treat any of them as
+current.** See `docs/INSTALLATION.md`.
