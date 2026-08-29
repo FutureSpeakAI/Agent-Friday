@@ -185,6 +185,28 @@ function Test-ShortcutsInstalled {
 
 # --- Autostart -----------------------------------------------------------
 
+function Get-StartupDir {
+    <#  The sign-in Startup folder, or '' - never a throw.
+
+        The three autostart functions called [Environment]::GetFolderPath
+        ('Startup') directly and fed the result straight to Join-Path, which is
+        the exact ParameterBindingValidationException Get-SpecialDir was written
+        to stop. They escaped it because they were only ever reached inside the
+        "she answered Yes" branch, which no test harness had taken - so the one
+        code path still holding the raw call was also the one nothing exercised.
+
+        5.6.6 made Test-Autostart run unconditionally, to record the MEASURED
+        autostart state in the manifest, and it threw on the first install that
+        ran afterwards. The manifest was never written at all, which would have
+        left the uninstaller with nothing to read - the same class of failure
+        that release exists to fix. #>
+    $fb = ''
+    if ($env:APPDATA) {
+        $fb = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+    }
+    return (Get-SpecialDir -Name 'Startup' -Fallback $fb)
+}
+
 function Enable-Autostart {
     <#  Startup-folder shortcut rather than a Run registry value.
 
@@ -199,7 +221,11 @@ function Enable-Autostart {
         does not throw a black window at her.
     #>
     param([Parameter(Mandatory)][string] $InstallRoot, [string] $IconPath = '')
-    $startupDir = [Environment]::GetFolderPath('Startup')
+    $startupDir = Get-StartupDir
+    if (-not $startupDir) {
+        Write-Log 'No usable Startup folder; autostart was not enabled.' 'WARN'
+        return ''
+    }
     $link = Join-Path $startupDir 'Agent Friday.lnk'
     $target = Join-Path $InstallRoot 'Agent Friday (background).cmd'
     return (New-Shortcut -LinkPath $link -TargetPath $target -WorkingDirectory $InstallRoot `
@@ -207,10 +233,13 @@ function Enable-Autostart {
 }
 
 function Disable-Autostart {
-    $link = Join-Path ([Environment]::GetFolderPath('Startup')) 'Agent Friday.lnk'
-    if (Test-Path -LiteralPath $link) {
-        Remove-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
-        Write-Log "Autostart shortcut removed: $link" 'OK'
+    $startupDir = Get-StartupDir
+    if ($startupDir) {
+        $link = Join-Path $startupDir 'Agent Friday.lnk'
+        if (Test-Path -LiteralPath $link) {
+            Remove-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+            Write-Log "Autostart shortcut removed: $link" 'OK'
+        }
     }
     # Belt and braces: if an older build ever wrote a Run value, clear it too.
     try {
@@ -224,7 +253,9 @@ function Disable-Autostart {
 }
 
 function Test-Autostart {
-    return (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) 'Agent Friday.lnk'))
+    $startupDir = Get-StartupDir
+    if (-not $startupDir) { return $false }
+    return (Test-Path -LiteralPath (Join-Path $startupDir 'Agent Friday.lnk'))
 }
 
 function Get-InstalledShortcutPaths {
@@ -241,7 +272,7 @@ function Get-InstalledShortcutPaths {
     $found = @()
     $desktop   = Get-DesktopDir
     $startMenu = Get-StartMenuDir
-    $startup   = [Environment]::GetFolderPath('Startup')
+    $startup   = Get-StartupDir
 
     if ($desktop)   { $found += (Join-Path $desktop 'Agent Friday.lnk') }
     if ($startMenu) {
