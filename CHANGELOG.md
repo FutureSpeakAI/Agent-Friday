@@ -3,7 +3,110 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.3**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.4**
+
+---
+
+## [5.6.4] — 2026-08-29
+
+Six defects found by watching a second install behave, plus the cost work that
+matters the moment you stop running models locally. Everything here was live in
+5.6.3.
+
+### Fixed
+
+- **`cloud_only` no longer throws away the model you picked.** `_route_basic`
+  returned the default cloud model the instant the mode was `cloud_only` —
+  above the `task_overrides` lookup and above the seat lookup, neither of which
+  ever ran. `cloud_only` is the factory default, so on a stock install the
+  model a user chose was written to disk, read back, rendered in the picker,
+  and discarded at dispatch; what actually answered was
+  `settings.orchestrator_model`. The mode now classifies the turn, honours a
+  task override, then the bound seat, then the default — the same precedence
+  every other mode already used. The guarantee is unchanged: a *local* model
+  chosen under `cloud_only` is still refused, and `_is_local_choice` checks all
+  three ways a model can be local, including a custom Ollama tag that the name
+  heuristic reads as cloud.
+
+  This is a different site from the `cloud_only` work in 5.6.3, which filtered
+  local legs out of the *fallback ladder*. That one governs where a failed call
+  retries; this one governs where the first call goes.
+
+- **The Local-Only Mode switch was inert in both directions, and displayed the
+  opposite of its own state.** The server gates on
+  `model_routing.vault_local_only` and defaults it to ON when absent. The
+  toggle read a bare *top-level* key of the same name, which does not exist —
+  so `!!undefined` rendered the switch OFF on every install whose settings had
+  never been hand-edited, while the gate was in fact ON. Having shown the wrong
+  state it then wrote that same top-level key, which nothing reads, leaving a
+  decoy in `settings.json` that looks authoritative. It now reads and writes
+  the key the server actually gates on.
+
+- **A partial settings write no longer resets its siblings.** Wiring the
+  toggle above exposed the more dangerous problem underneath: `_save_settings`
+  deep-merged exactly one block, `capability_routing`. Every other key in a
+  delta replaced its value wholesale, so
+  `{"model_routing": {"vault_local_only": false}}` would have dropped `mode`,
+  `vault_cloud_fallback` and `ollama_url` — a privacy switch silently moving
+  every future turn to a different provider. `model_routing` now deep-merges
+  too, via a named list rather than a second hardcoded key.
+
+### Security
+
+- **Connector credentials are no longer stored in a readable file.** An
+  Airtable personal access token and a Gmail app password went into
+  `~/.friday/mcp_servers.json` as plaintext when you connected those services.
+  Two exposures, not one: `GET /api/mcp/servers` returned the config verbatim,
+  so every connector token was also handed to the browser on request. Values
+  are now ciphertext from the moment they are written until the child process
+  is spawned — `_load_mcp_servers` deliberately returns them still encrypted,
+  and only `MCPServerProcess._spawn` decrypts, into the child's environment.
+
+  Existing installs are migrated, not just protected going forward: a plaintext
+  value is read correctly on first load and rewritten encrypted on the way
+  past. `ALLOWED_DIRS` and `SLACK_TEAM_ID` stay readable — they are
+  configuration, not credentials, and encrypting them would blind
+  `extension_security.assess_config`. The envelope now names the mechanism that
+  wrote it (`friday-enc:v1:<method>:<b64>`) so a blob carried to another
+  machine is refused with a message that says to reconnect, rather than decoded
+  to binary noise and sent as the token.
+
+### Performance
+
+- **Prompt caching sends a second breakpoint.** Anthropic's cache lookback is
+  20 blocks and Friday sends more than that, so a single breakpoint could fall
+  outside the window on a long turn and silently cache nothing.
+
+- **The cost meter charges what Anthropic charges.** Three separate places
+  guessed at prices; all three now read one table.
+
+- **`/api/intelligence` stops paying to re-learn that Ollama is off.**
+  Connecting to a *closed* localhost port on Windows costs ~2,005 ms — the
+  stack retries the SYN before giving up — not the microseconds loopback
+  implies. The Intelligence panel polls on a timer and the probe had no memory,
+  so a machine with Ollama switched off paid that on every render. The probe
+  now remembers a success for 25s and a refusal for 20s: backoff rather than
+  removal, because the daemon can be started at any moment. A failure is
+  recorded as a failure rather than cached as an empty success, which would
+  render as "Ollama is running and has no models" — a different and wronger
+  claim. The client abort goes from 12s to 30s, because the cold path is where
+  the variance lives.
+
+### Tests
+
+Four assertions that were failing against correct product behaviour are
+re-pinned: three stale doubles, and one assertion that prompt caching broke
+when it landed by changing the shape of a message body. The `cloud_only` tests
+now exercise the router rather than whichever test last wrote settings.
+
+Known, and pre-existing since before 5.6.3: seven unit tests fail on this line.
+Five are `test_residency_arbiter` against a `FakeLlama` double that predates
+`adopt_or_reap`; two more are `test_gate_harness_integrity` and
+`test_local_image`. Two `test_ollama_manager` assertions additionally flake
+with GPU load — they assert on the *last* call made, and `chat_completion`
+legitimately issues a seat-release call afterwards when the display is under
+its memory reserve, so they fail whenever the card is busy. All of these are
+test defects, not product defects, and none is introduced by this release.
 
 ---
 
