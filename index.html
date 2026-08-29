@@ -25141,6 +25141,48 @@ function ContactsWS() {
   const [detailLoad, setDetailLoad] = useState(false);
   const [researching, setResearching] = useState(false);
   const [toast, setToast] = useState('');
+  // -- Forget this person -------------------------------------------------
+  // Friday derives records about people who never agreed to be recorded, and
+  // rebuilds them nightly. Until this, a user asked to delete someone had to
+  // hand-edit two JSON files and a derived index. `report` is what is held;
+  // `receipt` is what was removed AND what deliberately was not.
+  const [forgetReport, setForgetReport] = useState(null);
+  const [forgetReceipt, setForgetReceipt] = useState(null);
+  const [forgetting, setForgetting] = useState(false);
+  const openForget = async () => {
+    if (!selected) return;
+    setForgetReceipt(null);
+    setForgetReport({ loading: true });
+    try {
+      const r = await fetch('/api/people/records/' + encodeURIComponent(selected.name));
+      const d = await r.json();
+      setForgetReport(d.status === 'ok' ? d.report : { error: d.message || 'lookup failed' });
+    } catch (e) {
+      setForgetReport({ error: String(e) });
+    }
+  };
+  const doForget = async () => {
+    if (!selected || forgetting) return;
+    setForgetting(true);
+    try {
+      const r = await fetch('/api/people/forget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: selected.name })
+      });
+      const d = await r.json();
+      if (d.status === 'ok') {
+        setForgetReceipt(d.receipt);
+        setForgetReport(null);
+        loadList();
+      } else {
+        setForgetReport({ error: d.message || 'could not remove' });
+      }
+    } catch (e) {
+      setForgetReport({ error: String(e) });
+    }
+    setForgetting(false);
+  };
   const loadList = () => {
     setLoading(true);
     fetch('/api/contacts').then(r => r.json()).then(d => {
@@ -25257,13 +25299,87 @@ function ContactsWS() {
         fontSize: 11
       },
       onClick: doCopy
-    }, "\uD83D\uDCCB Copy"))), toast && /*#__PURE__*/React.createElement("div", {
+    }, "\uD83D\uDCCB Copy"), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 11,
+        borderColor: '#ff0080',
+        color: '#ff0080'
+      },
+      title: "Show what Friday holds about this person, and remove it",
+      onClick: openForget
+    }, "\uD83D\uDDD1 Forget"))), toast && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11,
         color: '#00d4ff',
         marginBottom: 8
       }
-    }, toast), /*#__PURE__*/React.createElement("div", {
+    }, toast), forgetReport && /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        marginBottom: 10,
+        borderColor: '#ff0080'
+      }
+    }, forgetReport.loading ? /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 12, color: '#999' }
+    }, "Checking what Friday holds…") : forgetReport.error ? /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 12, color: '#ff0080' }
+    }, forgetReport.error) : /*#__PURE__*/React.createElement(React.Fragment, null,
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontWeight: 600, fontSize: 13, marginBottom: 6, color: '#fff' }
+      }, "Remove what Friday holds about ", selected.name, "?"),
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: '#bbb', marginBottom: 8, lineHeight: 1.5 }
+      }, "She currently holds ",
+        /*#__PURE__*/React.createElement("b", null, forgetReport.knowledge_graph.entities),
+        forgetReport.knowledge_graph.entities === 1 ? " entry about them in her map, " : " entries about them in her map, ",
+        /*#__PURE__*/React.createElement("b", null, forgetReport.knowledge_graph.relationships),
+        forgetReport.knowledge_graph.relationships === 1 ? " link to other things, and " : " links to other things, and ",
+        /*#__PURE__*/React.createElement("b", null, forgetReport.people_graph.present ? "a contact record" : "no contact record"),
+        ". Removing them also stops her building the same records again."),
+      forgetReport.sources && forgetReport.sources.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: '#f59e0b', marginBottom: 8, lineHeight: 1.5 }
+      }, "These notes of yours still mention them, and will not be changed: ",
+        forgetReport.sources.slice(0, 6).join(', '),
+        forgetReport.sources.length > 6 ? ", and " + (forgetReport.sources.length - 6) + " more" : ""),
+      /*#__PURE__*/React.createElement("div", {
+        style: { display: 'flex', gap: 6 }
+      }, /*#__PURE__*/React.createElement("button", {
+        className: "btn",
+        style: { fontSize: 11, borderColor: '#ff0080', color: '#ff0080' },
+        onClick: doForget,
+        disabled: forgetting
+      }, forgetting ? "Removing…" : "Remove them"),
+        /*#__PURE__*/React.createElement("button", {
+          className: "btn",
+          style: { fontSize: 11 },
+          onClick: () => setForgetReport(null)
+        }, "Cancel")))), forgetReceipt && /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        marginBottom: 10,
+        borderColor: '#00ff80'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { fontWeight: 600, fontSize: 13, marginBottom: 6, color: '#fff' }
+    }, "Removed."),
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: '#bbb', marginBottom: 6, lineHeight: 1.5 }
+      }, "Contact record: ", forgetReceipt.removed.people_graph,
+        " · map entries: ", forgetReceipt.removed.kg_entities,
+        " · links: ", forgetReceipt.removed.kg_relationships),
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: '#999', lineHeight: 1.5 }
+      }, forgetReceipt.note),
+      forgetReceipt.remaining_sources && forgetReceipt.remaining_sources.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5 }
+      }, "Still mentioned in your own notes: ",
+        forgetReceipt.remaining_sources.slice(0, 6).join(', ')),
+      /*#__PURE__*/React.createElement("button", {
+        className: "btn",
+        style: { fontSize: 11, marginTop: 8 },
+        onClick: () => { setForgetReceipt(null); setSelected(null); setDetail(null); }
+      }, "Done")), /*#__PURE__*/React.createElement("div", {
       className: "card",
       style: {
         marginBottom: 10
@@ -29831,6 +29947,165 @@ const WIZARD_STRUCTURES = [{
   name: 'Giga Earth (Rez)',
   desc: 'Tribute to Rez'
 }];
+// ── Vault-first consent flow ────────────────────────────────────────────────
+//
+// Runs BEFORE SetupWizard. Five screens: what Friday writes down, the vault
+// passphrase, where your words go, what cloud mode changes, and the part about
+// other people.
+//
+// It is a separate component rather than five more entries in WIZARD_STEPS
+// because that wizard dispatches on hardcoded numeric indices (step === 0 .. 5)
+// and inserting screens at the front would mean renumbering every branch in a
+// 1.5 MB file -- a change whose failure mode is a silently blank UI.
+//
+// The words come from /api/onboarding/copy, which serves
+// services/onboarding_copy.py -- the SAME strings the terminal wizard prints.
+// There used to be three onboarding surfaces disagreeing about where secrets
+// go and what Friday could promise; one of them told every user "your private
+// information never leaves your device" while writing cloud_only routing.
+// Fetching the copy is what stops this one forking again.
+function ConsentFlow({ onDone }) {
+  const [screens, setScreens] = React.useState(null);
+  const [i, setI] = React.useState(0);
+  const [pass, setPass] = React.useState('');
+  const [pass2, setPass2] = React.useState('');
+  const [mode, setMode] = React.useState('');
+  const [err, setErr] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch('/api/onboarding/copy').then(r => r.json())
+      .then(d => setScreens(d.screens || []))
+      // A failed fetch must not strand the user in a blank consent flow with
+      // no way forward. Fall through to the wizard rather than block.
+      .catch(() => onDone({}));
+  }, []);
+
+  if (!screens) return null;
+
+  // Screen 3b is shown only when screen 3 chose cloud.
+  const visible = screens.filter(s => s.name !== 'cloud_ack'
+    || (mode !== 'local_only' && mode !== 'local_preferred'));
+  const s = visible[i];
+  if (!s) return null;
+  const last = i === visible.length - 1;
+
+  const ack = (patch) => fetch('/api/onboarding/acks', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch)
+  }).catch(() => {});
+
+  const advance = () => {
+    if (s.name === 'collects') ack({ collects_ack: true });
+    if (s.name === 'cloud_ack') ack({ cloud_ack: true });
+    if (s.name === 'third_party') ack({ third_party_ack: true });
+    if (last) { onDone({ vault_passphrase: pass, routing_mode: mode || 'cloud_only' }); return; }
+    setI(i + 1);
+  };
+
+  const onVaultNext = (skip) => {
+    setErr('');
+    if (skip) { setPass(''); ack({ vault_skipped: true }); advance(); return; }
+    if (!pass) { setErr('Enter a passphrase, or choose Skip for now.'); return; }
+    if (pass !== pass2) { setErr('The two passphrases do not match.'); return; }
+    ack({ vault_skipped: false });
+    advance();
+  };
+
+  const box = { maxWidth: 660, margin: '0 auto' };
+  const para = { fontSize: 15, lineHeight: 1.75, color: '#cfd6dd', marginBottom: 18 };
+  // The copy is hard-wrapped at ~76 columns because the terminal wizard prints
+  // it. Rendering that with white-space: pre-wrap in a browser keeps every one
+  // of those breaks, so the paragraphs come out ragged and short. Collapse the
+  // single newlines INSIDE a paragraph and let the browser wrap; blank lines
+  // stay as paragraph breaks, because those are meant.
+  const paras = (block) => String(block).split(/\n\s*\n/).map(t => t.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean);
+
+  return React.createElement('div', {
+    style: {
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(6,10,16,0.98)', overflowY: 'auto', padding: '48px 24px'
+    }
+  }, React.createElement('div', { style: box },
+    React.createElement('div', {
+      style: { fontSize: 11, letterSpacing: 1.5, color: '#00d4ff', marginBottom: 8 }
+    }, `${i + 1} / ${visible.length}`),
+    React.createElement('h1', {
+      style: { fontSize: 26, fontWeight: 600, marginBottom: 22, color: '#fff' }
+    }, s.title),
+    ...s.blocks.flatMap((b, k) => paras(b).map((t, n) =>
+      React.createElement('p', { key: k + '-' + n, style: para }, t))),
+
+    s.warning && React.createElement('div', {
+      style: {
+        padding: '12px 14px', borderRadius: 8, marginBottom: 18,
+        border: '1px solid rgba(245,158,11,0.45)',
+        background: 'rgba(245,158,11,0.07)',
+        color: '#f0c37a', fontSize: 14, lineHeight: 1.7
+      }
+    }, paras(s.warning).join(' ')),
+
+    s.name === 'vault' && React.createElement('div', { style: { marginBottom: 18 } },
+      React.createElement('input', {
+        type: 'password', value: pass, placeholder: 'Passphrase',
+        onChange: e => setPass(e.target.value),
+        style: {
+          width: '100%', padding: '10px 12px', marginBottom: 8, fontSize: 14,
+          background: 'rgba(255,255,255,0.04)', color: '#fff',
+          border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8
+        }
+      }),
+      React.createElement('input', {
+        type: 'password', value: pass2, placeholder: 'Confirm passphrase',
+        onChange: e => setPass2(e.target.value),
+        style: {
+          width: '100%', padding: '10px 12px', fontSize: 14,
+          background: 'rgba(255,255,255,0.04)', color: '#fff',
+          border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8
+        }
+      }),
+      err && React.createElement('div', {
+        style: { color: '#ff0080', fontSize: 12, marginTop: 8 }
+      }, err)),
+
+    s.name === 'routing' && React.createElement('div', { style: { marginBottom: 18 } },
+      (s.choices || []).map(c => React.createElement('div', {
+        key: c.mode,
+        onClick: () => setMode(c.mode),
+        style: {
+          padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
+          border: '1px solid ' + (mode === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
+          background: mode === c.mode ? 'rgba(0,212,255,0.08)' : 'transparent'
+        }
+      },
+        React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label),
+        React.createElement('div', {
+          style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
+        }, c.detail)))),
+
+    React.createElement('div', { style: { display: 'flex', gap: 10, marginTop: 8 } },
+      s.name === 'vault'
+        ? React.createElement(React.Fragment, null,
+            React.createElement('button', {
+              className: 'btn', onClick: () => onVaultNext(false), disabled: saving
+            }, 'Set it'),
+            React.createElement('button', {
+              className: 'btn', onClick: () => onVaultNext(true)
+            }, 'Skip for now'))
+        : s.name === 'cloud_ack'
+          ? React.createElement(React.Fragment, null,
+              React.createElement('button', { className: 'btn', onClick: advance },
+                'Continue with cloud'),
+              React.createElement('button', {
+                className: 'btn',
+                onClick: () => setI(visible.findIndex(v => v.name === 'routing'))
+              }, 'Show me the other options again'))
+          : React.createElement('button', {
+              className: 'btn',
+              onClick: advance,
+              disabled: s.name === 'routing' && !mode
+            }, s.name === 'third_party' ? 'I understand' : 'Continue'))));
+}
 const WIZARD_STEPS = [{
   id: 'welcome',
   title: 'Welcome to Agent Friday',
@@ -30701,50 +30976,17 @@ function SetupWizard({
     style: {
       color: 'rgba(245,158,11,0.9)'
     }
-  }, "Demo mode \u2014 connect a provider anytime in Settings")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 22,
-      textAlign: 'left',
-      padding: '12px 14px',
-      borderRadius: 8,
-      border: '1px solid rgba(124,58,237,0.25)',
-      background: 'rgba(124,58,237,0.05)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(200,180,255,0.9)',
-      fontFamily: 'JetBrains Mono',
-      marginBottom: 6,
-      letterSpacing: '.04em'
-    }
-  }, "\uD83D\uDD10 ENCRYPT YOUR VAULT (RECOMMENDED)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.45)',
-      marginBottom: 8,
-      lineHeight: 1.6
-    }
-  }, "A passphrase encrypts private data (finance, health, notes) at rest with AES-256-GCM. Stored in your OS keychain \u2014 never on disk. Leave blank to set it later in Settings \u2192 Privacy."), /*#__PURE__*/React.createElement("input", {
-    type: "password",
-    value: data.vault_passphrase || '',
-    onChange: e => onChange({
-      vault_passphrase: e.target.value
-    }),
-    placeholder: "Vault passphrase (optional)",
-    style: {
-      width: '100%',
-      background: 'rgba(255,255,255,0.04)',
-      border: '1px solid rgba(124,58,237,0.3)',
-      borderRadius: 6,
-      padding: '9px 12px',
-      color: '#fff',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      outline: 'none',
-      boxSizing: 'border-box'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
+  }, "Demo mode \u2014 connect a provider anytime in Settings")),
+  // The vault passphrase used to be collected HERE: a purple box in the bottom
+  // third of the final screen, below the configuration summary and immediately
+  // above the button that dismisses the wizard forever, captioned "leave blank
+  // to set it later". The single most unrecoverable decision in the product was
+  // the last and least prominent thing on the last screen.
+  //
+  // It is now screen 2 of the consent flow, before any cosmetic choice, with
+  // the copy that explains what it protects on the screen before it. See
+  // ConsentFlow and services/onboarding_copy.py.
+  /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'rgba(255,255,255,0.25)',
@@ -35981,6 +36223,10 @@ function App() {
     distribution: 'default',
     providers: {}
   });
+  // The vault-first consent flow runs before the configuration wizard. Held
+  // separately from wizStep so the wizard's hardcoded step indices are
+  // untouched.
+  const [consentDone, setConsentDone] = useState(false);
   useEffect(() => {
     // ?skip_setup=1 in URL → bypass immediately and stamp the marker
     if (new URLSearchParams(window.location.search).get('skip_setup') === '1') {
@@ -40103,7 +40349,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       map: wsCustMap,
       setCust
     }
-  }, !setupDone && /*#__PURE__*/React.createElement(SetupWizard, {
+  }, !setupDone && !consentDone && /*#__PURE__*/React.createElement(ConsentFlow, {
+    onDone: seed => { setWizData(d => ({ ...d, ...seed })); setConsentDone(true); }
+  }), !setupDone && consentDone && /*#__PURE__*/React.createElement(SetupWizard, {
     step: wizStep,
     data: wizData,
     onChange: patch => setWizData(d => ({

@@ -817,6 +817,41 @@ def cmd_status():
     _check("Gemini API key set (optional)", bool(gemini_key),
            "voice + creative disabled" if not gemini_key else "")
 
+    # ── Where the vault passphrase lives ────────────────────────────────────
+    # Nobody could answer this before. `friday vault-setup` is opt-in and
+    # nothing reported it, so there was no way to tell a durable install from
+    # one whose only copy sat in a file the installer deletes -- which is the
+    # same line that tells a 5.6.5 casualty whether they are recoverable.
+    # Identifiers only; the value is never printed.
+    console.print()
+    console.print("  [bold]Vault passphrase[/bold]")
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        _found, _src = _vp.resolve()
+        _check("A passphrase is set", bool(_found),
+               "vault data is stored as PLAINTEXT at rest; run: friday vault-setup"
+               if not _found else "")
+        if _found:
+            console.print(f"     [dim]resolved from: {_src}[/dim]")
+            _durable = [h for h in _vp.locations() if h["durable"] and h["present"]]
+            _check("Stored where the installer cannot delete it", bool(_durable),
+                   "it is only in start.bat / the environment - run: friday vault-setup"
+                   if not _durable else "")
+            for _h in _durable:
+                console.print(f"     [dim]+ {_h['home']}[/dim]")
+            if any(not h["durable"] and h["present"] and h["home"] == "start.bat"
+                   for h in _vp.locations()):
+                console.print("     [yellow]start.bat still holds a plaintext copy; "
+                              "it is removed on the next start.[/yellow]")
+            _ok = _vp.verify(_found)
+            if _ok is True:
+                _check("It opens the encrypted vault", True)
+            elif _ok is False:
+                _check("It opens the encrypted vault", False,
+                       "the passphrase found does NOT decrypt ~/.friday/vault")
+    except Exception as _ve:
+        console.print(f"  [yellow]?[/yellow]  Vault passphrase  [dim]{_ve}[/dim]")
+
     # Validate keys if set
     if anthro_key:
         console.print()
@@ -1060,18 +1095,6 @@ def cmd_vault_setup():
     console.print("  It is stored in the OS keychain — never in a file or environment variable.")
     console.print()
 
-    try:
-        import keyring as _keyring
-    except ImportError:
-        console.print(
-            "  [red]keyring not installed.[/red]  "
-            "Run: [bold]pip install 'agent-friday[keyring]'[/bold]"
-        )
-        console.print()
-        console.print("  Alternatively, set [bold]FRIDAY_VAULT_PASSPHRASE[/bold] in your environment")
-        console.print("  (a shell variable, NOT in a file committed to source control).")
-        return
-
     from rich.prompt import Prompt
     import getpass
     try:
@@ -1087,15 +1110,25 @@ def cmd_vault_setup():
         console.print("\n  [yellow]Cancelled.[/yellow]")
         return
 
-    try:
-        _keyring.set_password("agent-friday", "vault-passphrase", passphrase)
-        console.print()
-        console.print("  [green]✓[/green]  Vault passphrase saved to the OS keychain.")
-        console.print("  [dim]Remove FRIDAY_PASSWORD / FRIDAY_VAULT_PASSPHRASE from start.bat[/dim]")
-        console.print("  [dim]if they were previously set there.[/dim]")
-    except Exception as e:
-        console.print(f"  [red]Failed to save to keychain: {e}[/red]")
-        console.print("  [dim]Set FRIDAY_VAULT_PASSPHRASE in your environment instead.[/dim]")
+    # ONE writer, the same one the wizard and the app wizard use. It writes
+    # every durable home available -- the OS keychain AND a DPAPI-wrapped file
+    # -- so losing either one is survivable. `keyring` is an optional
+    # dependency, which is exactly why this no longer refuses without it.
+    from agent_friday.services import vault_passphrase as _vp
+    written = _vp.store(passphrase)
+    console.print()
+    if written:
+        console.print("  [green]✓[/green]  Vault passphrase saved to: "
+                      + ", ".join(written) + ".")
+        moved = _vp.migrate()
+        if moved.get("stripped"):
+            console.print("  [green]✓[/green]  Removed the plaintext copy from start.bat.")
+        elif moved.get("action") == "conflict":
+            console.print("  [yellow]![/yellow]  " + moved.get("detail", ""))
+    else:
+        console.print("  [red]Could not save the passphrase anywhere durable.[/red]")
+        console.print("  [dim]No OS keychain and no DPAPI on this host. Set[/dim]")
+        console.print("  [dim]FRIDAY_VAULT_PASSPHRASE in your environment instead.[/dim]")
     console.print()
 
 

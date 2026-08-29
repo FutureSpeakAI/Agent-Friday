@@ -83,7 +83,7 @@ ROUTE_MODULES = [
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'messages',
-    'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
+    'news', 'notifications', 'orchestrator', 'ownership',
     'persona', 'platform', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'tasks', 'todos',
     'work_plan',
     'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
@@ -649,6 +649,24 @@ if __name__ == '__main__':
     import logging as _vlog_mod
     _vlog = _vlog_mod.getLogger(__name__)
     try:
+        # BEFORE _get_vault_key(), which caches the key it derives: relocate the
+        # passphrase out of app/start.bat first, so the rest of this boot resolves
+        # it from its durable home. Additive and idempotent — it copies, verifies
+        # the copy, and only then removes the plaintext line. Every interruption
+        # point leaves the passphrase readable; see vault_passphrase.migrate().
+        from agent_friday.services import vault_passphrase as _vp
+        _moved = _vp.migrate()
+        if _moved["action"] == "migrated":
+            print(f"  Vault passphrase: moved out of start.bat -> {', '.join(_moved['wrote'])}")
+        elif _moved["action"] == "finish":
+            print("  Vault passphrase: finished an interrupted move out of start.bat")
+        elif _moved["action"] == "conflict":
+            _vlog.warning("[vault] %s", _moved["detail"])
+            print(f"  Vault passphrase: {_moved['detail']}")
+        elif _moved["action"] == "blocked":
+            _vlog.warning("[vault] %s", _moved["detail"])
+            print(f"  Vault passphrase: NOT relocated - {_moved['detail']}")
+
         _get_vault_key()
         _migrate_vault_plaintext()
     except Exception as _vk_err:

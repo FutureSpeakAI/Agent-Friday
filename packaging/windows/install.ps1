@@ -89,7 +89,7 @@ Initialize-Log (Join-Path $LogDir ("install-{0}.log" -f (Get-Date -Format 'yyyyM
 $script:Sources = (Get-Content -LiteralPath (Join-Path $Here 'sources.json') -Raw | ConvertFrom-Json)
 Initialize-RemediationMenu
 
-$Version = '5.6.6'
+$Version = '5.7.0'
 try {
     $pyproject = Join-Path $PayloadDir 'pyproject.toml'
     if (Test-Path -LiteralPath $pyproject) {
