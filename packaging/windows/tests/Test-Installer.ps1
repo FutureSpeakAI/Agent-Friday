@@ -444,6 +444,70 @@ Check 'every secret-bearing exclusion is preserved across app.copy' `
       ("deleted on upgrade and never restored: " + ($notPreserved -join ', '))
 
 # =====================================================================
+Section '6. The vault passphrase cannot be in a directory we delete'
+# =====================================================================
+#
+# T1, the static half of the relocation proof. The dynamic half is
+# tests/rehearsal/upgrade-vault-test.ps1, which upgrades a real install with a
+# real passphrase and asserts the ciphertext still decrypts. Neither is enough
+# alone: T1 proves the path is outside a doomed directory but not that no step
+# reaches it; T2 only exercises the paths one run happens to take.
+#
+# This exists because start.bat was not carelessly placed. It was placed
+# somewhere everyone believed was safe, and the belief was never checked
+# against what app.copy actually does. A convention nobody tests is how 5.6.5
+# destroyed vaults. So the property is asserted, not trusted.
+
+$repoRoot = Split-Path -Parent (Split-Path -Parent $Root)
+$vpSource = Join-Path $repoRoot 'src\agent_friday\services\vault_passphrase.py'
+
+Check 'the single passphrase resolver exists' (Test-Path -LiteralPath $vpSource) $vpSource
+
+if (Test-Path -LiteralPath $vpSource) {
+    $vp = Get-Content -LiteralPath $vpSource -Raw
+
+    # file_homes() must build from core.FRIDAY_DIR (~/.friday, which this
+    # installer never touches) and not from the package root.
+    Check 'every durable passphrase home is under ~/.friday' `
+          ($vp -match '_SECURITY_DIR' -and $vp -match 'core\.FRIDAY_DIR') `
+          'file_homes() no longer derives from core.FRIDAY_DIR'
+
+    Check 'no durable home is derived from the package root' `
+          ($vp -notmatch '(?m)^\s*return\s*\[[^\]]*parents\[3\]') `
+          'file_homes() returns a path built from parents[3] (the app directory)'
+
+    # The blob is wrapped, not plaintext beside the ciphertext it decrypts.
+    Check 'the passphrase file is DPAPI-wrapped, not plaintext' `
+          ($vp -match 'FRIDAYDPAPI') `
+          'no DPAPI magic in vault_passphrase.py'
+
+    # Key material and ciphertext must not share a directory.
+    Check 'passphrase file is not stored inside the vault directory' `
+          ($vp -notmatch "_SECURITY_DIR[^
+
+]*['`"]vault['`"]") `
+          'the key would sit in the same folder as the ciphertext it decrypts'
+}
+
+# The wizard must never put the passphrase back into a launch script.
+$wizSource = Join-Path $repoRoot 'src\agent_friday\setup_wizard.py'
+if (Test-Path -LiteralPath $wizSource) {
+    $wiz = Get-Content -LiteralPath $wizSource -Raw
+    $writeBat = [regex]::Match($wiz, '(?s)def _write_start_bat.*?\n(?=def |\Z)')
+    Check '_write_start_bat does not write the vault passphrase' `
+          ($writeBat.Success -and $writeBat.Value -notmatch 'SET FRIDAY_PASSWORD=') `
+          'the passphrase is being written back into the file the installer deletes'
+}
+
+# app.copy still has to preserve start.bat: existing installs have the
+# passphrase there until migrate() has run once, and it still carries API keys.
+$installer = Get-Content (Join-Path $Root 'install.ps1') -Raw
+Check 'app.copy still preserves start.bat across the delete' `
+      ($installer -match 'AppUserFiles' -and $installer -match 'start\.bat') `
+      'the migration needs one more boot to read the old passphrase'
+
+
+# =====================================================================
 
 Write-Host ''
 Write-Host "  $($script:C.Bold)$($script:Pass) passed, $($script:Fail) failed$($script:C.Reset)"

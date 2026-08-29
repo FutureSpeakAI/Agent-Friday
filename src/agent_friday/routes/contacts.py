@@ -208,6 +208,69 @@ def add_trust_person():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# -- The right to be forgotten, for people who never agreed to be recorded -----
+#
+# Friday accumulates records about third parties automatically: the knowledge
+# graph derives `person` entities from the wiki and from every conversation
+# turn, and re-runs nightly. Until these three routes there was no way for a
+# user to answer "delete what you hold about me" except by hand-editing two
+# JSON files and a derived index.
+#
+# The onboarding now tells users they are responsible for those people. These
+# routes are what makes that statement actionable rather than merely true.
+# services/forget_person.py explains what is removed and what deliberately is
+# not.
+
+@contacts_bp.route('/api/people/records/<path:name>')
+def people_records(name):
+    """Everything Friday holds about one person, and where it lives."""
+    try:
+        from agent_friday.services import forget_person as fp
+        return jsonify({"status": "ok", "report": fp.find(name)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@contacts_bp.route('/api/people/forget', methods=['POST'])
+def people_forget():
+    """Remove a person and stop them being re-derived. Returns a receipt.
+
+    POST rather than DELETE /<name>: a name is not a URL-safe key (spaces,
+    slashes, apostrophes all occur in real ones), and the receipt is the point
+    of the call -- the user is going to read it back to whoever asked.
+    """
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({"status": "error", "message": "No name specified"}), 400
+    try:
+        from agent_friday.services import forget_person as fp
+        return jsonify({"status": "ok", "receipt": fp.forget(name)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@contacts_bp.route('/api/people/forgotten', methods=['GET', 'POST'])
+def people_forgotten():
+    """GET the tombstone list; POST {name, undo: true} to lift one.
+
+    Lifting a tombstone stops future exclusion. It does NOT restore deleted
+    records, and the response says so rather than letting the UI imply an
+    undelete that did not happen.
+    """
+    from agent_friday.services import forget_person as fp
+    try:
+        if request.method == 'GET':
+            return jsonify({"status": "ok", "forgotten": fp.list_forgotten()})
+        data = request.get_json(silent=True) or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({"status": "error", "message": "No name specified"}), 400
+        return jsonify({"status": "ok", "result": fp.unforget(name)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @contacts_bp.route('/api/contacts')
 def get_contacts():
     """Merged contact list built from trust_graph.json."""

@@ -389,6 +389,141 @@ def _existing_user() -> bool:
     return False
 
 
+# ── onboarding acknowledgements ──────────────────────────────────────────────
+# Local, never transmitted. They exist so a returning user is not made to sit
+# through a consent screen they have already read, and so Settings can re-show
+# exactly the one that has become relevant again.
+
+ONBOARDING_FILE = FRIDAY_DIR / "onboarding.json"
+
+
+def _onboarding_state() -> dict:
+    try:
+        data = json.loads(ONBOARDING_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _record_onboarding(**kv) -> None:
+    from datetime import datetime, timezone
+    state = _onboarding_state()
+    state.update(kv)
+    state["updated"] = datetime.now(timezone.utc).isoformat()
+    try:
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = ONBOARDING_FILE.with_name(ONBOARDING_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, ONBOARDING_FILE)
+    except Exception:
+        pass
+
+
+def _unanswered(existing: dict) -> list:
+    """Which parts of setup this machine has NOT answered yet.
+
+    `_existing_user()` was called exactly once, in main(), as a whole-wizard
+    gate: if it returned true the wizard printed "Existing installation
+    detected" and exited. Nothing else consulted it, so a machine that was
+    PARTLY set up could never be finished -- and that is not hypothetical. The
+    second-user install in August had `.setup_complete` on disk and no
+    `model_routing.mode`, because neither the wizard nor the installer had ever
+    written one; the gate then refused to run the step that would have fixed it.
+
+    So the question is no longer "has this user run setup?" but "what has this
+    user not been asked?", answered per step.
+    """
+    missing = []
+    if not (existing.get("agent_name") or "").strip():
+        missing.append("name")
+    routing = existing.get("model_routing") or {}
+    if not (routing.get("mode") or "").strip():
+        missing.append("routing")
+
+    acks = _onboarding_state()
+    if not acks.get("collects_ack"):
+        missing.append("collects")
+    # The vault question counts as answered by EITHER a passphrase that exists
+    # or a deliberate skip. Never by the absence of both.
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        has_pass = bool(_vp.resolve()[0])
+    except Exception:
+        has_pass = False
+    if not (has_pass or acks.get("vault_skipped")):
+        missing.append("vault")
+    if not acks.get("third_party_ack"):
+        missing.append("third_party")
+    if (routing.get("mode") == "cloud_only") and not acks.get("cloud_ack"):
+        missing.append("cloud_ack")
+    return missing
+
+
+def _say_screen(name: str, total: int, step: int, title_override: str = ""):
+    """Render one screen of the shared onboarding copy.
+
+    The words live in services/onboarding_copy.py because there were three
+    onboarding surfaces saying three different things about where secrets go.
+    """
+    from agent_friday.services import onboarding_copy as _oc
+    scr = _oc.screen(name)
+    _clear()
+    _header(step, total, (title_override or scr["title"]).upper())
+    for block in scr["blocks"]:
+        console.print(Panel(block, border_style="cyan", padding=(1, 3)))
+        console.print()
+    # A screen may carry ONE sentence that is not like the others -- the vault
+    # screen's "if you lose this passphrase the files cannot be recovered". It
+    # is separated in the copy module so both surfaces can give it weight
+    # instead of stacking it as a fifth paragraph.
+    if scr.get("warning"):
+        console.print(Panel(scr["warning"], border_style="yellow",
+                            title="Read this one twice", padding=(1, 3)))
+        console.print()
+    return scr
+
+
+def step_collects(total: int) -> None:
+    """Screen 1 -- what Friday writes down.
+
+    This is the screen that makes the vault screen make sense. "Vault first"
+    taken literally puts a passphrase prompt in front of someone who has not
+    been told what a vault is, which is security theatre in the direction of
+    consent. Comprehension precedes consent; this costs one screen.
+    """
+    _say_screen("collects", total, 1)
+    Prompt.ask("  [dim]Press Enter to continue[/dim]", default="", show_default=False)
+    _record_onboarding(collects_ack=True)
+
+
+def step_cloud_ack(total: int, step: int) -> bool:
+    """Screen 3b -- shown only when the user chose cloud.
+
+    Returns False if they want to reconsider the routing choice.
+    """
+    _say_screen("cloud_ack", total, step)
+    choice = Prompt.ask(
+        "  [bold]1[/bold] Continue with cloud   [bold]2[/bold] Show me the other options again",
+        choices=["1", "2"], default="1")
+    if choice == "2":
+        return False
+    _record_onboarding(cloud_ack=True)
+    return True
+
+
+def step_third_party(total: int, step: int) -> None:
+    """Screen 4 -- the people who were never asked.
+
+    This screen states an obligation. It only became shippable when
+    services/forget_person.py gave the user a way to act on it: telling someone
+    they are responsible for people who did not consent, while giving them no
+    mechanism, is worse than not raising it.
+    """
+    _say_screen("third_party", total, step)
+    Prompt.ask("  [dim]Press Enter to continue[/dim]", default="", show_default=False)
+    _record_onboarding(third_party_ack=True)
+
+
 def step_welcome(quick: bool):
     _clear()
     console.print()
@@ -465,6 +600,72 @@ def _show_privacy_posture():
             title="Privacy Posture", border_style="yellow", padding=(0, 2),
         ))
     console.print()
+
+
+def step_routing(total: int, step: int, existing_mode: str) -> str:
+    """Screen 3 -- where your words go. Returns a model_routing MODE.
+
+    This replaces `step_provider` and `_show_privacy_posture`, both of which
+    were unfixable as they stood:
+
+      * step_provider could not return a local mode at all. Options 2 and 3
+        printed "coming in v5" and returned "anthropic", so `_routing_block_for`
+        always wrote mode: cloud_only. A user who wanted a local-first install
+        had to finish setup, open Friday, and change it in Settings.
+      * _show_privacy_posture told anyone with Ollama installed that "nothing
+        leaves your machine". Installing Ollama does not change routing. The
+        wizard wrote cloud_only underneath that green panel.
+
+    The mode IS the answer here, which is why this screen writes it directly
+    rather than inferring it from a provider name.
+    """
+    from agent_friday.services import onboarding_copy as _oc
+    scr = _say_screen("routing", total, step)
+
+    # Recommend only what this machine can actually run. The marker follows
+    # setup_brain.assess()['capable'] and nothing else -- and "on this computer
+    # only" is still offered on hardware that cannot run it today, because a
+    # user with an eGPU, or a plan to buy a card, is entitled to choose it.
+    capable, reason, brain_label = False, "", ""
+    try:
+        from agent_friday.services import setup_brain as _sb
+        a = _sb.assess()
+        capable = bool(a.get("capable"))
+        reason = a.get("reason") or ""
+        brain_label = a.get("brain_label") or ""
+    except Exception:
+        pass
+    if reason:
+        console.print(Panel(reason + (("\n\n  " + brain_label) if brain_label else ""),
+                            title="This computer", border_style="dim", padding=(0, 2)))
+        console.print()
+
+    choices = scr["choices"]
+    for i, c in enumerate(choices):
+        rec = ""
+        if c["mode"] == "cloud_only" and not capable:
+            rec = " [bold magenta]<- RECOMMENDED for this computer[/bold magenta]"
+        elif c["mode"] == "local_preferred" and capable:
+            rec = " [bold magenta]<- RECOMMENDED for this computer[/bold magenta]"
+        console.print(f"  [bold cyan]{i + 1}[/bold cyan].  [bold white]{c['label']}[/bold white]{rec}")
+        console.print(f"       [dim]{c['detail']}[/dim]")
+        console.print()
+
+    default = "1" if not capable else "3"
+    if existing_mode:
+        for i, c in enumerate(choices):
+            if c["mode"] == existing_mode:
+                default = str(i + 1)
+    while True:
+        pick = Prompt.ask(f"  [cyan]Where should Friday think (1-{len(choices)})[/cyan]",
+                          default=default)
+        try:
+            idx = int(pick) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]["mode"]
+        except ValueError:
+            pass
+        console.print(f"  [red]Enter a number from 1 to {len(choices)}.[/red]")
 
 
 def step_provider(total: int, existing_provider: str) -> str:
@@ -796,10 +997,11 @@ def _verify_vault_passphrase(pw: str):
         return None
 
 
-def _vault_keep_existing(total: int, existing: str, source: str) -> str:
+def _vault_keep_existing(total: int, existing: str, source: str,
+                         step: int = 2) -> str:
     """A vault exists and we still have its passphrase. Keep it. Say so."""
     _clear()
-    _header(6, total, "VAULT ENCRYPTION")
+    _header(step, total, "A PASSPHRASE FOR THE PRIVATE PART")
     ok = _verify_vault_passphrase(existing)
     if ok is False:
         # We found *a* passphrase and it does not open the vault. Do not use it
@@ -832,7 +1034,8 @@ def _vault_keep_existing(total: int, existing: str, source: str) -> str:
     return existing
 
 
-def _vault_lost_passphrase(total: int, already_explained: bool = False) -> str:
+def _vault_lost_passphrase(total: int, already_explained: bool = False,
+                          step: int = 2) -> str:
     """A vault exists and its passphrase is gone. Stop and explain.
 
     Stephen, 2026-08-29: "if it exists and the passphrase is not recoverable,
@@ -842,7 +1045,7 @@ def _vault_lost_passphrase(total: int, already_explained: bool = False) -> str:
     """
     if not already_explained:
         _clear()
-        _header(6, total, "VAULT ENCRYPTION")
+        _header(step, total, "A PASSPHRASE FOR THE PRIVATE PART")
         console.print(Panel(
             "[bold yellow]There is an encrypted vault here, but I cannot find its\n"
             "passphrase.[/bold yellow]\n\n"
@@ -907,7 +1110,7 @@ def _vault_lost_passphrase(total: int, already_explained: bool = False) -> str:
     return ""
 
 
-def step_vault_password(total: int, existing: str) -> str:
+def step_vault_password(total: int, existing: str, step: int = 2) -> str:
     """Ask for a vault encryption passphrase — default path, not optional.
 
     RE-RUN SAFE SINCE 5.6.6. This step used to open with "Generate a random
@@ -927,54 +1130,73 @@ def step_vault_password(total: int, existing: str) -> str:
     vault_here = _vault_exists()
 
     if vault_here and existing:
-        return _vault_keep_existing(total, existing, source)
+        return _vault_keep_existing(total, existing, source, step)
     if vault_here and not existing:
-        return _vault_lost_passphrase(total)
+        return _vault_lost_passphrase(total, step=step)
 
-    _clear()
-    _header(6, total, "VAULT ENCRYPTION")
-    console.print(Panel(
-        "[bold cyan]Encrypt your vault at rest[/bold cyan]  [bold green]← RECOMMENDED[/bold green]\n\n"
-        "  Friday stores financial, health, legal, and personal data in\n"
-        "  [bold]~/.friday/vault[/bold].  A passphrase encrypts this data with\n"
-        "  AES-256-GCM + Argon2id so it cannot be read even if your disk is\n"
-        "  accessed by another user or process.\n\n"
-        "  [bold]FRIDAY_PASSWORD[/bold] is set in start.bat — only you can read it.\n"
-        "  You can also set it as an environment variable before launching.",
-        title="Security", border_style="green", padding=(0, 2),
-    ))
-    console.print()
+    _say_screen("vault", total, step)
 
-    auto_opt = Confirm.ask(
-        "  [bold]Generate a random passphrase for me?[/bold]  [dim](saves it to start.bat)[/dim]",
-        default=True,
-    )
-    if auto_opt:
-        import secrets as _sec
-        generated = _sec.token_urlsafe(24)
-        console.print(f"\n  [bold green]Generated passphrase:[/bold green] [bold white]{generated}[/bold white]")
-        console.print("  [dim]This is written to start.bat and never leaves your machine.[/dim]\n")
-        Prompt.ask("  [dim]Press Enter to continue[/dim]", default="")
-        return generated
+    # A BOUNDED LOOP, NOT RECURSION.
+    #
+    # The first draft of this re-entered step_vault_password on every empty or
+    # mismatched answer. Under the input the installer actually produces -- a
+    # user holding Enter through an unattended-feeling flow -- that is an
+    # infinite loop: Enter gives no passphrase, Enter again declines the skip,
+    # and it asks again forever. The wizard runs in the foreground at installer
+    # step 12, so a hang there is a hung install.
+    #
+    # Pressing Enter past this screen therefore SKIPS. That is the safe
+    # direction: it leaves data unencrypted, which is recoverable at any time
+    # (_migrate_vault_plaintext encrypts what already exists on the next start),
+    # whereas the old default -- generate a passphrase and write it to
+    # start.bat -- was not.
+    for attempt in range(3):
+        pw = Prompt.ask("  [cyan]Passphrase[/cyan]  [dim](Enter to skip)[/dim]",
+                        password=True, default="")
+        if not pw:
+            console.print()
+            if attempt < 2 and not Confirm.ask(
+                    "  [bold]Skip for now?[/bold]  Finance, health, legal and family "
+                    "records will sit on this disk as readable text until you set one.",
+                    default=True):
+                continue
+            # Recorded so the Settings banner can mention it ONCE. A skip is an
+            # answer; nagging someone who gave one is how a consent flow turns
+            # into an obstacle.
+            _record_onboarding(vault_skipped=True)
+            console.print("  [yellow]No passphrase set. You can set one any time in\n"
+                          "  Settings, and Friday will encrypt whatever already exists\n"
+                          "  the next time she starts.[/yellow]\n")
+            return ""
 
-    pw = Prompt.ask("  [cyan]Passphrase[/cyan]", password=True, default=existing or "")
-    if not pw:
-        console.print()
-        confirmed = Confirm.ask(
-            "  [bold red]⚠ Skip encryption?[/bold red]  Your vault data (finance, health, legal) "
-            "will be stored in plaintext. Are you sure?",
-            default=False,
-        )
-        if not confirmed:
-            return step_vault_password(total, existing)  # re-ask
-        console.print("  [yellow]Vault encryption disabled. You can enable it later by\n"
-                      "  setting FRIDAY_PASSWORD in start.bat and restarting.[/yellow]\n")
+        pw2 = Prompt.ask("  [cyan]Confirm passphrase[/cyan]", password=True, default="")
+        if pw != pw2:
+            console.print("  [red]Passphrases do not match. Try again.[/red]\n")
+            continue
+        break
+    else:
+        _record_onboarding(vault_skipped=True)
+        console.print("  [yellow]No passphrase set after three attempts. You can set\n"
+                      "  one any time in Settings.[/yellow]\n")
         return ""
-    pw2 = Prompt.ask("  [cyan]Confirm passphrase[/cyan]", password=True, default="")
-    if pw != pw2:
-        console.print("  [red]Passphrases do not match. Try again.[/red]\n")
-        return step_vault_password(total, existing)
-    console.print("  [green]✓ Vault encryption enabled.[/green]\n")
+
+    # ONE writer, and it is not a file the installer can delete. store() puts
+    # the passphrase in the OS keychain AND a DPAPI-wrapped file under
+    # ~/.friday/security, and returns which of them actually took.
+    from agent_friday.services import vault_passphrase as _vp
+    written = _vp.store(pw)
+    if written:
+        console.print("  [green]Vault encryption enabled.[/green]  "
+                      f"[dim]Passphrase stored in: {', '.join(written)}.[/dim]\n")
+        _record_onboarding(vault_skipped=False)
+    else:
+        # Do NOT quietly fall back to a file. The whole point of this release is
+        # that the passphrase stopped living somewhere that gets deleted.
+        console.print("  [red]Friday could not store the passphrase securely on\n"
+                      "  this computer (no OS keychain and no DPAPI).[/red]\n"
+                      "  [dim]Set FRIDAY_VAULT_PASSPHRASE in your environment before\n"
+                      "  launching, or the vault stays unencrypted.[/dim]\n")
+    Prompt.ask("  [dim]Press Enter to continue[/dim]", default="", show_default=False)
     return pw
 
 
@@ -1220,13 +1442,30 @@ def _persist(config: dict):
 
 
 def _write_start_bat(config: dict):
+    """The convenience launcher for a source checkout.
+
+    THE VAULT PASSPHRASE IS NOT WRITTEN HERE AND MUST NEVER BE AGAIN.
+
+    It used to be, on the line after the API keys, and that made this file
+    the passphrase only automatic home. PROJ_ROOT for a packaged install is
+    the app directory that install.ps1 deletes recursively on every upgrade.
+    5.6.5 destroyed vaults exactly this way. The passphrase now lives in the
+    OS keychain and a DPAPI-wrapped file under ~/.friday/security, neither of
+    which the installer touches; services/vault_passphrase.py owns that, and
+    vault_passphrase.migrate() moves existing installs across.
+
+    The API keys stay for now. That is a considered difference, not an
+    oversight: they have an encrypted second home already
+    (~/.friday/providers/keys via credential_store), so losing this file
+    costs a re-entry rather than the data, and
+    core._bootstrap_env_from_launch_scripts force-overrides them from here at
+    import -- untangling that is its own change with its own failure modes.
+    """
     lines = ["@echo off", "title Agent Friday", ""]
     if config.get("anthropic_api_key"):
         lines.append(f'SET ANTHROPIC_API_KEY={config["anthropic_api_key"]}')  # pragma: allowlist secret
     if config.get("gemini_api_key"):
         lines.append(f'SET GEMINI_API_KEY={config["gemini_api_key"]}')  # pragma: allowlist secret
-    if config.get("vault_password"):
-        lines.append(f'SET FRIDAY_PASSWORD={config["vault_password"]}')  # pragma: allowlist secret
     lines += ["", f'cd /d "{PROJ_ROOT}"', "python server.py", "pause"]
     bat = PROJ_ROOT / "start.bat"
     bat.write_text("\r\n".join(lines), encoding="utf-8")
@@ -1269,8 +1508,23 @@ def main():
     args = parser.parse_args()
     quick = args.quick
 
-    # Detect existing installs and bail out early unless --force
-    if _existing_user() and not args.force:
+    # Load existing values for defaults
+    existing = _load_config()
+
+    # WHAT HAS THIS USER NOT BEEN ASKED?
+    #
+    # This used to be "has this user run setup?", answered once, as a gate that
+    # exited the whole wizard. That was wrong in both directions. It refused to
+    # finish an install that was genuinely incomplete -- the second-user machine
+    # in August had .setup_complete and no model_routing.mode, and the gate
+    # stopped the only step that would have written one -- while a --force run
+    # re-asked EVERYTHING, including the vault question that then minted a new
+    # passphrase over an existing vault.
+    #
+    # Now every step consults what is already answered, and the gate only fires
+    # when nothing at all is outstanding.
+    missing = _unanswered(existing)
+    if _existing_user() and not args.force and not missing:
         _clear()
         console.print()
         console.print(ASCII_BANNER, style="bold cyan", highlight=False)
@@ -1290,30 +1544,77 @@ def main():
         console.print()
         sys.exit(0)
 
-    # Load existing values for defaults
-    existing = _load_config()
+    # A returning user with a gap gets the gap, not the whole wizard again.
+    resuming = _existing_user() and not args.force
 
-    total_steps = 6 if quick else 10
+    def _ask(part: str) -> bool:
+        """Should this step run? A settled answer is left alone."""
+        return (not resuming) or (part in missing)
+
+    total_steps = 6 if quick else 12
 
     # ── Welcome ──
-    step_welcome(quick)
+    if not resuming:
+        step_welcome(quick)
 
     config = dict(existing)  # start with existing so we don't wipe settings
 
-    # Step 1: Name
-    config["agent_name"] = step_name(total_steps, config.get("agent_name", "AGENT FRIDAY"))
+    # ── Screen 1: what Friday writes down ──
+    # First, and before the passphrase, because a passphrase prompt in front of
+    # someone who has not been told what a vault is is security theatre.
+    if _ask("collects"):
+        step_collects(total_steps)
+
+    # ── Screen 2: the vault ──
+    # Second. Not step 6 of 10, and not an optional box under the summary on
+    # the final screen: the promise this product makes is that the private part
+    # is protected, and the passphrase is the whole of that promise.
+    if _ask("vault"):
+        config["vault_password"] = step_vault_password(
+            total_steps, config.get("vault_password", ""), step=2)
+    else:
+        config.setdefault("vault_password", "")
+
+    # ── Screen 3: where your words go ──
+    _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
+    if not quick and _ask("routing"):
+        config["routing_mode"] = step_routing(total_steps, 3, _routing_existing)
+    else:
+        config["routing_mode"] = _routing_existing or "cloud_only"
+
+    # ── Screen 3b: what cloud mode changes ──
+    # Only when cloud was chosen, and re-shown by Settings if the mode later
+    # changes from a local mode to cloud_only -- the tradeoff someone accepted
+    # at install is not the one they are accepting then.
+    if not quick and config["routing_mode"] == "cloud_only" and _ask("cloud_ack"):
+        while not step_cloud_ack(total_steps, 4):
+            config["routing_mode"] = step_routing(total_steps, 3, config["routing_mode"])
+            if config["routing_mode"] != "cloud_only":
+                break
+
+    # ── Screen 4: the people who were never asked ──
+    if not quick and _ask("third_party"):
+        step_third_party(total_steps, 5)
+
+    # Step 6: Name
+    if _ask("name"):
+        config["agent_name"] = step_name(total_steps, config.get("agent_name", "AGENT FRIDAY"))
+    else:
+        config.setdefault("agent_name", "AGENT FRIDAY")
 
     if not quick:
-        # Step 2: Provider
-        config["provider"] = step_provider(total_steps, config.get("provider", "anthropic"))
+        # The provider follows from the routing mode now. A local mode still
+        # needs a cloud provider on file for the legs that go out; the mode is
+        # what decides whether they are taken.
+        config.setdefault("provider", "anthropic")
 
-        # Step 3: Orchestrator model
+        # Step 7: Orchestrator model
         config["orchestrator_model"] = step_model(
             total_steps, config["provider"],
             config.get("orchestrator_model", "claude-opus-5")
         )
 
-        # Step 4: Creative engine
+        # Step 8: Creative engine
         config["creative_model"] = step_creative_engine(
             total_steps, config.get("creative_model", "gemini-nano-banana-2")
         )
@@ -1322,20 +1623,18 @@ def main():
         config.setdefault("orchestrator_model", "claude-opus-5")
         config.setdefault("creative_model", "gemini-nano-banana-2")
 
-    # Step 5 (always): API keys
+    # Step 9 (always): API keys
     config["anthropic_api_key"], config["gemini_api_key"] = step_brain(
         total_steps,
         config.get("anthropic_api_key", ""),
         config.get("gemini_api_key", ""),
     )
 
-    # Step 6 (always): Vault encryption — prominent, recommended, not buried.
-    config["vault_password"] = step_vault_password(
-        total_steps, config.get("vault_password", ""),
-    )
+    # The vault used to be asked here, sixth of ten, after the model picker and
+    # the creative engine. It is screen 2 now, above.
 
     if not quick:
-        # Step 7: Voice — engine (local default / cloud opt-in) + TTS persona.
+        # Step 10: Voice — engine (local default / cloud opt-in) + TTS persona.
         config["voice_engine"] = step_voice_engine(
             total_steps, config.get("voice_engine", "local"))
         config["tts_voice"] = step_voice(total_steps, config.get("tts_voice", "Aoede"))
@@ -1355,8 +1654,14 @@ def main():
         config.setdefault("preferred_scene_index", 0)
         config.setdefault("connectors", {})
 
-    # The provider answer has to reach the thing that routes a turn.
-    # `provider` alone never did -- see _routing_block_for.
+    # The routing answer has to reach the thing that routes a turn.
+    #
+    # It never could before: this was derived from `provider`, and step_provider
+    # could only ever return "anthropic" (options 2 and 3 printed "coming in
+    # v5"), so _routing_block_for wrote mode: cloud_only on every install ever
+    # made by this wizard -- underneath a welcome screen promising the user's
+    # private information never left the device. The mode is now a question the
+    # user actually answered, on screen 3.
     _routing = _routing_block_for(
         config.get("provider") or "anthropic",
         (existing.get("model_routing") or {}),
@@ -1364,6 +1669,11 @@ def main():
     )
     if _routing is not None:
         config["model_routing"] = _routing
+    chosen_mode = config.pop("routing_mode", "") or ""
+    if chosen_mode:
+        block = dict(config.get("model_routing") or existing.get("model_routing") or {})
+        block["mode"] = chosen_mode
+        config["model_routing"] = block
 
     # Defaults that server expects
     config.setdefault("subagent_model", "claude-sonnet-5")

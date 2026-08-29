@@ -162,20 +162,45 @@ def test_wrong_passphrase_is_not_accepted(vault, enter_only, monkeypatch):
     assert got == ""
 
 
-# ── The fresh-install path must be untouched ────────────────────────────────
+# ── The fresh-install path ──────────────────────────────────────────────────
 
-def test_fresh_install_still_offers_to_generate(vault, enter_only):
-    """No vault yet: the default-Yes generate path is correct and must remain.
+def test_fresh_install_pressing_enter_skips_rather_than_generating(vault, enter_only):
+    """CHANGED DELIBERATELY in 5.7.0. This test used to assert the opposite.
 
-    Guards against fixing the upgrade case by breaking the common one.
+    It read: "No vault yet: the default-Yes generate path is correct and must
+    remain." That path opened with "Generate a random passphrase for me?"
+    defaulting to YES, printed the passphrase to the terminal, and wrote it to
+    start.bat -- the file inside the app directory the installer deletes, on
+    the line after the API keys. It was the second of the two routes that
+    destroyed vaults, and it recommended defeating the threat model the same
+    screen had just finished describing.
+
+    Enter-through now SKIPS. Nothing is generated and nothing is written to any
+    file. The safe direction is unencrypted-and-recoverable
+    (_migrate_vault_plaintext encrypts whatever exists on the next start)
+    rather than encrypted-under-a-key-in-a-doomed-file.
     """
-    # `vault` created the directory but nothing is in it and there is no salt.
     assert not w._vault_exists()
 
     got = w.step_vault_password(12, "")
 
-    assert got, "a fresh install should still get a generated passphrase"
-    assert len(got) > 20
+    assert got == "", "the wizard minted a passphrase the user never chose"
+    sb = w.PROJ_ROOT / "start.bat"
+    assert (not sb.exists()) or "FRIDAY_PASSWORD" not in sb.read_text(encoding="utf-8"), \
+        "a passphrase was written into start.bat"
+
+
+def test_holding_enter_through_the_vault_screen_terminates(vault, enter_only):
+    """A hang here is a hung install.
+
+    The wizard runs in the FOREGROUND at installer step 12. The first draft of
+    the rewritten screen re-entered itself on every empty answer, so a user
+    pressing Enter -- no passphrase, then declining the skip -- looped forever.
+    pytest caught it as a RecursionError; a real user would have seen the
+    installer stop with no explanation.
+    """
+    got = w.step_vault_password(12, "")     # every prompt answered with Enter
+    assert got == ""
 
 
 # ── The helper, directly ────────────────────────────────────────────────────

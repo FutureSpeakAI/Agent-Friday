@@ -62,9 +62,21 @@ def _now_iso() -> str:
 
 
 def _friday_password() -> str:
-    """The vault passphrase. Read live from the environment (set via FRIDAY_PASSWORD
-    env var) and fall back to the value core captured at import — whichever is non-empty."""
-    return os.environ.get("FRIDAY_PASSWORD") or getattr(core, "FRIDAY_PASSWORD", "") or ""
+    """The vault passphrase, from the ONE resolver.
+
+    This used to read FRIDAY_PASSWORD from the environment and nothing else,
+    which meant it could not see a passphrase stored by `friday vault-setup`
+    (keychain only). The result was a working Sovereign Vault beside a
+    credential store that had silently dropped a tier to DPAPI — invisible
+    unless you inspected which cipher a blob had been written with.
+
+    See services/vault_passphrase.py for the resolution order and why it is
+    that order. Imported inside the function: vault_passphrase is the lower
+    layer (it imports core and nothing from here), and a module-level import
+    would still be evaluated before `core` finishes for some import paths.
+    """
+    from agent_friday.services import vault_passphrase as _vp
+    return _vp.resolve()[0]
 
 
 def _vault_key() -> bytes | None:
@@ -101,42 +113,16 @@ def _vault_key() -> bytes | None:
     return _VAULT_KEY
 
 
-# ── Windows DPAPI (per-user) via ctypes — no pywin32 dependency ───────────────
-def _dpapi_available() -> bool:
-    return os.name == "nt"
-
-
-def _dpapi(data: bytes, encrypt: bool) -> bytes | None:
-    """Call CryptProtectData / CryptUnprotectData. Returns None if unavailable
-    or on failure (caller falls back / raises)."""
-    if os.name != "nt":
-        return None
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class DATA_BLOB(ctypes.Structure):
-            _fields_ = [("cbData", wintypes.DWORD),
-                        ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-        crypt32 = ctypes.windll.crypt32
-        kernel32 = ctypes.windll.kernel32
-
-        buf = ctypes.create_string_buffer(data, len(data))
-        blob_in = DATA_BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
-        blob_out = DATA_BLOB()
-        # CRYPTPROTECT_UI_FORBIDDEN = 0x1 (never prompt); per-user scope (flags=0x1).
-        fn = crypt32.CryptProtectData if encrypt else crypt32.CryptUnprotectData
-        ok = fn(ctypes.byref(blob_in), None, None, None, None, 0x1, ctypes.byref(blob_out))
-        if not ok:
-            return None
-        try:
-            out = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-        finally:
-            kernel32.LocalFree(blob_out.pbData)
-        return out
-    except Exception:
-        return None
+# ── Windows DPAPI (per-user) ── the implementation now lives in one place ─────
+# These were a second, byte-identical copy of the ctypes calls in
+# services/vault_passphrase.py, which needs the same primitive to wrap the vault
+# passphrase. Two copies of a crypto primitive is two things to get wrong, so
+# vault_passphrase is the canonical home and these are thin aliases. The names
+# are kept because callers and tests reference them.
+from agent_friday.services.vault_passphrase import (  # noqa: E402
+    dpapi as _dpapi,
+    dpapi_available as _dpapi_available,
+)
 
 
 def protection_method() -> str:
