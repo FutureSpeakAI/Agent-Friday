@@ -993,7 +993,29 @@ if ($Unattended) {
 #
 # installer_version is kept beside the measured one deliberately. If the two
 # ever disagree, that disagreement is the single most useful line in the file.
-$versionOnDisk = Get-InstalledAppVersion $AppDir
+# MEASURING MUST NOT BE ABLE TO FAIL THE INSTALL. Every step above has already
+# passed its own verify by the time we get here, so a throw in this block would
+# fail an install that actually worked -- and, worse, skip the manifest write, so
+# the uninstaller would have nothing to read. That is exactly what happened the
+# first time this block measured anything: Test-Autostart fed an empty known
+# folder to Join-Path and took the whole run down at step 17 of 16.
+#
+# So each measurement is asked for defensively and degrades to a stated
+# fallback. A manifest that says "we could not tell" is worth far more than no
+# manifest at all.
+function Get-Measured {
+    param([Parameter(Mandatory)][string] $What,
+          [Parameter(Mandatory)][scriptblock] $Probe,
+          $Fallback)
+    try { return (& $Probe) }
+    catch {
+        Write-Log "Manifest: could not measure $What ($($_.Exception.Message)); recording fallback." 'WARN'
+        Add-InstallWarning "The install completed, but $What could not be measured for the manifest."
+        return $Fallback
+    }
+}
+
+$versionOnDisk = Get-Measured 'the installed version' { Get-InstalledAppVersion $AppDir } ''
 if ($versionOnDisk -ne $Version) {
     Write-Log ("Manifest: code on disk reports '$versionOnDisk' but this installer is '$Version'. " +
                'Recording what is on disk.') 'WARN'
@@ -1009,8 +1031,8 @@ $manifest = [ordered]@{
     installed_at      = (Get-Date).ToString('o')
     install_root      = $InstallRoot
     python_version    = $script:Sources.python.version
-    shortcuts         = @(Get-InstalledShortcutPaths)   # MEASURED
-    autostart_enabled = [bool](Test-Autostart)          # MEASURED
+    shortcuts         = @(Get-Measured 'the installed shortcuts' { Get-InstalledShortcutPaths } $shortcutsCreated)
+    autostart_enabled = [bool](Get-Measured 'the autostart state' { Test-Autostart } $autostartOn)
     ollama            = [ordered]@{
         installed_by_this_installer = [bool]$ollamaOutcome.WeInstalledIt
         method                      = [string]$ollamaOutcome.Method
@@ -1026,9 +1048,19 @@ $manifest = [ordered]@{
         'not take and the files on disk are the older release.'
     )
 }
-[System.IO.File]::WriteAllText($ManifestPath, ($manifest | ConvertTo-Json -Depth 6),
-                               (New-Object System.Text.UTF8Encoding($false)))
-Write-Log "Manifest written: $ManifestPath" 'OK'
+try {
+    [System.IO.File]::WriteAllText($ManifestPath, ($manifest | ConvertTo-Json -Depth 6),
+                                   (New-Object System.Text.UTF8Encoding($false)))
+    Write-Log "Manifest written: $ManifestPath" 'OK'
+} catch {
+    # Everything Friday needs is already on disk and verified. Losing the
+    # manifest degrades the UNINSTALLER (it falls back to conservative
+    # defaults), which is not worth failing a working install over - but it is
+    # worth saying out loud rather than swallowing.
+    Write-Log "Manifest could not be written: $($_.Exception.Message)" 'FAIL'
+    Add-InstallWarning ('The install completed but install-manifest.json could not be written. ' +
+                        'Uninstalling will still work; it will be more cautious about what it removes.')
+}
 
 Complete-Install
 
