@@ -42,7 +42,20 @@ from agent_friday.core import (
 # ═══════════════════════════════════════════════════════════════
 
 def _run_claude_terminal(terminal_id, task, cwd):
-    """Launch a Claude Code instance in a new CMD window."""
+    """Launch a Claude Code instance in a new console window Friday owns.
+
+    Spawned directly with CREATE_NEW_CONSOLE rather than `cmd /c start ...`:
+    a `start`-launched window is a grandchild of a wrapper `cmd.exe /c` that
+    exits the moment `start` returns, so `proc.pid` from that older approach
+    named a process already dead by the time anything read it back — every
+    stop/kill against it was a no-op against a PID nobody held. Spawning the
+    console directly makes `proc.pid` the real, long-lived window.
+    The `title Friday-Vibe-<id>` prefix is not cosmetic: it is the only thing
+    that lets a restarted process find this exact window again (by what it is
+    actually running, matched via its own command line) rather than by a PID
+    that reboot has already forgotten — see
+    code_engine.adopt_or_reap_vibe_terminals.
+    """
     log_file = VIBE_LOG_DIR / f"{terminal_id}.log"
     try:
         # Validate cwd: must be an existing directory under HOME (prevents path
@@ -53,8 +66,11 @@ def _run_claude_terminal(terminal_id, task, cwd):
         # Sanitize the task string: strip characters that could break out of the
         # nested cmd quoting and chain commands (command injection).
         safe_task = re.sub(r'["&|<>^%\r\n`]', ' ', str(task or ''))[:2000].strip()
-        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd_p} && claude --dangerously-skip-permissions \"{safe_task}\""'
-        proc = subprocess.Popen(cmd, shell=True, cwd=str(cwd_p))
+        inner = (f'title Friday-Vibe-{terminal_id} && cd /d "{cwd_p}" && '
+                f'claude --dangerously-skip-permissions "{safe_task}"')
+        proc = subprocess.Popen(
+            ["cmd.exe", "/k", inner], cwd=str(cwd_p),
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
         VIBE_TERMINALS[terminal_id].update({
             'status': 'running',
             'pid': proc.pid,
@@ -66,6 +82,99 @@ def _run_claude_terminal(terminal_id, task, cwd):
             'stopped': datetime.now().isoformat(),
             'error': str(e)
         })
+    core._persist_vibe_terminals()
+
+
+def _vibe_terminal_processes() -> dict:
+    """`terminal_id -> (pid, command_line)` for live Friday-Vibe console windows.
+
+    Matches on the `title Friday-Vibe-<id>` marker actually present in the
+    process's own command line — never on `Name='cmd.exe'` alone, which would
+    just as happily catch a terminal window the user opened by hand. This is
+    the same discriminator lesson residency_arbiter._llama_server_pids
+    documents from 2026-08-18: matching by binary/process name instead of by
+    what the process is actually running reaps something that was never ours
+    to touch. Nobody types `title Friday-Vibe-<id>` themselves.
+    """
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='cmd.exe'\" | "
+             "Where-Object { $_.CommandLine -like '*title Friday-Vibe-*' } | "
+             "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=30, creationflags=_POPEN_FLAGS)
+        rows = json.loads(out.stdout or "[]")
+        if isinstance(rows, dict):
+            rows = [rows]
+    except Exception:
+        return {}
+    found = {}
+    for r in rows:
+        try:
+            cmdline = str(r.get("CommandLine") or "")
+            pid = r.get("ProcessId")
+            # `terminal_id` is `str(uuid.uuid4())[:12]` — 8 hex chars, the
+            # uuid's first hyphen, then 3 more hex chars. Not 12 plain hex
+            # chars: uuid4's dash always lands at index 8.
+            m = re.search(r"Friday-Vibe-([0-9a-fA-F]{8}-[0-9a-fA-F]{3})", cmdline)
+            if m and pid:
+                found[m.group(1)] = (int(pid), cmdline)
+        except Exception:
+            continue
+    return found
+
+
+def adopt_or_reap_vibe_terminals() -> dict:
+    """Reconcile VIBE_TERMINALS against what is actually running, at boot.
+
+    `VIBE_TERMINALS` is an in-memory registry (core/__init__.py) of real OS
+    subprocesses; it has no disk persistence of its own and no boot-time
+    adopt-or-reap, so a Friday restart while a vibe-code terminal is running
+    orphans that cmd.exe window — nothing tracks it, nothing can stop it from
+    the UI, and the process monitor stops reporting it. This is the same
+    class of bug residency_arbiter.LlamaServerBackend.adopt_or_reap exists to
+    close for llama-server seats, applied to the other kind of process this
+    app leaves running behind its own back.
+
+    A live `Friday-Vibe-<id>` window whose id was persisted as running is
+    ADOPTED: its record is restored into VIBE_TERMINALS with the (now
+    verified live) pid. A live `Friday-Vibe-<id>` window Friday has no record
+    of at all is REAPED — it cannot be a session the user started by hand,
+    since nobody types that title themselves, so it can only be an orphan
+    from a process that died without reaping it on the way out.
+    """
+    report = {"adopted": [], "reaped": []}
+    persisted = core._read_vibe_terminals_state()
+    try:
+        live = _vibe_terminal_processes()
+    except Exception as e:
+        _code_log(f"vibe-terminal survey failed: {e}", source="vibe", level="error")
+        return report
+
+    for tid, (pid, _cmdline) in live.items():
+        saved = persisted.get(tid)
+        if saved:
+            entry = dict(saved)
+            entry["pid"] = pid
+            entry["status"] = "running"
+            VIBE_TERMINALS[tid] = entry
+            report["adopted"].append(tid)
+        else:
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=20, creationflags=_POPEN_FLAGS)
+                report["reaped"].append(pid)
+            except Exception:
+                pass
+
+    core._persist_vibe_terminals()
+    if report["adopted"]:
+        _code_log(f"adopted {len(report['adopted'])} vibe-code terminal(s) "
+                  f"from before the restart", source="vibe", level="info")
+    if report["reaped"]:
+        _code_log(f"reaped {len(report['reaped'])} orphaned vibe-code "
+                  f"terminal(s): {sorted(report['reaped'])}", source="vibe", level="warn")
+    return report
 
 PROJECTS_DIR = HOME / "Projects"
 CODE_LOGS_DIR = FRIDAY_DIR / "logs"

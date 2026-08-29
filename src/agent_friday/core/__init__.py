@@ -595,6 +595,42 @@ VIBE_TERMINALS = {}   # id -> { id, task, status, cwd, pid, started, stopped, lo
 VIBE_LOG_DIR = Path(os.path.expanduser("~")) / ".friday" / "vibe-code-logs"
 VIBE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# `VIBE_TERMINALS` lives only in memory, so a restart forgets every vibe-code
+# terminal it launched while the cmd.exe window it spawned — running
+# `claude --dangerously-skip-permissions` somewhere under ~/Projects — keeps
+# running, unmanaged. Same disease residency_arbiter.endpoints_path() exists
+# to cure for llama-server seats: persist what is running to disk so a
+# restart can find it again, rather than only ever knowing what THIS process
+# started. code_engine.adopt_or_reap_vibe_terminals() reads this back at boot.
+VIBE_STATE_FILE = Path(os.path.expanduser("~")) / ".friday" / "vibe-code" / "terminals.json"
+VIBE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _persist_vibe_terminals() -> None:
+    """Write VIBE_TERMINALS to disk. Atomic (tmp-then-replace), best-effort.
+
+    Same shape as residency_arbiter._publish_endpoints: a process that cannot
+    persist its terminal list is still a working process for whoever owns it
+    right now, so a write failure here is swallowed rather than raised.
+    """
+    try:
+        tmp = VIBE_STATE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"terminals": VIBE_TERMINALS}, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, VIBE_STATE_FILE)
+    except Exception:
+        pass
+
+
+def _read_vibe_terminals_state() -> dict:
+    """`terminal_id -> last-known record` from disk. Never raises; {} on any problem."""
+    try:
+        data = json.loads(VIBE_STATE_FILE.read_text(encoding="utf-8"))
+        terms = data.get("terminals") or {}
+        return {str(k): v for k, v in terms.items() if isinstance(v, dict)}
+    except Exception:
+        return {}
+
 # ── Paths ─────────────────────────────────────────────────────
 HOME = Path(os.path.expanduser("~"))
 FRIDAY_DIR = HOME / ".friday"
@@ -1332,11 +1368,11 @@ DEFAULT_AGENT_PERSONALITY = (
     "You give the answer first, then the reasoning. You are honest about uncertainty."
 )
 
-
 # The one place the default local model is decided. `model_plan` imports nothing
 # from `agent_friday` (its only module-level import is `__future__`), so this is
 # free and cannot cycle. See model_plan.FLOOR_MODEL for why it is not retyped.
 from agent_friday.services.model_plan import FLOOR_MODEL as _FLOOR_MODEL  # noqa: E402
+
 
 DEFAULT_SETTINGS = {
     # NOTE for anyone adding a setting: _load_settings_raw() WHITELISTS against
