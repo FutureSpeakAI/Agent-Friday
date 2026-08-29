@@ -1,189 +1,187 @@
-# Agent Friday v5.6.5
+# Agent Friday v5.6.6
 
 *2026-08-29 · FutureSpeak.AI*
 
-**If you have ever upgraded Agent Friday in place, this release is not
-optional, and your install has probably been reporting a version it was not
-running.**
+**If you upgraded to 5.6.5 today, your vault passphrase may have been deleted.
+Read section 1 before you do anything else. If you have not upgraded yet,
+upgrade to 5.6.6 and skip 5.6.5 entirely.**
 
-Everything here is either that defect, the one escape hatch that should have
-let you out of it, or a correction to something 5.6.4 told you that was not
-true. No feature work.
+5.6.5 fixed in-place upgrades, which had never delivered any code. That fix was
+correct and it stays. But making the app-file copy actually *run* on an upgrade
+made a second, older defect reachable for the first time: the copy deletes the
+file your vault passphrase lives in.
+
+This release is that fix, the wizard half of the same problem, and two smaller
+defects of the identical shape. No feature work.
 
 ---
 
-## 1. In-place upgrades never delivered any code, and said they had
+## 1. An upgrade could destroy your vault passphrase
 
-Re-running a newer installer over an existing install replaced **nothing**.
-The installer printed "Friday is installed", wrote the new version number into
-`install-manifest.json`, and exited 0 — while every file of Friday's own code
-on disk stayed at the previous release.
+### What happened
 
-`Invoke-Step` runs a step's `-Verify` block *before* its action, and skips the
-action when verify passes. The `app.copy` verify asked only whether four files
-existed: `cli.py`, `server.py`, `setup_wizard.py`, `index.html`. Any earlier
-install satisfies that. So the copy short-circuited, every time, with one line
-in the log to show for it:
+Your vault passphrase is written to `start.bat` inside Friday's own app folder,
+and — unless you separately ran `friday vault-setup` — **nowhere else**. That is
+deliberate: the wizard refuses to put it in a settings file, so it is not
+committed or synced anywhere.
+
+`app.copy` deletes the entire app folder and lays down a fresh copy. `start.bat`
+is deliberately excluded from what ships, so it does not come back.
+
+Before 5.6.5 this never bit, by accident: `app.copy` short-circuited on every
+upgrade and the delete never ran. 5.6.5 fixed that short-circuit. From 5.6.5,
+every in-place upgrade deletes `start.bat`.
+
+Your data in `~/.friday/vault` is encrypted with AES-256-GCM under a key derived
+from that passphrase with Argon2id. **The vault is never deleted. Only the key
+is.** The files are still on your disk and they are still unreadable.
+
+### Measured, on the two published zips
+
+Published 5.6.3 installed, a real passphrase minted through the wizard's own
+writer, a real note encrypted under it, then upgraded with published 5.6.5:
+
+| | 5.6.3 → **5.6.5** | 5.6.3 → **5.6.6** |
+|---|---|---|
+| Installer exit code | 0 | 0 |
+| Code actually updated | yes (5.6.3 → 5.6.5) | yes (5.6.3 → 5.6.6) |
+| `start.bat` survived | **no** | **yes** |
+| Passphrase survived | **no** | **yes** |
+| Vault decrypts afterwards | **no** | **yes** |
+
+Both runs reported success. One of them left the vault permanently unreadable.
+
+### Are you affected
+
+Only if **all** of these are true:
+
+1. You upgraded in place by re-running the installer, using **5.6.5**, and
+2. you had set a vault passphrase, and
+3. you had not stored it via `friday vault-setup`.
+
+Upgrades using 5.6.4 or earlier did not delete it — those installers copied
+nothing at all, which is the defect 5.6.5 fixed. Fresh installs are unaffected.
+
+### If it happened to you
+
+**In order:**
+
+1. **Check the OS keychain.** If you ever ran `friday vault-setup`, your
+   passphrase is there and nothing is lost:
+   ```
+   friday vault-setup
+   ```
+   It will tell you if one is already stored.
+
+2. **Check for another copy.** If you ever launched Friday from a shortcut you
+   made yourself, or kept a `launch_now.bat` or `friday_startup.bat`, those hold
+   the same `SET FRIDAY_PASSWORD=` line. 5.6.6 preserves all of them from now on.
+
+3. **Check wherever you saved it.** If you accepted the wizard's generated
+   passphrase, it was shown on screen once and written to `start.bat`. A password
+   manager, a note, a screenshot.
+
+4. **If none of those:** there is **no recovery**. This is not a lock we can pick
+   — that is the property the encryption was chosen for. Argon2id + AES-256-GCM
+   with no key is not recoverable by us, by you, or by anyone else.
+
+   Your vault files stay where they are. Nothing deletes them, and 5.6.6 will not
+   overwrite them. If the passphrase turns up later it will still work. Friday
+   runs normally in the meantime; the vault stays locked.
+
+We are sorry. This was ours, it was silent, and it looked like success.
+
+---
+
+## 2. The setup wizard could mint a new passphrase over an existing vault
+
+A second, independent way to lose the same data.
+
+`step_vault_password` opened with *"Generate a random passphrase for me?"*
+defaulting to **Yes**, and never checked whether a vault already existed. The
+installer runs the wizard on **every** run, including every upgrade. So pressing
+Enter through an upgrade generated a fresh passphrase over a vault encrypted
+under the old one.
+
+Measured against 5.6.5, existing vault, every prompt answered with Enter:
 
 ```
-app.copy : verify passed before action - already in place, nothing to do.
+original passphrase : the-users-original-passphrase
+wizard returned     : gFwCZBGllhg2rcpVrdC7xgnHcbOYK5K4
+vault decrypts      : False  (IntegrityError)
 ```
 
-Measured on a real 5.6.3 → 5.6.4 upgrade run from the two published zips:
+Every other step in that wizard already takes what is on disk and leaves a
+settled answer alone. This one now does too:
 
-| | |
-|---|---|
-| Files updated | **0 of 489** |
-| `install-manifest.json` | `5.6.4` |
-| `pyproject.toml` on disk | `5.6.3` |
-| `connector_secrets.py` (new in 5.6.4) | **absent** |
-| `GET /api/mcp/servers` | returned connector tokens **in plaintext** |
-
-That last row is the point. 5.6.4's headline security fix was that connector
-credentials stop being handed to the browser. On an install that had upgraded
-into "5.6.4", they were still handed to the browser, because the code that
-stops it was never copied. Every other 5.6.4 fix was missing the same way.
-
-**This shipped with the installer itself.** 5.6.0 through 5.6.4 all carry it
-identically. No in-place upgrade this project has ever published delivered
-code. If your install came from an upgrade rather than a fresh install, you
-have been running the version you *first* installed.
-
-### The fix
-
-The `app.copy` verify now also requires the installed `pyproject.toml` version
-to equal the version being installed. An older install reports an older
-version and gets replaced. An install too old to have a readable
-`pyproject.toml` reports nothing, mismatches, and also gets replaced — so this
-repairs an upgrade from **any** prior release, not just from 5.6.4. The fast
-path survives only for what it was for: re-running the *same* installer, where
-skipping really is correct.
-
-### What you should do
-
-1. Download `AgentFriday-Setup-5.6.5.zip` below and run it over your existing
-   install. It keeps everything under `~/.friday` — notes, wiki, settings,
-   conversations, connected accounts.
-2. Run `friday status` and confirm the version it reports is 5.6.5.
-3. **If you connected Airtable, Gmail, GitHub or any other credentialed MCP
-   server while on an install that only believed it was 5.6.4, treat those
-   tokens as having been readable, and rotate them.** They sat in
-   `~/.friday/mcp_servers.json` in the clear and were served by
-   `GET /api/mcp/servers` on request.
-
-A fresh install was never affected, and neither was anyone running from a git
-checkout.
+- **Vault exists, passphrase found** (environment, `start.bat`, or the OS
+  keychain) — it is kept, and checked against your actual encrypted data before
+  being accepted. No prompt that can destroy anything.
+- **Vault exists, passphrase not found** — the wizard **stops and explains**. You
+  can type it, leave it unset (the default), or deliberately start a new vault —
+  and that last one requires typing the word `abandon`. Pressing Enter never
+  abandons anything.
+- **No vault yet** — unchanged. A fresh install still gets a generated
+  passphrase, which is the right default when there is nothing to lose.
 
 ---
 
-## 2. `friday update` pointed at a repository that does not exist
+## 3. Add/Remove Programs kept showing the old version
 
-A packaged install deliberately ships no `.git`, so every installer user hits
-the "not a git repository" branch of `friday update`. That branch printed
-`https://github.com/FutureSpeakAI/friday-desktop`, which returns **404**. The
-repository is `Agent-Friday`.
+`Register-Uninstaller` writes `DisplayVersion`. `Test-UninstallerRegistered`
+never read it back — it checked only that *an* entry existed pointing at a real
+file. `Invoke-Step` runs verify before the action, so on every upgrade the
+previous install's entry satisfied it, registration was skipped, and Windows went
+on reporting the old version indefinitely.
 
-So the one command that could have told an affected user what to do sent them
-to a dead link. It now prints the correct releases URL, shows the version the
-installer recorded beside the version actually running, gives the three steps
-that update a packaged install, and states plainly that an in-place upgrade
-before 5.6.5 may never have applied.
+Same defect as `app.copy`'s, one surface over — and this is a surface people
+check to find out what they are running. The check now compares the version.
 
 ---
 
-## 3. The uninstaller addressed the author by name
+## 4. The install manifest recorded intentions, not outcomes
 
-Its closing line read `For Stephen: …LAST-UNINSTALL-REPORT.md`, on every
-machine it ran on. It now reads `Details:`.
+`install-manifest.json` is what the uninstaller reads to know what to remove. It
+was written from what the installer *set out to do*. Because `Invoke-Step` skips
+steps whose verify already passes, several of those things did not happen and the
+file said they did. Three ways it was wrong, all now **measured** after the fact:
 
----
+- **`version`** — recorded the version being installed even when `app.copy`
+  short-circuited and the disk still held the old release. That is the paper
+  trail of the 5.6.5 bug. Now read back from the installed `pyproject.toml`, with
+  `installer_version` beside it. **If those two disagree, the copy did not take.**
+- **`shortcuts`** — empty on every upgrade, because `Install-Shortcuts` did not
+  re-run. The uninstaller therefore left four shortcuts on the machine after
+  reporting a clean removal. Now enumerated from what exists.
+- **`autostart_enabled`** — recorded your *answer*, not the state. Answering
+  "No" on a machine that already started Friday at sign-in wrote `false` and
+  changed nothing, so Friday kept starting and the uninstaller didn't know to
+  remove the entry. **Answering No now actually turns it off.**
 
-## Corrections to the 5.6.4 notes
-
-Documentation only — no behaviour changed by any of these.
-
-- **The known-issue test count was wrong: seven claimed, sixteen measured.**
-  `test_gate_harness_integrity`, named there as failing, passes. The five
-  `test_residency_arbiter` and `test_local_image` do fail. Also failing and
-  unnamed: five `test_routing_resolver`, one `test_model_router`, one
-  `test_model_plan`, one `test_nemo_voice`, two `test_egress_adversarial`.
-
-  The distinction 5.6.4 missed is **isolation versus whole-suite**. Running
-  their own files alone, only the two `test_egress_adversarial` cases fail,
-  identically at `v5.6.3` and `v5.6.4` — those two are deterministic and
-  genuinely pre-existing. The other thirteen pass in isolation and fail only
-  in a whole-suite run: order- and environment-dependent, not attributable to
-  a release. `v5.6.3` fails the same *number* with a partly different
-  *membership*. The count is stable; the roster is not. Still test defects,
-  not product defects.
-
-- **`cloud_only` does not refuse a local model you pick.** 5.6.4 said it did.
-  `_is_local_choice` guards a task override and a bound seat, but not the
-  turn's chosen model — which is the path the picker uses. The behaviour is
-  deliberate and long-standing, and it fails safe (on-device is the more
-  contained destination), so the sentence is corrected rather than the code.
-
-  **What `cloud_only` actually promises:** Friday will not pick a local model
-  on her own, and will not fall back to one when a cloud call fails. It does
-  not override a local model you choose yourself — that runs on your machine.
-
-- **The pricing fix was filed under Performance. It is a Fixed-section defect
-  with a bill attached.** Opus 5 — Friday's default — was metered at $15/$75
-  per MTok against a real $5/$25, so it was **charged at three times its real
-  price**. Fable 5 was billed as the cheapest model in the lineup when it is
-  the most expensive. `claude-haiku-4-5` metered at exactly $0. The Cost &
-  Usage panel and both budget tripwires inherited all three.
-
-- **"A partial settings write no longer resets its siblings" is narrower than
-  it sounds.** The deep merge covers two blocks out of the 20 a live
-  `settings.json` carries. The rest are still replaced wholesale.
-
-- **A privacy fix shipped in 5.6.4 undocumented** — the sensitivity
-  classifier's Layer 4 was POSTing a model tag that was never installed, so it
-  404'd on every call and returned "no opinion" indistinguishably from a
-  working layer. Now recorded in the 5.6.4 changelog entry.
+Manifest `schema_version` is now `2`.
 
 ---
 
-## Known issues
+## Still open, and it is Stephen's call
 
-Sixteen unit tests fail a whole-suite run on this line. Two
-(`test_egress_adversarial::test_tier2_keyword_batch`) are deterministic and
-pre-existing. The other fourteen pass when their own file is run alone and
-fail only under the full suite — they are order- and environment-dependent.
-All are test defects, not product defects. See the Corrections section above
-for the breakdown, and `KNOWN_ISSUES.md` for the standing list.
+The passphrase living inside the app folder is what made section 1 possible.
+Preserving the file across the copy fixes the symptom; the credential is still
+stored in the one directory the installer deliberately destroys. Moving it —
+to the OS keychain by default, or to `~/.friday` — is a real change with
+migration consequences for every existing install, and it is not being made in
+a hotfix. The options are written up in
+`docs/design/vault-passphrase-location.md`.
 
-The two `test_ollama_manager` assertions noted in 5.6.4 assert on the *last*
-call made; `chat_completion` legitimately issues a seat-release afterwards
-when the display is under its memory reserve, so they track free VRAM rather
-than correctness.
-
----
-
-## How this was verified
-
-1. Built with `packaging\windows\build-installer.ps1` from a **clean git
-   worktree** at the `v5.6.5` tag.
-2. **A fresh install** from the built zip, on an isolated root and profile.
-3. **A real in-place upgrade**, 5.6.3 → 5.6.5, from the *published* 5.6.3 zip,
-   then every file in the resulting install byte-compared against the 5.6.5
-   tag. This is the same procedure that proved the defect, run again to prove
-   the fix.
-4. Published, then the **published asset re-downloaded** and its SHA-256
-   compared against the local build.
+Until then: **run `friday vault-setup`.** It puts your passphrase in the OS
+keychain, which nothing in the installer touches.
 
 ---
 
-## Install
+## Upgrading
 
-Download `AgentFriday-Setup-5.6.5.zip` below, unzip it anywhere, and
-double-click **Install Agent Friday.cmd**. No Python, no git, no Ollama needed
-first. Per-user throughout — no administrator, no `Program Files`, no `HKLM`.
+Download `AgentFriday-Setup-5.6.6.zip`, unzip anywhere, double-click
+**Install Agent Friday.cmd**. Your notes, settings and connected accounts are
+kept; the installer replaces Friday's own files and nothing under `~/.friday`.
 
-Running it over an existing install is now a real upgrade, and keeps your data.
-
-There is no `.exe` build in this release, or in `5.6.0`–`5.6.4`. **Older
-`.exe` releases on this repository's release page — `v4.5.0` through `v5.4.0`
-— predate this month's security work entirely. Do not treat any of them as
-current.** See `docs/INSTALLATION.md`.
+If you are on 5.6.4 or earlier, your `start.bat` was never deleted — 5.6.6 will
+preserve it. If you are on 5.6.5, read section 1 first.

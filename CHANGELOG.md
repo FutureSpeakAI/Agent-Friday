@@ -3,7 +3,92 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.5**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.6**
+
+---
+
+## [5.6.6] — 2026-08-29
+
+**If you upgraded using 5.6.5, your vault passphrase may have been deleted. Read
+the first item. If you have not upgraded yet, take 5.6.6 and skip 5.6.5.**
+
+### Fixed
+
+- **An in-place upgrade could destroy the vault passphrase, silently.** The
+  passphrase is written to `start.bat` inside Friday's app folder and — unless
+  `friday vault-setup` was run — exists nowhere else; `setup_wizard.py`
+  deliberately refuses to put it in a settings file. `app.copy` deletes the app
+  folder wholesale, and `start.bat` is excluded from the shipped payload, so it
+  does not come back.
+
+  Before 5.6.5 this was latent: `app.copy`'s verify passed before its action on
+  every upgrade, so the delete never ran and the file survived by accident.
+  5.6.5 correctly fixed that short-circuit and thereby made this reachable for
+  the first time. From 5.6.5, every in-place upgrade deleted it.
+
+  `~/.friday/vault` is AES-256-GCM under an Argon2id key derived from that
+  passphrase. The vault is never deleted; only the key is. The ciphertext stays
+  on disk, permanently unreadable.
+
+  Measured on the two published zips. Published 5.6.3 installed, a passphrase
+  minted through the wizard's own `_write_start_bat`, a note encrypted under it,
+  then upgraded:
+
+  | | → 5.6.5 | → 5.6.6 |
+  |---|---|---|
+  | installer exit | 0 | 0 |
+  | code updated | yes | yes |
+  | `start.bat` survived | **no** | yes |
+  | vault decrypts | **no** | yes |
+
+  `app.copy` now moves the payload-excluded, credential-bearing files aside
+  before the delete and restores them after the copy, in a `finally` so a failed
+  copy cannot cost the passphrase. The held copy is deleted immediately on
+  restore rather than being left as a second plaintext credential on disk. The
+  preserved set is exactly `Get-PayloadExcludes`' secret-bearing list, which is
+  what makes restoring safe: the payload can never contain those names, so
+  putting them back cannot overwrite a shipped file.
+
+  **There is no recovery for data already affected.** See KNOWN_ISSUES §0.
+
+- **The setup wizard could mint a new passphrase over an existing vault.**
+  `step_vault_password` opened with "Generate a random passphrase for me?"
+  defaulting to Yes and never checked whether a vault existed. The installer
+  runs the wizard on every run including every upgrade, so pressing Enter
+  generated a fresh passphrase over data encrypted under the old one. Measured
+  against 5.6.5 with Enter-only answers: returned a new random passphrase, and
+  the vault then failed to decrypt with `IntegrityError`.
+
+  The step now reads the passphrase from the environment, `start.bat`, or the OS
+  keychain — `_load_config()` can never supply it, which is why `existing`
+  arrived empty on every run — and verifies it against real ciphertext. An
+  existing vault with a recoverable passphrase keeps it. An existing vault
+  without one **stops and explains**; the default is to leave it unset, and
+  starting a new vault requires typing `abandon`. Fresh installs are unchanged.
+
+- **Add/Remove Programs kept showing the old version after an upgrade.**
+  `Register-Uninstaller` writes `DisplayVersion`; `Test-UninstallerRegistered`
+  never read it back, so the previous install's entry satisfied the verify, the
+  action was skipped, and Windows reported the old version indefinitely. Same
+  defect shape as `app.copy`'s, on the surface a user checks to learn what they
+  are running. The check is now version-aware.
+
+- **`install-manifest.json` recorded intentions rather than outcomes.** Because
+  `Invoke-Step` skips steps whose verify already passes, things the manifest
+  claimed had not happened. Three now measured after the fact: `version` is read
+  back from the installed `pyproject.toml` (with `installer_version` beside it —
+  a disagreement means the copy did not take); `shortcuts` is enumerated from
+  what exists, so the uninstaller stops orphaning four shortcuts after an
+  upgrade; `autostart_enabled` reflects the measured state. Answering "No" to
+  autostart on a machine that already had it enabled now actually disables it,
+  instead of leaving it on and recording `false`. `schema_version` → 2.
+
+### Known, unchanged, and Stephen's to decide
+
+- The vault passphrase still lives inside the app directory — the property that
+  made the above possible. 5.6.6 preserves the file; it does not relocate the
+  credential. Options and migration consequences:
+  `docs/design/vault-passphrase-location.md`.
 
 ---
 

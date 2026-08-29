@@ -400,6 +400,49 @@ foreach ($f in @('start.bat','launch_now.bat','friday_startup.bat','friday_start
     Check "build excludes the secret-bearing $f" ($build -match [regex]::Escape($f))
 }
 
+# --- ...and app.copy must carry every one of them across the delete --------
+#
+# 5.6.6. Two lists have to agree and nothing enforced it: the payload's
+# exclusions (build-installer.ps1) and the files app.copy preserves before it
+# deletes $AppDir (install.ps1's $script:AppUserFiles). A file excluded from the
+# payload but NOT preserved is deleted on upgrade and never comes back, which is
+# exactly how the vault passphrase was destroyed - start.bat was correctly
+# excluded and not preserved, so an upgrade removed the only copy of the key to
+# ~/.friday/vault.
+#
+# The failure is silent, permanent and only visible to the one person it happens
+# to, so it gets an assertion rather than a convention.
+$inst = Get-Content (Join-Path $Root 'install.ps1') -Raw
+$preserved = @()
+$m = [regex]::Match($inst, '(?s)\$script:AppUserFiles\s*=\s*@\((.*?)\)')
+if ($m.Success) {
+    foreach ($q in [regex]::Matches($m.Groups[1].Value, "'([^']+)'")) {
+        $preserved += $q.Groups[1].Value
+    }
+}
+Check 'install.ps1 declares a preserved-user-file list' ($preserved.Count -gt 0)
+
+$excluded = @()
+$me = [regex]::Match($build, '(?s)function Get-PayloadExcludes.*?return @\((.*?)\)')
+if ($me.Success) {
+    foreach ($q in [regex]::Matches($me.Groups[1].Value, "'([^']+)'")) {
+        $excluded += $q.Groups[1].Value
+    }
+}
+Check 'build-installer.ps1 declares an exclusion list' ($excluded.Count -gt 0)
+
+# Only the SECRET-BEARING exclusions need preserving. Build artefacts and VCS
+# folders are excluded because they are noise, and deleting those is correct.
+$mustPreserve = @('start.bat','launch_now.bat','friday_startup.bat',
+                  'friday_startup.vbs','.env','secrets.yaml','config.yaml')
+$notPreserved = @()
+foreach ($f in $mustPreserve) {
+    if ($excluded -contains $f -and $preserved -notcontains $f) { $notPreserved += $f }
+}
+Check 'every secret-bearing exclusion is preserved across app.copy' `
+      ($notPreserved.Count -eq 0) `
+      ("deleted on upgrade and never restored: " + ($notPreserved -join ', '))
+
 # =====================================================================
 
 Write-Host ''
