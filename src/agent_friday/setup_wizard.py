@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -700,8 +701,236 @@ def step_api_keys(total: int, existing_anthro: str, existing_gemini: str) -> tup
     return anthro, gemini
 
 
+VAULT_DIR = FRIDAY_DIR / "vault"
+VAULT_CONFIG = VAULT_DIR / ".vault_config.json"
+
+
+def _vault_exists() -> bool:
+    """Is there already an encrypted vault whose passphrase matters?
+
+    The salt file is the thing that makes this irreversible: every byte in the
+    vault was encrypted under Argon2id(passphrase, THIS salt). A different
+    passphrase against the same salt derives a different key and the data is
+    gone. So the salt existing is exactly the condition under which minting a
+    new passphrase is destructive.
+    """
+    try:
+        if VAULT_CONFIG.exists():
+            return True
+        if VAULT_DIR.is_dir() and any(VAULT_DIR.iterdir()):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _existing_vault_password() -> tuple:
+    """(passphrase, where_it_came_from) for the vault, or ("", "").
+
+    `_load_config()` can never supply this — `_persist` deliberately strips
+    vault_password before writing settings (see its comment), so the `existing`
+    argument threaded through every other wizard step arrives empty here on
+    every single run. That is why this function exists: it goes and finds the
+    passphrase in the three places it can actually be.
+
+    Order matters. The environment is what the running product would see, and
+    start.bat is what `_bootstrap_env_from_launch_scripts` loads it from at
+    import, so those two agree by construction. The keyring is the copy made by
+    `friday vault-setup`, which is the only home that survives the app folder
+    being replaced.
+    """
+    for var in ("FRIDAY_VAULT_PASSPHRASE", "FRIDAY_PASSWORD"):
+        v = os.environ.get(var, "").strip()
+        if v:
+            return v, f"the {var} environment variable"
+
+    try:
+        sb = PROJ_ROOT / "start.bat"
+        if sb.exists():
+            m = re.search(r"(?im)^\s*SET\s+FRIDAY_PASSWORD=(.*)$",
+                          sb.read_text(encoding="utf-8", errors="ignore"))
+            if m and m.group(1).strip():
+                return m.group(1).strip(), "start.bat"
+    except Exception:
+        pass
+
+    try:
+        import keyring as _keyring
+        v = _keyring.get_password("agent-friday", "vault-passphrase")
+        if v:
+            return v, "your operating system's keychain"
+    except Exception:
+        pass
+
+    return "", ""
+
+
+def _verify_vault_passphrase(pw: str):
+    """True / False if it can be checked against real ciphertext, else None.
+
+    None is not a failure — it means the vault has a salt but nothing encrypted
+    yet to test against, so there is nothing to be wrong about.
+    """
+    try:
+        from agent_friday.privacy import vault_crypto as vc
+        salt = vc.load_salt(VAULT_CONFIG)
+        # Production derives with the DEFAULT profile (no profile argument):
+        # services/agent.py:4911, services/credential_store.py:97. Match it.
+        key = vc.derive_key(pw, salt)
+        for f in sorted(VAULT_DIR.rglob("*")):
+            if not f.is_file() or f.name == ".vault_config.json":
+                continue
+            try:
+                blob = f.read_bytes()
+            except Exception:
+                continue
+            if not vc.is_encrypted(blob):
+                continue
+            try:
+                vc.decrypt(blob, key)
+                return True
+            except Exception:
+                return False
+        return None
+    except Exception:
+        return None
+
+
+def _vault_keep_existing(total: int, existing: str, source: str) -> str:
+    """A vault exists and we still have its passphrase. Keep it. Say so."""
+    _clear()
+    _header(6, total, "VAULT ENCRYPTION")
+    ok = _verify_vault_passphrase(existing)
+    if ok is False:
+        # We found *a* passphrase and it does not open the vault. Do not use it
+        # and do not mint another — that would write a second wrong answer over
+        # the first. This is the same conversation as a lost passphrase.
+        console.print(Panel(
+            "[bold yellow]The passphrase I found does not open your vault.[/bold yellow]\n\n"
+            f"  I found one in {source}, but it does not decrypt the data in\n"
+            "  [bold]~/.friday/vault[/bold]. That usually means the passphrase was\n"
+            "  changed at some point and one of the two copies is stale.",
+            title="Vault", border_style="yellow", padding=(0, 2)))
+        console.print()
+        return _vault_lost_passphrase(total, already_explained=True)
+
+    detail = ("  I checked it against your encrypted data and it works."
+              if ok else
+              "  There is nothing encrypted yet to check it against, but it is\n"
+              "  the passphrase this install is already configured with.")
+    console.print(Panel(
+        "[bold green]Your vault is already encrypted, and I have kept your\n"
+        "existing passphrase.[/bold green]\n\n"
+        f"  Found in: [bold]{source}[/bold]\n"
+        f"{detail}\n\n"
+        "  [dim]Nothing to do here. Your existing notes stay readable.[/dim]",
+        title="Vault", border_style="green", padding=(0, 2)))
+    console.print()
+    console.print("  [dim]To change it deliberately, run [bold]friday vault-setup[/bold] — "
+                  "changing it\n  here would make everything already saved unreadable.[/dim]\n")
+    Prompt.ask("  [dim]Press Enter to continue[/dim]", default="")
+    return existing
+
+
+def _vault_lost_passphrase(total: int, already_explained: bool = False) -> str:
+    """A vault exists and its passphrase is gone. Stop and explain.
+
+    Stephen, 2026-08-29: "if it exists and the passphrase is not recoverable,
+    that is a situation to stop and explain, not to paper over by generating a
+    new one." Generating one here is precisely what destroys the data, because
+    the ciphertext stays and only the key changes.
+    """
+    if not already_explained:
+        _clear()
+        _header(6, total, "VAULT ENCRYPTION")
+        console.print(Panel(
+            "[bold yellow]There is an encrypted vault here, but I cannot find its\n"
+            "passphrase.[/bold yellow]\n\n"
+            "  [bold]~/.friday/vault[/bold] holds data encrypted with a passphrase that\n"
+            "  is not in this install's start.bat, its environment, or your\n"
+            "  operating system's keychain.\n\n"
+            "  Installers before 5.6.6 could delete the file that passphrase\n"
+            "  lived in during an upgrade. If you upgraded recently, that is\n"
+            "  almost certainly what happened.",
+            title="Vault", border_style="yellow", padding=(0, 2)))
+        console.print()
+
+    console.print("  [bold]Three ways forward.[/bold]\n")
+    console.print("    [bold]1.[/bold] Type the passphrase, if you know it or wrote it down.")
+    console.print("       [dim]I will check it against your data before accepting it.[/dim]")
+    console.print("    [bold]2.[/bold] Leave it unset for now and decide later.  [dim](default)[/dim]")
+    console.print("       [dim]Friday runs. The vault stays locked and untouched.[/dim]")
+    console.print("    [bold]3.[/bold] Start a new vault.  [bold red]This abandons the old data.[/bold red]")
+    console.print("       [dim]Nothing is deleted, but it can never be read again.[/dim]\n")
+
+    choice = Prompt.ask("  Which?", choices=["1", "2", "3"], default="2")
+
+    if choice == "1":
+        for _ in range(3):
+            pw = Prompt.ask("  [cyan]Passphrase[/cyan]", password=True, default="")
+            if not pw:
+                break
+            ok = _verify_vault_passphrase(pw)
+            if ok is True:
+                console.print("  [green]✓ That opens your vault. Keeping it.[/green]\n")
+                return pw
+            if ok is None:
+                console.print("  [yellow]There is nothing encrypted yet to check it against — "
+                              "accepting it.[/yellow]\n")
+                return pw
+            console.print("  [red]That does not open the vault. Try again, or press "
+                          "Enter to go back.[/red]\n")
+        console.print("  [yellow]Leaving the vault passphrase unset.[/yellow]\n")
+        return ""
+
+    if choice == "3":
+        console.print()
+        console.print("  [bold red]This makes everything currently in your vault permanently\n"
+                      "  unreadable.[/bold red] The files stay on disk; the key to them does not.\n")
+        typed = Prompt.ask('  Type [bold]abandon[/bold] to confirm, or press Enter to go back',
+                           default="")
+        if typed.strip().lower() != "abandon":
+            console.print("  [green]Nothing changed.[/green]\n")
+            return ""
+        import secrets as _sec
+        generated = _sec.token_urlsafe(24)
+        console.print(f"\n  [bold green]New passphrase:[/bold green] [bold white]{generated}[/bold white]")
+        console.print("  [dim]Written to start.bat. Save it somewhere safe.[/dim]\n")
+        Prompt.ask("  [dim]Press Enter to continue[/dim]", default="")
+        return generated
+
+    console.print("  [yellow]Leaving the vault passphrase unset. Friday will run; the vault\n"
+                  "  stays locked and nothing in it is touched.[/yellow]\n")
+    console.print("  [dim]If you find the passphrase later, run [bold]friday vault-setup[/bold] "
+                  "to store it.[/dim]\n")
+    Prompt.ask("  [dim]Press Enter to continue[/dim]", default="")
+    return ""
+
+
 def step_vault_password(total: int, existing: str) -> str:
-    """Ask for a vault encryption passphrase — default path, not optional."""
+    """Ask for a vault encryption passphrase — default path, not optional.
+
+    RE-RUN SAFE SINCE 5.6.6. This step used to open with "Generate a random
+    passphrase for me?" defaulting to YES, and it never looked at whether a
+    vault already existed. An existing user re-running setup — which the
+    installer does on EVERY upgrade, at step 12 — could press Enter and mint a
+    brand new passphrase over a vault encrypted under the old one. AES-256-GCM
+    over an Argon2id key: wrong passphrase, no data, no recovery. It looked
+    exactly like success.
+
+    Every other step in this wizard already takes an `existing` and leaves a
+    settled answer alone; `_routing_block_for` says why. This one now does too.
+    """
+    found, source = _existing_vault_password()
+    if not existing:
+        existing = found
+    vault_here = _vault_exists()
+
+    if vault_here and existing:
+        return _vault_keep_existing(total, existing, source)
+    if vault_here and not existing:
+        return _vault_lost_passphrase(total)
+
     _clear()
     _header(6, total, "VAULT ENCRYPTION")
     console.print(Panel(

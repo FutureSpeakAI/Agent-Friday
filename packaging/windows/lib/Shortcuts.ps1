@@ -227,6 +227,34 @@ function Test-Autostart {
     return (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) 'Agent Friday.lnk'))
 }
 
+function Get-InstalledShortcutPaths {
+    <#  Every shortcut this installer knows how to create, that EXISTS now.
+
+        The manifest used to record only what the current run created, and
+        Invoke-Step skips a step whose verify already passes - so on an upgrade
+        Install-Shortcuts did not run, the list came out empty, and the manifest
+        told the uninstaller there were no shortcuts to remove. It then left
+        four of them on the machine after an uninstall that reported success.
+
+        Measuring instead of remembering makes the manifest a record of what is
+        true rather than of what this particular run happened to do. #>
+    $found = @()
+    $desktop   = Get-DesktopDir
+    $startMenu = Get-StartMenuDir
+    $startup   = [Environment]::GetFolderPath('Startup')
+
+    if ($desktop)   { $found += (Join-Path $desktop 'Agent Friday.lnk') }
+    if ($startMenu) {
+        foreach ($n in @('Agent Friday.lnk','Uninstall Agent Friday.lnk',
+                         'Start Friday when I sign in.lnk')) {
+            $found += (Join-Path $startMenu $n)
+        }
+    }
+    if ($startup)   { $found += (Join-Path $startup 'Agent Friday.lnk') }
+
+    return @($found | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+}
+
 # --- Add / Remove Programs ----------------------------------------------
 
 function Register-Uninstaller {
@@ -280,10 +308,34 @@ function Register-Uninstaller {
 }
 
 function Test-UninstallerRegistered {
+    <#  .PARAMETER ExpectedVersion
+          When given, the registered DisplayVersion must equal it.
+
+          Register-Uninstaller writes DisplayVersion, and until 5.6.6 this
+          check never read it back. Invoke-Step runs Verify BEFORE the action
+          and skips the action when it passes, so on every upgrade this
+          returned $true from the PREVIOUS install's entry, Register-Uninstaller
+          never ran, and Add/Remove Programs went on displaying the old version
+          for ever. Same defect as app.copy's, one surface over - and this is
+          the surface a user checks to find out what they are running.
+
+          The uninstaller calls this with no argument, on purpose: it is asking
+          "is there an entry at all", and any version answers that. #>
+    param([string] $ExpectedVersion = '')
     try {
         $v = Get-ItemProperty -Path $script:UninstallRegKey -ErrorAction Stop
         if (-not $v.DisplayName) { return $false }
         if (-not $v.UninstallString) { return $false }
+        if ($ExpectedVersion) {
+            $have = ''
+            if ($v.PSObject.Properties.Match('DisplayVersion').Count -gt 0) {
+                $have = [string]$v.DisplayVersion
+            }
+            if ($have -ne $ExpectedVersion) {
+                Set-VerifyDetail "Add/Remove Programs shows version '$have', expected '$ExpectedVersion'."
+                return $false
+            }
+        }
         # The uninstall command must point at something that exists, or the
         # Add/Remove entry is a dead end - which is worse than no entry.
         $path = $v.UninstallString.Trim('"')
