@@ -34,11 +34,22 @@ unzip it anywhere, and double-click **Install Agent Friday.cmd**. SmartScreen
 may warn on first launch — see the SmartScreen note below for the one-click
 bypass.
 
-> ⚠️ **Take the newest zip, and do not go back for an older one.** `5.6.1` was
-> tagged a few hours before the API-key pre-flight it was written to add, so the
-> published `5.6.1` zip promises a self-repair loop it cannot verify a key for;
-> `5.6.0` is older still. Both are superseded by `5.6.2`. See
-> [RELEASE_NOTES.md](../RELEASE_NOTES.md).
+> ⚠️ **Take the newest zip, and do not go back for an older one.** Every
+> `5.6.x` before `5.6.5` is superseded — `5.6.1` was tagged a few hours before
+> the API-key pre-flight it was written to add, so the published `5.6.1` zip
+> promises a self-repair loop it cannot verify a key for, and `5.6.0` is older
+> still. See [RELEASE_NOTES.md](../RELEASE_NOTES.md).
+
+> 🔴 **Upgrading from any version before 5.6.5? Read this.** Installers
+> `5.6.0`–`5.6.4` did not replace Friday's own files when an install already
+> existed — the copy step short-circuited, while the installer still wrote the
+> new version number and reported success. An install that reached its version
+> by upgrading has been running the code it *first* installed. Running the
+> `5.6.5` installer over the top repairs it from any prior version and keeps
+> everything under `~/.friday`. If you connected a credentialed MCP server
+> (Airtable, Gmail, GitHub, Slack) while on an affected install, rotate that
+> credential — it was stored and served in plaintext. See
+> [CHANGELOG.md](../CHANGELOG.md) under 5.6.5.
 
 > ⚠️ **The releases page also carries an `AgentFriday.exe`. It is not current.**
 > The newest published `AgentFriday.exe` is **v5.4.0, built 6 July 2026**. It

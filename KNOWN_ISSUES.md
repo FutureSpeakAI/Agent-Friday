@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-08-26, for v5.6.2.**
+**As of 2026-08-29, for v5.6.5.**
 
 This file lists what is broken, what is unverified, and what we do not know. It is
 maintained because a defect you can read about is cheaper than one you discover, and
@@ -8,6 +8,85 @@ because a project that publishes its bug list is easier to trust than one that d
 
 If something here is wrong or you hit something that isn't here, please open an issue.
 We would rather add to this file than defend a claim.
+
+---
+
+## 0. If you upgraded in place before 5.6.5, you were not running what you thought
+
+**Fixed in 5.6.5. Read this if your install predates it.**
+
+Installers 5.6.0 through 5.6.4 skipped the app-file copy entirely when an install
+already existed — the `app.copy` step verified only that four files were *present*,
+which any earlier install satisfies, and `Invoke-Step` runs that verify *before* the
+action. So the installer wrote the new version into `install-manifest.json`, printed
+"Friday is installed", exited 0, and changed no code. Measured on a real 5.6.3 → 5.6.4
+run: 0 of 489 files updated.
+
+Consequences, if this happened to you:
+
+- Your version number was wrong. `install-manifest.json` said one thing;
+  `pyproject.toml` and the running code said another.
+- **No fix from any release you "upgraded" into was present.** For anyone who
+  upgraded into 5.6.4 specifically, that includes its connector-credential
+  encryption — so `~/.friday/mcp_servers.json` still held connector tokens in
+  plaintext and `GET /api/mcp/servers` still served them to the browser.
+
+**What to do:** install 5.6.5 over the top. It replaces the app files (from any prior
+version) and keeps everything under `~/.friday`. Then rotate any MCP connector
+credential — Airtable, Gmail, GitHub, Slack — that you entered while on an affected
+install.
+
+Fresh installs were never affected. Git checkouts were never affected.
+
+---
+
+## 0a. The unit-test suite fails 16 tests
+
+Sixteen tests fail a whole-suite run at v5.6.5, all of them test defects rather than
+product defects. The number has been stable across v5.6.3, v5.6.4 and v5.6.5; the
+membership has not.
+
+- **Deterministic and pre-existing (2).** Both
+  `tests/test_egress_adversarial.py::test_tier2_keyword_batch` cases fail whether run
+  alone or in the suite, identically at v5.6.3 and v5.6.4.
+- **Order- and environment-dependent (14).** Five `test_residency_arbiter` (a
+  `FakeLlama` double that predates `adopt_or_reap`), five `test_routing_resolver`,
+  `test_local_image`, `test_model_plan`, `test_model_router`, `test_nemo_voice`.
+  Every one of these passes when its own file is run alone. v5.6.3 fails a partly
+  different set of the same size, which is what "order-dependent" looks like from
+  outside.
+- **Reads real hardware.** Two `test_ollama_manager` assertions check the *last* call
+  made, and `chat_completion` legitimately issues a seat-release afterwards when the
+  display is under its memory reserve — so they track free VRAM, not correctness.
+
+The 5.6.4 release notes claimed seven and named `test_gate_harness_integrity`, which
+in fact passes. Corrected in 5.6.5.
+
+---
+
+## 0b. A partial settings write still resets 18 of 20 blocks
+
+`_save_settings` deep-merges two named blocks — `capability_routing` and
+`model_routing`. Every other top-level block in `settings.json` (`cost_budget`,
+`tool_hooks`, `qa_gates`, `context_pruning`, and the rest) is still replaced wholesale
+by a partial write. 5.6.4 fixed the two with a known blast radius; the general case is
+open.
+
+Related: `_load_settings()` does not backfill sub-block defaults, so a `model_routing`
+block written before 5.6.4 may hold only the keys that were explicitly saved. Readers
+supply their own defaults, and the privacy-relevant one is safe — `vault_local_only`
+defaults to ON when absent — but the file and `DEFAULT_SETTINGS` are two sources of
+truth for the same setting.
+
+---
+
+## 0c. `cloud_only` does not override a local model you pick
+
+`cloud_only` stops Friday choosing a local model on her own and stops her falling back
+to one when a cloud call fails. It does **not** refuse a local model you select in the
+picker — that runs on your machine. This is deliberate (`routing/model_router.py`:
+"the model picker is authoritative"), and it fails safe, but the 5.6.4 notes described
+it as a refusal. Corrected in 5.6.5.
 
 ---
 

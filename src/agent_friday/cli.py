@@ -70,6 +70,46 @@ CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
 SKILLS_DIR = FRIDAY_DIR / "skills"
 
+# The repository. `friday update` used to print `FutureSpeakAI/friday-desktop`,
+# which 404s — one constant, so there is one place to be wrong.
+REPO_URL = "https://github.com/FutureSpeakAI/Agent-Friday"
+RELEASES_URL = f"{REPO_URL}/releases/latest"
+
+
+def _app_version() -> str:
+    """This build's version, from pyproject.toml, else package metadata."""
+    try:
+        pp = PROJ_ROOT / "pyproject.toml"
+        if pp.exists():
+            m = re.search(r'(?m)^version\s*=\s*"([^"]+)"',
+                          pp.read_text(encoding="utf-8"))
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("agent-friday")
+    except Exception:
+        return "unknown"
+
+
+def _installed_manifest() -> dict:
+    """`install-manifest.json` for a packaged install, or {}.
+
+    The installer lays the app out as <InstallRoot>\\app, so PROJ_ROOT is the
+    app dir and the manifest sits beside it. Reading it is how `friday update`
+    can show the version the INSTALLER believes it put down — which, before
+    5.6.5, was not necessarily the version of the code actually on disk.
+    """
+    try:
+        p = PROJ_ROOT.parent / "install-manifest.json"
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8-sig")) or {}
+    except Exception:
+        pass
+    return {}
+
 # Must match server.py's default bind port (3000). The CLI also exports
 # FRIDAY_PORT to the server subprocess below so the two can never disagree.
 SERVER_PORT = int(os.environ.get("FRIDAY_PORT", "3000"))
@@ -883,9 +923,35 @@ def cmd_update():
 
     # Check git — repo-root paths, NOT the package dir (HERE is src/agent_friday;
     # .git, requirements.txt live at PROJ_ROOT, and build_ui moved to ui/).
+    #
+    # An INSTALLER install can never satisfy this: the payload deliberately
+    # ships no .git, so every packaged user lands in this branch. It used to
+    # send them to `FutureSpeakAI/friday-desktop`, which does not exist and
+    # returns 404 — the repository is `Agent-Friday`. So the one escape hatch
+    # for the users who most needed it pointed at nothing. Both halves are
+    # fixed here: the right URL, and instructions that work without git.
     if not (PROJ_ROOT / ".git").exists():
-        console.print("  [yellow]Not a git repository — manual update required.[/yellow]")
-        console.print(f"  Download latest from https://github.com/FutureSpeakAI/friday-desktop")
+        installed = _installed_manifest()
+        console.print("  [yellow]This is a packaged install, not a git checkout — "
+                      "so it updates by re-running the installer, not by pulling."
+                      "[/yellow]\n")
+        if installed:
+            console.print(f"  Installed version:  [bold]{installed.get('version', 'unknown')}[/bold]")
+        console.print(f"  This build:         [bold]{_app_version()}[/bold]\n")
+        console.print("  [bold]To update:[/bold]")
+        console.print("    1. Download the newest [bold]AgentFriday-Setup-*.zip[/bold] from")
+        console.print(f"       {RELEASES_URL}")
+        console.print("    2. Unzip it anywhere.")
+        console.print("    3. Double-click [bold]Install Agent Friday.cmd[/bold].")
+        console.print("\n  Your notes, settings and connected accounts are kept — the")
+        console.print("  installer replaces Friday's own files and nothing under ~/.friday.\n")
+        # Say the quiet part: anyone who upgraded in place before 5.6.5 may be
+        # running older code than their version number claims. See CHANGELOG
+        # 5.6.5. Re-running a 5.6.5-or-newer installer repairs it.
+        console.print("  [dim]If you upgraded in place before 5.6.5, the app files may not")
+        console.print("  actually have been replaced — installers before 5.6.5 skipped the")
+        console.print("  copy when files already existed. Re-running this installer fixes")
+        console.print("  it, and `friday status` will then show the real version.[/dim]\n")
         return
 
     # git pull

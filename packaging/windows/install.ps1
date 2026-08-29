@@ -89,7 +89,7 @@ Initialize-Log (Join-Path $LogDir ("install-{0}.log" -f (Get-Date -Format 'yyyyM
 $script:Sources = (Get-Content -LiteralPath (Join-Path $Here 'sources.json') -Raw | ConvertFrom-Json)
 Initialize-RemediationMenu
 
-$Version = '5.6.4'
+$Version = '5.6.5'
 try {
     $pyproject = Join-Path $PayloadDir 'pyproject.toml'
     if (Test-Path -LiteralPath $pyproject) {
@@ -423,26 +423,71 @@ else {
 #  Step 3 - Put Friday's own files in place
 # =========================================================================
 
+function Get-InstalledAppVersion {
+    <#  The version of the code ALREADY in $AppDir, or '' if it cannot be read.
+
+        pyproject.toml is the version's only source of truth and has shipped in
+        every payload, so it is what we ask. Returning '' for "cannot tell" is
+        load-bearing: every caller treats unknown as "not the version we are
+        installing", so the copy runs. Guessing the other way is the bug below.
+    #>
+    param([string] $Dir)
+    try {
+        $pp = Join-Path $Dir 'pyproject.toml'
+        if (-not (Test-Path -LiteralPath $pp)) { return '' }
+        $m = [regex]::Match((Get-Content -LiteralPath $pp -Raw), '(?m)^version\s*=\s*"([^"]+)"')
+        if ($m.Success) { return $m.Groups[1].Value }
+    } catch { }
+    return ''
+}
+
 $null = Invoke-Step -Id 'app.copy' -Title 'Copying Friday onto this laptop' `
     -HumanFailure 'Friday''s own files could not be copied onto this computer.' `
     -HumanFix 'Make sure there is space on the drive and that no antivirus is blocking the folder, then run this again.' `
-    -VerifyDescription "the application's main file is present and readable" `
+    -VerifyDescription "Friday's own files are present AND are this version" `
     -Action {
         if (-not (Test-Path -LiteralPath $PayloadDir)) {
             throw "No payload folder at $PayloadDir. This installer was not built with build-installer.ps1."
         }
         if (Test-Path -LiteralPath $AppDir) {
-            Write-Log "Removing previous app folder at $AppDir"
+            $was = Get-InstalledAppVersion $AppDir
+            if ($was) { Write-Log "Upgrading app files from $was to $Version" }
+            else      { Write-Log "Replacing app files of unknown version with $Version" }
             Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction SilentlyContinue
         }
         New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
         Copy-Item -Path (Join-Path $PayloadDir '*') -Destination $AppDir -Recurse -Force
     } `
     -Verify {
+        # VERSION-AWARE ON PURPOSE. This is the whole point of the block.
+        #
+        # Invoke-Step runs this verify BEFORE the action and skips the action
+        # when it passes. Until 5.6.5 it asked only whether four files EXISTED,
+        # which any previous install satisfies -- so re-running a newer
+        # installer over an older install short-circuited here and copied
+        # nothing. The installer then said "Friday is installed", wrote the new
+        # version into install-manifest.json and exited 0, while every file in
+        # $AppDir was still the old release.
+        #
+        # Measured, 5.6.3 -> 5.6.4: 0 of 489 files updated; manifest claiming
+        # 5.6.4 beside a pyproject.toml still reading 5.6.3; connector_secrets.py
+        # -- the only file new in 5.6.4 -- absent, so GET /api/mcp/servers went
+        # on handing connector tokens to the browser in the clear, which is the
+        # exact exposure that release announced it had closed. The defect
+        # shipped with the installer itself, so NO in-place upgrade has ever
+        # delivered code.
+        #
+        # Asking for the VERSION as well as the files closes it, and closes it
+        # from ANY prior release rather than only the one below this: an older
+        # install reports an older version, and an install too old to have a
+        # readable pyproject.toml reports '' -- both mismatch, both copy. The
+        # fast path survives for the case it was actually for, re-running the
+        # SAME installer (a retry, or the healer), where skipping is correct.
         (Test-Path -LiteralPath (Join-Path $AppDir 'src\agent_friday\cli.py')) -and
         (Test-Path -LiteralPath (Join-Path $AppDir 'src\agent_friday\server.py')) -and
         (Test-Path -LiteralPath (Join-Path $AppDir 'src\agent_friday\setup_wizard.py')) -and
-        (Test-Path -LiteralPath (Join-Path $AppDir 'index.html'))
+        (Test-Path -LiteralPath (Join-Path $AppDir 'index.html')) -and
+        ((Get-InstalledAppVersion $AppDir) -eq $Version)
     }
 
 # Now that the app is on disk, self-repair has something to repair.
