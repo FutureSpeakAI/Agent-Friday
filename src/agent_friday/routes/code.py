@@ -49,6 +49,7 @@ from agent_friday.services.code_engine import (
     _repo_tree,
     _run_claude_terminal,
     _safe_project_path,
+    adopt_or_reap_vibe_terminals,
 )  # noqa: E501
 from agent_friday.services.model_router import (
     _gated_vault_control,
@@ -59,6 +60,23 @@ from agent_friday.services.model_router import (
 
 code_bp = Blueprint('code', __name__)
 
+
+def _vibe_terminals_boot_reconcile():
+    """Adopt/reap vibe-code terminals left running by a previous process.
+
+    Off the request path and off the import path: the survey shells out to
+    PowerShell (WMI), and nothing about registering this blueprint — which
+    happens unconditionally, including under tests — should block on that.
+    """
+    try:
+        adopt_or_reap_vibe_terminals()
+    except Exception as e:
+        _code_log(f"vibe-terminal boot reconcile failed: {e}", source="vibe", level="error")
+
+
+if not os.environ.get("FRIDAY_TESTING"):
+    threading.Thread(target=_vibe_terminals_boot_reconcile, daemon=True,
+                     name="vibe-terminal-reconcile").start()
 
 
 @code_bp.route('/api/vibe-code/launch', methods=['POST'])
@@ -88,6 +106,7 @@ def vibe_code_launch():
         thread.start()
         launched.append(tid)
 
+    core._persist_vibe_terminals()
     return jsonify({"status": "ok", "launched": launched, "count": len(launched)})
 
 
@@ -121,6 +140,7 @@ def vibe_code_stop():
                 subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True, creationflags=_POPEN_FLAGS)
             except Exception:
                 pass
+        core._persist_vibe_terminals()
         return jsonify({"status": "ok"})
     return jsonify({"status": "error", "message": "Terminal not found"}), 404
 
@@ -131,6 +151,7 @@ def vibe_code_clear():
     to_remove = [tid for tid, t in VIBE_TERMINALS.items() if t['status'] in ('stopped', 'error', 'completed')]
     for tid in to_remove:
         del VIBE_TERMINALS[tid]
+    core._persist_vibe_terminals()
     return jsonify({"status": "ok", "removed": len(to_remove)})
 
 
@@ -726,6 +747,7 @@ def code_kill():
     if pid_or_id in VIBE_TERMINALS:
         VIBE_TERMINALS[pid_or_id]["status"] = "stopped"
         VIBE_TERMINALS[pid_or_id]["stopped"] = datetime.now().isoformat()
+        core._persist_vibe_terminals()
     CODE_PROCESSES.pop(pid_or_id, None)
     _code_log(f"killed process {pid_or_id} (pid {os_pid})", source="monitor", level="warn")
     return jsonify({"status": "ok", "killed": pid_or_id})
