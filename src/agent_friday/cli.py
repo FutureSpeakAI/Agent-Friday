@@ -29,6 +29,7 @@ import webbrowser
 from pathlib import Path
 
 from agent_friday.paths import friday_home
+from agent_friday.seed import ensure_seed_skills_installed
 
 # ── Rich UI ──────────────────────────────────────────────────────
 try:
@@ -241,6 +242,13 @@ def _launch_script_env(name: str) -> str:
 
 def cmd_start():
     """Launch the server and open the browser."""
+    # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills the
+    # first time anything reaches here — a no-op once that directory exists,
+    # so this runs unconditionally, ahead of the existing/new-user branch
+    # below (an upgrade from a version that predates this can be "existing"
+    # and still lack the directory).
+    ensure_seed_skills_installed()
+
     if not _is_existing_user():
         console.print()
         console.print(Panel(
