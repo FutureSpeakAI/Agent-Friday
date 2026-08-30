@@ -86,7 +86,7 @@ ROUTE_MODULES = [
     'news', 'notifications', 'orchestrator', 'ownership',
     'persona', 'platform', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'tasks', 'todos',
     'work_plan',
-    'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
+    'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_studio', 'workspace_undo',
 ]
 

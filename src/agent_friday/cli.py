@@ -28,6 +28,9 @@ import time
 import webbrowser
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+from agent_friday.seed import ensure_seed_skills_installed
+
 # ── Rich UI ──────────────────────────────────────────────────────
 try:
     from rich.console import Console
@@ -64,7 +67,7 @@ console = Console()
 HERE = Path(__file__).parent.resolve()
 # Project root is two levels up from src/agent_friday/
 PROJ_ROOT = HERE.parent.parent
-FRIDAY_DIR = Path.home() / ".friday"
+FRIDAY_DIR = friday_home()
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
@@ -77,14 +80,20 @@ RELEASES_URL = f"{REPO_URL}/releases/latest"
 
 
 def _app_version() -> str:
-    """This build's version, from pyproject.toml, else package metadata."""
+    """This build's version, from the ONE module that answers that question.
+
+    Delegated deliberately. There used to be a copy of the pyproject regex
+    here, and the whole point of services/app_version.py is that `friday
+    status` and the weekly update check cannot drift apart about what version
+    is running. Falls back to package metadata only when the disk cannot be
+    read at all -- app_version returns None for "cannot tell" rather than
+    guessing, and a guessed version is exactly what the 5.6.4 manifest bug was.
+    """
     try:
-        pp = PROJ_ROOT / "pyproject.toml"
-        if pp.exists():
-            m = re.search(r'(?m)^version\s*=\s*"([^"]+)"',
-                          pp.read_text(encoding="utf-8"))
-            if m:
-                return m.group(1)
+        from agent_friday.services.app_version import running_version
+        v = running_version(PROJ_ROOT)
+        if v:
+            return v
     except Exception:
         pass
     try:
@@ -95,20 +104,23 @@ def _app_version() -> str:
 
 
 def _installed_manifest() -> dict:
-    """`install-manifest.json` for a packaged install, or {}.
-
-    The installer lays the app out as <InstallRoot>\\app, so PROJ_ROOT is the
-    app dir and the manifest sits beside it. Reading it is how `friday update`
-    can show the version the INSTALLER believes it put down — which, before
-    5.6.5, was not necessarily the version of the code actually on disk.
-    """
+    """`install-manifest.json` for a packaged install, or {}. Also delegated."""
     try:
-        p = PROJ_ROOT.parent / "install-manifest.json"
-        if p.exists():
-            return json.loads(p.read_text(encoding="utf-8-sig")) or {}
+        from agent_friday.services.app_version import installed_manifest
+        return installed_manifest(PROJ_ROOT)
     except Exception:
-        pass
-    return {}
+        return {}
+
+
+def _version_truth() -> dict:
+    """Disk version, manifest version, and any disagreement between them."""
+    try:
+        from agent_friday.services.app_version import version_truth
+        return version_truth(PROJ_ROOT)
+    except Exception:
+        return {"running": None, "manifest": None, "installer": None,
+                "packaged": False, "disagrees": False, "disagreement": None}
+
 
 # Must match server.py's default bind port (3000). The CLI also exports
 # FRIDAY_PORT to the server subprocess below so the two can never disagree.
@@ -230,6 +242,13 @@ def _launch_script_env(name: str) -> str:
 
 def cmd_start():
     """Launch the server and open the browser."""
+    # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills the
+    # first time anything reaches here — a no-op once that directory exists,
+    # so this runs unconditionally, ahead of the existing/new-user branch
+    # below (an upgrade from a version that predates this can be "existing"
+    # and still lack the directory).
+    ensure_seed_skills_installed()
+
     if not _is_existing_user():
         console.print()
         console.print(Panel(
@@ -778,6 +797,50 @@ def cmd_status():
 
     console.print()
     console.rule("[bold cyan]FRIDAY DOCTOR[/bold cyan]")
+    console.print()
+
+    # ── Which version is this, really ───────────────────────────────────────
+    # `friday status` is the version-truth surface. Nothing else in the product
+    # is allowed to answer this question from a different source: the number
+    # below is read off app\pyproject.toml, the same file the installer reads
+    # back in Get-InstalledAppVersion, because install-manifest.json claimed
+    # 5.6.4 on machines whose files were 5.6.3 and a version report that can
+    # lie is worse than no version report.
+    console.print("  [bold]Version[/bold]")
+    _vt = _version_truth()
+    if _vt["running"]:
+        console.print(f"  [green]OK[/green]  Running version  [bold]{_vt['running']}[/bold]  "
+                      "[dim](read from pyproject.toml on disk)[/dim]")
+    else:
+        _check("Running version readable", False,
+               "pyproject.toml could not be read - this install is incomplete")
+    if _vt["packaged"]:
+        console.print(f"     [dim]install-manifest.json records: "
+                      f"{_vt['manifest'] or 'unknown'}"
+                      + (f" (installer carried {_vt['installer']})"
+                         if _vt['installer'] and _vt['installer'] != _vt['manifest'] else "")
+                      + "[/dim]")
+    if _vt["disagreement"]:
+        console.print(f"  [red]![/red]  [bold]{_vt['disagreement']}[/bold]")
+
+    # Weekly update check - state only, never a network call from `status`.
+    try:
+        from agent_friday.services import update_check as _upd
+        _us = _upd.status()
+        _check("Weekly update check enabled", bool(_us.get("enabled")),
+               "switch it on in Settings -> About" if not _us.get("enabled") else "")
+        if _us.get("last_checked_at"):
+            console.print(f"     [dim]last checked {_us['last_checked_at']} "
+                          f"({_us.get('last_result') or 'unknown'})[/dim]")
+        else:
+            console.print("     [dim]not checked yet[/dim]")
+        if _us.get("update_available") and _us.get("latest_version"):
+            console.print(f"  [yellow]![/yellow]  [bold]Agent Friday "
+                          f"{_us['latest_version']} is available[/bold]  "
+                          f"[dim]{_us.get('latest_url')}[/dim]")
+    except Exception as _ue:
+        console.print(f"  [yellow]?[/yellow]  Update check  [dim]{_ue}[/dim]")
+
     console.print()
 
     # Python

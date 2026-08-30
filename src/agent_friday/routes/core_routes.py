@@ -188,13 +188,17 @@ def friday_health():
     # rendered permanently empty.
     # Source checkouts: pyproject.toml wins (installed egg-info can be stale
     # for editable installs). Frozen/pip installs fall back to package metadata.
+    # ONE version-detection implementation, in services/app_version.py, which
+    # both `friday status` and the weekly update check also consume. There used
+    # to be a second tomllib parse of pyproject.toml right here, with a
+    # hardcoded "5.0.0" fallback -- so an install whose pyproject could not be
+    # read reported a version it had invented, which is precisely the shape of
+    # the install-manifest bug (claimed 5.6.4, was 5.6.3). Unknown is now None
+    # and the UI renders it as unknown.
     _app_version = None
     try:
-        import tomllib as _tomllib
-        _pp = Path(__file__).resolve().parents[3] / "pyproject.toml"
-        if _pp.exists():
-            with _pp.open("rb") as _ppf:
-                _app_version = _tomllib.load(_ppf).get("project", {}).get("version")
+        from agent_friday.services.app_version import running_version
+        _app_version = running_version()
     except Exception:
         _app_version = None
     if not _app_version:
@@ -202,7 +206,7 @@ def friday_health():
             from importlib.metadata import version as _pkg_version
             _app_version = _pkg_version("agent-friday")
         except Exception:
-            _app_version = "5.0.0"
+            _app_version = None
     _mood = None
     try:
         from agent_friday.services.model_router import _get_emotional_arc

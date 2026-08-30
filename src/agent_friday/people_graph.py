@@ -38,6 +38,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 # Canonical four human-relationship dimensions for new contacts. Legacy entries
 # may carry the old dimension names (information_quality, emotional_trust,
 # timeliness, domain_expertise); those are preserved untouched — we never delete
@@ -57,7 +59,7 @@ class PeopleGraph:
     """Load/modify/persist the human-contact trust graph."""
 
     def __init__(self, friday_dir=None):
-        self.friday_dir = Path(friday_dir or Path.home() / ".friday")
+        self.friday_dir = Path(friday_dir or friday_home())
         self.path = self.friday_dir / "people_graph.json"
         self.legacy_path = self.friday_dir / "trust_graph.json"
         self._lock = threading.RLock()

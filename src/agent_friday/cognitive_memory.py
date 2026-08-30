@@ -19,6 +19,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 
 class CognitiveMemory:
     """Versioned, tamper-evident memory manager.
@@ -32,7 +34,7 @@ class CognitiveMemory:
     """
 
     def __init__(self, memory_dir=None, ledger_path=None):
-        self.memory_dir = Path(memory_dir or Path.home() / ".friday" / "memory")
+        self.memory_dir = Path(memory_dir or friday_home() / "memory")
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.ledger_path = Path(ledger_path) if ledger_path else self.memory_dir / "memory_ledger.jsonl"
         self._lock = threading.Lock()

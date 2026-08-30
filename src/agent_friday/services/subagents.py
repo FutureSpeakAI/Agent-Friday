@@ -23,7 +23,9 @@ import threading
 import time
 from pathlib import Path
 
-SCOPES_FILE = Path.home() / ".friday" / "subagent_scopes.json"
+from agent_friday.paths import friday_home
+
+SCOPES_FILE = friday_home() / "subagent_scopes.json"
 
 # Ring 3 (OS control) is never available to a subagent, whatever the scope says.
 _SUBAGENT_RING_CEILING = 2
