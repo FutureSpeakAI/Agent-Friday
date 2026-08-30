@@ -29,6 +29,7 @@ _log = logging.getLogger("friday.agent")
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
+from agent_friday.core.os_mode import is_os_mode
 import agent_friday.core as core
 from agent_friday.core import (
     _network_is_offline,
@@ -1700,9 +1701,20 @@ _OPEN_SHELL_APPS = {
 def _open_app(name):
     """Launch a known GUI app by friendly name. Returns a confirmation string, or
     None if the name isn't a recognized app."""
+    key = re.sub(r'\s+', ' ', (name or '').lower().strip())
+    # Kiosk image (FRIDAY_OS_MODE=1): there is no desktop and nothing is
+    # installed to launch, even on a machine where sys.platform == 'win32'
+    # (this code path is exercised locally on Windows precisely because the
+    # target Linux kiosk platform isn't available to test on directly — see
+    # core/os_mode.py). Answer honestly instead of attempting a launch (or,
+    # for an unrecognized name, silently falling through as if nothing were
+    # asked) — a claimed launch that cannot possibly have happened is worse
+    # than admitting there is nothing to launch.
+    if key and (key in _OPEN_APPS or key in _OPEN_SHELL_APPS) and is_os_mode():
+        return (f"I can't launch **{name.strip()}** — no desktop applications "
+                "are installed in this environment.")
     if sys.platform != 'win32':
         return None
-    key = re.sub(r'\s+', ' ', (name or '').lower().strip())
     exe = _OPEN_APPS.get(key)
     if exe:
         try:
