@@ -138,14 +138,17 @@ class TestSpawnGuardrails:
     def test_cwd_defaults_to_home_when_omitted(self):
         result = isess.spawn(command="cmd.exe /c echo default_cwd_ok")
         assert result.get("session_id")
-        # normcase, because Windows paths are case-insensitive and the two
-        # sides disagree on case: the GitHub runner's USERPROFILE is
-        # "C:\\Users\\runneradmin" while Path.home() resolves it as
-        # "C:\\Users\\RUNNERADMIN". A case-sensitive == called that a different
-        # directory and failed a test whose subject is which directory was
-        # chosen, not how it is spelled.
-        assert (os.path.normcase(result["cwd"].rstrip("\\/"))
-                == os.path.normcase(str(isess.HOME).rstrip("\\/")))
+        # realpath + normcase, because the two sides name the same directory
+        # with different spellings. On the GitHub runner the child reports the
+        # 8.3 short form "C:\\Users\\RUNNER~1\\..." while isess.HOME holds the
+        # long "C:\\Users\\runneradmin\\...", and they also disagree on case.
+        # realpath expands the short form and normcase folds the case, so this
+        # compares WHICH directory was chosen — the test's actual subject —
+        # rather than how the OS happened to spell it.
+        def _same_dir(p):
+            return os.path.normcase(os.path.realpath(str(p).rstrip("\\/")))
+
+        assert _same_dir(result["cwd"]) == _same_dir(isess.HOME)
 
 
 # ── real subprocess: spawn/read/send actually work ──────────────────────────
