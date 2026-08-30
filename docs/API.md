@@ -387,7 +387,7 @@ Returns epistemic calibration scores.
 ## Health & System
 
 ### `GET /api/health`
-System health check (uptime, version, active models, vault encryption state, and governance/ring info).
+System health check (uptime, version, active models, vault encryption state, and governance/ring info) **plus** a versioned boot-critical health contract (PR-6, OS-mode sequence) consumed by Friday Linux's greenboot `30-health.sh` and by `friday health --exit-code` — see `src/agent_friday/services/health_check.py` for what each subsystem means and why it is (or is not) boot-critical.
 
 **Response:**
 ```json
@@ -407,9 +407,29 @@ System health check (uptime, version, active models, vault encryption state, and
   "creative_model": "...",
   "voice_model": "...",
   "vault": { "encryption_enabled": true, "warning": "" },
-  "governance": { "enabled": true, "policy": "cLaws", "ring_permissions": { ... }, "tool_counts_by_ring": { ... } }
+  "governance": { "enabled": true, "policy": "cLaws", "ring_permissions": { ... }, "tool_counts_by_ring": { ... } },
+
+  "health_schema_version": 1,
+  "boot_critical_ok": true,
+  "boot_status": "ok",
+  "subsystems": {
+    "config":            { "ok": true, "detail": "settings.json parses (79 keys)", "critical": true },
+    "credential_store":  { "ok": true, "detail": "write+read round trip OK (protection: vault)", "critical": true },
+    "memory_db":         { "ok": true, "detail": "dreams.db opens and answers a query", "critical": true },
+    "http_serving":      { "ok": true, "detail": "this request was served over HTTP, which is the proof", "critical": true },
+    "cloud_providers":   { "ok": false, "detail": "no cloud provider API key configured (local-only, or not set up yet)", "critical": false },
+    "model_seats":       { "ok": true, "detail": "orchestrator=claude-sonnet-5, subagent=claude-sonnet-5", "critical": false },
+    "voice":             { "ok": true, "detail": "voice=gemini-2.5-flash-native-audio-latest", "critical": false }
+  },
+  "deployment": "unknown"
 }
 ```
+
+`status` (inference-provider reachability, driven by `services/provider_health.py`) and `boot_status` (the new field, derived purely from the subsystems above) answer **different questions** and are independent — a machine can be `status: "down"` (no cloud key, no local model) while still `boot_status: "ok"` (every boot-critical subsystem is healthy), or vice versa. `boot_critical_ok` is the single field a boot gate should read: it is the AND of the four `critical: true` subsystems only — `cloud_providers`, `model_seats` and `voice` can never flip it, by design (a freshly-imaged, not-yet-configured kiosk is not a boot failure).
+
+`deployment` is an honest placeholder today (`"unknown"` unless `FRIDAY_DEPLOYMENT_ID` is set in the environment) — this repo has no ostree/deployment-generation concept yet; see the module docstring.
+
+`friday health --exit-code` computes this same contract in-process (via `services/health_check.py`, so the CLI and this route can never disagree) and exits `0` iff `boot_critical_ok`, non-zero otherwise. Its own `http_serving` check is a real HTTP probe of this endpoint (it has no other way to prove the server is serving from outside the process), so it requires the server to already be running to report healthy — an unreachable server is treated as a boot failure, not skipped.
 
 ### `GET /api/system`
 Extended system information.

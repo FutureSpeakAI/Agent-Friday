@@ -1323,8 +1323,13 @@ examples:
     for alias in ("status", "doctor", "check"):
         sub.add_parser(alias, help="System health check")
 
-    # health (post-install subsystem check, no server)
-    sub.add_parser("health", help="Post-install subsystem health check")
+    # health (post-install subsystem check, no server required)
+    p_health = sub.add_parser("health", help="Post-install subsystem health check")
+    p_health.add_argument(
+        "--exit-code", action="store_true", dest="exit_code",
+        help=("Print the boot-critical contract only, and exit 0 iff "
+              "boot_critical_ok is true (non-zero otherwise). This is the "
+              "form greenboot's 30-health.sh invokes on Friday Linux."))
 
     # update
     sub.add_parser("update", help="Update to latest version")
@@ -1419,10 +1424,77 @@ def cmd_erase(assume_yes: bool = False):
         console.print("[dim]Close any running Friday server (it may be holding files open) and retry.[/dim]")
 
 
-def cmd_health():
-    """Post-install subsystem health check — runs WITHOUT starting the server."""
+def _boot_critical_report_for_cli():
+    """Compute the same boot-critical contract /api/health reports — the ONE
+    shared implementation (services/health_check.py) so the CLI and the HTTP
+    route can never disagree about what "boot healthy" means.
+
+    Unlike the route (which is definitionally proof of HTTP serving just by
+    being reached), this CLI invocation is out-of-process and has no such
+    free proof — it probes the running server's own /api/health as real
+    evidence, so an unreachable server correctly counts as an unhealthy boot
+    rather than a rubber-stamped one. use_cache=False: a one-shot diagnostic
+    command should report the current truth, not a stale value some earlier
+    process cached in a different memory space (moot in practice — the cache
+    is per-process and the CLI is always a fresh process — but explicit
+    because "always fresh" is the contract a boot gate needs, not an
+    accident of implementation).
+    """
+    from agent_friday.services import health_check as _hc
+    return _hc.boot_critical_report(
+        served_over_http=False,
+        http_probe_url=f"{SERVER_URL}/api/health",
+        use_cache=False,
+    )
+
+
+def cmd_health(exit_code: bool = False):
+    """Post-install subsystem health check — runs WITHOUT starting the server.
+
+    `exit_code=True` (the `--exit-code` flag): print only the boot-critical
+    contract and return its `boot_critical_ok` bool, which `main()`'s
+    `_exit_code()` turns into process exit 0 (healthy) or 1 (not) — the
+    contract greenboot's `30-health.sh` depends on. The full diagnostic
+    panels below (providers, capabilities, hardware, local voice...) are
+    skipped in this mode: a boot gate wants a fast, unambiguous verdict, not
+    a page of optional-dependency status.
+    """
     os.environ.setdefault("FRIDAY_TESTING", "1")  # keep `import` side effects inert
+
+    if exit_code:
+        report = _boot_critical_report_for_cli()
+        color = "green" if report["boot_critical_ok"] else "red"
+        console.print(f"boot_status: [{color}]{report['boot_status']}[/{color}]  "
+                      f"(schema v{report['health_schema_version']}, "
+                      f"deployment={report['deployment']})")
+        t = Table(box=box.SIMPLE)
+        t.add_column("Subsystem"); t.add_column("Critical"); t.add_column("OK"); t.add_column("Detail")
+        for name, sub in report["subsystems"].items():
+            ok_color = "green" if sub["ok"] else ("red" if sub["critical"] else "yellow")
+            t.add_row(name, "yes" if sub["critical"] else "no",
+                      f"[{ok_color}]{sub['ok']}[/{ok_color}]", sub["detail"])
+        console.print(t)
+        return report["boot_critical_ok"]
+
     console.print(Rule("[bold cyan]Agent Friday - Health Check[/bold cyan]"))
+
+    # Boot-critical contract, shown here too (additive) even without
+    # --exit-code, so a human running `friday health` sees the same verdict
+    # a boot gate would — but this path's return value stays None (unchanged
+    # from before --exit-code existed), so plain `friday health` keeps
+    # exiting 0 regardless, matching every pre-existing caller's expectation.
+    try:
+        report = _boot_critical_report_for_cli()
+        color = "green" if report["boot_critical_ok"] else "red"
+        console.print(f"Boot-critical: [{color}]{report['boot_status']}[/{color}]  "
+                      f"(deployment={report['deployment']})")
+        for name, sub in report["subsystems"].items():
+            tag = "critical" if sub["critical"] else "non-critical"
+            icon = "[green]OK[/green]" if sub["ok"] else "[red]FAIL[/red]" if sub["critical"] else "[yellow]--[/yellow]"
+            console.print(f"  {icon}  {name} ({tag})  [dim]{sub['detail']}[/dim]")
+        console.print()
+    except Exception as e:
+        console.print(f"[yellow]boot-critical contract unavailable: {e}[/yellow]")
 
     def _have(mod):
         try:
@@ -1579,7 +1651,7 @@ def main():
     elif cmd in ("status", "doctor", "check"):
         rv = cmd_status()
     elif cmd == "health":
-        rv = cmd_health()
+        rv = cmd_health(exit_code=getattr(args, "exit_code", False))
     elif cmd == "update":
         rv = cmd_update()
     elif cmd == "skills":
