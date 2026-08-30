@@ -41,6 +41,30 @@ SERVER_START_TIMEOUT_S = 300.0
 
 CREATE_NO_WINDOW = 0x08000000  # Windows: suppress child console
 
+_OS_MODE_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _os_mode_active() -> bool:
+    """True when FRIDAY_OS_MODE is on.
+
+    Deliberately duplicated from (not imported from) agent_friday.core.
+    os_mode.is_os_mode(): that module lives inside the `agent_friday.core`
+    PACKAGE, and importing any name from a submodule of a package forces
+    Python to execute that package's __init__.py first. For
+    agent_friday.core that means the ~2600-line Flask app bootstrap and a
+    legacy `~/wiki` migration that touches the REAL home directory
+    regardless of FRIDAY_HOME (see agent_friday/paths.py's module docstring
+    for the full history of this hazard, from PR-1 of this OS-mode
+    sequence). This tray entry point exists specifically to decide, cheaply
+    and before anything heavy runs, whether to run anything at all — which
+    is impossible if making that decision first requires running the heavy
+    thing. Every other consumer of is_os_mode() in this PR already imports
+    (or already forces the import of) agent_friday.core for unrelated
+    reasons, so this three-line duplication is confined to the one call site
+    that cannot afford the shared import.
+    """
+    return os.environ.get("FRIDAY_OS_MODE", "").strip().lower() in _OS_MODE_TRUTHY
+
 
 def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -242,6 +266,16 @@ class FridayTray:
 
 
 def main() -> None:
+    # Kiosk image (FRIDAY_OS_MODE=1): there is no desktop to put a tray icon
+    # on — see core/os_mode.py. The sealed Linux image starts server.py
+    # directly (systemd unit / `friday` CLI), never this tray, so skipping
+    # here rather than in a caller is the one place that actually gates every
+    # way this entry point could be invoked.
+    if _os_mode_active():
+        print("[FRIDAY] FRIDAY_OS_MODE is on — skipping the system tray "
+              "(no desktop to put it on in kiosk mode).")
+        return
+
     # Single-instance guard: bind a loopback port to ensure only one tray runs.
     guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
