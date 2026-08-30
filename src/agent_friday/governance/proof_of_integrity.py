@@ -22,6 +22,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 _log = logging.getLogger(__name__)
 
 # Ed25519 — uses the stdlib-adjacent PyNaCl if available, otherwise
@@ -122,7 +124,7 @@ class IntegrityEngine:
     """
 
     def __init__(self, friday_dir=None, governance_key_fn=None):
-        self.friday_dir = Path(friday_dir or Path.home() / ".friday")
+        self.friday_dir = Path(friday_dir or friday_home())
         self._governance_key_fn = governance_key_fn
         self._signing_key = None  # Ed25519 SigningKey
         self._verify_key = None   # Ed25519 VerifyKey
@@ -323,7 +325,7 @@ class IntegrityEngine:
 
 _KEYRING_SERVICE = "agent-friday"
 _KEYRING_ACCOUNT = "governance-key"
-_GOV_KEY_FILE    = Path.home() / ".friday" / "vault" / ".governance-key"
+_GOV_KEY_FILE    = friday_home() / "vault" / ".governance-key"
 _GOV_KEY_LOCK    = threading.Lock()
 
 

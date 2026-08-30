@@ -34,8 +34,9 @@ import sys
 from pathlib import Path
 
 import agent_friday.privacy.vault_crypto as vc
+from agent_friday.paths import friday_home
 
-VAULT_DIR = Path.home() / ".friday" / "vault"
+VAULT_DIR = friday_home() / "vault"
 
 # Most-sensitive categories first. These hold legal/financial data that
 # the architecture docs explicitly promise to encrypt.

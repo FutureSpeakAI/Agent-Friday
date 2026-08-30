@@ -16,6 +16,7 @@ routing/provider_descriptors.BUILTIN_EXTRA_PROVIDERS. YAML descriptors
 import json, logging, os
 from pathlib import Path
 
+from agent_friday.paths import friday_home
 from agent_friday.routing.provider_descriptors import (
     BUILTIN_EXTRA_PROVIDERS,
     normalize_descriptor,
@@ -25,7 +26,7 @@ from agent_friday.routing.provider_descriptors import (
 
 _log = logging.getLogger("friday.provider_registry")
 
-PROVIDERS_DIR = Path.home() / ".friday" / "providers"
+PROVIDERS_DIR = friday_home() / "providers"
 PROVIDERS_DIR.mkdir(parents=True, exist_ok=True)
 
 PROVIDER_SCHEMA_KEYS = {"name", "type", "adapter", "base_url", "auth", "models",
