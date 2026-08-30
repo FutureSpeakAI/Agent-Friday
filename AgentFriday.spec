@@ -60,7 +60,17 @@ datas = [
     ('requirements.txt', '.'),
     ('static', 'static'),
     ('assets', 'assets'),
-    ('skills', 'skills'),
+    # Bundled career-pipeline skills moved from repo-root `skills/` into the
+    # installable package at `src/agent_friday/seed/skills/` (PR-3, packaging).
+    # Bundle at the SAME relative path inside the frozen tree
+    # (`agent_friday/seed/skills`) so `skill_registry.BUNDLED_DIR` -
+    # `Path(__file__).resolve().parent / "seed" / "skills"` from
+    # `agent_friday/skill_registry.py` - still resolves correctly frozen.
+    # NOTE: `datas` silently drops any entry whose source path does not exist
+    # (see the filter two lines below) - this one was `('skills', 'skills')`
+    # and would have gone missing with zero warning the moment the repo-root
+    # `skills/` directory was deleted, had this line not moved with it.
+    ('src/agent_friday/seed/skills', 'agent_friday/seed/skills'),
     ('optional-skills', 'optional-skills'),
 ]
 # Some bundled files exist only in the private working copy (gitignored in the

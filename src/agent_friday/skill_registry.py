@@ -57,7 +57,15 @@ except Exception:                                   # pragma: no cover
 
 HOME = Path(os.path.expanduser("~"))
 SKILLS_DIR = HOME / ".friday" / "skills"            # user/learned/imported skills
-BUNDLED_DIR = Path(__file__).resolve().parents[2] / "skills"  # skill_registry.py is src/agent_friday/ → repo root/skills
+# Bundled skills ship as real package data at agent_friday/seed/skills (see
+# agent_friday/seed/__init__.py) rather than a repo-root `skills/` directory -
+# the old `parents[2]` computation here pointed at the repo root and returned
+# nothing at all in a `pip install` (packages.find only ships src/). This is
+# still scanned in ADDITION to SKILLS_DIR: `ensure_seed_skills_installed()`
+# copies the same content into SKILLS_DIR on first run, but a fresh install
+# whose first-run copy hasn't fired yet (or was skipped) still sees the
+# bundled skills here.
+BUNDLED_DIR = Path(__file__).resolve().parent / "seed" / "skills"
 
 # Files we recognize as a skill manifest, in priority order. OpenClaw/agentskills
 # folders may use a lowercase or README variant.
