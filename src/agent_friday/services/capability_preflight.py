@@ -48,31 +48,63 @@ from __future__ import annotations
 import importlib.util
 import logging
 
+from agent_friday.core.os_mode import is_os_mode
+
 _log = logging.getLogger("friday.capabilities")
 
 
 class Capability:
-    """One declared capability and the import that has to succeed for it."""
+    """One declared capability and the import that has to succeed for it.
+
+    Most capabilities are gated purely on whether a dependency imports. A
+    capability may ALSO (or instead, when `module` is None) be gated on
+    OS mode: `os_mode_reason`, when set, is a short human explanation for
+    why the capability is unavailable specifically in the sealed Friday
+    Linux kiosk image — e.g. "no desktop to control in kiosk mode" — which
+    is a different fact from "the library isn't installed" and must not be
+    reported with a `pip install` fix line.
+    """
 
     __slots__ = ("key", "module", "claim", "breaks", "tools", "install",
-                 "optional")
+                 "optional", "os_mode_reason")
 
     def __init__(self, key, module, claim, breaks, *, tools=(), install=None,
-                 optional=False):
+                 optional=False, os_mode_reason=None):
         self.key = key
-        self.module = module          # importable name, checked without importing
+        self.module = module          # importable name, checked without importing;
+                                       # None means "no import dependency at all",
+                                       # i.e. this capability is only ever gated by
+                                       # os_mode_reason (see `present` below).
         self.claim = claim            # what Friday tells the user she can do
         self.breaks = breaks          # what actually happens when it is absent
         self.tools = tuple(tools)     # registry entries to drop when absent
-        self.install = install or "pip install " + module
+        self.install = install or (f"pip install {module}" if module else "")
         self.optional = optional
+        self.os_mode_reason = os_mode_reason
 
     @property
     def present(self) -> bool:
+        """False when the dependency cannot import, OR — for a capability
+        with `os_mode_reason` set — when FRIDAY_OS_MODE is on, regardless of
+        whether the dependency imports. A machine running the kiosk image may
+        have pyautogui installed; it still has no desktop to control."""
+        if self.os_mode_reason and is_os_mode():
+            return False
+        if self.module is None:
+            return True
         try:
             return importlib.util.find_spec(self.module) is not None
         except (ImportError, ValueError):
             return False
+
+    @property
+    def unavailable_reason(self) -> str:
+        """Why this capability is absent right now — distinguishing an
+        OS-mode gate (environment, not packaging) from a genuinely missing
+        dependency. Only meaningful when `present` is False."""
+        if self.os_mode_reason and is_os_mode():
+            return self.os_mode_reason
+        return self.breaks
 
 
 # ── The declared inventory ────────────────────────────────────────────────
@@ -94,6 +126,21 @@ CAPABILITIES = (
         tools=("screenshot", "move_mouse", "click", "type_text", "press_key",
                "scroll"),
         install="pip install pyautogui",
+        # Kiosk image (FRIDAY_OS_MODE=1): there is no desktop to control even
+        # when pyautogui happens to be installed — see core/os_mode.py.
+        os_mode_reason="no desktop to control in kiosk mode",
+    ),
+    Capability(
+        "clipboard", None,
+        claim="copy text to your clipboard",
+        breaks="the write_clipboard tool is declared to every model and "
+               "every call shells out to a PowerShell Set-Clipboard that "
+               "has nothing to write to",
+        tools=("write_clipboard",),
+        # No import dependency (it shells out to PowerShell), so this
+        # capability is otherwise always present — it is gated ONLY by
+        # OS mode, which is why `module` is None above.
+        os_mode_reason="no clipboard to control in kiosk mode",
     ),
     Capability(
         "pii_ner", "presidio_analyzer",
@@ -144,7 +191,8 @@ def status() -> dict:
         "capabilities": [
             {"key": c.key, "module": c.module, "present": c.present,
              "optional": c.optional, "claim": c.claim,
-             "breaks_when_absent": c.breaks, "install": c.install}
+             "breaks_when_absent": c.unavailable_reason, "install": c.install,
+             "os_mode_gated": bool(c.os_mode_reason and is_os_mode())}
             for c in CAPABILITIES
         ],
         "missing_required": [c.key for c in missing()],
@@ -158,14 +206,24 @@ def report() -> list:
     """Log every gap at startup and return the lines, for the boot report.
 
     Required gaps are WARNINGs because they are packaging bugs. Optional ones
-    are INFO because they are decisions. Neither is silent: a capability that
-    is quietly not there is exactly the failure this module exists to prevent.
+    are INFO because they are decisions. An OS-mode gate is neither — it is
+    the environment behaving exactly as designed (a kiosk has no desktop), so
+    it is logged at INFO with its own reason rather than a `pip install` fix
+    line that would be actively wrong (the dependency may well be installed;
+    the environment is what withholds it). Nothing here is silent: a
+    capability that is quietly not there is exactly the failure this module
+    exists to prevent.
     """
     lines = []
     for cap in CAPABILITIES:
         if cap.present:
             continue
-        if cap.optional:
+        os_mode_gated = bool(cap.os_mode_reason and is_os_mode())
+        if os_mode_gated:
+            line = ("[capability] {0}: withheld by OS mode — {1}"
+                    .format(cap.key, cap.os_mode_reason))
+            _log.info("%s withheld by OS mode: %s", cap.key, cap.os_mode_reason)
+        elif cap.optional:
             line = ("[capability] {0}: {1} absent by design — {2}"
                     .format(cap.key, cap.module, cap.breaks))
             _log.info("%s absent (optional): %s", cap.module, cap.breaks)
@@ -190,6 +248,9 @@ def explain(key: str) -> str:
     cap = _BY_KEY.get(key)
     if cap is None or cap.present:
         return ""
+    if cap.os_mode_reason and is_os_mode():
+        return "I can't {0} in this environment — {1}.".format(
+            cap.claim, cap.os_mode_reason)
     return ("I can't {0} in this build — the {1} library isn't installed. "
             "That's a gap in how Friday is packaged, not something you did "
             "wrong.".format(cap.claim, cap.module))

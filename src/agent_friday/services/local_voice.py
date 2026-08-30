@@ -40,8 +40,35 @@ import time
 import wave
 from pathlib import Path
 
+from agent_friday.paths import voice_assets_dir
+
 # Where downloaded checkpoints live. Honors $HOME redirection used by tests.
 _HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
+
+_OS_MODE_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _os_mode_active() -> bool:
+    """True when FRIDAY_OS_MODE is on.
+
+    Deliberately duplicated from (not imported from) agent_friday.core.
+    os_mode.is_os_mode(): that module lives inside the `agent_friday.core`
+    PACKAGE, and importing any name from a submodule of a package forces
+    Python to execute that package's __init__.py first — a ~2600-line Flask
+    app bootstrap plus a legacy `~/wiki` migration that touches the REAL
+    home directory regardless of FRIDAY_HOME (see agent_friday/paths.py's
+    module docstring for the full history, from PR-1 of this OS-mode
+    sequence). This module is imported by `friday doctor` / `friday models`
+    (agent_friday/cli.py, lazily, inside those command functions) and by
+    services/prewarm.py — none of which otherwise import agent_friday.core,
+    and none of which should start paying that import's real-home-touching
+    cost just to answer "is OS mode on?". See core/os_mode.py for the
+    canonical version used everywhere already inside the core-initialized
+    server process.
+    """
+    return os.environ.get("FRIDAY_OS_MODE", "").strip().lower() in _OS_MODE_TRUTHY
+
+
 LOCAL_VOICE_DIR = _HOME / ".friday" / "local_voice"
 WHISPER_DIR = LOCAL_VOICE_DIR / "whisper"
 PIPER_DIR = LOCAL_VOICE_DIR / "piper"
@@ -314,6 +341,26 @@ class WhisperASR:
         self._model = None
         self._lock = threading.Lock()
 
+    def _download_root(self) -> Path:
+        """Where faster-whisper should look for (and, if absent, download)
+        this model's checkpoint.
+
+        Under OS mode, prefer a baked-in copy at FRIDAY_VOICE_ASSETS/whisper
+        if one exists — the sealed kiosk image ships models there precisely
+        so faster_whisper's own cache lookup finds them and never reaches
+        Hugging Face. faster_whisper treats download_root as a read-through
+        cache (it only fetches what's missing), so pointing it at a
+        directory that already has the checkpoint is sufficient; nothing
+        else about how the model loads needs to change. A Windows-default
+        install (OS mode off) is completely unaffected — it always resolves
+        to the pre-existing ~/.friday/local_voice/whisper.
+        """
+        if _os_mode_active():
+            baked = voice_assets_dir() / "whisper"
+            if baked.exists() and any(baked.iterdir()):
+                return baked
+        return WHISPER_DIR
+
     def load(self, progress=None):
         if self._model is not None:
             return
@@ -323,12 +370,17 @@ class WhisperASR:
             if progress:
                 progress(f"Loading speech model ({self.model_size})…")
             from faster_whisper import WhisperModel
-            WHISPER_DIR.mkdir(parents=True, exist_ok=True)
+            download_root = self._download_root()
+            # exist_ok=True makes this a no-op against a read-only baked
+            # directory that already exists (the OS-mode branch above).
+            download_root.mkdir(parents=True, exist_ok=True)
             # CPU INT8 — the whole point of Tier-1. download_root keeps the
-            # checkpoint under ~/.friday so it survives and is inspectable.
+            # checkpoint under ~/.friday so it survives and is inspectable
+            # (or, under OS mode with a baked copy present, reads straight
+            # from the sealed image's own asset directory instead).
             self._model = WhisperModel(
                 self.model_size, device="cpu", compute_type="int8",
-                download_root=str(WHISPER_DIR))
+                download_root=str(download_root))
 
     def transcribe(self, pcm16_16k: bytes) -> str:
         if not pcm16_16k:
@@ -358,7 +410,34 @@ class PiperTTS:
         fname = (rel.split("/")[-1] if rel else f"{self.voice}.onnx")
         return PIPER_DIR / fname
 
+    def _baked_voice_path(self) -> Path | None:
+        """A Piper voice already sitting under FRIDAY_VOICE_ASSETS, if any.
+
+        The sealed Friday Linux image bakes voice assets at build time
+        (default /usr/share/friday/voice/ — see agent_friday.paths.
+        voice_assets_dir()) specifically so a kiosk deployment never needs
+        to reach Hugging Face for a model it already ships with. Checked
+        ONLY under OS mode (core/os_mode.py) — a Windows-default install
+        keeps downloading into ~/.friday/local_voice/piper exactly as
+        before, unconditionally, even if FRIDAY_VOICE_ASSETS happens to be
+        set in that environment for some other reason.
+        """
+        if not _os_mode_active():
+            return None
+        rel = _PIPER_VOICE_PATHS.get(self.voice)
+        if not rel:
+            return None
+        fname = rel.split("/")[-1]
+        path = voice_assets_dir() / fname
+        cfg = path.with_suffix(path.suffix + ".json")
+        if path.exists() and cfg.exists():
+            return path
+        return None
+
     def _ensure_voice_file(self, progress=None) -> Path:
+        baked = self._baked_voice_path()
+        if baked is not None:
+            return baked
         path = self._voice_path()
         cfg = path.with_suffix(path.suffix + ".json")
         if path.exists() and cfg.exists():

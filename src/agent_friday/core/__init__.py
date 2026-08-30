@@ -27,6 +27,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
+# Standalone leaf module (no side effects, does not import this package) —
+# see its docstring for why it is safe to import this early in core's own
+# init. Used below by _setup_friday_logging() for the OS-mode log-routing
+# gate (PR-2 of the OS-mode sequence).
+from agent_friday.core.os_mode import is_os_mode
+
 # ── Structured logging ──────────────────────────────────────────
 # Module-level logger; file handler is attached below once FRIDAY_DIR is known.
 # Using the "friday" hierarchy means all sub-loggers (friday.agent, friday.vault,
@@ -698,6 +704,22 @@ CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 DAILY_CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+class _JournaldSingleLineFormatter(logging.Formatter):
+    """A record's traceback (and any embedded newline in the message itself)
+    normally spans multiple lines. journald treats each LINE written to
+    stderr as a separate, independent log entry — a multi-line traceback
+    therefore arrives as several unrelated-looking entries with no way to
+    tell they belong together, and the priority/unit metadata journald
+    attaches is per-line, not per-record. Collapsing to one line (and never
+    emitting ANSI color codes, which this formatter — unlike Rich's console
+    formatting used elsewhere in this codebase — never adds in the first
+    place) keeps one record == one journal entry, which is the whole point
+    of "journald-friendly"."""
+
+    def format(self, record) -> str:
+        return super().format(record).replace("\r\n", " | ").replace("\n", " | ")
+
+
 # ── File logging setup ─────────────────────────────────────────
 # Now that FRIDAY_DIR is known, wire the rotating file handler. This runs once
 # at import time. Using pythonw (no console) makes this the only debug output.
@@ -706,6 +728,26 @@ def _setup_friday_logging() -> None:
     if root.handlers:
         return  # already configured (e.g. tests that import core twice)
     root.setLevel(logging.DEBUG)
+
+    # Kiosk image (FRIDAY_OS_MODE=1) with FRIDAY_LOG_TARGET=stdout: there is
+    # no tray to read ~/.friday/friday.log from and no user to open it — the
+    # sealed image's only consumer is journald, which captures the unit's
+    # stdout/stderr. Route everything to stderr in a single-line-per-record
+    # format instead of the rotating file used on every other install; do NOT
+    # also add the file handler, so this is a real routing change and not
+    # just an extra mirror. Any other combination (OS mode off, or OS mode on
+    # without this env var) keeps the exact pre-existing Windows-default
+    # behavior below untouched.
+    if is_os_mode() and os.environ.get("FRIDAY_LOG_TARGET") == "stdout":
+        sh = logging.StreamHandler(sys.stderr)
+        sh.setLevel(logging.DEBUG)
+        sh.setFormatter(_JournaldSingleLineFormatter(
+            "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        ))
+        root.addHandler(sh)
+        return
+
     try:
         FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
         fh = logging.handlers.RotatingFileHandler(
