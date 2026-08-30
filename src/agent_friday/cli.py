@@ -412,8 +412,10 @@ def cmd_model():
     console.rule("[bold cyan]MODEL SELECTION[/bold cyan]")
 
     console.print("\n  [bold]Orchestrator[/bold] (primary reasoning + tool use)")
+    new_orch = _pick_model(orchestrator_models(), cfg.get("orchestrator_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Subagent[/bold] (background tasks)")
+    new_sub = _pick_model(subagent_models(), cfg.get("subagent_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Creative engine[/bold] (images, music, voice)")
     new_creative = _pick_model(creative_models(), cfg.get("creative_model", "gemini-nano-banana-2"), "")

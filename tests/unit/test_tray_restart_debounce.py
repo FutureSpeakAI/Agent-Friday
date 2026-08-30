@@ -12,10 +12,25 @@ by anything in this file).
 """
 from __future__ import annotations
 
+import sys
 import threading
 import time
 
 import pytest
+
+# friday_tray is the Windows system-tray app: it imports pystray, which
+# pyproject declares as sys_platform == "win32" only, and whose import
+# selects an OS tray backend that does not exist on a headless Linux runner.
+#
+# skip(allow_module_level=True) rather than importorskip: this halts
+# collection on the CONDITION (not-Windows), so on Windows the import below
+# still runs for real and a missing pystray or a broken friday_tray fails
+# loudly on both Windows legs instead of skipping quietly.
+if sys.platform != "win32":
+    pytest.skip(
+        "friday_tray is a Windows-only tray app (pystray is win32-only)",
+        allow_module_level=True,
+    )
 
 from agent_friday.friday_tray import FridayTray
 
