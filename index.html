@@ -35826,6 +35826,415 @@ function SettingsTabKnowledge({
     }
   }, note)));
 }
+// ── Cost & Usage ─────────────────────────────────────────────────────────────
+// Restored 2026-08-30, after two months deleted.
+//
+// This panel is the entire reason cost_meter exists. 0cd13fc replaced the
+// settings sidebar with the tabbed workspace and dropped the rendering JSX,
+// leaving the fetches, the four useState declarations and saveBudget standing
+// behind it. The meter went on recording every call correctly and delivering
+// it to nothing. /api/costs/summary returned 200 the whole time, so no probe
+// that watched the backend would ever have noticed.
+//
+// What the silence cost, measured on the install where it was found the day it
+// was found: $1,189.76 for the month, $679.29 of it one model, against a $50
+// monthly budget whose alert was off — off because the only control that could
+// arm it had been deleted along with the panel. The one spend figure still
+// reachable anywhere in the UI was a "$3.50 today" line on the Providers tab.
+//
+// Notes for whoever edits this next:
+//   * by_model is first, and sorted descending. "You spent $1,190" is a number
+//     a person can only wince at. "$679 of it is Opus" is one they can act on.
+//   * Nothing here is rounded or abbreviated — 2-4 decimals, real thousands
+//     separators, never "$1.2k". A softened number argues with its reader.
+//   * The scope line under the total is load-bearing, not decoration. This
+//     table is Friday's own model calls. Claude Code bills its own account and
+//     none of it lands here. A total that looks complete and isn't is worse
+//     than no total at all.
+//   * The tab mounting IS the refresh gate. The deleted version gated its
+//     useEffect on openSections.costs, a key whose only toggle went with the
+//     JSX, so the effect could never fire even in principle.
+function SettingsTabCosts() {
+  const [costSummary, setCostSummary] = useState(null);
+  const [costSeries, setCostSeries] = useState([]);
+  const [costSched, setCostSched] = useState([]);
+  const [costBudget, setCostBudget] = useState({
+    daily: 0,
+    monthly: 0,
+    daily_enabled: false,
+    monthly_enabled: false
+  });
+  const [costRange, setCostRange] = useState('month');
+  const [costErr, setCostErr] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  const refreshCosts = () => {
+    apiFetch('/api/costs/summary?range=' + costRange).then(r => r.json()).then(d => {
+      if (d && d.status === 'ok') {
+        setCostSummary(d.summary || null);
+        setCostErr('');
+      } else {
+        setCostErr((d && d.message) || 'the cost meter did not answer');
+      }
+      setLoaded(true);
+    }).catch(() => {
+      setCostErr('could not reach the cost meter');
+      setLoaded(true);
+    });
+    apiFetch('/api/costs/timeseries?range=month').then(r => r.json()).then(d => setCostSeries(d.series || [])).catch(() => {});
+    apiFetch('/api/costs/scheduled?range=month').then(r => r.json()).then(d => setCostSched(d.scheduled || [])).catch(() => {});
+    apiFetch('/api/costs/budget').then(r => r.json()).then(d => {
+      if (d && d.budget) setCostBudget(d.budget);
+    }).catch(() => {});
+  };
+  useEffect(() => {
+    refreshCosts();
+    const id = setInterval(refreshCosts, 8000);
+    return () => clearInterval(id);
+  }, [costRange]);
+
+  // Optimistic locally, then reconciled against what the server actually
+  // stored — set_budget merges server-side, so the response is the truth.
+  const saveBudget = patch => {
+    setCostBudget(b => Object.assign({}, b, patch));
+    apiFetch('/api/costs/budget', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(patch)
+    }).then(r => r.json()).then(d => {
+      if (d && d.budget) setCostBudget(d.budget);
+    }).catch(() => {});
+  };
+
+  // Money keeps every digit the meter recorded. cost_meter rounds to 4dp on
+  // the way in; this rounds no further.
+  const usd = n => '$' + Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4
+  });
+  const num = n => Number(n || 0).toLocaleString();
+  const pct = n => (Number(n || 0) * 100).toFixed(1) + '%';
+
+  const mono = {
+    fontFamily: 'JetBrains Mono'
+  };
+  const dim = 'rgba(255,255,255,0.35)';
+
+  // A breakdown reads as a ranked list with a proportion bar, because the
+  // question it answers is "what is the big one", not "what is the list".
+  const breakdown = obj => {
+    const rows = Object.entries(obj || {}).map(([k, v]) => ({
+      k: k,
+      usd: (v && v.usd) || 0,
+      calls: (v && v.calls) || 0
+    })).sort((a, b) => b.usd - a.usd);
+    if (!rows.length) return /*#__PURE__*/React.createElement("div", {
+      style: Object.assign({
+        fontSize: 11,
+        color: dim
+      }, mono)
+    }, "nothing recorded in this range");
+    const peak = Math.max.apply(null, rows.map(r => r.usd).concat([0])) || 1;
+    return rows.map(r => /*#__PURE__*/React.createElement("div", {
+      key: r.k,
+      style: {
+        marginBottom: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: Object.assign({
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        gap: 10,
+        fontSize: 11
+      }, mono)
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'rgba(255,255,255,0.75)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      },
+      title: r.k
+    }, r.k), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: r.usd > 0 ? '#fff' : dim
+      }
+    }, usd(r.usd)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: dim,
+        marginLeft: 10
+      }
+    }, num(r.calls), " calls"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 4,
+        background: 'rgba(255,255,255,0.06)',
+        borderRadius: 2,
+        marginTop: 4,
+        overflow: 'hidden'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        width: Math.max(0, r.usd / peak * 100) + '%',
+        background: '#00d4ff',
+        borderRadius: 2
+      }
+    }))));
+  };
+
+  const s = costSummary;
+  // Peak is taken over the bars actually drawn. Computing it over the whole
+  // series while rendering only the tail scales every bar against a spike
+  // that is off-screen, which makes a busy month look quiet — a chart that
+  // renders wrong is a chart that lies.
+  const pts = (costSeries || []).slice(-30);
+  const peak = Math.max.apply(null, [1].concat(pts.map(p => p.usd || 0)));
+
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "SPEND"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 12
+    }
+  }, [['today', 'Today'], ['7d', 'Last 7 days'], ['month', 'This month']].map(([r, label]) => /*#__PURE__*/React.createElement("span", {
+    key: r,
+    onClick: () => setCostRange(r),
+    style: Object.assign({
+      cursor: 'pointer',
+      fontSize: 10,
+      padding: '4px 10px',
+      borderRadius: 5,
+      border: '1px solid ' + (costRange === r ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.1)'),
+      color: costRange === r ? '#00d4ff' : 'rgba(255,255,255,0.5)'
+    }, mono)
+  }, label))), costErr && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 11,
+      color: '#fbbf24',
+      marginBottom: 10
+    }, mono)
+  }, costErr), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 30,
+      color: '#fff',
+      fontFamily: 'Orbitron'
+    }
+  }, usd(s && s.total_usd)), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      textAlign: 'right'
+    }, mono)
+  }, num(s && s.total_calls), " calls", /*#__PURE__*/React.createElement("br", null), num(((s && s.input_tokens) || 0) + ((s && s.output_tokens) || 0)), " in + out tokens")), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      marginTop: 8,
+      lineHeight: 1.5
+    }, mono)
+  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-end',
+      gap: 2,
+      height: 40,
+      marginTop: 16
+    }
+  }, pts.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    title: p.date + ': ' + usd(p.usd) + ' (' + num(p.calls) + ' calls)',
+    style: {
+      flex: 1,
+      minWidth: 2,
+      height: Math.max(2, (p.usd || 0) / peak * 40) + 'px',
+      background: 'rgba(0,212,255,0.55)',
+      borderRadius: '1px 1px 0 0'
+    }
+  })), !pts.length && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, loaded ? 'No spend recorded yet.' : 'Loading...')), !!pts.length && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 9,
+      color: dim,
+      marginTop: 5
+    }, mono)
+  }, /*#__PURE__*/React.createElement("span", null, pts[0].date), /*#__PURE__*/React.createElement("span", null, "daily, peak ", usd(peak)), /*#__PURE__*/React.createElement("span", null, pts[pts.length - 1].date))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY MODEL"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Which model the money went to. Local models meter at $0."), breakdown(s && s.by_model)), /*#__PURE__*/React.createElement(StSection, {
+    title: "PROMPT CACHE"
+  }, s && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 22,
+      color: '#fff',
+      fontFamily: 'Orbitron'
+    }
+  }, pct(s.cache_hit_rate)), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, "hit rate")), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.5)',
+      marginTop: 8,
+      lineHeight: 1.6
+    }, mono)
+  }, "read from cache  ", num(s.cache_read_tokens), " tok", /*#__PURE__*/React.createElement("br", null), "written to cache ", num(s.cache_write_tokens), " tok", /*#__PURE__*/React.createElement("br", null), "fresh input     ", num(s.input_tokens), " tok"), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 8,
+      lineHeight: 1.5
+    }, mono)
+  }, "The share of input tokens served from cache at 0.1x. A rate near zero over a busy range means the prefix is being broken upstream, not that caching is unavailable."))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY PROVIDER"
+  }, breakdown(s && s.by_provider)), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY KIND"
+  }, breakdown(s && s.by_kind)), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY WORKSPACE"
+  }, breakdown(s && s.by_workspace)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
+    title: "SCHEDULED JOBS (THIS MONTH)"
+  }, (costSched || []).map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.schedule_id,
+    style: Object.assign({
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 11,
+      padding: '3px 0',
+      color: 'rgba(255,255,255,0.6)'
+    }, mono)
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, r.schedule_id), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#fff',
+      flexShrink: 0,
+      marginLeft: 10
+    }
+  }, usd(r.usd))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BUDGET ALERTS"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Off by default, and left off until you switch them on here."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: 'toggle-pill ' + (costBudget.daily_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      daily_enabled: !costBudget.daily_enabled
+    })
+  }, "Daily"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "0.5",
+    value: costBudget.daily,
+    onChange: e => saveBudget({
+      daily: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: 'toggle-pill ' + (costBudget.monthly_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      monthly_enabled: !costBudget.monthly_enabled
+    })
+  }, "Monthly"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    value: costBudget.monthly,
+    onChange: e => saveBudget({
+      monthly: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")));
+}
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
   // Settings straight onto Providers. The global covers a window that is
@@ -35872,6 +36281,12 @@ function SettingsWS() {
     id: 'providers',
     label: 'Providers',
     ico: '\u{1F511}'
+  }, {
+    // Spend sits next to the keys that incur it. Restored 2026-08-30 after
+    // 0cd13fc deleted the panel and left its fetches running into nothing.
+    id: 'costs',
+    label: 'Cost & Usage',
+    ico: '\u{1F4B0}'
   }, {
     id: 'work',
     label: 'Work',
@@ -35978,7 +36393,7 @@ function SettingsWS() {
   }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, null), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
-  }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
+  }), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
     s: s,
     save: save
   }), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
@@ -37136,47 +37551,6 @@ function App() {
     }
   };
   const schedStatusColor = s => s.last_status === 'failed' ? '#ef4444' : s.running ? '#00d4ff' : s.enabled ? '#34d399' : 'rgba(255,255,255,0.3)';
-
-  // ── Cost & Usage (Part D) ──
-  const [costSummary, setCostSummary] = useState(null);
-  const [costSeries, setCostSeries] = useState([]);
-  const [costSched, setCostSched] = useState([]);
-  const [costBudget, setCostBudget] = useState({
-    daily: 5,
-    monthly: 50,
-    daily_enabled: false,
-    monthly_enabled: false
-  });
-  const [costRange, setCostRange] = useState('month');
-  const refreshCosts = () => {
-    fetch('/api/costs/summary?range=' + costRange).then(r => r.json()).then(d => setCostSummary(d.summary || null)).catch(() => {});
-    fetch('/api/costs/timeseries?range=month').then(r => r.json()).then(d => setCostSeries(d.series || [])).catch(() => {});
-    fetch('/api/costs/scheduled?range=month').then(r => r.json()).then(d => setCostSched(d.scheduled || [])).catch(() => {});
-    fetch('/api/costs/budget').then(r => r.json()).then(d => {
-      if (d.budget) setCostBudget(d.budget);
-    }).catch(() => {});
-  };
-  useEffect(() => {
-    if (settingsOpen && openSections.costs) {
-      refreshCosts();
-      const id = setInterval(refreshCosts, 8000);
-      return () => clearInterval(id);
-    }
-  }, [settingsOpen, openSections.costs, costRange]);
-  const saveBudget = patch => {
-    setCostBudget(b => ({
-      ...b,
-      ...patch
-    }));
-    fetch('/api/costs/budget', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(patch)
-    }).catch(() => {});
-  };
-  const usd = n => '$' + Number(n || 0).toFixed(2);
 
   // ── Active Hooks (Part B) ──
   const [hooksList, setHooksList] = useState([]);
