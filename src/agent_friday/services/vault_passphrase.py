@@ -90,6 +90,7 @@ import re
 from pathlib import Path
 
 import agent_friday.core as core
+from agent_friday.core.os_mode import is_os_mode
 
 KEYRING_SERVICE = "agent-friday"
 KEYRING_ACCOUNT = "vault-passphrase"
@@ -308,6 +309,21 @@ def store(passphrase: str) -> list[str]:
     Writes BOTH homes rather than picking one, so losing either is survivable.
     An empty return means nothing durable could be written -- the caller must
     say so out loud rather than reporting success.
+
+    Under FRIDAY_OS_MODE, an empty result is not just reported -- it is
+    refused outright (raises RuntimeError). Every existing caller of this
+    function already treats an empty list as "could not store it" and shows
+    the user an explicit message rather than claiming success (see
+    cli.py::cmd_vault_setup, setup_wizard.py, routes/core_routes.py,
+    routes/insights.py), so this changes nothing about what those call sites
+    report on Windows. It matters specifically for the sealed Linux kiosk
+    image, which has no interactive operator to read a printed message: on a
+    host with neither a working `keyring` backend nor DPAPI (Windows-only),
+    the old behavior returned `[]` and every caller quietly moved on as if
+    "no durable home" were just informational. A silent no-op that pretends
+    to have stored a secret is worse than a loud failure -- see
+    KNOWN_ISSUES.md Section 7 for the Linux keyring/Secret-Service gap this
+    surfaces.
     """
     passphrase = (passphrase or "").strip()
     if not passphrase:
@@ -340,6 +356,17 @@ def store(passphrase: str) -> list[str]:
 
     if written:
         reset_cache()
+    elif is_os_mode():
+        raise RuntimeError(
+            "refusing to report the vault passphrase as stored under "
+            "FRIDAY_OS_MODE=1: neither the OS keychain (`keyring`) nor DPAPI "
+            "(Windows-only) could persist it on this host, so nothing durable "
+            "was written. On Linux this almost always means `keyring` is not "
+            "installed or has no Secret Service provider (e.g. gnome-keyring "
+            "/ libsecret) available in this image -- see KNOWN_ISSUES.md "
+            "Section 7. Set FRIDAY_VAULT_PASSPHRASE in the environment "
+            "instead, or add a durable secret store to this deployment."
+        )
     return written
 
 
