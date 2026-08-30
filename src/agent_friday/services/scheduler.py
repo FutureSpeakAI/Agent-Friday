@@ -848,6 +848,35 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] edition_daily unavailable: {e}")
 
+    # update-check — the ONLY outbound call in this roster that is not about
+    # the user's own work: one unauthenticated GET of Friday's public GitHub
+    # releases list, at most weekly, whose entire result is a dismissible
+    # notification. It sends nothing about this install (see
+    # services/update_check.py and its test).
+    #
+    # A SIX-HOUR ticker, not a weekly trigger. `_is_due` fires a weekly
+    # schedule only on its exact weekday, at or after its minute, and only if
+    # the machine is awake then -- so a laptop that was asleep on Monday
+    # morning skips the whole week. The week is enforced inside the task and
+    # only against checks that SUCCEEDED, so an offline boot retries in six
+    # hours instead of seven days.
+    #
+    # notify="silent" is load-bearing. The task pushes its own notification
+    # when (and only when) there is a newer release; a non-silent schedule
+    # would add "Update check - complete" every tick, and dispatch() notifies
+    # on every FAILURE regardless of mode, which is a weekly popup for anyone
+    # whose wifi is flaky. run_update_check() therefore never raises either.
+    try:
+        from agent_friday.services.update_check import (
+            run_update_check, SCHEDULE_REF as _UPD_REF, SCHEDULE_LABEL as _UPD_LABEL,
+            TICK_MINUTES as _UPD_TICK)
+        register_builtin_task(_UPD_REF, run_update_check,
+                              label=_UPD_LABEL, default_trigger="interval",
+                              default_spec={"every_minutes": _UPD_TICK},
+                              notify="silent", default_enabled=True)
+    except Exception as e:
+        print(f"  [scheduler] update_check unavailable: {e}")
+
 
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the
