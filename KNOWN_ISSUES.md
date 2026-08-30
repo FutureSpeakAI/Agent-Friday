@@ -906,8 +906,51 @@ claimed 8 GB; the code always disagreed.
   passphrase as plaintext `SET` lines into launch scripts, and those plaintext values
   *override* the encrypted store. Documentation claiming keys are "never stored as
   plaintext" was false as written. Treat any launch script as containing live secrets.
-- **`FRIDAY_SECRET_KEY` ships as a known default string.** A known Flask session secret
-  means forgeable sessions on any exposed instance. Generate a real one.
+- **`FRIDAY_SECRET_KEY` — STALE, corrected 2026-08-30 (PR-5, credentials).** This section
+  used to claim it "ships as a known default string." That is no longer what the code
+  does, and grepping `core/__init__.py::_load_or_create_secret` shows no evidence it ever
+  fell back to a hardcoded constant either — it reads `FRIDAY_SECRET_KEY` from the
+  environment if set, and otherwise generates a random 32-byte secret with
+  `secrets.token_hex(32)` and persists it (mode 0600, atomic write) so sessions survive a
+  restart. The persisted-random path has its own gap worth knowing: it writes to
+  `Path(os.path.expanduser("~")) / ".friday" / "secret_key"` — the *real* home directory,
+  computed inline rather than through `agent_friday.paths.friday_home()` (PR-1) or
+  `core.FRIDAY_DIR` — so it does **not** honor a `FRIDAY_HOME` override. A test or a kiosk
+  image that sets `FRIDAY_HOME` to redirect Friday's state still gets its Flask session
+  secret written under the invoking user's actual home directory. Not a forgeable-session
+  risk (the value is still random, never a known constant), but a state-isolation leak:
+  anything relying on `FRIDAY_HOME` to fully sandbox a test run or a sealed image should
+  not assume `~/.friday/secret_key` stays inside that sandbox.
+- **Linux OS-mode credential storage has no durable secret store yet (PR-5, credentials).**
+  `services/vault_passphrase.py::store()` and `services/credential_store.py::protect()`
+  now fail closed under `FRIDAY_OS_MODE=1`: if neither a vault key (`FRIDAY_PASSWORD`) nor
+  DPAPI (Windows-only) can protect a secret, and — for the vault passphrase specifically —
+  neither `keyring` nor DPAPI can persist it, both now raise `RuntimeError` instead of
+  silently writing plaintext or silently reporting an empty/success-looking result. That
+  is strictly better than before (a lost or unencrypted secret was previously invisible),
+  but it does not, by itself, give Friday Linux anywhere durable to put a credential:
+    - `keyring` is an *optional* extra in `pyproject.toml` (`keyring = ["keyring>=24.0"]`)
+      and is **not** in Friday Linux's planned venv extras list
+      (`[voice-local-lite,local,compression,federation,google,compose,provenance]`, per the
+      OS-mode spec). It is not installed by default and is not installed in this repo's own
+      dev venv or in CI (`.github/workflows/tests.yml` never installs it).
+    - Even if `keyring` is added as a dependency, `keyring`'s Linux backend needs a Secret
+      Service provider (e.g. `gnome-keyring` or `libsecret`) present in the OS image. No
+      such package is in Friday Linux's planned system package list.
+    - DPAPI is Windows-only (`os.name == "nt"`) and has no Linux equivalent in this
+      codebase today.
+  **Net effect:** on a Friday Linux kiosk image as currently planned, calling
+  `vault_passphrase.store()` for a value that isn't handed to it via
+  `FRIDAY_VAULT_PASSPHRASE`/`FRIDAY_PASSWORD` will now raise loudly and correctly instead
+  of silently losing the secret — which is progress — but there is still no way for it to
+  *succeed* at persisting a passphrase durably. Whoever builds Friday Linux's next
+  credentials milestone needs one of: (a) add `keyring` to the deployment's dependency
+  extras **and** ship a Secret Service provider in the system image, or (b) add a
+  different durable Linux secret store this module can write to, or (c) accept that
+  Friday Linux credentials/vault-passphrase persistence is environment-variable-only
+  (`FRIDAY_VAULT_PASSPHRASE` set by whatever provisions the kiosk) until (a) or (b) lands,
+  and document that as the supported path rather than leaving it to fail-closed by
+  default.
 - **The vault crypto tests are excluded from CI**, along with the MCP client, integration,
   regression and edge-case suites.
 - **`web_fetch.py` and `web_safety.py` — the SSRF guard — have zero tests.**

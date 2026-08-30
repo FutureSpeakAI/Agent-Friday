@@ -17,6 +17,15 @@ the strongest mechanism available on the host, picked automatically:
      and only with a loud one-time warning + hardened file permissions. Never
      silent.
 
+Under FRIDAY_OS_MODE (the sealed Friday Linux kiosk image — see
+`agent_friday.core.os_mode`), plaintext is not an acceptable last resort: a
+sealed image has no interactive operator to notice the warning, and DPAPI
+(Windows-only) never applies there anyway. `protect()` raises instead of
+falling through, so a credential either gets encrypted or nothing is written
+at all — never plaintext on disk with nobody looking. Windows-default
+behavior (OS mode off) is completely unchanged: same warning, same plaintext
+fallthrough as always.
+
 Every blob is self-describing, so `unprotect()` always knows how it was written:
     FRIDAYVAULT\\x01 ...   -> vault AES-256-GCM   (vault_crypto magic)
     FRIDAYDPAPI\\x01 ...   -> Windows DPAPI
@@ -35,6 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import agent_friday.core as core
+from agent_friday.core.os_mode import is_os_mode
 
 try:
     import agent_friday.privacy.vault_crypto as _vc
@@ -147,6 +157,20 @@ def protect(data: bytes) -> tuple[bytes, str]:
     dp = _dpapi(data, encrypt=True)
     if dp is not None:
         return _DPAPI_MAGIC + dp, "dpapi"
+    if is_os_mode():
+        # Fail closed. The sealed kiosk image has no interactive operator to
+        # see a stderr warning, and DPAPI is Windows-only, so the plaintext
+        # fallthrough below would silently ship a real secret unencrypted on
+        # every Linux OS-mode host with no FRIDAY_PASSWORD set. Refusing is
+        # the only option that cannot be missed.
+        raise RuntimeError(
+            "refusing to write a credential as PLAINTEXT under FRIDAY_OS_MODE=1: "
+            "no FRIDAY_PASSWORD (vault key) is set and DPAPI is unavailable on "
+            "this host (DPAPI is Windows-only; there is no equivalent on the "
+            "Friday Linux kiosk image). Set FRIDAY_PASSWORD or "
+            "FRIDAY_VAULT_PASSPHRASE so this credential can be encrypted before "
+            "it touches disk. Nothing was written."
+        )
     if not _WARNED_PLAINTEXT:
         print("[credstore] WARNING: no FRIDAY_PASSWORD and no DPAPI — credentials "
               "stored as PLAINTEXT at rest (file permissions hardened). Set "
@@ -196,10 +220,15 @@ def write_secret(path: Path, data: bytes) -> str:
 
     Returns the protection method used. The plaintext never touches disk
     unencrypted (the temp file holds the already-protected blob).
+
+    `protect()` is called before anything touches `path` (including creating
+    its parent directory) so that a fail-closed raise under FRIDAY_OS_MODE
+    (no FRIDAY_PASSWORD, no DPAPI) leaves the filesystem completely
+    untouched — not even an empty directory left behind.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     blob, method = protect(data)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(blob)
     harden_permissions(tmp)
