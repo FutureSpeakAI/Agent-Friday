@@ -261,9 +261,41 @@ def friday_health():
     except Exception as _ce:
         _capabilities = {"missing_required": [], "detail": str(_ce)[:120]}
 
+    # ── Boot-critical health contract (PR-6, OS-mode sequence) ────────────
+    # A DIFFERENT question from `_status` above: `_status` is inference
+    # reachability (a real backend answered a token), which is explicitly
+    # NON-critical here (a sealed kiosk with no cloud key yet, or a
+    # momentarily-unreachable Anthropic, is not a BOOT failure). This is
+    # "did Friday come up in a state fit to be scored healthy by whatever
+    # put it there" — greenboot's `30-health.sh` in Friday Linux, or
+    # `friday health --exit-code` locally. Additive: does not replace or
+    # repurpose `status` above, which existing tests and consumers already
+    # depend on meaning "inference verdict" (see
+    # tests/api/test_devtools_system_routes.py
+    # ::test_status_is_the_probe_verdict_not_a_constant). See
+    # services/health_check.py for what each subsystem means.
+    try:
+        from agent_friday.services import health_check as _hc
+        _boot_health = _hc.boot_critical_report(served_over_http=True)
+    except Exception as _he:
+        _boot_health = {
+            "health_schema_version": 1,
+            "boot_critical_ok": False,
+            "boot_status": "failed",
+            "subsystems": {"health_check": {"ok": False,
+                                            "detail": str(_he)[:200],
+                                            "critical": True}},
+            "deployment": "unknown",
+        }
+
     return jsonify({
         "status": _status,
         "inference": _inference,
+        "health_schema_version": _boot_health["health_schema_version"],
+        "boot_critical_ok": _boot_health["boot_critical_ok"],
+        "boot_status": _boot_health["boot_status"],
+        "subsystems": _boot_health["subsystems"],
+        "deployment": _boot_health["deployment"],
         "capabilities": _capabilities,
         "configuration": {
             "anthropic_key": bool(core.ANTHROPIC_API_KEY),
