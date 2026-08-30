@@ -273,3 +273,57 @@ def test_lyria_absent_from_creative_picker():
     # Still in the flat catalog — the Music panel / music_model resolve them.
     flat_ids = {e["id"] for e in cat["models"]}
     assert {"lyria-clip", "lyria-pro"} <= flat_ids
+
+
+# ── OpenRouter: a live catalog that never reached the picker ─────────────────
+
+def _openrouter_discovery(monkeypatch, ids):
+    """Point model_discovery's cache at a fake OpenRouter model list."""
+    from agent_friday.services import model_catalog as mc
+
+    real = mc._discovered_models
+
+    def fake(provider):
+        if provider.get("name") == "openrouter":
+            return ([{"id": i, "context_window": 128000} for i in ids], False)
+        return real(provider)
+
+    monkeypatch.setattr(mc, "_discovered_models", fake)
+
+
+def test_openrouter_live_models_reach_the_role_pickers(monkeypatch):
+    """OpenRouter's models must be selectable, not just browsable.
+
+    The aggregator declares no static models — its catalog is the live
+    /api/v1/models list, fetched by services/hosted_catalog. But `curated_ids`
+    was only replaced by the live list for HOSTED_NATIVE_TYPES
+    ("anthropic", "higgsfield"), and OpenRouter's type is "openai-compatible".
+    So every discovered model landed with curated=False, the role lists take
+    curated entries ONLY, and the one provider whose catalog is entirely live
+    was the one provider absent from every picker.
+
+    Observed on Stephen's running server, 2026-08-30: /api/models carried 396
+    OpenRouter models, all available=True, and roles.orchestrator held 24
+    entries of which ZERO were OpenRouter. "I added my OpenRouter API key and
+    it can't seem to switch on their models."
+    """
+    ids = ["moonshotai/kimi-latest", "z-ai/glm-5.3", "qwen/qwen3.8-flash"]
+    _openrouter_discovery(monkeypatch, ids)
+    cat = build_catalog()
+
+    in_models = {e["id"] for e in cat["models"] if e["provider"] == "openrouter"}
+    assert set(ids) <= in_models, "discovery did not reach the flat model list"
+
+    for role in ("orchestrator", "subagent"):
+        got = {e["id"] for e in cat["roles"][role] if e["provider"] == "openrouter"}
+        assert set(ids) <= got, (
+            f"OpenRouter models missing from roles[{role!r}] — "
+            f"the picker cannot offer them: {sorted(got)}")
+
+
+def test_openrouter_auto_router_is_offered(monkeypatch):
+    """`openrouter/auto` — "let Friday decide" — must be a pickable entry."""
+    _openrouter_discovery(monkeypatch, ["openrouter/auto", "z-ai/glm-5.3"])
+    cat = build_catalog()
+    orch = {e["id"] for e in cat["roles"]["orchestrator"]}
+    assert "openrouter/auto" in orch
