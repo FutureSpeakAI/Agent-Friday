@@ -27,9 +27,11 @@ import threading
 import time
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 _log = logging.getLogger("friday.model_discovery")
 
-CACHE_DIR = Path.home() / ".friday" / "cache" / "models"
+CACHE_DIR = friday_home() / "cache" / "models"
 CACHE_SCHEMA = 1
 
 #: Boot-window retry for connector-backed providers that are not up yet.

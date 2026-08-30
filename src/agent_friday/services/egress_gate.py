@@ -57,6 +57,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent_friday.paths import friday_home
 from agent_friday.services.sensitivity_classifier import classify as _classify_impl, Tier
 
 # ── Provider classification ────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ def is_local_provider(name: str) -> bool:
     return is_private_host(p.get("base_url"))
 
 _LOG_LOCK = threading.Lock()
-_DEFAULT_LOG = Path.home() / ".friday" / "vault" / "egress-log.jsonl"
+_DEFAULT_LOG = friday_home() / "vault" / "egress-log.jsonl"
 
 # Structured logger for the single most security-sensitive line in the codebase —
 # every cloud egress allow/block decision. Using `print()` here (the prior state)

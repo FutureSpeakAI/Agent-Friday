@@ -44,6 +44,8 @@ import threading
 from datetime import datetime, date
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 # ── Dimensions + composite weights (sum to 1.0) ────────────────────
 DIMENSIONS = (
     "factual_accuracy",
@@ -167,7 +169,7 @@ def _seed_for(domain):
 
 class SourceTrustGraph:
     def __init__(self, friday_dir=None):
-        self.friday_dir = Path(friday_dir or Path.home() / ".friday")
+        self.friday_dir = Path(friday_dir or friday_home())
         self.path = self.friday_dir / "source_trust.json"
         self._lock = threading.RLock()
 

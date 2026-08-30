@@ -38,6 +38,8 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
+from agent_friday.paths import friday_home
+
 # ── Container format ────────────────────────────────────────────────────────
 # 13-byte magic/version header. Bumping the trailing byte invalidates old blobs
 # only if you also change the AAD, which is intentional: version is integrity-
@@ -106,7 +108,7 @@ def derive_key(passphrase: str | bytes, salt: bytes,
 def load_salt(vault_config_path: Optional[Path] = None) -> bytes:
     """Load the vault master salt from .vault_config.json (salt_hex)."""
     if vault_config_path is None:
-        vault_config_path = Path.home() / ".friday" / "vault" / ".vault_config.json"
+        vault_config_path = friday_home() / "vault" / ".vault_config.json"
     cfg = json.loads(Path(vault_config_path).read_text(encoding="utf-8"))
     salt_hex = cfg.get("salt_hex")
     if not salt_hex:
@@ -198,7 +200,7 @@ def verify_entry(entry: dict, key: bytes) -> bool:
 def load_governance_key(vault_dir: Optional[Path] = None) -> bytes:
     """Load the 32-byte governance/HMAC key from ~/.friday/vault/.governance-key."""
     if vault_dir is None:
-        vault_dir = Path.home() / ".friday" / "vault"
+        vault_dir = friday_home() / "vault"
     return (Path(vault_dir) / ".governance-key").read_bytes()
 
 
