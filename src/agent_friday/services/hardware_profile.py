@@ -493,7 +493,12 @@ def measure_disk_read_mib_s(sample_path: Path | None = None,
                 src = max(cands, key=lambda p: p.stat().st_size)
     if src is None or not Path(src).exists():
         return {"read_mib_s": None, "method": "unavailable"}
-    read, t0 = 0, time.time()
+    # perf_counter, not time.time(): time.time()'s resolution on Windows is
+    # ~15.6 ms, and a cached 1 MiB read finishes well inside that, so `el`
+    # came out exactly 0.0 and the guard below reported "unavailable" — the
+    # measurement silently failed on the FASTEST disks. perf_counter is
+    # monotonic with ns resolution, so a real read always takes > 0.
+    read, t0 = 0, time.perf_counter()
     try:
         with open(src, "rb", buffering=0) as f:
             while read < target_bytes:
@@ -503,7 +508,7 @@ def measure_disk_read_mib_s(sample_path: Path | None = None,
                 read += len(b)
     except Exception:
         return {"read_mib_s": None, "method": "unavailable"}
-    el = time.time() - t0
+    el = time.perf_counter() - t0
     if el <= 0 or not read:
         return {"read_mib_s": None, "method": "unavailable"}
     return {"read_mib_s": round((read / 1048576) / el, 1),
