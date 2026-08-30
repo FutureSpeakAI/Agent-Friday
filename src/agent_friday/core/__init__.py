@@ -12,6 +12,7 @@ import subprocess
 import base64
 import secrets
 import sys
+import tempfile
 import traceback
 import uuid
 import threading
@@ -2055,14 +2056,39 @@ def _save_settings(data):
     _sync_capability_routing(merged, data)
     # Atomic write: write to a sibling temp file, fsync, then rename so a crash
     # mid-write never leaves a half-written (corrupt) settings.json.
-    _tmp = SETTINGS_FILE.with_suffix('.tmp')
-    _tmp.write_text(json.dumps(merged, indent=2), encoding='utf-8')
+    # The temp name is UNIQUE per write, not the shared SETTINGS_FILE.tmp it
+    # used to be. Friday saves settings from background threads as well as
+    # request handlers, and with one shared temp path two concurrent writers
+    # scribble over the same file — so a writer could replace() using a temp
+    # the OTHER writer was still filling, persisting a mixed settings.json.
+    # That is the exact corruption the atomic write exists to prevent, and the
+    # shared name reintroduced it under concurrency.
+    _fd, _tmp_name = tempfile.mkstemp(
+        dir=str(SETTINGS_FILE.parent), prefix='.settings-', suffix='.tmp')
+    _tmp = Path(_tmp_name)
     try:
-        with open(_tmp, 'rb') as _f:
+        with os.fdopen(_fd, 'w', encoding='utf-8') as _f:
+            _f.write(json.dumps(merged, indent=2))
+            _f.flush()
             os.fsync(_f.fileno())
+        # Windows denies a replace while any other handle holds the target
+        # (a concurrent reader, an indexer, AV). That surfaced as WinError 5
+        # turning a settings save into a 500. Retry briefly rather than lose
+        # the write; the file is already complete and fsynced by here.
+        for _attempt in range(10):
+            try:
+                _tmp.replace(SETTINGS_FILE)
+                break
+            except PermissionError:
+                if _attempt == 9:
+                    raise
+                _time.sleep(0.02)
     except Exception:
-        pass
-    _tmp.replace(SETTINGS_FILE)
+        try:
+            _tmp.unlink()
+        except Exception:
+            pass
+        raise
     # The write is complete and on disk; clear again so nothing keeps a
     # snapshot taken mid-write.
     _invalidate_settings_cache()
