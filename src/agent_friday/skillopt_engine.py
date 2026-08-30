@@ -47,12 +47,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from agent_friday.paths import friday_home
+
 
 # ════════════════════════════════════════════════════════════════════════
 #  Paths and constants
 # ════════════════════════════════════════════════════════════════════════
 
-FRIDAY_DIR = Path.home() / ".friday"
+FRIDAY_DIR = friday_home()
 SKILLOPT_DIR = FRIDAY_DIR / "skillopt"
 
 DEFAULT_WEIGHTS: Dict[str, float] = {

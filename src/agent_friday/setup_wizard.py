@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 try:
     from rich.console import Console
     from rich.panel import Panel
@@ -45,7 +47,7 @@ console = Console()
 # ── Paths ────────────────────────────────────────────────────────
 HERE = Path(__file__).parent.resolve()
 PROJ_ROOT = HERE.parent.parent  # src/agent_friday/ → repo root
-FRIDAY_DIR = Path.home() / ".friday"
+FRIDAY_DIR = friday_home()
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"

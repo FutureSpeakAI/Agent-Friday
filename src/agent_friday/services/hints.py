@@ -8,6 +8,8 @@ import yaml, os
 from pathlib import Path
 from functools import lru_cache
 
+from agent_friday.paths import friday_home
+
 HINTS_FILENAME = ".fridayhints"
 
 class FridayHints:
@@ -71,7 +73,7 @@ def find_hints_for_path(target_path: str) -> FridayHints:
 
 def get_global_hints() -> FridayHints:
     """Load hints from ~/.friday/.fridayhints (global defaults)."""
-    global_path = Path.home() / ".friday" / HINTS_FILENAME
+    global_path = friday_home() / HINTS_FILENAME
     if global_path.exists():
         return load_hints_from_file(str(global_path))
     return FridayHints()
@@ -79,7 +81,7 @@ def get_global_hints() -> FridayHints:
 
 def get_workspace_hints(workspace_name: str) -> FridayHints:
     """Load hints for a specific workspace."""
-    ws_path = Path.home() / ".friday" / "workspaces" / workspace_name / HINTS_FILENAME
+    ws_path = friday_home() / "workspaces" / workspace_name / HINTS_FILENAME
     if ws_path.exists():
         return load_hints_from_file(str(ws_path))
     return FridayHints()

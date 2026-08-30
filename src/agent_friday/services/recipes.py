@@ -8,7 +8,9 @@ import yaml, os, re, time, threading, uuid
 from pathlib import Path
 from datetime import datetime
 
-RECIPES_DIR = Path.home() / ".friday" / "recipes"
+from agent_friday.paths import friday_home
+
+RECIPES_DIR = friday_home() / "recipes"
 RECIPES_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Schema ---

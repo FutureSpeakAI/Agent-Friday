@@ -44,6 +44,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 ATTESTATION_VERSION = "1.0"
 ATTESTATION_TYPE = "source_attestation"
 
@@ -51,7 +53,7 @@ _LOCK = threading.Lock()
 
 
 def _fed_dir(friday_dir=None):
-    d = Path(friday_dir or Path.home() / ".friday") / "federation"
+    d = Path(friday_dir or friday_home()) / "federation"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -28,6 +28,8 @@ import time
 import webbrowser
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 # ── Rich UI ──────────────────────────────────────────────────────
 try:
     from rich.console import Console
@@ -64,7 +66,7 @@ console = Console()
 HERE = Path(__file__).parent.resolve()
 # Project root is two levels up from src/agent_friday/
 PROJ_ROOT = HERE.parent.parent
-FRIDAY_DIR = Path.home() / ".friday"
+FRIDAY_DIR = friday_home()
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
