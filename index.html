@@ -36065,6 +36065,16 @@ function App() {
     if (convId && convIdRef.current !== convId) {
       convIdRef.current = convId;
       openConversation(convId);
+      // Voice follows the OPEN thread, not the one that happened to be open
+      // when the mic was pressed. The socket carries the thread as a query
+      // param at connect; this keeps a live session in step when he switches
+      // conversations mid-call. Safe no-op when voice is off.
+      try {
+        const _v = voiceRef.current;
+        if (_v && _v.ws && _v.ws.readyState === WebSocket.OPEN) {
+          _v.ws.send(JSON.stringify({ type: 'conversation', id: convId }));
+        }
+      } catch (_) {}
     }
   }, [convId, openConversation]);
 
@@ -38317,7 +38327,17 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     // Pass the ephemeral UI session token so the WS handler can auth non-loopback
     // connections without requiring a full cookie-based session.
     const _ftok = window.__FRIDAY_API_TOKEN || '';
-    const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_ftok ? '?t=' + encodeURIComponent(_ftok) : ''));
+    // Address this voice session to the thread that is OPEN on screen. Speaking
+    // is a way of typing into the conversation you are looking at; without this
+    // the server fell back to conversations.resolve(None) -> Main for every
+    // turn, so talking while a non-Main thread was open filed the exchange
+    // somewhere he wasn't -- the two-conversations-merging surprise he
+    // reported. convIdRef, not convId: this callback's closure can be older
+    // than the thread currently on screen.
+    const _qs = [];
+    if (_ftok) _qs.push('t=' + encodeURIComponent(_ftok));
+    if (convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(convIdRef.current));
+    const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_qs.length ? '?' + _qs.join('&') : ''));
     v.ws = ws;
     let wsOpened = false;
     setVoiceStatus('connecting…');
