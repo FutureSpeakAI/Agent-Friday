@@ -35443,10 +35443,46 @@ function SettingsTabConnectors({
 function SettingsTabAbout() {
   const [h, setH] = useState(null);
   const [evo, setEvo] = useState(null);
+  // Update check. /api/updates/status reads CACHED state only -- opening this
+  // panel must not become a GitHub request. Only "Check now" hits the network.
+  const [upd, setUpd] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const loadUpd = () => apiFetch('/api/updates/status').then(r => r.json()).then(setUpd).catch(() => {});
   useEffect(() => {
     apiFetch('/api/health').then(r => r.json()).then(setH).catch(() => {});
     apiFetch('/api/evolution').then(r => r.json()).then(setEvo).catch(() => {});
+    loadUpd();
   }, []);
+  const checkNow = () => {
+    setChecking(true);
+    apiFetch('/api/updates/check', {
+      method: 'POST'
+    }).then(r => r.json()).then(d => {
+      setUpd(d);
+      setChecking(false);
+    }).catch(() => setChecking(false));
+  };
+  const toggleUpd = () => {
+    const want = !(upd && upd.enabled);
+    apiFetch('/api/updates/enabled', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        enabled: want
+      })
+    }).then(r => r.json()).then(setUpd).catch(() => {});
+  };
+  const vt = upd && upd.version_truth || {};
+  const fmtChecked = t => {
+    if (!t) return 'never';
+    try {
+      return new Date(t).toLocaleString();
+    } catch (e) {
+      return t;
+    }
+  };
   const fmtUp = sec => {
     if (!sec) return '—';
     const hh = Math.floor(sec / 3600),
@@ -35479,7 +35515,7 @@ function SettingsTabAbout() {
       color: 'rgba(255,255,255,0.45)',
       marginBottom: 8
     }
-  }, 'v' + (h?.version || '5.0.0'), " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
+  }, 'v' + (upd?.current_version || h?.version || 'unknown'), " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: 'Orbitron',
       fontSize: 10,
@@ -35487,6 +35523,93 @@ function SettingsTabAbout() {
       letterSpacing: '.2em'
     }
   }, "BY FUTURESPEAK.AI")), /*#__PURE__*/React.createElement(StSection, {
+    title: "UPDATES"
+  }, vt.disagreement ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 12px',
+      marginBottom: 14,
+      borderRadius: 8,
+      background: 'rgba(255,58,102,0.07)',
+      border: '1px solid rgba(255,58,102,0.25)',
+      fontSize: 11,
+      lineHeight: 1.6,
+      color: '#ff9db3',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#ff3a66',
+      marginBottom: 4
+    }
+  }, "\u26A0 This install does not match its own records"), vt.disagreement) : null, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Check for new versions weekly",
+    desc: "Asks GitHub once a week whether a newer Agent Friday has been released, and tells you if one has. Friday never downloads or installs anything by itself \u2014 you choose. The check sends nothing about you or this machine: no identifier, no usage data, not even which version you are running.",
+    value: !!(upd && upd.enabled),
+    onChange: toggleUpd
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      marginTop: 14,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: checkNow,
+    disabled: checking,
+    style: {
+      fontSize: 11,
+      opacity: checking ? 0.5 : 1,
+      cursor: checking ? 'default' : 'pointer'
+    }
+  }, checking ? "Checking\u2026" : "Check now"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.38)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "Last checked: ", fmtChecked(upd && upd.last_checked_at), upd && upd.last_result && upd.last_result !== 'ok' ? " \u2014 could not reach GitHub" : "")), upd && upd.update_available && upd.latest_version ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16,
+      padding: '14px 16px',
+      borderRadius: 10,
+      background: 'linear-gradient(135deg,rgba(0,212,255,0.08),rgba(0,255,128,0.04))',
+      border: '1px solid rgba(0,212,255,0.28)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 13,
+      color: '#00d4ff',
+      marginBottom: 6
+    }
+  }, "Agent Friday " + upd.latest_version + " is available"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.55)',
+      lineHeight: 1.6,
+      marginBottom: 12,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "You are running " + (upd.current_version || 'an unknown version') + ". Download the release, unzip it anywhere, and run \u201CInstall Agent Friday.cmd\u201D. Your notes, settings and connected accounts are kept."), /*#__PURE__*/React.createElement("a", {
+    href: upd.latest_url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    className: "btn",
+    style: {
+      fontSize: 11,
+      textDecoration: 'none',
+      display: 'inline-block'
+    }
+  }, "Open the release page \u2197")) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14,
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.38)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, upd && upd.current_version ? "You are running " + upd.current_version + (upd.last_checked_at ? " \u2014 up to date as of the last check." : ".") : "Version unknown \u2014 run `friday status` for details.")), /*#__PURE__*/React.createElement(StSection, {
     title: "SYSTEM HEALTH"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
