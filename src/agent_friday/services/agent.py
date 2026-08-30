@@ -4850,13 +4850,22 @@ _VAULT_CONFIG_FILE = FRIDAY_DIR / "vault" / ".vault_config.json"
 
 
 def _get_vault_key() -> bytes | None:
-    """Derive (once) the AES-256 vault key from FRIDAY_VAULT_PASSPHRASE.
+    """Derive (once) the AES-256 vault key from the resolved vault passphrase.
 
-    Tries the OS keychain (keyring package) before the environment variable so
-    the passphrase never needs to appear in a shell script.  Returns the 32-byte
-    key, or None when encryption is unavailable.  On None, callers fall back to
-    plaintext — vault encryption failure is logged at ERROR and surfaces in
-    /api/health as a persistent warning banner.
+    Resolution order lives in ONE place — services/vault_passphrase.py — and is
+    documented there. Returns the 32-byte key, or None when encryption is
+    unavailable. On None, callers fall back to plaintext; vault encryption
+    failure is logged at ERROR and surfaces in /api/health as a persistent
+    warning banner.
+
+    This docstring used to promise "tries the OS keychain before the
+    environment variable so the passphrase never needs to appear in a shell
+    script" while the code did the opposite — and since
+    core._bootstrap_env_from_launch_scripts loads start.bat's SET lines into
+    os.environ at import, "environment first" meant "start.bat first". The
+    promise is now kept, with one deliberate refinement: an environment
+    variable a HUMAN exported still outranks the keychain. Only one that came
+    out of a launch script is demoted.
     """
     import logging as _logging
     _vlog = _logging.getLogger(__name__)
@@ -4866,14 +4875,8 @@ def _get_vault_key() -> bytes | None:
         return _VAULT_KEY
     _VAULT_KEY_READY = True
 
-    # 1. Try OS keychain first (most secure — never on disk as plaintext).
-    _passphrase = FRIDAY_VAULT_PASSPHRASE
-    if not _passphrase:
-        try:
-            import keyring as _keyring
-            _passphrase = _keyring.get_password("agent-friday", "vault-passphrase") or ""
-        except Exception:
-            pass
+    from agent_friday.services import vault_passphrase as _vp
+    _passphrase = _vp.resolve()[0]
 
     if not _HAS_VAULT_CRYPTO or not _passphrase:
         if not _passphrase:

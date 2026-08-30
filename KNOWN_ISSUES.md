@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-08-26, for v5.6.2.**
+**As of 2026-08-29, for v5.6.6.**
 
 This file lists what is broken, what is unverified, and what we do not know. It is
 maintained because a defect you can read about is cheaper than one you discover, and
@@ -8,6 +8,135 @@ because a project that publishes its bug list is easier to trust than one that d
 
 If something here is wrong or you hit something that isn't here, please open an issue.
 We would rather add to this file than defend a claim.
+
+---
+
+## 0. If you upgraded using 5.6.5, your vault passphrase may be gone
+
+**Fixed in 5.6.6. There is no fix for data already affected — read this in full.**
+
+The vault passphrase is written to `start.bat` inside Friday's app folder and, unless
+you separately ran `friday vault-setup`, **nowhere else**. The installer's `app.copy`
+step deletes that folder and lays down a fresh copy, and `start.bat` is deliberately
+never shipped, so it does not come back.
+
+Before 5.6.5 this never bit, by accident — `app.copy` short-circuited on every upgrade
+(issue 0a below) so the delete never ran. 5.6.5 correctly fixed that short-circuit, and
+in doing so made this reachable. **Every in-place upgrade performed with 5.6.5 deletes
+`start.bat`.**
+
+`~/.friday/vault` is encrypted with AES-256-GCM under an Argon2id key derived from that
+passphrase. The vault is never deleted — only the key is. The files remain on disk and
+remain unreadable.
+
+Measured on the published zips, 5.6.3 → 5.6.5: installer exit 0, code updated correctly,
+`start.bat` gone, vault does not decrypt. The same run against 5.6.6: `start.bat`
+preserved, vault decrypts.
+
+**You are affected only if all three are true:** you upgraded in place with 5.6.5, you
+had set a vault passphrase, and you had not stored it with `friday vault-setup`.
+
+**What to do, in order:**
+
+1. Run `friday vault-setup` — if you ever used it, your passphrase is in the OS keychain
+   and nothing is lost.
+2. Look for another launch script you kept (`launch_now.bat`, `friday_startup.bat`);
+   they carry the same `SET FRIDAY_PASSWORD=` line. 5.6.6 preserves all of them.
+3. Check wherever you saved it — the wizard displayed a generated passphrase once.
+4. If none of those: **there is no recovery.** Argon2id + AES-256-GCM with no key cannot
+   be reversed by us or by anyone. Your vault files are left alone and 5.6.6 will not
+   overwrite them, so a passphrase found later still works. Friday runs normally
+   meanwhile with the vault locked.
+
+**Prevention, today:** run `friday vault-setup`. The OS keychain copy is the only one
+the installer does not touch.
+
+A second, independent route to the same loss — the setup wizard offering to generate a
+new passphrase over an existing vault, defaulting to Yes, on every upgrade — is also
+fixed in 5.6.6. See RELEASE_NOTES section 2.
+
+**Still open by design:** the passphrase remains stored inside the app directory. 5.6.6
+preserves the file across the copy; it does not relocate the credential. Options are in
+`docs/design/vault-passphrase-location.md`, pending a decision.
+
+---
+
+## 0a. If you upgraded in place before 5.6.5, you were not running what you thought
+
+**Fixed in 5.6.5. Read this if your install predates it.**
+
+Installers 5.6.0 through 5.6.4 skipped the app-file copy entirely when an install
+already existed — the `app.copy` step verified only that four files were *present*,
+which any earlier install satisfies, and `Invoke-Step` runs that verify *before* the
+action. So the installer wrote the new version into `install-manifest.json`, printed
+"Friday is installed", exited 0, and changed no code. Measured on a real 5.6.3 → 5.6.4
+run: 0 of 489 files updated.
+
+Consequences, if this happened to you:
+
+- Your version number was wrong. `install-manifest.json` said one thing;
+  `pyproject.toml` and the running code said another.
+- **No fix from any release you "upgraded" into was present.** For anyone who
+  upgraded into 5.6.4 specifically, that includes its connector-credential
+  encryption — so `~/.friday/mcp_servers.json` still held connector tokens in
+  plaintext and `GET /api/mcp/servers` still served them to the browser.
+
+**What to do:** install 5.6.6 over the top. It replaces the app files (from any prior
+version) and keeps everything under `~/.friday`. Then rotate any MCP connector
+credential — Airtable, Gmail, GitHub, Slack — that you entered while on an affected
+install.
+
+Fresh installs were never affected. Git checkouts were never affected.
+
+---
+
+## 0b. The unit-test suite fails 16 tests
+
+Sixteen tests fail a whole-suite run at v5.6.5, all of them test defects rather than
+product defects. The number has been stable across v5.6.3, v5.6.4 and v5.6.5; the
+membership has not.
+
+- **Deterministic and pre-existing (2).** Both
+  `tests/test_egress_adversarial.py::test_tier2_keyword_batch` cases fail whether run
+  alone or in the suite, identically at v5.6.3 and v5.6.4.
+- **Order- and environment-dependent (14).** Five `test_residency_arbiter` (a
+  `FakeLlama` double that predates `adopt_or_reap`), five `test_routing_resolver`,
+  `test_local_image`, `test_model_plan`, `test_model_router`, `test_nemo_voice`.
+  Every one of these passes when its own file is run alone. v5.6.3 fails a partly
+  different set of the same size, which is what "order-dependent" looks like from
+  outside.
+- **Reads real hardware.** Two `test_ollama_manager` assertions check the *last* call
+  made, and `chat_completion` legitimately issues a seat-release afterwards when the
+  display is under its memory reserve — so they track free VRAM, not correctness.
+
+The 5.6.4 release notes claimed seven and named `test_gate_harness_integrity`, which
+in fact passes. Corrected in 5.6.5.
+
+---
+
+## 0c. A partial settings write still resets 18 of 20 blocks
+
+`_save_settings` deep-merges two named blocks — `capability_routing` and
+`model_routing`. Every other top-level block in `settings.json` (`cost_budget`,
+`tool_hooks`, `qa_gates`, `context_pruning`, and the rest) is still replaced wholesale
+by a partial write. 5.6.4 fixed the two with a known blast radius; the general case is
+open.
+
+Related: `_load_settings()` does not backfill sub-block defaults, so a `model_routing`
+block written before 5.6.4 may hold only the keys that were explicitly saved. Readers
+supply their own defaults, and the privacy-relevant one is safe — `vault_local_only`
+defaults to ON when absent — but the file and `DEFAULT_SETTINGS` are two sources of
+truth for the same setting.
+
+---
+
+## 0d. `cloud_only` does not override a local model you pick
+
+`cloud_only` stops Friday choosing a local model on her own and stops her falling back
+to one when a cloud call fails. It does **not** refuse a local model you select in the
+picker — that runs on your machine. This is deliberate (`routing/model_router.py`:
+"the model picker is authoritative"), and it fails safe, but the 5.6.4 notes described
+it as a refusal. Corrected in 5.6.5.
 
 ---
 

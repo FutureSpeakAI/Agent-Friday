@@ -138,13 +138,36 @@ def adopt_or_reap_vibe_terminals() -> dict:
 
     A live `Friday-Vibe-<id>` window whose id was persisted as running is
     ADOPTED: its record is restored into VIBE_TERMINALS with the (now
-    verified live) pid. A live `Friday-Vibe-<id>` window Friday has no record
-    of at all is REAPED — it cannot be a session the user started by hand,
-    since nobody types that title themselves, so it can only be an orphan
-    from a process that died without reaping it on the way out.
+    verified live) pid.
+
+    A live window with no persisted record is an orphan ONLY IF the state file
+    is trustworthy, and on the first boot after this feature lands it is not.
+    Reaping is inferential — "no record, therefore abandoned" — and that
+    inference is only sound once every terminal Friday launches is recorded at
+    launch. Before then the file is empty because nothing ever wrote it, not
+    because nothing is running, and every live window looks like an orphan.
+    Each one is a `claude --dangerously-skip-permissions` session someone may
+    be part-way through, so the first-run cost of a wrong reap is unrecoverable
+    work; the cost of a wrong adopt is a stale row in a list. The asymmetry
+    decides it.
+
+    So: an UNVERSIONED state file (missing, unreadable, or written before
+    VIBE_STATE_VERSION existed) puts this in GRACE. Live windows are adopted
+    rather than killed, and the versioned file written on the way out arms
+    reaping for every subsequent boot. Grace is entered on the state of the
+    file rather than on its mere existence precisely because the pre-fix
+    reconcile already created an empty one on any machine that has booted this
+    code once -- an existence check would find that file and reap on the very
+    boot this exists to protect.
     """
-    report = {"adopted": [], "reaped": []}
-    persisted = core._read_vibe_terminals_state()
+    report = {"adopted": [], "reaped": [], "grace": False}
+    state = core._read_vibe_state()
+    persisted = state.get("terminals", {})
+    # A version this process does not recognise is treated as trustworthy: it
+    # was written by a build that also records at launch. Only the ABSENCE of a
+    # version means "written before that promise existed".
+    grace = not isinstance(state.get("version"), int)
+    report["grace"] = grace
     try:
         live = _vibe_terminal_processes()
     except Exception as e:
@@ -153,10 +176,18 @@ def adopt_or_reap_vibe_terminals() -> dict:
 
     for tid, (pid, _cmdline) in live.items():
         saved = persisted.get(tid)
-        if saved:
-            entry = dict(saved)
+        if saved or grace:
+            entry = dict(saved or {})
             entry["pid"] = pid
             entry["status"] = "running"
+            if not saved:
+                # Adopted without a record: name it for the UI, and mark how it
+                # arrived so a stale row is legible rather than mysterious.
+                entry.setdefault("task", "(adopted at startup — launched before "
+                                          "Friday tracked terminals)")
+                entry.setdefault("cwd", "")
+                entry.setdefault("started", datetime.now().isoformat())
+                entry["adopted_without_record"] = True
             VIBE_TERMINALS[tid] = entry
             report["adopted"].append(tid)
         else:
@@ -167,7 +198,14 @@ def adopt_or_reap_vibe_terminals() -> dict:
             except Exception:
                 pass
 
+    # Writes the versioned file. This is what ends grace, so it must happen
+    # even when nothing was found -- otherwise every boot is a first boot.
     core._persist_vibe_terminals()
+    if grace:
+        _code_log(f"first vibe-terminal reconcile on this machine: adopted "
+                  f"{len(report['adopted'])} live terminal(s) without killing "
+                  f"anything. Reaping is armed from the next start.",
+                  source="vibe", level="info")
     if report["adopted"]:
         _code_log(f"adopted {len(report['adopted'])} vibe-code terminal(s) "
                   f"from before the restart", source="vibe", level="info")

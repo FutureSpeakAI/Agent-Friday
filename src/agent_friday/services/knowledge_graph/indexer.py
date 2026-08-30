@@ -339,6 +339,8 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                                       if r.get("tier") == "B"} if mode == "delta" else {}
     skipped_tier3 = 0
     extracted = 0
+    extract_failures = 0
+    first_failure = None
 
     for chunk in todo:
         sens = chunk["sensitivity"]
@@ -363,6 +365,9 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                        indexing_mode, orb_label="🧠 indexing knowledge")
         except Exception as e:
             say(f"extract failed for {chunk['id']}: {e}")
+            extract_failures += 1
+            if first_failure is None:
+                first_failure = f"{type(e).__name__}: {e}"
             continue
         ents, rels = parse_extraction(raw)
         extracted += 1
@@ -405,6 +410,27 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     # ASCII only: progress strings reach cp1252 Windows consoles via callbacks.
     say(f"extracted {extracted} chunks -> {len(entities)} entities, "
         f"{len(relationships)} relationships ({skipped_tier3} TIER_3 skipped)")
+
+    # ── people the user has asked Friday to forget ───────────
+    # BEFORE the dangling-relationship sweep below, so removing them takes
+    # their edges with it for free. Without this the nightly reindex reads the
+    # same wiki pages and conversation turns and rebuilds every person a user
+    # deleted -- a delete button that works until the user goes to bed.
+    # services/forget_person.py owns the list.
+    try:
+        from agent_friday.services import forget_person as _fp
+        _gone = _fp.forgotten_names()
+        if _gone:
+            _before = len(entities)
+            entities = {eid: e for eid, e in entities.items()
+                        if _fp._norm(e.get("title", "")) not in _gone}
+            if len(entities) != _before:
+                say(f"excluded {_before - len(entities)} forgotten "
+                    f"{'person' if _before - len(entities) == 1 else 'people'}")
+    except Exception as _fe:
+        # Never let this fail an index run -- but say so, because silently
+        # re-deriving a deleted person is the failure that matters.
+        say(f"forget-list check failed, people may be re-derived: {_fe}")
 
     # drop dangling relationships
     relationships = {rid: r for rid, r in relationships.items()
@@ -523,9 +549,31 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     store.save_layout(layout_meta)
     manifest.save()
 
+    # Tier B used to fail SILENTLY and completely. `indexing_mode` defaults to
+    # "local_only", which pins every extraction call to the local model; on a
+    # machine with no local model every call raises, is caught above, and the
+    # chunk is skipped. Tier A still works, so the run reported success and
+    # produced a structural-only graph. The user was told the map was built.
+    #
+    # The onboarding now tells cloud-only users what they do and do not get.
+    # That sentence has to be backed by a run that says so out loud, so the
+    # failure is counted, named in the receipt, and stated plainly here.
+    degraded = bool(chunks) and extracted == 0 and extract_failures > 0
+    if degraded:
+        say("TIER B PRODUCED NOTHING: all %d extraction calls failed (%s). "
+            "The map has structural links only, not the semantic layer. "
+            "indexing_mode=%s pins extraction to a local model."
+            % (extract_failures, first_failure, indexing_mode))
+    elif extract_failures:
+        say("tier B: %d of %d chunks failed extraction"
+            % (extract_failures, extract_failures + extracted))
+
     info = {
         "tier": "B", "mode": indexing_mode,
         "chunks": len(chunks), "extracted": extracted,
+        "extract_failures": extract_failures,
+        "first_failure": first_failure,
+        "degraded": degraded,
         "skipped_tier3": skipped_tier3,
         "entities": len(entities), "relationships": len(relationships),
         "communities": len(communities), "reports": len(reports),

@@ -37,7 +37,14 @@ def test_core_and_v5_endpoints_registered():
         "/api/learning/state",
         "/api/memory/dream/state",
         "/api/channels",
-        "/api/onboarding/state",
+        # /api/onboarding/state was here until 5.7.0. It belonged to a
+        # voice-first onboarding state machine that nothing ever called:
+        # grep for "api/onboarding" in index.html returned zero hits for
+        # its whole life. It was the third of three onboarding surfaces,
+        # and the one telling users "everything works locally without
+        # them" -- false on any machine below the hardware floor. Deleted
+        # rather than corrected: dead code with a false promise in it is
+        # a promise waiting to be switched on by accident.
     ):
         assert path in rules, f"{path} not registered — blueprint discovery broken"
 

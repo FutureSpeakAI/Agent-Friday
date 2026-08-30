@@ -12,6 +12,7 @@ import subprocess
 import base64
 import secrets
 import sys
+import tempfile
 import traceback
 import uuid
 import threading
@@ -605,6 +606,14 @@ VIBE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 VIBE_STATE_FILE = Path(os.path.expanduser("~")) / ".friday" / "vibe-code" / "terminals.json"
 VIBE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# Bumped when the MEANING of the file changes, not its contents. Version 1 is
+# the first format written by a process that also records terminals at launch,
+# so a version-1 file is evidence that an absent terminal_id is genuinely
+# absent. A file with no version was written before that guarantee held (or by
+# the reconcile itself, which created an empty one at first boot), and an
+# absence in it proves nothing -- see adopt_or_reap_vibe_terminals.
+VIBE_STATE_VERSION = 1
+
 
 def _persist_vibe_terminals() -> None:
     """Write VIBE_TERMINALS to disk. Atomic (tmp-then-replace), best-effort.
@@ -612,10 +621,17 @@ def _persist_vibe_terminals() -> None:
     Same shape as residency_arbiter._publish_endpoints: a process that cannot
     persist its terminal list is still a working process for whoever owns it
     right now, so a write failure here is swallowed rather than raised.
+
+    The temp file carries the pid so two writers cannot land on one name. A
+    shared temp name is exactly the defect fixed in _save_settings this week:
+    concurrent writers interleave into a half-written file. Here that file is
+    the sole evidence deciding whether a live terminal gets force-killed, so a
+    torn write is not merely lost state.
     """
     try:
-        tmp = VIBE_STATE_FILE.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"terminals": VIBE_TERMINALS}, indent=2),
+        tmp = VIBE_STATE_FILE.with_suffix(".json.%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps({"version": VIBE_STATE_VERSION,
+                                   "terminals": VIBE_TERMINALS}, indent=2),
                        encoding="utf-8")
         os.replace(tmp, VIBE_STATE_FILE)
     except Exception:
@@ -624,10 +640,26 @@ def _persist_vibe_terminals() -> None:
 
 def _read_vibe_terminals_state() -> dict:
     """`terminal_id -> last-known record` from disk. Never raises; {} on any problem."""
+    return _read_vibe_state().get("terminals", {})
+
+
+def _read_vibe_state() -> dict:
+    """The whole persisted vibe-terminal document. Never raises.
+
+    Returns `{}` when the file is missing or unreadable -- deliberately
+    indistinguishable from a file that exists but names no version, because
+    neither can testify that a terminal was never recorded.
+    """
     try:
         data = json.loads(VIBE_STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
         terms = data.get("terminals") or {}
-        return {str(k): v for k, v in terms.items() if isinstance(v, dict)}
+        out = {"terminals": {str(k): v for k, v in terms.items()
+                             if isinstance(v, dict)}}
+        if isinstance(data.get("version"), int):
+            out["version"] = data["version"]
+        return out
     except Exception:
         return {}
 
@@ -2091,14 +2123,39 @@ def _save_settings(data):
     _sync_capability_routing(merged, data)
     # Atomic write: write to a sibling temp file, fsync, then rename so a crash
     # mid-write never leaves a half-written (corrupt) settings.json.
-    _tmp = SETTINGS_FILE.with_suffix('.tmp')
-    _tmp.write_text(json.dumps(merged, indent=2), encoding='utf-8')
+    # The temp name is UNIQUE per write, not the shared SETTINGS_FILE.tmp it
+    # used to be. Friday saves settings from background threads as well as
+    # request handlers, and with one shared temp path two concurrent writers
+    # scribble over the same file — so a writer could replace() using a temp
+    # the OTHER writer was still filling, persisting a mixed settings.json.
+    # That is the exact corruption the atomic write exists to prevent, and the
+    # shared name reintroduced it under concurrency.
+    _fd, _tmp_name = tempfile.mkstemp(
+        dir=str(SETTINGS_FILE.parent), prefix='.settings-', suffix='.tmp')
+    _tmp = Path(_tmp_name)
     try:
-        with open(_tmp, 'rb') as _f:
+        with os.fdopen(_fd, 'w', encoding='utf-8') as _f:
+            _f.write(json.dumps(merged, indent=2))
+            _f.flush()
             os.fsync(_f.fileno())
+        # Windows denies a replace while any other handle holds the target
+        # (a concurrent reader, an indexer, AV). That surfaced as WinError 5
+        # turning a settings save into a 500. Retry briefly rather than lose
+        # the write; the file is already complete and fsynced by here.
+        for _attempt in range(10):
+            try:
+                _tmp.replace(SETTINGS_FILE)
+                break
+            except PermissionError:
+                if _attempt == 9:
+                    raise
+                _time.sleep(0.02)
     except Exception:
-        pass
-    _tmp.replace(SETTINGS_FILE)
+        try:
+            _tmp.unlink()
+        except Exception:
+            pass
+        raise
     # The write is complete and on disk; clear again so nothing keeps a
     # snapshot taken mid-write.
     _invalidate_settings_cache()

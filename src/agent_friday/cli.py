@@ -70,6 +70,46 @@ CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
 SKILLS_DIR = FRIDAY_DIR / "skills"
 
+# The repository. `friday update` used to print `FutureSpeakAI/friday-desktop`,
+# which 404s — one constant, so there is one place to be wrong.
+REPO_URL = "https://github.com/FutureSpeakAI/Agent-Friday"
+RELEASES_URL = f"{REPO_URL}/releases/latest"
+
+
+def _app_version() -> str:
+    """This build's version, from pyproject.toml, else package metadata."""
+    try:
+        pp = PROJ_ROOT / "pyproject.toml"
+        if pp.exists():
+            m = re.search(r'(?m)^version\s*=\s*"([^"]+)"',
+                          pp.read_text(encoding="utf-8"))
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("agent-friday")
+    except Exception:
+        return "unknown"
+
+
+def _installed_manifest() -> dict:
+    """`install-manifest.json` for a packaged install, or {}.
+
+    The installer lays the app out as <InstallRoot>\\app, so PROJ_ROOT is the
+    app dir and the manifest sits beside it. Reading it is how `friday update`
+    can show the version the INSTALLER believes it put down — which, before
+    5.6.5, was not necessarily the version of the code actually on disk.
+    """
+    try:
+        p = PROJ_ROOT.parent / "install-manifest.json"
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8-sig")) or {}
+    except Exception:
+        pass
+    return {}
+
 # Must match server.py's default bind port (3000). The CLI also exports
 # FRIDAY_PORT to the server subprocess below so the two can never disagree.
 SERVER_PORT = int(os.environ.get("FRIDAY_PORT", "3000"))
@@ -372,8 +412,10 @@ def cmd_model():
     console.rule("[bold cyan]MODEL SELECTION[/bold cyan]")
 
     console.print("\n  [bold]Orchestrator[/bold] (primary reasoning + tool use)")
+    new_orch = _pick_model(orchestrator_models(), cfg.get("orchestrator_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Subagent[/bold] (background tasks)")
+    new_sub = _pick_model(subagent_models(), cfg.get("subagent_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Creative engine[/bold] (images, music, voice)")
     new_creative = _pick_model(creative_models(), cfg.get("creative_model", "gemini-nano-banana-2"), "")
@@ -777,6 +819,41 @@ def cmd_status():
     _check("Gemini API key set (optional)", bool(gemini_key),
            "voice + creative disabled" if not gemini_key else "")
 
+    # ── Where the vault passphrase lives ────────────────────────────────────
+    # Nobody could answer this before. `friday vault-setup` is opt-in and
+    # nothing reported it, so there was no way to tell a durable install from
+    # one whose only copy sat in a file the installer deletes -- which is the
+    # same line that tells a 5.6.5 casualty whether they are recoverable.
+    # Identifiers only; the value is never printed.
+    console.print()
+    console.print("  [bold]Vault passphrase[/bold]")
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        _found, _src = _vp.resolve()
+        _check("A passphrase is set", bool(_found),
+               "vault data is stored as PLAINTEXT at rest; run: friday vault-setup"
+               if not _found else "")
+        if _found:
+            console.print(f"     [dim]resolved from: {_src}[/dim]")
+            _durable = [h for h in _vp.locations() if h["durable"] and h["present"]]
+            _check("Stored where the installer cannot delete it", bool(_durable),
+                   "it is only in start.bat / the environment - run: friday vault-setup"
+                   if not _durable else "")
+            for _h in _durable:
+                console.print(f"     [dim]+ {_h['home']}[/dim]")
+            if any(not h["durable"] and h["present"] and h["home"] == "start.bat"
+                   for h in _vp.locations()):
+                console.print("     [yellow]start.bat still holds a plaintext copy; "
+                              "it is removed on the next start.[/yellow]")
+            _ok = _vp.verify(_found)
+            if _ok is True:
+                _check("It opens the encrypted vault", True)
+            elif _ok is False:
+                _check("It opens the encrypted vault", False,
+                       "the passphrase found does NOT decrypt ~/.friday/vault")
+    except Exception as _ve:
+        console.print(f"  [yellow]?[/yellow]  Vault passphrase  [dim]{_ve}[/dim]")
+
     # Validate keys if set
     if anthro_key:
         console.print()
@@ -883,9 +960,35 @@ def cmd_update():
 
     # Check git — repo-root paths, NOT the package dir (HERE is src/agent_friday;
     # .git, requirements.txt live at PROJ_ROOT, and build_ui moved to ui/).
+    #
+    # An INSTALLER install can never satisfy this: the payload deliberately
+    # ships no .git, so every packaged user lands in this branch. It used to
+    # send them to `FutureSpeakAI/friday-desktop`, which does not exist and
+    # returns 404 — the repository is `Agent-Friday`. So the one escape hatch
+    # for the users who most needed it pointed at nothing. Both halves are
+    # fixed here: the right URL, and instructions that work without git.
     if not (PROJ_ROOT / ".git").exists():
-        console.print("  [yellow]Not a git repository — manual update required.[/yellow]")
-        console.print(f"  Download latest from https://github.com/FutureSpeakAI/friday-desktop")
+        installed = _installed_manifest()
+        console.print("  [yellow]This is a packaged install, not a git checkout — "
+                      "so it updates by re-running the installer, not by pulling."
+                      "[/yellow]\n")
+        if installed:
+            console.print(f"  Installed version:  [bold]{installed.get('version', 'unknown')}[/bold]")
+        console.print(f"  This build:         [bold]{_app_version()}[/bold]\n")
+        console.print("  [bold]To update:[/bold]")
+        console.print("    1. Download the newest [bold]AgentFriday-Setup-*.zip[/bold] from")
+        console.print(f"       {RELEASES_URL}")
+        console.print("    2. Unzip it anywhere.")
+        console.print("    3. Double-click [bold]Install Agent Friday.cmd[/bold].")
+        console.print("\n  Your notes, settings and connected accounts are kept — the")
+        console.print("  installer replaces Friday's own files and nothing under ~/.friday.\n")
+        # Say the quiet part: anyone who upgraded in place before 5.6.5 may be
+        # running older code than their version number claims. See CHANGELOG
+        # 5.6.5. Re-running a 5.6.5-or-newer installer repairs it.
+        console.print("  [dim]If you upgraded in place before 5.6.5, the app files may not")
+        console.print("  actually have been replaced — installers before 5.6.5 skipped the")
+        console.print("  copy when files already existed. Re-running this installer fixes")
+        console.print("  it, and `friday status` will then show the real version.[/dim]\n")
         return
 
     # git pull
@@ -994,18 +1097,6 @@ def cmd_vault_setup():
     console.print("  It is stored in the OS keychain — never in a file or environment variable.")
     console.print()
 
-    try:
-        import keyring as _keyring
-    except ImportError:
-        console.print(
-            "  [red]keyring not installed.[/red]  "
-            "Run: [bold]pip install 'agent-friday[keyring]'[/bold]"
-        )
-        console.print()
-        console.print("  Alternatively, set [bold]FRIDAY_VAULT_PASSPHRASE[/bold] in your environment")
-        console.print("  (a shell variable, NOT in a file committed to source control).")
-        return
-
     from rich.prompt import Prompt
     import getpass
     try:
@@ -1021,15 +1112,25 @@ def cmd_vault_setup():
         console.print("\n  [yellow]Cancelled.[/yellow]")
         return
 
-    try:
-        _keyring.set_password("agent-friday", "vault-passphrase", passphrase)
-        console.print()
-        console.print("  [green]✓[/green]  Vault passphrase saved to the OS keychain.")
-        console.print("  [dim]Remove FRIDAY_PASSWORD / FRIDAY_VAULT_PASSPHRASE from start.bat[/dim]")
-        console.print("  [dim]if they were previously set there.[/dim]")
-    except Exception as e:
-        console.print(f"  [red]Failed to save to keychain: {e}[/red]")
-        console.print("  [dim]Set FRIDAY_VAULT_PASSPHRASE in your environment instead.[/dim]")
+    # ONE writer, the same one the wizard and the app wizard use. It writes
+    # every durable home available -- the OS keychain AND a DPAPI-wrapped file
+    # -- so losing either one is survivable. `keyring` is an optional
+    # dependency, which is exactly why this no longer refuses without it.
+    from agent_friday.services import vault_passphrase as _vp
+    written = _vp.store(passphrase)
+    console.print()
+    if written:
+        console.print("  [green]✓[/green]  Vault passphrase saved to: "
+                      + ", ".join(written) + ".")
+        moved = _vp.migrate()
+        if moved.get("stripped"):
+            console.print("  [green]✓[/green]  Removed the plaintext copy from start.bat.")
+        elif moved.get("action") == "conflict":
+            console.print("  [yellow]![/yellow]  " + moved.get("detail", ""))
+    else:
+        console.print("  [red]Could not save the passphrase anywhere durable.[/red]")
+        console.print("  [dim]No OS keychain and no DPAPI on this host. Set[/dim]")
+        console.print("  [dim]FRIDAY_VAULT_PASSPHRASE in your environment instead.[/dim]")
     console.print()
 
 

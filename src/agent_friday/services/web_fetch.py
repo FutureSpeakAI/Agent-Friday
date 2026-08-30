@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -29,6 +30,8 @@ from typing import Any
 from urllib.parse import urljoin
 
 from agent_friday.services.web_safety import MAX_REDIRECT_HOPS, UnsafeURLError, check_url
+
+_log = logging.getLogger("friday.web_fetch")
 
 # Extraction cap. Generous — the 12b's 131k window can hold a large page — but
 # not unbounded, because one pathological page should not eat a commission's

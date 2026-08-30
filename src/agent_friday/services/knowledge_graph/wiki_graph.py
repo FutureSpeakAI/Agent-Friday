@@ -431,6 +431,29 @@ def index_to_records(index: dict[str, dict]) -> dict[str, list[dict]]:
             "size": len(members),
         })
 
+    # Tier A derives an entity from every wiki page TITLE, so a page called
+    # "Dana Okafor" resurrects a forgotten person through the structural path
+    # even after the Tier B extractor has been taught to skip her. Filter here
+    # too: the tombstone has to hold on every route into the graph, not the one
+    # we happened to think of first. The page itself is untouched -- it is the
+    # user's own note, and forget_person deliberately does not rewrite those.
+    try:
+        from agent_friday.services import forget_person as _fp
+        _gone = _fp.forgotten_names()
+        if _gone:
+            _keep = {e["id"] for e in entities
+                     if _fp._norm(e.get("title", "")) not in _gone}
+            if len(_keep) != len(entities):
+                entities = [e for e in entities if e["id"] in _keep]
+                relationships = [r for r in relationships
+                                 if r.get("source") in _keep and r.get("target") in _keep]
+                for c in communities:
+                    c["entity_ids"] = [i for i in c.get("entity_ids", []) if i in _keep]
+                    c["size"] = len(c["entity_ids"])
+                communities = [c for c in communities if c["size"]]
+    except Exception:
+        pass
+
     return {"entities": entities, "relationships": relationships,
             "communities": communities}
 

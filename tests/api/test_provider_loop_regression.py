@@ -113,6 +113,37 @@ def test_generate_text_normalizes_string_prompts(monkeypatch):
     import agent_friday.services.demo_mode as _dm
     monkeypatch.setattr(_dm, "is_demo", lambda: False)
 
+    # This test stubs the CLOUD primitive and asserts the stub was reached, so
+    # it silently depends on the router NOT choosing a local seat. Two pieces of
+    # process-wide state decide that, and neither is this test's subject:
+    #
+    #   1. an earlier test in the same process leaving a non-cloud_only
+    #      model_routing block in the shared test home's settings.json, and
+    #   2. `_route_basic` then asking the REAL Ollama daemon on localhost:11434
+    #      (via the get_manager singleton, 30-second availability cache).
+    #
+    # In a full-suite run this failed with "[ROUTER] chose local/gemma4:e4b" --
+    # a model that exists on the author's machine and nowhere in CI. It
+    # reproduced identically on an UNMODIFIED tree given the same selection, so
+    # it is a latent order-and-hardware dependency rather than a regression;
+    # any change to suite composition can trigger it. The same hazard is on
+    # record twice already: the cloud_only tests that tested "the last test to
+    # write settings" (5350d69), and a routing probe that had to force the local
+    # seat empty before the real default behaviour appeared.
+    #
+    # Make the daemon unreachable for the duration. The test is named for prompt
+    # normalisation and that is now the only thing it measures.
+    import agent_friday.routing.ollama_manager as _om
+
+    class _NoDaemon:
+        def is_available(self):
+            return False
+
+        def list_models(self):
+            return []
+
+    monkeypatch.setattr(_om, "get_manager", lambda *a, **k: _NoDaemon())
+
     out = smr._generate_text("just a bare prompt")
     assert out == "normalized fine"
     assert captured["messages"] == [{"role": "user", "content": "just a bare prompt"}]

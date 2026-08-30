@@ -543,7 +543,7 @@ if ($warns.Count -eq 0) {
     Say '  the uninstaller once more usually clears it.'
 }
 Say ''
-Say "  $($script:C.Grey)For Stephen: $(Join-Path $LogDir 'LAST-UNINSTALL-REPORT.md')$($script:C.Reset)"
+Say "  $($script:C.Grey)Details: $(Join-Path $LogDir 'LAST-UNINSTALL-REPORT.md')$($script:C.Reset)"
 Say ''
 
 if (-not $Unattended) { Read-Host '  Press Enter to close' | Out-Null }

@@ -16,12 +16,28 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 
 import pytest
 
 import agent_friday.services.agent as agent_mod
 import agent_friday.services.interactive_sessions as isess
+
+# A handful of tests below launch a REAL child process and the command they
+# launch is a Windows shell (cmd.exe / powershell.exe). Friday is a Windows
+# desktop app, so that is the honest subject — but on Linux the spawn fails
+# with ENOENT and the test reports a KeyError on 'session_id' rather than
+# anything about the behaviour it names.
+#
+# Scoped to the individual tests that really spawn, NOT the module: the
+# guardrail and ring-gating tests also mention cmd.exe, but they are refused
+# or mocked before Popen is reached, so they are genuinely portable and keep
+# running on every leg.
+requires_windows_shell = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="launches a real cmd.exe/powershell.exe child; Windows-only by construction",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -118,13 +134,25 @@ class TestSpawnGuardrails:
         result = isess.spawn(command="cmd.exe /c echo hi", cwd="C:\\Windows\\System32")
         assert result.get("error")
 
+    @requires_windows_shell
     def test_cwd_defaults_to_home_when_omitted(self):
         result = isess.spawn(command="cmd.exe /c echo default_cwd_ok")
         assert result.get("session_id")
-        assert result["cwd"].rstrip("\\/") == str(isess.HOME).rstrip("\\/")
+        # realpath + normcase, because the two sides name the same directory
+        # with different spellings. On the GitHub runner the child reports the
+        # 8.3 short form "C:\\Users\\RUNNER~1\\..." while isess.HOME holds the
+        # long "C:\\Users\\runneradmin\\...", and they also disagree on case.
+        # realpath expands the short form and normcase folds the case, so this
+        # compares WHICH directory was chosen — the test's actual subject —
+        # rather than how the OS happened to spell it.
+        def _same_dir(p):
+            return os.path.normcase(os.path.realpath(str(p).rstrip("\\/")))
+
+        assert _same_dir(result["cwd"]) == _same_dir(isess.HOME)
 
 
 # ── real subprocess: spawn/read/send actually work ──────────────────────────
+@requires_windows_shell
 class TestSpawnAndInteractForReal:
     def _wait_for(self, predicate, timeout=10.0, interval=0.1):
         deadline = time.time() + timeout
@@ -170,6 +198,7 @@ class TestSendReadErrors:
         result = isess.read_output("does-not-exist")
         assert result.get("error")
 
+    @requires_windows_shell
     def test_send_after_exit_is_refused(self):
         result = isess.spawn(command="cmd.exe /c echo bye")
         sid = result["session_id"]

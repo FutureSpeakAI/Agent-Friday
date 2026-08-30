@@ -6,3 +6,7 @@ staging/
 payload/
 wheelhouse/
 *.zip
+
+# PowerShell drops a module cache under whatever HOME the build ran with.
+# build-installer.ps1 redirects the profile, so it lands here.
+Microsoft/
