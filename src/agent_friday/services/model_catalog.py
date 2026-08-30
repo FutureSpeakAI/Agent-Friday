@@ -322,31 +322,11 @@ def _model_entries_for(provider: dict, registry) -> list:
     # as curated picker entries with zero code changes. No cache → statics,
     # each flagged catalog_stale so the UI can say "showing built-in list".
     hosted_native = ptype in HOSTED_NATIVE_TYPES
-    # An aggregator ships NO static model list -- its catalog IS the live one,
-    # and there is no second list to fall back to. OpenRouter is the case:
-    # services/hosted_catalog names it in HOSTED_PROVIDERS and fetches its
-    # /api/v1/models, but this promotion gate was keyed on HOSTED_NATIVE_TYPES
-    # ("anthropic", "higgsfield") and OpenRouter's type is "openai-compatible".
-    # So its ~400 live models all landed curated=False, role lists take curated
-    # entries ONLY, and the one provider whose catalog is entirely live became
-    # the one provider absent from every picker -- models fetched, cached,
-    # marked available, and unselectable. Stephen, 2026-08-30: "I added my
-    # OpenRouter API key to Friday and it can't seem to switch on their models."
-    #
-    # Keyed on the SHAPE, not a second name list: "declares no statics and
-    # discovers over the wire" is exactly the condition under which the
-    # discovered list is the whole catalog, so the next aggregator works
-    # without an edit here.
-    live_catalog = (not ids
-                    and (provider.get("discovery") or {}).get("mode") == "api")
     hosted_fallback = False
-    if hosted_native or live_catalog:
+    if hosted_native:
         if disc_by_id:
             ids = [m.get("id") for m in discovered if m.get("id")]
-        elif hosted_native:
-            # Statics remain as the fallback list; an aggregator has none, so
-            # an empty discovery cache correctly leaves it with no models
-            # rather than inventing some.
+        else:
             hosted_fallback = True
 
     # `ids` is final here: descriptor statics, or the live Ollama install list.
