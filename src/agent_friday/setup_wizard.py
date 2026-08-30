@@ -18,6 +18,9 @@ import sys
 import time
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+from agent_friday.seed import ensure_seed_skills_installed
+
 try:
     from rich.console import Console
     from rich.panel import Panel
@@ -45,7 +48,7 @@ console = Console()
 # ── Paths ────────────────────────────────────────────────────────
 HERE = Path(__file__).parent.resolve()
 PROJ_ROOT = HERE.parent.parent  # src/agent_friday/ → repo root
-FRIDAY_DIR = Path.home() / ".friday"
+FRIDAY_DIR = friday_home()
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
@@ -1507,6 +1510,12 @@ def main():
                         help="Re-run setup even if a previous install is detected")
     args = parser.parse_args()
     quick = args.quick
+
+    # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills on
+    # first run. A no-op the moment that directory exists at all, so this is
+    # safe to call unconditionally on every wizard invocation, including
+    # --force re-runs and a returning user's gap-fill.
+    ensure_seed_skills_installed()
 
     # Load existing values for defaults
     existing = _load_config()

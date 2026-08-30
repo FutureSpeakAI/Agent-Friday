@@ -28,7 +28,7 @@ except ImportError:
 # lazy imports so the module can be loaded without the full friday tree
 # present (useful for unit tests).
 try:
-    from data.job_tracker_schema import JobListing, JobTracker
+    from agent_friday.seed.data.job_tracker_schema import JobListing, JobTracker
 except ImportError:  # pragma: no cover - fallback for partial installs
     from job_tracker_schema import JobListing, JobTracker  # type: ignore
 

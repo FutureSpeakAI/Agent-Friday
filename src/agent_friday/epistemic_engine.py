@@ -21,8 +21,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from agent_friday.paths import friday_home
 
-FRIDAY_DIR = Path.home() / ".friday"
+
+FRIDAY_DIR = friday_home()
 SCORES_PATH = FRIDAY_DIR / "epistemic_scores.json"
 HISTORY_PATH = FRIDAY_DIR / "epistemic_history.jsonl"
 

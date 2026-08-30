@@ -25,8 +25,10 @@ except ImportError:
     yaml = None  # type: ignore
 
 try:
-    from data.job_tracker_schema import JobListing, JobTracker, ApplicationRecord
-except ImportError:  # pragma: no cover
+    from agent_friday.seed.data.job_tracker_schema import (
+        JobListing, JobTracker, ApplicationRecord,
+    )
+except ImportError:  # pragma: no cover — fallback for partial/standalone installs
     from job_tracker_schema import JobListing, JobTracker, ApplicationRecord  # type: ignore
 
 

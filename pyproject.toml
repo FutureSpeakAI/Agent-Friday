@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-friday"
-version = "5.7.0"
+version = "5.8.0"
 description = "Agent Friday by FutureSpeak.AI â€” a sovereign, provider-agnostic desktop AI agent."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -130,3 +130,11 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+# Bundled seed content (agent_friday/seed/) - the career-pipeline skills and
+# their config/manifest files. The .py modules under seed/ ship automatically
+# as part of the discovered agent_friday.seed.* packages above; this section
+# is only for the non-code files (config.yaml, SKILL.md) that packages.find
+# does not pick up on its own. See agent_friday/seed/__init__.py.
+[tool.setuptools.package-data]
+agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md"]

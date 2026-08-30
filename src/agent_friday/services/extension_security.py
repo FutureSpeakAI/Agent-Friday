@@ -8,7 +8,9 @@ import os, re, json, time, unicodedata
 from pathlib import Path
 from datetime import datetime
 
-AUDIT_DIR = Path.home() / ".friday" / "security"
+from agent_friday.paths import friday_home
+
+AUDIT_DIR = friday_home() / "security"
 AUDIT_DIR.mkdir(parents=True, exist_ok=True)
 AUDIT_LOG = AUDIT_DIR / "mcp_audit.log"
 
