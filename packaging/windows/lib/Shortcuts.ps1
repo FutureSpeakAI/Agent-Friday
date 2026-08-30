@@ -185,6 +185,28 @@ function Test-ShortcutsInstalled {
 
 # --- Autostart -----------------------------------------------------------
 
+function Get-StartupDir {
+    <#  The sign-in Startup folder, or '' - never a throw.
+
+        The three autostart functions called [Environment]::GetFolderPath
+        ('Startup') directly and fed the result straight to Join-Path, which is
+        the exact ParameterBindingValidationException Get-SpecialDir was written
+        to stop. They escaped it because they were only ever reached inside the
+        "she answered Yes" branch, which no test harness had taken - so the one
+        code path still holding the raw call was also the one nothing exercised.
+
+        5.6.6 made Test-Autostart run unconditionally, to record the MEASURED
+        autostart state in the manifest, and it threw on the first install that
+        ran afterwards. The manifest was never written at all, which would have
+        left the uninstaller with nothing to read - the same class of failure
+        that release exists to fix. #>
+    $fb = ''
+    if ($env:APPDATA) {
+        $fb = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+    }
+    return (Get-SpecialDir -Name 'Startup' -Fallback $fb)
+}
+
 function Enable-Autostart {
     <#  Startup-folder shortcut rather than a Run registry value.
 
@@ -199,7 +221,11 @@ function Enable-Autostart {
         does not throw a black window at her.
     #>
     param([Parameter(Mandatory)][string] $InstallRoot, [string] $IconPath = '')
-    $startupDir = [Environment]::GetFolderPath('Startup')
+    $startupDir = Get-StartupDir
+    if (-not $startupDir) {
+        Write-Log 'No usable Startup folder; autostart was not enabled.' 'WARN'
+        return ''
+    }
     $link = Join-Path $startupDir 'Agent Friday.lnk'
     $target = Join-Path $InstallRoot 'Agent Friday (background).cmd'
     return (New-Shortcut -LinkPath $link -TargetPath $target -WorkingDirectory $InstallRoot `
@@ -207,10 +233,13 @@ function Enable-Autostart {
 }
 
 function Disable-Autostart {
-    $link = Join-Path ([Environment]::GetFolderPath('Startup')) 'Agent Friday.lnk'
-    if (Test-Path -LiteralPath $link) {
-        Remove-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
-        Write-Log "Autostart shortcut removed: $link" 'OK'
+    $startupDir = Get-StartupDir
+    if ($startupDir) {
+        $link = Join-Path $startupDir 'Agent Friday.lnk'
+        if (Test-Path -LiteralPath $link) {
+            Remove-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+            Write-Log "Autostart shortcut removed: $link" 'OK'
+        }
     }
     # Belt and braces: if an older build ever wrote a Run value, clear it too.
     try {
@@ -224,7 +253,37 @@ function Disable-Autostart {
 }
 
 function Test-Autostart {
-    return (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) 'Agent Friday.lnk'))
+    $startupDir = Get-StartupDir
+    if (-not $startupDir) { return $false }
+    return (Test-Path -LiteralPath (Join-Path $startupDir 'Agent Friday.lnk'))
+}
+
+function Get-InstalledShortcutPaths {
+    <#  Every shortcut this installer knows how to create, that EXISTS now.
+
+        The manifest used to record only what the current run created, and
+        Invoke-Step skips a step whose verify already passes - so on an upgrade
+        Install-Shortcuts did not run, the list came out empty, and the manifest
+        told the uninstaller there were no shortcuts to remove. It then left
+        four of them on the machine after an uninstall that reported success.
+
+        Measuring instead of remembering makes the manifest a record of what is
+        true rather than of what this particular run happened to do. #>
+    $found = @()
+    $desktop   = Get-DesktopDir
+    $startMenu = Get-StartMenuDir
+    $startup   = Get-StartupDir
+
+    if ($desktop)   { $found += (Join-Path $desktop 'Agent Friday.lnk') }
+    if ($startMenu) {
+        foreach ($n in @('Agent Friday.lnk','Uninstall Agent Friday.lnk',
+                         'Start Friday when I sign in.lnk')) {
+            $found += (Join-Path $startMenu $n)
+        }
+    }
+    if ($startup)   { $found += (Join-Path $startup 'Agent Friday.lnk') }
+
+    return @($found | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
 }
 
 # --- Add / Remove Programs ----------------------------------------------
@@ -280,10 +339,34 @@ function Register-Uninstaller {
 }
 
 function Test-UninstallerRegistered {
+    <#  .PARAMETER ExpectedVersion
+          When given, the registered DisplayVersion must equal it.
+
+          Register-Uninstaller writes DisplayVersion, and until 5.6.6 this
+          check never read it back. Invoke-Step runs Verify BEFORE the action
+          and skips the action when it passes, so on every upgrade this
+          returned $true from the PREVIOUS install's entry, Register-Uninstaller
+          never ran, and Add/Remove Programs went on displaying the old version
+          for ever. Same defect as app.copy's, one surface over - and this is
+          the surface a user checks to find out what they are running.
+
+          The uninstaller calls this with no argument, on purpose: it is asking
+          "is there an entry at all", and any version answers that. #>
+    param([string] $ExpectedVersion = '')
     try {
         $v = Get-ItemProperty -Path $script:UninstallRegKey -ErrorAction Stop
         if (-not $v.DisplayName) { return $false }
         if (-not $v.UninstallString) { return $false }
+        if ($ExpectedVersion) {
+            $have = ''
+            if ($v.PSObject.Properties.Match('DisplayVersion').Count -gt 0) {
+                $have = [string]$v.DisplayVersion
+            }
+            if ($have -ne $ExpectedVersion) {
+                Set-VerifyDetail "Add/Remove Programs shows version '$have', expected '$ExpectedVersion'."
+                return $false
+            }
+        }
         # The uninstall command must point at something that exists, or the
         # Add/Remove entry is a dead end - which is worse than no entry.
         $path = $v.UninstallString.Trim('"')

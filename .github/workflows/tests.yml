@@ -32,17 +32,21 @@ jobs:
           flask flask-sock anthropic google-genai
           google-api-python-client google-auth-oauthlib
           cryptography pynacl rich colorama beautifulsoup4 feedparser
-          tzdata requests pyyaml pytest
+          tzdata requests pyyaml pytest pdfplumber
 
       # Install the package itself (src layout, no heavy extras).
       - name: Install agent-friday (editable)
         run: pip install -e . --no-deps
 
-      # GUI-automation deps import display machinery; only meaningful (and
-      # only installable cleanly) on the Windows runner.
+      # GUI-automation and tray deps import display machinery; only meaningful
+      # (and only installable cleanly) on the Windows runner. pystray/pillow
+      # are here because friday_tray imports them at module scope and is a
+      # real shipped dependency (pyproject: sys_platform == 'win32'); without
+      # them tests/unit/test_tray_restart_debounce.py aborted COLLECTION on
+      # every leg, so the whole suite ran nowhere from 2026-08-13 onward.
       - name: Install Windows-only dependencies
         if: runner.os == 'Windows'
-        run: pip install pyautogui pynput
+        run: pip install pyautogui pynput pystray pillow
 
       # A module-level use-before-definition - a dict mutated ABOVE its own
       # definition - is invisible to the ruff F82 set below, because the name

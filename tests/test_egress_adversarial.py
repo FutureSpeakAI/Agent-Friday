@@ -455,19 +455,49 @@ def test_tier3_keyword_batch(phrase, expected):
     assert _classify(phrase) == expected
 
 
-# ── TIER_2 keyword batch ──────────────────────────────────────────────────────
+# ── TIER_2: strong phrases and context-gated common words ────────────────────
+# The 2026-08-19 strong/common split (sensitivity_classifier._TIER2_STRONG /
+# _TIER2_COMMON) is the contract these two tests pin. A multi-word phrase like
+# "phone number" is unconditional. A COMMON word — contact, family, daughter —
+# rates PRIVATE only inside a possessive/personal frame, because a bare mention
+# carries no personal data: "family picture-book aesthetic" is a style note, and
+# treating it as private vault-forced whole turns onto the local seat until that
+# split landed.
+#
+# This replaced a single batch asserting every TIER_2 keyword was PRIVATE by
+# bare substring. That was the pre-2026-08-19 rule; it had been stale ever
+# since, and only surfaced now because a collection error stopped CI running
+# any test at all.
 
-@pytest.mark.parametrize("phrase,expected", [
-    ("contact information on file",       Tier.PRIVATE),
-    ("my home address has changed",       Tier.PRIVATE),
-    ("family gathering this weekend",     Tier.PRIVATE),
-    ("my daughter just started school",   Tier.PRIVATE),
-    ("my partner prefers evenings",       Tier.PRIVATE),
-    ("phone number for the reservation",  Tier.PRIVATE),
+@pytest.mark.parametrize("phrase", [
+    # _TIER2_STRONG — unconditional, no determiner needed.
+    "phone number for the reservation",
+    "my home address has changed",
+    "emergency contact: 555-1234",
+    # _TIER2_COMMON — inside a possessive frame.
+    "my daughter just started school",
+    "my partner prefers evenings",
+    "our family gathering this weekend",
+    "her contact information on file",
 ])
-def test_tier2_keyword_batch(phrase, expected):
-    """All TIER_2 keyword phrases must classify as PRIVATE."""
-    assert _classify(phrase) == expected
+def test_tier2_strong_or_framed_common_is_private(phrase):
+    """Strong phrases, and common words in a personal frame, are PRIVATE."""
+    assert _classify(phrase) == Tier.PRIVATE
+
+
+@pytest.mark.parametrize("phrase", [
+    "contact information on file",
+    "family gathering this weekend",
+])
+def test_tier2_bare_common_word_is_not_private(phrase):
+    """A bare common word carries no personal data and must NOT rate PRIVATE.
+
+    Asserted as an exact tier rather than `!= PRIVATE`: if the classifier ever
+    starts escalating these, it should fail here loudly instead of passing on a
+    weaker claim. Both phrases are the same nouns as the test above, minus the
+    determiner — the determiner is the whole signal.
+    """
+    assert _classify(phrase) == Tier.PUBLIC
 
 
 # ── Double-signal escalation (presidio + keyword) ────────────────────────────

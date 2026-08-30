@@ -1,148 +1,187 @@
-# Agent Friday v5.6.3
+# Agent Friday v5.6.6
 
-*2026-08-26 · FutureSpeak.AI*
+*2026-08-29 · FutureSpeak.AI*
 
-**The first release built for someone who isn't the author.**
+**If you upgraded to 5.6.5 today, your vault passphrase may have been deleted.
+Read section 1 before you do anything else. If you have not upgraded yet,
+upgrade to 5.6.6 and skip 5.6.5 entirely.**
 
-`5.6.0` through `5.6.2` fixed what broke when the installer was finally run
-for the first time. This one fixes what broke when Friday was finally
-*used* by someone on her own hardware, her own account, and her own
-graphics card — a 5090, not the reference 4070. Four things, in the order
-a new user hits them.
+5.6.5 fixed in-place upgrades, which had never delivered any code. That fix was
+correct and it stays. But making the app-file copy actually *run* on an upgrade
+made a second, older defect reachable for the first time: the copy deletes the
+file your vault passphrase lives in.
+
+This release is that fix, the wizard half of the same problem, and two smaller
+defects of the identical shape. No feature work.
 
 ---
 
-## What's new, if you're installing for the first time
+## 1. An upgrade could destroy your vault passphrase
 
-### 1. The local model ladder scales with your hardware now
+### What happened
 
-It used to top out at `gemma4:12b`. A 16 GiB card, a 4090, and a 5090 all
-got handed the same 7.5 GB model, because "the largest that fits" had
-nothing left to reach for once the table ran out of rows. That's not a fit
-calculation — it's a missing ladder, and it reported a confident,
-correct-looking answer every single time.
+Your vault passphrase is written to `start.bat` inside Friday's own app folder,
+and — unless you separately ran `friday vault-setup` — **nowhere else**. That is
+deliberate: the wizard refuses to put it in a settings file, so it is not
+committed or synced anywhere.
 
-The ladder now runs:
+`app.copy` deletes the entire app folder and lays down a fresh copy. `start.bat`
+is deliberately excluded from what ships, so it does not come back.
+
+Before 5.6.5 this never bit, by accident: `app.copy` short-circuited on every
+upgrade and the delete never ran. 5.6.5 fixed that short-circuit. From 5.6.5,
+every in-place upgrade deletes `start.bat`.
+
+Your data in `~/.friday/vault` is encrypted with AES-256-GCM under a key derived
+from that passphrase with Argon2id. **The vault is never deleted. Only the key
+is.** The files are still on your disk and they are still unreadable.
+
+### Measured, on the two published zips
+
+Published 5.6.3 installed, a real passphrase minted through the wizard's own
+writer, a real note encrypted under it, then upgraded with published 5.6.5:
+
+| | 5.6.3 → **5.6.5** | 5.6.3 → **5.6.6** |
+|---|---|---|
+| Installer exit code | 0 | 0 |
+| Code actually updated | yes (5.6.3 → 5.6.5) | yes (5.6.3 → 5.6.6) |
+| `start.bat` survived | **no** | **yes** |
+| Passphrase survived | **no** | **yes** |
+| Vault decrypts afterwards | **no** | **yes** |
+
+Both runs reported success. One of them left the vault permanently unreadable.
+
+### Are you affected
+
+Only if **all** of these are true:
+
+1. You upgraded in place by re-running the installer, using **5.6.5**, and
+2. you had set a vault passphrase, and
+3. you had not stored it via `friday vault-setup`.
+
+Upgrades using 5.6.4 or earlier did not delete it — those installers copied
+nothing at all, which is the defect 5.6.5 fixed. Fresh installs are unaffected.
+
+### If it happened to you
+
+**In order:**
+
+1. **Check the OS keychain.** If you ever ran `friday vault-setup`, your
+   passphrase is there and nothing is lost:
+   ```
+   friday vault-setup
+   ```
+   It will tell you if one is already stored.
+
+2. **Check for another copy.** If you ever launched Friday from a shortcut you
+   made yourself, or kept a `launch_now.bat` or `friday_startup.bat`, those hold
+   the same `SET FRIDAY_PASSWORD=` line. 5.6.6 preserves all of them from now on.
+
+3. **Check wherever you saved it.** If you accepted the wizard's generated
+   passphrase, it was shown on screen once and written to `start.bat`. A password
+   manager, a note, a screenshot.
+
+4. **If none of those:** there is **no recovery**. This is not a lock we can pick
+   — that is the property the encryption was chosen for. Argon2id + AES-256-GCM
+   with no key is not recoverable by us, by you, or by anyone else.
+
+   Your vault files stay where they are. Nothing deletes them, and 5.6.6 will not
+   overwrite them. If the passphrase turns up later it will still work. Friday
+   runs normally in the meantime; the vault stays locked.
+
+We are sorry. This was ours, it was silent, and it looked like success.
+
+---
+
+## 2. The setup wizard could mint a new passphrase over an existing vault
+
+A second, independent way to lose the same data.
+
+`step_vault_password` opened with *"Generate a random passphrase for me?"*
+defaulting to **Yes**, and never checked whether a vault already existed. The
+installer runs the wizard on **every** run, including every upgrade. So pressing
+Enter through an upgrade generated a fresh passphrase over a vault encrypted
+under the old one.
+
+Measured against 5.6.5, existing vault, every prompt answered with Enter:
 
 ```
-     8 GiB  qwen3:4b     2.50 GB       16 GiB  qwen3:14b    9.28 GB
-    10 GiB  qwen3:8b     5.23 GB       24 GiB  qwen3:32b   20.20 GB
-    12 GiB  gemma4:12b   7.56 GB
+original passphrase : the-users-original-passphrase
+wizard returned     : gFwCZBGllhg2rcpVrdC7xgnHcbOYK5K4
+vault decrypts      : False  (IntegrityError)
 ```
 
-`friday models` (and the installer) now shows you every rung your machine
-could run, with the recommended default marked, instead of announcing one
-decision and hiding the rest. **`qwen3:14b` and `qwen3:32b` are marked
-UNMEASURED** — their fit is arithmetic, derived from the Ollama registry's
-own manifests, not a timed run on real hardware. `gemma4:12b` remains the
-best-evidenced row in the table: 49–54 tok/s, ~20.5s cold load, measured on
-the reference card. **This marking is deliberate and should not be quietly
-resolved by a future release** — when someone measures `qwen3:14b` or
-`qwen3:32b` for real, that's when the marking changes, not before.
+Every other step in that wizard already takes what is on disk and leaves a
+settled answer alone. This one now does too:
 
-Tool calling is now a **hard gate**, not a preference: `gemma3:4b` cannot
-be selected at any tier, on any card, because it cannot call tools and
-Friday does not stop passing it the tool registry — it can only narrate a
-call it never made. The flag itself is re-checked against the daemon's own
-`capabilities` array after every install rather than trusted from a table,
-so a wrong entry here is caught, not shipped quietly.
-
-**A real arithmetic bug came out at the same time.** `vram_gib` was
-hand-typed per model and already carried about 2 GiB of unstated overhead
-padding. A separate overhead constant then took another 1 GiB off the
-card, on top of that. Together, the two counts demanded a 13 GiB card for
-`gemma4:12b` — a model measured to run fully resident in 11. **A 12 GiB
-card was being refused the one model built for a 12 GiB card.** Overhead
-is now counted exactly once, from a measurement, and `vram_gib` is
-computed from the download size instead of typed by hand — it cannot
-drift from it again.
-
-`cli.BUNDLED_MODEL` and `ollama_manager.recommend_models` were both
-independent, disagreeing model tables. Both now derive from the same
-ladder as everything else, so `friday doctor` no longer recommends the one
-model in the system that can't use Friday's tools.
-
-### 2. API keys are manageable from Settings — for real, this time
-
-View, replace, and remove any provider's key from the running app, no
-launch script required. This closes a bug where a *replaced* key didn't
-survive a restart: the setup wizard wrote keys to `start.bat` and the
-encrypted credential store, Settings wrote only to the store, and Friday
-re-bootstraps her environment from `start.bat` on every launch — so the
-wizard's original key silently outlived every replacement typed into
-Settings, while the panel kept reporting "connected." A saved key is now
-treated as a deliberate, later instruction, and no longer shadowed by
-ambient environment configuration.
-
-`/test` now tells a rejected key apart from one that's simply out of
-credit — the same distinction `Test-AnthropicKey` has drawn at install
-time since `5.6.2`, now available for any key, any time, from Settings.
-
-### 3. Google connects without a JSON file
-
-Setting up Google used to mean creating your own Google Cloud project and
-dropping a `credentials.json` file into a folder before anything would
-work — a wall for anyone who isn't a developer. A guided, in-app
-walkthrough replaces that as the default path.
-
-**Say plainly what this does and does not include.** A one-click path is
-also built, and takes precedence when it's available — but it ships
-**inert**. The shared client ID and secret are empty until Stephen mints
-them under his own Google Cloud project; shipping half a client (an ID
-with no secret) would be worse than not shipping one, marching someone
-through a warning screen toward an error. So today, everyone still uses
-the walkthrough. When a client is minted, one-click activates with no
-further release needed — nothing about *that* is inert, only the
-credential is missing right now.
-
-### 4. Cloud-only mode is honored everywhere, not just in chat
-
-A keyless safety net was silently routing cloud-only turns to a local
-model whenever no Anthropic key was present. Correct instinct on a
-developer machine that always has a key close at hand; wrong on the first
-machine that never did. Fixed across typed chat, agentic/tool turns,
-briefings, and scheduled work — and the mirror-image bug, local-only turns
-quietly falling back to the cloud when a local seat had a bad minute, is
-fixed by the same rule, in one place, used by both directions.
+- **Vault exists, passphrase found** (environment, `start.bat`, or the OS
+  keychain) — it is kept, and checked against your actual encrypted data before
+  being accepted. No prompt that can destroy anything.
+- **Vault exists, passphrase not found** — the wizard **stops and explains**. You
+  can type it, leave it unset (the default), or deliberately start a new vault —
+  and that last one requires typing the word `abandon`. Pressing Enter never
+  abandons anything.
+- **No vault yet** — unchanged. A fresh install still gets a generated
+  passphrase, which is the right default when there is nothing to lose.
 
 ---
 
-## Also in this release
+## 3. Add/Remove Programs kept showing the old version
 
-- **Installer documentation pass.** `README.md` and `INSTALLATION.md` no
-  longer describe a single bundled model or a fixed 16 GB RAM floor as if
-  that were the only path — both now describe the question the installer
-  actually asks and the ladder it actually offers.
-- **A Settings UI fix**: links that pointed at provider tabs which don't
-  exist no longer do.
+`Register-Uninstaller` writes `DisplayVersion`. `Test-UninstallerRegistered`
+never read it back — it checked only that *an* entry existed pointing at a real
+file. `Invoke-Step` runs verify before the action, so on every upgrade the
+previous install's entry satisfied it, registration was skipped, and Windows went
+on reporting the old version indefinitely.
 
----
-
-## How this was verified
-
-Same discipline as `5.6.1` and `5.6.2`, because it keeps finding real
-problems before a stranger does:
-
-1. Built with `packaging\windows\build-installer.ps1` from a **clean,
-   detached git worktree** at the `v5.6.3` tag.
-2. The built zip was **opened and inspected** — not trusted from the build
-   log — for the model ladder, the `UNMEASURED` markings, the key-test
-   distinction, the Google walkthrough, and the cloud-only routing fix.
-3. Published, then the **published asset was re-downloaded** and the same
-   checks, plus a full hash comparison against the local build, were run
-   again against the file a stranger would actually receive.
+Same defect as `app.copy`'s, one surface over — and this is a surface people
+check to find out what they are running. The check now compares the version.
 
 ---
 
-## Install
+## 4. The install manifest recorded intentions, not outcomes
 
-Download `AgentFriday-Setup-5.6.3.zip` below, unzip it anywhere, and
-double-click **Install Agent Friday.cmd**. No Python, no git, no Ollama
-needed first. Per-user throughout — no administrator, no `Program Files`,
-no `HKLM`.
+`install-manifest.json` is what the uninstaller reads to know what to remove. It
+was written from what the installer *set out to do*. Because `Invoke-Step` skips
+steps whose verify already passes, several of those things did not happen and the
+file said they did. Three ways it was wrong, all now **measured** after the fact:
 
-There is no `.exe` build in this release, or in `5.6.0`–`5.6.2`. **Older
-`.exe` releases on this repository's release page — `v4.4.0` through
-`v5.4.0` — predate this week's security work entirely and run only two of
-Friday's four privacy layers even on the day each was built. Do not treat
-any of them as current.** See `docs/INSTALLATION.md`.
+- **`version`** — recorded the version being installed even when `app.copy`
+  short-circuited and the disk still held the old release. That is the paper
+  trail of the 5.6.5 bug. Now read back from the installed `pyproject.toml`, with
+  `installer_version` beside it. **If those two disagree, the copy did not take.**
+- **`shortcuts`** — empty on every upgrade, because `Install-Shortcuts` did not
+  re-run. The uninstaller therefore left four shortcuts on the machine after
+  reporting a clean removal. Now enumerated from what exists.
+- **`autostart_enabled`** — recorded your *answer*, not the state. Answering
+  "No" on a machine that already started Friday at sign-in wrote `false` and
+  changed nothing, so Friday kept starting and the uninstaller didn't know to
+  remove the entry. **Answering No now actually turns it off.**
+
+Manifest `schema_version` is now `2`.
+
+---
+
+## Still open, and it is Stephen's call
+
+The passphrase living inside the app folder is what made section 1 possible.
+Preserving the file across the copy fixes the symptom; the credential is still
+stored in the one directory the installer deliberately destroys. Moving it —
+to the OS keychain by default, or to `~/.friday` — is a real change with
+migration consequences for every existing install, and it is not being made in
+a hotfix. The options are written up in
+`docs/design/vault-passphrase-location.md`.
+
+Until then: **run `friday vault-setup`.** It puts your passphrase in the OS
+keychain, which nothing in the installer touches.
+
+---
+
+## Upgrading
+
+Download `AgentFriday-Setup-5.6.6.zip`, unzip anywhere, double-click
+**Install Agent Friday.cmd**. Your notes, settings and connected accounts are
+kept; the installer replaces Friday's own files and nothing under `~/.friday`.
+
+If you are on 5.6.4 or earlier, your `start.bat` was never deleted — 5.6.6 will
+preserve it. If you are on 5.6.5, read section 1 first.

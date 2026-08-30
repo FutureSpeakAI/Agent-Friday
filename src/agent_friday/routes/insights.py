@@ -303,13 +303,10 @@ def set_vault_passphrase():
     if len(passphrase) < 6:
         return jsonify({"status": "error",
                         "message": "Passphrase must be at least 6 characters."}), 400
-    keychain = False
-    try:
-        import keyring as _keyring
-        _keyring.set_password("agent-friday", "vault-passphrase", passphrase)
-        keychain = True
-    except Exception:
-        pass
+    # The ONE writer: OS keychain AND a DPAPI-wrapped file, so a host without
+    # the optional `keyring` dependency still gets a durable copy.
+    from agent_friday.services import vault_passphrase as _vp
+    keychain = bool(_vp.store(passphrase))
     os.environ["FRIDAY_VAULT_PASSPHRASE"] = passphrase
     try:
         core.FRIDAY_VAULT_PASSPHRASE = passphrase

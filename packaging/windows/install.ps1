@@ -89,7 +89,7 @@ Initialize-Log (Join-Path $LogDir ("install-{0}.log" -f (Get-Date -Format 'yyyyM
 $script:Sources = (Get-Content -LiteralPath (Join-Path $Here 'sources.json') -Raw | ConvertFrom-Json)
 Initialize-RemediationMenu
 
-$Version = '5.6.4'
+$Version = '5.7.0'
 try {
     $pyproject = Join-Path $PayloadDir 'pyproject.toml'
     if (Test-Path -LiteralPath $pyproject) {
@@ -423,26 +423,167 @@ else {
 #  Step 3 - Put Friday's own files in place
 # =========================================================================
 
+function Get-InstalledAppVersion {
+    <#  The version of the code ALREADY in $AppDir, or '' if it cannot be read.
+
+        pyproject.toml is the version's only source of truth and has shipped in
+        every payload, so it is what we ask. Returning '' for "cannot tell" is
+        load-bearing: every caller treats unknown as "not the version we are
+        installing", so the copy runs. Guessing the other way is the bug below.
+    #>
+    param([string] $Dir)
+    try {
+        $pp = Join-Path $Dir 'pyproject.toml'
+        if (-not (Test-Path -LiteralPath $pp)) { return '' }
+        $m = [regex]::Match((Get-Content -LiteralPath $pp -Raw), '(?m)^version\s*=\s*"([^"]+)"')
+        if ($m.Success) { return $m.Groups[1].Value }
+    } catch { }
+    return ''
+}
+
+# --- User state that lives INSIDE the app folder -------------------------
+#
+# app.copy deletes $AppDir wholesale and copies a fresh payload over it. That
+# is right for code and catastrophic for anything the USER put there, and the
+# setup wizard puts the single most unrecoverable thing in the product there:
+#
+#   setup_wizard.py:968  "Never write vault_password to settings files - it
+#                         lives only in start.bat as a FRIDAY_PASSWORD env var"
+#
+# start.bat is written to PROJ_ROOT, which for a packaged install is $AppDir.
+# So <InstallRoot>\app\start.bat is the ONLY automatic home of the passphrase
+# that decrypts ~/.friday/vault (AES-256-GCM over an Argon2id key). ~/.friday
+# is deliberately never touched by this installer, so deleting start.bat
+# leaves the ciphertext intact and the key gone. There is no recovery.
+#
+# Before 5.6.5 this was latent: app.copy's verify passed before the action on
+# every upgrade, so the delete never ran and the file survived by accident.
+# 5.6.5 fixed the verify - correctly - and by doing so made this reachable for
+# the first time. It is fixed here rather than by reverting that.
+#
+# THE LIST IS EXACTLY Get-PayloadExcludes' secret-bearing set (see
+# build-installer.ps1). That is what makes restoring safe rather than a
+# conflict: the payload is GUARANTEED never to contain these names, so putting
+# them back can never overwrite a file this release shipped.
+$script:AppUserFiles = @(
+    'start.bat', 'launch_now.bat', 'friday_startup.bat', 'friday_startup.vbs',
+    '.env', 'secrets.yaml', 'config.yaml'
+)
+
+function Save-AppUserFiles {
+    <#  Move user state out of $AppDir before it is deleted. Returns the count.
+        The holding folder sits in $InstallRoot, NOT in $AppDir, so the
+        recursive delete cannot reach it. #>
+    param([Parameter(Mandatory)][string] $AppDir,
+          [Parameter(Mandatory)][string] $KeepDir)
+    $n = 0
+    foreach ($name in $script:AppUserFiles) {
+        $src = Join-Path $AppDir $name
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
+        try {
+            New-Item -ItemType Directory -Force -Path $KeepDir | Out-Null
+            Copy-Item -LiteralPath $src -Destination (Join-Path $KeepDir $name) -Force
+            # Names only. NEVER the contents - these files hold the vault
+            # passphrase and API keys in plain text.
+            Write-Log "Preserving user file across the copy: $name" 'OK'
+            $n++
+        } catch {
+            Write-Log "Could not preserve $name : $($_.Exception.Message)" 'WARN'
+        }
+    }
+    return $n
+}
+
+function Restore-AppUserFiles {
+    <#  Put them back, then delete the holding copy immediately - it is a
+        second plaintext copy of a credential and must not outlive the step.
+
+        Idempotent, and safe to call when nothing was saved. If $AppDir is
+        missing (the copy failed outright) the holding folder is LEFT so a
+        retry, or Stephen, can still recover it. #>
+    param([Parameter(Mandatory)][string] $KeepDir,
+          [Parameter(Mandatory)][string] $AppDir)
+    if (-not (Test-Path -LiteralPath $KeepDir)) { return 0 }
+    if (-not (Test-Path -LiteralPath $AppDir)) {
+        Write-Log "App folder missing at restore time - keeping preserved files at $KeepDir" 'WARN'
+        return 0
+    }
+    $n = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $KeepDir -File -Force -ErrorAction SilentlyContinue)) {
+        try {
+            Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $AppDir $f.Name) -Force
+            Write-Log "Restored user file after the copy: $($f.Name)" 'OK'
+            $n++
+        } catch {
+            Write-Log "Could not restore $($f.Name) : $($_.Exception.Message)" 'FAIL'
+            return $n   # leave KeepDir in place; do not destroy the only copy
+        }
+    }
+    Remove-Item -LiteralPath $KeepDir -Recurse -Force -ErrorAction SilentlyContinue
+    return $n
+}
+
 $null = Invoke-Step -Id 'app.copy' -Title 'Copying Friday onto this laptop' `
     -HumanFailure 'Friday''s own files could not be copied onto this computer.' `
     -HumanFix 'Make sure there is space on the drive and that no antivirus is blocking the folder, then run this again.' `
-    -VerifyDescription "the application's main file is present and readable" `
+    -VerifyDescription "Friday's own files are present AND are this version" `
     -Action {
         if (-not (Test-Path -LiteralPath $PayloadDir)) {
             throw "No payload folder at $PayloadDir. This installer was not built with build-installer.ps1."
         }
+        $keepDir = Join-Path $InstallRoot '.upgrade-keep'
+        # An interrupted earlier attempt may have left files here. Take them
+        # back first, so this attempt's Save sees the real current state.
+        [void](Restore-AppUserFiles -KeepDir $keepDir -AppDir $AppDir)
         if (Test-Path -LiteralPath $AppDir) {
-            Write-Log "Removing previous app folder at $AppDir"
+            $was = Get-InstalledAppVersion $AppDir
+            if ($was) { Write-Log "Upgrading app files from $was to $Version" }
+            else      { Write-Log "Replacing app files of unknown version with $Version" }
+            # BEFORE the delete. start.bat holds the vault passphrase and it
+            # exists nowhere else - see the note above Save-AppUserFiles.
+            [void](Save-AppUserFiles -AppDir $AppDir -KeepDir $keepDir)
             Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-        Copy-Item -Path (Join-Path $PayloadDir '*') -Destination $AppDir -Recurse -Force
+        try {
+            New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+            Copy-Item -Path (Join-Path $PayloadDir '*') -Destination $AppDir -Recurse -Force
+        } finally {
+            # In finally, not after the copy: if the copy throws, the user's
+            # passphrase must still go back. A failed upgrade is recoverable;
+            # a destroyed vault is not.
+            [void](Restore-AppUserFiles -KeepDir $keepDir -AppDir $AppDir)
+        }
     } `
     -Verify {
+        # VERSION-AWARE ON PURPOSE. This is the whole point of the block.
+        #
+        # Invoke-Step runs this verify BEFORE the action and skips the action
+        # when it passes. Until 5.6.5 it asked only whether four files EXISTED,
+        # which any previous install satisfies -- so re-running a newer
+        # installer over an older install short-circuited here and copied
+        # nothing. The installer then said "Friday is installed", wrote the new
+        # version into install-manifest.json and exited 0, while every file in
+        # $AppDir was still the old release.
+        #
+        # Measured, 5.6.3 -> 5.6.4: 0 of 489 files updated; manifest claiming
+        # 5.6.4 beside a pyproject.toml still reading 5.6.3; connector_secrets.py
+        # -- the only file new in 5.6.4 -- absent, so GET /api/mcp/servers went
+        # on handing connector tokens to the browser in the clear, which is the
+        # exact exposure that release announced it had closed. The defect
+        # shipped with the installer itself, so NO in-place upgrade has ever
+        # delivered code.
+        #
+        # Asking for the VERSION as well as the files closes it, and closes it
+        # from ANY prior release rather than only the one below this: an older
+        # install reports an older version, and an install too old to have a
+        # readable pyproject.toml reports '' -- both mismatch, both copy. The
+        # fast path survives for the case it was actually for, re-running the
+        # SAME installer (a retry, or the healer), where skipping is correct.
         (Test-Path -LiteralPath (Join-Path $AppDir 'src\agent_friday\cli.py')) -and
         (Test-Path -LiteralPath (Join-Path $AppDir 'src\agent_friday\server.py')) -and
         (Test-Path -LiteralPath (Join-Path $AppDir 'src\agent_friday\setup_wizard.py')) -and
-        (Test-Path -LiteralPath (Join-Path $AppDir 'index.html'))
+        (Test-Path -LiteralPath (Join-Path $AppDir 'index.html')) -and
+        ((Get-InstalledAppVersion $AppDir) -eq $Version)
     }
 
 # Now that the app is on disk, self-repair has something to repair.
@@ -728,7 +869,7 @@ $null = Invoke-Step -Id 'shortcuts.uninstall' -Title 'Registering the uninstalle
                'folder in the Start menu and choose Uninstall Agent Friday.') `
     -VerifyDescription 'Friday appears in Add/Remove Programs and the uninstall command exists' `
     -Action { Register-Uninstaller -InstallRoot $InstallRoot -Version $Version -IconPath $IconPath } `
-    -Verify { Test-UninstallerRegistered }
+    -Verify { Test-UninstallerRegistered -ExpectedVersion $Version }
 
 # =========================================================================
 #  Step 11 - Autostart
@@ -759,7 +900,24 @@ if ($Unattended) {
             Add-InstallWarning 'Enable-Autostart failed; autostart is OFF.'
         }
     } else {
-        Say-Ok 'Friday will only start when you open her.'
+        # HONOUR THE NO. On an upgrade the previous install may already have
+        # autostart on, and until 5.6.6 answering No here did nothing to it -
+        # the entry stayed, Friday went on starting at sign-in, and the manifest
+        # recorded autostart_enabled=false anyway. So the answer was ignored AND
+        # written down wrong, and the uninstaller then read the manifest and left
+        # the entry behind. An answer the installer records has to be an answer
+        # the installer acts on.
+        if (Test-Autostart) {
+            [void](Disable-Autostart)
+            if (Test-Autostart) {
+                Say-Note 'Friday could not be removed from your sign-in items. She may still start automatically.'
+                Add-InstallWarning 'Disable-Autostart failed; autostart is still ON despite the user answering No.'
+            } else {
+                Say-Ok 'Friday will only start when you open her.'
+            }
+        } else {
+            Say-Ok 'Friday will only start when you open her.'
+        }
     }
 }
 
@@ -816,15 +974,65 @@ if ($Unattended) {
 #  Manifest + report
 # =========================================================================
 
+# A MANIFEST IS A RECORD OF WHAT HAPPENED, NOT OF WHAT WAS INTENDED.
+#
+# This block used to write down the installer's intentions: the version it set
+# out to install, the shortcuts this run created, the autostart answer it was
+# given. Invoke-Step skips any step whose verify already passes, so on an
+# upgrade several of those intentions were not carried out and the file said
+# they were. Three separate ways it lied, all fixed here by MEASURING:
+#
+#   version           - said $Version even when app.copy short-circuited and
+#                       the code on disk was still the old release. That is the
+#                       5.6.5 bug's paper trail. Now read back off disk.
+#   shortcuts         - empty on every upgrade, because Install-Shortcuts did
+#                       not run, so the uninstaller left four .lnk files behind.
+#   autostart_enabled - recorded the ANSWER, not the state. Answering No on a
+#                       machine that already had autostart wrote false while
+#                       leaving it on. (The No is now also acted on - see above.)
+#
+# installer_version is kept beside the measured one deliberately. If the two
+# ever disagree, that disagreement is the single most useful line in the file.
+# MEASURING MUST NOT BE ABLE TO FAIL THE INSTALL. Every step above has already
+# passed its own verify by the time we get here, so a throw in this block would
+# fail an install that actually worked -- and, worse, skip the manifest write, so
+# the uninstaller would have nothing to read. That is exactly what happened the
+# first time this block measured anything: Test-Autostart fed an empty known
+# folder to Join-Path and took the whole run down at step 17 of 16.
+#
+# So each measurement is asked for defensively and degrades to a stated
+# fallback. A manifest that says "we could not tell" is worth far more than no
+# manifest at all.
+function Get-Measured {
+    param([Parameter(Mandatory)][string] $What,
+          [Parameter(Mandatory)][scriptblock] $Probe,
+          $Fallback)
+    try { return (& $Probe) }
+    catch {
+        Write-Log "Manifest: could not measure $What ($($_.Exception.Message)); recording fallback." 'WARN'
+        Add-InstallWarning "The install completed, but $What could not be measured for the manifest."
+        return $Fallback
+    }
+}
+
+$versionOnDisk = Get-Measured 'the installed version' { Get-InstalledAppVersion $AppDir } ''
+if ($versionOnDisk -ne $Version) {
+    Write-Log ("Manifest: code on disk reports '$versionOnDisk' but this installer is '$Version'. " +
+               'Recording what is on disk.') 'WARN'
+    Add-InstallWarning ("The installed files report version '$versionOnDisk' but this installer is " +
+                        "'$Version'. The manifest records the version actually on disk.")
+}
+
 $manifest = [ordered]@{
-    schema_version    = 1
+    schema_version    = 2
     product           = 'Agent Friday'
-    version           = $Version
+    version           = $versionOnDisk       # MEASURED off app\pyproject.toml
+    installer_version = $Version             # what this installer carried
     installed_at      = (Get-Date).ToString('o')
     install_root      = $InstallRoot
     python_version    = $script:Sources.python.version
-    shortcuts         = @($shortcutsCreated)
-    autostart_enabled = $autostartOn
+    shortcuts         = @(Get-Measured 'the installed shortcuts' { Get-InstalledShortcutPaths } $shortcutsCreated)
+    autostart_enabled = [bool](Get-Measured 'the autostart state' { Test-Autostart } $autostartOn)
     ollama            = [ordered]@{
         installed_by_this_installer = [bool]$ollamaOutcome.WeInstalledIt
         method                      = [string]$ollamaOutcome.Method
@@ -834,12 +1042,25 @@ $manifest = [ordered]@{
     _note = @(
         'The uninstaller reads this file so it removes exactly what was created and nothing else.',
         'In particular it only offers to remove Ollama if installed_by_this_installer is true,',
-        'and it only removes the model tags listed in models_pulled - not every model on the machine.'
+        'and it only removes the model tags listed in models_pulled - not every model on the machine.',
+        'version, shortcuts and autostart_enabled are MEASURED after the install, not assumed from',
+        'what the installer set out to do. If version and installer_version disagree, the copy did',
+        'not take and the files on disk are the older release.'
     )
 }
-[System.IO.File]::WriteAllText($ManifestPath, ($manifest | ConvertTo-Json -Depth 6),
-                               (New-Object System.Text.UTF8Encoding($false)))
-Write-Log "Manifest written: $ManifestPath" 'OK'
+try {
+    [System.IO.File]::WriteAllText($ManifestPath, ($manifest | ConvertTo-Json -Depth 6),
+                                   (New-Object System.Text.UTF8Encoding($false)))
+    Write-Log "Manifest written: $ManifestPath" 'OK'
+} catch {
+    # Everything Friday needs is already on disk and verified. Losing the
+    # manifest degrades the UNINSTALLER (it falls back to conservative
+    # defaults), which is not worth failing a working install over - but it is
+    # worth saying out loud rather than swallowing.
+    Write-Log "Manifest could not be written: $($_.Exception.Message)" 'FAIL'
+    Add-InstallWarning ('The install completed but install-manifest.json could not be written. ' +
+                        'Uninstalling will still work; it will be more cautious about what it removes.')
+}
 
 Complete-Install
 

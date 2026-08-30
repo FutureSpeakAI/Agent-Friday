@@ -1,7 +1,8 @@
 # Google Housekeeper — Tasks, Calendar and Gmail write access
 
 **Status:** spec, awaiting Stephen's answers to Q-H1..Q-H6. **HK-1 and HK-4 are LANDED** (commit `342df97`, a parallel session, 2026-08-26) — see the reconciliation notes inside those work orders; do not rebuild them. HK-2/HK-3/HK-5 can start immediately; HK-7/HK-8 need answers.
-**Date:** 2026-08-26 (amended same day after `342df97` landed)
+**Date:** 2026-08-26 (amended same day after `342df97` landed; re-checked 2026-08-29 against v5.7.0)
+**Re-check 2026-08-29:** the blocking fact in §0 is **re-verified a third time** — both connected accounts still hold only `tasks.readonly` and only `gmail.readonly`, so nothing writes yet and the re-consent is still outstanding. **Q-H1..Q-H6 remain open and unanswered**; nothing in this document has been decided on Stephen's behalf.
 **Written by:** Fable (spec) for a Sonnet build session
 **Prompted by:** Google Tasks can be read but never completed, so the to-do list only grows. Stephen then asked for the full role: add/remove/edit events and to-dos; compose, send and delete email — "my Google accounts' housekeeper."
 
@@ -61,6 +62,17 @@ Confirmed, and it was deeper than a missing tool: the only Tasks code was two `.
 > unpushed branch `wip/vibe-terminal-persistence`, and it is not shippable as written:
 > its reap path would force-kill every running vibe terminal on the first boot after it
 > lands, because nothing has a persisted record yet.
+>
+> **Update 2026-08-30 — the two paragraphs above are now superseded by this merge.**
+> Persistence and boot reconcile ARE present in the working tree from this commit
+> onward, and the first-boot reap is fixed rather than merely described: the state file
+> carries a version, an unversioned file puts the reconcile in grace, and a live terminal
+> with no record is adopted rather than killed. Six tests cover it, five of which fail
+> against the unfixed reconcile. What remains true is the standing-authority argument —
+> Friday still launches `claude --dangerously-skip-permissions` under `~/Projects`, and
+> §5/Q-H4 still has to reconcile that with the housekeeper verbs. Dated rather than
+> deleted, because the paragraph above is why two sessions went wrong on 2026-08-29 and
+> the record of the correction is worth more than a tidy page.
 >
 > The general lesson, since this document caused the error: confirm a claim that code
 > landed with `git log --all -S <symbol>`, not by reading a spec that asserts it.
@@ -208,7 +220,7 @@ Design, mirroring the file-grant structure point by point:
 
 - **Q-H1:** Confirm the OAuth client's publishing status in the GCP console (Testing vs Production). If Testing, you're already re-consenting weekly and the new scopes are free riders; if something else, tell the build session, because §2's timing argument changes.
 - **Q-H2:** Scope breadth for Gmail — sharpened by `342df97`: a re-consent is now *mandatory* for Tasks regardless, so the question is what rides along on it. Recommendation upgraded to **take both** (`gmail.compose` + `gmail.modify`) in that single reconnect: the marginal consent cost is zero, the tools stay unbuilt until their work orders land, and it avoids a third ceremony when HK-9 arrives. Say no only if you want the consent screen to under-promise until the send design has history.
-- **Q-H3:** Send approval UX: is per-send approval in the panel acceptable indefinitely, or do you want a "trusted recipients" list (e.g. sends to yourself/Janet auto-approve) once HK-8 has history? Policy call, not code.
+- **Q-H3:** Send approval UX: is per-send approval in the panel acceptable indefinitely, or do you want a "trusted recipients" list (e.g. sends to yourself or a designated trusted contact auto-approve) once HK-8 has history? Policy call, not code.
 - **Q-H4:** Earned autonomy for the housekeeper: which verbs, if any, may ever run scheduled without a card? (Spec's position: completions yes eventually, archives maybe, sends never.)
 - **Q-H5:** Calendar deletes: comfortable with delete-with-receipt as specced, or do you want delete to require the same approval card as send until it has history?
 - **Q-H6:** May the build session retire the gmail-mcp config entry entirely (it advertises unimplemented send tools if ever re-enabled), or do you want it kept dormant?
@@ -217,4 +229,4 @@ Design, mirroring the file-grant structure point by point:
 
 ## 7. Explicitly out of scope / in flight elsewhere
 
-File grants, local file search and PDF extraction (WO-14/WO-17, shipped 2026-08-25) — HK borrows their patterns, changes nothing in them. The 5.6.1 installer verification and tomorrow's partner-machine install — nothing here restarts the server, edits `index.html` (HK-7's UI work happens in the build session, after the install), or rebuilds the installer. The plaintext GitHub PAT found in `~/.friday/mcp_servers.json` during this audit is spun off as its own task, not part of HK.
+File grants, local file search and PDF extraction (WO-14/WO-17, shipped 2026-08-25) — HK borrows their patterns, changes nothing in them. The 5.6.1 installer verification and the second-machine install *[dated 2026-08-26; both have since happened, and the product is now v5.7.0]* — nothing here restarts the server, edits `index.html` (HK-7's UI work happens in the build session, after the install), or rebuilds the installer. The plaintext GitHub PAT found in `~/.friday/mcp_servers.json` during this audit was spun off as its own task, not part of HK. *[RESOLVED 2026-08-29: v5.6.4 stopped connector tokens being stored and returned in plaintext, and no plaintext PAT is present in that file today.]*

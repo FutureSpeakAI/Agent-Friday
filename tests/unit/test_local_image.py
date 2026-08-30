@@ -363,10 +363,23 @@ def test_available_models_lists_only_what_is_on_disk(monkeypatch, tmp_path):
 
 
 def test_an_uninstalled_request_falls_back_rather_than_failing(monkeypatch):
-    """A seat naming absent weights must not reach the sampler and error."""
+    """A seat naming absent weights must not reach the sampler and error.
+
+    The arbiter is SUPPLIED rather than left to `get_arbiter()`. Under test the
+    residency layer is absent, so `get_arbiter()` returns None, generate() takes
+    its unmanaged-GPU branch and really calls `ComfyUIBackend().start()` — which
+    raises FileNotFoundError on a machine with no ComfyUI beside the temp
+    runtime dir. generate() catches that and returns status='error' long before
+    the sampler, so the fallback this test exists to prove was never reached and
+    the failure surfaced as `KeyError: 'model'`.
+
+    An earlier attempt to head that off stubbed `li._ensure_comfy` with
+    `raising=False`. There is no `_ensure_comfy` in local_image — the name was
+    invented — and `raising=False` turned the mistake into a silent no-op
+    instead of an AttributeError naming it.
+    """
     monkeypatch.setattr(li, "is_installed",
                         lambda mid=None: mid != li.SD35_MEDIUM_ID)
-    monkeypatch.setattr(li, "_ensure_comfy", lambda **k: True, raising=False)
     seen = {}
     monkeypatch.setattr(li, "build_workflow",
                         lambda *a, **k: seen.setdefault("model", k.get("model_id")) or {})
@@ -374,5 +387,11 @@ def test_an_uninstalled_request_falls_back_rather_than_failing(monkeypatch):
     monkeypatch.setattr(li, "_await_result",
                         lambda pid, timeout=600, cancelled=None: [
                             {"filename": "a.png", "subfolder": ""}])
-    li.generate("x", model=li.SD35_MEDIUM_ID)
+    out = li.generate("x", model=li.SD35_MEDIUM_ID, arbiter=FakeArbiter())
+    # Falling back means finishing, not erroring politely. Asserting the status
+    # first is what turns any future short-circuit into a legible failure rather
+    # than a KeyError on the line below.
+    assert out["status"] == "ok"
     assert seen["model"] == li.MODEL_ID
+    assert out["model"] == li.MODEL_ID, (
+        "the envelope must name the seat that actually answered, not the one asked for")

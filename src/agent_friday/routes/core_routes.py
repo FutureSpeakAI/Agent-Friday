@@ -573,6 +573,53 @@ def draft_email():
     return jsonify({"status": "placeholder", "draft": "Email drafting coming in Phase C"})
 
 
+@core_bp.route('/api/onboarding/copy')
+def api_onboarding_copy():
+    """The onboarding words, so the app wizard renders the SAME ones the
+    terminal wizard does.
+
+    There were three onboarding surfaces and they disagreed with each other
+    about where secrets go and what Friday can promise. The terminal wizard
+    told every user "your private information never leaves your device" while
+    writing model_routing.mode: cloud_only. Duplicated copy is how that
+    happened, so there is now one module (services/onboarding_copy.py), one set
+    of tests holding its promises to the behaviour that keeps them, and this
+    endpoint so the browser cannot fork it.
+    """
+    from agent_friday.services import onboarding_copy as oc
+    return jsonify({"status": "ok", "screens": oc.all_screens()})
+
+
+@core_bp.route('/api/onboarding/acks', methods=['GET', 'POST'])
+def api_onboarding_acks():
+    """Local acknowledgement flags. Never transmitted anywhere."""
+    import json as _json
+    path = core.FRIDAY_DIR / "onboarding.json"
+    try:
+        state = _json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            state = {}
+    except Exception:
+        state = {}
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "acks": state})
+
+    data = request.get_json(silent=True) or {}
+    from datetime import datetime, timezone
+    for k in ("collects_ack", "cloud_ack", "third_party_ack", "vault_skipped"):
+        if k in data:
+            state[k] = bool(data[k])
+    state["updated"] = datetime.now(timezone.utc).isoformat()
+    try:
+        core.FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(_json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"status": "ok", "acks": state})
+
+
 @core_bp.route('/api/setup/status')
 def api_setup_status():
     initialized = _is_existing_install()
@@ -628,22 +675,25 @@ def api_setup_complete():
                 cs.set_provider_key(pname, kv)
                 cs.hot_reload_provider_key(pname, kv)
 
-    # 1b) Vault passphrase (H4) → OS keychain, same slot friday vault-setup uses.
+    # 1b) Vault passphrase (H4) → every durable home, via the ONE writer.
     #     Arms AES-256-GCM at-rest encryption for the sovereign vault. Optional;
-    #     never written to a file. Live env is set too so this session encrypts
-    #     without a restart. Never logged.
+    #     never written to a file in the clear. Live env is set too so this
+    #     session encrypts without a restart. Never logged.
+    #
+    #     This used to write the OS keychain directly and swallow the failure,
+    #     which on a host without `keyring` (an optional dependency) meant the
+    #     passphrase survived only until the process exited. vault_passphrase
+    #     .store() also writes a DPAPI-wrapped file, so it survives either way.
     vault_pass = (data.get('vault_passphrase') or '').strip()
     if vault_pass:
-        try:
-            import keyring as _keyring
-            _keyring.set_password("agent-friday", "vault-passphrase", vault_pass)
-        except Exception:
-            pass  # keyring absent → fall through to env-only for this session
+        from agent_friday.services import vault_passphrase as _vp
+        _vp.store(vault_pass)
         os.environ["FRIDAY_VAULT_PASSPHRASE"] = vault_pass
         try:
             core.FRIDAY_VAULT_PASSPHRASE = vault_pass
         except Exception:
             pass
+        _vp.reset_cache()
 
     # 2) Settings delta (NO secrets) → _save_settings keeps routing congruent.
     delta = {}
