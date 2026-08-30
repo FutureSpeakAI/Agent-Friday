@@ -7,6 +7,84 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Friday now tells you when there is a newer version, once a week.** Windows
+  desktop only — Friday Linux updates atomically through bootc and is not
+  affected.
+
+  Once a week, Friday asks GitHub whether a newer stable release of Agent
+  Friday has been published. If there is one, you get a dismissible
+  notification with a link to it. That is the whole feature. Friday never
+  downloads anything and never installs anything; updating remains what it has
+  always been — download the zip, unzip it, run `Install Agent Friday.cmd`.
+
+  **It sends nothing about you.** This is one unauthenticated `GET` of a public
+  GitHub URL, the same request anyone's browser makes by visiting the releases
+  page. No install identifier, no usage data, no version string in a query
+  parameter, and no `User-Agent` beyond what an ordinary HTTP client sends by
+  existing. `tests/unit/test_update_check.py` reconstructs the entire outbound
+  request — method, URL, query string, headers, body — and fails if it contains
+  the hostname, the username, the home directory, this install's version, or
+  anything shaped like an identifier. The test directly below it feeds that
+  same scanner a request that *does* leak and fails if the scanner shrugs.
+
+  **If the network is down, you will not hear about it.** Offline, DNS failure,
+  GitHub rate-limiting, GitHub having a bad day: all logged, none surfaced. A
+  check that nags because the wifi is off is worse than no check.
+
+  **You will not be told twice about the same release.** One notification per
+  version, dismissible, and it does not come back until there is something
+  newer.
+
+  Switch it off in **Settings → About → Updates**, which also shows the version
+  you are running, when the last check happened, and a **Check now** button.
+
+- **`friday status` now reports which version you are actually running** — and
+  says so if that disagrees with `install-manifest.json`.
+
+  The version is read from `app\pyproject.toml`, the same file the installer
+  reads back in `Get-InstalledAppVersion`. It is deliberately **not** read from
+  the manifest, because before 5.6.5 the manifest could be wrong: `app.copy`
+  ran its verify before its action, so 5.6.0–5.6.4 upgraded 0 of 489 files
+  while writing the new version number down anyway. Any install that went
+  through one of those upgrades has been reporting a version it is not running.
+
+  If the disk and the manifest disagree, `friday status` and Settings → About
+  both say so in plain language and tell you to re-run the latest installer.
+  An update check that trusted the manifest would tell those users they were
+  current, which is worse than having no check at all.
+
+### Changed
+
+- **One version-detection implementation, not three.** `cli.py` had a regex
+  over `pyproject.toml`, `/api/health` had a separate `tomllib` parse of the
+  same file, and the two had different fallbacks — `/api/health` fell back to
+  the literal string `"5.0.0"`, so an install that could not read its own
+  version reported one it had invented. Both now delegate to
+  `services/app_version.py`, unknown stays unknown, and
+  `tests/unit/test_one_version_source.py` fails if a fourth reader appears.
+
+### A decision made on your behalf — please overrule it if you disagree
+
+Stephen asked for the weekly check to be **on by default for new
+installations**. It is.
+
+Existing installs upgrading into this release **also get it switched on**,
+because the scheduler seeds newly-registered built-in tasks onto installs that
+predate them. Nobody asked for that, and quietly switching on a
+network-touching behaviour for someone who already installed is exactly the
+kind of thing this product should not do. It is called out here rather than
+left to be discovered, the toggle is one click away in Settings → About, and
+the check sends nothing regardless.
+
+If the right answer is "off for existing installs, on only for fresh ones",
+that is a one-line change to the seeding call — say the word.
+
+---
+
 ## [5.6.6] — 2026-08-29
 
 **If you upgraded using 5.6.5, your vault passphrase may have been deleted. Read
