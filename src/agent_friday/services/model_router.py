@@ -29,6 +29,7 @@ import base64
 import secrets
 import sys
 import traceback
+import contextvars as _contextvars
 import uuid
 import threading
 import asyncio
@@ -760,6 +761,16 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
 
 #: OpenRouter's Auto Router. Sent as the model id; the model that actually
 #: answers is reported back in the response's top-level `model` field.
+#: Where streamed tokens go when the caller has not passed `on_delta`.
+#:
+#: routes/chat.py::chat() is ~1200 lines of persistence, receipts, egress and
+#: workspace context with a dozen exit points. Threading a callback down every
+#: branch of it to reach the transport would be a rewrite of the one function
+#: a chat turn cannot afford to have broken. A context variable reaches the
+#: same place without touching any of it: /api/chat/stream sets the sink,
+#: the transport publishes to it, and chat() is not modified at all.
+DELTA_SINK = _contextvars.ContextVar("friday_delta_sink", default=None)
+
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
 #: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
@@ -1091,6 +1102,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if isinstance(content, str):
                 convo.append({"role": m.get("role", "user"), "content": content})
 
+        # What the provider ACTUALLY served, for the attribution badge.
+        # attribution's contract is "the model id it truly ran"; with
+        # `openrouter/auto` the id we SEND is a router, not an answer.
+        _last_served = {}
+
         def _send(_convo, _oai_tools):
             payload = {
                 "model": model,
@@ -1260,11 +1276,13 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if _want_stream and "text/event-stream" not in (
                     (getattr(r, "headers", None) or {}).get("Content-Type") or ""):
                 _want_stream = False
-            resp = (_consume_sse_completion(r, on_delta=on_delta)
+            resp = (_consume_sse_completion(r, on_delta=on_delta or DELTA_SINK.get())
                     if _want_stream else r.json())
             # Attribute cost to the model the provider ACTUALLY served (an
             # OpenRouter fallback may answer with a different model than asked).
             served = resp.get('model')
+            if served:
+                _last_served['id'] = served
             if served and served != model and isinstance(resp, dict):
                 resp.setdefault('_served_model', served)
             return resp
@@ -1303,8 +1321,12 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         # endpoint actually ran.
         try:
             from agent_friday.services import attribution
+            # The model that ANSWERED, not the one we asked for. Under
+            # `openrouter/auto` those differ on every turn, and a badge
+            # reading "openrouter/auto" is exactly the lie this module was
+            # written to end -- it names a router, not a model.
             attribution.record_generation(
-                model, provider=pname,
+                _last_served.get('id') or model, provider=pname,
                 seat="local" if local_bypass else "openai")
         except Exception:
             pass

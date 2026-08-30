@@ -23883,6 +23883,63 @@ function fridayInvalidateModelCatalog() {
 }
 // Fetch the catalog once, cache app-wide, and expose role lists + an id→meta map.
 // Components call this and render selectors from it — no hardcoded model lists.
+/* ── fridayChatTurn ────────────────────────────────────────────────────────
+   One chat turn, streamed when the server can and blocking when it cannot.
+
+   The turn is NEVER sent twice. Falling back after tokens have already
+   arrived would re-run a turn that is half-persisted and fully billed, so
+   the blocking endpoint is used only when the stream produced nothing at
+   all — a 404 on an older server, a proxy that refuses event-streams, a
+   connection that died before the first byte. Once a delta has landed, a
+   failure is reported as a failure.
+
+   `payload` is chat()'s own JSON, forwarded verbatim by the done event, so
+   every caller downstream (model badge, seat, fallback chain, actions) reads
+   exactly the fields it read before streaming existed. */
+async function fridayChatTurn(body, onDelta) {
+  const SEP = String.fromCharCode(10) + String.fromCharCode(10);
+  let got = false;
+  try {
+    const r = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok || !r.body) throw new Error('stream unavailable (' + r.status + ')');
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', payload = null, errMsg = null, sawDone = false;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      got = true;
+      buf += dec.decode(chunk.value, { stream: true });
+      let i;
+      while ((i = buf.indexOf(SEP)) !== -1) {
+        const frame = buf.slice(0, i);
+        buf = buf.slice(i + SEP.length);
+        if (frame.indexOf('data:') !== 0) continue;   // ": open" keepalive
+        let ev;
+        try { ev = JSON.parse(frame.slice(5).trim()); } catch (_) { continue; }
+        if (typeof ev.delta === 'string') { if (onDelta) onDelta(ev.delta); continue; }
+        if (ev.error) errMsg = ev.error;
+        if (ev.done) { sawDone = true; payload = ev.payload; }
+      }
+    }
+    if (payload) return payload;
+    throw new Error(errMsg || (sawDone ? 'stream finished with no payload'
+                                       : 'stream ended early'));
+  } catch (e) {
+    if (got) throw e;          // half a turn already happened — do not repeat it
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    return await r.json();
+  }
+}
+
 function useModelCatalog() {
   const [cat, setCat] = useState(window.__fridayModelCatalog || null);
   const [err, setErr] = useState(null);
@@ -40437,14 +40494,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if (focusWin) body.workspace = focusWin;
       const frame = cameraOn ? cameraFrameRef.current?.primary : null;
       if (frame) body.image = frame;
-      const r = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-      const d = await r.json();
+      // A placeholder the deltas fill in, so the reply appears as it is
+      // written instead of arriving whole after a spinner.
+      setChatMsgs(p => [...p, {
+        role: 'friday',
+        text: '',
+        streaming: true,
+        time: new Date().toLocaleTimeString()
+      }]);
+      let d;
+      try {
+        d = await fridayChatTurn(body, piece => setChatMsgs(p => {
+          const q = p.slice();
+          for (let i = q.length - 1; i >= 0; i--) {
+            if (q[i].streaming) {
+              q[i] = { ...q[i], text: (q[i].text || '') + piece };
+              break;
+            }
+          }
+          return q;
+        }));
+      } finally {
+        // The placeholder is scaffolding, never the record: the real message
+        // is appended below with its model, seat and fallback chain.
+        setChatMsgs(p => p.filter(x => !x.streaming));
+      }
       // B2: seat changes detected this turn render as system lines BEFORE the
       // reply — a routing flip is never silent again.
       if (d.seat_events && d.seat_events.length) setChatMsgs(p => [...p, ...d.seat_events.map(ev => ({

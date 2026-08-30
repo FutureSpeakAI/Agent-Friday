@@ -172,6 +172,78 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     CHAT_HISTORY.append(friday_msg)
 
 
+@chat_bp.route('/api/chat/stream', methods=['POST'])
+def chat_stream():
+    """The same turn as /api/chat, delivered as it is written.
+
+    Text chat has never streamed in this app, for ANY provider: /api/chat
+    returns one finished JSON body and no client code could read a stream.
+    The transport can already stream (model_router assembles SSE frames), so
+    the missing half was carrying those tokens up to the browser.
+
+    Not by restructuring chat(). That function is ~1200 lines of persistence,
+    receipts, egress and workspace context with a dozen exit points, and it is
+    the one function a chat turn cannot afford to have broken. It runs here
+    UNCHANGED, on a worker thread carrying THIS request's context (so session,
+    auth and body are the same ones), while the transport publishes token
+    deltas into model_router.DELTA_SINK.
+
+    Additive in both directions: /api/chat is untouched, and the final `done`
+    event carries chat()'s own payload verbatim, so the client renders exactly
+    what the blocking endpoint would have returned. A client that cannot
+    stream, or a provider whose transport does not, still gets a correct turn
+    -- just all at once, as before.
+    """
+    import queue as _queue
+    from flask import copy_current_request_context
+    from agent_friday.services import model_router as _mr
+
+    SEP = chr(10) + chr(10)
+    q = _queue.Queue()
+    box = {}
+
+    @copy_current_request_context
+    def _run_turn():
+        token = _mr.DELTA_SINK.set(lambda piece: q.put(("delta", piece)))
+        try:
+            rv = chat()
+            body = rv[0] if isinstance(rv, tuple) else rv
+            box["payload"] = (body.get_json(silent=True)
+                              if hasattr(body, "get_json") else None)
+        except Exception as e:                     # never strand the client
+            traceback.print_exc()
+            box["error"] = str(e)
+        finally:
+            try:
+                _mr.DELTA_SINK.reset(token)
+            except Exception:
+                pass
+            q.put(("done", None))
+
+    threading.Thread(target=_run_turn, daemon=True).start()
+
+    def _events():
+        # Open the stream immediately so a proxy that buffers until the first
+        # byte cannot hold the whole turn back.
+        yield ": open" + SEP
+        while True:
+            kind, val = q.get()
+            if kind == "delta":
+                yield "data: " + json.dumps({"delta": val}) + SEP
+                continue
+            if "error" in box:
+                yield "data: " + json.dumps({"error": box["error"]}) + SEP
+            else:
+                yield "data: " + json.dumps(
+                    {"done": True, "payload": box.get("payload")}) + SEP
+            break
+
+    return Response(stream_with_context(_events()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache",
+                             "X-Accel-Buffering": "no"})
+
+
 @chat_bp.route('/api/chat', methods=['POST'])
 def chat():
     """Text chat — powered by Anthropic Claude.
