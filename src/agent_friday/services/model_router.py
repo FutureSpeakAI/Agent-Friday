@@ -768,6 +768,43 @@ AUTO_ROUTER_COST_TIERS = ("low", "medium", "high", "xhigh", "max")
 AUTO_ROUTER_DEFAULT_TIER = "low"
 
 
+#: A reasoning model spends the SAME max_tokens budget on its private
+#: reasoning as on the answer, and the Auto Router is free to pick one --
+#: which model answers is not knowable when the budget is set. Measured
+#: 2026-08-30: `openrouter/auto` at max_tokens=20 routed to
+#: deepseek-v4-flash-0731, spent all 20 on `reasoning` deltas, returned
+#: finish_reason="length" with content "" -- a billed turn that said nothing.
+#: Floor the budget so a routed reasoning model can still reach its answer.
+AUTO_ROUTER_MIN_MAX_TOKENS = 1024
+
+#: Spend ceilings, in OpenRouter's own units for `provider.max_price`:
+#: USD per MILLION tokens. This is a different mechanism from `cost_tier`
+#: and covers the band cost_tier has no word for -- free.
+#:
+#: cost_tier ("low".."max") only steers the Auto Router's CHOICE. max_price
+#: is a hard constraint on which endpoints may serve, and applies to any
+#: OpenRouter call. Composition with `openrouter/auto` is NOT documented by
+#: OpenRouter, so this ships default-off and is proven by a live call before
+#: it is offered in the UI.
+OPENROUTER_PRICE_CEILINGS = {
+    "free":     {"prompt": 0, "completion": 0},
+    "cheap":    {"prompt": 1, "completion": 3},
+    "standard": {"prompt": 10, "completion": 30},
+}
+
+
+def openrouter_price_ceiling(settings=None):
+    """The configured `provider.max_price` ceiling, or None for no constraint.
+
+    Unknown values mean NO ceiling rather than a guessed one: a typo must not
+    silently narrow which models may answer.
+    """
+    st = settings if settings is not None else (_load_settings() or {})
+    band = str(((st.get("model_routing") or {})
+                .get("openrouter_price_band") or "")).strip().lower()
+    return OPENROUTER_PRICE_CEILINGS.get(band)
+
+
 def auto_router_cost_tier(settings=None):
     """The configured cost tier, validated. Unknown values fall back to the
     default rather than riding to the wire -- OpenRouter would reject the
@@ -1089,6 +1126,47 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if model == AUTO_ROUTER_MODEL:
                 payload["plugins"] = [{"id": "auto-router",
                                        "cost_tier": auto_router_cost_tier()}]
+                # See AUTO_ROUTER_MIN_MAX_TOKENS: raise a too-small budget
+                # rather than let a routed reasoning model bill for silence.
+                if (payload.get("max_tokens") or 0) < AUTO_ROUTER_MIN_MAX_TOKENS:
+                    _log.info("auto-router: raising max_tokens %s -> %s so a "
+                              "routed reasoning model can reach its answer",
+                              payload.get("max_tokens"),
+                              AUTO_ROUTER_MIN_MAX_TOKENS)
+                    payload["max_tokens"] = AUTO_ROUTER_MIN_MAX_TOKENS
+            # Spend ceiling (descriptor-gated: only aggregators route across
+            # endpoints, so only they can honour a price constraint).
+            if features.get('aggregator'):
+                _ceiling = openrouter_price_ceiling()
+                # A ceiling NEVER rides along with the Auto Router, because
+                # the two knobs can contradict each other and the loser is the
+                # turn. Both verified against the live API on 2026-08-30:
+                #
+                #   auto + max_price {0,0}          -> HTTP 404 "No endpoints
+                #                                      found that satisfy the
+                #                                      max price" (the router
+                #                                      has no free endpoint)
+                #   auto + cost_tier=high + cheap   -> the same 404: the tier
+                #                                      asks for expensive
+                #                                      models, the ceiling
+                #                                      forbids them
+                #
+                # Which combinations conflict depends on live pricing, so it
+                # cannot be predicted before sending. cost_tier is already the
+                # spend dial for auto; a second one buys nothing and can kill
+                # the turn. The ceiling stays for a model the user picked
+                # themselves, where nothing is competing to choose.
+                if _ceiling and model == AUTO_ROUTER_MODEL:
+                    _log.info("auto-router: spend ceiling not sent — cost_tier "
+                              "is the dial here, and a ceiling can contradict "
+                              "it into a 404. Pick a model directly to apply "
+                              "a ceiling.")
+                    _ceiling = None
+                if _ceiling:
+                    _prov_prefs = dict(payload.get("provider") or {})
+                    _prov_prefs["max_price"] = dict(_ceiling)
+                    _prov_prefs.setdefault("sort", "price")
+                    payload["provider"] = _prov_prefs
             # OpenRouter first-class features (descriptor-driven, harmless to
             # omit for providers that don't declare them):
             if features.get('usage_accounting'):

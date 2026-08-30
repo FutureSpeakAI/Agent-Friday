@@ -32717,7 +32717,7 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       })));
 }
 
-function SettingsTabIntelligence() {
+function SettingsTabIntelligence({ s, save }) {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
@@ -32873,6 +32873,12 @@ function SettingsTabIntelligence() {
       saving && E('div', {
         style: { fontSize: 10, color: '#f59e0b', fontFamily: 'JetBrains Mono', marginTop: 8 },
       }, 'Saving ' + saving + '…')),
+
+    // The spend dial belongs beside the job it governs. Choosing the router
+    // on this tab and hunting its cost control on another is how a feature
+    // reads as unfinished.
+    (d.roles || []).some(rr => rr.model === 'openrouter/auto') &&
+      E(AutoRouterControls, { s: s || {}, save: save, orReady: true }),
 
     // ── MACHINE ──────────────────────────────────────────────────────────────
     E(StSection, { title: 'THE MACHINE' },
@@ -35233,6 +35239,83 @@ function ModelBrowser({
     onClick: () => useAsVideo(m)
   }, "Video")))));
 }
+/* ── AutoRouterControls ────────────────────────────────────────────────────
+   "Let Friday decide" — one component, rendered in Settings → Providers AND
+   inline under the model selector when the Auto Router is the chosen model.
+   Picking the router in one tab and its spend dial in another is how a
+   feature ends up feeling unfinished. */
+function AutoRouterControls({ s, save, orReady, compact }) {
+  const TIERS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Very high'], ['max', 'Max']];
+  const mr = s.model_routing || {};
+  const tier = mr.auto_router_cost_tier || 'low';
+  const setKey = (k, v) => {
+    const next = Object.assign({}, mr);
+    next[k] = v;
+    save({ model_routing: next });
+  };
+  const pill = (active, label, onClick, title) => React.createElement("button", {
+    key: label,
+    onClick: onClick,
+    title: title,
+    style: {
+      fontFamily: 'JetBrains Mono', fontSize: 11, padding: '5px 11px',
+      borderRadius: 6, cursor: 'pointer',
+      color: active ? '#001014' : 'rgba(255,255,255,0.75)',
+      background: active ? 'linear-gradient(90deg,#0097b2,#00d4ff)' : 'rgba(255,255,255,0.05)',
+      border: '1px solid ' + (active ? 'rgba(0,212,255,0.6)' : 'rgba(255,255,255,0.12)')
+    }
+  }, label);
+  const row = children => React.createElement("div", {
+    style: { display: 'flex', gap: 6, flexWrap: 'wrap' }
+  }, children);
+
+  const intro = React.createElement("div", {
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6, marginBottom: 12 }
+  }, "OpenRouter chooses a model for each prompt, from what its community collectively spends on for similar prompts over the previous 7 days. New models enter the pool as they catch on. It is not an analysis of your task. You are billed at the rate of whichever model answers.");
+
+  const needKey = orReady ? null : React.createElement("div", {
+    style: {
+      fontSize: 11, color: '#f59e0b', background: 'rgba(245,158,11,0.08)',
+      border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6,
+      padding: '8px 10px', marginBottom: 12, lineHeight: 1.5
+    }
+  }, "Needs an OpenRouter key — add one in Settings → Providers.");
+
+  const tierRow = React.createElement(StRow, {
+    label: "COST PRIORITY",
+    desc: "How much the router may spend on your behalf. OpenRouter's own default is Low; raising it buys stronger models at a higher rate."
+  }, row(TIERS.map(([id, label]) => pill(tier === id, label, () => setKey('auto_router_cost_tier', id), 'cost_tier: ' + id))));
+
+  const freeNote = React.createElement("div", {
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.38)', lineHeight: 1.6, marginTop: 2 }
+  }, React.createElement("span", { style: { color: 'rgba(255,255,255,0.6)' } }, "Want zero cost?"),
+    " The router has no free models to route to, so it cannot be told to be free. Search \":free\" in any model picker and choose one yourself instead.");
+
+  const footer = React.createElement("div", {
+    style: {
+      fontSize: 11, color: 'rgba(255,255,255,0.38)', lineHeight: 1.6,
+      borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10, marginTop: 4
+    }
+  },
+    React.createElement("div", { style: { marginBottom: 6 } },
+      React.createElement("span", { style: { color: 'rgba(255,255,255,0.6)' } }, "You still see who answered."),
+      " Every reply is labelled with the model that actually served it, and Cost & Usage bills that model by name — never a single \"auto\" bucket."),
+    React.createElement("div", null,
+      React.createElement("span", { style: { color: '#f59e0b' } }, "Where your prompt goes:"),
+      " auto routing hands the turn to a provider you did not choose yourself. Model and privacy restrictions set on your OpenRouter account still apply, and the egress gate still runs."));
+
+  const body = [intro, needKey, tierRow, freeNote, footer];
+  if (compact) {
+    return React.createElement("div", {
+      style: {
+        marginTop: 10, padding: '10px 12px', borderRadius: 8,
+        border: '1px solid rgba(0,212,255,0.18)', background: 'rgba(0,212,255,0.04)'
+      }
+    }, body);
+  }
+  return React.createElement(StSection, { title: "LET FRIDAY DECIDE" }, body);
+}
+
 function SettingsTabProviders({
   s,
   save
@@ -35255,84 +35338,13 @@ function SettingsTabProviders({
   const rows = provs.filter(p => !['local-voice', 'nemo-local'].includes(p.type));
   const enabled = rows.filter(p => p.enabled),
     disabled = rows.filter(p => !p.enabled);
-  const AUTO_TIERS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Very high'], ['max', 'Max']];
   const orProv = provs.filter(p => p.name === 'openrouter')[0];
   const orReady = !!(orProv && orProv.enabled && orProv.key_source && orProv.key_source !== 'none');
-  const autoTier = (s.model_routing || {}).auto_router_cost_tier || 'low';
-  const setAutoTier = t => save({
-    model_routing: {
-      ...(s.model_routing || {}),
-      auto_router_cost_tier: t
-    }
-  });
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
-    title: "LET FRIDAY DECIDE"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      lineHeight: 1.6,
-      marginBottom: 12
-    }
-  }, "Pick ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.75)'
-    }
-  }, "Let Friday decide (OpenRouter Auto)"), " in any model picker and OpenRouter chooses a model for each prompt. It picks from what the OpenRouter community collectively spends on for similar prompts over the previous 7 days, so new models enter the pool as they catch on. It is not an analysis of your task. You are billed at the rate of whichever model answers."), orReady ? null : /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#f59e0b',
-      background: 'rgba(245,158,11,0.08)',
-      border: '1px solid rgba(245,158,11,0.25)',
-      borderRadius: 6,
-      padding: '8px 10px',
-      marginBottom: 12,
-      lineHeight: 1.5
-    }
-  }, "Needs an OpenRouter key. Add one below and its models - including the Auto Router - appear in every picker."), /*#__PURE__*/React.createElement(StRow, {
-    label: "COST PRIORITY",
-    desc: "How much the router may spend on your behalf. OpenRouter's own default is Low; raising it buys stronger models at a higher rate."
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      flexWrap: 'wrap'
-    }
-  }, AUTO_TIERS.map(([id, label]) => /*#__PURE__*/React.createElement("button", {
-    key: id,
-    onClick: () => setAutoTier(id),
-    title: 'cost_tier: ' + id,
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-      padding: '5px 11px',
-      borderRadius: 6,
-      cursor: 'pointer',
-      color: autoTier === id ? '#001014' : 'rgba(255,255,255,0.75)',
-      background: autoTier === id ? 'linear-gradient(90deg,#0097b2,#00d4ff)' : 'rgba(255,255,255,0.05)',
-      border: '1px solid ' + (autoTier === id ? 'rgba(0,212,255,0.6)' : 'rgba(255,255,255,0.12)')
-    }
-  }, label)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.38)',
-      lineHeight: 1.6,
-      borderTop: '1px solid rgba(255,255,255,0.06)',
-      paddingTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.6)'
-    }
-  }, "You still see who answered."), " Every reply is labelled with the model that actually served it, and Cost & Usage bills that model by name - never a single \"auto\" bucket."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#f59e0b'
-    }
-  }, "Where your prompt goes:"), " auto routing hands the turn to a provider you did not choose yourself. Model and privacy restrictions set on your OpenRouter account still apply, and the egress gate still runs."))), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(AutoRouterControls, {
+    s: s,
+    save: save,
+    orReady: orReady
+  }), /*#__PURE__*/React.createElement(StSection, {
     title: "MODEL PROVIDERS"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -36052,7 +36064,10 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, null), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+    s: s,
+    save: save
+  }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
