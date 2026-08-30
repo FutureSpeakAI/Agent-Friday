@@ -604,21 +604,40 @@ add an alias layer anywhere, assume every static check downstream of it now lies
 
 ### Blocking for a packaged release
 
-**The career pipeline cannot work in a pip install.** `pyproject.toml` packages only
-`src/`, but `routes/jobs.py` imports `data.job_tracker_schema`, `skills.application_engine`
-and `skills.job_scanner` — all top-level directories at the repo root, none of which ship
-in the wheel. A user who runs `pip install agent-friday` gets four `/api/pipeline/*`
-endpoints that cannot function under any circumstances, because the modules are not on
-their disk.
+**FIXED (PR-3, packaging).** `data/job_tracker_schema.py` and `skills/application_engine`,
+`skills/job_scanner` moved from repo-root directories into the installed package proper, at
+`agent_friday/seed/data` and `agent_friday/seed/skills` — see `agent_friday/seed/__init__.py`.
+`routes/jobs.py` now imports them as plain `agent_friday.seed.*` submodules; no sys.path
+surgery, no repo-root dependency. `pyproject.toml` gained a `[tool.setuptools.package-data]`
+entry for the non-code `config.yaml`/`SKILL.md` files (the `.py` modules ship automatically
+as part of the discovered package). A first-run step (`ensure_seed_skills_installed()`,
+called from `cli.cmd_start()` and `setup_wizard.main()`) also copies the bundled skills into
+`friday_home()/"skills"` so they appear in the user-facing Skills registry. Proven with a
+real non-editable install into a fresh venv from this tree, not asserted from the diff — see
+the PR description for the actual command output. `AgentFriday.spec` (the PyInstaller build)
+was updated too: its `datas` list silently drops any entry whose source no longer exists,
+so the old `('skills', 'skills')` line would have gone missing from frozen builds with zero
+warning the moment repo-root `skills/` was deleted, had it not moved with everything else.
+`packaging/windows/build-installer.ps1` needed no change — it stages the whole repo tree
+including `src/`, so the new location was already covered.
 
-They will at least now be *told* — the blueprint policy announces "Career pipeline
-unavailable" rather than logging a warning nobody reads. But being reliably informed that
-a shipped feature is permanently broken is not the same as shipping a working feature.
+Original text, for history:
 
-**Status: source installs work, pip installs do not.** Fixing it properly means deciding
-whether bundled skills are Python package internals or first-class installed content, and
-that is a product decision about what the skills system *is*, not a packaging typo. It is
-deliberately not being answered inside a bug fix.
+> **The career pipeline cannot work in a pip install.** `pyproject.toml` packages only
+> `src/`, but `routes/jobs.py` imports `data.job_tracker_schema`, `skills.application_engine`
+> and `skills.job_scanner` — all top-level directories at the repo root, none of which ship
+> in the wheel. A user who runs `pip install agent-friday` gets four `/api/pipeline/*`
+> endpoints that cannot function under any circumstances, because the modules are not on
+> their disk.
+>
+> They will at least now be *told* — the blueprint policy announces "Career pipeline
+> unavailable" rather than logging a warning nobody reads. But being reliably informed that
+> a shipped feature is permanently broken is not the same as shipping a working feature.
+>
+> **Status: source installs work, pip installs do not.** Fixing it properly means deciding
+> whether bundled skills are Python package internals or first-class installed content, and
+> that is a product decision about what the skills system *is*, not a packaging typo. It is
+> deliberately not being answered inside a bug fix.
 
 ### Local Friday converses and remembers. She does not act.
 

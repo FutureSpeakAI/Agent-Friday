@@ -12,7 +12,7 @@ optional intel pack), the engine drives the entire pipeline:
                                                                   tracker log
 ```
 
-Lives at `skills/application_engine/engine.py`. Designed to be invoked by
+Lives at `agent_friday/seed/skills/application_engine/engine.py`. Designed to be invoked by
 the chat ("apply to this") or autonomously when `auto_apply=true` is set
 on a high-confidence priority job.
 
