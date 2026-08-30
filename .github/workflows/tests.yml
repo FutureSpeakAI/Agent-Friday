@@ -32,7 +32,7 @@ jobs:
           flask flask-sock anthropic google-genai
           google-api-python-client google-auth-oauthlib
           cryptography pynacl rich colorama beautifulsoup4 feedparser
-          tzdata requests pyyaml pytest
+          tzdata requests pyyaml pytest pdfplumber
 
       # Install the package itself (src layout, no heavy extras).
       - name: Install agent-friday (editable)

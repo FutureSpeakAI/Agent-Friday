@@ -36,6 +36,24 @@ import types
 import pytest
 
 
+# -- The DPAPI file home is Windows-only -------------------------------------
+# With `keyring` absent, the ONLY durable home is the DPAPI-wrapped file, and
+# CryptProtectData exists only on Windows: vault_passphrase.dpapi() returns
+# None when os.name != "nt", so store() writes nothing at all on Linux. The
+# two tests below are about what that file does, so off Windows they have no
+# subject and fail describing an empty directory rather than the behaviour.
+#
+# This guard states a real and previously unwritten platform assumption: on a
+# non-Windows host the passphrase has NO durable home. That costs users
+# nothing today -- Friday is a Windows desktop app (tray, DPAPI, PowerShell,
+# packaging/windows is the only packaging path) -- but it is an assumption,
+# not a law, and it is now recorded where someone porting this will hit it.
+requires_dpapi = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="the durable file home is DPAPI-wrapped; CryptProtectData is Windows-only",
+)
+
+
 # -- A fake OS keychain ------------------------------------------------------
 # `keyring` is an optional dependency (pyproject.toml:86). The packaged
 # installer ships it (packaging/windows/requirements/core.txt:38); a source
@@ -186,6 +204,7 @@ def test_both_resolvers_return_the_same_secret(
 
 # -- F3 ----------------------------------------------------------------------
 
+@requires_dpapi
 def test_dpapi_file_is_a_durable_home_without_keyring(clean_env, friday_home, monkeypatch):
     """``keyring`` is optional and this venv does not have it.
 
@@ -228,6 +247,7 @@ def test_the_durable_home_is_not_in_the_app_directory(friday_home):
         )
 
 
+@requires_dpapi
 def test_a_torn_write_is_not_mistaken_for_a_passphrase(clean_env, friday_home, monkeypatch):
     """A half-written credential is worse than an absent one: it looks present.
 

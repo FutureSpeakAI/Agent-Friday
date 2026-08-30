@@ -1065,9 +1065,27 @@ class TestHealth:
         resp = client.get("/api/health")
         assert resp.status_code == 200
 
-    def test_has_status_ok(self, client):
-        data = client.get("/api/health").get_json()
-        assert data["status"] == "ok"
+    # The old assertion here was `status == "ok"`, which made a unit test
+    # depend on whether a real inference provider happened to be reachable
+    # from the machine running it: /api/health derives status from a live
+    # probe (decision D1). On a dev box with Ollama up it passed; on a CI
+    # runner it turned on probe-cache state, which is how it passed on the
+    # Windows legs and failed on ubuntu with 'degraded'.
+    #
+    # These two pin D1's actual contract instead, deterministically on every
+    # platform: the verdict is PASSED THROUGH from the probe rather than
+    # hardcoded, and HTTP stays 200 even when inference is down, because the
+    # tray treats non-2xx as "server is dead" and would restart a server that
+    # is running fine with an unreachable backend. The old test could not
+    # catch a regression to a hardcoded "ok"; this one fails on it.
+    @pytest.mark.parametrize("verdict", ["ok", "degraded", "down", "unknown"])
+    def test_status_is_the_probe_verdict_not_a_constant(self, client, monkeypatch, verdict):
+        monkeypatch.setattr(
+            "agent_friday.services.provider_health.inference_health",
+            lambda *a, **k: {"status": verdict, "providers": []})
+        resp = client.get("/api/health")
+        assert resp.status_code == 200, "liveness must stay 200 regardless of inference health"
+        assert resp.get_json()["status"] == verdict
 
     def test_has_uptime(self, client):
         data = client.get("/api/health").get_json()
