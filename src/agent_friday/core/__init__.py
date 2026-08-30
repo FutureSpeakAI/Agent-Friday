@@ -606,6 +606,14 @@ VIBE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 VIBE_STATE_FILE = Path(os.path.expanduser("~")) / ".friday" / "vibe-code" / "terminals.json"
 VIBE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# Bumped when the MEANING of the file changes, not its contents. Version 1 is
+# the first format written by a process that also records terminals at launch,
+# so a version-1 file is evidence that an absent terminal_id is genuinely
+# absent. A file with no version was written before that guarantee held (or by
+# the reconcile itself, which created an empty one at first boot), and an
+# absence in it proves nothing -- see adopt_or_reap_vibe_terminals.
+VIBE_STATE_VERSION = 1
+
 
 def _persist_vibe_terminals() -> None:
     """Write VIBE_TERMINALS to disk. Atomic (tmp-then-replace), best-effort.
@@ -613,10 +621,17 @@ def _persist_vibe_terminals() -> None:
     Same shape as residency_arbiter._publish_endpoints: a process that cannot
     persist its terminal list is still a working process for whoever owns it
     right now, so a write failure here is swallowed rather than raised.
+
+    The temp file carries the pid so two writers cannot land on one name. A
+    shared temp name is exactly the defect fixed in _save_settings this week:
+    concurrent writers interleave into a half-written file. Here that file is
+    the sole evidence deciding whether a live terminal gets force-killed, so a
+    torn write is not merely lost state.
     """
     try:
-        tmp = VIBE_STATE_FILE.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"terminals": VIBE_TERMINALS}, indent=2),
+        tmp = VIBE_STATE_FILE.with_suffix(".json.%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps({"version": VIBE_STATE_VERSION,
+                                   "terminals": VIBE_TERMINALS}, indent=2),
                        encoding="utf-8")
         os.replace(tmp, VIBE_STATE_FILE)
     except Exception:
@@ -625,10 +640,26 @@ def _persist_vibe_terminals() -> None:
 
 def _read_vibe_terminals_state() -> dict:
     """`terminal_id -> last-known record` from disk. Never raises; {} on any problem."""
+    return _read_vibe_state().get("terminals", {})
+
+
+def _read_vibe_state() -> dict:
+    """The whole persisted vibe-terminal document. Never raises.
+
+    Returns `{}` when the file is missing or unreadable -- deliberately
+    indistinguishable from a file that exists but names no version, because
+    neither can testify that a terminal was never recorded.
+    """
     try:
         data = json.loads(VIBE_STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
         terms = data.get("terminals") or {}
-        return {str(k): v for k, v in terms.items() if isinstance(v, dict)}
+        out = {"terminals": {str(k): v for k, v in terms.items()
+                             if isinstance(v, dict)}}
+        if isinstance(data.get("version"), int):
+            out["version"] = data["version"]
+        return out
     except Exception:
         return {}
 
