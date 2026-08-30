@@ -60,12 +60,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from agent_friday.paths import friday_home
 
 # ════════════════════════════════════════════════════════════════════════
 #  Paths and constants
 # ════════════════════════════════════════════════════════════════════════
 
-FRIDAY_DIR = Path.home() / ".friday"
+FRIDAY_DIR = friday_home()
 LIQUID_DIR = FRIDAY_DIR / "liquid_ui"
 REQUESTS_PATH = LIQUID_DIR / "requests.jsonl"
 USAGE_PATH = LIQUID_DIR / "usage.jsonl"

@@ -7,7 +7,9 @@ Layered config profiles for different user personas (journalist, developer, etc.
 import yaml, os, sys
 from pathlib import Path
 
-DISTROS_DIR = Path.home() / ".friday" / "distros"
+from agent_friday.paths import friday_home
+
+DISTROS_DIR = friday_home() / "distros"
 DISTROS_DIR.mkdir(parents=True, exist_ok=True)
 
 BUILTIN_DISTROS = {

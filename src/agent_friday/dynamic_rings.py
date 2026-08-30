@@ -18,6 +18,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from agent_friday.paths import friday_home
+
 
 class PrivilegeState:
     """Per-task privilege tracker."""
@@ -65,7 +67,7 @@ class DynamicPrivilegeManager:
 
     def __init__(self, log_path=None, governance_key_fn=None):
         self.log_path = Path(log_path) if log_path else \
-            Path.home() / ".friday" / "vault" / "privilege-log.jsonl"
+            friday_home() / "vault" / "privilege-log.jsonl"
         self._governance_key_fn = governance_key_fn
         self._lock = threading.Lock()
         self._tasks: dict[str, PrivilegeState] = {}  # task_id -> state

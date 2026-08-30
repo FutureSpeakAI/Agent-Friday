@@ -21,12 +21,14 @@ from pathlib import Path
 import pystray
 from PIL import Image
 
+from agent_friday.paths import friday_home
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
 ICON_PATH = PROJECT_DIR / "assets" / "icons" / "futurespeak.png"
-VOICE_LOG = Path.home() / ".friday" / "voice_debug.log"
-SERVER_STDERR_LOG = Path.home() / ".friday" / "server_stderr.log"
+VOICE_LOG = friday_home() / "voice_debug.log"
+SERVER_STDERR_LOG = friday_home() / "server_stderr.log"
 SERVER_URL = "http://localhost:3000"
 HEALTH_URL = f"{SERVER_URL}/api/health"
 PORT = 3000
