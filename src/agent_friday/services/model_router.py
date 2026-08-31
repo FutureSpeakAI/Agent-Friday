@@ -29,6 +29,7 @@ import base64
 import secrets
 import sys
 import traceback
+import contextvars as _contextvars
 import uuid
 import threading
 import asyncio
@@ -758,10 +759,159 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 pass
 
 
+#: OpenRouter's Auto Router. Sent as the model id; the model that actually
+#: answers is reported back in the response's top-level `model` field.
+#: Where streamed tokens go when the caller has not passed `on_delta`.
+#:
+#: routes/chat.py::chat() is ~1200 lines of persistence, receipts, egress and
+#: workspace context with a dozen exit points. Threading a callback down every
+#: branch of it to reach the transport would be a rewrite of the one function
+#: a chat turn cannot afford to have broken. A context variable reaches the
+#: same place without touching any of it: /api/chat/stream sets the sink,
+#: the transport publishes to it, and chat() is not modified at all.
+DELTA_SINK = _contextvars.ContextVar("friday_delta_sink", default=None)
+
+AUTO_ROUTER_MODEL = "openrouter/auto"
+
+#: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
+#: "low"; ours matches so turning the feature on cannot silently raise spend.
+AUTO_ROUTER_COST_TIERS = ("low", "medium", "high", "xhigh", "max")
+AUTO_ROUTER_DEFAULT_TIER = "low"
+
+
+#: A reasoning model spends the SAME max_tokens budget on its private
+#: reasoning as on the answer, and the Auto Router is free to pick one --
+#: which model answers is not knowable when the budget is set. Measured
+#: 2026-08-30: `openrouter/auto` at max_tokens=20 routed to
+#: deepseek-v4-flash-0731, spent all 20 on `reasoning` deltas, returned
+#: finish_reason="length" with content "" -- a billed turn that said nothing.
+#: Floor the budget so a routed reasoning model can still reach its answer.
+AUTO_ROUTER_MIN_MAX_TOKENS = 1024
+
+#: Spend ceilings, in OpenRouter's own units for `provider.max_price`:
+#: USD per MILLION tokens. This is a different mechanism from `cost_tier`
+#: and covers the band cost_tier has no word for -- free.
+#:
+#: cost_tier ("low".."max") only steers the Auto Router's CHOICE. max_price
+#: is a hard constraint on which endpoints may serve, and applies to any
+#: OpenRouter call. Composition with `openrouter/auto` is NOT documented by
+#: OpenRouter, so this ships default-off and is proven by a live call before
+#: it is offered in the UI.
+OPENROUTER_PRICE_CEILINGS = {
+    "free":     {"prompt": 0, "completion": 0},
+    "cheap":    {"prompt": 1, "completion": 3},
+    "standard": {"prompt": 10, "completion": 30},
+}
+
+
+def openrouter_price_ceiling(settings=None):
+    """The configured `provider.max_price` ceiling, or None for no constraint.
+
+    Unknown values mean NO ceiling rather than a guessed one: a typo must not
+    silently narrow which models may answer.
+    """
+    st = settings if settings is not None else (_load_settings() or {})
+    band = str(((st.get("model_routing") or {})
+                .get("openrouter_price_band") or "")).strip().lower()
+    return OPENROUTER_PRICE_CEILINGS.get(band)
+
+
+def auto_router_cost_tier(settings=None):
+    """The configured cost tier, validated. Unknown values fall back to the
+    default rather than riding to the wire -- OpenRouter would reject the
+    request, and a typo in settings must not take chat down."""
+    st = settings if settings is not None else (_load_settings() or {})
+    routing = st.get("model_routing") or {}
+    tier = str(routing.get("auto_router_cost_tier") or "").strip().lower()
+    return tier if tier in AUTO_ROUTER_COST_TIERS else AUTO_ROUTER_DEFAULT_TIER
+
+
+def _consume_sse_completion(resp, on_delta=None):
+    """Assemble an OpenAI-compatible SSE stream into ONE response dict.
+
+    The returned dict is shape-identical to a non-streamed
+    /chat/completions body -- choices[0].message.{content,tool_calls},
+    finish_reason, model, usage -- so every caller above the transport is
+    unchanged. Streaming is a property of the WIRE, not of the contract.
+
+    Why the model is read off the chunks: with `openrouter/auto` the id we
+    SENT is not the model that answers. Each chunk carries the resolved id,
+    and that is the only place the routed model is stated. Dropping it is how
+    a per-model cost breakdown turns into one opaque `openrouter/auto` bucket.
+
+    `on_delta(text)` fires per content fragment for progressive rendering.
+    """
+    content_parts = []
+    tool_calls = {}          # index -> partial tool call
+    finish_reason = None
+    served_model = None
+    usage = None
+
+    for raw in resp.iter_lines(decode_unicode=True):
+        if not raw:
+            continue
+        # OpenRouter sends ": OPENROUTER PROCESSING" keepalive comments while
+        # it waits on an upstream. They are not events; treating them as JSON
+        # is how a stream reader dies three seconds into a cold start.
+        if raw.startswith(":"):
+            continue
+        if not raw.startswith("data:"):
+            continue
+        data = raw[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+        except Exception:
+            continue
+        if chunk.get("model"):
+            served_model = chunk["model"]
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                content_parts.append(piece)
+                if on_delta:
+                    try:
+                        on_delta(piece)
+                    except Exception:
+                        pass
+            # Tool calls arrive fragmented: the id/name land on the first
+            # chunk for an index, the arguments accrete character-wise after.
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                slot = tool_calls.setdefault(
+                    idx, {"id": None, "type": "function",
+                          "function": {"name": None, "arguments": ""}})
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["function"]["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["function"]["arguments"] += fn["arguments"]
+
+    message = {"role": "assistant", "content": "".join(content_parts)}
+    if tool_calls:
+        message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+    out = {"choices": [{"message": message,
+                        "finish_reason": finish_reason or "stop"}]}
+    if served_model:
+        out["model"] = served_model
+    if usage:
+        out["usage"] = usage
+    return out
+
+
 def _call_openai(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
-                 provider=None, fallback_models=None):
+                 provider=None, fallback_models=None, stream=None,
+                 on_delta=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
 
     Two configuration paths:
@@ -952,6 +1102,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if isinstance(content, str):
                 convo.append({"role": m.get("role", "user"), "content": content})
 
+        # What the provider ACTUALLY served, for the attribution badge.
+        # attribution's contract is "the model id it truly ran"; with
+        # `openrouter/auto` the id we SEND is a router, not an answer.
+        _last_served = {}
+
         def _send(_convo, _oai_tools):
             payload = {
                 "model": model,
@@ -980,6 +1135,54 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                                 "enable_thinking": False}
                     except Exception:
                         pass
+            # Auto Router: "let Friday decide". The cost tier is nested in a
+            # `plugins` entry -- a top-level `cost_tier` is accepted by the
+            # API and silently ignored, which would present as the router
+            # always behaving as though it were on the default tier.
+            if model == AUTO_ROUTER_MODEL:
+                payload["plugins"] = [{"id": "auto-router",
+                                       "cost_tier": auto_router_cost_tier()}]
+                # See AUTO_ROUTER_MIN_MAX_TOKENS: raise a too-small budget
+                # rather than let a routed reasoning model bill for silence.
+                if (payload.get("max_tokens") or 0) < AUTO_ROUTER_MIN_MAX_TOKENS:
+                    _log.info("auto-router: raising max_tokens %s -> %s so a "
+                              "routed reasoning model can reach its answer",
+                              payload.get("max_tokens"),
+                              AUTO_ROUTER_MIN_MAX_TOKENS)
+                    payload["max_tokens"] = AUTO_ROUTER_MIN_MAX_TOKENS
+            # Spend ceiling (descriptor-gated: only aggregators route across
+            # endpoints, so only they can honour a price constraint).
+            if features.get('aggregator'):
+                _ceiling = openrouter_price_ceiling()
+                # A ceiling NEVER rides along with the Auto Router, because
+                # the two knobs can contradict each other and the loser is the
+                # turn. Both verified against the live API on 2026-08-30:
+                #
+                #   auto + max_price {0,0}          -> HTTP 404 "No endpoints
+                #                                      found that satisfy the
+                #                                      max price" (the router
+                #                                      has no free endpoint)
+                #   auto + cost_tier=high + cheap   -> the same 404: the tier
+                #                                      asks for expensive
+                #                                      models, the ceiling
+                #                                      forbids them
+                #
+                # Which combinations conflict depends on live pricing, so it
+                # cannot be predicted before sending. cost_tier is already the
+                # spend dial for auto; a second one buys nothing and can kill
+                # the turn. The ceiling stays for a model the user picked
+                # themselves, where nothing is competing to choose.
+                if _ceiling and model == AUTO_ROUTER_MODEL:
+                    _log.info("auto-router: spend ceiling not sent — cost_tier "
+                              "is the dial here, and a ceiling can contradict "
+                              "it into a 404. Pick a model directly to apply "
+                              "a ceiling.")
+                    _ceiling = None
+                if _ceiling:
+                    _prov_prefs = dict(payload.get("provider") or {})
+                    _prov_prefs["max_price"] = dict(_ceiling)
+                    _prov_prefs.setdefault("sort", "price")
+                    payload["provider"] = _prov_prefs
             # OpenRouter first-class features (descriptor-driven, harmless to
             # omit for providers that don't declare them):
             if features.get('usage_accounting'):
@@ -993,10 +1196,43 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             # — data stays on-device — exactly like the Ollama path.
             if not local_bypass:
                 payload = _seal_or_block(payload, pname)
+            # Streaming is a wire choice, not a contract change: the SSE
+            # branch reassembles the SAME response dict, so the agentic loop,
+            # metering and attribution below are byte-for-byte unaffected.
+            # Default ON where the descriptor declares it; a caller can force
+            # either way. Tool turns stream too -- _consume_sse_completion
+            # reassembles fragmented tool_calls.
+            _want_stream = (features.get('streaming', True)
+                            if stream is None else bool(stream))
             _t0 = _time.time()
             try:
-                r = requests.post(f"{base_url}/chat/completions", headers=headers,
-                                  json=payload, timeout=timeout_s)
+                if _want_stream:
+                    _spayload = dict(payload)
+                    _spayload["stream"] = True
+                    r = requests.post(f"{base_url}/chat/completions",
+                                      headers=headers, json=_spayload,
+                                      timeout=timeout_s, stream=True)
+                    # An endpoint that refuses to stream must not take the
+                    # turn down with it -- fall back to the blocking call once.
+                    #
+                    # ONLY on 400. A blanket >=400 fallback silently ate the
+                    # 429 Retry-After etiquette below (the retry re-sent
+                    # immediately, unthrottled) and would re-send on 401/403
+                    # and 5xx too -- doubling load on exactly the failures
+                    # where that is worst.
+                    if r.status_code == 400:
+                        try:
+                            r.close()
+                        except Exception:
+                            pass
+                        _want_stream = False
+                        r = requests.post(f"{base_url}/chat/completions",
+                                          headers=headers, json=payload,
+                                          timeout=timeout_s)
+                else:
+                    r = requests.post(f"{base_url}/chat/completions",
+                                      headers=headers, json=payload,
+                                      timeout=timeout_s)
             except Exception:
                 _health(False, int((_time.time() - _t0) * 1000))
                 raise
@@ -1034,10 +1270,19 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 raise
             _health(True, int((_time.time() - _t0) * 1000),
                     status=getattr(r, 'status_code', 200))
-            resp = r.json()
+            # A 200 that is not actually an event stream (a proxy that
+            # ignores `stream`, a cached JSON body) would otherwise assemble
+            # to empty content and read as the model saying nothing.
+            if _want_stream and "text/event-stream" not in (
+                    (getattr(r, "headers", None) or {}).get("Content-Type") or ""):
+                _want_stream = False
+            resp = (_consume_sse_completion(r, on_delta=on_delta or DELTA_SINK.get())
+                    if _want_stream else r.json())
             # Attribute cost to the model the provider ACTUALLY served (an
             # OpenRouter fallback may answer with a different model than asked).
             served = resp.get('model')
+            if served:
+                _last_served['id'] = served
             if served and served != model and isinstance(resp, dict):
                 resp.setdefault('_served_model', served)
             return resp
@@ -1076,8 +1321,12 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         # endpoint actually ran.
         try:
             from agent_friday.services import attribution
+            # The model that ANSWERED, not the one we asked for. Under
+            # `openrouter/auto` those differ on every turn, and a badge
+            # reading "openrouter/auto" is exactly the lie this module was
+            # written to end -- it names a router, not a model.
             attribution.record_generation(
-                model, provider=pname,
+                _last_served.get('id') or model, provider=pname,
                 seat="local" if local_bypass else "openai")
         except Exception:
             pass

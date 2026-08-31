@@ -170,7 +170,7 @@ def test_call_openai_reaches_shared_loop(monkeypatch):
 
     posts = []
 
-    def _fake_post(url, headers=None, json=None, timeout=None):
+    def _fake_post(url, headers=None, json=None, timeout=None, **kw):
         posts.append({"url": url, "payload": json})
         return _FakeResp()
 

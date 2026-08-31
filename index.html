@@ -23883,6 +23883,63 @@ function fridayInvalidateModelCatalog() {
 }
 // Fetch the catalog once, cache app-wide, and expose role lists + an id→meta map.
 // Components call this and render selectors from it — no hardcoded model lists.
+/* ── fridayChatTurn ────────────────────────────────────────────────────────
+   One chat turn, streamed when the server can and blocking when it cannot.
+
+   The turn is NEVER sent twice. Falling back after tokens have already
+   arrived would re-run a turn that is half-persisted and fully billed, so
+   the blocking endpoint is used only when the stream produced nothing at
+   all — a 404 on an older server, a proxy that refuses event-streams, a
+   connection that died before the first byte. Once a delta has landed, a
+   failure is reported as a failure.
+
+   `payload` is chat()'s own JSON, forwarded verbatim by the done event, so
+   every caller downstream (model badge, seat, fallback chain, actions) reads
+   exactly the fields it read before streaming existed. */
+async function fridayChatTurn(body, onDelta) {
+  const SEP = String.fromCharCode(10) + String.fromCharCode(10);
+  let got = false;
+  try {
+    const r = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok || !r.body) throw new Error('stream unavailable (' + r.status + ')');
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', payload = null, errMsg = null, sawDone = false;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      got = true;
+      buf += dec.decode(chunk.value, { stream: true });
+      let i;
+      while ((i = buf.indexOf(SEP)) !== -1) {
+        const frame = buf.slice(0, i);
+        buf = buf.slice(i + SEP.length);
+        if (frame.indexOf('data:') !== 0) continue;   // ": open" keepalive
+        let ev;
+        try { ev = JSON.parse(frame.slice(5).trim()); } catch (_) { continue; }
+        if (typeof ev.delta === 'string') { if (onDelta) onDelta(ev.delta); continue; }
+        if (ev.error) errMsg = ev.error;
+        if (ev.done) { sawDone = true; payload = ev.payload; }
+      }
+    }
+    if (payload) return payload;
+    throw new Error(errMsg || (sawDone ? 'stream finished with no payload'
+                                       : 'stream ended early'));
+  } catch (e) {
+    if (got) throw e;          // half a turn already happened — do not repeat it
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    return await r.json();
+  }
+}
+
 function useModelCatalog() {
   const [cat, setCat] = useState(window.__fridayModelCatalog || null);
   const [err, setErr] = useState(null);
@@ -32717,7 +32774,7 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       })));
 }
 
-function SettingsTabIntelligence() {
+function SettingsTabIntelligence({ s, save }) {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
@@ -32873,6 +32930,12 @@ function SettingsTabIntelligence() {
       saving && E('div', {
         style: { fontSize: 10, color: '#f59e0b', fontFamily: 'JetBrains Mono', marginTop: 8 },
       }, 'Saving ' + saving + '…')),
+
+    // The spend dial belongs beside the job it governs. Choosing the router
+    // on this tab and hunting its cost control on another is how a feature
+    // reads as unfinished.
+    (d.roles || []).some(rr => rr.model === 'openrouter/auto') &&
+      E(AutoRouterControls, { s: s || {}, save: save, orReady: true }),
 
     // ── MACHINE ──────────────────────────────────────────────────────────────
     E(StSection, { title: 'THE MACHINE' },
@@ -35233,6 +35296,83 @@ function ModelBrowser({
     onClick: () => useAsVideo(m)
   }, "Video")))));
 }
+/* ── AutoRouterControls ────────────────────────────────────────────────────
+   "Let Friday decide" — one component, rendered in Settings → Providers AND
+   inline under the model selector when the Auto Router is the chosen model.
+   Picking the router in one tab and its spend dial in another is how a
+   feature ends up feeling unfinished. */
+function AutoRouterControls({ s, save, orReady, compact }) {
+  const TIERS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Very high'], ['max', 'Max']];
+  const mr = s.model_routing || {};
+  const tier = mr.auto_router_cost_tier || 'low';
+  const setKey = (k, v) => {
+    const next = Object.assign({}, mr);
+    next[k] = v;
+    save({ model_routing: next });
+  };
+  const pill = (active, label, onClick, title) => React.createElement("button", {
+    key: label,
+    onClick: onClick,
+    title: title,
+    style: {
+      fontFamily: 'JetBrains Mono', fontSize: 11, padding: '5px 11px',
+      borderRadius: 6, cursor: 'pointer',
+      color: active ? '#001014' : 'rgba(255,255,255,0.75)',
+      background: active ? 'linear-gradient(90deg,#0097b2,#00d4ff)' : 'rgba(255,255,255,0.05)',
+      border: '1px solid ' + (active ? 'rgba(0,212,255,0.6)' : 'rgba(255,255,255,0.12)')
+    }
+  }, label);
+  const row = children => React.createElement("div", {
+    style: { display: 'flex', gap: 6, flexWrap: 'wrap' }
+  }, children);
+
+  const intro = React.createElement("div", {
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6, marginBottom: 12 }
+  }, "OpenRouter chooses a model for each prompt, from what its community collectively spends on for similar prompts over the previous 7 days. New models enter the pool as they catch on. It is not an analysis of your task. You are billed at the rate of whichever model answers.");
+
+  const needKey = orReady ? null : React.createElement("div", {
+    style: {
+      fontSize: 11, color: '#f59e0b', background: 'rgba(245,158,11,0.08)',
+      border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6,
+      padding: '8px 10px', marginBottom: 12, lineHeight: 1.5
+    }
+  }, "Needs an OpenRouter key — add one in Settings → Providers.");
+
+  const tierRow = React.createElement(StRow, {
+    label: "COST PRIORITY",
+    desc: "How much the router may spend on your behalf. OpenRouter's own default is Low; raising it buys stronger models at a higher rate."
+  }, row(TIERS.map(([id, label]) => pill(tier === id, label, () => setKey('auto_router_cost_tier', id), 'cost_tier: ' + id))));
+
+  const freeNote = React.createElement("div", {
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.38)', lineHeight: 1.6, marginTop: 2 }
+  }, React.createElement("span", { style: { color: 'rgba(255,255,255,0.6)' } }, "Want zero cost?"),
+    " The router has no free models to route to, so it cannot be told to be free. Search \":free\" in any model picker and choose one yourself instead.");
+
+  const footer = React.createElement("div", {
+    style: {
+      fontSize: 11, color: 'rgba(255,255,255,0.38)', lineHeight: 1.6,
+      borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10, marginTop: 4
+    }
+  },
+    React.createElement("div", { style: { marginBottom: 6 } },
+      React.createElement("span", { style: { color: 'rgba(255,255,255,0.6)' } }, "You still see who answered."),
+      " Every reply is labelled with the model that actually served it, and Cost & Usage bills that model by name — never a single \"auto\" bucket."),
+    React.createElement("div", null,
+      React.createElement("span", { style: { color: '#f59e0b' } }, "Where your prompt goes:"),
+      " auto routing hands the turn to a provider you did not choose yourself. Model and privacy restrictions set on your OpenRouter account still apply, and the egress gate still runs."));
+
+  const body = [intro, needKey, tierRow, freeNote, footer];
+  if (compact) {
+    return React.createElement("div", {
+      style: {
+        marginTop: 10, padding: '10px 12px', borderRadius: 8,
+        border: '1px solid rgba(0,212,255,0.18)', background: 'rgba(0,212,255,0.04)'
+      }
+    }, body);
+  }
+  return React.createElement(StSection, { title: "LET FRIDAY DECIDE" }, body);
+}
+
 function SettingsTabProviders({
   s,
   save
@@ -35255,7 +35395,13 @@ function SettingsTabProviders({
   const rows = provs.filter(p => !['local-voice', 'nemo-local'].includes(p.type));
   const enabled = rows.filter(p => p.enabled),
     disabled = rows.filter(p => !p.enabled);
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+  const orProv = provs.filter(p => p.name === 'openrouter')[0];
+  const orReady = !!(orProv && orProv.enabled && orProv.key_source && orProv.key_source !== 'none');
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(AutoRouterControls, {
+    s: s,
+    save: save,
+    orReady: orReady
+  }), /*#__PURE__*/React.createElement(StSection, {
     title: "MODEL PROVIDERS"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -36098,7 +36244,10 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, null), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+    s: s,
+    save: save
+  }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
@@ -40345,14 +40494,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if (focusWin) body.workspace = focusWin;
       const frame = cameraOn ? cameraFrameRef.current?.primary : null;
       if (frame) body.image = frame;
-      const r = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-      const d = await r.json();
+      // A placeholder the deltas fill in, so the reply appears as it is
+      // written instead of arriving whole after a spinner.
+      setChatMsgs(p => [...p, {
+        role: 'friday',
+        text: '',
+        streaming: true,
+        time: new Date().toLocaleTimeString()
+      }]);
+      let d;
+      try {
+        d = await fridayChatTurn(body, piece => setChatMsgs(p => {
+          const q = p.slice();
+          for (let i = q.length - 1; i >= 0; i--) {
+            if (q[i].streaming) {
+              q[i] = { ...q[i], text: (q[i].text || '') + piece };
+              break;
+            }
+          }
+          return q;
+        }));
+      } finally {
+        // The placeholder is scaffolding, never the record: the real message
+        // is appended below with its model, seat and fallback chain.
+        setChatMsgs(p => p.filter(x => !x.streaming));
+      }
       // B2: seat changes detected this turn render as system lines BEFORE the
       // reply — a routing flip is never silent again.
       if (d.seat_events && d.seat_events.length) setChatMsgs(p => [...p, ...d.seat_events.map(ev => ({

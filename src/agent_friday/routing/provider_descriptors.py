@@ -363,7 +363,8 @@ SIGNUP_URLS = {
 def _mk(name, label, base_url, env_key, *, aliases=(), enabled=False,
         priority=50, discovery_parser="openai", discovery=True, models=(),
         extra_headers=None, features=None, rate_limit_style="none",
-        model_format="plain", capabilities=("tools",), max_models=0):
+        model_format="plain", capabilities=("tools",), max_models=0,
+        model_meta=None):
     d = {
         "schema_version": SCHEMA_VERSION,
         "name": name,
@@ -382,7 +383,7 @@ def _mk(name, label, base_url, env_key, *, aliases=(), enabled=False,
                       if discovery else {"mode": "static"}),
         "models": list(models),
         "model_format": model_format,
-        "model_meta": {},
+        "model_meta": dict(model_meta or {}),
         "capabilities": list(capabilities),
         "roles": ["orchestrator", "subagent"],
         "cost_per_1k": {},
@@ -409,8 +410,16 @@ BUILTIN_EXTRA_PROVIDERS = [
                        "X-Title": "Agent Friday"},
         features={"fallback_models_param": True, "usage_accounting": True,
                   "keyless_discovery": True, "aggregator": True,
+                  "streaming": True,
                   "model_suffixes": [":free", ":beta", ":nitro", ":floor",
-                                      ":thinking"]}),
+                                      ":thinking"]},
+        # The Auto Router arrives in the live catalog as a bare id among ~400
+        # others. Name it for what it is, so "let Friday decide" is findable
+        # by the person looking for it rather than by someone who already
+        # knows OpenRouter's slug.
+        model_meta={"openrouter/auto": {
+            "label": "Let Friday decide (OpenRouter Auto)",
+            "short": "Auto-route"}}),
     # ── HuggingFace Inference Providers router (T2; spec §12.2) ─────────────
     _mk("huggingface", "Hugging Face (Inference Providers)",
         "https://router.huggingface.co/v1", "HF_TOKEN",

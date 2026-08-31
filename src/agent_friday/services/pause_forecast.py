@@ -210,6 +210,50 @@ def _no_pause(why: str) -> dict:
 #  The forecasts
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _looks_local(model_id: str, arb) -> bool:
+    """Is there ANY evidence this id names a model on THIS machine?
+
+    A hosted id has nothing to load. `openrouter/auto` matched no residency
+    entry, no recorded load and no Ollama tag, so it fell through to the flat
+    30-second guess and put "openrouter/auto is not loaded, so the first reply
+    has to wait for it - about 30 seconds before any text appears" in front of
+    a cloud call that answers in one. Observed 2026-08-30 with the Auto Router
+    seated as the everyday model.
+
+    The rule this restores is the module's own: a warning with no evidence
+    under it is noise, and noise is how the warning gets clicked through on
+    the day it finally matters. No evidence of a local model, no load warning.
+    """
+    # Ask the authority the rest of the codebase asks. "Not installed" and
+    # "not local" are different claims, and an uninstalled LOCAL model is the
+    # very case this module exists for -- it warns so the first turn is not a
+    # mystery. Only a hosted id has nothing to load at all.
+    try:
+        from agent_friday.routing.model_router import provider_family
+        if provider_family(model_id) == "local":
+            return True
+    except Exception:
+        pass
+    # An id the family inference does not recognise is still local if this
+    # machine can actually show us the thing.
+    if arb is not None:
+        for e in (arb.entries or []):
+            if e.get("model_id") == model_id:
+                return True
+    if model_id in RECORDED_COLD_LOAD_S:
+        return True
+    try:
+        import json as _json
+        import urllib.request as _u
+        with _u.urlopen("http://localhost:11434/api/tags", timeout=3) as r:
+            for m in (_json.loads(r.read().decode()) or {}).get("models", []):
+                if m.get("name") == model_id:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def before_local_turn(model_id: str, *, vault: bool = False,
                       cloud_ok: bool = True) -> dict:
     """Will an ordinary local turn on this model make Friday wait?
@@ -245,6 +289,13 @@ def before_local_turn(model_id: str, *, vault: bool = False,
         return _no_pause(
             "%s answered a message %s ago, so it is warm — whatever the "
             "residency plan says about it." % (model_id, _plural(ago or 0)))
+
+    # Nothing to load if it does not live here. Checked just before the
+    # cold-load path, whose last resort is a flat 30s guess that reads as
+    # authoritative in front of a hosted model.
+    if not _looks_local(model_id, arb):
+        return _no_pause("%s is served over the network — there is no model "
+                         "to load on this machine." % model_id)
 
     seconds, basis = _load_estimate(model_id, arb)
     if seconds < WORTH_WARNING_S:
