@@ -3,7 +3,77 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.8.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.9.0**
+
+---
+
+## [5.9.0] - 2026-08-31
+
+The OS-mode sequence for Friday Linux (the sealed, portable OS image project):
+five PRs, each behind `FRIDAY_OS_MODE` so Windows behavior is unchanged, each
+merged only after its own CI matrix (windows-latest + ubuntu-latest, both
+Python versions) passed green.
+
+### Added
+
+- **`core/os_mode.py`**, a single `is_os_mode()` query point every other
+  change below reads from, instead of scattering `os.environ.get("FRIDAY_OS_MODE")`
+  checks around the codebase. Six behaviors now gate on it: the system tray
+  is skipped, logging routes to stderr in a journald-friendly format,
+  computer-control tools (mouse/keyboard/screenshot) and the clipboard tool
+  report themselves honestly unavailable with "no desktop to control in
+  kiosk mode" instead of failing opaquely, `_open_app` refuses honestly
+  instead of attempting a Windows-only launch, and voice-asset lookup checks
+  a baked-in asset directory before ever reaching out to the network.
+- **`/api/health` gains a documented boot-critical health contract**
+  (`health_schema_version`, `boot_critical_ok`, `boot_status`, `subsystems`,
+  `deployment`), additive to the existing `status`/`inference` fields these
+  responses already carried. Four subsystems are boot-critical (config,
+  credential store, memory database, HTTP serving); model seats, voice, and
+  cloud providers are explicitly not — a kiosk with no cloud key configured
+  yet is a normal state, not a boot failure. Every boot-critical check has a
+  paired test that actually forces it to fail and asserts the response
+  reflects that, not just a check that a function returns something.
+  `friday health --exit-code` exposes the same contract as a process exit
+  code, for an OS boot-health script to consume.
+- **`agent_friday.paths`**: `friday_home()`, `models_dir()`, `runtime_dir()`,
+  `voice_assets_dir()` — the previously-scattered `Path.home() / ".friday"`
+  literal, unified into one place across the 23 files that computed it
+  inline, with `FRIDAY_HOME` now an honored override everywhere those files
+  touch. (Deliberately not nested under `core/` — `agent_friday/core/__init__.py`
+  has real import-time side effects, including a legacy-directory migration
+  that touches the real home directory regardless of `FRIDAY_HOME`, and
+  nesting there would have dragged that into all 23 previously side-effect-free
+  call sites.)
+- **Career-pipeline routes now work in an installed package, not just a
+  source checkout.** `data/job_tracker_schema.py` and
+  `skills/{application_engine,job_scanner}` move into the package proper as
+  `agent_friday.seed.*`, with a first-run step copying the bundled skills
+  into the user's own skills folder. This was a real, measured defect, not
+  a theoretical one: a wheel built from the prior release 404's four of six
+  job-pipeline endpoints because they depended on a repo-root layout no
+  `pip install` ever has.
+
+### Fixed
+
+- **Credential storage now fails closed under `FRIDAY_OS_MODE`, instead of
+  silently writing plaintext or silently reporting success with nothing
+  written.** With no vault key and no DPAPI available (DPAPI is
+  Windows-only), `credential_store.protect()` and `vault_passphrase.store()`
+  now raise, and nothing touches disk. Windows-default behavior (OS mode
+  off) is unchanged — same warning, same plaintext fallthrough as before.
+  Also corrected `KNOWN_ISSUES.md` §7's stale claim that `FRIDAY_SECRET_KEY`
+  ships as a known default string — it doesn't, and never has; it's a
+  persisted random secret, though that persisted copy currently ignores
+  `FRIDAY_HOME` (a separate, smaller, documented gap).
+
+### Known gaps carried forward, not fixed here
+
+- On Linux, `vault_passphrase.store()`'s fail-closed path has nowhere
+  durable to succeed at persisting a passphrase yet: `keyring` isn't in
+  this project's Linux deployment extras, and no Secret Service provider is
+  assumed present either. Documented in `KNOWN_ISSUES.md` §7 with the three
+  concrete options for whoever picks this up next.
 
 ---
 
