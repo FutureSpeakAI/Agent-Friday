@@ -103,12 +103,11 @@ build_pyi/
 *.manifest
 # NOTE: AgentFriday.spec IS tracked on purpose — it's the build recipe.
 
-# ─── Private user data — NEVER commit (PII / minors / family-court) ───────
+# ─── Private user data — never commit ─────────────────────────────────────
 # VOICE_DEMO.md — now tracked: rewritten as product spec sheet (70% features).
 # Loaded by server.py (_load_voice_demo) into Gemini Live system prompt.
-data/coparenting-intel.json
-data/*-intel.json
-data/ofw-*.json
+# NOTE: this rule is deliberately generic. Naming the specific files here
+# would publish their names to everyone who clones this public repo.
 data/*.json
 voice_debug.log
 *voice_debug*.log

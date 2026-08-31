@@ -29,9 +29,7 @@ chroma_db/
 creations/
 self_improvement/
 
-# Co-parenting / legal / family-court exports (never in-repo)
-data/*-intel.json
-data/ofw-*.json
+# Private user data exports (never in-repo)
 data/*.json
 
 # Local startup scripts (hold API keys)
