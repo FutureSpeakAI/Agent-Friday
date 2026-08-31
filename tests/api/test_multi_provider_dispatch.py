@@ -37,8 +37,11 @@ def _capture_posts(monkeypatch):
     import requests
     posts = []
 
-    def _fake_post(url, headers=None, json=None, timeout=None):
-        posts.append({"url": url, "headers": headers or {}, "payload": json})
+    def _fake_post(url, headers=None, json=None, timeout=None, **kw):
+        # **kw absorbs `stream=True`: the transport streams by default and the
+        # double must not constrain the wire options it is not asserting on.
+        posts.append({"url": url, "headers": headers or {}, "payload": json,
+                      "stream": bool(kw.get("stream"))})
         return _FakeResp()
 
     monkeypatch.setattr(requests, "post", _fake_post)
@@ -203,7 +206,7 @@ def test_429_retry_after_honored(monkeypatch):
         def json(self):
             return {}
 
-    def _fake_post(url, headers=None, json=None, timeout=None):
+    def _fake_post(url, headers=None, json=None, timeout=None, **kw):
         calls["n"] += 1
         return _Resp429() if calls["n"] == 1 else _FakeResp()
 
