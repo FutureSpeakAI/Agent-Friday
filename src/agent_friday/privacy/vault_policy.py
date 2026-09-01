@@ -27,23 +27,36 @@ returns is the single answer to "what is this machine doing about the vault".
 
 What the flag means
 -------------------
-``vault_local_only`` is one intent -- *vault content must not leave this
-machine* -- with two enforcement points that must agree:
+``vault_local_only`` is a real switch with two honest positions, and BOTH
+enforcement points obey it:
 
-  ``True``   force vault-touching turns onto a local model, AND gate vault
-             tiers out of any cloud prompt.
-  ``False``  the owner has accepted cloud exposure. Neither is enforced.
+  ``True``  -- GATED. The vault stays on this machine. Vault tiers are stripped
+             from any cloud prompt, and vault-touching questions are routed to
+             a local model.
+  ``False`` -- UNGATED. The cloud gets full access, deliberately and knowingly.
+             No prompt gating, and no force-routing either: a vault-touching
+             question goes to the cloud with full context, like any other
+             question.
 
-The previous split meant ``False`` produced a third, undesigned posture:
-routing still protected the question while prompt assembly leaked the context.
-Nobody chose that, and nobody could see it.
+The second half of ``False`` is the part that did not exist before. The old
+code force-routed every vault-touching turn to a local model *regardless of the
+flag*, which produced a third, undesigned posture nobody chose: routing quietly
+protected the question while prompt assembly leaked the context around it. On
+the reference machine that meant "remind me what my Chase account balance was"
+was answered by ``functiongemma:270m`` -- a 270M model, which reads as a
+refusal -- while every ordinary cloud turn carried 4,486 characters of TIER_2
+context anyway. Neither half was the owner's decision, and neither was visible.
 
-**Consequence worth stating plainly:** on a machine with ``vault_local_only``
-already set to ``False``, making routing honour the flag means vault-targeted
-questions that used to land on a local model will now route to the cloud. That
-is the setting doing what it says. It is also why :func:`resolve` treats an
-ungated posture as an event worth logging every time it is resolved, and why
-``describe()`` exists for the UI to say so out loud.
+Ungated is not a degraded mode or an accident to be corrected. It is a position
+the owner is entitled to take, and the job of this module is to make it mean
+exactly what it says rather than something weaker and unreadable. It is still
+announced, because a privacy control that changes posture silently is the
+problem regardless of which posture it lands on.
+
+NOTE that the egress gate (`services/egress_gate.seal_outbound`) is a SEPARATE
+mechanism and is not governed by this flag. It keeps classifying and redacting
+outbound fields whatever this resolves to, so "full access" is full with
+respect to *this* gate, not with respect to the whole pipeline.
 
 Fail-safe direction
 -------------------
@@ -110,13 +123,17 @@ class VaultPolicy(NamedTuple):
             return ("Vault gating ACTIVE: vault-touching turns are pinned to a "
                     "local model and vault tiers are stripped from cloud prompts "
                     f"(cloud fallback: {self.cloud_fallback}).")
-        how = ("explicitly set to false" if self.explicit
-               else f"defaulted open by {self.source}")
-        return ("Vault gating OFF: model_routing.vault_local_only is " + how +
-                ". Vault-tier context is NOT stripped from cloud prompts and "
-                "vault-touching turns are NOT pinned to a local model. Only the "
-                "egress gate is still checking. Set it to true to restore "
-                "gating.")
+        if self.explicit:
+            return ("Vault UNGATED by choice: model_routing.vault_local_only is "
+                    "false, so the cloud gets full access -- vault-tier context "
+                    "is sent whole and vault-touching questions route normally "
+                    "instead of being pinned to a local model. The egress gate "
+                    "is a separate mechanism and still redacts on the way out. "
+                    "Set vault_local_only true to keep the vault local.")
+        return ("Vault gating OFF and NOBODY CHOSE IT: vault_local_only was "
+                f"defaulted open by {self.source}. Vault-tier context is not "
+                "stripped from cloud prompts and vault-touching turns are not "
+                "pinned to a local model. Set it explicitly either way.")
 
 
 def _coerce_fallback(raw: Any) -> str:

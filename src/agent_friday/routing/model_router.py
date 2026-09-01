@@ -494,12 +494,13 @@ class ModelRouter:
         # whether the vault protected anything. Both were right about the half
         # they looked at. See privacy/vault_policy for the account.
         #
-        # NOTE the consequence, because it is a real posture change and not a
-        # tidy-up: on a machine where the owner has already set
-        # `vault_local_only: false`, vault-targeted turns that used to land on
-        # a local model by accident now route to the cloud. That is the setting
-        # doing what its name says. The alternative -- keeping a protection the
-        # setting disclaims -- is what made the posture unreadable.
+        # UNGATED MEANS UNGATED. When the owner sets `vault_local_only: false`
+        # they are asking for the cloud to have full access, so a vault-touching
+        # question routes like any other question -- it is NOT pinned to a local
+        # model. That is the point of the switch, not a side effect of fixing it.
+        # Force-routing a question the owner has explicitly declassified is how
+        # "remind me what my Chase account balance was" ended up answered by a
+        # 270M model while the context around it went to the cloud anyway.
         from agent_friday.privacy import vault_policy as _vp
         policy = _vp.resolve(self.config)
 
