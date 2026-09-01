@@ -460,6 +460,27 @@ class ModelRouter:
         # Verified 2026-08-16 with the daemon stopped: this route returned
         # "Vault access required but no local model — cloud with redaction"
         # while gemma4:12b and gemma4:e2b were resident and answering.
+        # ── The single resolver ─────────────────────────────────────────────
+        # This method used to force-route EVERY vault-touching turn to a local
+        # model without ever reading `vault_local_only`, while the prompt-
+        # assembly path read the same setting and honoured it. One flag, two
+        # enforcement points, two different answers -- and on 2026-09-01 two
+        # sessions probing the same server reached opposite conclusions about
+        # whether the vault protected anything. Both were right about the half
+        # they looked at. See privacy/vault_policy for the account.
+        #
+        # NOTE the consequence, because it is a real posture change and not a
+        # tidy-up: on a machine where the owner has already set
+        # `vault_local_only: false`, vault-targeted turns that used to land on
+        # a local model by accident now route to the cloud. That is the setting
+        # doing what its name says. The alternative -- keeping a protection the
+        # setting disclaims -- is what made the posture unreadable.
+        from agent_friday.privacy import vault_policy as _vp
+        policy = _vp.resolve(self.config)
+
+        if not policy.force_local_routing:
+            return None  # caller falls through to normal routing
+
         models = self._local_candidates()
 
         if models:
@@ -477,7 +498,7 @@ class ModelRouter:
             "No model is available in Friday's own store and the Ollama "
             "daemon is not reachable either."
         )
-        fallback = self.config.get("vault_cloud_fallback", "redact")
+        fallback = policy.cloud_fallback
         if fallback in ("deny", "warn"):
             return self._finalize({
                 "provider": "cloud",
@@ -501,14 +522,27 @@ class ModelRouter:
         flags added by `_finalize` (is_local, vault_allowed, scrub_pii,
         vault_access, refuse, warning).
 
-        Vault detection runs first and takes precedence over the routing mode —
-        even in cloud_only mode a vault request is force-routed local or refused,
-        so vault data never reaches the cloud.
+        Vault detection runs first and takes precedence over the routing mode:
+        when `model_routing.vault_local_only` is on (the default), a vault
+        request is force-routed local or refused even in cloud_only mode, so
+        vault data never reaches the cloud.
+
+        When the owner has explicitly set `vault_local_only: false`, that claim
+        does NOT hold and this docstring must not pretend otherwise -- vault
+        turns route normally and only the egress gate is still checking. The
+        posture is resolved in privacy/vault_policy and reported by
+        `vault_policy.status()`.
         """
         ctx = task_context or {}
 
         if self.needs_vault_access(messages, ctx):
-            return self._route_vault(ctx)
+            # `_route_vault` returns None when the owner has disabled vault
+            # gating, meaning "I have no special claim on this turn" -- so it
+            # falls through to normal routing rather than silently pinning a
+            # protection the setting disclaims.
+            vault_route = self._route_vault(ctx)
+            if vault_route is not None:
+                return vault_route
 
         result = self._apply_cloud_provider(self._route_basic(messages, ctx), ctx)
         # Say which seat won and why. Three sessions have now debugged "the
