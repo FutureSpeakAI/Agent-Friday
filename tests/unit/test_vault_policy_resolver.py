@@ -66,8 +66,8 @@ def test_ungated_posture_is_logged(caplog):
     vault_policy.reset_announcements()
     with caplog.at_level(logging.WARNING, logger="friday.vault"):
         vault_policy.resolve({"vault_local_only": False})
-    assert any("Vault gating OFF" in r.message or "Vault gating OFF" in r.getMessage()
-               for r in caplog.records), "turning the gate off must be announced"
+    assert any("UNGATED" in r.getMessage() or "gating OFF" in r.getMessage()
+               for r in caplog.records), "leaving the gate open must be announced"
 
 
 def test_gated_posture_is_not_noisy(caplog):
@@ -84,7 +84,8 @@ def test_announcement_is_rate_capped(caplog):
     with caplog.at_level(logging.WARNING, logger="friday.vault"):
         for _ in range(200):
             vault_policy.resolve({"vault_local_only": False})
-    warnings = [r for r in caplog.records if "Vault gating OFF" in r.getMessage()]
+    warnings = [r for r in caplog.records
+                if "UNGATED" in r.getMessage() or "gating OFF" in r.getMessage()]
     assert len(warnings) == 1, f"expected 1 announcement, got {len(warnings)}"
 
 
@@ -174,3 +175,87 @@ def test_vault_fallback_comes_from_the_resolver(monkeypatch):
     router._local_candidates = lambda: []          # no local model anywhere
     decision = router._route_vault({}) or {}
     assert decision.get("refuse") is True, "fallback=deny must refuse, not redact"
+
+
+# ── the switch, proved in both directions ───────────────────────────────────
+#
+# Stephen's stated intent, 2026-09-01: "I want them going to the cloud if
+# ungated. Ungated means cloud has full access." So the flag is a real switch
+# with two honest positions, and each one is asserted end to end here: what the
+# router does with a vault-touching question, AND what the prompt builder does
+# with vault-tier context.
+
+VAULT_Q = "remind me what my Chase account balance was"
+
+
+def _route(cfg):
+    from agent_friday.routing.model_router import ModelRouter
+    r = ModelRouter(cfg)
+    r._local_candidates = lambda: [{"name": "gemma4:12b", "size_gb": 7.0}]
+    # Force the non-vault path to prefer cloud so "routes normally" is
+    # observable: with mode=cloud_only an ungated vault turn must land on cloud.
+    return r.route([{"role": "user", "content": VAULT_Q}], {}) or {}
+
+
+def test_gated_routes_a_vault_question_to_a_local_model():
+    d = _route({"mode": "cloud_only", "vault_local_only": True})
+    assert d.get("vault_access") is True, "the vault mechanism must claim the turn"
+    assert d.get("is_local") is True
+    assert d.get("provider") == "local"
+    # Even in cloud_only. That is the whole point of the gated position.
+
+
+def test_ungated_sends_a_vault_question_to_the_cloud():
+    """Ungated means ungated: no force-routing, cloud gets the question."""
+    d = _route({"mode": "cloud_only", "vault_local_only": False})
+    assert d.get("vault_access") is not True, (
+        "an ungated vault turn must NOT be claimed by the vault mechanism")
+    assert d.get("provider") == "cloud", (
+        "ungated + cloud_only must route the vault question to the cloud, not "
+        "pin it to a 270M local model")
+    assert d.get("is_local") is False
+
+
+def test_gated_withholds_vault_context_from_a_cloud_prompt():
+    from agent_friday.privacy.vault_access import VaultAccessControl, Tier
+    ac = VaultAccessControl(log_path=None)
+    secret = "Stephen's Chase checking balance is $12,345.67."
+    assert ac.classify(secret) == Tier.SENSITIVE
+    assert ac.gate_content(secret, "cloud", fallback="redact") == ""
+    assert ac.gate_content(secret, "local", fallback="redact") == secret
+
+
+def test_ungated_passes_vault_context_through(monkeypatch):
+    """The prompt builder must receive no gate at all when ungated."""
+    from agent_friday.services import model_router as svc
+    monkeypatch.setattr(svc, "_load_settings", lambda: {
+        "model_routing": {"mode": "cloud_only", "vault_local_only": False}})
+    assert svc._gated_vault_control() is None, (
+        "ungated must assemble the cloud prompt with full vault context")
+
+
+def test_gated_installs_a_real_gate(monkeypatch):
+    from agent_friday.services import model_router as svc
+    monkeypatch.setattr(svc, "_load_settings", lambda: {
+        "model_routing": {"mode": "cloud_only", "vault_local_only": True}})
+    assert svc._gated_vault_control() is not None
+
+
+def test_ungated_is_announced_as_a_choice_not_a_fault():
+    """An owner who chose this should not be told the machine is broken."""
+    text = vault_policy.resolve({"vault_local_only": False},
+                                announce=False).describe()
+    assert "by choice" in text.lower()
+    assert "full access" in text.lower()
+    # and it must still name the separate mechanism that keeps redacting
+    assert "egress" in text.lower()
+
+
+def test_defaulted_open_reads_differently_from_chosen_open():
+    """`false` by omission is not the same event as `false` by decision."""
+    chosen = vault_policy.resolve({"vault_local_only": False},
+                                  announce=False).describe()
+    # An absent key defaults to GATED, so construct the un-chosen open case.
+    p = vault_policy.VaultPolicy(False, "redact", "default", False)
+    assert "NOBODY CHOSE IT" in p.describe()
+    assert "NOBODY CHOSE IT" not in chosen
