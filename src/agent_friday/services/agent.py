@@ -3726,7 +3726,29 @@ def _cc_check():
     if _CC_KILL.is_set():
         return False, "Kill switch is active. Computer control suspended — re-enable in Settings."
     if not _CC_PERMISSION.is_set():
-        return False, "Computer control permission not granted. Enable it in Settings > Computer Control."
+        # TWO gates, and only one of them has ever been the problem in practice.
+        #
+        # `computer_control_enabled` is the persisted setting; _CC_PERMISSION is
+        # the per-session grant, deliberately cleared on every launch (see the
+        # unlink above). Reporting "enable it in Settings" for a missing GRANT
+        # tells a user whose toggle is already on to go turn on the thing that
+        # is already on — which is exactly the loop this message created. Name
+        # the gate that is actually shut.
+        try:
+            _enabled = bool(_load_settings().get('computer_control_enabled', False))
+        except Exception:
+            _enabled = False
+        if not _enabled:
+            return False, (
+                "Computer control is turned off. Turn on Settings \u2192 Privacy & "
+                "Security \u2192 Computer Control, then press \"Grant for this "
+                "session\"."
+            )
+        return False, (
+            "Computer control is enabled, but not granted for this session. The "
+            "grant is cleared on every restart \u2014 open Settings \u2192 Privacy & "
+            "Security \u2192 Computer Control and press \"Grant for this session\"."
+        )
     return True, None
 
 
