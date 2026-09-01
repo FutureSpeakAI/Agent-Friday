@@ -177,7 +177,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 import uuid
@@ -188,14 +187,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from agent_friday.core import _load_settings
+from agent_friday.paths import friday_home
 from agent_friday.services import approvals
 from agent_friday.services import qa_gates
 
 _log = logging.getLogger("friday.goals")
 
-_HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
-FRIDAY_DIR = _HOME / ".friday"
+# Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
+# module along with everything else (see agent_friday/paths.py).
+FRIDAY_DIR = friday_home()
 GOALS_DIR = FRIDAY_DIR / "goals"
 REVIEWS_DIR = GOALS_DIR / "reviews"
 GOVERNANCE_DIR = FRIDAY_DIR / "governance"

@@ -17,15 +17,13 @@ Priority levels:
 from __future__ import annotations
 
 import json
-import os
 import threading
 import uuid
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
+from agent_friday.paths import friday_home
 
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+FRIDAY_DIR = friday_home()
 FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
 NOTIF_FILE = FRIDAY_DIR / "notifications.json"
 TRIGGER_STATE_FILE = FRIDAY_DIR / "notif_trigger_state.json"

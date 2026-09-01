@@ -19,6 +19,7 @@ import sqlite3
 import time
 
 from flask import Blueprint, jsonify
+from agent_friday.paths import friday_home
 
 intelligence_bp = Blueprint("intelligence", __name__)
 
@@ -249,7 +250,7 @@ def _costs_rollup():
     builds: a provider that is configured but has never served anything says
     so, instead of looking identical to one doing all the work.
     """
-    path = os.path.expanduser("~/.friday/costs.db")
+    path = str(friday_home() / "costs.db")
     out = {"providers": {}, "models": {}, "serving": None}
     if not os.path.exists(path):
         return out
