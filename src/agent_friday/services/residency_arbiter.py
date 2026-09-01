@@ -1090,7 +1090,8 @@ class Arbiter:
         golden fixtures keep meaning something.
         """
         from agent_friday.services import context_budget
-        hwp.refresh_display_reserve(self.profile)
+        hwp.refresh_display_reserve(
+            self.profile, ours_resident_mib=self._ours_resident_mib())
         _cloud = ()
         try:
             from agent_friday.core import _load_settings as _ls
@@ -1116,7 +1117,8 @@ class Arbiter:
         Never refuses. Returns `fits`, the overflow, and what would have to give.
         """
         with self._lock:
-            hwp.refresh_display_reserve(self.profile)
+            hwp.refresh_display_reserve(
+            self.profile, ours_resident_mib=self._ours_resident_mib())
             from agent_friday.services import context_budget
             return rp.preview_assignment(
                 assignments or {}, self.entries, self.profile,
@@ -1578,6 +1580,31 @@ class Arbiter:
             pass
 
     # ── introspection ───────────────────────────────────────────────────────
+
+    def _ours_resident_mib(self) -> int:
+        """VRAM this process knows it is holding, for the display-reserve probe.
+
+        `refresh_display_reserve` falls back to the card's own `memory.used`
+        when the WDDM counter is unusable, and `memory.used` counts our seats
+        too. Handing it this number keeps it from double-counting them and
+        refusing every placement -- the exact failure the `vram_baseline_mib`
+        comment in hardware_profile.detect_gpus warns about.
+        """
+        total = 0
+        try:
+            for mib in (self.ollama.resident() or {}).values():
+                if isinstance(mib, (int, float)) and mib > 0:
+                    total += int(mib)
+        except Exception:
+            pass
+        try:
+            for proc in getattr(self.llama, "procs", {}).values() or {}:
+                mib = (proc or {}).get("vram_mib") if isinstance(proc, dict) else None
+                if isinstance(mib, (int, float)) and mib > 0:
+                    total += int(mib)
+        except Exception:
+            pass
+        return total
 
     def status(self):
         return {

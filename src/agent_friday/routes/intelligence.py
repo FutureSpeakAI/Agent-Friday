@@ -366,6 +366,26 @@ def _wake_estimate_s(size_bytes: int) -> int | None:
     return max(1, int(round((size_bytes / 1e9) / _GB_PER_SEC)))
 
 
+#: What every routing mode does and does not govern. Surfaced next to the mode
+#: picker so "Cloud only" cannot be read as a claim about embeddings, which it
+#: never was: `conversation_memory.EMBED_MODEL` is a module constant pinned to
+#: all-MiniLM-L6-v2 and runs in-process on CPU, consulting no routing setting.
+def _vault_policy_status():
+    """Resolved vault posture for the Intelligence panel. Never raises."""
+    try:
+        from agent_friday.privacy import vault_policy
+        return vault_policy.status()
+    except Exception as exc:
+        return {"gated": None, "degraded": None,
+                "summary": "Vault posture could not be resolved: %s" % exc}
+
+
+_MODE_SCOPE_NOTE = (
+    "Governs chat, voice and agent turns. Embeddings are always computed "
+    "locally on this machine (all-MiniLM-L6-v2, on CPU) and never leave it in "
+    "any mode. Vault gating is a separate setting."
+)
+
 @intelligence_bp.route("/api/intelligence")
 def api_intelligence():
     from agent_friday.services.model_catalog import build_catalog
@@ -648,19 +668,39 @@ def api_intelligence():
         "serving": costs["serving"],
         "residency_help": RESIDENCY_HELP,
         "routing_mode": routing_mode,
+        # The vault posture, stated where a user can see it. A privacy control
+        # that disables itself silently is worse than one that is absent; this
+        # is the surface that makes `vault_local_only: false` visible without
+        # reading the logs. `degraded` is true when gating is off.
+        "vault_policy": _vault_policy_status(),
         "routing_modes": [
+            # ── Label honesty ────────────────────────────────────────────
+            # These four strings are the only description of the privacy
+            # posture most users will ever read, and every one of them
+            # described CHAT ROUTING ONLY while implying total coverage.
+            # Embeddings never consult this setting at all: EMBED_MODEL is a
+            # module constant pinned to all-MiniLM-L6-v2, running in-process on
+            # CPU. That is a defensible design -- local embeddings are what a
+            # sovereignty posture wants -- but "Cloud only" silently not
+            # covering them is a promise problem whichever behaviour is right.
+            # Say what each mode governs, and what it does not.
             {"id": "local_only", "label": "Local only",
              "help": "Never leaves the machine. If a local model cannot answer, "
-                     "I say so rather than using the cloud."},
+                     "I say so rather than using the cloud.",
+             "covers": _MODE_SCOPE_NOTE},
             {"id": "local_preferred", "label": "Local preferred",
              "help": "Try local first, fall back to the cloud when local is "
-                     "busy or unavailable."},
+                     "busy or unavailable.",
+             "covers": _MODE_SCOPE_NOTE},
             {"id": "smart", "label": "Smart",
              "help": "Choose per task: local for routine work, cloud when it "
-                     "will clearly be better."},
+                     "will clearly be better.",
+             "covers": _MODE_SCOPE_NOTE},
             {"id": "cloud_only", "label": "Cloud only",
-             "help": "Always use a cloud model. Fastest, costs money, and every "
-                     "turn leaves the machine."},
+             "help": "Always use a cloud model for chat. Fastest, costs money, "
+                     "and every chat turn leaves the machine. Embeddings still "
+                     "run locally on this machine -- see below.",
+             "covers": _MODE_SCOPE_NOTE},
         ],
         "roles": roles,
         "models": models,
