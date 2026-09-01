@@ -85,7 +85,7 @@
       "num_ctx": 2048,
       "offload": {},
       "role": "embedder",
-      "status": "resident",
+      "status": "on-demand",
       "vram_mib": 0
     },
     "function_manager": null,
