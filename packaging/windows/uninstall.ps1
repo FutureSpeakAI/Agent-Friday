@@ -91,8 +91,13 @@ $LogDir = Join-Path $env:TEMP 'AgentFriday-uninstall'
 Initialize-Log (Join-Path $LogDir ("uninstall-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss')))
 Write-Log "Install root: $InstallRoot"
 
+# FRIDAY_HOME IS the state directory, not its parent - matching
+# agent_friday.paths.friday_home(), which every module now resolves through.
+# This used to append '.friday' to it, so an uninstall under FRIDAY_HOME
+# targeted a directory Friday never wrote to: it left the real state behind
+# and removed whatever happened to sit at that path instead.
 $FridayDir   = Join-Path $env:USERPROFILE '.friday'
-if ($env:FRIDAY_HOME) { $FridayDir = Join-Path $env:FRIDAY_HOME '.friday' }
+if ($env:FRIDAY_HOME) { $FridayDir = $env:FRIDAY_HOME }
 
 $manifest = $null
 $manifestPath = Join-Path $InstallRoot 'install-manifest.json'
