@@ -7602,6 +7602,42 @@ function StSection({title,children}){
     {children}
   </div>;
 }
+function CcGrantPanel({enabled}){
+  const [st,setSt]=useState({available:null,granted:false,killed:false});
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState('');
+  const poll=useCallback(()=>{fetch('/api/control/permission').then(r=>r.json()).then(d=>setSt({available:!!d.available,granted:!!d.granted,killed:!!d.killed})).catch(()=>{})},[]);
+  useEffect(()=>{poll();const iv=setInterval(poll,4000);return()=>clearInterval(iv)},[poll]);
+  const act=async(action)=>{
+    setBusy(true);setErr('');
+    try{
+      const r=await apiFetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+      const d=await r.json();
+      if(!r.ok||d.error)setErr(String(d.error||'Request failed'));
+      else setSt(s0=>({...s0,granted:!!d.granted,killed:!!d.killed}));
+    }catch(e){setErr('Could not reach the server.')}
+    setBusy(false);poll();
+  };
+  const Line=({ok,label,detail})=><div style={{display:'flex',alignItems:'flex-start',marginBottom:6}}>
+    <span style={{display:'inline-block',width:7,height:7,borderRadius:'50%',flexShrink:0,marginTop:5,marginRight:9,background:ok===null?'rgba(255,255,255,0.22)':(ok?'#00ff80':'#ff6b8a'),boxShadow:ok?'0 0 6px rgba(0,255,128,0.55)':'none'}}/>
+    <div>
+      <div style={{fontSize:12,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono'}}>{label}</div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.38)',marginTop:1,lineHeight:1.5}}>{detail}</div>
+    </div>
+  </div>;
+  const ready=st.available&&enabled;
+  return <div style={{marginTop:10,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+    <Line ok={st.available===null?null:st.available} label="Installed" detail={st.available===false?'pyautogui is not installed — run: pip install pyautogui':st.available===null?'checking…':'pyautogui is available on this machine.'}/>
+    <Line ok={enabled} label="Enabled in Settings" detail={enabled?'The toggle above is on.':'Turn the toggle above on first.'}/>
+    <Line ok={st.granted} label="Session grant" detail={st.granted?'Held. Friday can control this computer until the server restarts.':'Not held. The grant is per-session and is cleared on every restart — press Grant below to give it for this session.'}/>
+    {st.killed&&<div style={{fontSize:11,color:'#ffb347',marginBottom:8,lineHeight:1.5}}>⚠ The kill switch was used. Granting again clears it.</div>}
+    <div style={{display:'flex',gap:6,marginTop:10}}>
+      <button className={`settings-btn ${st.granted?'':'active'}`} disabled={busy||!ready||st.granted} style={{fontSize:12,opacity:(!ready||st.granted)?0.45:1}} onClick={()=>act('grant')}>{busy?'…':'Grant for this session'}</button>
+      <button className="settings-btn" disabled={busy||!st.granted} style={{fontSize:12,opacity:st.granted?1:0.45}} onClick={()=>act('revoke')}>Revoke</button>
+    </div>
+    {err&&<div style={{fontSize:11,color:'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono',lineHeight:1.5}}>{err}</div>}
+  </div>;
+}
 function SettingsTabGeneral({s,save}){
   return <div>
     <StSection title="IDENTITY">
@@ -8142,6 +8178,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="COMPUTER CONTROL">
       <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Permission revokes on every restart.</div>
       <StToggle label="Enable Computer Control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
+      <CcGrantPanel enabled={!!s.computer_control_enabled}/>
     </StSection>
   </div>;
 }
@@ -10834,6 +10871,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
               onMouseLeave={e=>{e.currentTarget.style.background='transparent'}}>
               Reset to auto (evolution)
             </button>
+            <div style={{borderTop:'1px solid rgba(255,255,255,0.06)',margin:'4px 0'}}/>
+            <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Camera Tracking</div>
+            {[{k:'holo',label:'Face Tracking',hint:'Parallax \u2014 the scene moves with your head',fn:'toggleHologram'},
+              {k:'hands',label:'Minority Report',hint:'Pinch to click, hold to right-click',fn:'toggleHands'}].map(t=>(
+              <button key={t.k} onClick={()=>{window.fridayVibe?.[t.fn]?.();setTimeout(()=>setSceneState(v=>({...v,holo:window.fridayVibe?.isHologramOn?.()??v.holo,hands:window.fridayVibe?.isHandsOn?.()??v.hands})),120)}}
+                style={{display:'flex',width:'100%',alignItems:'center',justifyContent:'space-between',gap:8,textAlign:'left',background:sceneState[t.k]?'rgba(0,212,255,0.12)':'transparent',border:'none',borderLeft:sceneState[t.k]?'2px solid rgba(0,212,255,0.7)':'2px solid transparent',padding:'7px 12px',cursor:'pointer',color:sceneState[t.k]?'#00d4ff':'rgba(255,255,255,0.72)',fontFamily:'JetBrains Mono',fontSize:11,letterSpacing:'.03em'}}
+                onMouseEnter={e=>{if(!sceneState[t.k])e.currentTarget.style.background='rgba(255,255,255,0.06)'}}
+                onMouseLeave={e=>{if(!sceneState[t.k])e.currentTarget.style.background='transparent'}}>
+                <span>{t.label}<span style={{display:'block',opacity:0.4,fontSize:9,fontFamily:'Inter',marginTop:2}}>{t.hint}</span></span>
+                <span style={{flexShrink:0,fontSize:9,opacity:0.85}}>{sceneState[t.k]?'ON':'OFF'}</span>
+              </button>
+            ))}
+            <div style={{padding:'2px 12px 6px',fontSize:9,color:'rgba(255,255,255,0.3)',fontFamily:'Inter',lineHeight:1.5}}>Uses your webcam. First use loads MediaPipe from a CDN, so it needs internet.</div>
           </div>}
         </div>
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
