@@ -431,8 +431,33 @@ class ModelRouter:
                 self.config.get("ollama_url", "http://localhost:11434"))
             have = {m["name"] for m in models}
             if ollama.is_available():
-                models += [m for m in ollama.list_models()
-                           if m.get("name") not in have]
+                # GENERATION candidates only. The model_store branch above
+                # filters on `can_generate`; this one did not, so every
+                # embedding model the daemon had installed was offered as a
+                # chat candidate -- and the selector's last resort is "largest
+                # artifact wins". Measured 2026-09-01 on the reference box:
+                # restoring `vault_local_only` routed vault turns to
+                # `embeddinggemma:300m` (0.60 GB) over `functiongemma:270m`
+                # (0.30 GB), i.e. the one candidate that cannot answer.
+                # residency_catalog.can_generate reads the daemon's own
+                # capabilities and assumes generation when they are unknown,
+                # so this narrows nothing it cannot prove.
+                try:
+                    from agent_friday.services import residency_catalog as _rc
+                    _can = _rc.can_generate
+                except Exception:
+                    def _can(_mid):
+                        return True
+                for m in ollama.list_models():
+                    name = m.get("name")
+                    if not name or name in have:
+                        continue
+                    try:
+                        if not _can(name):
+                            continue
+                    except Exception:
+                        pass
+                    models.append(m)
         except Exception:
             pass
         return models
