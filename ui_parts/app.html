@@ -7629,7 +7629,7 @@ function CcGrantPanel({enabled}){
   return <div style={{marginTop:10,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)'}}>
     <Line ok={st.available===null?null:st.available} label="Installed" detail={st.available===false?'pyautogui is not installed — run: pip install pyautogui':st.available===null?'checking…':'pyautogui is available on this machine.'}/>
     <Line ok={enabled} label="Enabled in Settings" detail={enabled?'The toggle above is on.':'Turn the toggle above on first.'}/>
-    <Line ok={st.granted} label="Session grant" detail={st.granted?'Held. Friday can control this computer until the server restarts.':'Not held. The grant is per-session and is cleared on every restart — press Grant below to give it for this session.'}/>
+    <Line ok={st.granted} label="Session grant" detail={st.granted?'Held. Friday can control this computer. This grant persists across restarts until revoked.':'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'}/>
     {st.killed&&<div style={{fontSize:11,color:'#ffb347',marginBottom:8,lineHeight:1.5}}>⚠ The kill switch was used. Granting again clears it.</div>}
     <div style={{display:'flex',gap:6,marginTop:10}}>
       <button className={`settings-btn ${st.granted?'':'active'}`} disabled={busy||!ready||st.granted} style={{fontSize:12,opacity:(!ready||st.granted)?0.45:1}} onClick={()=>act('grant')}>{busy?'…':'Grant for this session'}</button>
@@ -8176,7 +8176,7 @@ function SettingsTabPrivacy({s,save}){
       <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
     </StSection>
     <StSection title="COMPUTER CONTROL">
-      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Permission revokes on every restart.</div>
+      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Once granted, permission persists across restarts until you revoke it.</div>
       <StToggle label="Enable Computer Control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
       <CcGrantPanel enabled={!!s.computer_control_enabled}/>
     </StSection>

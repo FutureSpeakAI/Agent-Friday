@@ -31401,7 +31401,7 @@ function CcGrantPanel({
   }), /*#__PURE__*/React.createElement(Line, {
     ok: st.granted,
     label: "Session grant",
-    detail: st.granted ? 'Held. Friday can control this computer until the server restarts.' : 'Not held. The grant is per-session and is cleared on every restart \u2014 press Grant below to give it for this session.'
+    detail: st.granted ? 'Held. Friday can control this computer. This grant persists across restarts until revoked.' : 'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'
   }), st.killed && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -34193,7 +34193,7 @@ function SettingsTabPrivacy({
       marginBottom: 10,
       lineHeight: 1.6
     }
-  }, "High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Permission revokes on every restart."), /*#__PURE__*/React.createElement(StToggle, {
+  }, "High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Once granted, permission persists across restarts until you revoke it."), /*#__PURE__*/React.createElement(StToggle, {
     label: "Enable Computer Control",
     value: !!s.computer_control_enabled,
     onChange: () => save({
