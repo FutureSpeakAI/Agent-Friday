@@ -66,18 +66,18 @@ import hashlib
 import hmac as _hmac
 import json
 import logging
-import os
 import re
 import threading
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
+from agent_friday.paths import friday_home
 
 _log = logging.getLogger("friday.dissent_gate")
 
-_HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
-FRIDAY_DIR = _HOME / ".friday"
+# Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
+# module along with everything else (see agent_friday/paths.py).
+FRIDAY_DIR = friday_home()
 EVENTS_PATH = FRIDAY_DIR / "governance" / "dissent_events.jsonl"
 
 _LOCK = threading.Lock()

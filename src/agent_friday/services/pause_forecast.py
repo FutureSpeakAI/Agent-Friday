@@ -38,6 +38,7 @@ and the difference belongs in the warning rather than in a comment here.
 from __future__ import annotations
 
 import time
+from agent_friday.paths import friday_home
 
 # How long a pause has to be before it is worth interrupting someone about.
 # Below this it reads as ordinary latency, and a warning would be noise.
@@ -125,7 +126,7 @@ def _served_recently(model_id: str, within_s: float = 900.0):
     """
     import os
     import sqlite3
-    path = os.path.expanduser("~/.friday/costs.db")
+    path = str(friday_home() / "costs.db")
     if not model_id or not os.path.exists(path):
         return False, None
     try:

@@ -51,9 +51,9 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from agent_friday.paths import friday_home
 
-HOME = Path(os.path.expanduser("~"))
-BASE_DIR = HOME / ".friday" / "behavioral_monitor"
+BASE_DIR = friday_home() / "behavioral_monitor"
 TRACES_PATH = BASE_DIR / "traces.jsonl"
 AUDIT_PATH = BASE_DIR / "audit.jsonl"
 LATEST_REPORT_PATH = BASE_DIR / "latest_report.json"

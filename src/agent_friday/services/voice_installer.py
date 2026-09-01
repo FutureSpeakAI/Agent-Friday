@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+from agent_friday.paths import friday_home
 
 # Ordered pip stages per target. Each stage is a list of pip args (after
 # `python -m pip`). Sizes are pre-flight disk requirements in GB.
@@ -55,8 +56,7 @@ _TORCHAUDIO_PIN = os.environ.get("FRIDAY_TORCHAUDIO_PIN", "2.11.0+cu126")
 #: install that half-failed left literally no record of what pip said. The only
 #: way to reconstruct 2026-08-24 was reading dist-info timestamps.
 def _log_path():
-    from pathlib import Path
-    p = Path(os.path.expanduser("~")) / ".friday" / "voice-install.log"
+    p = friday_home() / "voice-install.log"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 

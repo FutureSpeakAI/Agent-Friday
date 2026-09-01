@@ -38,11 +38,11 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+from agent_friday.paths import friday_home
 
 _log = logging.getLogger("friday.boot_guard")
 
-HOME = Path(os.path.expanduser("~"))
-STATE_DIR = HOME / ".friday" / "boot_guard"
+STATE_DIR = friday_home() / "boot_guard"
 ATTEMPT_FILE = STATE_DIR / "boot_attempt.json"
 KNOWN_GOOD = STATE_DIR / "known_good"
 NOTES_FILE = STATE_DIR / "rollback_notes.jsonl"
@@ -223,8 +223,8 @@ def restore_known_good() -> dict:
 
 def _self_editable_paths() -> list:
     """What a self-edit or a liquid-UI change is allowed to touch."""
-    return [HOME / ".friday" / "workspace_studio",
-            HOME / ".friday" / "settings.json"]
+    return [friday_home() / "workspace_studio",
+            friday_home() / "settings.json"]
 
 
 # ── gates ───────────────────────────────────────────────────────────────────
