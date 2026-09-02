@@ -43,6 +43,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -367,7 +368,62 @@ def effective_baseline_mib(gpu: dict, os_family: str) -> int:
     return floor
 
 
-def refresh_display_reserve(profile: dict) -> dict:
+#: The rejection log fires once per sampling cycle, and the arbiter samples
+#: every minute. On 2026-09-01 that produced 1,038 identical ERROR lines in one
+#: day -- the single largest source of noise in the log, drowning the egress
+#: gate's TIER_3 redactions, which are the lines that actually matter. Rate-cap
+#: it: say it immediately, then at most once every _REJECTION_LOG_INTERVAL_S,
+#: and say how many were suppressed so the frequency is still recoverable.
+_REJECTION_LOG_INTERVAL_S = 3600.0
+_REJECTION_LOG_STATE: dict = {}
+_REJECTION_LOG_LOCK = threading.Lock()
+
+
+def _log_rejection(msg, idx, *args):
+    """ERROR on first sight per GPU, then at most hourly, with a suppressed count."""
+    now = time.time()
+    with _REJECTION_LOG_LOCK:
+        last, suppressed = _REJECTION_LOG_STATE.get(idx, (0.0, 0))
+        if last and (now - last) < _REJECTION_LOG_INTERVAL_S:
+            _REJECTION_LOG_STATE[idx] = (last, suppressed + 1)
+            return
+        _REJECTION_LOG_STATE[idx] = (now, 0)
+    if suppressed:
+        msg += " (%d identical reading%s suppressed since the last report)" % (
+            suppressed, "" if suppressed == 1 else "s")
+    _log.error(msg, idx, *args)
+
+
+def _foreign_occupancy_mib(gpu: dict, ours_resident_mib: int = 0):
+    """VRAM held on this card by tenants that are NOT us, or None.
+
+    `memory.used` minus what we know we have resident. Everything left is
+    somebody else's -- another CUDA process, a training run, a second Friday.
+    The arbiter must not plan into it.
+
+    Returns None when the card cannot be read, which leaves the caller on its
+    previous behaviour: this is strictly additive, no platform is worse off
+    than before it existed.
+    """
+    try:
+        idx = gpu.get("index")
+        total = gpu.get("vram_total_mib")
+        live = next((g for g in detect_gpus() if g.get("index") == idx), None)
+        if not live:
+            return None
+        used = live.get("vram_used_mib")
+        if not isinstance(used, int) or used < 0:
+            return None
+        # A device-level figure that exceeds the card is not usable either.
+        if isinstance(total, int) and total > 0 and used > total:
+            return None
+        foreign = used - max(0, int(ours_resident_mib or 0))
+        return max(0, foreign)
+    except Exception:
+        return None
+
+
+def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dict:
     """Sample what the desktop is holding NOW and write it into the profile.
 
     The arbiter calls this before it plans, so the plan plans against the
@@ -430,15 +486,42 @@ def refresh_display_reserve(profile: dict) -> dict:
             }
             _DISPLAY_REJECTIONS[idx] = rejection
             g["vram_display_reserve_rejected"] = rejection
-            _log.error(
+
+            # ── Do not fall back to a STALE IDLE FLOOR ───────────────────────
+            # Discarding the broken WDDM reading is right. Landing on the
+            # cached idle floor and stopping there is not: the floor describes
+            # an empty card, and the reason we are here is that something is
+            # holding the card. Measured 2026-09-01 -- the arbiter believed
+            # 8,451 MiB were available while nvidia-smi reported 11,557 of
+            # 12,282 MiB in use by a fine-tuning run. Every placement decision
+            # after that point was arithmetic against memory that did not exist.
+            #
+            # `memory.used` is the honest second source: it is a device-level
+            # figure, bounded by the card, and it counts every tenant including
+            # ones we know nothing about. What it also counts is US, so the
+            # caller passes what it has resident and we subtract it -- planning
+            # against our own seats would double-count them and refuse every
+            # placement, which is the failure the `vram_baseline_mib` comment
+            # in `detect_gpus` warns about.
+            foreign = _foreign_occupancy_mib(g, ours_resident_mib)
+            if foreign is not None and foreign > rejection["kept_mib"]:
+                g["vram_display_reserve_mib"] = foreign
+                g["vram_display_reserve_at"] = stamp
+                rejection["kept_mib"] = foreign
+                rejection["fallback"] = "device-used-minus-ours"
+                rejection["ours_resident_mib"] = int(ours_resident_mib or 0)
+            else:
+                rejection["fallback"] = "cached-floor"
+
+            _log_rejection(
                 "GPU %s display reserve reading discarded as impossible: the "
                 "WDDM counter reports %d MiB held by the desktop on a %d MiB "
                 "card, above the %d MiB ceiling (%.0f%% of the card). Falling "
-                "back to %d MiB. The counter measures committed allocations, "
-                "not resident VRAM; a browser can commit more than the card "
-                "physically has, so this reading is not usable.",
+                "back to %d MiB (%s). The counter measures committed "
+                "allocations, not resident VRAM; a browser can commit more "
+                "than the card physically has, so this reading is not usable.",
                 idx, live, total, ceiling, MAX_DISPLAY_FRACTION * 100,
-                rejection["kept_mib"])
+                rejection["kept_mib"], rejection.get("fallback"))
             continue
         g["vram_display_reserve_mib"] = live
         g["vram_display_reserve_at"] = stamp

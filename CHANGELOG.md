@@ -3,14 +3,115 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.9.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.10.0**
 
 ---
 
-## [Unreleased]
+## [5.10.0] - 2026-09-01
+
+A working session's worth of fixes to things that were reachable in the code but
+not from the screen, plus one deliberate reversal of a security default that is
+called out in full below.
+
+**This release also carries 5.9.0.** 5.9.0 was tagged in git on 2026-08-31 but
+never published as a GitHub release, so no installer for it ever existed. Anyone
+upgrading from the last published build (5.8.1) receives the OS-mode sequence
+described under [5.9.0] as well as everything here.
+
+### Changed — security posture
+
+- **The Computer Control grant now survives a restart.** This **reverses a
+  public-release hardening choice**, deliberately and at the owner's request on
+  2026-09-01. Previously `services/agent.py` deleted the persisted permission
+  file at import, so a grant never outlived the process and Settings promised
+  that permission "revokes on every restart". It now restores the grant at boot
+  and logs when it does.
+
+  What that costs, stated plainly: a capability that can move the mouse, click,
+  type and take screenshots on your behalf **no longer re-asks after a restart
+  or a reboot.** It holds until you revoke it in Settings. If you install this
+  release and had previously granted Computer Control, check
+  Settings → Privacy & Security → Computer Control and revoke it if you did not
+  intend it to persist.
+
+  Two things deliberately did **not** change: the kill switch is still never
+  persisted, so a fresh start clears a panic-kill rather than locking you out
+  permanently; and `computer_control_enabled` remains a separate second gate, so
+  a restored grant does nothing while the feature itself is switched off.
+
+### Added
+
+- **A Grant button for Computer Control.** There are two gates —
+  `computer_control_enabled` (the persisted setting) and a session grant that
+  `_cc_check()` actually tests. The grant was only ever set by
+  `POST /api/control/permission {action:'grant'}`, and **nothing in the
+  repository ever called it**; the string `'grant'` appeared exactly once, inside
+  `control.py` itself. Every computer-control tool therefore refused forever,
+  whatever the setting said. Measured on a live install before the fix:
+  `/api/control/permission` → `{"available":true,"granted":false}` while
+  `/api/settings` → `computer_control_enabled = True`.
+  Settings → Privacy & Security → Computer Control now shows three status lines
+  (Installed / Enabled in Settings / Session grant) plus Grant and Revoke.
+  Unknown status renders grey rather than green — a status dot must not assert
+  what it does not know.
+- **Face Tracking and Minority Report toggles are reachable again.** Commit
+  16f8cd1 (2026-04-14) removed the HUD that contained their only two callers;
+  both engines survived intact and the modes had been dark for four and a half
+  months. Restored as two rows in the existing Holographic Scene menu, calling
+  the `window.fridayVibe` exports that were already there. **No engine changes.**
+- **`privacy/vault_policy.py`** — one resolver both vault enforcement points now
+  read, and a `vault_policy` block on `/api/intelligence` carrying a `degraded`
+  flag so the posture is visible rather than inferred.
 
 ### Fixed
 
+- **A model that cannot generate is no longer offered as a chat candidate.**
+  `_local_candidates()` filtered on `can_generate` in its model-store branch but
+  not in its Ollama branch, so every installed embedding model was offered as a
+  generation candidate. Because `_pick_local_model`'s last resort is "largest
+  artifact wins", and the largest was `embeddinggemma:300m` (0.60 GB, cannot
+  produce text) ahead of `functiongemma:270m` (0.30 GB, can), any turn falling
+  through to that branch selected the one candidate incapable of answering —
+  which reads as a dead backend. This is the defect behind the reported symptom
+  of a local model that returns nothing.
+- **Two vault enforcement points that disagreed.** Routing force-routed vault
+  turns local and never read `vault_local_only` at all; prompt assembly read it,
+  saw `false`, and returned `None` — which assembles every cloud system prompt
+  **ungated**. One machine held two vault postures at once and reported neither.
+  Measured on the live server: 4,486 characters of TIER_2 context in the cloud
+  prompt of turns as innocuous as "what's the weather today". Both now resolve
+  through `vault_policy.resolve()`, and every failure path resolves to GATED.
+- **Ungated now means ungated.** `vault_local_only` has two honest positions and
+  no third: `true` strips vault tiers from cloud prompts and routes
+  vault-touching questions to a local model; `false` gives the cloud full access,
+  with no prompt gating and no force-routing. The previous third state — routing
+  quietly protecting the question while prompt assembly leaked the context around
+  it — was nobody's decision and nobody could see it.
+- **Disabling vault gating is no longer silent.** It now warns once per distinct
+  posture (not per call) and is surfaced in the API.
+- **GPU accounting.** The WDDM display-reserve counter read 18,376 MiB on a
+  12,282 MiB card. It was correctly discarded, then incorrectly fell back to a
+  cached idle floor of 2,807 MiB — so the arbiter believed 8,451 MiB were free
+  while the card actually held 11,557. It now falls back to the device's own
+  `memory.used` minus what we have resident, and never below the cached floor.
+- **A log line that buried the log.** That rejection error fired 1,038 times in
+  one day, burying the egress gate's redaction records. It is now capped to
+  hourly per GPU and reports the suppressed count.
+- **An orphaned model seat.** `embeddinggemma:300m` was planned RESIDENT for a
+  consumer that does not exist — `EMBED_MODEL` is a module constant pinned to
+  `all-MiniLM-L6-v2` running in-process on CPU, and the live seat reported
+  `calls: 0`. Now ON_DEMAND, still assignable.
+- **Routing-mode labels that overstated their scope.** All four blurbs described
+  chat routing while implying total coverage; embeddings never consulted the
+  setting at all. Each mode now carries a scope note, and "Cloud only" says
+  plainly that embeddings stay local.
+- **Spoken turns filed into the wrong conversation.** The server half of voice
+  thread-targeting shipped in 5.7.0 and had been dead code ever since, because no
+  client ever sent the `conversation_id` the two WebSocket handlers were already
+  reading. Every spoken turn fell back to `resolve(None)` and landed in Main
+  regardless of what was on screen — which reads as two conversations merging.
+  The client now sends the open thread at connect and re-targets mid-call when
+  you switch threads.
 - **`FRIDAY_HOME` is now a real isolation boundary.** It was documented, and
   relied on by concurrent fine-tuning/eval work and by the in-app end-to-end
   suite, as the way to point Friday at a throwaway directory instead of a real
@@ -54,6 +155,51 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
   delta. Five of its six tests fail against the previous commit. Closes #13;
   also closes the `KNOWN_ISSUES.md` entry on `secret_key` escaping the sandbox
   and the `KNOWN GAP` `agent_friday/paths.py` carried on `runtime_dir()`.
+
+  Landed here as #14. Verified independently for this release: with
+  `FRIDAY_HOME` unset, all 31 resolved state roots are identical to 5.9.0's.
+
+### Security
+
+- **Private data filenames are no longer published through ignore rules.** On a
+  public repository an ignore rule is not a hiding place — it is a published list
+  of filenames, and the surrounding comments described the category of data. The
+  specific entries were replaced with the generic `data/*.json` pattern that
+  already sat directly beneath them and covered every one of them; ignore
+  behaviour is byte-for-byte unchanged, verified with `git check-ignore` before
+  and after. This removes the disclosure **going forward only** — it does not
+  remove it from the already-published tags and release artifacts that carry it.
+
+### Known gaps carried forward, not fixed here
+
+- **Face Tracking and Minority Report need internet on first use.** MediaPipe is
+  not vendored; both modes load `face_detection` and `hands` from
+  `cdn.jsdelivr.net`. That sits oddly with the offline-first posture elsewhere.
+  The menu says so under the toggles. Vendoring is a separate job.
+- **The egress gate is not a meaningful floor on the system prompt.** Measured
+  against the real ungated prompt it removes 274 of 12,861 characters (2.1%) —
+  four lines from CORE IDENTITY. TODAY'S CONTEXT, PERSONAL CONTEXT and LATEST
+  BRIEFING all survive it. So with `vault_local_only: false`, "full access" is
+  very nearly full already.
+- **`services/local_seats.py` and `services/model_catalog.py`** now honour
+  `FRIDAY_HOME` but keep the literal `runtime` path segment they always had, so
+  they still ignore `FRIDAY_RUNTIME_DIR` and `settings.json["runtime_dir"]`.
+  Routing them through `runtime_dir()` would import `agent_friday.core` — a ~4s
+  Flask bootstrap — onto the `friday models` CLI path. Pre-existing, commented at
+  both sites, not widened here.
+
+### Test status, stated honestly
+
+`pytest tests/unit tests/api` on this release: **8 failed out of 6,754 tests collected** (325 files).
+On 5.9.0 measured in the same window: **8 failed out of 6,710 collected** (320 files).
+
+The failures are **identical in set** between the two and are **not caused by
+anything in this release**. All of them read live GPU state
+(`tests/unit/test_residency_arbiter.py`, `tests/unit/test_ollama_manager.py`,
+`tests/unit/test_gate_harness_integrity.py`) and pass or fail according to how
+much VRAM the machine has free at that second; this measurement was taken on a
+box whose GPU was ~11.2 GB occupied out of 12.3 GB by an unrelated workload.
+CI, which runs on GPU-less runners, is green on all five jobs.
 
 ---
 
