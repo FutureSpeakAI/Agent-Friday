@@ -25,14 +25,13 @@ Design rules mirror conversation_memory.py:
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 from datetime import datetime
 from pathlib import Path
+from agent_friday.paths import friday_home
 
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+FRIDAY_DIR = friday_home()
 MEMORY_DIR = FRIDAY_DIR / "memory"
 DEFAULT_STATE_FILE = MEMORY_DIR / "emotional_arc.json"
 

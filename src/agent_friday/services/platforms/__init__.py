@@ -21,13 +21,14 @@ import importlib
 import json
 import os
 import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_friday.services.platforms.base import PlatformAdapter  # noqa: F401
+from agent_friday.paths import friday_home
 
-_HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
-FRIDAY_DIR = _HOME / ".friday"
+# Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
+# module along with everything else (see agent_friday/paths.py).
+FRIDAY_DIR = friday_home()
 CONFIG_PATH = FRIDAY_DIR / "platforms.json"
 
 _LOCK = threading.Lock()

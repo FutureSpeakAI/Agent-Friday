@@ -558,10 +558,14 @@ def _friday_store_entries(exclude: set | None = None) -> list:
     out = []
     try:
         import json as _json
-        import os as _os
         import pathlib as _pl
-        home = _os.environ.get("USERPROFILE") or _os.path.expanduser("~")
-        raw = _pl.Path(home, ".friday", "runtime", "models",
+        from agent_friday.paths import friday_home
+        # Honours FRIDAY_HOME. Still assumes the default "runtime"
+        # segment rather than calling runtime_dir(): resolving that
+        # imports core, a ~4s Flask bootstrap, on the CLI path. So
+        # this still ignores FRIDAY_RUNTIME_DIR -- pre-existing, and
+        # tracked separately from the FRIDAY_HOME fix.
+        raw = _pl.Path(friday_home(), "runtime", "models",
                        "models.json").read_text(encoding="utf-8")
         rows = (_json.loads(raw) or {}).get("models") or {}
     except Exception:

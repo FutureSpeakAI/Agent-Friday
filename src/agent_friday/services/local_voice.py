@@ -40,10 +40,9 @@ import time
 import wave
 from pathlib import Path
 
-from agent_friday.paths import voice_assets_dir
+from agent_friday.paths import friday_home, voice_assets_dir
 
 # Where downloaded checkpoints live. Honors $HOME redirection used by tests.
-_HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
 
 _OS_MODE_TRUTHY = {"1", "true", "yes", "on"}
 
@@ -69,7 +68,7 @@ def _os_mode_active() -> bool:
     return os.environ.get("FRIDAY_OS_MODE", "").strip().lower() in _OS_MODE_TRUTHY
 
 
-LOCAL_VOICE_DIR = _HOME / ".friday" / "local_voice"
+LOCAL_VOICE_DIR = friday_home() / "local_voice"
 WHISPER_DIR = LOCAL_VOICE_DIR / "whisper"
 PIPER_DIR = LOCAL_VOICE_DIR / "piper"
 

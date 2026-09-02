@@ -16,14 +16,12 @@ path. No LLM call is required: SkillOpt's research loop has a heuristic fallback
 that runs when no researcher callable is supplied.
 """
 
-import os
 import json
 import time
 import threading
-from pathlib import Path
+from agent_friday.paths import friday_home
 
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+FRIDAY_DIR = friday_home()
 TRAJ_FILE = FRIDAY_DIR / "trajectories.jsonl"
 
 _LOCK = threading.Lock()

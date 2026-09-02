@@ -38,19 +38,17 @@ Public surface (consumed by routes/connectors.py + briefings + ambient health):
 
 from __future__ import annotations
 
-import os
-import json
 import sys
 import subprocess
 import threading
 import time as _time
 import logging
 from pathlib import Path
+from agent_friday.paths import friday_home
 
 _log = logging.getLogger("friday.connectors")
 
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+FRIDAY_DIR = friday_home()
 REPO_DIR = Path(__file__).resolve().parents[3]  # connectors.py is src/agent_friday/services/ → repo root
 
 # Spawn child processes without flashing a console window on Windows.

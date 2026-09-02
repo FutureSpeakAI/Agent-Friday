@@ -21,6 +21,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from agent_friday.paths import friday_home
 
 
 # ── Constants ────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ PIPELINE_STAGES = [
 ACTIVE_STAGES = {"discovered", "triaged", "applied", "screening", "interview", "offer"}
 TERMINAL_STAGES = {"closed", "rejected", "withdrawn"}
 
-DEFAULT_TRACKER_PATH = Path.home() / ".friday" / "job_tracker.json"
+DEFAULT_TRACKER_PATH = friday_home() / "job_tracker.json"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

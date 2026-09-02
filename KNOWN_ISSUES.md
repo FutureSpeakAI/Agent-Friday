@@ -914,13 +914,12 @@ claimed 8 GB; the code always disagreed.
   `secrets.token_hex(32)` and persists it (mode 0600, atomic write) so sessions survive a
   restart. The persisted-random path has its own gap worth knowing: it writes to
   `Path(os.path.expanduser("~")) / ".friday" / "secret_key"` — the *real* home directory,
-  computed inline rather than through `agent_friday.paths.friday_home()` (PR-1) or
-  `core.FRIDAY_DIR` — so it does **not** honor a `FRIDAY_HOME` override. A test or a kiosk
-  image that sets `FRIDAY_HOME` to redirect Friday's state still gets its Flask session
-  secret written under the invoking user's actual home directory. Not a forgeable-session
-  risk (the value is still random, never a known constant), but a state-isolation leak:
-  anything relying on `FRIDAY_HOME` to fully sandbox a test run or a sealed image should
-  not assume `~/.friday/secret_key` stays inside that sandbox.
+  computed inline rather than through `agent_friday.paths.friday_home()`.
+  **RESOLVED (2026-08-31).** `_load_or_create_secret()` now resolves through
+  `friday_home()`, as does every other state path in the codebase — `core.FRIDAY_DIR`
+  itself was the load-bearing offender and had the same inline computation. The secret
+  is still random and never a known constant; it now also stays inside a `FRIDAY_HOME`
+  sandbox. See `tests/unit/test_friday_home_isolation.py`, which fails on the old code.
 - **Linux OS-mode credential storage has no durable secret store yet (PR-5, credentials).**
   `services/vault_passphrase.py::store()` and `services/credential_store.py::protect()`
   now fail closed under `FRIDAY_OS_MODE=1`: if neither a vault key (`FRIDAY_PASSWORD`) nor
