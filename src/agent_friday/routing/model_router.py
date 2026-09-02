@@ -431,8 +431,33 @@ class ModelRouter:
                 self.config.get("ollama_url", "http://localhost:11434"))
             have = {m["name"] for m in models}
             if ollama.is_available():
-                models += [m for m in ollama.list_models()
-                           if m.get("name") not in have]
+                # GENERATION candidates only. The model_store branch above
+                # filters on `can_generate`; this one did not, so every
+                # embedding model the daemon had installed was offered as a
+                # chat candidate -- and the selector's last resort is "largest
+                # artifact wins". Measured 2026-09-01 on the reference box:
+                # restoring `vault_local_only` routed vault turns to
+                # `embeddinggemma:300m` (0.60 GB) over `functiongemma:270m`
+                # (0.30 GB), i.e. the one candidate that cannot answer.
+                # residency_catalog.can_generate reads the daemon's own
+                # capabilities and assumes generation when they are unknown,
+                # so this narrows nothing it cannot prove.
+                try:
+                    from agent_friday.services import residency_catalog as _rc
+                    _can = _rc.can_generate
+                except Exception:
+                    def _can(_mid):
+                        return True
+                for m in ollama.list_models():
+                    name = m.get("name")
+                    if not name or name in have:
+                        continue
+                    try:
+                        if not _can(name):
+                            continue
+                    except Exception:
+                        pass
+                    models.append(m)
         except Exception:
             pass
         return models
@@ -460,6 +485,28 @@ class ModelRouter:
         # Verified 2026-08-16 with the daemon stopped: this route returned
         # "Vault access required but no local model — cloud with redaction"
         # while gemma4:12b and gemma4:e2b were resident and answering.
+        # ── The single resolver ─────────────────────────────────────────────
+        # This method used to force-route EVERY vault-touching turn to a local
+        # model without ever reading `vault_local_only`, while the prompt-
+        # assembly path read the same setting and honoured it. One flag, two
+        # enforcement points, two different answers -- and on 2026-09-01 two
+        # sessions probing the same server reached opposite conclusions about
+        # whether the vault protected anything. Both were right about the half
+        # they looked at. See privacy/vault_policy for the account.
+        #
+        # UNGATED MEANS UNGATED. When the owner sets `vault_local_only: false`
+        # they are asking for the cloud to have full access, so a vault-touching
+        # question routes like any other question -- it is NOT pinned to a local
+        # model. That is the point of the switch, not a side effect of fixing it.
+        # Force-routing a question the owner has explicitly declassified is how
+        # "remind me what my Chase account balance was" ended up answered by a
+        # 270M model while the context around it went to the cloud anyway.
+        from agent_friday.privacy import vault_policy as _vp
+        policy = _vp.resolve(self.config)
+
+        if not policy.force_local_routing:
+            return None  # caller falls through to normal routing
+
         models = self._local_candidates()
 
         if models:
@@ -477,7 +524,7 @@ class ModelRouter:
             "No model is available in Friday's own store and the Ollama "
             "daemon is not reachable either."
         )
-        fallback = self.config.get("vault_cloud_fallback", "redact")
+        fallback = policy.cloud_fallback
         if fallback in ("deny", "warn"):
             return self._finalize({
                 "provider": "cloud",
@@ -501,14 +548,27 @@ class ModelRouter:
         flags added by `_finalize` (is_local, vault_allowed, scrub_pii,
         vault_access, refuse, warning).
 
-        Vault detection runs first and takes precedence over the routing mode —
-        even in cloud_only mode a vault request is force-routed local or refused,
-        so vault data never reaches the cloud.
+        Vault detection runs first and takes precedence over the routing mode:
+        when `model_routing.vault_local_only` is on (the default), a vault
+        request is force-routed local or refused even in cloud_only mode, so
+        vault data never reaches the cloud.
+
+        When the owner has explicitly set `vault_local_only: false`, that claim
+        does NOT hold and this docstring must not pretend otherwise -- vault
+        turns route normally and only the egress gate is still checking. The
+        posture is resolved in privacy/vault_policy and reported by
+        `vault_policy.status()`.
         """
         ctx = task_context or {}
 
         if self.needs_vault_access(messages, ctx):
-            return self._route_vault(ctx)
+            # `_route_vault` returns None when the owner has disabled vault
+            # gating, meaning "I have no special claim on this turn" -- so it
+            # falls through to normal routing rather than silently pinning a
+            # protection the setting disclaims.
+            vault_route = self._route_vault(ctx)
+            if vault_route is not None:
+                return vault_route
 
         result = self._apply_cloud_provider(self._route_basic(messages, ctx), ctx)
         # Say which seat won and why. Three sessions have now debugged "the

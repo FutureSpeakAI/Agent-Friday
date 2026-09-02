@@ -3707,16 +3707,33 @@ def _cc_persist(granted: bool):
         _log.warning("CC permission persist failed: %s", _e)
 
 
-# Public-release hardening: Computer Control starts DISABLED on every launch.
-# We do NOT auto-restore a previous runtime grant — this experimental, high-trust
-# capability is opt-in per session — and we clear any stale persisted grant so the
-# default is genuinely off (matches the Settings promise that permission is revoked
-# on every server restart).
+# ── Computer Control grant: RESTORED on launch, by the owner's decision ──────
+#
+# This deliberately reverses a public-release hardening choice. The previous
+# behaviour cleared the persisted grant on every launch so Computer Control was
+# opt-in per session; Stephen asked on 2026-09-01 for the grant to survive a
+# restart, having been told what it costs, and this is that change.
+#
+# What it means, stated plainly: a grant given once now persists across server
+# restarts and machine reboots until it is revoked in Settings or the file is
+# deleted. A capability that can move the mouse and type on his behalf no
+# longer re-asks after a restart. That is the trade he chose.
+#
+# What is NOT restored is the kill switch. `_cc_persist` never writes it, and a
+# fresh start therefore clears a kill — a user who panic-killed the capability
+# is not permanently locked out, while a considered grant is honoured. Those
+# two defaults point in opposite directions on purpose.
+#
+# `computer_control_enabled` (the persisted setting) remains a separate, second
+# gate: restoring the grant does nothing if the feature itself is off.
 try:
     if _CC_PERM_FILE.exists():
-        _CC_PERM_FILE.unlink()
-except Exception:
-    pass
+        _CC_PERMISSION.set()
+        _log.info(
+            "Computer Control grant restored from %s — it persists across "
+            "restarts until revoked in Settings.", _CC_PERM_FILE)
+except Exception as _e:
+    _log.warning("CC permission restore failed: %s", _e)
 
 
 def _cc_check():
@@ -3726,7 +3743,29 @@ def _cc_check():
     if _CC_KILL.is_set():
         return False, "Kill switch is active. Computer control suspended — re-enable in Settings."
     if not _CC_PERMISSION.is_set():
-        return False, "Computer control permission not granted. Enable it in Settings > Computer Control."
+        # TWO gates, and only one of them has ever been the problem in practice.
+        #
+        # `computer_control_enabled` is the persisted setting; _CC_PERMISSION is
+        # the grant, which now persists across restarts (see the restore
+        # unlink above). Reporting "enable it in Settings" for a missing GRANT
+        # tells a user whose toggle is already on to go turn on the thing that
+        # is already on — which is exactly the loop this message created. Name
+        # the gate that is actually shut.
+        try:
+            _enabled = bool(_load_settings().get('computer_control_enabled', False))
+        except Exception:
+            _enabled = False
+        if not _enabled:
+            return False, (
+                "Computer control is turned off. Turn on Settings \u2192 Privacy & "
+                "Security \u2192 Computer Control, then press \"Grant for this "
+                "session\"."
+            )
+        return False, (
+            "Computer control is enabled, but has not been granted. Open "
+            "Settings \u2192 Privacy & Security \u2192 Computer Control and press "
+            "\"Grant\". The grant then persists across restarts until you revoke it."
+        )
     return True, None
 
 

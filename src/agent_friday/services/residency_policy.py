@@ -74,7 +74,23 @@ ROLE_RESIDENCY = {
     "sidekick": RESIDENT,
     "sidekick_fast": RESIDENT,
     "function_manager": RESIDENT,   # sits inside the tool loop
-    "embedder": RESIDENT,           # live recall happens mid-turn
+    # ── embedder: ON_DEMAND, not RESIDENT ────────────────────────────────
+    # This said RESIDENT and "live recall happens mid-turn". Neither half was
+    # true on 2026-09-01. `services/role_consumers.py` classifies the embedding
+    # seat as DISPLAYS -- "Read, never obeyed": nothing selects a model from it,
+    # because `conversation_memory.EMBED_MODEL` is a module constant pinned to
+    # all-MiniLM-L6-v2 and runs in-process on CPU via sentence_transformers.
+    #
+    # So the plan pinned `embeddinggemma:300m` resident on a 12 GB card for a
+    # consumer that does not exist. The live server reported it
+    # `calls: 0, last_used: null` while the arbiter reserved room for it.
+    # Declaring a seat nothing consumes is the same pattern as the dead
+    # generator and the orphaned watchers: it costs VRAM, it invents work, and
+    # it makes the seat map lie about what is running.
+    #
+    # ON_DEMAND keeps the seat assignable -- so wiring a real consumer later is
+    # a one-line change back -- without reserving a card for nobody.
+    "embedder": ON_DEMAND,
     "interactive_brain": RESIDENT,
     # Commissioned work. Big, occasional, and worth waiting for.
     "heavy_hitter": LEASED,
@@ -850,8 +866,14 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
         seat = _place(emb, "embedder", "pinned") if budgets else None
         if seat is None:
             need = _vram_for(emb, DEFAULT_NUM_CTX["embedder"])
+            # Residency comes from ROLE_RESIDENCY, not a literal. This said
+            # "resident" while the table said the same thing; when the table
+            # changed to on-demand, a hardcoded string here would have kept
+            # planning the seat resident anyway -- two sources of truth for
+            # one fact, which is the bug this whole patch is about.
             seat = _placement(emb, "embedder", "cpu",
-                              DEFAULT_NUM_CTX["embedder"], "resident", 0)
+                              DEFAULT_NUM_CTX["embedder"],
+                              ROLE_RESIDENCY["embedder"], 0)
             if budgets:
                 seat["demoted_from"] = "gpu"
                 seat["demotion_rule"] = "R3"

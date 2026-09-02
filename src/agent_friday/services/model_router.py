@@ -2627,20 +2627,34 @@ def _get_vault_control():
 
 
 def _vault_local_only():
-    """Whether vault gating is active (settings.model_routing.vault_local_only)."""
-    try:
-        cfg = (_load_settings().get('model_routing') or {})
-        return bool(cfg.get('vault_local_only', True))
-    except Exception:
-        return True
+    """Whether vault gating is active.
+
+    Delegates to `privacy.vault_policy` -- the ONE resolver. This used to read
+    settings.model_routing directly, while `routing/model_router._route_vault`
+    read nothing at all, which is how one machine came to have two vault
+    postures at once (see privacy/vault_policy for the full account).
+    """
+    return _vault_policy().local_only
 
 
 def _vault_cloud_fallback():
+    return _vault_policy().cloud_fallback
+
+
+def _vault_policy():
+    """The resolved vault posture, from the single resolver.
+
+    Passes the `model_routing` block read through THIS module's `_load_settings`
+    rather than letting the resolver re-read settings itself: two reads of the
+    same file inside one request is how a module ends up disagreeing with
+    itself, which is the failure this whole patch exists to remove.
+    """
+    from agent_friday.privacy import vault_policy
     try:
-        cfg = (_load_settings().get('model_routing') or {})
-        return cfg.get('vault_cloud_fallback', 'redact')
+        cfg = (_load_settings() or {}).get('model_routing') or {}
     except Exception:
-        return 'redact'
+        cfg = None
+    return vault_policy.resolve(cfg, source="settings")
 
 
 def _predict_route_provider(keywords='', workspace='', has_tools=False):
@@ -2681,7 +2695,15 @@ def _gated_vault_control():
     briefing / draft call sites (previously ungated — see
     `_predict_route_provider`) don't each hand-roll the same check.
     """
-    return _get_vault_control() if _vault_local_only() else None
+    policy = _vault_policy()
+    if not policy.gated:
+        # LOUD, not silent. Returning None here disables vault gating for the
+        # whole prompt-assembly path; the resolver logs the posture (once per
+        # distinct posture, not per call) and `vault_policy.status()` surfaces
+        # it to /api/health and the Intelligence panel so it is visible without
+        # reading logs.
+        return None
+    return _get_vault_control()
 
 
 def _build_context_prompt(message, workspace='', workspace_context=None,
