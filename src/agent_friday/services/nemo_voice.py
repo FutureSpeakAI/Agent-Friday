@@ -45,17 +45,17 @@ from pathlib import Path
 
 # Reuse the Tier-1 audio + probing helpers so the two tiers share one resample /
 # dependency-probe implementation (no duplication, identical 24 kHz output).
+from agent_friday.paths import friday_home
 from agent_friday.services.local_voice import (
     PLAYBACK_RATE,
     _module_installed,
     _resample_pcm16,
 )
 
-_HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
 # Cache the (large) NeMo/HF checkpoints under ~/.friday/models/nemo so they
 # survive reinstalls, are inspectable, and never pollute the Tier-1
 # ~/.friday/local_voice dir.
-NEMO_DIR = _HOME / ".friday" / "models" / "nemo"
+NEMO_DIR = friday_home() / "models" / "nemo"
 
 # Target models. Settings can override the ASR id (the TTS pair is fixed for v1).
 NEMO_ASR_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"

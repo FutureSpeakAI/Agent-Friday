@@ -79,10 +79,14 @@ def _friday_store() -> list[tuple[str, float]]:
     """
     out: list[tuple[str, float]] = []
     try:
-        import os
         import pathlib
-        home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-        raw = pathlib.Path(home, ".friday", "runtime", "models",
+        from agent_friday.paths import friday_home
+        # Honours FRIDAY_HOME. Still assumes the default "runtime"
+        # segment rather than calling runtime_dir(): resolving that
+        # imports core, a ~4s Flask bootstrap, on the CLI path. So
+        # this still ignores FRIDAY_RUNTIME_DIR -- pre-existing, and
+        # tracked separately from the FRIDAY_HOME fix.
+        raw = pathlib.Path(friday_home(), "runtime", "models",
                            "models.json").read_text("utf-8")
         for mid, rec in ((json.loads(raw) or {}).get("models") or {}).items():
             if not isinstance(rec, dict) or rec.get("is_embedding"):

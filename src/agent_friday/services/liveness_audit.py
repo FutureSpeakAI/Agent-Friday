@@ -37,16 +37,15 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from agent_friday.paths import friday_home
 
 _log = logging.getLogger("friday.liveness")
 
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+FRIDAY_DIR = friday_home()
 
 OK, STALE, EMPTY, ORPHANED, MISSING = "ok", "stale", "empty", "orphaned", "missing"
 

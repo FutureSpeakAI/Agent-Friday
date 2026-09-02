@@ -1167,7 +1167,7 @@ The attempt plan tries `v1alpha` first only when affective or proactive features
 | `FRIDAY_LIVE_MODEL` | Override default Live model ID |
 | `FRIDAY_LIVE_VOICE` | Override default Live voice name |
 | `FRIDAY_VOICE_DEBUG` | Set to `1` for per-chunk voice logging |
-| `FRIDAY_HOME` | Override `~` for model/config storage |
+| `FRIDAY_HOME` | Friday's state directory (replaces `~/.friday` itself, not `~`) |
 | `FRIDAY_TESTING` | Set to `1` for test mode (skip network probes, Silero) |
 | `FRIDAY_WS_TOKEN` | WebSocket authentication token |
 

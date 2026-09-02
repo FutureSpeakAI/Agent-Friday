@@ -38,6 +38,7 @@ import queue
 import threading
 import time
 from typing import Optional
+from agent_friday.paths import friday_home
 
 log = logging.getLogger("friday.privacy.shadow")
 
@@ -52,7 +53,7 @@ _stats = {"seen": 0, "dropped": 0, "analyzed": 0, "errors": 0, "would_escalate":
 
 
 def _privacy_dir() -> str:
-    base = os.path.join(os.path.expanduser("~"), ".friday", "privacy")
+    base = str(friday_home() / "privacy")
     os.makedirs(base, exist_ok=True)
     return base
 
