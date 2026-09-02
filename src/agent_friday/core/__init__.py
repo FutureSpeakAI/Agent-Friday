@@ -32,6 +32,12 @@ from pathlib import Path
 # init. Used below by _setup_friday_logging() for the OS-mode log-routing
 # gate (PR-2 of the OS-mode sequence).
 from agent_friday.core.os_mode import is_os_mode
+# The single source of truth for Friday's state root (PR-1 of the OS-mode
+# sequence). Import-light and side-effect-free by construction — it only
+# reaches back into this package lazily, inside runtime_dir(), so importing it
+# here cannot recurse. friday_home() honours FRIDAY_HOME; user_home() is the
+# host's own home and deliberately does not.
+from agent_friday.paths import friday_home, is_redirected, user_home
 
 # ── Structured logging ──────────────────────────────────────────
 # Module-level logger; file handler is attached below once FRIDAY_DIR is known.
@@ -199,7 +205,7 @@ def _load_or_create_secret():
     if env:
         return env
     try:
-        p = Path(os.path.expanduser("~")) / ".friday" / "secret_key"
+        p = friday_home() / "secret_key"
         if p.exists():
             existing = p.read_text(encoding="utf-8").strip()
             if existing:
@@ -599,12 +605,31 @@ def logout():
 
 # ── Vibe Code: Terminal State ─────────────────────────────────
 VIBE_TERMINALS = {}   # id -> { id, task, status, cwd, pid, started, stopped, log_file }
-VIBE_LOG_DIR = Path(os.path.expanduser("~")) / ".friday" / "vibe-code-logs"
+VIBE_LOG_DIR = friday_home() / "vibe-code-logs"
 VIBE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Paths ─────────────────────────────────────────────────────
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+# Two different questions, two different answers — conflating them is what
+# made FRIDAY_HOME decorative (docs/audits/friday-home-isolation-gap-2026-08-31.md).
+#
+#   HOME       — the human's own home directory. Desktop, ~/Projects, the
+#                sandbox root that bounds which files Friday may read, the
+#                legacy ~/wiki. These are facts about the machine, and a
+#                FRIDAY_HOME redirect must NOT move them: pointing the sandbox
+#                root at an empty temp directory would not isolate anything,
+#                it would just stop Friday reading the files it was asked about.
+#   FRIDAY_DIR — where Friday keeps ITS state: settings.json, the vault,
+#                conversation memory, the wiki, credentials. This is what a
+#                test run, an eval harness, a kiosk image or an unattended
+#                agent needs pointed away from the real user, and this is what
+#                FRIDAY_HOME redirects.
+#
+# This module is the one most of the codebase resolves through — services/,
+# routes/ and the settings loader all import FRIDAY_DIR from here — so a
+# FRIDAY_HOME that this line ignores is a FRIDAY_HOME that does nothing where
+# it matters, however many peripheral modules honour it.
+HOME = user_home()
+FRIDAY_DIR = friday_home()
 WIKI_DIR = FRIDAY_DIR / "wiki"
 
 # ── Local runtime stack (decision D7) ────────────────────────
@@ -682,7 +707,16 @@ def _merge_legacy_wiki():
 
 
 try:
-    _merge_legacy_wiki()
+    # Under a FRIDAY_HOME redirect this migration is both pointless and
+    # destructive: there is no legacy wiki belonging to an instance whose state
+    # lives elsewhere, and _merge_legacy_wiki() ends by RENAMING ~/wiki — a
+    # write to the very directory the redirect promised not to touch. A test
+    # run that renamed a user's ~/wiki out from under them would be a data
+    # scare caused by the safety mechanism.
+    if is_redirected():
+        _log.debug("skipping legacy ~/wiki migration: FRIDAY_HOME is set")
+    else:
+        _merge_legacy_wiki()
 except Exception as _mig_err:
     import logging as _log
     _log.getLogger(__name__).warning(
@@ -691,8 +725,13 @@ except Exception as _mig_err:
 # first run. Drives the `show_all_workspaces` default — existing installs keep
 # the full dock; fresh installs get the trimmed core set from the setup wizard.
 _FRESH_INSTALL = not FRIDAY_DIR.exists()
+# The Desktop gallery is a convenience for a real user at a real machine. A
+# redirected instance has no business creating folders on the host's Desktop,
+# so it keeps its creations inside its own state directory.
 _desktop = HOME / "Desktop"
-CREATIONS_DIR = (_desktop / "friday-creations") if _desktop.exists() else (FRIDAY_DIR / "friday-creations")
+CREATIONS_DIR = ((_desktop / "friday-creations")
+                 if (_desktop.exists() and not is_redirected())
+                 else (FRIDAY_DIR / "friday-creations"))
 # Daily Creation archive — JSON artifacts Friday generates once a day on a
 # background schedule (distinct from the Desktop media gallery above).
 DAILY_CREATIONS_DIR = FRIDAY_DIR / "creations"

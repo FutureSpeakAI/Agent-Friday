@@ -10,9 +10,11 @@ again.
 
 Deliberately NOT placed under `agent_friday.core`: `agent_friday/core/__init__.py`
 already exists in this repo as a ~2600-line Flask application module with real
-import-time side effects — it imports Flask, builds the app, and (as of this
-writing) runs a legacy `~/wiki` -> `~/.friday/wiki` migration against the
-*real* home directory on import, independent of any FRIDAY_HOME override.
+import-time side effects — it imports Flask, builds the app, and runs a legacy
+`~/wiki` -> `~/.friday/wiki` migration on import. (That migration used to run
+against the *real* home directory regardless of FRIDAY_HOME; it is now gated on
+`is_redirected()` below. The import weight is unchanged, so the reason for
+keeping this module outside `agent_friday.core` still stands.)
 Since Python always executes a package's `__init__.py` before any of its
 submodules, `agent_friday.core.paths` would drag every one of this PR's ~22
 previously side-effect-free call sites (including `cli.py`, invoked on every
@@ -42,11 +44,59 @@ def friday_home() -> Path:
          that every one of this PR's call sites used before. This branch must
          stay byte-identical to that expression; do not change it here without
          also updating every replaced call site.
+
+    FRIDAY_HOME **is** the state directory, not its parent: `FRIDAY_HOME=/x`
+    puts `settings.json` at `/x/settings.json`, not `/x/.friday/settings.json`.
+    Thirteen service modules used to read it the other way (`Path(FRIDAY_HOME or
+    Path.home()) / ".friday"`). Both readings isolate, but holding both at once
+    split one Friday across two directories — settings under `$FRIDAY_HOME`,
+    soul and goals under `$FRIDAY_HOME/.friday`. They now all route through
+    here; `tests/unit/test_friday_home_isolation.py` pins it.
+
+    This is the ONLY place in the codebase permitted to compute Friday's state
+    root. Anything that recomputes it independently will drift out of the
+    override the moment someone sets FRIDAY_HOME — which is exactly how the gap
+    audited in docs/audits/friday-home-isolation-gap-2026-08-31.md arose.
     """
     env = os.environ.get("FRIDAY_HOME")
     if env:
         return Path(os.path.expanduser(env))
     return Path.home() / ".friday"
+
+
+def user_home() -> Path:
+    """The operating system's home directory for the current user.
+
+    Deliberately NOT affected by FRIDAY_HOME. Some paths are genuinely
+    *about the human's machine* rather than about Friday's state, and
+    redirecting them would break the feature instead of isolating it:
+
+      - `~/Desktop` (where creations are surfaced for the user to find)
+      - the sandbox root that bounds which files Friday may read
+      - `~/Projects` (the default working directory for code tasks)
+      - the legacy `~/wiki` directory the wiki migration reads from
+
+    Callers that want Friday's *state* want `friday_home()`. Callers that
+    want the human's home want this. Having both named makes the choice
+    explicit at every call site instead of implicit in an `expanduser`.
+    """
+    return Path(os.path.expanduser("~"))
+
+
+def is_redirected() -> bool:
+    """True when FRIDAY_HOME is set, i.e. Friday's state has been pointed
+    somewhere other than the current user's own `~/.friday`.
+
+    This is the signal for "do not touch the host's home directory at all".
+    Under a redirect (a test run, an eval harness, a kiosk image, an
+    unattended agent) it is not enough for Friday to *store* its state
+    elsewhere — anything that mutates the host home as a side effect must
+    also stand down. The migration of a legacy `~/wiki` is the sharp case:
+    it renames a directory the redirected process was promised it could not
+    reach, and there is by definition nothing to migrate for an instance
+    whose state lives somewhere else entirely.
+    """
+    return bool(os.environ.get("FRIDAY_HOME"))
 
 
 def models_dir() -> Path:
@@ -94,15 +144,13 @@ def runtime_dir() -> Path:
     env-var-or-default logic minus the settings.json layer (settings.json
     parsing lives in core and isn't worth duplicating for a fallback path).
 
-    KNOWN GAP (pre-existing, not introduced by this PR): when the delegation
-    succeeds, the default (`~/.friday/runtime`) is computed from core's own
-    `HOME = Path(os.path.expanduser("~"))`, which does NOT read FRIDAY_HOME —
-    only this module's other three functions do. So `FRIDAY_HOME=/x
-    runtime_dir()` will NOT return a path under `/x` unless FRIDAY_RUNTIME_DIR
-    or settings.json is also set. Fixing that means changing
-    `agent_friday/core/__init__.py`'s HOME/FRIDAY_DIR computation, which is
-    out of scope for a pure path-consolidation PR — flagged here and in the
-    PR description for whoever picks up OS-mode gating next.
+    The gap this docstring used to flag is CLOSED. Core's default was
+    `HOME / ".friday" / "runtime"` computed from its own
+    `Path(os.path.expanduser("~"))`, so `FRIDAY_HOME=/x runtime_dir()` did
+    not land under `/x` unless FRIDAY_RUNTIME_DIR or settings.json was also
+    set. `agent_friday/core/__init__.py` now derives `FRIDAY_DIR` from
+    `friday_home()`, so the delegated default honours FRIDAY_HOME like
+    everything else. See tests/unit/test_friday_home_isolation.py.
     """
     try:
         from agent_friday.core import runtime_dir as _core_runtime_dir

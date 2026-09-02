@@ -38,16 +38,15 @@ Public API:
 
 from __future__ import annotations
 
-import os
 import re
-import io
 import json
 import shutil
 import zipfile
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Optional
+from agent_friday.paths import friday_home
 
 try:
     import yaml
@@ -55,8 +54,7 @@ try:
 except Exception:                                   # pragma: no cover
     _HAS_YAML = False
 
-HOME = Path(os.path.expanduser("~"))
-SKILLS_DIR = HOME / ".friday" / "skills"            # user/learned/imported skills
+SKILLS_DIR = friday_home() / "skills"   # user/learned/imported skills
 # Bundled skills ship as real package data at agent_friday/seed/skills (see
 # agent_friday/seed/__init__.py) rather than a repo-root `skills/` directory -
 # the old `parents[2]` computation here pointed at the repo root and returned

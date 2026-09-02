@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from agent_friday.paths import friday_home
 
 try:
     import yaml
@@ -36,9 +37,9 @@ log = logging.getLogger("friday.skills.application_engine")
 
 HERE = Path(__file__).parent
 DEFAULT_CONFIG_PATH = HERE / "config.yaml"
-USER_OVERRIDE = Path.home() / ".friday" / "skills" / "application_engine.local.yaml"
+USER_OVERRIDE = friday_home() / "skills" / "application_engine.local.yaml"
 
-VARIANT_STATE_PATH = Path.home() / ".friday" / "skills" / "application_engine.bandit.json"
+VARIANT_STATE_PATH = friday_home() / "skills" / "application_engine.bandit.json"
 
 
 # ════════════════════════════════════════════════════════════════════════

@@ -20,18 +20,18 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
 import sqlite3
 import threading
 import time
 import uuid
 from collections import defaultdict
-from pathlib import Path
 from typing import Any, Dict, List, Optional
+from agent_friday.paths import friday_home
 
-_HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
-FRIDAY_DIR = _HOME / ".friday"
+# Friday's state root. Resolved centrally so FRIDAY_HOME redirects this
+# module along with everything else (see agent_friday/paths.py).
+FRIDAY_DIR = friday_home()
 DB_PATH = FRIDAY_DIR / "learning.db"
 
 # Reentrant: promote() holds the lock across a read-count/score/promote sequence

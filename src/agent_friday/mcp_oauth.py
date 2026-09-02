@@ -35,7 +35,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
 import re
 import secrets
 import threading
@@ -47,11 +46,12 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Callable
+from agent_friday.paths import friday_home
 
 try:
     from agent_friday.core import FRIDAY_DIR as _FRIDAY_DIR
 except Exception:  # pragma: no cover — standalone import (tests, tooling)
-    _FRIDAY_DIR = Path(os.path.expanduser("~")) / ".friday"
+    _FRIDAY_DIR = friday_home()
 
 # Tests monkeypatch this to a tmp dir; everything below reads it lazily.
 OAUTH_DIR = _FRIDAY_DIR / "mcp_oauth"

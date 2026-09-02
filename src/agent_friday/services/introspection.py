@@ -33,9 +33,9 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from agent_friday.paths import friday_home
 
-HOME = Path.home()
-FRIDAY_DIR = HOME / ".friday"
+FRIDAY_DIR = friday_home()
 PERSONALITY_FILE = FRIDAY_DIR / "personality.json"
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 SELF_IMPROVEMENT_DIR = FRIDAY_DIR / "self_improvement"

@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
+from agent_friday.paths import friday_home
 from agent_friday.core import (
     _load_settings,
     login_required,
@@ -129,7 +130,7 @@ def api_skills_reload():
 # role is diagnostic: it surfaces additions/removals in the server log so
 # operators can confirm changes took effect without needing a restart.
 
-_SKILLS_WATCH_DIR = Path(os.path.expanduser("~")) / ".friday" / "skills"
+_SKILLS_WATCH_DIR = friday_home() / "skills"
 _skills_watcher_baseline: set = set()
 _skills_watcher_lock = threading.Lock()
 
