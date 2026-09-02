@@ -18,6 +18,7 @@ from dataclasses import asdict
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from agent_friday.paths import friday_home
 
 try:
     import yaml
@@ -47,7 +48,7 @@ log = logging.getLogger("friday.skills.job_scanner")
 
 HERE = Path(__file__).parent
 DEFAULT_CONFIG_PATH = HERE / "config.yaml"
-USER_OVERRIDE = Path.home() / ".friday" / "skills" / "job_scanner.local.yaml"
+USER_OVERRIDE = friday_home() / "skills" / "job_scanner.local.yaml"
 
 
 def load_config(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -84,7 +85,7 @@ def _deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
 class KeywordRotator:
     """Round-robin through configured keyword sets so we vary our queries."""
 
-    _state_path = Path.home() / ".friday" / "skills" / "job_scanner.state.json"
+    _state_path = friday_home() / "skills" / "job_scanner.state.json"
 
     def __init__(self, sets: Sequence[Sequence[str]]):
         self.sets: List[List[str]] = [list(s) for s in sets if s]
@@ -442,7 +443,7 @@ def scan(*, config: Optional[Dict[str, Any]] = None,
 #  Helpers — counter, schedule, skillopt hook
 # ════════════════════════════════════════════════════════════════════════
 
-_COUNTER_PATH = Path.home() / ".friday" / "skills" / "job_scanner.daily.json"
+_COUNTER_PATH = friday_home() / "skills" / "job_scanner.daily.json"
 
 
 def _priority_sent_today() -> int:

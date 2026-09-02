@@ -27,18 +27,19 @@ Design rules, consistent with the rest of the codebase:
 
 from __future__ import annotations
 
-import os
 import re
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
+from agent_friday.paths import friday_home
 
 # ── Storage location ──────────────────────────────────────────────────
-# Mirrors server.py's FRIDAY_DIR = ~/.friday. Kept independent so this module
-# has no import dependency on server.py (avoids a circular import).
-HOME = Path(os.path.expanduser("~"))
-FRIDAY_DIR = HOME / ".friday"
+# Resolved via agent_friday.paths rather than recomputed here. That module is
+# import-light (stdlib only), so this keeps the no-dependency-on-server.py
+# property that motivated the original duplication, while still honouring
+# FRIDAY_HOME -- which a private copy of the computation never can.
+FRIDAY_DIR = friday_home()
 DEFAULT_PERSIST_DIR = FRIDAY_DIR / "memory" / "conversations"
 
 EMBED_MODEL = "all-MiniLM-L6-v2"

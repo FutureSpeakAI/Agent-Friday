@@ -7,6 +7,56 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`FRIDAY_HOME` is now a real isolation boundary.** It was documented, and
+  relied on by concurrent fine-tuning/eval work and by the in-app end-to-end
+  suite, as the way to point Friday at a throwaway directory instead of a real
+  user's `~/.friday`. It did not do that. `core/__init__.py` — the module
+  `services/`, `routes/` and the settings loader all resolve `FRIDAY_DIR`
+  through — computed it as `Path(os.path.expanduser("~")) / ".friday"` with no
+  environment check, so setting `FRIDAY_HOME` left the real `settings.json`,
+  conversation memory, wiki, vault and Flask session secret fully in play. The
+  ~14 peripheral modules that *did* honor it made the guardrail look
+  trustworthy on a shallow check while the paths that mattered were unprotected
+  — worse than a feature that plainly does not exist.
+
+  Every state root in the codebase (33 modules, three flavours of duplicated
+  computation) now resolves through `agent_friday.paths.friday_home()`. Two
+  import-time side effects that mutated the *host* home also stand down under a
+  redirect: the legacy `~/wiki` migration, which ends by **renaming** `~/wiki`
+  (a redirected test run would have moved a real user's wiki out from under
+  them), and the `~/Desktop/friday-creations` gallery.
+
+  `HOME` in `core` is now explicitly the *human's* home — Desktop, `~/Projects`,
+  the sandbox root bounding which files Friday may read — and is deliberately
+  **not** redirected; only Friday's own state is. Conflating the two is what
+  made the override decorative in the first place.
+
+  One convention survives: **`FRIDAY_HOME` is the state directory itself, not
+  its parent.** Thirteen service modules read it as a replacement for `~` and
+  appended `.friday` themselves, so `FRIDAY_HOME=/x` split one Friday across
+  `/x` (settings) and `/x/.friday` (soul, goals, approvals, platforms, voice).
+  Both readings isolate; holding both at once does not give you one coherent
+  instance. `packaging/windows/uninstall.ps1` held the losing reading too, and
+  would have deleted a directory Friday never wrote to while leaving the real
+  state behind.
+
+  **Behavior with `FRIDAY_HOME` unset is byte-identical** — every root still
+  resolves to `Path.home()/".friday"`, pinned by its own test. Only callers
+  already setting `FRIDAY_HOME` see a change, and what they see is the half of
+  their state that was never isolated becoming isolated.
+
+  Proven by `tests/unit/test_friday_home_isolation.py`, which snapshots a decoy
+  home (size, mtime, sha256) around a real Friday exercise and fails on any
+  delta. Five of its six tests fail against the previous commit. Closes #13;
+  also closes the `KNOWN_ISSUES.md` entry on `secret_key` escaping the sandbox
+  and the `KNOWN GAP` `agent_friday/paths.py` carried on `runtime_dir()`.
+
+---
+
 ## [5.9.0] - 2026-08-31
 
 The OS-mode sequence for Friday Linux (the sealed, portable OS image project):
