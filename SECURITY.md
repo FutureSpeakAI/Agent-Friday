@@ -78,6 +78,27 @@ clear message if any are found. False positives can be allowlisted per-line with
 [`.github/SECURITY_POLICY.md`](.github/SECURITY_POLICY.md) for full details and
 the pre-release checklist.
 
+## Known advisories in dependencies
+
+GitHub reports open advisories against two of Friday's Python dependencies.
+Both were reviewed on 2026-09-01 and neither is exploitable in Agent Friday; the
+reachability analysis, with the evidence for each claim, is in
+[`docs/audits/dependency-security-2026-09-01.md`](docs/audits/dependency-security-2026-09-01.md).
+
+- **chromadb** (four advisories, two rated critical). All four are in ChromaDB's
+  client/server deployment - the HTTP API routes and the auth providers guarding
+  them. Friday runs no Chroma server: conversation memory uses an in-process
+  `PersistentClient` against a local directory, with no listening port, no
+  tenants and no auth provider. **There is no fixed version to move to** -
+  upstream's newest release is itself in the affected range - so these alerts
+  will stay open until Chroma ships a fix. `tests/unit/test_chromadb_no_server.py`
+  enforces the embedded-only property that makes them unreachable.
+- **hydra-core 1.3.2** (one high). Reachable only through `nemo_toolkit`, the
+  opt-in `voice-local-gpu` extra, which is never installed by the Windows
+  installer and is excluded from `[all]`. The patched 1.3.4 is unreachable
+  because NeMo pins `hydra-core<=1.3.2`; requiring it would break that extra
+  rather than upgrade it.
+
 ## Reporting a vulnerability or an exposed secret
 
 If you discover a security issue — including a secret or PII that was committed:
