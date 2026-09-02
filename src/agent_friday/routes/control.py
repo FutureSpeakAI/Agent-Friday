@@ -69,7 +69,7 @@ def cc_permission():
                 "granted": False,
                 "error": "Computer Control is turned off. Turn it on under "
                          "Settings → Privacy & Security → Computer Control, "
-                         "then press \"Grant for this session\".",
+                         "then press \"Grant\".",
             }), 403
         _CC_KILL.clear()
         _CC_PERMISSION.set()

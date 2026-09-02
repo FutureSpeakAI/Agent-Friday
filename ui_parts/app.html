@@ -7632,7 +7632,7 @@ function CcGrantPanel({enabled}){
     <Line ok={st.granted} label="Session grant" detail={st.granted?'Held. Friday can control this computer. This grant persists across restarts until revoked.':'Not held. Press Grant below. Once given, the grant persists across restarts until revoked.'}/>
     {st.killed&&<div style={{fontSize:11,color:'#ffb347',marginBottom:8,lineHeight:1.5}}>⚠ The kill switch was used. Granting again clears it.</div>}
     <div style={{display:'flex',gap:6,marginTop:10}}>
-      <button className={`settings-btn ${st.granted?'':'active'}`} disabled={busy||!ready||st.granted} style={{fontSize:12,opacity:(!ready||st.granted)?0.45:1}} onClick={()=>act('grant')}>{busy?'…':'Grant for this session'}</button>
+      <button className={`settings-btn ${st.granted?'':'active'}`} disabled={busy||!ready||st.granted} style={{fontSize:12,opacity:(!ready||st.granted)?0.45:1}} onClick={()=>act('grant')}>{busy?'…':'Grant'}</button>
       <button className="settings-btn" disabled={busy||!st.granted} style={{fontSize:12,opacity:st.granted?1:0.45}} onClick={()=>act('revoke')}>Revoke</button>
     </div>
     {err&&<div style={{fontSize:11,color:'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono',lineHeight:1.5}}>{err}</div>}
