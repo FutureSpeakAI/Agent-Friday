@@ -31,10 +31,13 @@ than a setting.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import shutil
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -151,6 +154,11 @@ def mark_boot_succeeded() -> None:
     a["consecutive_failures"] = 0
     a["last_start_completed"] = True
     a["last_ok"] = datetime.now().isoformat(timespec="seconds")
+    # A start that reached serving vindicates any rollback that preceded it, and
+    # re-arms the auto-revert for the next bad edit. Without this the loop guard
+    # in restore_known_good() would disarm the mechanism permanently after its
+    # first use.
+    a["restore_pending"] = False
     _write(ATTEMPT_FILE, a)
 
 
@@ -158,74 +166,325 @@ def failing_to_boot() -> bool:
     return int(_read_attempt().get("consecutive_failures", 0)) >= MAX_FAILED_BOOTS
 
 
-# ── known-good snapshots of UI / workspace state ────────────────────────────
+# ── known-good snapshots: what is covered, and how it is keyed ──────────────
+#
+# 2026-09-03. Until this change the covered set was `~/.friday/workspace_studio`
+# and `~/.friday/settings.json` and nothing else, while the module's headline
+# claim was that a failed self-edit must never leave Friday unable to start.
+# Neither of those paths can break a boot, so the auto-revert restored things
+# that cannot cause the failure it exists to cure. The set below is the app's
+# own importable source and the UI entry — the things that CAN stop a start —
+# plus the two it always had.
+#
+# Two consequences of widening it, both handled rather than hoped about:
+#
+#  * a partial snapshot used to be harmless and is now catastrophic, because
+#    `restore_known_good` replaces whole directories. Snapshots are therefore
+#    staged and swapped atomically, carry a per-entry integrity record, and are
+#    refused at restore time if they do not verify.
+#  * the live state being replaced used to be discarded. It is now MOVED to
+#    STATE_DIR/failed/<timestamp>/, which is where `note()` has always told the
+#    user to look and where, until today, nothing was ever written.
+
+_SNAPSHOT_IGNORE = shutil.ignore_patterns(
+    "__pycache__", "*.pyc", "*.pyo", "*.pyd", ".git", "*.log", "*.tmp")
+
+
+def _package_root() -> Path:
+    """The importable package directory — src/agent_friday, or _MEIPASS frozen.
+
+    Deliberately computed here rather than imported from `core._RES_DIR`: this
+    module must stay stdlib-only so the recovery path never depends on the app
+    it is recovering. `boot_guard.py` lives at <pkg>/services/boot_guard.py.
+    """
+    frozen = getattr(sys, "_MEIPASS", None)
+    if frozen:
+        return Path(frozen)
+    return Path(__file__).resolve().parent.parent
+
+
+def _self_editable_paths() -> list:
+    """What a self-edit or a liquid-UI change is allowed to touch.
+
+    Ordered widest-first only for readability; the snapshot is keyed by full
+    path (see `_slug`), so order carries no meaning.
+    """
+    pkg = _package_root()
+    paths = [pkg]
+    ui = pkg.parent.parent / "index.html"     # repo root in a source checkout
+    if ui.exists():
+        paths.append(ui)
+    paths.append(HOME / ".friday" / "workspace_studio")
+    paths.append(HOME / ".friday" / "settings.json")
+    return paths
+
+
+def _slug(p: Path) -> str:
+    """A stable per-path key for the snapshot store.
+
+    The previous implementation keyed by `p.name`, so two covered paths sharing
+    a basename would have silently overwritten each other in the store and then
+    restored each other's contents over the top. Not reachable with two paths;
+    reachable the moment the set grows, which is this change.
+    """
+    full = str(p).replace("\\", "/").rstrip("/")
+    digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:12]
+    stem = re.sub(r"[^A-Za-z0-9_.-]", "_", p.name)[:40] or "path"
+    return "%s-%s" % (stem, digest)
+
+
+def _fingerprint(p: Path) -> dict:
+    """Cheap integrity/change record: file count, total bytes, newest mtime.
+
+    Not a hash of contents — this runs on every successful boot over a 25 MB
+    tree and the job is to notice a change and to notice a truncated store, not
+    to resist a forger who already has write access to both.
+    """
+    if not p.exists():
+        return {"exists": False, "files": 0, "bytes": 0, "mtime": 0.0}
+    if p.is_file():
+        st = p.stat()
+        return {"exists": True, "files": 1, "bytes": st.st_size,
+                "mtime": round(st.st_mtime, 3)}
+    files = 0
+    total = 0
+    newest = 0.0
+    for f in p.rglob("*"):
+        name = f.name
+        if "__pycache__" in f.parts or name.endswith((".pyc", ".pyo", ".pyd")):
+            continue
+        if not f.is_file():
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        files += 1
+        total += st.st_size
+        newest = max(newest, st.st_mtime)
+    return {"exists": True, "files": files, "bytes": total,
+            "mtime": round(newest, 3)}
+
+
+def _matches(fp_a: dict, fp_b: dict, *, ignore_mtime: bool = False) -> bool:
+    if not fp_a or not fp_b:
+        return False
+    if fp_a.get("files") != fp_b.get("files"):
+        return False
+    if fp_a.get("bytes") != fp_b.get("bytes"):
+        return False
+    if ignore_mtime:
+        return True
+    return abs(float(fp_a.get("mtime", 0)) - float(fp_b.get("mtime", 0))) < 0.01
+
+
+def _read_manifest() -> dict:
+    try:
+        return json.loads((STATE_DIR / "known_good.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _copy_into(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if src.is_dir():
+        shutil.copytree(src, dest, ignore=_SNAPSHOT_IGNORE)
+    else:
+        shutil.copy2(src, dest)
+
+
 def snapshot_known_good(paths=None) -> dict:
     """Copy the CURRENT state of the self-editable surfaces into known_good.
 
     Only called after a proven boot. Snapshots whole files rather than diffs, on
     the same principle that made the calendar repair possible: the receipt held
     the actual prior value, so restoring needed no reconstruction.
+
+    Staged-then-swapped: everything is written to `known_good.staging` and moved
+    into place only once every entry has copied, and the manifest's `complete`
+    flag is written last. A crash at any point leaves the PREVIOUS known-good
+    intact, which matters now that a restore replaces the source tree.
+
+    Skips the copy entirely when nothing covered has changed since the last
+    snapshot, because this runs after every successful start.
+
+    MEASURED 2026-09-03 on the reference machine: 309 files, 7.4 MB, 0.31 s for
+    a full copy and 0.05 s when unchanged. (`du` reports the package tree at
+    25 MB; the difference is `__pycache__`, which `_SNAPSHOT_IGNORE` drops.)
     """
     src_paths = [Path(p) for p in (paths or _self_editable_paths())]
-    KNOWN_GOOD.mkdir(parents=True, exist_ok=True)
+    live = {}
+    for p in src_paths:
+        if p.exists():
+            live[str(p)] = _fingerprint(p)
+
+    prior = _read_manifest()
+    if prior.get("complete") and set(prior.get("entries", {})) == set(live):
+        if all(_matches(prior["entries"][k].get("fingerprint"), live[k])
+               for k in live):
+            return {"ok": True, "unchanged": True,
+                    "saved": sorted(live), "at": prior.get("at")}
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    staging = STATE_DIR / "known_good.staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+
+    entries = {}
     saved = []
     for p in src_paths:
         if not p.exists():
             continue
+        slug = _slug(p)
         try:
-            dest = KNOWN_GOOD / p.name
-            if p.is_dir():
-                dest = KNOWN_GOOD / p.name
-                if dest.exists():
-                    shutil.rmtree(dest, ignore_errors=True)
-                shutil.copytree(p, dest)
-            else:
-                shutil.copy2(p, dest)
-            saved.append(str(p))
+            _copy_into(p, staging / slug)
         except Exception as e:
+            # One unreadable path must not silently produce a snapshot that
+            # LOOKS complete and restores a hole into the live tree.
             _log.warning("boot_guard: could not snapshot %s: %s", p, e)
+            shutil.rmtree(staging, ignore_errors=True)
+            return {"ok": False, "error": "could not snapshot %s (%s)" % (p, e),
+                    "saved": []}
+        entries[str(p)] = {
+            "slug": slug,
+            "kind": "dir" if p.is_dir() else "file",
+            "fingerprint": _fingerprint(p),
+            "stored": _fingerprint(staging / slug),
+        }
+        saved.append(str(p))
+
+    old = STATE_DIR / "known_good.previous"
+    shutil.rmtree(old, ignore_errors=True)
+    if KNOWN_GOOD.exists():
+        try:
+            KNOWN_GOOD.rename(old)
+        except OSError:
+            shutil.rmtree(KNOWN_GOOD, ignore_errors=True)
+    staging.rename(KNOWN_GOOD)
+    shutil.rmtree(old, ignore_errors=True)
+
     _write(STATE_DIR / "known_good.json",
-           {"at": datetime.now().isoformat(timespec="seconds"), "paths": saved})
+           {"at": datetime.now().isoformat(timespec="seconds"),
+            "paths": saved,          # kept for readers of the old shape
+            "entries": entries,
+            "complete": True})
     return {"ok": True, "saved": saved}
 
 
+def _verify_snapshot(manifest: dict) -> tuple:
+    """(ok, reason) — is this store safe to copy over a live tree?
+
+    Checked BEFORE anything is moved. The previous implementation assumed the
+    store was whole because the directory existed, which was survivable while it
+    held workspace JSON and is not survivable now that it holds the source.
+    """
+    if not manifest:
+        return False, "no known-good snapshot exists yet"
+    if not manifest.get("complete"):
+        return False, ("the last snapshot did not finish, so restoring it would "
+                       "replace working files with a fragment")
+    entries = manifest.get("entries") or {}
+    if not entries:
+        return False, "the known-good manifest names no paths"
+    for target, meta in entries.items():
+        stored = KNOWN_GOOD / meta.get("slug", "")
+        if not stored.exists():
+            return False, "the snapshot of %s is missing from the store" % target
+        # mtime is not preserved by every copy path across volumes; size and
+        # count are what a truncation actually changes.
+        if not _matches(meta.get("stored"), _fingerprint(stored), ignore_mtime=True):
+            return False, ("the snapshot of %s does not match what was recorded "
+                           "when it was taken" % target)
+    return True, None
+
+
 def restore_known_good() -> dict:
-    """Put the self-editable surfaces back to the last PROVEN-bootable state."""
+    """Put the self-editable surfaces back to the last PROVEN-bootable state.
+
+    Honest about two things the previous version overstated.
+
+    First, WHEN it takes effect. `server.py` calls this from `__main__`, long
+    after the module imported the package at the top of the file, so replacing
+    `.py` files on disk cannot change the code already in memory. A restore of
+    the source lands on the NEXT start. The report says so; claiming otherwise
+    would be the invisible-success failure one layer down.
+
+    Second, WHAT it kept. The note has always pointed at STATE_DIR/"failed" and
+    nothing ever wrote there. The state being replaced is now moved there rather
+    than deleted, so the sentence is true and the broken state is inspectable.
+
+    A restore that has not yet been vindicated by a successful boot is not
+    repeated: it did not help the first time and re-running it costs a full
+    tree copy per failed start.
+    """
     if safe_mode():
         return {"ok": False, "skipped": "safe mode — nothing restored so the "
                                         "broken state can be inspected"}
-    manifest = STATE_DIR / "known_good.json"
-    try:
-        paths = json.loads(manifest.read_text(encoding="utf-8")).get("paths") or []
-    except Exception:
-        return {"ok": False, "error": "no known-good snapshot exists yet"}
-    restored = []
-    for sp in paths:
-        p = Path(sp)
-        src = KNOWN_GOOD / p.name
-        if not src.exists():
-            continue
+
+    attempt = _read_attempt()
+    if attempt.get("restore_pending"):
+        return {"ok": False, "skipped": (
+            "a restore to the last proven-bootable state was already applied at "
+            "%s and no successful start has happened since. Restoring again "
+            "would repeat something that did not help. Start with "
+            "FRIDAY_SAFE_MODE=1 to inspect, or look in %s"
+            % (attempt.get("restored_at"), STATE_DIR / "failed"))}
+
+    manifest = _read_manifest()
+    ok, why = _verify_snapshot(manifest)
+    if not ok:
+        note("Did not roll back — the saved state could not be trusted.",
+             reason=why)
+        return {"ok": False, "error": why}
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    failed_dir = STATE_DIR / "failed" / stamp
+    failed_dir.mkdir(parents=True, exist_ok=True)
+
+    restored, kept, problems = [], [], []
+    for target, meta in (manifest.get("entries") or {}).items():
+        p = Path(target)
+        stored = KNOWN_GOOD / meta["slug"]
+        staged = STATE_DIR / "restore_staging" / meta["slug"]
+        shutil.rmtree(staged.parent, ignore_errors=True)
         try:
-            if src.is_dir():
-                if p.exists():
-                    shutil.rmtree(p, ignore_errors=True)
-                shutil.copytree(src, p)
-            else:
-                shutil.copy2(src, p)
-            restored.append(sp)
+            # Copy out of the store first, so the store itself is never the
+            # thing that gets moved and a failure here changes nothing.
+            _copy_into(stored, staged)
+            if p.exists():
+                shutil.move(str(p), str(failed_dir / meta["slug"]))
+                kept.append(target)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(staged), str(p))
+            restored.append(target)
         except Exception as e:
-            _log.error("boot_guard: could not restore %s: %s", sp, e)
+            _log.error("boot_guard: could not restore %s: %s", target, e)
+            problems.append({"path": target, "error": str(e)})
+            # Put the live state back rather than leaving a hole.
+            aside = failed_dir / meta["slug"]
+            if aside.exists() and not p.exists():
+                try:
+                    shutil.move(str(aside), str(p))
+                except Exception:
+                    problems.append({"path": target,
+                                     "error": "left in %s" % aside})
+        finally:
+            shutil.rmtree(staged.parent, ignore_errors=True)
+
+    attempt["consecutive_failures"] = 0
+    attempt["restore_pending"] = True
+    attempt["restored_at"] = datetime.now().isoformat(timespec="seconds")
+    _write(ATTEMPT_FILE, attempt)
+
+    takes_effect = ("Source changes land on the next start — this process "
+                    "already loaded its code before the rollback ran.")
     note("Rolled back to the last state that actually booted.",
-         reason="two consecutive failed starts", restored=restored,
-         undo="the pre-rollback files are in %s" % (STATE_DIR / "failed"))
-    return {"ok": True, "restored": restored}
-
-
-def _self_editable_paths() -> list:
-    """What a self-edit or a liquid-UI change is allowed to touch."""
-    return [HOME / ".friday" / "workspace_studio",
-            HOME / ".friday" / "settings.json"]
-
+         reason="two consecutive failed starts",
+         restored=restored, takes_effect=takes_effect,
+         undo="the pre-rollback files are in %s" % failed_dir)
+    return {"ok": True, "restored": restored, "kept_for_inspection": str(failed_dir),
+            "takes_effect": takes_effect,
+            "problems": problems or None}
 
 # ── gates ───────────────────────────────────────────────────────────────────
 def check_self_edit(path: str) -> tuple:
@@ -295,7 +554,14 @@ def status() -> dict:
         "last_start": a.get("last_start"),
         "last_proven_boot": a.get("last_ok"),
         "known_good_snapshot_at": known_good_at,
-        "would_auto_revert": failing_to_boot(),
+        "known_good_covers": [e for e in (_read_manifest().get("entries") or {})],
+        "would_auto_revert": failing_to_boot() and not a.get("restore_pending"),
+        "restore_pending": bool(a.get("restore_pending")),
+        "restored_at": a.get("restored_at"),
+        # The trail was written by note() and read by nobody: recent_notes() had
+        # no callers, so "a trail he cannot read is a trail that does not exist"
+        # described its own module.
+        "recent_notes": recent_notes(10),
         "boot_critical_files": list(BOOT_CRITICAL),
         "recent_rollbacks": recent_notes(5),
     }
