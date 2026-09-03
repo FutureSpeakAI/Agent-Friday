@@ -37,8 +37,30 @@ def get_capabilities():
 
 
 @compute_bp.route("/api/federation/compute/request", methods=["POST"])
+@login_required
 def receive_job():
-    """Receive a federated compute job from a peer."""
+    """Receive a federated compute job from a peer.
+
+    security-boundary.md follow-up (2026-09-03): this route had no decorator
+    while 7 of its 10 siblings in this file do. `core.check_auth()` (the
+    app-wide `@app.before_request` hook) already fail-closes any non-loopback
+    caller with no `FRIDAY_REMOTE_KEY` for EVERY route, decorated or not —
+    verified empirically (tests/api/test_compute_federation_auth.py): a
+    spoofed non-loopback caller got 401 from this exact route before this
+    decorator was ever added. So this line changes no enforcement outcome
+    today. It is added anyway: for the same posture every sibling route
+    states explicitly rather than relying on a reader's knowledge of the
+    global hook, and as a second, independent layer in case that hook is
+    ever narrowed (its own exemption list already grows by path prefix for
+    /ws/). It does NOT address the real remaining risk on this route, which
+    a decorator cannot fix: `accept_job()`'s only trust check is a
+    caller-SELF-REPORTED `requester_trust_score`, and `capability:
+    "analysis.run"` runs the caller's own `prompt` field as a Python script
+    with the full process environment (services/worker_adapters/
+    python_script_adapter.py). That is a real design question about what
+    "trusting a federation peer" should mean, and it is Stephen's call, not
+    mine — flagged, not fixed, here.
+    """
     data = request.get_json(silent=True) or {}
     accepted, reason = prov.accept_job(data)
     if not accepted:
@@ -52,7 +74,10 @@ def receive_job():
 
 
 @compute_bp.route("/api/federation/compute/status/<job_id>", methods=["GET"])
+@login_required
 def job_status(job_id):
+    """Same note as receive_job above: added for consistency with the file's
+    own pattern; core.check_auth() already covered enforcement."""
     status = prov.get_job_status(job_id)
     if not status:
         return jsonify({"error": "job not found"}), 404
@@ -60,8 +85,12 @@ def job_status(job_id):
 
 
 @compute_bp.route("/api/federation/compute/result", methods=["POST"])
+@login_required
 def receive_result():
-    """A peer delivers the result of a job we sent them (callback / push)."""
+    """A peer delivers the result of a job we sent them (callback / push).
+
+    Same note as receive_job above: added for consistency with the file's
+    own pattern; core.check_auth() already covered enforcement."""
     data = request.get_json(silent=True) or {}
     job_id = data.get("job_id")
     if not job_id:

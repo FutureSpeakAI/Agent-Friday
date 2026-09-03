@@ -396,5 +396,29 @@ class TestToolDefinitionCache:
         assert len(eg._TOOL_TIER_CACHE) <= eg._TOOL_TIER_MAX
 
 
+class TestPromptKeyTierGated:
+    """security-boundary.md §1.3/§9.3: seal_outbound's PII scrub covers
+    system/messages/prompt, but the TIER gate only ran for system/messages —
+    a payload whose only content is a top-level `prompt` key got the scrub
+    and no tier gate, so a TIER_2/3 span with no matching PII shape (no SSN,
+    no phone number — just sensitive prose) sailed through untouched. This
+    is exactly the shape `compute_client.request_job` sends: `seal_outbound
+    ({"prompt": prompt}, provider="federation")`.
+    """
+
+    def test_prompt_only_payload_is_tier_gated(self):
+        payload = {"prompt": SENSITIVE}
+        result = seal_outbound(payload, "federation")
+        assert not _leaked(result["prompt"]), (
+            "a payload whose only content is a top-level 'prompt' key must "
+            "be tier-gated, not merely PII-scrubbed"
+        )
+
+    def test_public_prompt_still_passes(self):
+        payload = {"prompt": "what's a good recipe for banana bread?"}
+        result = seal_outbound(payload, "federation")
+        assert result["prompt"] == "what's a good recipe for banana bread?"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

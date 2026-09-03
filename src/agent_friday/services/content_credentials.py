@@ -151,10 +151,28 @@ def timestamp_rfc3161(content_hash: str) -> Dict[str, Any]:
     or {"type":"local-ledger"} on any network or parse failure.
     Always offline-safe: a failure never breaks the caller.
     """
+    # security-boundary.md §19 row 9: no content leaves here — only a
+    # SHA-256 hash — so there is nothing to gate, but the fact and timing of
+    # the request were invisible in the one file supposed to enumerate
+    # everything that left. Recorded via record_binary_egress, the same
+    # primitive every other unclassifiable-payload egress uses; the attempt
+    # is logged whether it succeeds or falls back to local-ledger.
     try:
-        return _request_tsa_token(content_hash)
-    except Exception:
+        result = _request_tsa_token(content_hash)
+    except Exception as e:
+        _record_tsa_egress("block", "network or parse failure: %s" % e)
         return {"type": "local-ledger"}
+    _record_tsa_egress("allow", "RFC-3161 timestamp token received")
+    return result
+
+
+def _record_tsa_egress(action: str, reason: str) -> None:
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_binary_egress("freetsa.org", "content_hash_timestamp",
+                                 action=action, reason=reason, byte_len=32)
+    except Exception:
+        pass
 
 
 def _request_tsa_token(content_hash: str) -> Dict[str, Any]:

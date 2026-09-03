@@ -12,6 +12,28 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Dict, Optional
 
+_CHANNEL_SEND_WITHHELD = ("[withheld by egress gate — this message stayed "
+                          "on this device]")
+
+
+def _gate_channel_text(text: str, channel: str) -> str:
+    """Gate any text before it reaches a channel adapter's transport.
+    FAIL-CLOSED: any gate exception, including NeverSendBlocked, withholds
+    rather than sends the raw text."""
+    if not text:
+        return text
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        return _CHANNEL_SEND_WITHHELD
+    try:
+        gated = _eg._gate_text(text, f"channel_{channel}", "channel.send")
+        return gated if gated else _CHANNEL_SEND_WITHHELD
+    except _eg.NeverSendBlocked:
+        return _CHANNEL_SEND_WITHHELD
+    except Exception:
+        return _CHANNEL_SEND_WITHHELD
+
 
 class ChannelAdapter:
     """Base class for a messaging-platform bridge.
@@ -98,8 +120,20 @@ class ChannelAdapter:
     def _poll_once(self) -> None:
         raise NotImplementedError
 
-    def send(self, chat_id: str, text: str) -> Dict[str, Any]:
+    def _send_raw(self, chat_id: str, text: str) -> Dict[str, Any]:
+        """Adapter transport — implement this, not ``send()``."""
         raise NotImplementedError
+
+    # security-boundary.md §19 row 6: this used to be the abstract method
+    # every adapter overrode directly, so only the reply path
+    # (manager.handle_incoming -> gate_reply -> self.send()) was gated —
+    # any OTHER caller of adapter.send() (manager.test_channel(), wired to
+    # the /test route with a caller-supplied `text`) bypassed the gate
+    # entirely. Gating HERE, once, means the reply path is no longer the
+    # only guarded door, and no future adapter can add a new one.
+    def send(self, chat_id: str, text: str) -> Dict[str, Any]:
+        gated = _gate_channel_text(text, self.name)
+        return self._send_raw(chat_id, gated)
 
     # ── inbound dispatch (adapters call this per received message) ────────────
     def _dispatch(self, chat_id: str, text: str) -> None:

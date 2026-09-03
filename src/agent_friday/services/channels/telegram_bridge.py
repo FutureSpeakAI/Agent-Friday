@@ -57,7 +57,7 @@ class TelegramBridge(ChannelAdapter):
             if isinstance(text, str) and text and chat is not None:
                 self._dispatch(str(chat), text)
 
-    def send(self, chat_id: str, text: str) -> Dict[str, Any]:
+    def _send_raw(self, chat_id: str, text: str) -> Dict[str, Any]:
         try:
             r = self._call("sendMessage",
                           {"chat_id": chat_id, "text": text[:4096]})
