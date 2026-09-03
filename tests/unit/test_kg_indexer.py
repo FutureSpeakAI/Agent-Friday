@@ -114,6 +114,174 @@ class TestModelResolution:
             indexer._resolve_model(1, "gated_cloud")
 
 
+class TestKnowledgeGraphSettingsPersistence:
+    """Regression: `knowledge_graph` was absent from `core.DEFAULT_SETTINGS`.
+
+    `_load_settings_raw()` whitelists every top-level key it returns against
+    `DEFAULT_SETTINGS` (core/__init__.py:2002) -- a key missing from that
+    dict is written to settings.json successfully (the write path does not
+    whitelist, see `_save_settings`) and then silently dropped on every
+    subsequent read. `kg_settings()` reads its user overlay via
+    `_load_settings()`, so a user who unchecked "index conversations" or
+    switched indexing_mode to gated_cloud in Settings -> Knowledge saw
+    "Saved", and the very next read served the untouched factory defaults --
+    the same defect class as `egress_mode` and the top-level
+    `vault_local_only` (docs/design/security-boundary.md #18), just on the
+    other side of the settings file.
+    """
+
+    @pytest.fixture
+    def restore_kg_settings(self):
+        """This test writes into the REAL, session-shared settings.json
+        (the whole point is to exercise the real _save_settings /
+        _load_settings_raw round trip, not a mock of it) -- so it must put
+        the `knowledge_graph` block back exactly as it found it, or every
+        test after it in the same session inherits a customized
+        indexing_mode. `test_defaults_local_only_and_index_everything` in
+        test_knowledge_graph_store.py caught exactly this the first time
+        this fixture didn't exist."""
+        import agent_friday.core as core
+        original = core._load_settings_raw().get("knowledge_graph")
+        yield
+        core._save_settings({"knowledge_graph": original or {}})
+        core._invalidate_settings_cache()
+
+    def test_saved_kg_customization_survives_a_reload(
+            self, monkeypatch, restore_kg_settings):
+        import agent_friday.core as core
+        from agent_friday.services.knowledge_graph import kg_settings
+
+        core._invalidate_settings_cache()
+        custom = {"indexing_mode": "gated_cloud",
+                  "index_sources": {"wiki": True, "conversations": False,
+                                     "cognitive": False, "soul": False}}
+        core._save_settings({"knowledge_graph": custom})
+        core._invalidate_settings_cache()
+
+        raw = core._load_settings_raw()
+        assert raw.get("knowledge_graph", {}).get("indexing_mode") == \
+            "gated_cloud", (
+                "the saved block did not survive _load_settings_raw() -- "
+                "'knowledge_graph' fell out of the DEFAULT_SETTINGS "
+                "whitelist again")
+
+        merged = kg_settings()
+        assert merged["indexing_mode"] == "gated_cloud"
+        assert merged["index_sources"]["conversations"] is False
+        # Untouched defaults still fill in what the user never set.
+        assert merged["nightly_reindex"] is True
+
+    def test_without_the_default_settings_entry_the_save_is_silently_lost(
+            self, monkeypatch, restore_kg_settings):
+        """Would have caught the original bug: pull `knowledge_graph` back
+        out of DEFAULT_SETTINGS (reproducing the state before this fix) and
+        confirm the exact failure this class describes -- a successful save
+        that a reload cannot see."""
+        import agent_friday.core as core
+        from agent_friday.services.knowledge_graph import kg_settings
+
+        core._invalidate_settings_cache()
+        core._save_settings({"knowledge_graph": {"indexing_mode": "gated_cloud"}})
+        core._invalidate_settings_cache()
+
+        stripped = {k: v for k, v in core.DEFAULT_SETTINGS.items()
+                    if k != "knowledge_graph"}
+        monkeypatch.setattr(core, "DEFAULT_SETTINGS", stripped)
+        core._invalidate_settings_cache()
+        try:
+            raw = core._load_settings_raw()
+            assert "knowledge_graph" not in raw
+            assert kg_settings()["indexing_mode"] == "local_only"  # reverted
+        finally:
+            core._invalidate_settings_cache()
+
+
+class TestConversationChunks:
+    """Regression coverage for the conversation source.
+
+    `_conversation_chunks` used to call `cm.recent_turns(limit=...)`, a
+    method `ConversationMemory` has never had, and read a `content` field
+    that its real `recent()` has never returned either. A bare
+    `except Exception: return []` turned both into an empty list that reads
+    exactly like "no conversations yet" -- so the conversation source has
+    never indexed a single turn. These stub `ConversationMemory` the way the
+    real `recent()` actually shapes its rows (`text`, not `content`; no
+    `turn_id`), so a reintroduced wrong method or field name fails loudly.
+    """
+
+    def test_recent_shape_is_indexed(self, monkeypatch):
+        import agent_friday.conversation_memory as cmem
+
+        class FakeConversationMemory:
+            def available(self):
+                return True
+
+            def recent(self, n=20, roles=None):
+                assert n == 400  # the indexer's limit, passed through
+                return [
+                    {"text": "A" * 50, "role": "user",
+                     "timestamp": "2026-09-01T00:00:00", "date": "2026-09-01",
+                     "session_id": "s1", "topic_keywords": []},
+                    # under the 40-char floor -- must be skipped as trivia
+                    {"text": "short", "role": "user",
+                     "timestamp": "2026-09-01T00:01:00", "date": "2026-09-01",
+                     "session_id": "s1", "topic_keywords": []},
+                ]
+
+        monkeypatch.setattr(cmem, "ConversationMemory", FakeConversationMemory)
+        monkeypatch.setattr(indexer, "_classify_free_text", lambda text: 2)
+
+        chunks = list(indexer._conversation_chunks())
+        assert len(chunks) == 1
+        c = chunks[0]
+        assert c["text"] == "A" * 50
+        assert c["sensitivity"] == 2
+        assert c["id"].startswith("conv:")
+        assert c["source_path"].startswith("conversation:")
+        assert c["provenance"]["conversations"]
+
+    def test_unavailable_store_yields_nothing_quietly(self, monkeypatch, capsys):
+        import agent_friday.conversation_memory as cmem
+
+        class FakeConversationMemory:
+            def available(self):
+                return False
+
+        monkeypatch.setattr(cmem, "ConversationMemory", FakeConversationMemory)
+        assert list(indexer._conversation_chunks()) == []
+        # "not ready" is not a failure -- must not print an alarm for it.
+        assert capsys.readouterr().out == ""
+
+    def test_broken_method_is_reported_not_swallowed(self, monkeypatch, capsys):
+        """Would have caught the original bug: a store shaped like the real
+        one (available, but no working `recent`) must not vanish without a
+        trace -- it still degrades to [], but says why."""
+        import agent_friday.conversation_memory as cmem
+
+        class BrokenConversationMemory:
+            def available(self):
+                return True
+            # no `recent` (and no `recent_turns`) -- calling either raises
+            # AttributeError, reproducing the original defect's failure mode.
+
+        monkeypatch.setattr(cmem, "ConversationMemory", BrokenConversationMemory)
+        assert list(indexer._conversation_chunks()) == []
+        assert "conversation source failed" in capsys.readouterr().out
+
+
+class TestCognitiveChunksFailureVisibility:
+    def test_broken_source_is_reported_not_swallowed(self, monkeypatch, capsys):
+        import agent_friday.cognitive_memory as cogmem
+
+        class BrokenCognitiveMemory:
+            def __init__(self):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(cogmem, "CognitiveMemory", BrokenCognitiveMemory)
+        assert list(indexer._cognitive_chunks()) == []
+        assert "cognitive memory source failed" in capsys.readouterr().out
+
+
 class TestIndexPass:
     def test_full_index_produces_artifacts(self, wiki_home, tmp_path):
         store = KnowledgeGraphStore(base_dir=tmp_path / "kg")

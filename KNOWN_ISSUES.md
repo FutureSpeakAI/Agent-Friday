@@ -704,11 +704,55 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   present. Not chased to a cause. The consequence is the one §1 opens with: a diagnostic
   you believe is being recorded and is not. Prefer the structured logger or the response
   payload over `print()` for anything you intend to rely on later.
-- **The `egress_mode` setting is read by nothing.** Settings → Privacy → EGRESS GATE
-  (Audit/Enforce) is a dead control. The direction is safe — the gate always enforces —
-  but a privacy toggle that does nothing is a credibility problem regardless.
+- ~~**The `egress_mode` setting is read by nothing.**~~ **Fixed 2026-09-03.** The
+  EGRESS GATE / Cloud Mode control is removed from both `index.html` and
+  `ui_parts/app.html` (docs/design/security-boundary.md #18.2 already specified
+  the disposition: implement audit-only for real, or remove — the control had no
+  constituency). The same pass fixed `ui_parts/app.html`'s Local-Only Mode toggle,
+  which wrote a top-level `vault_local_only` the server has never read (only the
+  nested `model_routing.vault_local_only`), and added
+  `scripts/check_settings_readers.py` (wired into the pytest suite as
+  `tests/unit/test_settings_readers_check.py`) so a settings control writing a key
+  nothing reads fails a test instead of shipping silently.
 - **Two safety gates have no callers**: `boot_guard.check_self_edit()` and
-  `check_scope()`.
+  `check_scope()`. Reconfirmed 2026-09-03 — still zero call sites anywhere in
+  `src/`. `_self_editable_paths()` and the two gates' docstrings describe a
+  "self-edit tool" that writes arbitrary files and should check each path against
+  `check_self_edit` and the batch against `check_scope`; no such tool exists yet.
+  Not fixed here: wiring a safety gate to the wrong call site is worse than an
+  honestly-absent one, and which tool should own this call is a product decision,
+  not a missing line.
+- **`settings.json`'s `knowledge_graph` block was silently discarded on every
+  read.** Fixed 2026-09-03 — same defect class as `egress_mode` above, found while
+  fixing the conversation-memory indexer bug below: `knowledge_graph` was never
+  declared in `core.DEFAULT_SETTINGS`, so `_load_settings_raw()`'s whitelist
+  (`core/__init__.py:2002`) dropped it from every read while `_save_settings()`
+  happily persisted it to disk. Settings → Knowledge's toggles (which sources to
+  index, `indexing_mode`, `power_indexer`, `nightly_reindex`) all showed "Saved"
+  and reverted to factory defaults on the next load. One line added to
+  `DEFAULT_SETTINGS`; `services/knowledge_graph/__init__.py:kg_settings()` already
+  did the right thing once it could see what was saved.
+- **The conversation source has never indexed a single turn into the knowledge
+  graph.** Fixed 2026-09-03. `services/knowledge_graph/indexer.py`'s
+  `_conversation_chunks()` called `cm.recent_turns(limit=...)` —
+  `ConversationMemory` has never had that method, only `recent(n=..., roles=...)`
+  — and read a `content` field that `recent()`'s rows have never carried (they
+  carry `text`). A bare `except Exception: return []` turned the resulting
+  `AttributeError` into an empty list indistinguishable from "no conversations
+  yet," on every indexing pass, since the feature shipped. Fixed by calling the
+  real method with its real field name; the bare except in both this function and
+  the structurally identical `_cognitive_chunks()` now prints what failed instead
+  of swallowing it.
+- **Five settings controls persist a value and read it back only to redraw
+  themselves — nothing else in the app consumes them.** Found 2026-09-03 while
+  calibrating the settings-readers checker above; not fixed, since each needs a
+  product decision about what it should actually do:
+  - `stream_responses` ("Stream tokens as they arrive") — no code decides
+    whether a response streams based on this key.
+  - `auto_open_chat`, `compact_mode` (Settings → Interface toggles), `scene_name`
+    (3D scene picker), and `startup_workspace` — each is written and read back
+    only inside its own settings-panel component (`index.html` ~31432-31475);
+    nothing elsewhere in either HTML file or in `src/` references any of them.
 - **The model picker shows a hardcoded list of three models** while hundreds may be
   available.
 - **Settings keys absent from `DEFAULT_SETTINGS` are silently discarded on save**, and

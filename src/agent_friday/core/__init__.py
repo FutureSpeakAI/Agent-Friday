@@ -1422,6 +1422,16 @@ DEFAULT_SETTINGS = {
     "away_drain": {                       # P5 — drains queued heavy work on a
         "enabled": False,                 # timer. Default OFF: it takes the GPU.
     },
+    # Empty on purpose: services/knowledge_graph/__init__.py:kg_settings() owns
+    # the real defaults (KG_DEFAULT_SETTINGS) and layers the user's saved block
+    # on top. This entry exists only so that block SURVIVES the whitelist two
+    # lines above this comment's file-mate -- without it, every knowledge-graph
+    # setting the Settings->Knowledge tab saves (index_sources, indexing_mode,
+    # power_indexer, nightly_reindex...) round-trips through settings.json and
+    # is silently discarded on the very next read, same defect class as
+    # egress_mode and the top-level vault_local_only (docs/design/
+    # security-boundary.md #18).
+    "knowledge_graph": {},
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,

@@ -146,7 +146,12 @@ def _cognitive_chunks() -> Iterable[dict]:
         from agent_friday.cognitive_memory import CognitiveMemory
         mem = CognitiveMemory()
         mem_dir = Path(getattr(mem, "memory_dir"))
-    except Exception:
+    except Exception as e:
+        # Total failure here is indistinguishable from "no memories yet"
+        # unless it is said out loud — see _conversation_chunks below, where
+        # the same shape of swallow hid a broken source for good.
+        print(f"  [KG] cognitive memory source failed, no cognitive facts "
+              f"indexed: {e}")
         return []
     out = []
     if not mem_dir.exists():
@@ -171,17 +176,35 @@ def _cognitive_chunks() -> Iterable[dict]:
 
 
 def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
+    """Chat turns from `ConversationMemory.recent()`.
+
+    `recent()` returns dicts shaped {text, role, timestamp, date, session_id,
+    topic_keywords} — no `turn_id` (it never surfaces Chroma's internal doc
+    id). That is fine: the id below falls back to a hash of the content,
+    which is stable across re-indexes and gives the same chunk id for the
+    same turn every time, keeping "delta" mode's dedup working.
+
+    Bug history: this used to call a `recent_turns(limit=...)` method that
+    `ConversationMemory` has never had, and read a `content` field that
+    `recent()` has never returned either. The bare `except Exception: return
+    []` below turned that AttributeError into an empty list indistinguishable
+    from "no conversations yet" — so the conversation source has never
+    actually indexed a single turn. Fixed by calling the real method with its
+    real field name, and by no longer swallowing the failure silently.
+    """
     try:
         from agent_friday.conversation_memory import ConversationMemory
         cm = ConversationMemory()
         if not cm.available():
             return []
-        turns = cm.recent_turns(limit=limit)
-    except Exception:
+        turns = cm.recent(n=limit)
+    except Exception as e:
+        print(f"  [KG] conversation source failed, no conversation turns "
+              f"indexed: {e}")
         return []
     out = []
     for t in turns or []:
-        content = str(t.get("content") or "")
+        content = str(t.get("text") or "")
         if len(content.strip()) < 40:      # skip trivia
             continue
         sens = _classify_free_text(content)

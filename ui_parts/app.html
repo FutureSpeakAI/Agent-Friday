@@ -8149,7 +8149,7 @@ function SettingsTabPrivacy({s,save}){
         {armMsg&&<div style={{fontSize:10,color:armMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       </div>}
       {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
-      <StToggle label="Local-Only Mode" value={!!s.vault_local_only} onChange={()=>save({vault_local_only:!s.vault_local_only})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+      <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
     <StSection title="YOUR DATA">
       <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists.</div>
@@ -8160,12 +8160,6 @@ function SettingsTabPrivacy({s,save}){
         <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap',borderColor:eraseConfirm==='ERASE'?'rgba(255,0,80,0.5)':undefined,color:eraseConfirm==='ERASE'?'#ff6b8a':undefined}} disabled={eraseConfirm!=='ERASE'} onClick={eraseAll}>Erase Everything</button>
       </div>
       {eraseMsg&&<div style={{fontSize:10,color:eraseMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{eraseMsg}</div>}
-    </StSection>
-    <StSection title="EGRESS GATE">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Controls what data leaves the device. Tier 1 (public) passes through. Tier 2 (sensitive) is redacted. Tier 3 (private) is blocked.</div>
-      <StRow label="Cloud Mode">
-        <div style={{display:'flex',gap:6}}>{['audit','enforce'].map(m=><button key={m} className={`settings-btn ${(s.egress_mode||'enforce')===m?'active':''}`} onClick={()=>save({egress_mode:m})} style={{fontSize:12}}>{m.charAt(0).toUpperCase()+m.slice(1)}</button>)}</div>
-      </StRow>
     </StSection>
     <StSection title="CONTEXT LOGGING">
       <StToggle label="Full Context Logging" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="Append-only log of chats, tool calls, file reads. Stored locally."/>
