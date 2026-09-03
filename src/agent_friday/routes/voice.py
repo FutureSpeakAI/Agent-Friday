@@ -628,6 +628,82 @@ def _gate_voice_text(text: str) -> str:
         return _LIVE_TEXT_WITHHELD
 
 
+# security-boundary.md §19 row 1: what the model sees in place of a fully
+# withheld Live system instruction (a whole-payload never-send match). The
+# session still opens — refusing to connect at all would be a worse failure
+# than a degraded one — but Friday's own words say so, not a fabrication.
+_VOICE_SYS_INSTRUCTION_WITHHELD = (
+    "You are Agent Friday, a sovereign personal AI assistant having a live "
+    "voice conversation. Your full personal context could not be sent to "
+    "this cloud voice provider because it contained content on the user's "
+    "never-send list. Tell the user their personal context is only "
+    "available through local processing right now, and that switching to a "
+    "local model would let you discuss it. Continue the conversation "
+    "normally for anything else."
+)
+
+
+def _gate_voice_system_instruction(sys_text: str) -> str:
+    """Gate the Live voice system instruction before Google ever sees it.
+
+    security-boundary.md §19 row 1: this is the assembled context prompt —
+    personality, self-knowledge, and (when the vault gate is on) TIER-gated
+    vault material — going straight to Google as `system_instruction=`. The
+    vault-assembly gate (`_get_vault_control()`) only runs when
+    `vault_local_only` is true; with it false (Stephen's current posture,
+    `e1f1874`) `_get_friday_system_prompt` assembles ungated and NOTHING
+    stood between the result and Google — no egress-gate call existed on
+    this path at all, unlike the sibling tool-result and live.text paths
+    just above. FAIL-CLOSED, same shape as those: any gate exception,
+    including NeverSendBlocked, withholds rather than sends the raw prompt.
+    """
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as _ie:
+        _log.error("voice system-instruction gating module unavailable: %s — "
+                  "withholding rather than sending ungated", _ie)
+        return _VOICE_SYS_INSTRUCTION_WITHHELD
+    try:
+        gated = _eg._gate_text(sys_text, "google-gemini", "voice_system_instruction")
+        return gated if gated else _VOICE_SYS_INSTRUCTION_WITHHELD
+    except _eg.NeverSendBlocked as _nb:
+        _log.warning("voice system-instruction NEVER-SEND blocked: %s", _nb)
+        return _VOICE_SYS_INSTRUCTION_WITHHELD
+    except Exception as _ge:
+        _log.warning("voice system-instruction gating unavailable: %s — "
+                    "withholding rather than sending ungated", _ge)
+        return _VOICE_SYS_INSTRUCTION_WITHHELD
+
+
+def _record_mic_audio_egress(event: str, byte_len: int = 0) -> None:
+    """security-boundary.md §19 row 2: Live microphone audio streamed to
+    Gemini with NO ledger row of any kind — contrast routes/chat.py:341,
+    which at least records binary egress for an uploaded image. PCM audio
+    cannot be text-classified, so this is not a gate; it is the same
+    `record_binary_egress` primitive every other binary path already uses,
+    making the send itself (and its size) part of the one file that is
+    supposed to enumerate everything that left the machine.
+
+    `event` is "open" (session start, 0 bytes — the session existing at all
+    is the fact worth recording) or "close" (session end, `byte_len` the
+    bytes actually forwarded this leg). Never raises: a ledger failure must
+    not take the voice session down, but it must not pretend to have
+    written a row either — that is why this logs rather than swallowing.
+    """
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as _ie:
+        _log.error("mic-audio ledger unavailable (module import failed): %s", _ie)
+        return
+    reason = ("live voice session opened" if event == "open"
+              else "live voice session closed")
+    try:
+        _eg.record_binary_egress("google-gemini", "mic_audio", action="allow",
+                                 reason=reason, byte_len=byte_len)
+    except Exception as _re:
+        _log.warning("mic-audio ledger row failed (%s): %s", event, _re)
+
+
 def _build_realtime_input_config(types, interruption_mode="auto"):
     """Build the Live API RealtimeInputConfig.
 
@@ -1651,6 +1727,18 @@ if sock is not None:
             "to check if your hardware can handle it?'\n\n"
             + VOICE_TOOL_CHOREOGRAPHY
         )
+        # security-boundary.md §19 row 1: this whole literal is Friday-authored
+        # boilerplate with no user data, and it says the words "financial",
+        # "health", "legal" — exactly the keywords the TIER-2/3 classifier
+        # exists to catch in USER content. Registering it trusted (self-healing
+        # every connection, same pattern as REFUSAL_HONESTY_DIRECTIVE and
+        # SELF.md in model_router.py) means the new gate below classifies it
+        # as public rather than over-redacting Friday's own policy text.
+        try:
+            from agent_friday.services.egress_gate import register_trusted_text as _rvp
+            _rvp(voice_prefix)
+        except Exception:
+            pass
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
 
@@ -1672,7 +1760,7 @@ if sock is not None:
 
         # Ask-first action policy for the live voice agent. The confirmed=true gate
         # on the open_url / navigate_workspace tools enforces this mechanically.
-        voice_prefix += (
+        _voice_actions_policy = (
             "=== TAKING ACTIONS (ASK FIRST) ===\n"
             "Before you open a URL or switch the on-screen workspace, ASK the user "
             "out loud for permission and wait for them to say yes — unless they "
@@ -1683,6 +1771,12 @@ if sock is not None:
             "If it fails, say so and offer another approach. Only open links that "
             "came from real data you were given — never a URL you guessed.\n\n"
         )
+        try:
+            from agent_friday.services.egress_gate import register_trusted_text as _rap
+            _rap(_voice_actions_policy)
+        except Exception:
+            pass
+        voice_prefix += _voice_actions_policy
 
         try:
             ws.send(json.dumps({"type": "status", "text": "loading context"}))
@@ -1779,6 +1873,10 @@ if sock is not None:
         sys_text = system_instruction
         if live_style:
             sys_text = f"Speaking style: {live_style}\n\n{sys_text}"
+        # security-boundary.md §19 row 1: the egress gate, not just the
+        # (possibly off) vault-assembly gate, stands between the assembled
+        # context prompt and Google before it becomes system_instruction=.
+        sys_text = _gate_voice_system_instruction(sys_text)
 
         live_cfg_kwargs = dict(
             response_modalities=[types.Modality.AUDIO],
@@ -2558,6 +2656,8 @@ if sock is not None:
                             break
 
                         _leg_started = _time.time()
+                        _leg_bytes_at_start = _audio_bytes_to_gemini
+                        _record_mic_audio_egress("open")
                         try:
                             if leg == 0 and _use_handle:
                                 _vlog(f'session resumed with {model_name} from stored handle')
@@ -2655,6 +2755,9 @@ if sock is not None:
                                 await session_cm.__aexit__(None, None, None)
                             except Exception as _xe:
                                 _vlog(f'leg close error (ignored): {_xe}')
+                            _record_mic_audio_egress(
+                                "close",
+                                byte_len=max(0, _audio_bytes_to_gemini - _leg_bytes_at_start))
 
                         if done.is_set():
                             break

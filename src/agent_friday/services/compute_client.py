@@ -151,14 +151,20 @@ def request_job(
 ) -> dict:
     """Send a job to a provider. Returns the job_request dict (with job_id)."""
     prompt = task_spec.get("prompt", "")
+    context = task_spec.get("context", {})
 
-    # Egress gate — check before sending
-    try:
-        from agent_friday.services.egress_gate import seal_outbound
-        safe_payload = seal_outbound({"prompt": prompt}, provider="federation")
-        prompt = safe_payload.get("prompt", prompt)
-    except Exception:
-        pass
+    # Egress gate — must run before anything leaves for a federation peer.
+    # security-boundary.md §19 row 4: this used to be `except Exception:
+    # pass`, so a gate that could not run silently became a send that
+    # skipped it — the exact bug egress_gate.py's own scrub step guards
+    # against ("A scrub that cannot run must not become a send that skips
+    # it"), generalised here to this call site. `context` is now gated too;
+    # only `prompt` used to reach seal_outbound at all.
+    from agent_friday.services.egress_gate import seal_outbound
+    safe_payload = seal_outbound({"prompt": prompt, "context": context},
+                                 provider="federation")
+    prompt = safe_payload.get("prompt", prompt)
+    context = safe_payload.get("context", context)
 
     job_id = str(uuid.uuid4())
     payload = {
@@ -169,7 +175,7 @@ def request_job(
         "prompt": prompt,
         "offered_mψ": offered_mψ,
         "sent_at": _now(),
-        "context": task_spec.get("context", {}),
+        "context": context,
     }
 
     url = provider_endpoint.rstrip("/") + "/api/federation/compute/request"
