@@ -854,11 +854,27 @@ if __name__ == '__main__':
             print("  Boot guard: SAFE MODE — self-modification disabled, "
                   "nothing will be auto-restored")
         elif _bg.failing_to_boot():
+            # Read the count BEFORE restoring: restore_known_good() clears it so
+            # the next start is a clean chance, and reading after printed 0.
+            _fails = _bg.status().get("consecutive_failed_boots")
             _res = _bg.restore_known_good()
-            print("  Boot guard: %d failed starts — restored last "
-                  "proven-bootable state (%s)"
-                  % (_bg.status().get("consecutive_failed_boots"),
-                     ", ".join(_res.get("restored") or []) or "nothing to restore"))
+            if _res.get("skipped"):
+                print("  Boot guard: %s failed starts — NOT rolling back again. %s"
+                      % (_fails, _res["skipped"]))
+            elif _res.get("ok"):
+                print("  Boot guard: %s failed starts — rolled back to the last "
+                      "proven-bootable state (%s)"
+                      % (_fails,
+                         ", ".join(_res.get("restored") or []) or "nothing to restore"))
+                # Said out loud because it is the difference between a mechanism
+                # and a claim: this process imported its modules before the
+                # rollback ran, so a source rollback lands on the next start.
+                print("  Boot guard: %s" % _res.get("takes_effect", ""))
+                print("  Boot guard: the state that was replaced is kept at %s"
+                      % _res.get("kept_for_inspection"))
+            else:
+                print("  Boot guard: %s failed starts — could NOT roll back: %s"
+                      % (_fails, _res.get("error")))
         _bg.mark_boot_started()
 
         def _confirm_boot():
