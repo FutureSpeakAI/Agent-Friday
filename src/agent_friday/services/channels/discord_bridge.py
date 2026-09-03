@@ -92,7 +92,7 @@ class DiscordBridge(ChannelAdapter):
     def _poll_once(self) -> None:  # not used — gateway-driven
         pass
 
-    def send(self, chat_id: str, text: str) -> Dict[str, Any]:
+    def _send_raw(self, chat_id: str, text: str) -> Dict[str, Any]:
         """Send outside the gateway loop (used by the /test endpoint).
 
         Uses the REST API directly via stdlib so a one-off test message works

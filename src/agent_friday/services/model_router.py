@@ -2743,6 +2743,26 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     except Exception:
         pass
 
+    # security-boundary.md §20: the retrieval ledger. One row per named,
+    # tier-tagged section, written HERE — before gating decides what
+    # survives — so the record exists regardless of gating posture. This is
+    # the fix for §1.4: vault access-log rows stop entirely when prompt
+    # gating is off (today's posture), so an ungated cloud prompt produced
+    # NO record anywhere of what vault material it carried. Never allowed
+    # to break assembly: a ledger failure is swallowed, not raised.
+    try:
+        from agent_friday.services import retrieval_ledger as _rl
+        from agent_friday.services.egress_gate import is_local_provider as _is_local
+        _rl.record_assembly(
+            sections,
+            turn_id=_rl.new_turn_id(),
+            destination_class=("local" if _is_local(provider) else provider),
+            gated=vault_control is not None,
+            policy_source=_vault_policy().source,
+        )
+    except Exception:
+        pass
+
     # Assemble. With a vault_control + cloud provider this gates by tier
     # (TIER_1 in full, TIER_2 redacted, TIER_3 dropped). Otherwise it's a
     # plain join — identical to the legacy ungated behavior.

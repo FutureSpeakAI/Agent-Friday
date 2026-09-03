@@ -261,6 +261,30 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
             "changed": changed, "skipped": skipped}
 
 
+def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
+    """Gate calendar event prose before it reaches Google Calendar.
+
+    security-boundary.md §19 row 7: the write itself already sits behind the
+    approvals queue's outward-action card, so consent is covered — this
+    closes CLASSIFICATION. Returns (gated_text, error) — error is "" unless
+    the gate could not run or blocked outright, in which case the caller
+    must refuse rather than send unclassified or garbled text.
+    """
+    if not text:
+        return text, ""
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as e:
+        return "", f"the privacy gate could not be reached ({e})"
+    try:
+        gated = _eg._gate_text(text, "google", f"calendar.{field}")
+    except _eg.NeverSendBlocked as nb:
+        return "", str(nb)
+    except Exception as e:
+        return "", f"the privacy gate failed ({e})"
+    return gated, ""
+
+
 def create_event(*, title: str, start: str, end: str = "", location: str = "",
                  description: str = "", attendees=None) -> dict:
     """Create an event. `start`/`end` are ISO 8601 datetimes."""
@@ -272,6 +296,13 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
     svc, err = _service()
     if svc is None:
         return {"error": err}
+    title, title_err = _gate_calendar_field(title, "title")
+    if title_err or not title:
+        return {"error": "could not create the event: title " +
+                (title_err or "contained only private content that stays "
+                              "on this device")}
+    location, _le = _gate_calendar_field(location, "location")
+    description, _de = _gate_calendar_field(description, "description")
     if not end:
         try:
             end = (datetime.fromisoformat(start)
@@ -322,7 +353,12 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
         if val == "" and not allow_clearing:
             would_clear.append(key)
             continue
-        patch[key] = val
+        gated_val, gate_err = _gate_calendar_field(val, key)
+        if gate_err or (not gated_val and val):
+            return {"error": "could not update the event: %s %s"
+                    % (key, gate_err or "contained only private content "
+                                        "that stays on this device")}
+        patch[key] = gated_val
     if would_clear:
         return {"error": ("refusing to clear %s — blanking a field loses "
                           "information the receipt cannot restore. Pass "
