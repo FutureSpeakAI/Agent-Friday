@@ -1324,9 +1324,12 @@ def _scrub_all(obj, lookup: dict):
         return [_scrub_all(x, lookup) for x in obj]
     if isinstance(obj, dict):
         # Only content-bearing keys. Scrubbing ids/roles/model names would
-        # corrupt the request shape for no privacy gain.
+        # corrupt the request shape for no privacy gain. "context" added for
+        # compute_client.py's federation task context (security-boundary.md
+        # §19 row 4) — a structured dict, not flat prose, but its string
+        # leaves are exactly the same identifier-scrub target.
         return {k: (_scrub_all(v, lookup)
-                    if k in ("content", "text", "system", "prompt") else v)
+                    if k in ("content", "text", "system", "prompt", "context") else v)
                 for k, v in obj.items()}
     return obj
 
@@ -1367,7 +1370,7 @@ def seal_outbound(
     # ── §5.5 step 1: deterministic identifier scrub, unconditional ──
     _lk = pii_lookup if isinstance(pii_lookup, dict) else {}
     try:
-        for key in ("system", "messages", "prompt"):
+        for key in ("system", "messages", "prompt", "context"):
             if key in sealed:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
@@ -1410,6 +1413,22 @@ def seal_outbound(
     # Tool definitions
     if "tools" in sealed and isinstance(sealed["tools"], list):
         sealed["tools"] = _gate_tools(sealed["tools"], provider, log_path)
+
+    # A bare top-level `prompt` string (the Ollama-native /api/generate shape,
+    # and compute_client.py's federation job payload). Scrubbed above like
+    # system/messages, but until now never TIER-gated — the key sets differed
+    # (security-boundary.md §1.3/§9.3): a span with no PII shape to scrub
+    # (no SSN, no phone number — just sensitive prose) sailed through
+    # untouched whenever `prompt` was the payload's only content.
+    if "prompt" in sealed and isinstance(sealed["prompt"], str):
+        sealed["prompt"] = _gate_text(sealed["prompt"], provider, "prompt", log_path)
+
+    # Federation task context (compute_client.py — the only caller today):
+    # an arbitrary structured dict of task data, gated the same way a JSON
+    # tool result is — every string value classified, structure preserved.
+    if "context" in sealed and isinstance(sealed["context"], (dict, list)):
+        sealed["context"] = _gate_json_value(
+            sealed["context"], provider, "context", log_path)
 
     return sealed
 

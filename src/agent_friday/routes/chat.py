@@ -90,6 +90,38 @@ chat_bp = Blueprint('chat', __name__)
 import logging as _logging
 _LOG = _logging.getLogger("friday.chat")
 
+# security-boundary.md §19 row 11: the vision prompt sent alongside a
+# screenshot/camera frame to Gemini. Both call sites used to duplicate this
+# literal inline; a single shared constant means they cannot drift apart.
+# It is a fixed, self-authored string with no user data by construction —
+# registered trusted below so gating it is a no-op today — but the two call
+# sites now actually call the gate, so a future edit that interpolates user
+# text into this prompt is protected instead of silently shipping ungated.
+VISION_SCREEN_PROMPT = (
+    "Briefly describe what is visible on this screen. Focus on text, UI "
+    "elements, and data shown. Be concise (2-3 sentences)."
+)
+try:
+    from agent_friday.services.egress_gate import register_trusted_text as _rvsp
+    _rvsp(VISION_SCREEN_PROMPT)
+except Exception:
+    pass
+
+
+def _gate_vision_prompt(text: str) -> str:
+    """Gate the vision-screen prompt before it reaches Gemini. FAIL-CLOSED."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        return VISION_SCREEN_PROMPT
+    try:
+        gated = _eg._gate_text(text, "google-gemini", "vision.prompt")
+        return gated if gated else VISION_SCREEN_PROMPT
+    except _eg.NeverSendBlocked:
+        return VISION_SCREEN_PROMPT
+    except Exception:
+        return VISION_SCREEN_PROMPT
+
 
 
 # ── Conversations (docs/design/conversations-and-concurrency.md §3.1) ───────
@@ -388,7 +420,7 @@ def chat():
                     vision_resp = gclient.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=[
-                            "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                            _gate_vision_prompt(VISION_SCREEN_PROMPT),
                             types.Part.from_bytes(data=img_bytes, mime_type=_mime),
                         ],
                     )
@@ -1489,7 +1521,7 @@ def chat_send():
                 vision_resp = gclient.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
-                        "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                        _gate_vision_prompt(VISION_SCREEN_PROMPT),
                         types.Part.from_bytes(data=img_bytes, mime_type=mime),
                     ],
                 )
