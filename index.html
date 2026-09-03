@@ -34041,31 +34041,6 @@ function SettingsTabPrivacy({
       fontFamily: 'JetBrains Mono'
     }
   }, eraseMsg)), /*#__PURE__*/React.createElement(StSection, {
-    title: "EGRESS GATE"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 12,
-      lineHeight: 1.6
-    }
-  }, "Controls what data leaves the device. Tier 1 (public) passes through. Tier 2 (sensitive) is redacted. Tier 3 (private) is blocked."), /*#__PURE__*/React.createElement(StRow, {
-    label: "Cloud Mode"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6
-    }
-  }, ['audit', 'enforce'].map(m => /*#__PURE__*/React.createElement("button", {
-    key: m,
-    className: `settings-btn ${(s.egress_mode || 'enforce') === m ? 'active' : ''}`,
-    onClick: () => save({
-      egress_mode: m
-    }),
-    style: {
-      fontSize: 12
-    }
-  }, m.charAt(0).toUpperCase() + m.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
     title: "CONTEXT LOGGING"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Full Context Logging",
