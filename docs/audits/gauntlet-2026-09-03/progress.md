@@ -13,6 +13,46 @@ at f000f07. Never pushed. Main checkout at
 unrelated in-progress uncommitted work (knowledge-graph/credential-store
 changes) that does not belong to this task.
 
+## Morning summary — read this section first, the rest is detail
+
+Good morning. Overnight, unattended: **15 real defects fixed** with full
+red→green→red-on-revert proof and a green full suite after every batch,
+**~20 items queued** for you because they're judgment calls or too risky to
+land unattended, and the seam-by-seam sweep continues below and in
+`coverage.md`/`findings.jsonl`. In priority order:
+
+1. **Your live app spent real money overnight, unattended (F31), and the
+   fix cannot stop it — see the very next section.** Not your hypothesis
+   (health-check billing) — a KG reindex with no cost cap that ran for
+   hours. Fixed here, but only takes effect on restart.
+2. **A real credential leak, found and fixed (F32).** Every MCP connector
+   you've added — any third-party `npx`/`pip` package — was receiving your
+   live decrypted Anthropic/OpenAI/Gemini/vault keys in its own process
+   environment, with zero filtering, despite code that was clearly built to
+   prevent exactly this and simply never got wired in.
+3. **The single most important open question tonight (Q19), not fixed,
+   needs your read:** `local_only` and `local_preferred` modes' own stated
+   promises are false for ordinary interactive chat — not an edge case, the
+   most common thing you do. This is queued, not fixed, because the code
+   carries your own dated 2026-08-16 decision to keep chat fast on cloud,
+   and reversing it is a real trade-off only you should make.
+4. **Three more local-only enforcement gaps closed the same night** (F33:
+   an open Gemini Live call kept streaming to the cloud after local-only
+   was turned on mid-call; F34: a KG chunk marked "must stay local" could
+   still reach the cloud if you'd picked a cloud reasoning model; F35: a
+   vault-forced route could still fall back to cloud on a local failure, in
+   the one function that was missing a guard its sibling already had).
+5. Everything else — 8 more fixes (F1, F2, F8, F10-copy, F11, F12, F26,
+   F27, F28) and ~20 queued items (Q1, Q4, Q16-Q21 and more) — is detailed
+   below and in `findings.jsonl`/`coverage.md`. Nothing else tonight rose
+   to "wake him up for this" the way items 1-4 did.
+
+No seam has reached the audit's own 2-consecutive-clean-sweep closure bar
+yet — several got close and then a fresh sweep found one more thing, which
+given how much real material turned up (including the four items above) is
+the audit working as intended, not a sign it's stuck. The loop continues
+after this section.
+
 ## ⚠⚠ READ THIS FIRST — live production is still spending money right now (F31)
 
 Stephen's overnight report: the LIVE running Friday (not this worktree —
