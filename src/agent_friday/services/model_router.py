@@ -403,6 +403,23 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     except Exception as _re:
         print(f"  [GEN] routing failed, defaulting to cloud: {_re}")
 
+    # Honor the router's verdicts BEFORE any provider sees the request --
+    # the exact two lines _generate_agent already has (services/agent.py)
+    # and this sibling never did. refuse=True means vault access was
+    # required and the configured fallback is deny/warn -- no model call is
+    # permitted at all. Without this, a vault-forced local route whose local
+    # leg failed fell through to the unconditional cloud/openai fallback
+    # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
+    # contract for every one of this function's many callers (briefings,
+    # digests, KG summarization, calendar/message drafting, wiki bootstrap...
+    # docs/audits/gauntlet-2026-09-03/findings.jsonl).
+    if route.get('refuse'):
+        return (route.get('warning')
+                or "This request needs vault access, which requires a local "
+                   "model. Install or start Ollama (or adjust "
+                   "model_routing.vault_cloud_fallback), then retry.")
+    vault_access = bool(route.get('vault_access'))
+
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
@@ -433,9 +450,14 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # hard-fail with "ANTHROPIC_API_KEY is not set" while chat works on a
     # different provider, regardless of how the router classifies the task.
     if provider == 'local':
-        attempts = [('local', _via_ollama, routed_model),
-                    ('cloud', _via_claude, None),
-                    ('openai', _via_openai, None)]
+        attempts = [('local', _via_ollama, routed_model)]
+        # A vault-forced local route must NEVER retry on a cloud provider:
+        # the messages were assembled for a local model and may carry
+        # TIER_2/TIER_3 content -- the same guard _generate_agent already
+        # has. Anything else keeps the resilience chain.
+        if not vault_access:
+            attempts += [('cloud', _via_claude, None),
+                         ('openai', _via_openai, None)]
     elif provider == 'openai':
         attempts = [('openai', _via_openai, routed_model),
                     ('cloud', _via_claude, None),
@@ -450,7 +472,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # still tried as a last resort (a desktop agent should limp, not refuse),
     # but healthy providers get the request first.
     # The mode the user chose outranks the resilience ladder.
-    attempts = _mode_filtered_attempts(attempts, routing_cfg)
+    attempts = _mode_filtered_attempts(attempts, routing_cfg, vault_access=vault_access)
     attempts = _health_order(attempts, routed_provider_name)
 
     errors = []

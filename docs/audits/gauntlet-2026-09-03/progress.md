@@ -459,6 +459,30 @@ testing the same real behavior after Fix #11's legitimate internal change,
 not a weakening of the test. Both tests in that file pass after. Full
 `pytest tests/unit tests/api` re-run after this correction — result below.
 
+### Fix #12 — _generate_text never checked the router's refuse/vault_access verdicts (F35, BROKEN)
+**File:** [src/agent_friday/services/model_router.py](../../../src/agent_friday/services/model_router.py)
+**Finding:** `_generate_agent` (services/agent.py) has an explicit guard:
+refuse early on `route.get('refuse')`, and never let a `vault_access=True`
+local route fall back to cloud. Its sibling `_generate_text` — used by
+briefings, the weekly digest/editorial, calendar/message drafting, wiki
+identity bootstrap, and KG description-summarization — had neither check
+at all. A vault-forced local route whose local leg failed fell straight
+through to a real cloud call, defeating `vault_cloud_fallback`'s deny/warn
+contract.
+**Fix:** added the same two guards from `_generate_agent`, verbatim in
+spirit: an early return on `refuse`, and a `vault_access`-gated cloud/
+openai fallback for the local branch, plus threading `vault_access` into
+`_mode_filtered_attempts` (which already accepted it, unused here).
+**Probe:** [tests/gauntlet/test_generate_text_honors_vault_refusal.py](../../../tests/gauntlet/test_generate_text_honors_vault_refusal.py)
+**Evidence:** RED before fix (2/3 fail cleanly; the ordinary-fallback
+sanity check passes both before and after) → GREEN after (3/3) → RED again
+on `git stash` revert → fix reapplied, stash dropped. Ran with
+`tests/gauntlet/` (only the 2 pre-existing by-design reds) and the two
+related pre-existing test files (`test_fallback_honours_mode.py`,
+`test_model_router.py`) — no regressions.
+**Batch verification, Fix #12:** full unit+API suite running now — result
+to follow below once complete.
+
 ## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
 
 **1. GPU context during pytest (rule crossed).** Root-caused via static
@@ -525,6 +549,17 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### Q21 — no signal anywhere tells you a background job has been running unusually long
+The direct answer to "how would we have noticed F31 sooner": nothing would
+have. The KG reindex status endpoint has no `started_at`, the reindex
+never registers as a tracked task/orb so it never gets an `elapsed` field
+anywhere, and `scheduler.py`'s builtin-kind tasks (unlike `agent_prompt`-
+kind ones, which have an explicit 1800s timeout) have no wall-clock cap at
+all. A real, valuable defensive improvement, but choosing a timeout value
+and touching the central scheduler dispatcher is a design decision with
+real blast radius — queued rather than guessed at unattended this late in
+the run. Evidence in findings.jsonl Q21.
 
 ### Q19 — SEVERE: local_only/local_preferred's own promise is false for ordinary interactive chat
 See the top-of-file section above — this is the single most important
