@@ -697,6 +697,20 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     except Exception as _hf_err:                 # never break the cloud path
         log.warning("higgsfield image dispatch skipped: %s", _hf_err)
 
+    # ── kie.ai-seated image models. ────────────────────────────────────────
+    # Same rationale as the Higgsfield branch above: checked before the
+    # Gemini-specific `is_available()`, and only fires for ids kie.ai's
+    # hand-curated catalogue actually carries (services/provider_registry.py
+    # — "kie" entry).
+    try:
+        from agent_friday.services import kie_generate as _kie
+        _requested_kie = model or _configured_image_model()
+        if _kie.is_kie_model(_requested_kie):
+            return _kie.generate("image", prompt, model=_requested_kie,
+                                 aspect_ratio=aspect_ratio, n=n)
+    except Exception as _kie_err:                 # never break the cloud path
+        log.warning("kie.ai image dispatch skipped: %s", _kie_err)
+
     if not is_available():
         if allow_demo:
             return _demo_creation("image", prompt, model or DEFAULT_IMAGE_MODEL,
@@ -863,6 +877,19 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                                 aspect_ratio=aspect_ratio, extra=_extra)
     except Exception as _hf_err:                 # never break the cloud path
         log.warning("higgsfield video dispatch skipped: %s", _hf_err)
+
+    # ── kie.ai-seated video models. ────────────────────────────────────────
+    try:
+        from agent_friday.services import kie_generate as _kie
+        _requested_kie = model or _configured_video_model()
+        if _kie.is_kie_model(_requested_kie):
+            _extra = {}
+            if duration_seconds:
+                _extra["duration"] = int(duration_seconds)
+            return _kie.generate("video", prompt, model=_requested_kie,
+                                 aspect_ratio=aspect_ratio, extra=_extra)
+    except Exception as _kie_err:                 # never break the cloud path
+        log.warning("kie.ai video dispatch skipped: %s", _kie_err)
 
     if not is_available():
         if allow_demo:
