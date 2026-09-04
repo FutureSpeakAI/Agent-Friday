@@ -336,6 +336,35 @@ probably not a THREAT_MODEL contradiction — but worth checking against
 `local_preferred`'s own UI help text before closing. Not yet checked; low
 priority, noted for a future sweep.
 
+## Scope addition (2026-09-04): visual-notes.md, capture-only
+
+Stephen: a visual/aesthetics pass on the liquid UI workspaces is a
+different loop with a different bar (no red-then-green proof for taste),
+and shouldn't be merged into this one. This audit's bar stays exactly as
+written — no visual critic added, no judging appearance. But when a finder
+or critic incidentally notices something about a workspace's look or
+usability (confusing, empty when it shouldn't be, two surfaces disagree
+visually, a control is easy to miss, a layout obscures what matters,
+something looks unfinished), it now gets a line or two in
+[visual-notes.md](visual-notes.md) — location only, no investigation, no
+fix, no verdict. UI copy that's false and any index.html/app.html
+divergence stay in findings.jsonl as before (those have verdicts). Folding
+"note anything workspace-visual you happen to see, don't chase it" into
+every future finder/critic dispatch prompt from here on.
+
+**Also raised: Workspace Studio's discoverability.** Stephen's framing was
+that it's shipped and real (full undo) but reachable only by asking Friday,
+with no UI surface at all — possibly UNREACHED-adjacent in this audit's
+terms. Checked the code rather than accepting the premise: it's REFUTED.
+`index.html`'s `FWin` component (the real, live floating-window wrapper
+every open workspace renders through) has a 💬 button in every workspace's
+title bar, wired to the real `/api/workspace/<id>/chat` etc. routes and the
+real backend — a genuine, if easy-to-miss, discoverable UI entry point (see
+findings.jsonl H12). The premise didn't hold, so this isn't an UNREACHED
+finding; the real gap is a visual/discoverability one (small unlabeled
+icon, no onboarding), which is exactly what visual-notes.md is now for —
+logged there, not investigated further.
+
 ## Handoff from the session that wrote this prompt (2026-09-04, ~00:15)
 
 The Fable 5.1 session that authored `docs/gauntlet-loop-prompt` briefly began
