@@ -707,6 +707,27 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
         scrubbed = core._scrub_pii(text)[0]
         text = core._PII_TAG_RE.sub("[redacted]", scrubbed)
 
+    # Local-only is an absolute override, the same guarantee routes/chat.py's
+    # vision path already enforces (fixed 2026-08-23, commit 4607bd9) and
+    # routes/voice.py's engine selection now enforces too — it must win
+    # regardless of key presence or network status. Before this, "read this
+    # aloud" and the News audio briefing sent spoken text to Gemini TTS even
+    # with Local-Only Mode on, because this function only ever checked PII
+    # content and connectivity, never model_routing.mode (see
+    # docs/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    try:
+        _local_only = str(((_load_settings() or {}).get('model_routing') or {})
+                          .get('mode') or '').strip().lower() == 'local_only'
+    except Exception:
+        _local_only = False
+    if _local_only:
+        _buf = _synthesize_tts_wav_local(text)
+        if _buf is not None:
+            return _buf
+        raise RuntimeError(
+            "local-only mode is on and no local voice engine is ready — "
+            "refusing to send spoken text to Gemini TTS")
+
     try:
         _prefer_local = allow_local and ((not core.GEMINI_API_KEY) or _network_is_offline())
     except Exception:

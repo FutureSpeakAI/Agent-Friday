@@ -887,6 +887,18 @@ def _resolve_voice_engine(settings=None):
         cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
     except Exception:
         cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
+    # Local-only is an absolute override, the same guarantee routes/chat.py's
+    # vision path already enforces (fixed 2026-08-23, commit 4607bd9) — it
+    # must win regardless of `voice_engine` preference or whether the Gemini
+    # key is valid. Before this, a user with Local-Only Mode on but the
+    # Tier-1 voice deps not installed (`pip install -e .[voice-local-lite]`,
+    # an easy-to-skip separate step) got their microphone audio and Friday's
+    # spoken replies streamed to Gemini Live anyway — silently (see
+    # docs/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    _local_only = str(((settings.get('model_routing') or {})
+                       .get('mode')) or '').strip().lower() == 'local_only'
+    if _local_only:
+        cloud_ok = False
     tier = "cpu"
     eng = None
     try:
@@ -933,15 +945,23 @@ def _resolve_voice_engine(settings=None):
         if cloud_ok:
             return {**_pick("gemini"), "reason": "user selected cloud"}
         if local_ok:
-            return {**_pick("local"), "reason": "cloud unavailable, using local"}
-        return {**_pick("demo"), "reason": "no voice engine available"}
+            return {**_pick("local"), "reason": (
+                "local-only mode is on, cloud voice is disabled"
+                if _local_only else "cloud unavailable, using local")}
+        return {**_pick("demo"), "reason": (
+            "local-only mode is on and no local voice engine is ready"
+            if _local_only else "no voice engine available")}
 
     # Default + auto both prefer local (the ethos).
     if local_ok:
         return {**_pick("local"), "reason": "local default"}
     if cloud_ok:
         return {**_pick("gemini"), "reason": "local deps missing, using cloud"}
-    return {**_pick("demo"), "reason": "install .[voice-local-lite] or connect a cloud key"}
+    return {**_pick("demo"), "reason": (
+        "local-only mode is on and no local voice engine is ready — voice "
+        "will not use the cloud; install .[voice-local-lite]"
+        if _local_only else
+        "install .[voice-local-lite] or connect a cloud key")}
 
 
 @voice_bp.route('/api/voice/session-info')
