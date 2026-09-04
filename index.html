@@ -28671,16 +28671,20 @@ function ContentAccountsTab({
     setPaused(!paused);
     flash(!paused ? '⏸ All publishing paused' : '▶ Publishing resumed');
   }).catch(() => flash('Pause endpoint unavailable'));
-  const saveGlobals = () => fetch('/api/settings', {
+  const saveGlobals = () => apiFetch('/api/settings', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      content_staging_base_url: staging,
-      content_conflict_window_hours: Number(confWin) || 2
+      settings: {
+        content: {
+          staging_base_url: staging,
+          conflict_window_hours: Number(confWin) || 2
+        }
+      }
     })
-  }).then(() => flash('Saved')).catch(() => flash('Save failed'));
+  }).then(r => r.json()).then(d => flash(d.status === 'ok' ? 'Saved' : 'Save failed')).catch(() => flash('Save failed'));
   const daysLeft = iso => {
     if (!iso) return null;
     const d = Math.ceil((new Date(iso) - Date.now()) / 86400000);

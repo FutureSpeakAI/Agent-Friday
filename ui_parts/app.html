@@ -6832,7 +6832,7 @@ function ContentAccountsTab({platforms,reload}){
   };
   const testPost=async(name)=>{try{const r=await fetch('/api/content/platforms/'+name+'/test',{method:'POST'});const d=await r.json();flash(d&&d.ok===false?(d.message||'Test failed'):(d.message||'✓ Test post sent (private/self where the platform allows)'))}catch(e){flash('Test failed')}};
   const pauseAll=()=>fetch('/api/content/pause',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:!paused})}).then(r=>r.json()).then(()=>{setPaused(!paused);flash(!paused?'⏸ All publishing paused':'▶ Publishing resumed')}).catch(()=>flash('Pause endpoint unavailable'));
-  const saveGlobals=()=>fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content_staging_base_url:staging,content_conflict_window_hours:Number(confWin)||2})}).then(()=>flash('Saved')).catch(()=>flash('Save failed'));
+  const saveGlobals=()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{content:{staging_base_url:staging,conflict_window_hours:Number(confWin)||2}}})}).then(r=>r.json()).then(d=>flash(d.status==='ok'?'Saved':'Save failed')).catch(()=>flash('Save failed'));
   const daysLeft=iso=>{if(!iso)return null;const d=Math.ceil((new Date(iso)-Date.now())/86400000);return isNaN(d)?null:d};
   return(<div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6}}>{toast}</div>}
