@@ -1202,6 +1202,74 @@ def cmd_tls_init():
     console.print()
 
 
+def cmd_measure(model_id: str):
+    """`friday measure <model_id>` — headroom.md §12 Phase 2 item 4e.
+
+    Runs ONE real generation (image) or ONE real load (voice) and records
+    what it actually cost as a measured Footprint. This is the only path
+    that turns a Footprint's `basis` into `"measured"` — nothing here ever
+    fabricates a reading (HR6): a model whose weights are not installed
+    prints why and records nothing, it does not download them to try.
+
+    For an image model this takes and releases the Arbiter's exclusive
+    `image_job` lease exactly as an ordinary generation request would — the
+    GPU is touched for real, briefly, then handed back. Before/after
+    `nvidia-smi` numbers are printed so the run can be checked against a
+    live card by eye.
+    """
+    from agent_friday.services import footprint_measure as fpm
+
+    console.print()
+    console.rule("[bold cyan]MEASURE: %s[/bold cyan]" % model_id)
+
+    before = None
+    try:
+        from agent_friday.services import machine_monitor as mm
+        before = mm.gpu_rows(fresh=True)
+        if before:
+            g = before[0]
+            console.print("  Before: %d / %d MiB used on %s"
+                          % (g["used_mib"], g["total_mib"], g["name"]))
+    except Exception as e:
+        console.print("  [dim](could not read nvidia-smi before: %s)[/dim]"
+                      % e)
+
+    result = fpm.measure(model_id)
+
+    def _report_one(mid, r):
+        if r.get("status") == "blocked":
+            console.print("  [yellow]%s: not measured[/yellow] — %s"
+                          % (mid, r.get("reason")))
+            return False
+        fp = r.get("footprint") or {}
+        console.print("  [green]%s: measured[/green]" % mid)
+        for k in ("vram_mib", "host_ram_mib", "load_s", "work_s_per_unit",
+                 "artifact_bytes", "licence", "quality_note"):
+            v = fp.get(k)
+            if v is not None:
+                console.print("      %s: %s" % (k, v))
+        return True
+
+    ok = False
+    if "status" in result:               # a single-model (image) result
+        ok = _report_one(model_id, result)
+    else:                                # {"stt": {...}, "tts": {...}}
+        for k, r in result.items():
+            ok = _report_one(r.get("model_id", k), r) or ok
+
+    try:
+        after = mm.gpu_rows(fresh=True)
+        if after:
+            g = after[0]
+            console.print("  After:  %d / %d MiB used on %s"
+                          % (g["used_mib"], g["total_mib"], g["name"]))
+    except Exception:
+        pass
+
+    console.print()
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="friday",
@@ -1281,6 +1349,16 @@ examples:
 
     # tls-init
     sub.add_parser("tls-init", help="Generate a self-signed TLS certificate")
+
+    # measure — headroom.md §12 Phase 2 item 4e: reproducible footprint jobs.
+    p_measure = sub.add_parser(
+        "measure",
+        help="Measure a model's real footprint (VRAM/RAM/timing) and record "
+             "it — the only way a Footprint's basis becomes 'measured'")
+    p_measure.add_argument(
+        "model_id",
+        help="An image model id from local_image.MODELS, or 'voice' to "
+             "measure faster-whisper/Piper host RAM")
 
     return p
 
@@ -1529,6 +1607,8 @@ def main():
         rv = cmd_erase(assume_yes=getattr(args, "yes", False))
     elif cmd == "tls-init":
         rv = cmd_tls_init()
+    elif cmd == "measure":
+        rv = cmd_measure(args.model_id)
     else:
         parser.print_help()
         rv = 2
