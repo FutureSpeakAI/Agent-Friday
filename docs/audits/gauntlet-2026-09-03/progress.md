@@ -15,9 +15,9 @@ changes) that does not belong to this task.
 
 ## Morning summary — read this section first, the rest is detail
 
-Good morning. Overnight, unattended: **15 real defects fixed** with full
+Good morning. Overnight, unattended: **22 real defects fixed** with full
 red→green→red-on-revert proof and a green full suite after every batch,
-**~20 items queued** for you because they're judgment calls or too risky to
+**~25 items queued** for you because they're judgment calls or too risky to
 land unattended, and the seam-by-seam sweep continues below and in
 `coverage.md`/`findings.jsonl`. In priority order:
 
@@ -36,16 +36,22 @@ land unattended, and the seam-by-seam sweep continues below and in
    most common thing you do. This is queued, not fixed, because the code
    carries your own dated 2026-08-16 decision to keep chat fast on cloud,
    and reversing it is a real trade-off only you should make.
-4. **Three more local-only enforcement gaps closed the same night** (F33:
-   an open Gemini Live call kept streaming to the cloud after local-only
-   was turned on mid-call; F34: a KG chunk marked "must stay local" could
-   still reach the cloud if you'd picked a cloud reasoning model; F35: a
-   vault-forced route could still fall back to cloud on a local failure, in
-   the one function that was missing a guard its sibling already had).
-5. Everything else — 8 more fixes (F1, F2, F8, F10-copy, F11, F12, F26,
-   F27, F28) and ~20 queued items (Q1, Q4, Q16-Q21 and more) — is detailed
-   below and in `findings.jsonl`/`coverage.md`. Nothing else tonight rose
-   to "wake him up for this" the way items 1-4 did.
+4. **Five more local-only/privacy enforcement gaps closed the same night**
+   (F33: an open Gemini Live call kept streaming to the cloud after
+   local-only was turned on mid-call; F34: a KG chunk marked "must stay
+   local" could still reach the cloud if you'd picked a cloud reasoning
+   model; F35: a vault-forced route could still fall back to cloud on a
+   local failure, in the one function that was missing a guard its sibling
+   already had; F36: the MCP tool-call audit/sanitize mechanism — same
+   shape as item 2, on the tool-call path instead of the spawn path — was
+   also never wired in; F37: the always-on "related pages" context that
+   goes into every system prompt could leak real content from a page you'd
+   put in an encrypted wiki section, to any provider including cloud).
+5. Everything else — 10 more fixes (F1, F2, F8, F10-copy, F11, F12, F26,
+   F27, F28, and F13 sharpened into a 5th UI-mirror gap) and ~25 queued
+   items (Q1, Q4, Q16-Q23 and more) — is detailed below and in
+   `findings.jsonl`/`coverage.md`. Nothing else tonight rose to "wake him
+   up for this" the way items 1-4 did.
 
 No seam has reached the audit's own 2-consecutive-clean-sweep closure bar
 yet — several got close and then a fresh sweep found one more thing, which
