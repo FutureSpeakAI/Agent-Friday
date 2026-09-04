@@ -34,18 +34,29 @@ Green-everywhere is not the bar. Judged-everywhere is.
 
 ## Claim corpus extraction
 
+**Correction 2026-09-04 (Stephen's check-in):** this table previously said
+UNSTARTED for every source despite progress.md describing a completed round-1
+claim-extraction pass and 6 agents having returned full claim lists — that
+was a bookkeeping failure (the claims were reported back in agent transcripts
+but never transcribed into claims.jsonl or reflected here). claims.jsonl now
+holds C1-C90, extracted from the round-1 and round-2 agent reports, each
+with a quote, location, and either a `linked_finding` (F#/H#) or a `status`
+of `verified_holds` / `verified_BROKEN*` / `noted_not_independently_chased`
+(extracted and read, but not individually traced to a verdict this round —
+honestly marked as such, not silently dropped).
+
 | Source | Status |
 |---|---|
-| THREAT_MODEL.md | UNSTARTED |
-| KNOWN_ISSUES.md (incl. 2026-09-03 entries) | UNSTARTED |
-| docs/FILE_GRANTS.md | UNSTARTED |
-| README.md | UNSTARTED |
-| RELEASE_NOTES.md | UNSTARTED |
-| docs/CONFIGURATION.md | UNSTARTED |
-| docs/API.md | UNSTARTED |
-| tests/README.md | UNSTARTED |
-| index.html (settings labels, disclosures, Saved affordances) | UNSTARTED |
-| ui_parts/app.html (same) | UNSTARTED |
-| src/agent_friday/services/*.py docstrings | UNSTARTED |
-| src/agent_friday/routes/*.py docstrings | UNSTARTED |
-| Implicit claims: exported fns / UI controls / settings keys / routes / scheduled jobs / worker adapters actually reachable | UNSTARTED |
+| THREAT_MODEL.md | EXTRACTED (C1-C13) — 4 independently verified, 9 noted-not-chased |
+| KNOWN_ISSUES.md (incl. 2026-09-03 entries) | EXTRACTED (C14-C41) — most "Fixed" entries independently re-verified against current code, several still-open items confirmed still open |
+| docs/FILE_GRANTS.md | EXTRACTED (C42-C49) — 5 rules noted, 1 partially verified (no-grant-tool half); deeper per-rule verification not yet done |
+| README.md | EXTRACTED (C50-C59) |
+| RELEASE_NOTES.md | EXTRACTED (C60-C63) — historical entries, low priority for this release's focus |
+| docs/CONFIGURATION.md | EXTRACTED (C64-C67) — defaults cross-checked against DEFAULT_SETTINGS |
+| docs/API.md | EXTRACTED (C68-C73) — route-registration cross-check done (no documented-but-missing routes found) |
+| tests/README.md | EXTRACTED (C74-C77) — 2 of 4 claims checked (route count, suite timing) found to be planning claims rather than assertions/facts, per Stephen's explicit correction; treated as corpus items to judge, not trusted |
+| index.html (settings labels, disclosures, Saved affordances) | EXTRACTED (C78-C82) — settings-panel toggles covered; broader disclosure-string sweep (onboarding aside) not exhaustive |
+| ui_parts/app.html (same) | PARTIAL — covered via the divergence check (F7), not independently re-read end to end |
+| src/agent_friday/services/*.py docstrings | PARTIAL — onboarding_copy.py, provider_health.py, cost_meter.py, egress_gate.py docstrings specifically checked (C83-C90); not every service module's docstrings individually corpus-walked |
+| src/agent_friday/routes/*.py docstrings | NOT SYSTEMATICALLY DONE — individual routes checked as part of seam work, no dedicated docstring sweep across all ~61 route files |
+| Implicit claims: exported fns / UI controls / settings keys / routes / scheduled jobs / worker adapters actually reachable | IN PROGRESS — this is the core method used throughout (F1, F8, F9, F12 are all reachability findings), not a one-time pass; continues every round |
