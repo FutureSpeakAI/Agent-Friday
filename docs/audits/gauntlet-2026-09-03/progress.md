@@ -50,7 +50,13 @@ stronger than it is:
 ## What you need to decide — ranked, one sentence each
 
 25 items are queued because they're judgment calls, not because they're
-unimportant. Ranked by how much rides on the answer:
+unimportant. Ranked by how much rides on the answer. **One set of five is
+handled separately, as its own five-minute document, not folded into this
+list:** [decisions-five-dead-settings.md](decisions-five-dead-settings.md)
+turns the long-known "five settings persist and redraw but drive nothing"
+gap into five direct per-setting questions with options and a
+recommendation each — go there first if you want the quickest wins before
+tackling the rest of this list.
 
 1. **Q19 (SEVERE).** `local_only` and `local_preferred` don't actually keep
    ordinary chat local by default — the most common thing you do with
