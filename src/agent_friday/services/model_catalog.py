@@ -589,11 +589,17 @@ def _friday_store_entries(exclude: set | None = None) -> list:
         except Exception:
             live = False
         m = _humanize(mid)
+        # A registry entry may carry its own display name (set at `register`
+        # time via `label=`) — e.g. a fine-tune given a human-chosen name that
+        # humanizing model_id would mangle (hyphens -> spaces, only the first
+        # letter cased). That name renders verbatim; everything else keeps the
+        # inferred label.
+        display_label = rec.get("label") or m["label"]
         gb = float(rec.get("size_bytes") or 0) / 1e9
         out.append({
             "id": mid,
-            "label": m["label"],
-            "short": m["short"],
+            "label": display_label,
+            "short": rec.get("label") or m["short"],
             "provider": "arbiter-local",
             "provider_label": "Local (Friday's own seats)",
             "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],

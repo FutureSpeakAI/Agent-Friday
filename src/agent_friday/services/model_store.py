@@ -215,7 +215,8 @@ def get(model_id: str) -> dict | None:
 
 def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              mmproj=None, chat_template=None, sha256: str | None = None,
-             origin: dict | None = None, verify: bool = False) -> dict:
+             origin: dict | None = None, verify: bool = False,
+             label: str | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
 
     `verify=True` hashes the file, which on a 9 GB artifact is not free — so it
@@ -252,6 +253,12 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         "chat_template": str(chat_template) if chat_template else None,
         "added_at": time.time(),
     })
+    # A human-assigned display name (e.g. "FutureSpeakAI-FridayWeaver-SM-1.0")
+    # that the picker shows verbatim instead of humanizing model_id — the
+    # humanizer turns hyphens into spaces and title-cases only the first
+    # letter, which mangles a name someone chose on purpose.
+    if label:
+        entry["label"] = str(label)
     if sha256:
         entry["sha256"] = sha256
     elif verify:
