@@ -41,8 +41,24 @@ stronger than it is:
   correction). `claims.jsonl` is now at 149 entries. What's genuinely
   still not walked: deeper docstrings in the remaining ~50 service
   modules beyond the 12 now covered — `coverage.md`'s table is current.
-- **Startup wiring stayed parked.** Static analysis only — see JUDGMENT
-  CALL 1. Nothing about boot sequencing was dynamically verified.
+- **Startup wiring: UPDATE, no longer accurate as of Round 14.** This
+  line originally said static analysis only, nothing dynamically
+  verified — Stephen explicitly unparked it ("consider it unparked...
+  make the code change you need") and a real, isolated dynamic boot was
+  executed (his live Friday process confirmed untouched throughout,
+  GPU/Ollama confirmed returned to baseline after). Found F67 (severe —
+  6 provider credentials leak to sandboxed MCP connectors via an
+  incomplete blocklist), F68 (a broken provider key reports "connected"
+  identically to a working one, reproducing Stephen's own real
+  situation), F69 (the real VRAM-reserve reader is live-broken on this
+  machine), F70 (no ordering guarantee between residency and the first
+  request). See Round 14 below and coverage.md for full detail. What
+  this line's original caveat still correctly warns about: this was ONE
+  dynamic boot with a specific, deliberately-constructed state (no LLM
+  seat assigned) — it is evidence about what this sequence actually
+  does, not exhaustive proof it does the same thing under every real
+  configuration (a boot with a real local model to load, in particular,
+  was not tested — see F70's own note).
 - **Five early fixes (F1, F2, F8, F11, F12) shipped without a documented
   revert step**, before the red→green→red-on-revert discipline was
   tightened partway through the night. All five have now been run through
@@ -2119,6 +2135,116 @@ weakened — only the isolation/cleanup surrounding it changed. No test
 has gone red under this rule because the code was wrong and been
 "fixed" by softening it; that would stay a finding, not become a test
 edit, per condition 2 above.
+
+### Round 14 — startup wiring unparked, dynamic boot executed for real (2026-09-04, evening)
+
+**Authorization.** Stephen, directly: "consider it unparked... Make the
+code change you need to test the dynamic boot properly." Superseding the
+original parked verdict's own conclusion (env vars alone can't isolate
+the four inertness conditions), not overturning its analysis — the
+analysis was right that a launcher built from redirected HOME plus
+`FRIDAY_NO_ARBITER` can't prove it; what changed is Stephen authorizing
+the actual code-adjacent work (an isolated real boot, not env-var
+gymnastics) that proof requires.
+
+**Method.** Built an isolated `.friday` home under this session's own
+scratchpad — `USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`/`HOME` redirected
+*before* any `agent_friday` import, the same principle `tests/
+conftest.py` uses, but for a genuinely live boot with `FRIDAY_TESTING`
+left **unset** (the whole point — that variable is what has made this
+entire cascade permanently unexercised by the suite). Launched the real
+`src/agent_friday/server.py` as an actual OS subprocess, on ports 47331/
+47332 (never 3000, Stephen's live instance). Populated the isolated home
+via the real `credential_store.write_secret()`/`core._save_settings()`
+machinery — never anything hand-rolled — with: two real, decryptable,
+fake provider keys (one under a blocklisted env-var name, one not); three
+keys written correctly then deliberately corrupted, to reproduce "existed,
+now can't decrypt" rather than "never existed" (matching Stephen's own
+real situation — three of his provider keys are in exactly that state);
+and one real MCP server entry pointing at a purpose-built probe script
+whose first line of execution writes its own `os.environ` to a file —
+the only way to observe what a spawned connector's environment genuinely
+contains, per Stephen's own framing.
+
+**Safety, both constraints held throughout, verified not assumed.**
+Stephen's live Friday (PID 39784, port 3000, running since 08:39 this
+morning) confirmed still running, untouched, at the start, middle, and
+end of this investigation. GPU state measured before (825 MiB used,
+11,188 MiB free), monitored continuously during both boot passes (stayed
+under ~1.7GB used throughout — no LLM seat had a model assigned in the
+fresh isolated settings.json, so residency's own model-loading step had
+nothing to load), and confirmed back to exact baseline after (812 MiB
+used) — including one small model (`functiongemma:270m`, 413MB, loaded
+by the boot-time egress/judgment self-test probes rather than my own
+residency pass) explicitly unloaded via Ollama's `keep_alive: 0` rather
+than left to its own 5-minute expiry, since "don't leave anything
+resident" was the instruction, not "it will expire eventually." One
+honest side effect, not caught until after: this session's own ambient
+shell environment carries Stephen's real `GEMINI_API_KEY`/
+`GOOGLE_API_KEY`, inherited by the first isolated launch since only
+`HOME`-family and Friday-specific env vars were overridden — the boot-
+time egress self-test made one real, live, low-cost Gemini call
+("gemini-3.5-flash", ~2s) using it before this was noticed. Confirmed
+the real key never reached the MCP probe's own environment (correctly
+blocklisted), so no secret was exposed externally, but the call itself
+was real. Explicitly stripped `GEMINI_API_KEY`/`GOOGLE_API_KEY`/
+`ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the child process's own
+environment for the second pass to prevent a repeat. Disclosing this
+plainly rather than omitting it: a real, if minor, cost was incurred by
+this investigation, and that belongs in the record Stephen sees, not
+just the findings that resulted.
+
+**Findings — all four from watching, none from reading alone (though
+reading found the shape of F67 first; the spawn is what proved it):**
+
+- **F67 (SEVERE).** `extension_security.ENV_BLOCKLIST` is missing 6 of
+  the provider registry's real, current env-var names — `MISTRAL_API_KEY`,
+  `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `FIREWORKS_API_KEY`,
+  `PERPLEXITY_API_KEY`, `COHERE_API_KEY` — none of which were in scope
+  when the blocklist was written. Any of these six, once a user
+  configures that provider, leaks into every sandboxed-trust MCP
+  connector's real environment. Confirmed by live spawn: a planted fake
+  Mistral key reached the probe's environment; a blocklisted Anthropic
+  key, and Stephen's own real ambient Gemini/Google keys, correctly did
+  not. Third recurrence of F32/F44's exact class — a hand-maintained
+  exact-name list drifting out of sync with a registry that grows.
+  Deliberately NOT fixed mechanically (just adding six strings) without
+  also deciding whether the list should be generated from the registry
+  or covered by a coverage test — escalated as a design question, not
+  patched around.
+- **F68.** `provider_key_status()` reports "connected" from file-
+  existence alone, never decryptability. Reproduced Stephen's own real
+  situation (3 keys currently undecryptable) in isolation: all 3 report
+  "connected," identical to the 2 that actually work, and the boot log's
+  "Provider keys: loaded 2 from encrypted store" gives zero signal that
+  3 more exist and failed. Not fixed here — a three-state status (absent/
+  present-but-failing/working, matching `web_search.py`'s own existing
+  pattern for Brave) is a real design decision touching a UI surface this
+  pass didn't audit the frontend side of.
+- **F69.** Incidental discovery: `hardware_profile.py`'s WDDM VRAM-
+  reserve reader is live-broken on this actual machine right now — logged
+  an impossible 42,301 MiB "held by desktop" reading on a 12,282 MiB
+  card during the real residency boot, correctly caught and floored to
+  1024 MiB. Fresh, live evidence reinforcing F62 (two parallel,
+  non-shared VRAM-reserve implementations) — the one `residency_
+  arbiter.py` actually uses is not just architecturally separate from
+  `gpu_headroom.py`, it is currently non-functional in its live-reading
+  half.
+- **F70.** No ordering guarantee between residency's daemon-thread boot
+  and the HTTP port opening (no `join()`/wait in server.py before
+  `app.run()`). This run's residency finished before the port opened only
+  because no LLM seat had a model assigned — not a guarantee the code
+  provides for Stephen's real boots, all of which do have one. Confirmed
+  safe, separately: credential decryption and MCP connector spawn both
+  reliably complete before the port opens (measured ~28+ second gap
+  between MCP spawn and first successful HTTP response) — so no boot-time
+  consent gate exists or could exist for connectors, structurally, by the
+  time anything is reachable.
+
+All 4 findings filed `confirmed_pending_action` — mechanical fixes vs.
+real design questions flagged per finding, not decided unilaterally
+where the choice affects a live security boundary or a user-facing
+surface this pass didn't have full visibility into.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
