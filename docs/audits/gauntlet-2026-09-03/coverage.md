@@ -56,7 +56,7 @@ DONE" rows below are still exactly that.
 
 | Source | Status |
 |---|---|
-| THREAT_MODEL.md | EXTRACTED (C1-C13) — 4 independently verified, 9 noted-not-chased |
+| THREAT_MODEL.md | FULLY EXTRACTED AND CHASED (C1-C13, C134-C135) — all 298 lines read; every one of the 9 originally noted-not-chased claims traced into current code (8 hold, 1 broken: F42); 2 additional claims extracted and checked (1 broken: F43, fixed; 1 broken: Q27, queued) |
 | KNOWN_ISSUES.md (incl. 2026-09-03 entries) | EXTRACTED (C14-C41) — most "Fixed" entries independently re-verified against current code, several still-open items confirmed still open |
 | docs/FILE_GRANTS.md | EXTRACTED (C42-C49) — 5 rules noted, 1 partially verified (no-grant-tool half); deeper per-rule verification not yet done |
 | README.md | EXTRACTED (C50-C59) |
@@ -65,7 +65,7 @@ DONE" rows below are still exactly that.
 | docs/API.md | EXTRACTED (C68-C73) — route-registration cross-check done (no documented-but-missing routes found) |
 | tests/README.md | EXTRACTED (C74-C77) — 2 of 4 claims checked (route count, suite timing) found to be planning claims rather than assertions/facts, per Stephen's explicit correction; treated as corpus items to judge, not trusted |
 | index.html (settings labels, disclosures, Saved affordances) | EXTRACTED (C78-C82) — settings-panel toggles covered; broader disclosure-string sweep (onboarding aside) not exhaustive |
-| ui_parts/app.html (same) | PARTIAL — covered via the divergence check (F7), not independently re-read end to end |
-| src/agent_friday/services/*.py docstrings | PARTIAL — onboarding_copy.py, provider_health.py, cost_meter.py, egress_gate.py docstrings specifically checked (C83-C90); not every service module's docstrings individually corpus-walked |
+| ui_parts/app.html (same) | EXTRACTED (C136-C143 among C136-C149) — full disclosure-string surface read end to end (tooltips, settings copy, onboarding/wizard text, kill-switch/toast copy), not just the component-presence divergence check; found F45, F46, and 3 more loci of Q19/F11's already-known defects |
+| src/agent_friday/services/*.py docstrings | EXTRACTED for 12 modules total — onboarding_copy.py, provider_health.py, cost_meter.py, egress_gate.py (C83-C90, prior round) plus creative_engine.py, music_engine.py, sensitivity_classifier.py, vault_passphrase.py, connector_secrets.py, extension_security.py (C143-C149 among C136-C149; wiki_engine.py/federation.py checked, nothing new beyond existing corpus). Found F44 (severe) and C144 (low severity, fixed). Remaining service modules not yet individually walked. |
 | src/agent_friday/routes/*.py docstrings | EXTRACTED (C91-C133) — all 61 route files read at the module-docstring level (or confirmed to carry only a shared boilerplate header); ~30 files had at least one checkable factual claim worth extracting, ~30 were pure route-enumeration with nothing to extract. Verified on the spot (not just extracted): all 15 claims that looked strong enough to double-check held against the actual code, no contradiction found. Depth still shallow on the ~15 largest files (chat.py, code.py, insights.py, news.py, workflows.py) — function-level docstrings there were sampled via grep, not read end to end. |
 | Implicit claims: exported fns / UI controls / settings keys / routes / scheduled jobs / worker adapters actually reachable | IN PROGRESS — this is the core method used throughout (F1, F8, F9, F12 are all reachability findings), not a one-time pass; continues every round |

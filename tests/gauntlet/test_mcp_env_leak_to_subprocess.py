@@ -79,6 +79,26 @@ class TestMcpEnvLeakToSubprocess:
             "an unrelated var) must still pass through"
         )
 
+    def test_the_real_vault_passphrase_env_var_is_blocked(self, monkeypatch):
+        """Gauntlet finding: ENV_BLOCKLIST named FRIDAY_VAULT_KEY/
+        FRIDAY_HMAC_SECRET -- neither is a real env var anywhere in this
+        codebase (vault_passphrase.py's own _ENV_VARS is
+        ("FRIDAY_VAULT_PASSPHRASE", "FRIDAY_PASSWORD")). The one that
+        actually carries the Sovereign Vault decryption passphrase when a
+        user sets it via environment variable, FRIDAY_VAULT_PASSPHRASE,
+        was never in the blocklist at all -- F32's fix would not have
+        stripped it before spawning a sandboxed community MCP connector."""
+        monkeypatch.setenv("FRIDAY_VAULT_PASSPHRASE", "correct-horse-battery-staple")
+        sp = MCPServerProcess(name="community-pkg", command="npx",
+                              args=["some-mcp-server"], trust_level="sandboxed")
+        env = _spawn_and_capture(monkeypatch, sp)
+        assert "FRIDAY_VAULT_PASSPHRASE" not in env, (
+            "the real vault-passphrase environment variable name reached a "
+            "sandboxed MCP server's subprocess environment -- ENV_BLOCKLIST "
+            "named two env vars that don't exist anywhere in the codebase "
+            "instead of the real one"
+        )
+
     def test_default_trust_level_is_sandboxed_not_wide_open(self, monkeypatch):
         """No trust_level configured at all (every server today) must default
         to filtered, not to trusting-by-omission."""

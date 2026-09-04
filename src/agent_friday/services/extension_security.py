@@ -17,11 +17,23 @@ AUDIT_LOG = AUDIT_DIR / "mcp_audit.log"
 ALLOWLIST_FILE = AUDIT_DIR / "extension_allowlist.json"
 AUDIT_FILE = AUDIT_DIR / "extension_audit.jsonl"
 
-# Env vars MCP servers must NEVER see
+# Env vars MCP servers must NEVER see.
+# FRIDAY_VAULT_KEY/FRIDAY_HMAC_SECRET below are not real env var names used
+# anywhere in this codebase (grep-confirmed) -- vault_passphrase.py's own
+# _ENV_VARS is ("FRIDAY_VAULT_PASSPHRASE", "FRIDAY_PASSWORD"). FRIDAY_PASSWORD
+# was blocklisted; FRIDAY_VAULT_PASSPHRASE, the actual Sovereign Vault
+# decryption passphrase when a user sets it via environment variable, was
+# not -- meaning F32's sanitize_env_for_mcp() fix (which filters exactly
+# this set before spawning a sandboxed/untrusted stdio MCP server) would
+# not have stripped it, handing the vault passphrase to any ordinary
+# community MCP connector (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+# The two stale names are left in place -- harmless, and removing them
+# fixes nothing; the defect was the missing real one.
 ENV_BLOCKLIST = {
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
     "OPENROUTER_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY",
-    "FRIDAY_PASSWORD", "FRIDAY_VAULT_KEY", "FRIDAY_HMAC_SECRET",
+    "FRIDAY_PASSWORD", "FRIDAY_VAULT_PASSPHRASE",
+    "FRIDAY_VAULT_KEY", "FRIDAY_HMAC_SECRET",
     "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
     "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
     "DATABASE_URL", "DB_PASSWORD", "REDIS_URL",

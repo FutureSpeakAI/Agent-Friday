@@ -762,6 +762,49 @@ RED again on `git stash` revert → fix reapplied, stash dropped. Full
 **Batch verification, Fix #17:** full unit+API suite running now — result
 to follow below once complete.
 
+### Fix #18 — the Ed25519 attestation private key was never permission-locked (F43)
+**File:** [src/agent_friday/governance/proof_of_integrity.py](../../../src/agent_friday/governance/proof_of_integrity.py)
+**Finding:** found while chasing every one of THREAT_MODEL.md's "noted-
+not-chased" claims, per Stephen's request. The governance key's file
+fallback correctly chmods 0o600 (`get_governance_key()`); the Ed25519
+attestation private key, in the same file, never did — a plain
+`write_bytes()` with no chmod anywhere.
+**Fix:** `_load_or_generate_ed25519()` now chmods the private key to
+0o600 immediately after writing, mirroring the exact pattern already
+correct two functions later in the same file. The public verify key is
+deliberately left alone.
+**Probe:** [tests/gauntlet/test_ed25519_key_file_permissions.py](../../../tests/gauntlet/test_ed25519_key_file_permissions.py)
+**Evidence:** RED before fix → GREEN after (2/2) → RED again on `git
+stash` revert → fix reapplied, stash dropped.
+
+### Fix #19 — F32's own secret blocklist named two fake env vars instead of the real vault passphrase (F44)
+**File:** [src/agent_friday/services/extension_security.py](../../../src/agent_friday/services/extension_security.py)
+**Finding:** found while chasing tonight's own F32 fix for stale
+references, per Stephen's request. `ENV_BLOCKLIST` named
+`FRIDAY_VAULT_KEY`/`FRIDAY_HMAC_SECRET` — neither is a real environment
+variable anywhere in the codebase. `vault_passphrase.py`'s own real names
+are `FRIDAY_VAULT_PASSPHRASE`/`FRIDAY_PASSWORD`; only the latter was
+blocklisted. F32's own fix from earlier tonight would not have stripped
+the real vault passphrase from a sandboxed MCP connector's environment.
+**Fix:** added `FRIDAY_VAULT_PASSPHRASE` to `ENV_BLOCKLIST`. Left the two
+stale names in place (harmless).
+**Probe:** [tests/gauntlet/test_mcp_env_leak_to_subprocess.py](../../../tests/gauntlet/test_mcp_env_leak_to_subprocess.py) (new test alongside F32's existing 5)
+**Evidence:** RED before fix → GREEN after (6/6 in the file) → RED again
+on `git stash` revert → fix reapplied, stash dropped.
+
+**Also fixed the same batch, documentation-only, no probe needed beyond a
+pin:** F11 extended to two more identical false-claim loci in
+`index.html`/`ui_parts/app.html` (Settings → Privacy tab and the
+first-run wizard's passphrase step — both now say the same accurate
+thing F11 already established); `sensitivity_classifier.py`'s own module
+docstring corrected to match `egress_gate.py`'s actual default tier
+(claimed PRIVATE, the real default is PUBLIC with the fail-closed
+guarantee coming from the embedding layer — low severity, pure
+documentation).
+
+**Batch verification, Fixes #18+#19 + the copy corrections:** full
+unit+API suite running now — result to follow below once complete.
+
 ## Retroactive revert verification — F1, F2, F8, F11, F12
 
 These five landed before the red→green→red-on-revert discipline was
@@ -879,6 +922,42 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### F42 — THREAT_MODEL.md's central "IntegrityEngine verifies before every action" claim doesn't match the real gate
+The threat model's headline defense against unauthorized cLaws
+modification describes HMAC/Ed25519 manifest verification running before
+every action. The real pre-action gate is a completely different
+mechanism (`_governance_check()`'s ring-based allow/deny in
+`services/agent.py`) that never calls `IntegrityEngine` at all —
+verification only happens if something explicitly hits the on-demand
+`/api/integrity` endpoints. Not fixed because this is a "should the claim
+move or the code" call: wiring real signature verification into the most
+heavily-used gate in the codebase is a real behavior/performance change,
+not something to land overnight; correcting the threat model to describe
+what actually runs changes the product's central security claim, which
+is Stephen's call given how prominent it is. Evidence in findings.jsonl
+F42.
+
+### F45 — the content-publishing "Global kill switch" doesn't exist server-side
+Clicking it always 404s (`/api/content/pause` isn't a route anywhere) —
+the failure is disclosed, not silent, but an emergency-stop control does
+nothing. Not fixed unilaterally because a kill switch is exactly the
+class of control this audit treats with extra caution even when the fix
+looks mechanical. Evidence in findings.jsonl F45.
+
+### F46 — the "Staging host" asset-auto-staging promise was never built
+The copy promises unguessable-path staging with auto-deletion after
+publish; no staging-upload logic exists anywhere. In practice the user
+must supply an already-public URL themselves. Not fixed — building a real
+staging pipeline is a genuine feature (where to stage, retention window,
+reliable deletion trigger), not a wiring fix. Evidence in findings.jsonl
+F46.
+
+### Q27 — dependencies aren't actually pinned despite the threat model saying they are
+`pyproject.toml` and every `requirements/*.txt` use only `>=` floors, no
+exact pins anywhere. Low severity, but pinning project-wide is a real
+maintenance-policy trade-off (supply-chain safety vs. version calcification)
+worth a deliberate choice. Evidence in findings.jsonl Q27.
 
 ### Q26 — the root cause behind every cost-metering gap tonight (Q6, Q7, Q11, Q13), and an actionable priority order
 Dispatched per your explicit request to find the systemic reason rather
