@@ -261,11 +261,18 @@ an honest `noted_not_independently_chased` status where a claim was read
 but not individually traced to a verdict). coverage.md's corpus table
 corrected to match.
 
-**3. Suite verification rests on exit code alone (in progress).** `-q`
-piped through `tail -5` in the earlier runs apparently ate the actual
-"N passed" summary line — re-running now without that pipe, reading the
-full output file directly, specifically to capture the real count rather
-than trust exit 0 alone. Result recorded below once it lands.
+**3. Suite verification rests on exit code alone (in progress).** Re-ran
+without the `tail -5` pipe — the summary line is STILL missing from the
+captured output even reading the full file directly (progress dots to
+100%, then just `[exited with code 0]`, no "N passed" line at all). So the
+pipe wasn't the cause; something about this background-capture path drops
+pytest's final terminal-writer output specifically (pytest.ini's own
+`addopts` has nothing that would suppress it — confirmed, no custom
+reporter, no `-p no:terminal`). Rather than keep guessing at the terminal
+capture, switched to `--junit-xml=<path>`, which pytest writes to disk
+directly regardless of what happens to the captured stdout — a
+deterministic count that can't be a vacuous "collected but not run" false
+positive. Running now; real numbers recorded below once it lands.
 
 **4. F10 sharpened.** See the rewritten queue item above: posed as an
 explicit (A) fail-closed / (B) fall-back-with-notice choice with
