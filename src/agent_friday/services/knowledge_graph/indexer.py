@@ -47,6 +47,15 @@ ENTITY_TYPES = "person,organization,project,tool,concept,event,place"
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 100
 MAX_REPORT_COMMUNITIES = 24        # cap LLM cost per index pass
+# Extraction had no equivalent cap: one LLM call per stale chunk, no ceiling.
+# When the routed cheap/free provider goes unhealthy, model_router's own
+# cross-provider circuit breaker (correct for chat: never leave the user
+# without an answer) reroutes every remaining chunk straight to the paid
+# frontier default -- a live incident (2026-09-04) ran a single Tier B pass
+# for 7+ hours straight through the night, unattended, at ~$10/hour, because
+# nothing here would ever stop asking. A corpus bigger than this cap is
+# retried on the next delta pass instead of billed to the end tonight.
+MAX_CLOUD_EXTRACT_CALLS = 200       # cap real-money LLM calls per index pass
 
 
 def _prompt(name: str) -> str:
@@ -361,6 +370,8 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                                       store.load("relationships")
                                       if r.get("tier") == "B"} if mode == "delta" else {}
     skipped_tier3 = 0
+    skipped_cloud_cap = 0
+    cloud_extract_calls = 0
     extracted = 0
     extract_failures = 0
     first_failure = None
@@ -377,12 +388,22 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             else:
                 skipped_tier3 += 1
                 continue
+        if not pinned and cloud_extract_calls >= MAX_CLOUD_EXTRACT_CALLS:
+            # This chunk stays "stale" in the manifest -- the next delta pass
+            # picks it back up. Silence past the cap, not a failure: nothing
+            # was attempted, let alone billed.
+            skipped_cloud_cap += 1
+            continue
         prompt = (extract_tpl
                   .replace("{entity_types}", ENTITY_TYPES)
                   .replace("{tuple_delimiter}", TUPLE_DELIM)
                   .replace("{record_delimiter}", RECORD_DELIM)
                   .replace("{completion_delimiter}", COMPLETION_DELIM)
                   .replace("{input_text}", chunk["text"]))
+        if not pinned:
+            # Count the attempt, not just successes: a failing call can still
+            # have made (and paid for) an HTTP round trip before raising.
+            cloud_extract_calls += 1
         try:
             raw = call([{"role": "user", "content": prompt}], None, sens,
                        indexing_mode, orb_label="🧠 indexing knowledge")
@@ -433,6 +454,10 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     # ASCII only: progress strings reach cp1252 Windows consoles via callbacks.
     say(f"extracted {extracted} chunks -> {len(entities)} entities, "
         f"{len(relationships)} relationships ({skipped_tier3} TIER_3 skipped)")
+    if skipped_cloud_cap:
+        say(f"cloud extraction cap reached: {skipped_cloud_cap} chunk(s) left "
+            f"stale for the next delta pass instead of an uncapped cloud bill "
+            f"(cap={MAX_CLOUD_EXTRACT_CALLS})")
 
     # ── people the user has asked Friday to forget ───────────
     # BEFORE the dangling-relationship sweep below, so removing them takes
@@ -598,6 +623,7 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         "first_failure": first_failure,
         "degraded": degraded,
         "skipped_tier3": skipped_tier3,
+        "skipped_cloud_cap": skipped_cloud_cap,
         "entities": len(entities), "relationships": len(relationships),
         "communities": len(communities), "reports": len(reports),
         "embedded": embedded,
