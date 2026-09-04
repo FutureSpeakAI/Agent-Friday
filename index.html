@@ -36155,7 +36155,15 @@ function SettingsTabCosts() {
       marginTop: 8,
       lineHeight: 1.5
     }, mono)
-  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), /*#__PURE__*/React.createElement("div", {
+  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ffb347',
+      marginTop: 6,
+      lineHeight: 1.5
+    }, mono),
+    title: "These providers' rates could not be verified against their own pricing page, so no dollar figure is shown for them rather than guessing one -- see the model breakdown below."
+  }, num(s.unpriced_calls), " call", s.unpriced_calls === 1 ? '' : 's', " this period ", s.unpriced_calls === 1 ? 'is' : 'are', " not priced (real spend, unverified rate) — not included in the total above."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'flex-end',
