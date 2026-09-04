@@ -25,7 +25,22 @@ from . import kg_settings, mark_wiki_dirty
 # ── always-on context ─────────────────────────────────────────
 
 def knowledge_context_block(message: str, max_items: int = 3) -> list[str]:
-    """Graph pointers for the current message. Structural only — free."""
+    """Graph pointers for the current message. Structural only — free.
+
+    This block is folded into EVERY system prompt by context_injection's
+    build_injected_context(), for whatever provider is handling the turn --
+    cloud included -- with no per-provider tier gating downstream (unlike
+    the deliberately tier-gated _build_context_prompt() path two lines away
+    in model_router._get_friday_system_prompt(), which redacts TIER_2/3
+    content per provider). A candidate's `summary` is a real plaintext
+    excerpt of the page (wiki_graph._first_paragraph, taken from the
+    decrypted body whenever the vault is unlocked), so a TIER_3 page --
+    one living in a user-designated encrypted wiki section -- must never
+    reach this always-on, ambient path (docs/audits/gauntlet-2026-09-03/
+    findings.jsonl). Filtered here rather than in structural_query itself,
+    since that module has other, differently-gated callers (e.g. the
+    explicit read_wiki tool).
+    """
     msg = (message or "").strip()
     if len(msg) < 12 or not kg_settings().get("enabled", True):
         return []
@@ -34,8 +49,15 @@ def knowledge_context_block(message: str, max_items: int = 3) -> list[str]:
         result = structural_query.query(msg, max_should_read=max_items)
     except Exception:
         return []
+    try:
+        from agent_friday.services.wiki_engine import _wiki_encrypted_sections
+        encrypted_sections = _wiki_encrypted_sections()
+    except Exception:
+        encrypted_sections = set()
     lines = []
-    for c in (result.get("candidates") or [])[:max_items]:
+    safe_candidates = [c for c in (result.get("candidates") or [])
+                       if c.get("section") not in encrypted_sections]
+    for c in safe_candidates[:max_items]:
         if c.get("summary"):
             lines.append(f"- {c['title']} ({c['page']}): {c['summary'][:160]}")
     should = result.get("should_read") or []
