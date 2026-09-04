@@ -714,14 +714,16 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   `scripts/check_settings_readers.py` (wired into the pytest suite as
   `tests/unit/test_settings_readers_check.py`) so a settings control writing a key
   nothing reads fails a test instead of shipping silently.
-- **Two safety gates have no callers**: `boot_guard.check_self_edit()` and
-  `check_scope()`. Reconfirmed 2026-09-03 — still zero call sites anywhere in
-  `src/`. `_self_editable_paths()` and the two gates' docstrings describe a
-  "self-edit tool" that writes arbitrary files and should check each path against
-  `check_self_edit` and the batch against `check_scope`; no such tool exists yet.
-  Not fixed here: wiring a safety gate to the wrong call site is worse than an
-  honestly-absent one, and which tool should own this call is a product decision,
-  not a missing line.
+- ~~**Two safety gates have no callers**: `boot_guard.check_self_edit()` and
+  `check_scope()`.~~ **Fixed 2026-09-03** (`fix/boot-guard-rollback`, merged into
+  v5.11.0). The self-edit tool these gates were written for is `code_apply`
+  (`routes/code.py`); both are now called from there, refusing whole-plan (409)
+  rather than half-applying around a skipped file. The same change widened
+  `_self_editable_paths()` / `BOOT_CRITICAL` coverage from two files
+  (`workspace_studio`, `settings.json` — neither capable of breaking a boot) to
+  the real package root and `index.html`, and made snapshot/restore
+  staged-and-swapped with a completion marker, so a crash mid-snapshot can no
+  longer leave a corrupt restore point.
 - **`settings.json`'s `knowledge_graph` block was silently discarded on every
   read.** Fixed 2026-09-03 — same defect class as `egress_mode` above, found while
   fixing the conversation-memory indexer bug below: `knowledge_graph` was never
