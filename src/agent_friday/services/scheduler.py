@@ -27,7 +27,6 @@ import json
 import logging
 import threading
 import time as _time
-import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -611,7 +610,17 @@ def dispatch(rec, *, manual=False):
                 _notify_run(rec, "complete", summary)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
-            traceback.print_exc()
+            # print_exc() writes to stderr, which the packaged app has none
+            # of -- it launches via pythonw (core/__init__.py, Shortcuts.ps1/
+            # Heal.ps1), so under the real shipped runtime this traceback
+            # went nowhere: not to friday.log (logging-only), not to any
+            # console. The one-line failure summary still reaches the user
+            # via _notify_run/run history below; the traceback needed to
+            # diagnose WHERE a task broke did not. _log (this module's own
+            # logger, already used correctly elsewhere here) writes to
+            # friday.log regardless of console presence -- the same reason
+            # server.py's _fail_loud_and_exit routes through logging too.
+            _log.exception("builtin task [%s] failed: %s", sid, err)
             attempts = int(rec.get("retry_count", 0)) + 1
             maxr = int((rec.get("retry") or {}).get("max", 0))
             backoff = int((rec.get("retry") or {}).get("backoff_seconds", 300))

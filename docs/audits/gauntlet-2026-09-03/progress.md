@@ -734,6 +734,28 @@ reds).
 **Batch verification, Fix #16:** full unit+API suite running now — result
 to follow below once complete.
 
+### Fix #17 — a scheduled task's traceback was silently discarded under the packaged app (F41)
+**File:** [src/agent_friday/services/scheduler.py](../../../src/agent_friday/services/scheduler.py)
+**Finding:** `dispatch()`'s exception handler — the single place every
+builtin/agent_prompt scheduled task's failure lands — called
+`traceback.print_exc()`, writing to stderr. The packaged app launches via
+`pythonw` (confirmed in `packaging/windows/lib/Shortcuts.ps1`/`Heal.ps1`),
+which has no stderr console at all, so under the real shipped runtime
+that traceback went nowhere — not to `friday.log` (logging-only), not to
+any console. The one-line failure summary still reached the user; the
+traceback needed to diagnose *where* a task broke did not, for as long as
+this handler has existed.
+**Fix:** swapped `traceback.print_exc()` for `_log.exception(...)` —
+this module's own logger, already used correctly elsewhere in the same
+file — and removed the now-unused `import traceback`.
+**Probe:** [tests/gauntlet/test_scheduler_task_failure_uses_logger.py](../../../tests/gauntlet/test_scheduler_task_failure_uses_logger.py)
+**Evidence:** RED before fix → GREEN after (2/2, including a no-op-shaped
+sanity check that other existing `_log` usages elsewhere are untouched) →
+RED again on `git stash` revert → fix reapplied, stash dropped. Full
+`tests/gauntlet/` green (only the 2 pre-existing by-design reds).
+**Batch verification, Fix #17:** full unit+API suite running now — result
+to follow below once complete.
+
 ## Retroactive revert verification — F1, F2, F8, F11, F12
 
 These five landed before the red→green→red-on-revert discipline was
@@ -851,6 +873,29 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### Q24 — manual "Run Now" can race a schedule into running twice concurrently
+`dispatch()`'s only concurrency guard is skipped specifically for manual
+triggers (`if sid in _RUNNING and not manual`) — click Run Now while a
+schedule is already running (or click it twice) and the same task
+executes on two threads at once, racing writes to the same record/file.
+Worse: the scheduler's own nightly KG reindex bypasses even the *manual*
+route's lock entirely, so a user clicking "Reindex now" in the UI while
+the 03:30 schedule is mid-run gets two fully concurrent rebuilds of the
+same on-disk graph. Not fixed because the `and not manual` exemption may
+be a deliberate escape hatch (forcing a re-run past a stuck lock from a
+crashed prior run) rather than an oversight — removing it outright could
+break that legitimate case. Decide: should Run Now refuse outright while
+a run is in progress, queue behind it, or keep the override with a real
+lock instead of none? Evidence in findings.jsonl Q24.
+
+### Q25 — a whole Settings→Scheduler UI section is dead, polling but rendering nothing
+Fully implemented (list/toggle/run-now/delete/history, 5s polling) but
+none of its handlers or fetched data are referenced in any JSX — the real,
+working scheduler UI lives in a separate Workflows-tab component with
+different handler names. Low severity; decide whether to delete the dead
+section or build it out as a second real surface. Evidence in
+findings.jsonl Q25.
 
 ### F40 — the Federation panel's per-peer ask/allow/block trust control does nothing
 The dropdown reads as a real lever (color-coded amber/green/red, defaults
@@ -1041,6 +1086,22 @@ cleanly in isolation regardless of whether Fix #8 is present or reverted
 shared-state flakiness somewhere in this ~7200-test suite, not caused by
 Fix #8. Not chased further — same category as the WinError 10038 anomaly
 above, flagged honestly rather than silently ignored.
+
+**Third observed anomaly (2026-09-04, ~07:03), understood immediately, not
+a flake:** the first full-suite run after Fix #17 (F41) reported 1
+failure, `test_notifications_engine.py::TestListNotifications::test_
+same_priority_newer_first`. That test is a pre-existing, deliberate
+`@pytest.mark.xfail(strict=True, reason="_now_iso() strips microseconds
+... unstable ... known limitation, not a test error")` — it pushes two
+notifications 10ms apart and asserts the newer one sorts first, which is
+genuinely a coin flip against the real 1-second timestamp resolution
+depending on whether a wall-clock second boundary falls between the two
+pushes. `strict=True` means an unexpected PASS on a lucky roll counts as
+a suite failure, not just the expected fail. Re-ran the full suite once
+more with no code changes: clean, 6701/0/0/8 — confirms this was that
+known, already-documented, self-describing timing coin-flip landing on
+the "unexpectedly passed" side once, not a regression from Fix #17
+(scheduler.py and notifications_engine.py are unrelated modules).
 
 ## Scope addition (2026-09-04): visual-notes.md, capture-only
 
