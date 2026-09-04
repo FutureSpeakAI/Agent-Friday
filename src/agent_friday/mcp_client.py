@@ -64,6 +64,16 @@ _HTTP_PROTOCOL_VERSION = "2025-06-18"
 _DEFAULT_START_TIMEOUT = 30.0   # seconds to wait for initialize + tools/list
 _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
 
+# `for raw in proc.stdout:`/`for raw in proc.stderr:` has no per-line size
+# cap -- a malicious or buggy MCP server that never emits a newline (or
+# sends one enormous JSON-RPC line) gets read into a single, unboundedly
+# large Python string before anything else runs. `_stderr_tail`'s
+# deque(maxlen=40) only bounds how many COMPLETED lines are retained; it
+# does nothing for the one line currently being assembled. 16 MiB is
+# generously larger than any real JSON-RPC message this protocol sends
+# (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+_MAX_LINE_CHARS = 16 * 1024 * 1024
+
 
 class _Pending:
     """A single outstanding JSON-RPC request awaiting its response."""
@@ -274,7 +284,21 @@ class MCPServerProcess:
         if proc is None or proc.stdout is None:
             return
         try:
-            for raw in proc.stdout:
+            while True:
+                raw = proc.stdout.readline(_MAX_LINE_CHARS)
+                if not raw:
+                    break  # EOF
+                if not raw.endswith("\n") and len(raw) >= _MAX_LINE_CHARS:
+                    # A well-behaved server never sends this. Discard it and
+                    # keep reading until the next real newline so we resync
+                    # rather than let it (or a repeat) grow memory further.
+                    self._log(f"[mcp:{self.name}] dropped an oversized stdout "
+                              f"frame (>{_MAX_LINE_CHARS} bytes)")
+                    while True:
+                        nxt = proc.stdout.readline(_MAX_LINE_CHARS)
+                        if not nxt or nxt.endswith("\n"):
+                            break
+                    continue
                 line = raw.strip()
                 if not line:
                     continue
@@ -313,7 +337,18 @@ class MCPServerProcess:
         if proc is None or proc.stderr is None:
             return
         try:
-            for raw in proc.stderr:
+            while True:
+                raw = proc.stderr.readline(_MAX_LINE_CHARS)
+                if not raw:
+                    break  # EOF
+                if not raw.endswith("\n") and len(raw) >= _MAX_LINE_CHARS:
+                    self._stderr_tail.append(
+                        f"[dropped an oversized stderr frame (>{_MAX_LINE_CHARS} bytes)]")
+                    while True:
+                        nxt = proc.stderr.readline(_MAX_LINE_CHARS)
+                        if not nxt or nxt.endswith("\n"):
+                            break
+                    continue
                 line = raw.rstrip()
                 if line:
                     self._stderr_tail.append(line)
