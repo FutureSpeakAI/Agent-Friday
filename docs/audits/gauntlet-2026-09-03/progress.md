@@ -362,6 +362,36 @@ was entirely inside the KG indexer's own extraction loop, not in any
 read/status endpoint — a narrower, different, and honestly more interesting
 bug than the one he suspected.
 
+**Second restart, 08:39:32 — also resolved, not an open anomaly, and it
+closes the loop on F47.** An independent check flagged this second live-app
+restart as unaccounted-for in this ledger, the same shape as the 03:35:47
+one above. Same answer: Stephen's own action, through a different session,
+same as 03:35:47 — not something this audit did or should chase further as
+a mystery. What actually happened, relayed by Stephen from that session:
+the C: drive hit 0 bytes free at approximately 08:10 (root cause: F47,
+`tests/conftest.py`'s leaked pytest temp homes — this audit's own test
+harness). Friday crashed at 08:13:46 with a genuine Windows structured-
+exception stack-overflow trap — no Python frame, caught only by
+`faulthandler`, not something the app's own exception handling could ever
+have intercepted. It stayed dead for 26 minutes: `friday_tray.py`'s
+watchdog polls every 5 seconds and correctly detected the death within
+that cadence, but its entire response is relabelling its own tray menu —
+nothing a person would see without opening it by hand (now tracked as
+**F48**; a notification-only fix is already in hand in a separate session,
+whether to also auto-restart is queued as Stephen's own call, for the same
+reason a repeating fault hidden behind an auto-restarting process is worse
+than a process that visibly stays dead). Recovery at 08:39:32 was manual —
+a separate session noticed independently, preserved the crash log, and
+brought the server back up.
+
+Worth being explicit about what this chain actually is: this audit's own
+test harness filled the disk; the full disk crashed the live product a
+real person depends on; and the one piece of code whose entire job is
+noticing exactly that kind of failure detected it correctly and told no
+one. That is this audit's founding thesis, demonstrated end to end against
+the audit's own infrastructure, not a hypothetical case study — see F47
+and F48 in `findings.jsonl` for the full record.
+
 **Also worth surfacing here, found while chasing this generalization
 tonight — a real security gap, not a cost one:** every stdio MCP connector
 was inheriting Friday's full decrypted secrets environment (cloud-provider
