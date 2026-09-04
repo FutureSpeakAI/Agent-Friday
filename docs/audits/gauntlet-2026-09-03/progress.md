@@ -1962,6 +1962,119 @@ problem that's measurably not urgent, was the wrong trade to make
 unprompted. See F65 for the two lower-risk options left for a future
 pass.
 
+### Round 13 — three more corrections (2026-09-04, evening)
+
+**F49-F63 now carry explicit red-on-revert evidence, or an explicit
+reasoned N/A.** These 15 findings had red+green but no revert-proof
+recorded for any of them (F52/F55 had recorded neither). Went back
+through all 15 individually: for the 10 that changed real runtime
+behavior with a matching test (F49, F50, F51, F53, F54, F55, F56's
+cleanup half, F57, F58, F59), actually reverted the fix in place, ran the
+probe, confirmed it failed for the right reason, restored the fix (`git
+diff` confirmed byte-identical each time), confirmed green again — full
+detail per finding in findings.jsonl. For the 5 that changed only a
+docstring with no runtime-behavior difference (F52's self-finding — no
+code of its own, borrows F47/F49/F51's now-individually-proven fixes by
+composition — and F60/F61/F62/F63), recorded explicitly why a
+revert-test doesn't apply rather than leaving them looking equivalent to
+the 10 that carry real proof. One genuine catch along the way: F51's
+first revert attempt reinserted only the mkdtemp call and passed GREEN
+incorrectly — the structural guard requires BOTH a friday_-prefixed
+mkdtemp AND a hardcoded HOME-env-var line before flagging a file, by
+design, so a partial revert correctly didn't trip it; completing the
+reinserted block correctly went red.
+
+**F54 rewritten as a complete, standalone entry** for direct escalation
+to Stephen. Added: the exact condition that bypassed both checks
+(category present, text absent), a per-call-site exposure assessment
+(the 4 real callers checked individually — only `/api/policies/evaluate`,
+a login-gated route accepting an arbitrary POST body with no required
+text fields, was genuinely exposed to this condition; the other 3 either
+always populate text or never populate an H1-H4 category), the exact
+timeline (introduced complete in the module's first commit, `bb6afb1`,
+2026-06-26 — roughly 10 weeks before this audit caught it on 2026-09-04),
+and the red-on-revert proof. No evidence found of it having actually been
+exploited via the live route — this is a code-level finding, not a
+report of an incident.
+
+**F56 escalated with a specific question and options, not left vague.**
+Checked `docs/design/security-boundary.md` (commit `1771cc9`, Stephen's
+own approved spec) before treating the tool-permission-enforcement half
+as open, per instruction. §4.1's mechanism table already rules on this
+shape: "Governance rings, confirmation gate, approvals queue, subagent
+scopes | Kept. They gate *actions*, not egress, and they already have
+the right shape," and principle B1 warns specifically against what a
+second enforcement point would risk ("Two mechanisms reading different
+flags is the root cause of the month's worst confusion"). Presented
+three concrete options (leave as-is / wire in a second gate / delete the
+dead functions entirely) with what each permits and costs, and flagged
+the one ambiguity worth knowing: the spec's line may be about the
+concept (correctly implemented via `services/subagents.py`) rather than
+a ruling on `scoped_agents.py` — a second, similarly-named, dead-in-this-
+respect module — by name. The cleanup half of F56 (the no-op removal
+loop) is unaffected and needed no ruling; only the enforcement-wiring
+question is escalated.
+
+**F64 — determining whether the 15 order-dependent tests are the test's
+fault or the code's: RESOLVED, and it was both, for different tests.**
+Bisected via binary search across all 243 `tests/unit/` files (each round
+paired with the earliest-failing file as a fast reproduction signal),
+narrowing 243 → 122 → 61 → 31 → 15 → 7 → down to one:
+`tests/unit/test_vault_gate_is_honest.py`. Confirmed the mechanism
+directly with a temporary probe reading real settings state — before the
+fix, `model_routing.mode` was `'local_preferred'` after this file ran;
+after, it was back to the real default. Along the way, ruled out
+`test_kg_reindex_route.py` (the file `tests/api/conftest.py`'s own
+"Cross-test leak heal" comment names as a known historical risk) by
+collection-order position, and ruled out the KG-related unit files as a
+targeted guess that didn't reproduce alone — both useful negative
+results, not wasted motion.
+
+**Root cause 1 (the test's fault, 14 of 15 failures):**
+`TestPartialModelRoutingSaveKeepsItsSiblings::test_saving_one_key_does_
+not_reset_the_block` calls the REAL `core._save_settings()` against the
+session-shared settings.json (`tests/conftest.py` mints ONE isolated
+home per pytest session, not per test) and sets `model_routing.mode` to
+`"local_preferred"` — then never restores it. Every later test in the
+same session expecting default routing got silently routed local
+instead. Not a new problem class: `test_kg_indexer.py` already has a
+`restore_kg_settings` fixture for the identical reason on a different
+settings block, with a docstring citing the exact prior incident that
+taught this lesson (`test_defaults_local_only_and_index_everything` in
+`test_knowledge_graph_store.py` caught it once already); `test_work_
+queue.py` also correctly restores via try/finally. This one test just
+never got the same treatment. Fixed with a `restore_model_routing`
+fixture matching `test_kg_indexer.py`'s pattern exactly — a pre-existing
+test file outside `tests/gauntlet/`, edited directly; recorded here per
+the standing exception-logging discipline (same reasoning as F49/F51:
+reverting would leave a known, reproduced, actively-polluting defect in
+place).
+
+**Root cause 2 (the code's fault, 1 of 15 failures, filed as F66):**
+`test_self_sufficient_routes.py::test_costs_timeseries_and_scheduled`'s
+500 traced to a genuine production bug that F50's OWN fix (this same
+session, storing NULL for an unpriced model's cost rather than a
+fabricated 0.0) made newly reachable: `cost_meter.timeseries()` sums
+`cost_usd` in Python (`b["usd"] += cost`) rather than SQL, unlike
+`summary()`/`by_schedule()` (both use `COALESCE(SUM(cost_usd),0)`
+correctly) — so the first unpriced call in a range crashes with
+`TypeError: unsupported operand type(s) for +=: 'float' and 'NoneType'`.
+Traced the specific trigger to `test_multi_provider_dispatch.py::
+test_dispatch_to_groq_descriptor`, which records a real call for
+`llama-3.3-70b-versatile` (an `UNPRICED_MODELS` entry) against the
+shared session DB. This is reachable in real production too, not just
+under test: any deployment recording even one call to an unpriced
+provider breaks the cost dashboard's timeseries chart for any range
+containing it, permanently, until the row ages out. Fixed by skipping
+`None` in the Python sum (matching `summary()`'s SQL-level treatment),
+red-on-revert proven with 3 new tests in `tests/gauntlet/test_cost_meter_
+timeseries_handles_unpriced_calls.py`.
+
+**Verification:** `pytest tests/unit/ tests/api/` — full suite, both
+fixes in place — exit 0, all tests pass, no exceptions or skips beyond
+the pre-existing 8. `tests/gauntlet/` also reconfirmed green after both
+changes.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
