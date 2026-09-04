@@ -1547,35 +1547,56 @@ def chat_send():
             except Exception as ve:
                 vision_description = f"[Vision unavailable: {ve}]"
 
-        # Build context-enriched system prompt. This endpoint always goes to
-        # Anthropic (cloud), so vault TIER_2/TIER_3 content is gated out here.
+        # Build context-enriched system prompt, gated for whichever provider
+        # actually ends up serving this turn.
+        #
+        # This used to hardcode provider='cloud' unconditionally, on the
+        # (once-true) assumption that this endpoint always goes to Anthropic.
+        # But _generate_agent below runs the SAME router /api/chat uses,
+        # which can correctly route a vault-tier message to a local seat --
+        # and a prompt pre-stripped as if bound for the cloud doesn't
+        # magically regain the TIER_2/3 content it's entitled to just
+        # because a local seat answered instead. Net effect before this fix
+        # was never a leak (content was already stripped, not exposed) but a
+        # local seat that IS entitled to see full vault content got a
+        # degraded, silently-redacted answer with no indication why --
+        # exactly the seam /api/chat's own _prep_for(provider) (chat.py:748)
+        # was written to close. Mirrors that pattern here (findings.jsonl F18).
         settings = _load_settings()
-        system_prompt, sources = _build_context_prompt(
-            message, workspace, workspace_context, vision_description,
-            provider='cloud',
-            vault_control=(_get_vault_control() if _vault_local_only() else None),
-            vault_fallback=_vault_cloud_fallback(),
-        )
-
-        # Prepend user-configured agent personality + response prefs + cLaws
-        personality = _load_agent_personality()
-        system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
-        # Ask-first action policy (enforced by the gate in _execute_tool).
-        system_prompt = system_prompt + "\n\n" + ACTION_PERMISSION_POLICY
-
-        # Cross-session memory: recall relevant past exchanges + carry forward
-        # the last session summary + adapt tone from the accumulated arc. This
-        # endpoint is cloud-bound, so the appended text is gated/scrubbed by the
-        # _generate_agent path like the rest of the prompt.
         _session_id = _current_session_id()
-        try:
-            _mem_block = (_build_memory_context_block(message, _session_id)
-                          + _build_session_continuity_block()
-                          + _build_emotional_tone_block())
-            if _mem_block:
-                system_prompt = system_prompt + "\n" + _mem_block
-        except Exception as _mb_err:
-            print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
+        _send_sources = []
+
+        def _sys_for(provider_name):
+            prompt, sources = _build_context_prompt(
+                message, workspace, workspace_context, vision_description,
+                provider=provider_name,
+                vault_control=(_get_vault_control() if _vault_local_only() else None),
+                vault_fallback=_vault_cloud_fallback(),
+            )
+            _send_sources[:] = sources or []
+            # Prepend user-configured agent personality + response prefs + cLaws
+            personality = _load_agent_personality()
+            prompt = _settings_system_prefix(settings, personality) + (prompt or '')
+            # Ask-first action policy (enforced by the gate in _execute_tool).
+            prompt = prompt + "\n\n" + ACTION_PERMISSION_POLICY
+            # Cross-session memory: recall relevant past exchanges + carry
+            # forward the last session summary + adapt tone from the
+            # accumulated arc. Rebuilt per provider along with everything
+            # else above, so a local seat's memory recall isn't scrubbed as
+            # if it were headed to the cloud either.
+            try:
+                _mem_block = (_build_memory_context_block(message, _session_id)
+                              + _build_session_continuity_block()
+                              + _build_emotional_tone_block())
+                if _mem_block:
+                    prompt = prompt + "\n" + _mem_block
+            except Exception as _mb_err:
+                print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
+            return prompt
+
+        _send_provider = _predict_route_provider(
+            keywords=message, workspace=workspace, has_tools=True)
+        system_prompt = _sys_for(_send_provider)
 
         # Anthropic-format message history
         messages = []
@@ -1605,7 +1626,7 @@ def chat_send():
             _attr2 = None
         reply, tool_trace = _generate_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
-            session_ctx=_sess_ctx, workspace=workspace,
+            session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
         )
 
         # ── FR-2/A7 on this endpoint too: pseudo-tool-call leaks and
@@ -1616,13 +1637,14 @@ def chat_send():
             return _generate_agent(
                 messages + [{"role": "user", "content": corrective_note}],
                 system=system_prompt, temperature=settings.get('temperature'),
-                session_ctx=_sess_ctx, workspace=workspace,
+                session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
             )
 
         reply, tool_trace, _send_integrity = validate_toolcall_integrity(
             reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
             redispatch=_send_redispatch,
         )
+        sources = _send_sources
 
         # ── B2: seat-change visibility on this endpoint too. ──
         try:

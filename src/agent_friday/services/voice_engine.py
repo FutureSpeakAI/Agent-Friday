@@ -824,6 +824,21 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
         )
     )
 
+    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q6c): this
+    # is a real, billed Gemini call that had ZERO cost_meter integration
+    # despite cost_meter.PRICING already carrying entries for the Live voice
+    # models — the TTS model id itself was also missing there until this fix.
+    # Never allowed to break speech: any failure here is swallowed.
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _um = getattr(response, "usage_metadata", None)
+        _cm.meter("gemini", "gemini-2.5-flash-preview-tts", {
+            "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
+            "output_tokens": getattr(_um, "candidates_token_count", 0) or 0,
+        }, kind="voice")
+    except Exception:
+        pass
+
     audio_data = response.candidates[0].content.parts[0].inline_data.data
     buf = io.BytesIO()
     with wave.open(buf, 'wb') as wf:

@@ -163,18 +163,43 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
 # ── nightly reindex job ───────────────────────────────────────
 
 def run_nightly_reindex() -> dict:
-    """Scheduler entry: Tier A rebuild + Tier B delta (settings-gated)."""
+    """Scheduler entry: Tier A rebuild + Tier B delta (settings-gated).
+
+    Goes through the SAME concurrency guards as the manual
+    ``/api/knowledge-graph/reindex`` HTTP route (routes/knowledge_graph.py's
+    ``_rebuild_lock`` for Tier A, ``_TIER_B_STATE`` for Tier B). Before this
+    fix, the 03:30 nightly job called ``wiki_graph.rebuild_tier_a()`` /
+    ``indexer.reindex_tier_b()`` directly, acquiring neither -- so a user
+    clicking "Reindex now" in the Knowledge Graph panel while the nightly
+    schedule (or its own earlier Run Now) was mid-run got two fully
+    concurrent, uncoordinated rebuilds of the same on-disk KG store
+    (docs/audits/gauntlet-2026-09-03/findings.jsonl Q24). Tier A now blocks
+    on the same lock the manual route blocks on (serializes rather than
+    racing); Tier B checks the same running flag the manual route checks and
+    skips this pass rather than starting a second concurrent index when one
+    is already in flight.
+    """
     settings = kg_settings()
     if not settings.get("enabled", True) or not settings.get("nightly_reindex",
                                                              True):
         return {"skipped": True}
     from . import wiki_graph
+    from agent_friday.routes.knowledge_graph import _rebuild_lock, _TIER_B_STATE
     mark_wiki_dirty("nightly")
-    info_a = wiki_graph.rebuild_tier_a()
-    info_b = {}
-    try:
-        from . import indexer
-        info_b = indexer.reindex_tier_b(mode="delta")
-    except Exception as e:
-        info_b = {"error": str(e)}
+    with _rebuild_lock:
+        info_a = wiki_graph.rebuild_tier_a()
+    if _TIER_B_STATE.get("running"):
+        info_b = {"skipped": "tier_b_already_running"}
+    else:
+        _TIER_B_STATE["running"] = True
+        _TIER_B_STATE["started_at"] = time.time()
+        try:
+            from . import indexer
+            info_b = indexer.reindex_tier_b(mode="delta")
+            _TIER_B_STATE["last"] = info_b
+        except Exception as e:
+            info_b = {"error": str(e)}
+            _TIER_B_STATE["last"] = info_b
+        finally:
+            _TIER_B_STATE["running"] = False
     return {"tier_a": info_a, "tier_b": info_b}

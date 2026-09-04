@@ -386,6 +386,37 @@ def get_peer(agent_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+_FED_PREFS = ("ask", "allow", "block")
+
+
+def set_peer_pref(agent_id: str, pref: str) -> Optional[Dict[str, Any]]:
+    """Set a known peer's federation trust preference (ask/allow/block).
+
+    This is the write side of the Federation panel's per-peer control
+    (gauntlet-2026-09-03 F40) -- the `fed_pref` column already existed and
+    was already read by get_peers()/get_peer() (so the UI dropdown rendered
+    correctly), but nothing ever wrote it: /api/federation/peers/<id>/pref
+    didn't exist as a route at all. Returns the updated peer record, or
+    None if the peer doesn't exist or *pref* isn't one of the three known
+    values.
+    """
+    if pref not in _FED_PREFS:
+        return None
+    try:
+        with _LOCK:
+            with _conn() as con:
+                cur = con.execute(
+                    "UPDATE peers SET fed_pref = ? WHERE agent_id = ?",
+                    (pref, agent_id),
+                )
+                if cur.rowcount == 0:
+                    return None
+        return get_peer(agent_id)
+    except Exception as e:
+        print(f"  [federation] set_peer_pref failed: {e}")
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  TRUST MANAGEMENT
 # ─────────────────────────────────────────────────────────────────────────────

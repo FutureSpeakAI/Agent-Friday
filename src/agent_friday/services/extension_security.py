@@ -1,10 +1,10 @@
-﻿"""
+"""
 Agent Friday — Extension Security
 Inspired by patterns in Goose (Apache-2.0). All code is original.
 
 Env var blocklists, audit logging, Unicode sanitization, trust levels for MCP.
 """
-import os, re, json, time, unicodedata
+import os, re, json, time, hashlib, unicodedata
 from pathlib import Path
 from datetime import datetime
 
@@ -229,7 +229,7 @@ def assess_server(name: str, spec: dict) -> dict:
     else:
         raw = "allow"
 
-    allowlisted = is_allowlisted(name)
+    allowlisted = is_allowlisted(name, spec)
     verdict = "allow" if (allowlisted and raw == "warn") else raw
 
     return {"name": name, "verdict": verdict,
@@ -246,12 +246,40 @@ def assess_config(cfg: dict) -> dict:
     return {"servers": results, "summary": summary}
 
 
+# F9: gate_mcp_config's security_note used to be attached only to the
+# in-memory deepcopy handed to MCPManager.load_config() -- MCPServerProcess /
+# MCPServerHTTP never store it, and the on-disk mcp_servers.json is
+# deliberately left untouched (so a later fix to the command doesn't require
+# a manual config edit to re-enable). With nowhere durable to read it back,
+# both status surfaces (services/connectors.py's _status_for_mcp and
+# routes/core_routes.py's /api/mcp/status) saw only the live handshake status
+# 'disabled', which matches none of their explicit branches, and fell into a
+# generic "failed to start" / bare "disabled" catch-all -- the real reason was
+# computed and then thrown away. This name-keyed registry is (re)populated by
+# every gate_mcp_config() call (each boot/reload) and is the durable lookup
+# both resolvers now consult.
+_BLOCKED_REGISTRY: dict[str, str] = {}
+
+
+def get_blocked_reason(name: str) -> str | None:
+    """The security_note gate_mcp_config attached to *name* this run, if any."""
+    return _BLOCKED_REGISTRY.get(name) if name else None
+
+
+def blocked_servers() -> dict:
+    """A copy of the full {server name: security_note} registry."""
+    return dict(_BLOCKED_REGISTRY)
+
+
 def gate_mcp_config(cfg: dict) -> dict:
     """Disable any enabled server whose launch command trips a block finding.
 
     Returns a copy of the config; already-disabled servers pass through
     untouched (no security_note). Scanner errors must never take connectors
-    down — callers wrap this in try/except.
+    down — callers wrap this in try/except. Also (re)populates
+    _BLOCKED_REGISTRY (see get_blocked_reason/blocked_servers) so a security
+    block is legible to /api/connectors and /api/mcp/status, not just to the
+    in-memory config this function returns (F9).
     """
     import copy
     if not isinstance(cfg, dict):
@@ -260,40 +288,120 @@ def gate_mcp_config(cfg: dict) -> dict:
     servers = out.get("servers")
     if not isinstance(servers, dict):
         return out
+    # Reset the registry for every server named in this config so a
+    # previously-blocked server that's since been fixed (or removed) doesn't
+    # keep reporting a stale block reason.
+    for name in servers:
+        _BLOCKED_REGISTRY.pop(name, None)
     for name, spec in servers.items():
         if not isinstance(spec, dict) or not spec.get("enabled", True):
             continue  # already off (or malformed) — leave untouched
         if assess_server(name, spec)["verdict"] == "block":
             spec["enabled"] = False
-            spec["security_note"] = (
+            note = (
                 "Disabled: blocked by extension security "
                 "(destructive or download-and-execute launch command)."
             )
+            spec["security_note"] = note
+            _BLOCKED_REGISTRY[name] = note
     return out
 
 
 # ── Allowlist ─────────────────────────────────────────────────────────────────
+# Q22: is_allowlisted()/add_to_allowlist() used to key approval purely by
+# server NAME. assess_server() promotes any future "warn"-level verdict for an
+# allowlisted name straight to "allow" -- so editing an already-approved
+# server's launch command to something materially different (still
+# warn-tier only; a block-tier finding is never bypassed by the allowlist)
+# silently inherited the old approval with zero re-review. The allowlist is
+# now keyed by a fingerprint of the approved command/args (or url, for a
+# remote server) alongside the name: a name is only "still allowlisted" while
+# its current launch spec hashes to what was actually approved. Editing the
+# command drops it back to normal warn-tier handling until it's re-approved.
 
-def get_allowlist() -> list:
-    """Read the persisted set of operator-approved server names."""
+def _normalize_command(spec: dict) -> str:
+    """A stable string form of a server's launch spec, for fingerprinting."""
+    spec = spec or {}
+    if spec.get("url"):
+        payload = {"url": str(spec.get("url") or "")}
+    else:
+        payload = {
+            "command": str(spec.get("command") or ""),
+            "args": [str(a) for a in (spec.get("args") or [])],
+        }
+    return json.dumps(payload, sort_keys=True)
+
+
+def _command_fingerprint(spec: dict) -> str:
+    """SHA-256 of the normalized launch command -- what add_to_allowlist
+    actually approved for a given server name."""
+    return hashlib.sha256(_normalize_command(spec).encode("utf-8")).hexdigest()
+
+
+def _current_server_spec(name: str) -> dict | None:
+    """Best-effort lookup of *name*'s currently configured launch spec, used
+    when a caller (e.g. the /api/extensions/allowlist route, which only takes
+    a name) approves or checks a server without supplying its spec directly.
+    None means "no configured entry for this name was found" — distinct from
+    an empty-but-present spec ({})."""
+    try:
+        from agent_friday.services.agent import _load_mcp_servers
+        cfg = _load_mcp_servers()
+        servers = cfg.get("servers") or {}
+        return servers[name] if name in servers else None
+    except Exception:
+        return None
+
+
+def get_allowlist() -> dict:
+    """Read the persisted map of operator-approved server names to the launch
+    command fingerprint they were approved for. A value of None means the
+    server was approved without a resolvable spec to fingerprint (only
+    reachable via a direct add_to_allowlist(name) call for a name with no
+    matching entry in mcp_servers.json — e.g. a caller/test working entirely
+    off explicit specs rather than the on-disk config) and is treated as
+    still-trusted-by-name, matching the pre-fix behavior for that narrow case
+    rather than permanently locking such a name out."""
     try:
         if ALLOWLIST_FILE.exists():
             data = json.loads(ALLOWLIST_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): (v if v is None else str(v)) for k, v in data.items()}
             if isinstance(data, list):
-                return [str(x) for x in data]
+                # Legacy (pre-Q22-fix) format: names only, no fingerprint was
+                # ever recorded. Nothing to match against, so these fall
+                # through to normal (unapproved) handling until re-approved --
+                # the correct outcome here, not a silent grandfather-in of an
+                # unknown historical command.
+                return {}
     except Exception:
         pass
-    return []
+    return {}
 
 
-def is_allowlisted(name: str) -> bool:
-    return bool(name) and name in get_allowlist()
+def is_allowlisted(name: str, spec: dict = None) -> bool:
+    """True only if *name* is approved AND its current launch command still
+    matches the fingerprint that was approved (Q22). A name-only match with a
+    changed command is treated as NOT allowlisted."""
+    if not name:
+        return False
+    allowlist = get_allowlist()
+    if name not in allowlist:
+        return False
+    stored = allowlist[name]
+    if stored is None:
+        return True
+    if spec is None:
+        spec = _current_server_spec(name)
+        if spec is None:
+            return False  # nothing to verify the approval against
+    return stored == _command_fingerprint(spec)
 
 
-def _write_allowlist(names: list) -> None:
+def _write_allowlist(data: dict) -> None:
     try:
         ALLOWLIST_FILE.parent.mkdir(parents=True, exist_ok=True)
-        ALLOWLIST_FILE.write_text(json.dumps(names, indent=2), encoding="utf-8")
+        ALLOWLIST_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
         pass
 
@@ -312,23 +420,34 @@ def _audit_allowlist(action: str, name: str) -> None:
         pass
 
 
-def add_to_allowlist(name: str) -> list:
-    """Approve a server name; returns the updated allowlist."""
+def add_to_allowlist(name: str, spec: dict = None) -> dict:
+    """Approve a server name for its CURRENT launch command (or *spec*, if
+    given explicitly). Returns the updated {name: fingerprint} allowlist.
+
+    If neither *spec* nor a matching mcp_servers.json entry can be found, the
+    approval is recorded with no fingerprint (None) — see get_allowlist()'s
+    docstring for why that's still treated as approved rather than silently
+    rejected.
+    """
     name = (name or "").strip()
+    if not name:
+        return get_allowlist()
     current = get_allowlist()
-    if name and name not in current:
-        current.append(name)
+    resolved = spec if spec is not None else _current_server_spec(name)
+    fp = _command_fingerprint(resolved) if resolved is not None else None
+    if current.get(name, "__unset__") != fp:
+        current[name] = fp
         _write_allowlist(current)
         _audit_allowlist("add", name)
     return current
 
 
-def remove_from_allowlist(name: str) -> list:
+def remove_from_allowlist(name: str) -> dict:
     """Revoke a server name; returns the updated allowlist."""
     name = (name or "").strip()
     current = get_allowlist()
     if name in current:
-        current = [x for x in current if x != name]
+        current.pop(name, None)
         _write_allowlist(current)
         _audit_allowlist("remove", name)
     return current

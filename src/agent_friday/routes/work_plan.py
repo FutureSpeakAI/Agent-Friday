@@ -148,6 +148,11 @@ def forecast_pause():
     and get the common case: the first message of a session, where the seat is
     not resident and the reply takes ~13 s longer than every message after it
     for no visible reason.
+
+    `local_turn` also accepts `message`: the text about to be sent. It is an
+    additional, content-based trigger (Q18 -- see pause_forecast.forecast's
+    docstring) layered on top of the load-time estimate, not a replacement
+    for it.
     """
     from agent_friday.services import pause_forecast as pf
 
@@ -159,7 +164,7 @@ def forecast_pause():
         if not model:
             return jsonify({"error": "no model, and no seat to infer one"}), 400
         kw = {"model_id": model, "vault": bool(body.get("vault")),
-              "cloud_ok": _cloud_available()}
+              "cloud_ok": _cloud_available(), "text": body.get("message") or ""}
     elif kind == "heavy_lease":
         kw = {"vault": bool(body.get("vault")), "cloud_ok": _cloud_available()}
     elif kind == "image":

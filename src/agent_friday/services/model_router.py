@@ -350,7 +350,8 @@ def _claude_safe_model(candidate, settings):
 
 
 def _generate_text(messages, system=None, model=None, max_tokens=16384,
-                   temperature=None, orb_label=None, workspace=None):
+                   temperature=None, orb_label=None, workspace=None,
+                   system_builder=None):
     """Single-shot text generation via the user's CONFIGURED provider.
 
     Briefings, the front page, and editorials are not chat, but they should run
@@ -363,6 +364,22 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     dispatches to the SAME _call_* primitives the chat path uses (minus the tool
     loop). It tries the routed provider first, then falls back through every
     other provider, so generation never hard-fails while any provider is up.
+
+    system_builder: optional `callable(provider_name) -> str | None`. Many
+    callers predict a SINGLE provider up front (`_predict_route_provider`) to
+    decide how much vault TIER content the system prompt may carry, then hand
+    a prompt baked for that one provider in here. But this function's OWN
+    fallback ladder (below) can land the request on a DIFFERENT provider than
+    predicted when the first leg fails operationally — and a prompt gated for
+    'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
+    that content with no re-gating (docs/audits/gauntlet-2026-09-03/
+    findings.jsonl F30). When `system_builder` is given, each leg calls it
+    with ITS OWN provider name and uses the result instead of the static
+    `system` string, so the prompt is always gated for the provider actually
+    about to see it. A builder that raises is treated as "no system prompt"
+    for that leg (fail closed) rather than falling back to `system`, which
+    may have been gated for a different, less restrictive provider. Omit it
+    (the default) to keep the previous single-prompt behavior unchanged.
 
     Returns the response text.
     """
@@ -420,6 +437,17 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
                    "model_routing.vault_cloud_fallback), then retry.")
     vault_access = bool(route.get('vault_access'))
 
+    # F30: re-gate the system prompt per LEG, not once for the predicted
+    # provider — see the `system_builder` docstring above. Without a builder,
+    # every leg gets the same static `system` (unchanged legacy behavior).
+    def _system_for(provider_name):
+        if system_builder is None:
+            return system
+        try:
+            return system_builder(provider_name)
+        except Exception:
+            return None
+
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
@@ -427,20 +455,20 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
         # Mirror the chat path exactly: same shared client, same primitive.
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
-        return _call_claude(messages, system=system,
+        return _call_claude(messages, system=_system_for('cloud'),
                             model=_claude_safe_model(use_model or model, settings),
                             max_tokens=max_tokens, temperature=temperature)
 
     def _via_openai(use_model):
         # The routed model rides its RESOLVED provider (openrouter/groq/…);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
-        return _call_openai(messages, system=system, model=use_model,
+        return _call_openai(messages, system=_system_for('openai'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
                             orb_label=orb_label,
                             provider=routed_provider_name if use_model else None)[0]
 
     def _via_ollama(use_model):
-        return _call_ollama(messages, system=system, model=use_model,
+        return _call_ollama(messages, system=_system_for('local'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
                             orb_label=orb_label)[0]
 

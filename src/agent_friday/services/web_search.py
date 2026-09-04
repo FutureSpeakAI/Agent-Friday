@@ -43,6 +43,14 @@ _CANARY_TTL_S = 300.0
 _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
 
 
+# Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7c): Brave
+# calls had ZERO cost_meter tracking. Brave bills a flat USD-per-query rate
+# (unlike Firecrawl's credits), checked against public pricing aggregator
+# pages 2026-09-04, not Brave's own pricing page directly -- best-effort,
+# moderate confidence, flagged.
+_BRAVE_USD_PER_QUERY = 0.005
+
+
 class SearchStatus:
     OK = "ok"                      # results returned
     EMPTY = "empty"                # backend answered, genuinely nothing
@@ -311,6 +319,11 @@ def _brave(query: str, count: int) -> dict:
     if r.status_code >= 400:
         return {"status": SearchStatus.BACKEND_BROKEN,
                 "detail": f"Brave returned HTTP {r.status_code}"}
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.record("brave", "web-search", cost_usd=_BRAVE_USD_PER_QUERY, kind="tool")
+    except Exception:
+        pass
     data = r.json()
     items = ((data.get("web") or {}).get("results")) or []
     results = [{

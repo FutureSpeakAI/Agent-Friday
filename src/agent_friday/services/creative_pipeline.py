@@ -476,17 +476,29 @@ def _exec_text_stage(stage, prompt, context):
         _gated_vault_control, _generate_text, _get_friday_system_prompt,
         _predict_route_provider)
     ws = stage.get("workspace") or ""
-    try:
-        _kw = prompt[:400]
-        system = _get_friday_system_prompt(
-            keywords=_kw, workspace=ws,
-            provider=_predict_route_provider(keywords=_kw, workspace=ws),
+    _kw = prompt[:400]
+
+    # F30: `_predict_route_provider` predicts ONE provider and the prompt used
+    # to be gated for it once — but _generate_text's own fallback ladder can
+    # land on a DIFFERENT provider than predicted when the first leg fails
+    # operationally, reusing a prompt gated for the wrong destination
+    # (docs/audits/gauntlet-2026-09-03/findings.jsonl F30). `_sys_for` rebuilds
+    # the prompt for an EXPLICIT provider and is passed as `system_builder` so
+    # every ladder leg — first attempt and every fallback — is gated for the
+    # provider it actually calls.
+    def _sys_for(provider_name):
+        return _get_friday_system_prompt(
+            keywords=_kw, workspace=ws, provider=provider_name,
             vault_control=_gated_vault_control())
+
+    try:
+        system = _sys_for(_predict_route_provider(keywords=_kw, workspace=ws))
     except Exception:
         system = None
     temperature = stage.get("temperature")
     return _generate_text([{"role": "user", "content": prompt}],
-                          system=system, max_tokens=stage.get("max_tokens", 4096),
+                          system=system, system_builder=_sys_for,
+                          max_tokens=stage.get("max_tokens", 4096),
                           temperature=temperature, workspace=ws)
 
 

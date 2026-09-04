@@ -2665,7 +2665,7 @@ function StudioWS(){
     <FridaySays text={creations.length+' creations in the gallery. Generate images, video & music, compose timelines, or run a full production.'}/>
     {minor&&<div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,padding:'5px 10px',borderRadius:8,background:'rgba(34,197,94,0.08)',border:'1px solid rgba(34,197,94,0.3)'}}>
       <span style={{fontSize:13}}>👨‍👧</span><span style={{fontSize:11,color:'#7fe0a8',fontWeight:600}}>Family mode</span>
-      <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything Friday creates here.</span>
+      <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.</span>
     </div>}
     <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
       <button className={'btn '+(view==='generate'?'':'btn-magenta')} style={{fontSize:11,fontWeight:700}} onClick={()=>setView('generate')}>✨ Generate</button>
@@ -6894,7 +6894,7 @@ function ContentAccountsTab({platforms,reload}){
           <input className="input" style={{width:44,fontSize:11,padding:'2px 6px'}} value={confWin} onChange={e=>setConfWin(e.target.value)}/>
         </label>
       </div>
-      <div style={{fontSize:10.5,color:'#a8a8b4',marginBottom:4}}>Staging host — a public base URL <i>you</i> control, used only when Instagram/TikTok insist on fetching media from a URL. Assets are staged at unguessable paths and deleted after publish confirms. Leave empty to hold such posts instead — Friday never exposes a port on her own.</div>
+      <div style={{fontSize:10.5,color:'#a8a8b4',marginBottom:4}}>Staging host — a public base URL <i>you</i> already host and control, used only when Instagram/TikTok insist on fetching media from a URL. Friday does not upload or stage anything herself — the asset must already be public at that URL before publishing. Leave empty to hold such posts instead.</div>
       <div style={{display:'flex',gap:6}}>
         <input className="input" style={{flex:1,fontSize:11,boxSizing:'border-box'}} placeholder="https://your-host.example/staging (optional)" value={staging} onChange={e=>setStaging(e.target.value)}/>
         <button className="btn" style={{fontSize:10}} onClick={saveGlobals}>Save</button>
@@ -7723,7 +7723,7 @@ function WorkProposal({p,onDecided}){
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:12,color:'rgba(255,255,255,0.85)'}}>
               {t.title}
-              {t.touches_vault&&<span title="reads vault-tier material, which never leaves this machine" style={{marginLeft:6,fontSize:10,color:'#ffb347'}}>{'\u{1F512} vault'}</span>}
+              {t.touches_vault&&<span title="reads vault-tier material, which stays on this machine when Vault Local-Only is on" style={{marginLeft:6,fontSize:10,color:'#ffb347'}}>{'\u{1F512} vault'}</span>}
             </div>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.38)',fontFamily:'JetBrains Mono',marginTop:2}}>
               <span style={{color:cm.c}}>{cm.label}</span>
@@ -8158,7 +8158,7 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="CONTEXT LOGGING">
       <StToggle label="Full Context Logging" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="Append-only log of chats, tool calls, file reads. Stored locally."/>
-      <StToggle label="Go Off Record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Disable logging for this session."/>
+      <StToggle label="Go Off Record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Disable logging until you turn this back on."/>
       <StRow label="Retention Period">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
       </StRow>
@@ -8920,12 +8920,12 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
-  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,scheduler:false,costs:false,hooks:false,federation:false,defederation:false,content_policies:false,moderation:false,orchestrator:false,orchestrator_budgets:false,capability_card:false,work_log:false});
+  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,costs:false,hooks:false,federation:false,defederation:false,content_policies:false,moderation:false,orchestrator:false,orchestrator_budgets:false,capability_card:false,work_log:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
   // Mic / Speaker test state (used by the Audio & Voice section).
   const[micTestActive,setMicTestActive]=useState(false);
@@ -9125,27 +9125,12 @@ function App(){
     try{await fetch('/api/google/accounts/'+a.id+'/services',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({services:next})});}catch(e){}
     refreshGoogleAccounts();
   };
-  // ══ Self-Sufficient Friday: Scheduled Tasks / Cost & Usage / Active Hooks ══
-  // ── Scheduler (Part A) ──
-  const[schedules,setSchedules]=useState([]);
-  const[schedBuiltins,setSchedBuiltins]=useState([]);
-  const[schedHistory,setSchedHistory]=useState({});   // id -> [runs] (expanded)
-  const[schedMsg,setSchedMsg]=useState('');
-  const[schedForm,setSchedForm]=useState(null);        // null=closed; else draft
-  const refreshSchedules=()=>fetch('/api/schedules').then(r=>r.json()).then(d=>{if(d&&d.schedules){setSchedules(d.schedules);setSchedBuiltins(d.builtin_tasks||[])}}).catch(()=>{});
-  useEffect(()=>{if(settingsOpen&&openSections.scheduler){refreshSchedules();const id=setInterval(refreshSchedules,5000);return()=>clearInterval(id)}},[settingsOpen,openSections.scheduler]);
-  const toggleSchedule=(s)=>{fetch('/api/schedules/'+s.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!s.enabled})}).then(()=>refreshSchedules()).catch(()=>{});};
-  const runScheduleNow=(s)=>{setSchedMsg('Running '+s.name+'…');fetch('/api/schedules/'+s.id+'/run-now',{method:'POST'}).then(r=>r.json()).then(d=>{setSchedMsg(d.status==='ok'?(s.name+' started'):'Run failed');setTimeout(()=>setSchedMsg(''),4000);setTimeout(refreshSchedules,1500);}).catch(()=>{setSchedMsg('Run failed');});};
-  const deleteSchedule=(s)=>{if(!window.confirm('Delete schedule "'+s.name+'"?'))return;fetch('/api/schedules/'+s.id,{method:'DELETE'}).then(()=>refreshSchedules()).catch(()=>{});};
-  const loadHistory=(s)=>{if(schedHistory[s.id]){setSchedHistory(h=>{const n={...h};delete n[s.id];return n});return;}fetch('/api/schedules/'+s.id+'/history?limit=10').then(r=>r.json()).then(d=>setSchedHistory(h=>({...h,[s.id]:d.history||[]}))).catch(()=>{});};
-  const saveNewSchedule=()=>{const f=schedForm;if(!f.name){setSchedMsg('Name required');return;}
-    const spec=f.trigger==='interval'?{every_minutes:parseInt(f.every||60,10)}:(f.trigger==='weekly'?{weekday:parseInt(f.weekday??6,10),hour:parseInt(f.hour||9,10),minute:parseInt(f.minute||0,10)}:{hour:parseInt(f.hour||9,10),minute:parseInt(f.minute||0,10)});
-    const task=f.kind==='builtin'?{kind:'builtin',ref:f.ref||(schedBuiltins[0]||'')}:{kind:'agent_prompt',prompt:f.prompt||'',model:f.model||undefined,workspace:f.workspace||undefined};
-    if(f.kind==='agent_prompt'&&!f.prompt){setSchedMsg('Prompt required for an agent task');return;}
-    fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.name,trigger:f.trigger,spec,task,notify:f.notify||'on_complete',enabled:true})}).then(r=>r.json()).then(d=>{if(d.status==='ok'){setSchedForm(null);setSchedMsg('Task added');setTimeout(()=>setSchedMsg(''),3000);refreshSchedules();}else{setSchedMsg(d.message||'Create failed');}}).catch(()=>setSchedMsg('Create failed'));};
-  const fmtTrigger=(s)=>{const sp=s.spec||{};if(s.trigger==='interval')return'every '+(sp.every_minutes||60)+' min';const hm=String(sp.hour??9).padStart(2,'0')+':'+String(sp.minute||0).padStart(2,'0');if(s.trigger==='weekly'){const wd=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][sp.weekday??6];return wd+' '+hm;}return'daily '+hm;};
-  const fmtTime=(ts)=>{if(!ts)return'—';try{return new Date(ts*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){return'—';}};
-  const schedStatusColor=(s)=>s.last_status==='failed'?'#ef4444':(s.running?'#00d4ff':(s.enabled?'#34d399':'rgba(255,255,255,0.3)'));
+  // ══ Self-Sufficient Friday: Cost & Usage / Active Hooks ══
+  // (Scheduled Tasks used to live here as a second, fully dead "Scheduler"
+  // section: its state, 7 handlers, and 5s poll were never wired to any JSX
+  // in this file and were removed. The real, working scheduler UI is the
+  // Workflows tab's schedules panel, using differently-named handlers
+  // (runSched/toggleSched/deleteSched). Cost & Usage lives below.)
 
   // ── Cost & Usage (Part D) ──
   const[costSummary,setCostSummary]=useState(null);
@@ -10667,7 +10652,6 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const[cameraSource,setCameraSource]=useState('screen');     // 'screen' | 'webcam' | 'both'
   const[cameraFacing,setCameraFacing]=useState('user');       // 'user' | 'environment'
   const[cameraIntervalSec,setCameraIntervalSec]=useState(3);
-  const[cameraAutoDescribe,setCameraAutoDescribe]=useState(false);
   const[cameraControlsOpen,setCameraControlsOpen]=useState(false);
   const[cameraSendIndicator,setCameraSendIndicator]=useState(false);
   const cameraFrameRef=useRef(null);
@@ -10712,7 +10696,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // can clear their own UI when voice ends from anywhere.
   useEffect(()=>{try{window.dispatchEvent(new CustomEvent('friday-voice-change',{detail:{on:voiceOn}}))}catch(_){}},[voiceOn]);
   // Persist camera prefs through /api/settings (interval + auto-describe).
-  useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec);if(typeof agentSettings.camera_auto_describe==='boolean')setCameraAutoDescribe(agentSettings.camera_auto_describe)},[agentSettings.camera_interval_sec,agentSettings.camera_auto_describe]);
+  useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec)},[agentSettings.camera_interval_sec]);
   const toggleCamera=()=>{if(cameraOn){setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}else{setCameraOn(true);setCameraControlsOpen(true)}};
 
   // ── Never go quiet without saying so first ───────────────────────────────
@@ -10750,7 +10734,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       try{
         const fr=await apiFetch('/api/work/forecast',{method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({kind:'local_turn'})});
+          body:JSON.stringify({kind:'local_turn',message:m})});
         const f=await fr.json();
         if(f&&f.will_pause){setPausePending({forecast:f,message:m});return;}
       }catch(_){/* a forecast we cannot get must never block a message */}
@@ -11058,7 +11042,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             {(()=>{
               const MODE_MEANING={
                 cloud_only:'All conversation goes to the cloud orchestrator seat.',
-                smart:'The router picks the seat per turn — vault-touching turns always go local.',
+                smart:'The router picks the seat per turn — vault-touching turns go local when Vault Local-Only is on.',
                 local_preferred:'Local seat answers first; cloud orchestrator only as fallback.',
                 local_only:'ALL conversation goes to the local seat. The cloud orchestrator is NOT consulted.'};
               const localM=(agentSettings.model_routing||{}).local_model||'gemma4:latest';
