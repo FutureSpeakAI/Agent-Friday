@@ -73,6 +73,16 @@ was entirely inside the KG indexer's own extraction loop, not in any
 read/status endpoint — a narrower, different, and honestly more interesting
 bug than the one he suspected.
 
+**Also worth surfacing here, found while chasing this generalization
+tonight — a real security gap, not a cost one:** every stdio MCP connector
+was inheriting Friday's full decrypted secrets environment (cloud-provider
+API keys, vault key, etc.) with no filtering at all, despite a purpose-built
+mechanism in `extension_security.py` that was simply never wired in.
+Fixed, proven, committed — see Fix #9 (F32) in the FIXED LEDGER below. Not
+related to tonight's cost incident, but a genuinely more serious class of
+finding, and it landed the same night, so it belongs in this same
+top-of-file summary rather than only buried in the ledger.
+
 ## JUDGMENT CALL 1 — second-instance boot (startup seam)
 
 Per the operational note: if I can't prove all four inertness conditions
