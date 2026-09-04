@@ -880,6 +880,39 @@ that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
 
+### Q26 — the root cause behind every cost-metering gap tonight (Q6, Q7, Q11, Q13), and an actionable priority order
+Dispatched per your explicit request to find the systemic reason rather
+than keep finding individual instances. Confirmed: text-chat metering
+works because it's a side effect of the cloud/local fallback ladder that
+already had to exist; image/video/music/voice generation each have
+exactly one provider, so no router — and thus no metering chokepoint —
+was ever built for them. A true unified fix like egress's single
+`gate_text` primitive isn't realistic, because cost needs the RESPONSE
+in a different shape per modality, not just the request text the way
+sensitivity does. But the remaining gap splits cleanly:
+- **Mechanical, just needs a verified rate (not a design call):** Gemini
+  image generation's `usage_metadata` is already present on every
+  response and read by nothing; ElevenLabs' character count is already
+  in scope right after the existing egress gate; the 5 extra provider
+  catalogs (Q11b) are already fully wired through the same chokepoint
+  every other provider uses — their $0 is a missing pricing table, not a
+  code gap. None of these were implemented tonight anyway: fabricating a
+  plausible-looking dollar rate for a real financial ledger without
+  verifying it against each provider's actual current published pricing
+  would be a new defect, not a fix.
+- **Needs real per-provider design work:** Veo video and Lyria music are
+  long-running "operations" with no simple usage object — billing has to
+  be computed from requested clip length, not read off a response.
+  Gemini Live bills per session-second across a persistent websocket,
+  needing a connection-lifetime timer.
+- **The durable fix**, once the mechanical items land and have set a
+  precedent: a required-usage-record interface every future non-chat
+  provider integration must satisfy, with a hard failure if it's skipped
+  — mirroring how egress already hard-fails a skipped seal.
+
+Full detail and the recommended order to tackle these in is in
+findings.jsonl Q26.
+
 ### Q24 — manual "Run Now" can race a schedule into running twice concurrently
 `dispatch()`'s only concurrency guard is skipped specifically for manual
 triggers (`if sid in _RUNNING and not manual`) — click Run Now while a
