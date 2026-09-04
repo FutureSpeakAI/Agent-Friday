@@ -466,6 +466,68 @@ def record_footprint(model_id: str, fingerprint: str, fp: dict) -> None:
     record_measurement(model_id, fingerprint, dict(fp, num_ctx=None))
 
 
+# ── thrash degradation (headroom.md §5.2, §7's thrash row) ─────────────────
+#
+# §5.2's own table names "the thrash history for this model on this profile"
+# as ONE of runs_well's inputs, alongside `host_ram_mib` and
+# `requires.ram_recommended_mib` -- but it is not one of the twelve
+# Footprint fields in §5.1 (`FOOTPRINT_FIELDS`), which is a fixed shape the
+# spec defines exactly. So this is a companion record, in the SAME store
+# (`record_measurement`'s own file, per this module's header: "the existing
+# record_measurement", not a new persistence path) but under its own
+# top-level key rather than inside a model's measurement list, where it
+# would either collide with a real `model_id` bucket or need retrofitting
+# into `FOOTPRINT_FIELDS` and start rendering on every row that reads a
+# Footprint, including callers that only want §5.1's own fields.
+#
+# Written by `residency_arbiter.Arbiter._on_thrash_breach` (§7: "mark the
+# model's footprint degraded with the sample attached"); read by
+# `residency_policy._runs_well_verdict` so the NEXT `verdicts()` call, not
+# just the process that saw the thrash, reflects it (§5.2's own line: "so
+# runs_well reflects it next time").
+
+_THRASH_KEY = "_thrash_degraded"
+
+
+def record_thrash_degraded(model_id: str, fingerprint: str, sample: dict,
+                           explanation: str) -> None:
+    """Mark `model_id` degraded on this profile from a sustained thrash
+    signature. `sample` is the `machine_monitor.sample()` dict that was
+    live when the signature fired -- kept verbatim ("with the sample
+    attached") so a later reader can see what was actually measured, not
+    just a sentence about it."""
+    data = _load_store()
+    bucket = data.setdefault(_THRASH_KEY, {}).setdefault(fingerprint, {})
+    bucket[model_id] = {
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "explanation": explanation,
+        "sample": sample,
+    }
+    _save_store(data)
+
+
+def thrash_degraded(model_id: str, fingerprint: str) -> dict | None:
+    """The last recorded thrash-degradation for `model_id` on this profile,
+    or `None` if it has never thrashed here (or was cleared)."""
+    try:
+        return (_load_store().get(_THRASH_KEY) or {}).get(
+            fingerprint, {}).get(model_id)
+    except Exception:
+        return None
+
+
+def clear_thrash_degraded(model_id: str, fingerprint: str) -> None:
+    """Clear a prior thrash mark -- a fresh measurement superseding it, or
+    test teardown. Best-effort; clearing something that was never marked is
+    a no-op, not an error."""
+    data = _load_store()
+    try:
+        del data[_THRASH_KEY][fingerprint][model_id]
+    except (KeyError, TypeError):
+        return
+    _save_store(data)
+
+
 def _footprint_from_text_row(row: dict) -> dict:
     """Migrate one legacy per-num_ctx text measurement into a Footprint,
     without retyping SEED_MEASUREMENTS -- §12 Phase 2 item 1: "migrated, not

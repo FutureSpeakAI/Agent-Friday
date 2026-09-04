@@ -12,6 +12,11 @@ never evicts, kills, or throttles anything (HR7). Two functions:
   verdict()  -> per resource, ok | at_risk | breached, each with a `basis`
                 so a caller can render "unknown" honestly rather than a
                 guessed green tick (HR1).
+  tick()     -> one sample()+verdict() cycle, ALSO dispatching the verdict
+                to `residency_arbiter.Arbiter.respond_to_monitor` (§7, §12
+                Phase 5) — a dispatch, not a decision: this file still never
+                decides what to do with a breach, it hands the reading to
+                the one thing in the process allowed to act on it.
 
 ONE nvidia-smi call. `gpu_headroom.gpu_memory()` used to make its own; the
 query here is that same call, extended with the four fields §4.3 asks for
@@ -470,6 +475,20 @@ def _verdict_disk_system(sample_: dict) -> dict:
     }
 
 
+def disk_system_verdict(sample_: dict) -> dict:
+    """The `disk_system` resource alone, without going through `verdict()`.
+
+    Used by `Arbiter.grant()`'s R-DISK-SYSTEM admission check (headroom.md
+    §7, §12 Phase 5). A DELIBERATELY separate entry point from `verdict()`
+    rather than `verdict(sample_)["disk_system"]`: `verdict()` also
+    advances the shared thrash-history window and rate-capped logging for
+    all four resources on every call, and a caller that only wants one
+    resource, on the hot admission path of every load, should not pay (or
+    trigger side effects for) the other three every time.
+    """
+    return _verdict_disk_system(sample_)
+
+
 # Rate-capped, per resource, the same pattern
 # `hardware_profile._log_rejection` uses (2026-09-01: 1,038 identical
 # rejection lines in one day from that sibling pattern before it was
@@ -617,14 +636,35 @@ def _ours_resident_mib() -> int:
 
 
 def tick() -> dict:
-    """One sample-and-verdict cycle, recorded as the last sample."""
+    """One sample-and-verdict cycle, recorded as the last sample.
+
+    Also DISPATCHES the verdict to the Arbiter (headroom.md §7, §12 Phase
+    5) — a dispatch, not a decision: this module still only ever reports
+    (HR7's line about `gpu_headroom` applies here too). The reading is
+    handed to `residency_arbiter.Arbiter.respond_to_monitor`, the one place
+    in the process that owns Friday's leases and processes and is allowed
+    to act on what this function measured; `machine_monitor` itself makes
+    no eviction, cancellation or termination call anywhere in this file.
+    A no-op when no Arbiter governs this process (tests,
+    `FRIDAY_NO_ARBITER=1`) or when nothing is leased.
+    """
     s = sample(ours_resident_mib=_ours_resident_mib())
     set_last_sample(s)
+    v = None
     try:
-        verdict(s)          # advances thrash history; logs a breach, if any
+        v = verdict(s)      # advances thrash history; logs a breach, if any
     except Exception as e:
         _log.warning("machine_monitor: verdict failed on a fresh sample: %s",
                      e)
+    if v is not None:
+        try:
+            from agent_friday.services.residency_arbiter import get_arbiter
+            arb = get_arbiter()
+            if arb is not None:
+                arb.respond_to_monitor(s, v)
+        except Exception as e:
+            _log.warning("machine_monitor: intrusion-response dispatch "
+                         "failed on a fresh sample: %s", e)
     return s
 
 
