@@ -2,6 +2,21 @@
 
 Legend: UNSTARTED / IN PROGRESS / SWEEP 1 CLEAN / SWEEP 2 CLEAN (done) / PARKED
 
+## Exit criteria (corrected 2026-09-04, per handoff from the session that
+## wrote the gauntlet-loop prompt — see progress.md "Handoff" section)
+
+The prompt's original wording ("two consecutive fresh-context sweeps ...
+and every claim on it holds blind") cannot be satisfied for a seam carrying
+a BROKEN finding whose fix is queued rather than landed — a queued fix
+never "holds." The corrected exit condition, which this run uses:
+
+A seam is done when **two consecutive fresh-context sweeps surface nothing
+new**, AND **every claim on it carries a verdict with an artifact**:
+- HOLDS — the observation/call-graph that established it (findings.jsonl `H*` entries), or
+- BROKEN/UNREACHED — a red probe under tests/gauntlet/ pinning it (fixed: probe now green with red/green/red evidence; queued: probe stays red, evidence + reason in progress.md's QUEUED FOR STEPHEN section).
+
+Green-everywhere is not the bar. Judged-everywhere is.
+
 | Seam | Status | Notes |
 |---|---|---|
 | Settings write → settings read | UNSTARTED | |

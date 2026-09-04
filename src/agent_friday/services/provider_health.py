@@ -2,10 +2,13 @@
 Agent Friday — Provider Health: point-in-time checks + a measurement plane.
 
 Point-in-time checks (the original surface — wizard/Settings polling):
-  * anthropic         — key present (env or encrypted store)
-  * openai-compatible — key present; optional light GET {base_url}/models (deep)
-  * ollama            — daemon reachable (ollama_manager.is_available)
-  * google            — key present
+  * anthropic         — key present; deep: real 1-shot generation
+  * openai-compatible — key present; deep: light GET {base_url}/models + real
+                        1-shot generation
+  * ollama            — daemon reachable; deep: real 1-shot generation
+  * google            — key present; deep: real 1-shot generation
+  * comfyui           — local server reachability (no key concept)
+  * higgsfield        — MCP connector reachable/authorized (no key concept)
 
 A shallow check (default) never touches the network — it only reports whether a
 key is configured / the local daemon is up — so it is offline- and test-safe. A
@@ -218,6 +221,33 @@ def _check(name, deep=False) -> dict:
                     "detail": h.get("detail", "")}
         except Exception as e:
             return {"provider": name, "status": "missing", "detail": str(e)[:120]}
+
+    if ptype == "comfyui":
+        # auth:{"type":"none"} means _has_key() below would short-circuit to
+        # True unconditionally and never actually check anything (F2) — a
+        # ComfyUI server that isn't running reported "ok" forever.
+        try:
+            from agent_friday.services.local_image import is_reachable
+            ok = is_reachable()
+            return {"provider": name, "status": "ok" if ok else "down",
+                    "detail": "server reachable" if ok
+                              else "ComfyUI not running on 127.0.0.1"}
+        except Exception as e:
+            return {"provider": name, "status": "down", "detail": str(e)[:120]}
+
+    if ptype == "higgsfield":
+        # Same auth:{"type":"none"} shape as comfyui, but a correct liveness
+        # check already exists — provider_registry.is_provider_available()
+        # checks the MCP connector's actual OAuth/reachability state. This
+        # module just never called it (F2).
+        try:
+            from agent_friday.services.provider_registry import get_provider_registry
+            ok = get_provider_registry().is_provider_available(name)
+            return {"provider": name, "status": "ok" if ok else "down",
+                    "detail": "connector reachable" if ok
+                              else "MCP connector not reachable/authorized"}
+        except Exception as e:
+            return {"provider": name, "status": "down", "detail": str(e)[:120]}
 
     if not _has_key(prov):
         return {"provider": name, "status": "missing", "detail": "no API key",
@@ -502,6 +532,24 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             return _result("ok" if got else "down",
                            detail if got else "empty completion", bool(got))
 
+        if ptype == "google":
+            # Mirrors the anthropic branch above (F2): a present GEMINI_API_KEY
+            # used to report "ok" on every health surface even when the key
+            # was revoked or rate-limited, because deep=1 fell through to the
+            # shallow "key present" response — inference_probe() had no
+            # google branch and probe_types (inference_health) omitted it.
+            from agent_friday.core import get_genai_client
+            client = get_genai_client()
+            if client is None:
+                return _result("missing", "no client", False)
+            resp = client.models.generate_content(
+                model=model or "gemini-3.5-flash", contents=_PROBE_PROMPT)
+            ms = int((time.time() - t0) * 1000)
+            got = bool((getattr(resp, "text", None) or "").strip())
+            return _result("ok" if got else "down",
+                           f"generated in {ms}ms" if got else "empty completion",
+                           got)
+
         if ptype == "openai-compatible":
             import requests
             from agent_friday.routing.provider_descriptors import (
@@ -567,7 +615,7 @@ def inference_health(providers=None) -> dict:
     except Exception:
         return {"status": "unknown", "providers": []}
 
-    probe_types = {"ollama", "anthropic", "openai-compatible"}
+    probe_types = {"ollama", "anthropic", "openai-compatible", "google"}
     results = []
     for p in allp:
         pname = p.get("name", "")
