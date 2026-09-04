@@ -52,6 +52,93 @@ stronger than it is:
   its own probe in the process. Worth knowing before trusting the "22
   fixes, full proof" framing at face value.
 
+## Cold re-verification (2026-09-04) — corrections applied
+
+Stephen ran an independent session cold against pin `2f13aa7` (worktree
+`verify/gauntlet-fixes-2026-09-04`, report at commit `0e7be19`) to re-run
+every probe in this ledger without trusting this session's own self-reported
+green. All 24 fixes passed the mechanical red→green→red-on-revert three-step,
+but the report found real gaps that self-verification had missed. Every item
+named has now been corrected in this worktree:
+
+- **F37's fix was wrong and has been redone.** It compared a case-preserved
+  wiki section name against `_wiki_encrypted_sections()`'s always-lowercased
+  set — a section named e.g. `Private` was never actually excluded, and the
+  original probe used lowercase on both sides so it couldn't have caught
+  this. Fixed for real (lowercase both sides of the comparison, mirroring
+  `wiki_engine.py`'s own already-correct idiom) and the probe rewritten with
+  mixed-case `"Private"` so it now genuinely discriminates. Re-verified
+  red→green→red-on-revert against the corrected probe.
+- **Seven probes that pinned source text, not behaviour** (F11, F19, F20,
+  F33, F38, F39, F41): each re-examined individually. F11 and F38 are pure
+  documentation-copy claims — a text pin is the correct and complete proof
+  there, so they're now explicitly labeled as such rather than implied to be
+  behavioral. F33 and F39 are genuine source-position pins for logic nested
+  in `ws_live`'s Flask-Sock closure (no independent call surface, same
+  constraint as F20) — checked each for the false-positive risk F20 had and
+  found none, tightened F33's pin to the fix's own variable name as a
+  precaution anyway. F20 and F41 had real bugs in the probes themselves
+  (below). F19 was a mix — one real behavioral test, one honest text pin for
+  a second, structurally-untestable call site — now labeled as the mix it
+  is instead of a blanket "proven" claim.
+- **F20's evidence was wrong, not just weak.** The ledger claimed
+  `ws_live`'s body had "ZERO reference to local_only" pre-fix — false; it
+  already contained one, from an unrelated `_vault_local_only()` (vault
+  setting, nothing to do with model-routing). The probe's first assertion
+  passed vacuously pre-fix because of that same coincidence; only the second
+  assertion happened to still force a real failure. Rewritten to pin the
+  fix's own variable name (`_ws_local_only`, absent anywhere pre-fix) instead
+  of the ambiguous generic substring. Re-verified against the true pre-fix
+  commit, not just a stashed diff.
+- **F26's "sanity check" called its own mock**, never exercising
+  `creations.py`'s real call site at all. Rewritten to call the real
+  dispatch function (`_generate_media_daily`) and assert on the kwargs it
+  actually passes.
+- **F28 pinned a call argument, not the memory bound it claimed to prove**,
+  and covered only `_read_loop` — `_drain_stderr`, the second function the
+  finding names, had no test. Rewritten to assert on the actual length of
+  every string returned by `readline()` (the real property), and extended to
+  cover `_drain_stderr` too.
+- **F14 was unproven.** The probe covered only the backend deep-merge
+  hardening; the actual fix (`saveGlobals`'s request-body shape) had zero
+  automated coverage, self-admittedly ("covered by diff review"). Added a
+  source-text probe against both `index.html` and `ui_parts/app.html`
+  asserting the real envelope shape and the `status==='ok'` gate directly.
+- **F35's evidence didn't travel.** `_generate_text` has a demo-mode gate
+  that returns early, before the router is ever consulted, whenever no
+  provider key is available — true by default on a machine without one. The
+  probe never patched it; it happened to pass for the right reason on this
+  developer's machine (an ambient key), but would have passed for the wrong
+  reason (nothing was called at all) anywhere else. Fixed by forcing
+  `demo_mode.is_demo()` to `False` in every test.
+- **F31 and F34 violated the standing rule** that new probes go only in
+  `tests/gauntlet/`, not existing test files. Both had added new test
+  classes directly to `tests/unit/test_kg_indexer.py`. Moved verbatim to
+  `tests/gauntlet/test_kg_indexer_cloud_extraction_cap.py` and
+  `test_kg_indexer_pin_enforcement.py`; `test_kg_indexer.py` restored
+  byte-for-byte to its pre-audit content. F34 also legitimately extended an
+  existing test (`tests/api/test_kg_reindex_route.py`) whose mock had to
+  track a real behavior change the fix introduced — left in place (reverting
+  it would leave a permanently broken assertion) but explicitly called out
+  as the same rule's exception, not an oversight.
+- **The disk-space crisis has a root cause, and it's now fixed.** At
+  approximately 08:10 on 2026-09-03 the C: drive hit 0 bytes free with the
+  live app running, and Friday crashed with a stack overflow at 08:13. The
+  cause: `tests/conftest.py` creates one throwaway temp home per pytest
+  process and never removed any of them — 3,858 accumulated since June, up
+  to 781MB each; the verifier's cleanup alone freed ~153GB. This supersedes
+  an unrelated news-feed hypothesis another session had been chasing for the
+  same crash. Fixed (explicit, one-time exception to the never-edit-
+  pre-existing-test-files rule, granted directly by Stephen because this
+  file caused a real production crash): `pytest_sessionfinish` now removes
+  the run's own temp home on a normal exit, and a startup sweep removes any
+  left behind by a run that never got that far (Ctrl+C, OOM kill, a crash).
+
+Every correction above was re-verified red→green→red-on-revert against the
+true pre-fix commit (not a re-stash of the current diff) before landing.
+Full `tests/gauntlet/` green (only the 2 pre-existing by-design reds). Full
+`tests/unit tests/api`: 6697 tests, 0 failures, 0 errors, 8 skipped.
+
 ## What you need to decide — ranked, one sentence each
 
 33 items are queued (28 in the ranked list below, plus Q1/Q4/H-series
