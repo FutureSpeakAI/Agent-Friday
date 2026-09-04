@@ -32,8 +32,8 @@ import agent_friday.core as core
 from agent_friday.core import (
     ConnectionClosed,
     FRIDAY_DIR,
-    FRIDAY_PASSWORD,
     FRIDAY_WS_TOKEN,
+    _HTTP_AUTH_KEY,
     TEMP_AUDIO_DIR,
     _api_token_valid,
     _is_local_request,
@@ -1158,6 +1158,31 @@ def voice_setup_install_cancel():
     return jsonify(voice_installer.cancel())
 
 
+def _ws_auth_ok(ui_tok_ok: bool) -> bool:
+    """Mirror core.login_required()'s fail-closed semantics for a WebSocket
+    handshake (F21, docs/audits/gauntlet-2026-09-03/findings.jsonl).
+
+    Both `/ws/voice-local` and `/ws/live` used to gate on bare `FRIDAY_PASSWORD`
+    directly: `if FRIDAY_PASSWORD and not authenticated and not loopback and
+    not ui_tok: deny`. When no password was configured at all, that whole
+    condition short-circuited False and the block was skipped ENTIRELY —
+    not even checking loopback — so the socket accepted any connection
+    unconditionally, non-loopback included. `login_required()` never does
+    this for HTTP: `if not _HTTP_AUTH_KEY: return f(...) if loopback else 403`
+    — a non-loopback caller is denied even with no key configured. This
+    mirrors that exact structure, using `_HTTP_AUTH_KEY` (FRIDAY_REMOTE_KEY or
+    FRIDAY_PASSWORD) rather than bare FRIDAY_PASSWORD so a FRIDAY_REMOTE_KEY-
+    only configuration is covered too, not just the bare-FRIDAY_PASSWORD case
+    the finding named.
+    """
+    if not _HTTP_AUTH_KEY:
+        # No key configured anywhere: same as login_required's fail-closed
+        # branch — only loopback is trusted, not the ephemeral UI token, since
+        # login_required's own equivalent branch doesn't consult it either.
+        return _loopback_trusted()
+    return bool(session.get("authenticated") or _loopback_trusted() or ui_tok_ok)
+
+
 if sock is not None:
 
     @sock.route('/ws/voice-local')
@@ -1191,8 +1216,7 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
-        if (FRIDAY_PASSWORD and not session.get("authenticated")
-                and not _loopback_trusted() and not _ui_tok_ok):
+        if not _ws_auth_ok(_ui_tok_ok):
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
             except Exception:
@@ -1224,10 +1248,7 @@ if sock is not None:
         # Captured HERE, at connect time, and never re-read later: `session` and
         # `request` are request-context bound, and turns now run on their own
         # thread where neither is available.
-        _ws_authenticated = bool(
-            (not FRIDAY_PASSWORD) or session.get("authenticated")
-            or _loopback_trusted() or _ui_tok_ok
-        )
+        _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
 
         done = threading.Event()
 
@@ -1467,7 +1488,11 @@ if sock is not None:
                         max_tokens=_voice_reply_cap(settings),
                         temperature=settings.get("temperature"),
                         session_ctx={"authenticated": _ws_authenticated,
-                                     "provider": _prov},
+                                     "provider": _prov,
+                                     # Lets classify_task() reach TaskType.VOICE
+                                     # so a user's task_overrides.voice config
+                                     # actually takes effect (gauntlet Q20).
+                                     "is_voice": True},
                         workspace=settings.get("active_workspace") or "",
                     )
                 except Exception as e:
@@ -1646,8 +1671,7 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
-        if (FRIDAY_PASSWORD and not session.get("authenticated")
-                and not _loopback_trusted() and not _ui_tok_ok):
+        if not _ws_auth_ok(_ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
@@ -2426,6 +2450,27 @@ if sock is not None:
                                             resume_handle[0] = _sru.new_handle
                                             _handle_model[0] = model_name
                                             _live_resume_store(_sru.new_handle, model_name, live_voice, gen=_conn_gen)
+                                        # Cost metering (docs/audits/gauntlet-2026-09-03/
+                                        # findings.jsonl Q6c): the Gemini Live session is a
+                                        # real, billed call that had ZERO cost_meter
+                                        # integration despite PRICING already carrying rates
+                                        # for this exact model. usage_metadata arrives
+                                        # per-chunk on the live stream (cumulative for the
+                                        # session so far, per the API's own semantics) —
+                                        # metered as its own row every time it shows up
+                                        # rather than only once at teardown, since a leg can
+                                        # end (GoAway, error, disconnect) without a clean
+                                        # close. Never allowed to break the voice bridge.
+                                        _um = getattr(chunk, 'usage_metadata', None)
+                                        if _um is not None:
+                                            try:
+                                                from agent_friday.services import cost_meter as _cm
+                                                _cm.meter("gemini", model_name, {
+                                                    "input_tokens": getattr(_um, 'prompt_token_count', 0) or 0,
+                                                    "output_tokens": getattr(_um, 'response_token_count', 0) or 0,
+                                                }, kind="voice")
+                                            except Exception:
+                                                pass
                                         # GoAway: Gemini is about to retire this session
                                         # (connection lifetime / context cap). Don't cut a
                                         # response mid-word: if Friday is speaking, drain

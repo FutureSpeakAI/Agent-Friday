@@ -22,6 +22,7 @@ loopback callback, which is a browser redirect back into the app.
 | /api/content/preview                         | POST              |
 | /api/content/repurpose                       | POST              |
 | /api/content/queue                           | GET               |
+| /api/content/pause                           | POST              |
 | /api/content/calendar                        | GET               |
 | /api/content/best-times                      | GET               |
 | /api/content/analytics/summary               | GET               |
@@ -563,6 +564,35 @@ def content_queue():
         "history": history,
         "pause_all": platform_registry.publishing_paused(),
     })
+
+
+@content_pipeline_bp.route("/api/content/pause", methods=["POST"])
+def content_pause():
+    """F45: the Content workspace's "Global kill switch" (§6.6) — the only
+    write path for the ``pause_all`` flag ``platform_registry.publishing_paused()``
+    reads, and that ``publisher.tick()`` checks first on every pass (a paused
+    tick claims nothing and returns immediately). Body: {paused: bool}; the
+    frontend always sends the desired end-state explicitly ({paused: !paused}),
+    so an explicit value is honored as-is. A body with no `paused` key (or a
+    non-JSON POST) toggles the current state instead, so the endpoint is still
+    usable from curl/tests without echoing state back first.
+
+    Persists through platform_registry's existing non-secret config file
+    (~/.friday/platforms.json, same load_config/save_config pair every other
+    platform-registry write already uses) so the pause survives process
+    restarts and takes effect on the very next publisher tick."""
+    data = _json()
+    cfg = platform_registry.load_config()
+    if "paused" in data:
+        desired = bool(data.get("paused"))
+    else:
+        desired = not bool(cfg.get("pause_all", False))
+    cfg["pause_all"] = desired
+    saved = platform_registry.save_config(cfg)
+    if not saved.get("ok"):
+        return jsonify({"ok": False,
+                        "error": saved.get("error") or "failed to persist pause state"})
+    return jsonify({"ok": True, "paused": platform_registry.publishing_paused()})
 
 
 @content_pipeline_bp.route("/api/content/calendar", methods=["GET"])

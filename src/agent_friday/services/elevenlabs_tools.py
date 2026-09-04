@@ -209,6 +209,24 @@ def _tool_speak_text(inp):
         return "speak_text failed: could not read audio body (%s)" % e
     elapsed = time.time() - started
 
+    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q11a):
+    # this tool's own description says it "costs characters against the
+    # ElevenLabs quota", yet had zero cost_meter references. ElevenLabs bills
+    # per character, not per token — cost_meter.PRICING carries a matching
+    # "USD per 1K characters" entry for common ElevenLabs model ids (see that
+    # table's comment), so len(text) is passed as input_tokens deliberately.
+    # A model id with no PRICING entry meters $0 rather than a guessed rate.
+    # Recorded here (a 2xx already came back from ElevenLabs, so the call was
+    # billed) rather than after the audio-validity check below, since a
+    # malformed-but-non-error response still consumed the character quota.
+    # Never allowed to break the tool.
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.record("elevenlabs", model_id, input_tokens=len(text), output_tokens=0,
+                  duration_ms=int(elapsed * 1000), kind="voice")
+    except Exception:
+        pass
+
     # A 200 with an HTML error page or an empty body is a failure, not a
     # creation. Reuse the canonical check rather than writing a second one.
     from agent_friday.services import creative_store

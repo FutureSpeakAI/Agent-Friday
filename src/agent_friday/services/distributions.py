@@ -13,7 +13,7 @@ DISTROS_DIR.mkdir(parents=True, exist_ok=True)
 BUILTIN_DISTROS = {
     "default": {
         "name": "default",
-        "description": "Standard Agent Friday — all workspaces, balanced for general use",
+        "description": "Standard Agent Friday — the default personality, no tone override",
         "default_workspaces": ["home", "news", "messages", "calendar", "career", "code", "wiki", "contacts", "sites", "settings", "studio"],
         "default_providers": ["anthropic", "google-gemini", "ollama-local"],
         "default_recipes": ["morning-briefing"],
@@ -23,7 +23,7 @@ BUILTIN_DISTROS = {
     },
     "journalist": {
         "name": "journalist",
-        "description": "News-heavy configuration with source trust, editorial tools, and research focus",
+        "description": "Personality only — Friday speaks like an investigative-research assistant, prioritizing source verification and editorial rigor. Does not change which workspaces, tools, or providers are available.",
         "default_workspaces": ["home", "news", "messages", "calendar", "wiki", "contacts", "settings", "studio", "content"],
         "default_providers": ["anthropic", "google-gemini", "ollama-local"],
         "default_recipes": ["morning-briefing", "weekly-review"],
@@ -36,7 +36,7 @@ BUILTIN_DISTROS = {
     },
     "developer": {
         "name": "developer",
-        "description": "Code-heavy configuration with GitHub integration, CI/CD awareness, and dev tools",
+        "description": "Personality only — Friday speaks like a pair programmer, focused on code quality and architecture. Does not add GitHub integration, CI/CD awareness, or any dev tools beyond what's already installed.",
         "default_workspaces": ["home", "code", "news", "messages", "calendar", "wiki", "settings", "studio"],
         "default_providers": ["anthropic", "ollama-local"],
         "default_recipes": [],
@@ -48,7 +48,7 @@ BUILTIN_DISTROS = {
     },
     "researcher": {
         "name": "researcher",
-        "description": "Deep-research configuration — long-form synthesis, citations, wiki and source trust",
+        "description": "Personality only — Friday speaks like a research analyst, prioritizing depth, citations, and structured long-form synthesis. Does not change which workspaces, tools, or providers are available.",
         "default_workspaces": ["home", "wiki", "news", "code", "messages", "calendar", "contacts", "settings", "studio"],
         "default_providers": ["anthropic", "google-gemini", "ollama-local"],
         "default_recipes": ["morning-briefing"],
@@ -60,7 +60,7 @@ BUILTIN_DISTROS = {
     },
     "executive": {
         "name": "executive",
-        "description": "Executive configuration — briefings, calendar, finance, concise decision support",
+        "description": "Personality only — Friday speaks like a chief of staff: concise, decisive, bottom-line-first. Does not change which workspaces, tools, or providers are available.",
         "default_workspaces": ["home", "calendar", "messages", "news", "finance", "contacts", "settings", "studio"],
         "default_providers": ["anthropic", "google-gemini"],
         "default_recipes": ["morning-briefing", "weekly-review"],

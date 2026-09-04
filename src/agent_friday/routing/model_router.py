@@ -196,7 +196,20 @@ class ModelRouter:
     def fallback_to_cloud(self):
         return self.config.get("fallback_to_cloud", True)
 
-    def classify_task(self, messages, has_tools=False, workspace=None):
+    def classify_task(self, messages, has_tools=False, workspace=None, is_voice=False):
+        """Classify the task type driving a routing decision.
+
+        `is_voice` is an explicit origin signal (not inferred from message
+        content) — set True by a caller that knows this turn came from the
+        voice pipeline (see routes/voice.py's ws-local handler). It is
+        checked first because the documented `task_overrides.voice` config
+        key (docs/CONFIGURATION.md) needs *some* caller to ever reach
+        TaskType.VOICE at all; before this, nothing in the codebase ever
+        produced it, and the three TaskType.VOICE branches in _route_basic
+        were unreachable dead code (gauntlet Q20).
+        """
+        if is_voice:
+            return TaskType.VOICE
         if not messages:
             return TaskType.SIMPLE
         last_msg = ""
@@ -748,7 +761,8 @@ class ModelRouter:
         has_tools = bool(ctx.get("has_tools"))
         workspace = ctx.get("workspace", "")
 
-        task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace)
+        task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace,
+                                       is_voice=bool(ctx.get("is_voice")))
 
         if mode == "cloud_only":
             # cloud_only means NOTHING RUNS ON THIS MACHINE. It never meant

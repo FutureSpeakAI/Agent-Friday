@@ -28,6 +28,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+
 # ── Rich UI ──────────────────────────────────────────────────────
 try:
     from rich.console import Console
@@ -109,6 +110,28 @@ def _installed_manifest() -> dict:
     except Exception:
         pass
     return {}
+
+
+def _version_truth() -> dict:
+    """Disk version, manifest version, and any disagreement between them."""
+    running = _app_version()
+    if running == "unknown":
+        running = None
+    manifest = _installed_manifest()
+    packaged = bool(manifest)
+    manifest_version = manifest.get("version") if packaged else None
+    installer_version = manifest.get("installer_version") if packaged else None
+    disagreement = None
+    if packaged and manifest_version and running and manifest_version != running:
+        disagreement = (
+            f"install-manifest.json claims {manifest_version}, but the code on "
+            f"disk (pyproject.toml) is {running} -- the installer said it updated "
+            "and did not. Reinstall rather than trust `friday update`."
+        )
+    return {"running": running, "manifest": manifest_version,
+            "installer": installer_version, "packaged": packaged,
+            "disagreement": disagreement}
+
 
 # Must match server.py's default bind port (3000). The CLI also exports
 # FRIDAY_PORT to the server subprocess below so the two can never disagree.
@@ -488,7 +511,7 @@ RING_LABELS = {
 }
 
 
-def cmd_models(install: bool = False):
+def cmd_models(install: bool = False, force: bool = False):
     """Show what this machine can run; with --install, download it.
 
     Deliberately shows the plan first and downloads only when asked. An
@@ -557,6 +580,23 @@ def cmd_models(install: bool = False):
         console.print("  No models to download — checking everything else.")
         report = {"ok": True, "results": [], "installed": 0, "failed": 0,
                   "summary": "No model downloads were needed."}
+    elif plan["disk_warning"] and not force:
+        # The plan already computed this — render() above just printed it as a
+        # warning line. Printing a warning and then downloading anyway is not a
+        # warning, it is a courtesy notice before an automatic failure: the
+        # download proceeds, the disk fills mid-pull, and `ollama pull` fails
+        # confusingly deep inside its own progress output instead of here,
+        # where the honest number was already sitting.
+        after = plan["disk_after_gib"]
+        console.print(
+            f"  [red]Refusing to download: this would leave about "
+            f"{after:.1f} GiB free, below the "
+            f"{model_plan.FREE_DISK_FLOOR_GIB:.0f} GiB Friday wants to keep "
+            f"clear.[/red]")
+        console.print(
+            "  Free up space, or re-run with [bold]friday models --install "
+            "--force[/bold] to download anyway.\n")
+        return 3
     else:
         report = model_setup.install(plan, say=lambda s: console.print(s))
 
@@ -778,6 +818,50 @@ def cmd_status():
 
     console.print()
     console.rule("[bold cyan]FRIDAY DOCTOR[/bold cyan]")
+    console.print()
+
+    # ── Which version is this, really ───────────────────────────────────────
+    # `friday status` is the version-truth surface. Nothing else in the product
+    # is allowed to answer this question from a different source: the number
+    # below is read off app\pyproject.toml, the same file the installer reads
+    # back in Get-InstalledAppVersion, because install-manifest.json claimed
+    # 5.6.4 on machines whose files were 5.6.3 and a version report that can
+    # lie is worse than no version report.
+    console.print("  [bold]Version[/bold]")
+    _vt = _version_truth()
+    if _vt["running"]:
+        console.print(f"  [green]OK[/green]  Running version  [bold]{_vt['running']}[/bold]  "
+                      "[dim](read from pyproject.toml on disk)[/dim]")
+    else:
+        _check("Running version readable", False,
+               "pyproject.toml could not be read - this install is incomplete")
+    if _vt["packaged"]:
+        console.print(f"     [dim]install-manifest.json records: "
+                      f"{_vt['manifest'] or 'unknown'}"
+                      + (f" (installer carried {_vt['installer']})"
+                         if _vt['installer'] and _vt['installer'] != _vt['manifest'] else "")
+                      + "[/dim]")
+    if _vt["disagreement"]:
+        console.print(f"  [red]![/red]  [bold]{_vt['disagreement']}[/bold]")
+
+    # Weekly update check - state only, never a network call from `status`.
+    try:
+        from agent_friday.services import update_check as _upd
+        _us = _upd.status()
+        _check("Weekly update check enabled", bool(_us.get("enabled")),
+               "switch it on in Settings -> About" if not _us.get("enabled") else "")
+        if _us.get("last_checked_at"):
+            console.print(f"     [dim]last checked {_us['last_checked_at']} "
+                          f"({_us.get('last_result') or 'unknown'})[/dim]")
+        else:
+            console.print("     [dim]not checked yet[/dim]")
+        if _us.get("update_available") and _us.get("latest_version"):
+            console.print(f"  [yellow]![/yellow]  [bold]Agent Friday "
+                          f"{_us['latest_version']} is available[/bold]  "
+                          f"[dim]{_us.get('latest_url')}[/dim]")
+    except Exception as _ue:
+        console.print(f"  [yellow]?[/yellow]  Update check  [dim]{_ue}[/dim]")
+
     console.print()
 
     # Python
@@ -1245,6 +1329,10 @@ examples:
         "models", help="Show what this machine can run, and install it")
     p_models.add_argument("--install", action="store_true",
                           help="Download the recommended models")
+    p_models.add_argument("--force", action="store_true",
+                          help="Download even when the plan's own disk-space "
+                               "check says free space would fall below the "
+                               "floor after the download")
 
     # tools
     sub.add_parser("tools", help="Browse and configure tool rings")
@@ -1260,8 +1348,13 @@ examples:
     for alias in ("status", "doctor", "check"):
         sub.add_parser(alias, help="System health check")
 
-    # health (post-install subsystem check, no server)
-    sub.add_parser("health", help="Post-install subsystem health check")
+    # health (post-install subsystem check, no server required)
+    p_health = sub.add_parser("health", help="Post-install subsystem health check")
+    p_health.add_argument(
+        "--exit-code", action="store_true", dest="exit_code",
+        help=("Print the boot-critical contract only, and exit 0 iff "
+              "boot_critical_ok is true (non-zero otherwise). This is the "
+              "form greenboot's 30-health.sh invokes on Friday Linux."))
 
     # update
     sub.add_parser("update", help="Update to latest version")
@@ -1356,10 +1449,77 @@ def cmd_erase(assume_yes: bool = False):
         console.print("[dim]Close any running Friday server (it may be holding files open) and retry.[/dim]")
 
 
-def cmd_health():
-    """Post-install subsystem health check — runs WITHOUT starting the server."""
+def _boot_critical_report_for_cli():
+    """Compute the same boot-critical contract /api/health reports — the ONE
+    shared implementation (services/health_check.py) so the CLI and the HTTP
+    route can never disagree about what "boot healthy" means.
+
+    Unlike the route (which is definitionally proof of HTTP serving just by
+    being reached), this CLI invocation is out-of-process and has no such
+    free proof — it probes the running server's own /api/health as real
+    evidence, so an unreachable server correctly counts as an unhealthy boot
+    rather than a rubber-stamped one. use_cache=False: a one-shot diagnostic
+    command should report the current truth, not a stale value some earlier
+    process cached in a different memory space (moot in practice — the cache
+    is per-process and the CLI is always a fresh process — but explicit
+    because "always fresh" is the contract a boot gate needs, not an
+    accident of implementation).
+    """
+    from agent_friday.services import health_check as _hc
+    return _hc.boot_critical_report(
+        served_over_http=False,
+        http_probe_url=f"{SERVER_URL}/api/health",
+        use_cache=False,
+    )
+
+
+def cmd_health(exit_code: bool = False):
+    """Post-install subsystem health check — runs WITHOUT starting the server.
+
+    `exit_code=True` (the `--exit-code` flag): print only the boot-critical
+    contract and return its `boot_critical_ok` bool, which `main()`'s
+    `_exit_code()` turns into process exit 0 (healthy) or 1 (not) — the
+    contract greenboot's `30-health.sh` depends on. The full diagnostic
+    panels below (providers, capabilities, hardware, local voice...) are
+    skipped in this mode: a boot gate wants a fast, unambiguous verdict, not
+    a page of optional-dependency status.
+    """
     os.environ.setdefault("FRIDAY_TESTING", "1")  # keep `import` side effects inert
+
+    if exit_code:
+        report = _boot_critical_report_for_cli()
+        color = "green" if report["boot_critical_ok"] else "red"
+        console.print(f"boot_status: [{color}]{report['boot_status']}[/{color}]  "
+                      f"(schema v{report['health_schema_version']}, "
+                      f"deployment={report['deployment']})")
+        t = Table(box=box.SIMPLE)
+        t.add_column("Subsystem"); t.add_column("Critical"); t.add_column("OK"); t.add_column("Detail")
+        for name, sub in report["subsystems"].items():
+            ok_color = "green" if sub["ok"] else ("red" if sub["critical"] else "yellow")
+            t.add_row(name, "yes" if sub["critical"] else "no",
+                      f"[{ok_color}]{sub['ok']}[/{ok_color}]", sub["detail"])
+        console.print(t)
+        return report["boot_critical_ok"]
+
     console.print(Rule("[bold cyan]Agent Friday - Health Check[/bold cyan]"))
+
+    # Boot-critical contract, shown here too (additive) even without
+    # --exit-code, so a human running `friday health` sees the same verdict
+    # a boot gate would — but this path's return value stays None (unchanged
+    # from before --exit-code existed), so plain `friday health` keeps
+    # exiting 0 regardless, matching every pre-existing caller's expectation.
+    try:
+        report = _boot_critical_report_for_cli()
+        color = "green" if report["boot_critical_ok"] else "red"
+        console.print(f"Boot-critical: [{color}]{report['boot_status']}[/{color}]  "
+                      f"(deployment={report['deployment']})")
+        for name, sub in report["subsystems"].items():
+            tag = "critical" if sub["critical"] else "non-critical"
+            icon = "[green]OK[/green]" if sub["ok"] else "[red]FAIL[/red]" if sub["critical"] else "[yellow]--[/yellow]"
+            console.print(f"  {icon}  {name} ({tag})  [dim]{sub['detail']}[/dim]")
+        console.print()
+    except Exception as e:
+        console.print(f"[yellow]boot-critical contract unavailable: {e}[/yellow]")
 
     def _have(mod):
         try:
@@ -1508,7 +1668,8 @@ def main():
     elif cmd == "model":
         rv = cmd_model()
     elif cmd == "models":
-        rv = cmd_models(install=getattr(args, "install", False))
+        rv = cmd_models(install=getattr(args, "install", False),
+                        force=getattr(args, "force", False))
     elif cmd == "tools":
         rv = cmd_tools()
     elif cmd == "config":
@@ -1516,7 +1677,7 @@ def main():
     elif cmd in ("status", "doctor", "check"):
         rv = cmd_status()
     elif cmd == "health":
-        rv = cmd_health()
+        rv = cmd_health(exit_code=getattr(args, "exit_code", False))
     elif cmd == "update":
         rv = cmd_update()
     elif cmd == "skills":

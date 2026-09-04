@@ -489,8 +489,8 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
             "id": "vault", "name": "Memory", "status": "ready",
             "reason": (f"Runs on your processor, no graphics card needed. Uses "
                        f"{EMBEDDER['id']} (~{EMBEDDER['mib']} MB) via "
-                       f"{EMBEDDER['via']}, so it arrives with the install "
-                       f"rather than as a separate download."),
+                       f"{EMBEDDER['via']}, downloaded lazily on first use "
+                       f"rather than during the install."),
             "models": [],
         })
 

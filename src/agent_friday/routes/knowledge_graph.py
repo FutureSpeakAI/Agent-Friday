@@ -186,7 +186,7 @@ def kg_query():
     return jsonify(result)
 
 
-_TIER_B_STATE = {"running": False, "last": None}
+_TIER_B_STATE = {"running": False, "last": None, "started_at": None}
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/reindex", methods=["POST"])
@@ -209,6 +209,13 @@ def kg_reindex():
 
         def run():
             _TIER_B_STATE["running"] = True
+            # started_at makes "how long has this been running" answerable via
+            # /api/knowledge-graph/reindex/status -- previously `running` was
+            # the entire signal, so a caller polling it saw running:true
+            # identically whether the job started 30 seconds or 7 hours ago
+            # (docs/audits/gauntlet-2026-09-03/findings.jsonl Q21, the same
+            # blind spot that let F31 run undetected for 7+ hours).
+            _TIER_B_STATE["started_at"] = time.time()
             try:
                 from agent_friday.services.knowledge_graph import indexer
                 info = indexer.reindex_tier_b(
@@ -239,7 +246,8 @@ def kg_reindex():
 @login_required
 def kg_reindex_status():
     return jsonify({"status": "ok", "running": _TIER_B_STATE["running"],
-                    "last": _TIER_B_STATE["last"]})
+                    "last": _TIER_B_STATE["last"],
+                    "started_at": _TIER_B_STATE.get("started_at")})
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/search", methods=["GET"])

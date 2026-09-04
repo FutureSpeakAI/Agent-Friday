@@ -451,6 +451,16 @@ def index_to_records(index: dict[str, dict]) -> dict[str, list[dict]]:
                     c["entity_ids"] = [i for i in c.get("entity_ids", []) if i in _keep]
                     c["size"] = len(c["entity_ids"])
                 communities = [c for c in communities if c["size"]]
+            # The title check above only stops a forgotten person's OWN page
+            # node from resurfacing. Her name can still be sitting inside
+            # SOMEONE ELSE's description -- this "description" is the page's
+            # own first-paragraph summary (a derived field this module
+            # builds, not the wiki page file itself), so redacting it here
+            # does not touch the user's own note, same reasoning as the
+            # title filter above.
+            for e in entities:
+                if e.get("description"):
+                    e["description"] = _fp.redact_forgotten_names(e["description"])
     except Exception:
         pass
 

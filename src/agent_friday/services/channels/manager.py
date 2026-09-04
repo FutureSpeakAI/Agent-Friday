@@ -197,24 +197,51 @@ def _run_agent(text: str) -> str:
     """Run Friday's shared agent loop for a channel message. Isolated so tests
     can monkeypatch it without importing the heavy agent stack."""
     from agent_friday.services.agent import _generate_agent
+
+    # F30: `_system_prompt` predicts a provider and gates for it ONCE, then
+    # (previously) that single baked prompt was handed to _generate_agent's
+    # fallback ladder — which can land on a DIFFERENT provider than predicted
+    # when the first leg fails operationally, reusing a prompt gated for the
+    # wrong destination (docs/audits/gauntlet-2026-09-03/findings.jsonl F30).
+    # `_gated_system_prompt(provider, ...)` builds it for an EXPLICIT
+    # provider (no internal prediction) and is passed as `system_builder`, so
+    # _generate_agent re-gates the prompt for whichever provider each leg —
+    # first attempt and every fallback — actually is.
     reply, _trace = _generate_agent(
         [{"role": "user", "content": text}],
-        system=_system_prompt(keywords=text), workspace="chat")
+        system=_system_prompt(keywords=text),
+        system_builder=lambda provider: _gated_system_prompt(provider, keywords=text),
+        workspace="chat")
     return reply or ""
 
 
-def _system_prompt(keywords: str = "") -> str:
+def _gated_system_prompt(provider: str, keywords: str = "") -> str:
+    """Build the channel system prompt gated for an EXPLICIT provider — no
+    internal prediction. Used as `_generate_agent`'s `system_builder` so every
+    fallback leg gets a prompt gated for the provider it actually calls."""
     try:
         from agent_friday.services.model_router import (
-            _gated_vault_control, _get_friday_system_prompt,
-            _predict_route_provider)
+            _gated_vault_control, _get_friday_system_prompt)
         return _get_friday_system_prompt(
             keywords=keywords, workspace="chat",
-            provider=_predict_route_provider(
-                keywords=keywords, workspace="chat", has_tools=True),
+            provider=provider,
             vault_control=_gated_vault_control()) + "\n\n" + _SYSTEM_HINT
     except Exception:
         return _SYSTEM_HINT
+
+
+def _system_prompt(keywords: str = "") -> str:
+    """Predict the provider this message will route to and gate for it.
+    Kept for the initial (pre-dispatch) prompt and backward compatibility;
+    `_run_agent` also passes `_gated_system_prompt` as `system_builder` so
+    every ladder leg is re-gated for the provider it actually calls (F30)."""
+    try:
+        from agent_friday.services.model_router import _predict_route_provider
+        provider = _predict_route_provider(
+            keywords=keywords, workspace="chat", has_tools=True)
+    except Exception:
+        provider = "cloud"
+    return _gated_system_prompt(provider, keywords=keywords)
 
 
 def gate_reply(text: str, channel: str) -> str:

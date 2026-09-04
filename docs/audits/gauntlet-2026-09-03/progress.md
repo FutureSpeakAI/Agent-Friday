@@ -139,17 +139,18 @@ true pre-fix commit (not a re-stash of the current diff) before landing.
 Full `tests/gauntlet/` green (only the 2 pre-existing by-design reds). Full
 `tests/unit tests/api`: 6697 tests, 0 failures, 0 errors, 8 skipped.
 
-## What you need to decide — ranked, one sentence each
+## What you need to decide — SUPERSEDED, see Delegation Resolution below
 
-33 items are queued (28 in the ranked list below, plus Q1/Q4/H-series
-observations) because they're judgment calls, not because they're
-unimportant. Ranked by how much rides on the answer. **One set of five is
-handled separately, as its own five-minute document, not folded into this
-list:** [decisions-five-dead-settings.md](decisions-five-dead-settings.md)
-turns the long-known "five settings persist and redraw but drive nothing"
-gap into five direct per-setting questions with options and a
-recommendation each — go there first if you want the quickest wins before
-tackling the rest of this list.
+This list (28 ranked items, current as of the 00:33 check-in) was the
+queue as it stood before Stephen delegated it in full to Claude on
+2026-09-04. Left in place, unedited, as the historical record of what was
+open and how it was ranked at that point — but every item on it has since
+been fixed, removed, or (for four of them) escalated with a sharper,
+specific question. **See "DELEGATION RESOLUTION" below the historical
+queue text for the actual current disposition of every item; don't act on
+this list as if it's still open.** `decisions-five-dead-settings.md` (the
+separate five-settings document referenced below) was likewise resolved
+directly by Stephen before the delegation and is tracked there, not here.
 
 1. **Q19 (SEVERE).** `local_only` and `local_preferred` don't actually keep
    ordinary chat local by default — the most common thing you do with
@@ -580,7 +581,14 @@ existing fallback. Wired into `_gate_messages()` alongside the existing
 - `pytest tests/gauntlet/` after this fix: 11/12 pass, the one deliberate F3 failure (queued finding) unchanged.
 - Full `pytest tests/unit tests/api --tb=no -q` running now — this one touches a security-critical shared function (`_gate_messages`) used by every cloud call site including the existing adversarial egress tests, so the full-suite result matters more than usual for this fix specifically.
 
-## ⚠ HIGHEST-PRIORITY QUEUE ITEM — please read first, decision needed
+## ⚠ HIGHEST-PRIORITY QUEUE ITEM — RESOLVED (see below), left for the reasoning
+
+**Resolved.** Stephen ruled on Q19 directly (see "HANDOFF ITEM RESPONSES"
+below) and F10's router half closed as a direct consequence of that fix —
+see F10 in findings.jsonl and the "DELEGATION RESOLUTION" section further
+down this file. The reasoning below is kept because it's still the
+clearest write-up of the two options that were on the table; it is not a
+live decision anymore.
 
 **F10 — the local-only privacy promise is false by default, and this is
 worse than a leak: a user made a decision based on it.** (Framing per
@@ -1084,7 +1092,130 @@ explicit (A) fail-closed / (B) fall-back-with-notice choice with
 consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
-## QUEUED FOR STEPHEN
+## DELEGATION RESOLUTION (2026-09-04) — the queue below was cleared
+
+Stephen delegated the entire remaining queue to Claude: *"Can you please
+make the determination on the ones waiting for me? You're the dev here...
+Nothing stays queued for him unless I say so."* He gave five settlement
+principles in order (transparency; both local and cloud paths available,
+fail visibly rather than substitute silently; a false claim in copy is a
+defect, fix the code or the copy; a control that reports success while
+doing nothing is the worst class of defect, bias toward removing it; minor
+mode stays closed) and said anything those don't settle is Claude's call
+to make and justify, preferring reversible, revealing, and honest-about-
+its-own-limits over convenient. Only three shapes were to come back to
+him: something irreversible, something that changes what the product
+promises in a way the principles don't cover, or something where a guess
+would be invention because the feature's purpose genuinely can't be told.
+
+Every determination below is recorded as Claude's own, under that
+delegation, with its reasoning — not Stephen's words — so any one of them
+is cheap for him to overturn by reading a decision rather than
+reconstructing a question. Full evidence and fix detail for every item is
+in `findings.jsonl` (search the id); this section is the readable summary.
+The original queue text that follows this section (now historical) is left
+in place rather than deleted, since several entries were superseded by
+later findings in the same seam and the record is more honest with the
+original reasoning visible alongside the resolution.
+
+**What was fixed** (the code moved to match the claim, or a real gap was
+closed): **F3** (context-log retention was decorative — built the sweep,
+`core.prune_context_logs()`, registered as a real daily scheduler task,
+since the setting's own comment already specified the intended behavior
+precisely and the storage shape — one file per day — made it low-risk).
+**F9/Q22** (MCP security-block status now says `blocked_by_policy` with a
+real reason instead of a generic `error`/`disabled`; allowlist now keyed
+by command fingerprint, not bare name). **F10** (closed as a direct
+consequence of Q19's fix, not separately — local_only's new routing block
+runs before the old Ollama-unavailable branches this finding named can
+ever execute). **F13** (the mirror-regeneration danger this named was
+already closed by a guard that predates this audit by nine days; the
+finding's own premise — "would silently lose them" — was no longer true,
+so the probe was rewritten to verify the guard instead of asserting a
+staleness that's accepted by design). **F18** (`/api/chat/send` hardcoded
+`provider='cloud'` before routing ran, redacting vault content for a local
+seat that was entitled to see it; now defers prompt assembly until a
+provider is predicted, mirroring `/api/chat`'s own established pattern).
+**F21** (voice websockets now fail closed when unconfigured, matching
+`login_required()`'s already-established HTTP posture — not a new policy,
+a consistency fix). **F22, F24, F25, F29, F30, F40, F42, F45, F46, Q5,
+Q7, Q9, Q11, Q17, Q18, Q20, Q21, Q23, Q24, Q25, Q27** — each fixed per its
+own findings.jsonl fix_note; several (F13, F18, Q7-part-b) turned out to
+be already-closed or naturally-resolved by another fix once re-examined
+rather than needing new code. **F6** (`camera_auto_describe`, a dead
+setting nobody could ever enable that did nothing even if they could) —
+removed, not built, same reasoning as the items below.
+
+**What was removed rather than built** (a control that looked functional
+and did nothing): **Q25**'s entire dead Settings→Scheduler section (state,
+7 handlers, an unused formatter, a 5-second poll — none of it wired to any
+JSX in either HTML file; the real, working scheduler UI already lives in
+the Workflows tab). **F6**'s dead `camera_auto_describe` setting.
+
+**Escalated — the genuine handful, four items, each with a specific
+question:**
+
+1. **Q6, parts (a)/(b)** — the cost budget is alert-only by explicit,
+   commented design ("Friday is never silently blocked from working"),
+   which is the exact reason the historical $1,189.76-vs-$50 incident could
+   happen and can happen again. Fixing part (c), the two real unmetered
+   Gemini voice call sites, was mechanical and is done. Making the budget
+   actually enforce is not: it would satisfy transparency but could violate
+   the OTHER standing promise in the same code comment (never silently
+   block the user), and reversing that promise is a value trade-off, not a
+   bug fix. **Question: do you want a real enforcing cap even though it
+   means Friday can refuse mid-task when it's hit, or keep alert-only and
+   have the UI say plainly that it's an alert, not a limit?**
+2. **Q10** — a corrected fact merges onto (rather than replaces) a stale
+   one in the KG, and the KG store has no retention/eviction policy at
+   all, unlike context logs, which at least had a setting with a precise
+   spec to implement against. Neither "replace" nor "keep merging" is
+   obviously right (replace risks discarding legitimate history; merge
+   risks a stale fact resurfacing with no signal of which is current), and
+   there's no existing spec anywhere for what a KG retention policy should
+   even be — especially with TIER_2/3 content in scope, which is squarely
+   content policy, already established as yours to direct. **Question:
+   should a correction replace the prior description outright, or should
+   retrieval surface both with the newer one marked current — and does
+   that change for TIER_2/3 entities? Should the KG store ever prune, and
+   on what basis?**
+3. **Q16** — the daily "short-production" creation (the flagship,
+   unattended "she made something overnight" feature) auto-advances
+   through all three of its own pipeline's human-review checkpoints,
+   including the one explicitly commented as a cost gate before the most
+   expensive call (Veo video) and the one before publishing to the
+   Desktop. This session's Q7 fix means the OUTER daily-budget ceiling
+   that excludes this mode when spend is low now actually works (it
+   previously always read near-zero), which de-risks the cost-gate
+   checkpoint specifically — but says nothing about whether an
+   autonomously generated video is something you'd want to wake up to
+   unreviewed. **Question: stop at all three checkpoints (full autonomy
+   traded for review), keep auto-advancing through all three as today
+   (full autonomy, no review), or a middle ground (e.g., review only
+   before publish, since the cost gate is now budget-backed for real)?**
+4. **F48** — the tray watchdog notices a server crash but only relabels
+   its own menu; a separate session already has a notify-only fix in
+   hand. Whether to ALSO auto-restart is not mechanical: auto-restart
+   risks silently looping on a repeating fault (worse than a visibly-dead
+   process), while notify-only requires you to act by hand. Both are
+   honest, legitimate choices with no single right answer.
+   **Question: notify only, or notify with a capped auto-restart (e.g. at
+   most once per N minutes, then fall back to notify-only)?**
+
+Also reviewed and closed with no code change needed, since the finding's
+own premise no longer required action once re-examined: **F5, F7, F23,
+Q12, Q13, Q14, Q15, Q26** — each has its own "reviewed under delegation"
+note in findings.jsonl explaining why. In short: F5/F7's underlying
+questions were already answered elsewhere (the five-settings ruling; F13's
+guard); F23/Q12/Q14/Q15 are genuinely inert with nothing currently
+depending on them, and "fixing" them opportunistically risked new bugs for
+zero live benefit; Q13/Q26 are meta-findings whose concrete predictions
+are now the fixed items above, with one forward-looking architecture
+recommendation (a required-usage-record interface for future non-chat
+providers) noted but not built, since nothing currently unmetered depends
+on it.
+
+## Historical queue text (superseded by the resolution above)
 
 ### F42 — THREAT_MODEL.md's central "IntegrityEngine verifies before every action" claim doesn't match the real gate
 The threat model's headline defense against unauthorized cLaws

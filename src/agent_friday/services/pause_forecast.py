@@ -206,6 +206,40 @@ def _no_pause(why: str) -> dict:
             "checked_at": time.time()}
 
 
+def _content_heavy_ask(model_id: str | None, *, vault: bool = False,
+                       cloud_ok: bool = True) -> dict:
+    """The load-time signal said no pause, but the request itself smells like
+    depth. Ask anyway.
+
+    See Q18 in docs/audits/gauntlet-2026-09-03/findings.jsonl:
+    `services.workflow_plan.looks_heavy()` was purpose-built for exactly this
+    -- its own docstring says "Only ever decides whether to ASK" -- and had
+    never been wired to anything. A warm seat and a heavy job are independent
+    facts; the load-time forecast above only ever sees the first. This is the
+    second signal, OR'd in rather than replacing the first, so neither a
+    slow-loading trivial request nor a fast-loading heavy one goes unannounced.
+
+    There is no measured duration for "this looks like a big job" the way
+    there is for a cold model load, so `seconds` borrows
+    `workflow_plan.ASK_ABOVE_S` -- the same threshold that module already uses
+    to decide whether content is worth interrupting someone about.
+    """
+    from agent_friday.services.workflow_plan import ASK_ABOVE_S
+    model = model_id or "the current seat"
+    return {
+        "will_pause": True, "seconds": ASK_ABOVE_S, "confidence": POSSIBLE,
+        "basis": "the wording looks like a deep job (refactor/audit/analyze/"
+                 "across-everything, etc.), not a measured duration",
+        "why": ("%s is already warm, so this will not wait on a cold load -- "
+                "but the message itself reads like a big job (something like "
+                "refactor/migrate/audit/analyze/across-every-file), which can "
+                "run long regardless of load time." % model),
+        "affects": [model_id] if model_id else [],
+        "options": _options(ASK_ABOVE_S, vault=vault, cloud_ok=cloud_ok),
+        "checked_at": time.time(),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  The forecasts
 # ─────────────────────────────────────────────────────────────────────────────
@@ -360,9 +394,26 @@ def before_drain(cls: str = "heavy") -> dict:
 
 
 def forecast(kind: str, **kw) -> dict:
-    """One entry point, so callers do not each pick their own vocabulary."""
+    """One entry point, so callers do not each pick their own vocabulary.
+
+    `text` (optional, `local_turn` only) is the actual message about to be
+    sent. It is an ADDITIONAL trigger, OR'd against the kind's own load-time
+    signal rather than replacing it: if the load-time estimate did not already
+    justify asking, but the text itself looks heavy per
+    `services.workflow_plan.looks_heavy()`, ask anyway. See Q18 -- looks_heavy
+    was written for exactly this and, before this wiring, was never called by
+    anything.
+    """
+    text = kw.pop("text", None)
     fn = {"local_turn": before_local_turn, "heavy_lease": before_heavy_lease,
           "image": before_image, "drain": before_drain}.get(kind)
     if fn is None:
         return _no_pause("unknown forecast kind %r" % kind)
-    return fn(**kw)
+    result = fn(**kw)
+    if kind == "local_turn" and not result.get("will_pause") and text:
+        from agent_friday.services.workflow_plan import looks_heavy
+        if looks_heavy(text):
+            return _content_heavy_ask(kw.get("model_id"),
+                                      vault=bool(kw.get("vault")),
+                                      cloud_ok=bool(kw.get("cloud_ok", True)))
+    return result

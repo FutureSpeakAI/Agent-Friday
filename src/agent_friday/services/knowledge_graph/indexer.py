@@ -392,6 +392,19 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     extracted = 0
     extract_failures = 0
     first_failure = None
+    # KnowledgeGraphManifest.record() keys by source_path and OVERWRITES the
+    # whole entry -- it has no notion of "this file has more chunks coming".
+    # A source over CHUNK_SIZE produces several chunks; if one is cap-skipped
+    # below but another chunk from the SAME file succeeds later in this same
+    # pass, that chunk's record() call stamps the file's CURRENT on-disk
+    # fingerprint as fully ingested. The next delta pass then sees that
+    # fingerprint, calls the file "unchanged", and never retries the
+    # cap-skipped chunk -- it is gone silently, with no failure counted,
+    # until the file happens to be edited again. Track which source_paths
+    # took a cap-skip this pass and scrub the manifest for them below, so the
+    # file's fingerprint stays stale and the whole file is picked up again on
+    # the next delta pass.
+    capped_sources: set[str] = set()
 
     for chunk in todo:
         sens = chunk["sensitivity"]
@@ -408,8 +421,11 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         if not pinned and cloud_extract_calls >= MAX_CLOUD_EXTRACT_CALLS:
             # This chunk stays "stale" in the manifest -- the next delta pass
             # picks it back up. Silence past the cap, not a failure: nothing
-            # was attempted, let alone billed.
+            # was attempted, let alone billed. Remember the file too: see
+            # capped_sources above -- a sibling chunk's success below must
+            # not stamp this file "up to date" out from under this one.
             skipped_cloud_cap += 1
+            capped_sources.add(canonical(chunk["source_path"]))
             continue
         prompt = (extract_tpl
                   .replace("{entity_types}", ENTITY_TYPES)
@@ -468,13 +484,24 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         manifest.record(chunk["source_path"], kind="tierb",
                         produced=[chunk["id"]])
 
+    if capped_sources:
+        # A sibling chunk from one of these files may have already called
+        # manifest.record() above and stamped the file "up to date" at its
+        # current fingerprint -- undo that so the whole file stays stale and
+        # is re-attempted (all its chunks, not just the capped ones) on the
+        # next delta pass. forget() is a no-op for a file that was never
+        # recorded this pass, so this is safe either way.
+        for _src in capped_sources:
+            manifest.forget(_src)
+
     # ASCII only: progress strings reach cp1252 Windows consoles via callbacks.
     say(f"extracted {extracted} chunks -> {len(entities)} entities, "
         f"{len(relationships)} relationships ({skipped_tier3} TIER_3 skipped)")
     if skipped_cloud_cap:
         say(f"cloud extraction cap reached: {skipped_cloud_cap} chunk(s) left "
             f"stale for the next delta pass instead of an uncapped cloud bill "
-            f"(cap={MAX_CLOUD_EXTRACT_CALLS})")
+            f"(cap={MAX_CLOUD_EXTRACT_CALLS}, {len(capped_sources)} source "
+            f"file(s) held back from the manifest)")
 
     # ── people the user has asked Friday to forget ───────────
     # BEFORE the dangling-relationship sweep below, so removing them takes
@@ -492,6 +519,21 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             if len(entities) != _before:
                 say(f"excluded {_before - len(entities)} forgotten "
                     f"{'person' if _before - len(entities) == 1 else 'people'}")
+            # The title check above only stops a forgotten person's OWN node
+            # from resurfacing. It says nothing about her showing up inside a
+            # SURVIVING entity's description -- "Bob's colleague Jane
+            # recommended the vendor" writes "Jane" straight into Bob's node,
+            # and forget()'s one-time community_reports scrub never sees a
+            # future write like this one. Redact on every pass, before the
+            # description-summarization step below feeds this text to an
+            # LLM, so a forgotten name can never ride back in through the
+            # summary either.
+            for e in entities.values():
+                if e.get("description"):
+                    e["description"] = _fp.redact_forgotten_names(e["description"])
+                if e.get("descriptions"):
+                    e["descriptions"] = [_fp.redact_forgotten_names(d)
+                                         for d in e["descriptions"]]
     except Exception as _fe:
         # Never let this fail an index run -- but say so, because silently
         # re-deriving a deleted person is the failure that matters.
