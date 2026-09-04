@@ -1698,6 +1698,41 @@ Full detail for all of the above is in findings.jsonl (F49, F50) and the
 updated Q6/Q10/Q16/F48 entries. `tests/gauntlet/` stayed green (204 tests)
 through every change in this round.
 
+**Addendum, same round: a third leaked-temp-home instance (F51), and the
+structural fix instead of a fourth reactive one.** The disk-leak report
+above (F49) was relayed again by a different, independent session that had
+found the identical `friday_judgment_*` leak without seeing this session's
+fix already land — reconciled: same leak, already fixed and reclaimed
+(confirmed still true: 137.85GB free, 0 leaked dirs, fix still committed).
+But the report's own framing — "the pattern rather than the instance is
+the finding" — was right, and acting on it immediately found a THIRD,
+independent instance: `tests/test_egress_adversarial.py` had reinvented
+the same unmanaged isolated-home pattern, leaking 327 directories (~262MB)
+since 2026-06-28 — nearly two and a half months, older than either F47's
+or F49's incident window. Fixed the same way (deleted the duplicate
+block, reclaimed the leaked space, proved zero-leak with a real run).
+
+Then built the structural guard rather than stopping at three reactive
+fixes: `tests/gauntlet/test_no_duplicate_isolated_test_homes.py` scans
+every top-level file under `tests/` for the exact anti-pattern (a
+friday-prefixed `mkdtemp` paired with a hardcoded HOME-family env
+redirect) and fails, naming the file, if one is ever reintroduced.
+Verified the guard actually discriminates by temporarily recreating the
+bad pattern in a scratch file, confirming the guard failed and named it
+precisely, then removing the scratch file and reconfirming green.
+
+**F52 — the self-finding Stephen asked for, alongside F50.** Recorded
+explicitly, not as three unrelated bugs: this audit's OWN test tooling —
+built specifically to find controls that report success while doing
+nothing — independently reinvented exactly that failure shape three
+separate times, in three files, across three months, and reported PASS on
+every single run throughout. F47's instance of it is what filled the disk
+to 0 bytes and crashed the live product a real person depends on. That is
+not an analogy for this audit's central thesis; it is the thesis,
+demonstrated end to end by the audit's own infrastructure, against the
+product the audit exists to protect. Being the one auditing doesn't
+exempt the auditor.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
