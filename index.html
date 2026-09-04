@@ -31425,22 +31425,7 @@ function SettingsTabGeneral({
     placeholder: "Describe Friday's personality..."
   }))), /*#__PURE__*/React.createElement(StSection, {
     title: "APPEARANCE"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Scene",
-    desc: "Holographic background scene."
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "input",
-    style: {
-      width: '100%'
-    },
-    value: s.scene_name || 'nebula',
-    onChange: e => save({
-      scene_name: e.target.value
-    })
-  }, ['nebula', 'matrix', 'void', 'aurora', 'cosmos', 'midnight', 'prism', 'circuit', 'ocean', 'ember'].map(n => /*#__PURE__*/React.createElement("option", {
-    key: n,
-    value: n
-  }, n.charAt(0).toUpperCase() + n.slice(1))))), /*#__PURE__*/React.createElement(StToggle, {
+  }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Show All Workspaces",
     value: s.show_all_workspaces !== false,
     onChange: () => save({
@@ -40774,6 +40759,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         model: d.model,
         seat: d.seat,
         fallback_chain: d.fallback_chain || [],
+        // local_only mode refused (no local seat available) rather than
+        // silently answering from the cloud — offer the user an explicit
+        // choice to switch instead of a dead-end error (findings.jsonl
+        // Q19; Stephen, 2026-09-04: "fail... then ask the user if it can
+        // go into cloud only mode").
+        offer_cloud_switch: !!d.offer_cloud_switch,
         time: new Date().toLocaleTimeString()
       }]);
       // Execute any structured actions Friday returned (navigate, open_path…).
@@ -41869,7 +41860,41 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       dest: 'clipboard',
       ico: '📋'
     }]
-  })), /*#__PURE__*/React.createElement("div", {
+  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      display: 'block'
+    },
+    // Local-only refused (no local seat available) rather than silently
+    // answering from the cloud — this is the explicit choice Stephen
+    // asked for: fail closed, say so, then let the user decide to switch
+    // (findings.jsonl Q19). Never applied automatically.
+    onClick: () => apiFetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        settings: {
+          model_routing: {
+            mode: 'cloud_only'
+          }
+        }
+      })
+    }).then(r => r.json()).then(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Switched to Cloud-Only mode — send your message again.',
+      time: new Date().toLocaleTimeString()
+    }])).catch(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Could not switch modes — try Settings → Intelligence directly.',
+      time: new Date().toLocaleTimeString()
+    }]))
+  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',

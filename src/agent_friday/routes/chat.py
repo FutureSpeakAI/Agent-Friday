@@ -666,14 +666,30 @@ def chat():
             except Exception:
                 pass
 
-        # ── Refuse: a vault request that cannot be served locally (deny/warn). ──
-        # Never send vault data to the cloud — return the warning instead.
+        # ── Refuse: the router declined to make any model call at all. ──
+        # Two distinct reasons share this one flag: a vault request that
+        # cannot be served locally (deny/warn) — never send vault data to
+        # the cloud, return the warning instead — and, separately,
+        # local_only mode with no local seat available (findings.jsonl
+        # Q19). Only the first is actually vault-related; `vault_blocked`
+        # stays scoped to that so callers checking it aren't misled by an
+        # unrelated local_only refusal. The local_only case additionally
+        # carries `offer_cloud_switch` — Stephen, 2026-09-04: "the system
+        # should fail to function and produce an error, then it should ask
+        # the user if it can go into cloud only mode" — a real, present
+        # choice for the frontend to render as an action, not just prose
+        # the user has to act on by finding Settings themselves. This is a
+        # standing transparency principle now, not a rule scoped to this
+        # one case: the user always knows what is happening to their data
+        # and which model is serving them.
         if _route_info.get('refuse'):
             _warn = _route_info.get('warning') or (
                 "This request needs vault access which requires a local model. "
                 "Please install Ollama or switch to local routing mode."
             )
-            _vault_orb("Vault Access — Blocked")
+            _offer_cloud_switch = bool(_route_info.get('offer_cloud_switch'))
+            _vault_orb("Vault Access — Blocked" if _vault_access
+                      else "Local-Only Mode — No Local Seat")
             user_msg = {
                 'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace,
@@ -681,12 +697,14 @@ def chat():
             friday_msg = {
                 'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'friday', 'text': _warn, 'pinned': False, 'sources': [],
+                'offer_cloud_switch': _offer_cloud_switch,
             }
             _persist_turn(_conv_id_from(data), user_msg, friday_msg)
             _save_chat_history(CHAT_HISTORY)
             return jsonify({
                 "response": _warn, "user_msg": user_msg, "friday_msg": friday_msg,
-                "sources": [], "tool_trace": [], "vault_blocked": True,
+                "sources": [], "tool_trace": [], "vault_blocked": _vault_access,
+                "offer_cloud_switch": _offer_cloud_switch,
             })
 
         if _vault_access and _routed_local:
