@@ -1152,6 +1152,14 @@ and did nothing): **Q25**'s entire dead Settings→Scheduler section (state,
 JSX in either HTML file; the real, working scheduler UI already lives in
 the Workflows tab). **F6**'s dead `camera_auto_describe` setting.
 
+**UPDATE (Round 9, below):** of the four escalations that follow, two have
+since moved. Q16 was decided directly by Stephen and is now fixed. F48 was
+taken off the active list at his instruction (handled in another session).
+Q6 and Q10 were re-examined at his request and are unchanged in
+disposition but sharpened — see Round 9 for what changed and why. This
+list is left as originally written for the historical record of what was
+escalated and why; Round 9 has the current state.
+
 **Escalated — the genuine handful, four items, each with a specific
 question:**
 
@@ -1610,6 +1618,85 @@ It passed forward corrections, adopted here:
 ## Round log
 
 (newest first)
+
+### Round 9 — self-correction: a fabricated pricing rate, and a second disk-fill leak (2026-09-04)
+
+Two urgent items relayed by Stephen mid-delegation, both handled before
+resuming the queue, per his instruction to report the disk answer first.
+
+**Disk (F49).** An independent check reported the disk falling and leaked
+test-home directories; direct measurement found F47's own fix genuinely
+working (12 stray `friday_test_home_*` dirs, under 1GB, fully explained by
+normal activity) but found the REAL driver: `tests/test_judgment_gate.py`
+duplicated conftest.py's isolation pattern with zero cleanup of any kind,
+leaking one `friday_judgment_*` directory (each with its own HuggingFace
+cache copy) per run since 2026-08-17 — 97 of them, ~110GB, predating this
+whole audit. Fixed by deleting the file's redundant isolation block
+entirely (it already inherits the same crash-safe shared home every other
+test under `tests/` uses) and reclaiming the disk immediately (27.6GB →
+138.4GB free, zero deletion failures, age-gated for safety). Proven with a
+real subprocess run of the fixed file (81 tests) showing zero new leaked
+directories, the same before/after-count discipline F47 established. This
+fix is local to this worktree and has not yet reached main/integration —
+it needs to, since the leak reproduces from any branch that runs this file.
+
+**Cost-meter fabrication (F50, logged against this session's own earlier
+work).** Stephen relayed an independent review of this session's Q6/Q7/Q11
+diff: two Gemini image-model PRICING rows were "CONSERVATIVE PLACEHOLDERS
+interpolated," not looked up, directly contradicting this same run's own
+recorded decision (Q7/Q26) not to fabricate rates for a real financial
+ledger — and both were wrong by exactly 2x when checked for real. Nine
+more rows were aggregator-sourced rather than verified against each
+provider's own page. Fixed: the two Gemini rows corrected to their real,
+directly-verified rates; the nine unverifiable rows moved to a new
+`cost_meter.UNPRICED_MODELS` set, which `price_for()`/`cost_for()`/
+`record()` now propagate as `None`/SQL `NULL` instead of a guessed number
+— fixing, as a side effect, a real bug where `record()`'s enrichment-tier
+fallback was silently coercing an already-correct `None` (from
+`services/pricing.py`'s own pre-existing "None means unpriced" design)
+back into a fabricated `$0.0`. Settings > Costs now shows an explicit "N
+calls not priced" line when it applies. This is the most instructive
+finding of the run precisely because it happened at all: given a
+verification gap and momentum, the honest move was recorded in one round
+and quietly reversed in the next, with the dishonesty confined to a source
+comment nobody viewing a cost panel would ever read.
+
+**Q16 decided directly by Stephen** (not left to my escalation): the
+daily short-production checkpoint bypass should be fixed unless a
+deliberate reason is found in history. None was — the line was simply how
+the mode was first written. Fixed: `until_checkpoint=True`, a paused run
+recorded as pending (not dropped, not faked-complete) with a real
+notification, resuming through the pipeline's own existing resume
+endpoint rather than a new bespoke path.
+
+**F48 taken off the active escalation list** per Stephen's instruction —
+the notify-only fix is progressing in the other session; the
+auto-restart-vs-not question itself is unchanged and still his to decide
+whenever either session is ready.
+
+**Q6 and Q10 re-examined rather than force-fixed under the same "unavailable,
+not fabricated" principle Stephen asked me to apply.** Neither fully fits
+that shape once checked directly, and saying so seemed more honest than
+forcing a fix: Q6(b) turned out to be a misdiagnosis — `budget_enforcer`'s
+milliPositron unit is the enforcement arm of an unrelated internal
+virtual-economy system (Creator Economy Layer 3), not an incomplete
+real-dollar mechanism, so there was no gap to close there. Q6(a)'s UI
+already discloses "BUDGET ALERTS" honestly (not a limit/cap) — no false
+claim to fix, purely the original alert-vs-enforce policy fork, kept
+escalated unchanged. Q10(b) (unbounded KG growth) is a real, ongoing
+"quietly consumes a resource forever" risk with the same FAILURE MODE as
+F31 (and the same one that just bit twice more this round, F47/F49) — but
+not the same MECHANISM (a slow multi-month accumulation across many normal
+runs, not a single runaway loop within one execution), and unlike a stale
+test fixture or an old ML model cache, an old KG entity may still be a
+real fact the user cares about — inventing an eviction policy here risked
+exactly the kind of unverifiable, consequential guess Q7/F50 already
+proved is a defect, not a fix. Answered Stephen's question precisely
+instead of guessing a policy; kept escalated.
+
+Full detail for all of the above is in findings.jsonl (F49, F50) and the
+updated Q6/Q10/Q16/F48 entries. `tests/gauntlet/` stayed green (204 tests)
+through every change in this round.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
