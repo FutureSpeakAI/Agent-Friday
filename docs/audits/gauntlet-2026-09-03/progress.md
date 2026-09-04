@@ -330,6 +330,45 @@ cap).
 touched or restarted per Stephen's explicit instruction. See the top-of-
 file section for what he should expect to see when he wakes up.
 
+### Fix #9 — every stdio MCP server inherited Friday's full decrypted-secrets environment (F32, BROKEN — real security gap)
+**File:** [src/agent_friday/mcp_client.py](../../../src/agent_friday/mcp_client.py)
+**Finding:** a fresh-context sweep of the MCP seam found `services/
+extension_security.py`'s `sanitize_env_for_mcp()`/`ENV_BLOCKLIST` (19 named
+secrets, "Env vars MCP servers must NEVER see") had zero callers anywhere in
+the codebase, despite a live API surface
+(`/api/security/env-blocklist`/`/trust-levels`) that reads as if the control
+is active. `MCPServerProcess._spawn()` did `full_env = os.environ.copy()` —
+the entire parent environment, unfiltered — and `credential_store.
+bootstrap_provider_env()` decrypts every stored provider key into
+`os.environ` at boot, before any MCP server spawns. Net effect: any stdio
+connector (a random `npx`/`pip`/`uvx` community package, "sandboxed" by
+this codebase's own default trust model) could read Friday's live
+`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/`FRIDAY_VAULT_KEY`/etc.
+straight out of its own environment — no exploit, just normal process
+inheritance a purpose-built security module was never wired into.
+**Fix:** `MCPServerProcess` gained a `trust_level` parameter (default
+`"sandboxed"` — opt IN to secrets, not opt out of leaking them); `_spawn()`
+filters the inherited environment through `extension_security.
+sanitize_env_for_mcp()` before layering the connector's own (separately
+encrypted) env on top, so a connector's own configured vars are unaffected.
+`MCPManager.load_config()` resolves each server's trust level via the
+already-existing (previously uncalled) `extension_security.
+get_trust_level()`.
+**Probe:** [tests/gauntlet/test_mcp_env_leak_to_subprocess.py](../../../tests/gauntlet/test_mcp_env_leak_to_subprocess.py)
+**Evidence:**
+- RED before fix: all 5 tests fail cleanly (a blocklisted key survives into
+  the subprocess env; the not-yet-existing `trust_level` kwarg/attribute
+  raises `TypeError`/`AttributeError` inside the test body).
+- GREEN after fix: all 5 pass, including no-op-shaped checks that a
+  `"trusted"` server still gets the full environment and that a connector's
+  own configured env vars still pass through.
+- RED again after reverting via `git stash` (no-op check) — same 5
+  failures, same reasons.
+- Fix reapplied from the stash; stash entry dropped.
+- Ran together with the two existing MCP gauntlet probes (F8, F28): 9/9
+  green, no interaction between the three MCP fixes.
+- Full unit+API suite run after this fix — see result below.
+
 ## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
 
 **1. GPU context during pytest (rule crossed).** Root-caused via static
@@ -396,6 +435,36 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### Q16 — the daily "short-production" creation bypasses its own pipeline's human-review checkpoints (found generalizing F31)
+While generalizing F31's defect shape across the rest of the codebase (see
+Round 6 below), a sweep found something adjacent but distinct, worth your
+judgment even though it isn't the same bug. `creative_pipeline.py`'s
+full-production template marks 3 of 6 stages `checkpoint: True`, with
+comments naming exactly why: *"human reviews the look before any spend"*,
+*"cost gate — video is the expensive call"*, *"final review before the work
+is published"*. `services/creations.py:456` — the unattended, once-a-day
+`short-production` mode of the daily-creation builtin task (08:00 Central) —
+runs that same template with `until_checkpoint=False`, auto-advancing
+through all three. It's the only caller of this template that runs
+unattended: an overnight job can generate a real Veo video (the single most
+expensive call in the whole creative pipeline) and publish it to
+`~/Desktop/friday-creations`, with no human ever having looked at it first.
+
+**The question, precisely, mirrors F10's shape:** (A) make this one caller
+stop at its checkpoints like every other caller — consequence: the "she
+made something overnight" flagship daily-creation feature (docs/
+ACTION_CREATION_SPEC.md Pillar 2) stops being fully autonomous for this one
+mode; a busy/offline user's run just waits for approval instead of
+finishing. Or (B) keep today's behavior — consequence: an autonomous
+overnight job keeps being able to spend on the most expensive stage in the
+pipeline and publish without review, budget ceiling ($0.50/day) aside.
+**Not fixed** because it trades off the feature's "come alive
+autonomously" premise against a real spend/oversight gap — your call, not
+mine. Evidence: `creative_pipeline.py:185,205,224` (the checkpoint comments),
+`creations.py:451-456` (`until_checkpoint=False`), `scheduler.py` (08:00
+builtin registration per docs/ACTION_CREATION_SPEC.md's own table). Full
+detail in findings.jsonl Q16.
 
 ### Q1 — context_retention_days is decorative (F3, BROKEN)
 Settings → Privacy → Context Logging → Retention Period persists and reads
