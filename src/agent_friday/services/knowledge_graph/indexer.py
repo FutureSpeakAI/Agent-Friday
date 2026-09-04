@@ -276,7 +276,24 @@ def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
 def _llm(messages, system: Optional[str], sensitivity: int, mode: str,
          orb_label: Optional[str] = None) -> str:
     """Single LLM entry point for the whole indexer (spec §5.4)."""
-    model, _pinned = _resolve_model(sensitivity, mode)
+    model, pinned = _resolve_model(sensitivity, mode)
+    if pinned:
+        # _resolve_model's pin (local_only, or a TIER_2/3 chunk under
+        # gated_cloud) has to be enforced HERE -- routing/model_router.py's
+        # capability-based seat choice (settings.capability_routing.reasoning)
+        # can select a cloud model regardless of what `model=` is passed to
+        # _generate_text, which only ever uses it as a cloud-fallback label,
+        # never as a routing constraint. Before this, "Local only = nothing
+        # ever leaves this machine" (index.html's own KG settings copy, and
+        # this module's docstring) was false the moment a user picked a
+        # cloud model as their reasoning seat -- an ordinary, UI-encouraged
+        # action -- because a "pinned" chunk still rode the general router.
+        # Calling the local primitive directly, the same pattern already
+        # established for voice (F16), is the only way the pin is real.
+        from agent_friday.services.model_router import _call_ollama
+        text, _trace = _call_ollama(messages, system=system, model=model,
+                                    max_tokens=4096, orb_label=orb_label)
+        return text
     from agent_friday.services.model_router import _generate_text
     return _generate_text(messages, system=system, model=model,
                           max_tokens=4096, workspace="research",

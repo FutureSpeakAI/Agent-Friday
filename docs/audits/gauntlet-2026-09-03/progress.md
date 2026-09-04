@@ -83,6 +83,33 @@ related to tonight's cost incident, but a genuinely more serious class of
 finding, and it landed the same night, so it belongs in this same
 top-of-file summary rather than only buried in the ledger.
 
+**One more, and this is the most consequential thing found all night —
+NOT fixed, needs your judgment (Q19):** `local_only` mode's own stated
+guarantee ("ALL turns go to the local seat — the cloud orchestrator is not
+consulted") and `local_preferred`'s ("local seat first; cloud only as
+fallback") are both false for ordinary interactive chat — not an edge case,
+the single most common thing you do with Friday. The router's tool-use
+branch only prefers local for background/scheduled work; every
+interactive message defaults straight to cloud regardless of which of
+these two modes you've picked, unless you've also explicitly bound a local
+model as your reasoning seat. Empirically verified against the real router
+with factory-default settings: `local_only`, `local_preferred`, and `smart`
+all route an ordinary chat message to cloud claude-sonnet-5 identically.
+**Why this is queued rather than fixed:** the code carries an explicit,
+dated, Stephen-attributed comment from 2026-08-16 keeping interactive chat
+on cloud for speed — this may be a documented decision this promise was
+never reconciled against, not a plain oversight, and reversing it changes
+the speed/quality of every single chat message for anyone who picked
+local_only or local_preferred specifically for the privacy guarantee.
+Even the copy-only half of this (correcting `_MODE_MEANING`'s wording) hits
+an existing, off-limits test (`tests/unit/test_seat_transparency.py:72`)
+that hardcodes the current absolute claim as correct — so unlike F10, there
+is no clean, test-safe copy fix to land unilaterally here either. Full
+detail, both options, and their consequences are in findings.jsonl Q19 —
+please read that one closely; it is the one item tonight that touches what
+the product's core privacy promise actually does, for the case nearly
+everyone hits nearly every time.
+
 ## JUDGMENT CALL 1 — second-instance boot (startup seam)
 
 Per the operational note: if I can't prove all four inertness conditions
@@ -379,6 +406,59 @@ get_trust_level()`.
   green, no interaction between the three MCP fixes.
 - Full unit+API suite run after this fix — see result below.
 
+### Fix #10 — /ws/live's local-only gate never rechecked across a call's renewal legs (F33, BROKEN)
+**File:** [src/agent_friday/routes/voice.py](../../../src/agent_friday/routes/voice.py)
+**Finding:** F20 made local-only refuse a NEW /ws/live connection. But the
+handler's own comments say a single Gemini Live connection is capped
+(~10 min) and the reconnect loop is what makes an hours-long call possible
+by redialing Gemini for each new leg — that loop never rechecked
+`model_routing.mode` before redialing. Turning local-only on mid-call had
+no effect on a call already in progress.
+**Fix:** added the same local-only recheck at the top of the renewal
+loop, before each leg's first connect attempt — refuses the next renewal
+and ends the call gracefully instead of redialing Gemini. Deliberately
+scoped to "refuse the next leg," not "cut audio mid-sentence on the
+current one" (an abruptness question left alone as a UX judgment call
+outside this fix).
+**Probe:** [tests/gauntlet/test_ws_live_respects_local_only.py](../../../tests/gauntlet/test_ws_live_respects_local_only.py) (new test alongside the existing F20 pin)
+**Evidence:** RED before fix (source-position pin: no `local_only` mention
+inside the reconnect loop at all) → GREEN after (2/2) → RED again on
+`git stash` revert → fix reapplied, stash dropped. Ran with the full
+gauntlet suite: no interaction with other voice fixes.
+
+### Fix #11 — KG indexer's "pinned" (local_only) flag was computed and then discarded (F34, BROKEN)
+**File:** [src/agent_friday/services/knowledge_graph/indexer.py](../../../src/agent_friday/services/knowledge_graph/indexer.py)
+**Finding:** `_resolve_model()` correctly computes `pinned=True` for
+local_only (and TIER_2/3 chunks), but `_llm()` discarded it and always
+called the general router (`_generate_text`), which can select a cloud
+model via `capability_routing.reasoning` regardless of the `model=` hint.
+Index.html's own KG-settings copy ("Local only = nothing ever leaves this
+machine") was false for anyone who'd bound a cloud reasoning seat — an
+ordinary, UI-encouraged action.
+**Fix:** `_llm()` now branches on `pinned`: when True, calls
+`_call_ollama` directly (bypassing the router entirely), the same pattern
+F16 already established for voice.
+**Probe:** [tests/unit/test_kg_indexer.py::TestLlmEnforcesThePin](../../../tests/unit/test_kg_indexer.py)
+**Evidence:** RED before fix → GREEN after (2/2, including a no-op-shaped
+check that unpinned/gated_cloud chunks still use the router as before) →
+RED again on `git stash` revert → fix reapplied, stash dropped. Full
+`test_kg_indexer.py` (20 tests) and full `tests/gauntlet/` green together
+with F33.
+
+**Batch verification, Fixes #10+#11 together:** first full run surfaced one
+real regression, correctly caught rather than missed: `tests/api/
+test_kg_reindex_route.py::test_reindex_tier_b_sync` asserts a full,
+default-mode (`local_only`) reindex produces entities, mocking
+`_generate_text` to return a canned extraction — exactly the pinned path
+Fix #11 now routes through `_call_ollama` instead. The test's own intent
+(does a local_only reindex actually extract entities) is still correct and
+still worth asserting; only its mock target was now incomplete. Extended it
+to also stub `_call_ollama` with the same tuple shape the api conftest's
+own `stub_llm` fixture already uses elsewhere — a mechanical update to keep
+testing the same real behavior after Fix #11's legitimate internal change,
+not a weakening of the test. Both tests in that file pass after. Full
+`pytest tests/unit tests/api` re-run after this correction — result below.
+
 ## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
 
 **1. GPU context during pytest (rule crossed).** Root-caused via static
@@ -445,6 +525,41 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### Q19 — SEVERE: local_only/local_preferred's own promise is false for ordinary interactive chat
+See the top-of-file section above — this is the single most important
+queued item tonight. Full detail in findings.jsonl Q19.
+
+### Q20 — task_overrides.voice is permanently inert (found alongside Q19)
+`docs/CONFIGURATION.md` documents a `task_overrides.voice` config key, and
+`routing/model_router.py` has three `TaskType.VOICE`-gated branches meant
+to honor it — but `classify_task()` can never return `TaskType.VOICE`, and
+nothing else injects it, so all three are dead code and the documented
+config key silently does nothing. Lower severity than Q19 (a no-op setting,
+not a privacy-promise violation) but queued rather than touched alongside
+Q19 in the same sensitive routing function tonight — making it reachable
+means deciding how voice turns should be classified, a real design choice,
+not a one-line wiring fix. Evidence in findings.jsonl Q20.
+
+### Q17 — "Go Off Record" claims "for this session" but nothing ever resets it
+`off_record` is correctly read everywhere it's checked (not the F3/F6/F14/
+F15/F24 unread-setting class) — the defect is that no session-boundary,
+new-chat, or app-restart ever turns it back off, contradicting the toggle's
+own "Disable logging for this session" copy. Inverse-severity sibling of
+F3 (F3 promised automatic deletion that never happens; this promises
+automatic resumption that never happens). Fix is a real choice between
+wiring a real reset boundary or rewording the toggle — queued. Evidence in
+findings.jsonl Q17.
+
+### Q18 — `looks_heavy()`, the content-based "should I ask before this?" heuristic, has zero callers
+`services/workflow_plan.py`'s stated premise ("If Friday thinks work might
+be heavy, she asks") is backed by a real heuristic that nothing ever calls
+— the live "ask" trigger is a completely different, load-time-only
+heuristic (`pause_forecast.py`) with no awareness of what the request
+actually asks for. Matches F1's orphaned-function shape, but combining the
+two heuristics is a real design choice (changes how often the pause-warning
+interrupts the user), not a one-line wiring fix — queued. Evidence in
+findings.jsonl Q18.
 
 ### Q16 — the daily "short-production" creation bypasses its own pipeline's human-review checkpoints (found generalizing F31)
 While generalizing F31's defect shape across the rest of the codebase (see
