@@ -153,8 +153,16 @@ DEFAULT_PROVIDERS = [
         # fidelity for eight-step speed, SD 3.5 Medium runs thirty steps and
         # costs several times as much per picture. `note` carries that trade
         # so the choice is informed at the point it is made.
-        "models": ["z-image-turbo-fp8", "sd3.5-medium-fp8"],
-        "capabilities": ["image"],
+        # Two image models were here for a long time; five more (three video,
+        # two more image) joined 2026-09-04, each declaring the files that
+        # prove it is really here (services/local_image.py, local_video.py).
+        # FLUX.1 dev is deliberately NOT in this list — its licence forbids
+        # commercial use of the model itself, so it is registered per-machine
+        # via services/local_creative_overrides.py instead of shipping here.
+        "models": ["z-image-turbo-fp8", "sd3.5-medium-fp8",
+                   "sdxl-base-1.0", "qwen-image-q3ks",
+                   "wan2.2-ti2v-5b", "wan2.2-14b-a14b-gguf", "cogvideox-2b"],
+        "capabilities": ["image", "video"],
         "roles": [ROLE_CREATIVE],
         "cost_per_1k": {},
         "model_meta": {
@@ -179,6 +187,72 @@ DEFAULT_PROVIDERS = [
                 "licence": "Stability AI Community License",
                 "licence_note": "free commercial use below $1M annual revenue; "
                                 "attribution required if redistributed",
+            },
+            "sdxl-base-1.0": {
+                "label": "Stable Diffusion XL Base 1.0 (local image)",
+                "short": "SDXL Base",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["image"],
+                "note": "best pick for consistent styles or recurring "
+                        "characters via LoRA — measured ~55s per 1024x1024 "
+                        "image on a 4070 12GB, ~8GB VRAM peak",
+                "licence": "CreativeML Open RAIL++-M",
+                "licence_note": "no commercial-use restriction; large "
+                                "LoRA/ControlNet ecosystem",
+            },
+            "qwen-image-q3ks": {
+                "label": "Qwen-Image Q3_K_S (local image)",
+                "short": "Qwen-Image",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["image"],
+                "note": "renders legible text in images — quantized for 12GB. "
+                        "Measured: bold high-contrast text (a chalkboard "
+                        "sign) came out fully legible on a real test, but "
+                        "this is one data point, not a guarantee across all "
+                        "prompts. ~4.25 min per 1024x1024 image, ~10.7GB "
+                        "VRAM peak on a 4070 12GB — close to the ceiling",
+                "licence": "Apache 2.0",
+            },
+            "wan2.2-ti2v-5b": {
+                "label": "Wan 2.2 TI2V 5B (local video)",
+                "short": "Wan 2.2 5B",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "NOT currently reliable on 12GB cards — sampling "
+                        "completes cleanly (~9 min for 20 steps at 832x480), "
+                        "but VAE decode hung for 15+ minutes with no result "
+                        "in two separate tests (both an 81-frame and a "
+                        "29-frame clip), so this is length-independent, not "
+                        "just slow for long clips. Prefer Wan 2.2 14B GGUF "
+                        "until this is root-caused.",
+                "licence": "Apache 2.0",
+                "licence_note": "no commercial restriction",
+            },
+            "wan2.2-14b-a14b-gguf": {
+                "label": "Wan 2.2 A14B GGUF (local video)",
+                "short": "Wan 2.2 14B",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "default video model — the only one of the two Wan "
+                        "tiers confirmed reliable on this hardware. Measured "
+                        "~8.1 min for a short (~1.8s) clip at 832x480, "
+                        "~9.2-9.7GB VRAM peak on a 4070 12GB. Two-expert "
+                        "model, so expect longer clips to take "
+                        "proportionally longer — full 5s-clip timing not "
+                        "yet measured.",
+                "licence": "Apache 2.0",
+                "default": True,
+            },
+            "cogvideox-2b": {
+                "label": "CogVideoX 2B (local video)",
+                "short": "CogVideoX 2B",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "6 seconds, fixed 480x720, 8fps — reliable but the "
+                        "most limited of the three video options. Measured "
+                        "~2.4 min for a short (~1.6s) clip, ~5GB VRAM peak "
+                        "on a 4070 12GB — the lightest of the three.",
+                "licence": "Apache 2.0",
             },
         },
         "enabled": True,
