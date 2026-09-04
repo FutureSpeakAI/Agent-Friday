@@ -381,6 +381,21 @@ class MCPServerProcess:
             self._log(f"[mcp:{self.name}] process dead — restarting before call")
             if not self.start():
                 return f"[mcp:{self.name} unavailable] {self.error or 'server not running'}"
+        # extension_security's TRUST_LEVELS declares every trust level
+        # "audit": True and sandboxed/untrusted "unicode_sanitize": True --
+        # a real, named control surface (GET /api/security/mcp-audit and
+        # /trust-levels read as if it's active) that validate_tool_input/
+        # validate_tool_output/audit_tool_call existed to satisfy but were
+        # never called from either MCP transport's real call site (docs/
+        # audits/gauntlet-2026-09-03/findings.jsonl) -- the same shape as
+        # F32's env leak, on the tool-call path instead of the spawn path.
+        # Without this, a sandboxed/untrusted server's output reaches the
+        # agent's context with invisible/control Unicode intact (the exact
+        # steganographic injection vector sanitize_unicode names), and the
+        # audit log is structurally empty no matter how many calls happen.
+        from agent_friday.services import extension_security as _extsec
+        arguments = _extsec.validate_tool_input(tool_name, arguments or {}, self.trust_level)
+        _t0 = time.time()
         try:
             result = self._request(
                 "tools/call",
@@ -388,8 +403,16 @@ class MCPServerProcess:
                 timeout=timeout,
             )
         except Exception as e:  # noqa: BLE001
-            return f"[mcp:{self.name} error] {e}"
-        return _flatten_tool_result(result)
+            text = f"[mcp:{self.name} error] {e}"
+            _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                    trust_level=self.trust_level,
+                                    duration_ms=int((time.time() - _t0) * 1000))
+            return text
+        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+        _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                trust_level=self.trust_level,
+                                duration_ms=int((time.time() - _t0) * 1000))
+        return text
 
     def info(self) -> dict:
         return {
@@ -497,11 +520,13 @@ class MCPServerHTTP:
         url: str,
         headers: dict[str, str] | None = None,
         log: Callable[[str], None] | None = None,
+        trust_level: str = "sandboxed",
     ) -> None:
         self.name = name
         self.url = url
         self.headers = {str(k): str(v) for k, v in (headers or {}).items()}
         self._log = log or (lambda _m: None)
+        self.trust_level = trust_level
 
         self.tools: list[dict] = []
         self.status = "stopped"     # stopped|starting|ready|error|needs_auth|disabled
@@ -720,6 +745,13 @@ class MCPServerHTTP:
     ) -> str:
         if self.status != "ready" and not self.start():
             return f"[mcp:{self.name} unavailable] {self.error or 'server not ready'}"
+        # Same trust-level-aware sanitize/audit as the stdio transport (see
+        # MCPServerProcess.call_tool -- F32-shaped: TRUST_LEVELS declares
+        # audit/unicode_sanitize for every level, but neither transport's
+        # real call site ever consulted it).
+        from agent_friday.services import extension_security as _extsec
+        arguments = _extsec.validate_tool_input(tool_name, arguments or {}, self.trust_level)
+        _t0 = time.time()
         try:
             result = self._request(
                 "tools/call",
@@ -730,11 +762,23 @@ class MCPServerHTTP:
             # Token revoked/expired beyond refresh mid-session.
             self.status = "needs_auth"
             self.error = "authorization expired — reconnect this server"
-            return (f"[mcp:{self.name} unavailable] authorization expired — "
+            text = (f"[mcp:{self.name} unavailable] authorization expired — "
                     f"re-authorize the connector and try again")
+            _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                    trust_level=self.trust_level,
+                                    duration_ms=int((time.time() - _t0) * 1000))
+            return text
         except Exception as e:  # noqa: BLE001
-            return f"[mcp:{self.name} error] {e}"
-        return _flatten_tool_result(result)
+            text = f"[mcp:{self.name} error] {e}"
+            _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                    trust_level=self.trust_level,
+                                    duration_ms=int((time.time() - _t0) * 1000))
+            return text
+        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+        _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                trust_level=self.trust_level,
+                                duration_ms=int((time.time() - _t0) * 1000))
+        return text
 
     def info(self) -> dict:
         return {
@@ -774,11 +818,13 @@ class MCPManager:
                     continue
                 if spec.get("url"):
                     # Remote server over Streamable HTTP.
+                    from agent_friday.services import extension_security as _extsec
                     sp: MCPServerProcess | MCPServerHTTP = MCPServerHTTP(
                         name=name,
                         url=str(spec["url"]),
                         headers=spec.get("headers"),
                         log=self._log,
+                        trust_level=_extsec.get_trust_level(spec),
                     )
                 else:
                     from agent_friday.services import extension_security as _extsec

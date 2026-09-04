@@ -523,6 +523,58 @@ related pre-existing test files (`test_fallback_honours_mode.py`,
 **Batch verification, Fix #12:** full unit+API suite running now — result
 to follow below once complete.
 
+### Fix #13 — MCP tool-call sanitize/audit mechanism was never wired in (F36, BROKEN — same shape as F32)
+**File:** [src/agent_friday/mcp_client.py](../../../src/agent_friday/mcp_client.py)
+**Finding:** deliberately re-swept the MCP seam looking for F32's exact
+pattern ("a real security mechanism exists, TRUST_LEVELS declares intent,
+but nothing calls it") elsewhere, and found it again: `validate_tool_input`,
+`validate_tool_output`, and `audit_tool_call` (extension_security.py) had
+zero callers on either transport's real `call_tool()`. A sandboxed/
+untrusted MCP server's output reached the agent's context with invisible/
+control Unicode intact — the exact steganographic injection vector
+`sanitize_unicode` exists to close — and `GET /api/security/mcp-audit`
+returned an empty log forever, no matter how many tool calls happened.
+**Fix:** both `MCPServerProcess.call_tool()` and `MCPServerHTTP.call_tool()`
+now sanitize arguments and output and record an audit entry, trust-level-
+aware via `self.trust_level` (F32 already added this to the stdio class;
+extended it to `MCPServerHTTP` and to `MCPManager.load_config()`'s HTTP
+branch, which never resolved one for remote servers before).
+**Probe:** [tests/gauntlet/test_mcp_tool_call_sanitize_and_audit.py](../../../tests/gauntlet/test_mcp_tool_call_sanitize_and_audit.py)
+**Evidence:** RED before fix (3/4 fail cleanly; the "trusted server output
+unmangled" sanity check passes both before and after) → GREEN after (4/4)
+→ RED again on `git stash` revert → fix reapplied, stash dropped. Full
+`tests/gauntlet/` green (only the 2 pre-existing by-design reds) — no
+interaction with F8/F28/F32.
+**Batch verification, Fix #13:** full unit+API suite running now — result
+to follow below once complete.
+
+### Fix #14 — the always-on KG "related pages" context bypassed tier gating entirely (F37, BROKEN — real privacy gap)
+**File:** [src/agent_friday/services/knowledge_graph/integration.py](../../../src/agent_friday/services/knowledge_graph/integration.py)
+**Finding:** `model_router.py`'s system-prompt assembly deliberately tier-
+gates its main content (a documented, hardened path after a real prior
+incident). But `knowledge_context_block()` — folded into *every* system
+prompt by `context_injection.build_injected_context()`, for whatever
+provider is handling the turn — never checked sensitivity at all. Its
+candidates carry a real plaintext excerpt of the page (the decrypted body,
+whenever the vault is unlocked — the normal state), and a page in a user-
+designated encrypted wiki section is TIER_3, but nothing downstream of
+`structural_query.py` ever read that. Any TIER_3 page's real content could
+reach any provider's system prompt, protected only by the generic PII-
+pattern egress scan, not the deliberate tier-based redaction the rest of
+the prompt gets.
+**Fix:** `knowledge_context_block()` now excludes any candidate whose
+`section` is in `wiki_engine._wiki_encrypted_sections()` — the exact same
+check `wiki_graph._page_sensitivity()` already uses to mark a page TIER_3
+— filtered before the shown-items slice so a safe candidate isn't
+displaced.
+**Probe:** [tests/gauntlet/test_kg_context_block_excludes_encrypted_sections.py](../../../tests/gauntlet/test_kg_context_block_excludes_encrypted_sections.py)
+**Evidence:** RED before fix (an encrypted-section summary appears in the
+block) → GREEN after (3/3, including two no-op-shaped sanity checks) →
+RED again on `git stash` revert → fix reapplied, stash dropped. Full
+`tests/gauntlet/` green (only the 2 pre-existing by-design reds).
+**Batch verification, Fixes #13+#14 together:** full unit+API suite
+running now — result to follow below once complete.
+
 ## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
 
 **1. GPU context during pytest (rule crossed).** Root-caused via static
@@ -589,6 +641,28 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### Q23 — F31's own cost cap can silently, permanently drop chunks from multi-chunk files (gated_cloud mode only)
+A side effect of tonight's own F31 fix, not present before the cap
+existed: the manifest tracks completeness per FILE, not per chunk, so if
+one chunk from a multi-chunk source succeeds while another from the same
+file is skipped by `MAX_CLOUD_EXTRACT_CALLS`, the whole file gets marked
+"up to date" and the skipped chunk's entities never make it into the graph
+— silently, until that file is edited again. Only affects `gated_cloud`
+mode with a cap-sized backlog; `local_only` (the default) is unaffected.
+The clean fix requires restructuring how `reindex_tier_b` batches its
+per-file manifest writes — a real, non-trivial change to a function this
+audit has already touched twice tonight — so it's queued rather than
+rushed this late in the run: a data-completeness gap, not a money or
+security one. Evidence in findings.jsonl Q23.
+
+### Q22 — the MCP allowlist is keyed by server name, not by its approved command (minor)
+Editing an already-approved server's command to something new (still only
+warn-tier — block-tier findings are never bypassed) inherits the old
+approval with no re-review, because `is_allowlisted()` only checks the
+name. Two reasonable designs exist (name-keyed vs. command-fingerprint-
+keyed) and which one you want is a UX/friction trade-off, not a bug with
+one answer. Evidence in findings.jsonl Q22.
 
 ### Q21 — no signal anywhere tells you a background job has been running unusually long
 The direct answer to "how would we have noticed F31 sooner": nothing would
