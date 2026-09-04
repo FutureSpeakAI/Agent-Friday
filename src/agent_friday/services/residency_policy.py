@@ -36,7 +36,14 @@ ROLES = ("interactive_brain", "heavy_hitter", "sidekick", "sidekick_heavy",
          # one. See ROLE_RESIDENCY for why seven roles fit a card that cannot
          # hold three copies of a 12B.
          "orchestrator", "sidekick_fast", "function_manager",
-         "memory_manager", "researcher")
+         "memory_manager", "researcher",
+         # headroom.md §12 Phase 3.1 / D8: a permanently refused seat until a
+         # local backend exists (no `ltx`/`wan`/`hunyuan`/`cogvideo` reference
+         # anywhere under src/, §2.5 VERIFIED by absence). It is a ROLE so
+         # `plan_chain` can name it in a stage and refuse it cleanly with a
+         # reason, the same P6 pattern `plan()` already uses for a whole
+         # unified-memory profile -- not so `plan()` ever seats it.
+         "video")
 
 # A role may be spelled more than one way without becoming two seats.
 # `embeddings_manager` is what the embedder seat is called when you describe it
@@ -97,6 +104,9 @@ ROLE_RESIDENCY = {
     "researcher": LEASED,
     "sidekick_heavy": LEASED,
     "image": LEASED,
+    # Not served by any backend yet (D8), but the SHAPE it would take if one
+    # existed is the same as image's -- an occasional, exclusive render.
+    "video": LEASED,
     # Scheduled or reactive. Nothing is waiting on them in a conversation.
     "memory_manager": ON_DEMAND,    # nightly consolidation
     "stt": ON_DEMAND,
@@ -921,6 +931,18 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
             "no GPU to lease; local image generation is unavailable on this "
             "profile and escalates to cloud"))
 
+    # ── video: D8, headroom.md §14.2. No local backend exists in the tree at
+    # all -- not "does not fit this profile", which is what an R3/R5 refusal
+    # elsewhere in this function means. `plan_chain` is where the seat
+    # actually goes to cloud (§5.3: "the chain's video stage is cloud"); this
+    # is `plan()`'s own placement question, and the honest answer is that
+    # there is nothing to place, on every profile, always.
+    refusals.append(_refusal(
+        "video", None, "R5",
+        "no local video backend exists in the tree (no ltx/wan/hunyuan/"
+        "cogvideo reference anywhere under src/); video runs in the cloud "
+        "on every machine today"))
+
     # ── CPU services, always.
     seats["stt"] = _cpu_seat("stt", "faster-whisper")
     seats["tts"] = _cpu_seat("tts", "kokoro")
@@ -1706,3 +1728,555 @@ def num_ctx_for_model(model_id: str, default: int = TOOL_SEAT_NUM_CTX) -> int:
     except Exception:
         pass
     return default
+
+
+# ── Chains — planning the sequence Stephen described (headroom.md §6) ───────
+#
+# "speak, transcribe, reason, render, speak back" is not one lease, it is a
+# SEQUENCE of them, and today each stage takes and releases its own lease
+# independently -- the brain reloading between them, or refused outright by
+# `_local_brain_ready()` while an image lease holds the card (§2.6). A chain
+# is the plan for the sequence, not just the next single lease.
+
+DEFAULT_STT_MODEL = "faster-whisper-small-int8"   # footprint_measure's own id
+DEFAULT_TTS_MODEL = "piper-en_us-amy-medium"       # ditto, for the TTS half
+
+
+def _chain_default_model(role: str, resident: dict) -> str | None:
+    seat = (resident or {}).get(role)
+    if seat and seat.get("model_id"):
+        return seat["model_id"]
+    return {"image": DEFAULT_IMAGE_MODEL, "stt": DEFAULT_STT_MODEL,
+           "tts": DEFAULT_TTS_MODEL}.get(role)
+
+
+def _chain_stage_gpu_idx(budgets: list, multi_gpu: bool) -> int | None:
+    """Which GPU an exclusive (image/video-shaped) lease takes: R5's own
+    choice in `plan()` -- the LAST GPU in availability order when there is
+    more than one, so the language seats keep the biggest card and an
+    exclusive render gets whichever is left (§6.3 P4)."""
+    if not budgets:
+        return None
+    order = sorted(budgets, key=lambda b: (-b["available_mib"], b["index"]))
+    return order[-1]["index"] if multi_gpu else order[0]["index"]
+
+
+def _chain_gpu_available(budgets: list, idx: int | None) -> int:
+    if idx is None:
+        return 0
+    for b in budgets:
+        if b["index"] == idx:
+            return b["available_mib"]
+    return 0
+
+
+def plan_chain(profile: dict, entries: list, stages: list,
+               contract: dict | None = None, resident: dict | None = None,
+               *, cloud_ok: bool = True, strict_vault: bool = False,
+               _alt: int | None = None) -> dict:
+    """(HardwareProfile, Catalog, [stage], Contract, current seats) -> ChainPlan.
+
+    Pure, like `plan()` -- a function of its inputs only, `cloud_ok` and
+    `strict_vault` included: the caller reads whether a cloud key exists
+    (`work_plan._cloud_available()`'s own check, HR8) and whether D2's
+    stricter setting is on, and hands the facts in rather than this module
+    reaching for settings or the network itself.
+
+    `resident` is the caller's own snapshot of what is ACTUALLY loaded right
+    now -- typically `Arbiter.plan["seats"]` -- because a chain reasons about
+    a real sequence of grant/release cycles starting from the machine as it
+    is, not a freshly recomputed ideal lineup. `plan()` already answers "what
+    SHOULD be resident"; this answers "what does running THIS sequence, from
+    here, cost". Each entry is `{model_id, device, vram_mib, voice_bound?}`.
+
+    `stages` is `[{role, model_id?, units?, touches_vault?}]` -- section 6.1's
+    shape. A stage with no `model_id` takes whatever is already resident for
+    that role, or the fixed default for image/stt/tts (section 5.3's own
+    model ids).
+
+    `entries` (the CatalogEntry list `plan()` also takes) is accepted for
+    signature parity with that function and for a future caller that wants
+    to pick a NEW role's model from the installed set, but is not read here:
+    every number this function needs -- VRAM, load time, work rate --
+    already lives in `residency_catalog.footprint()`, keyed by
+    `(model_id, profile fingerprint)`, which covers every modality uniformly
+    (Phase 2), where `entries` only ever described text.
+
+    Rules, headroom.md section 6.2:
+
+    1. One lease at a time. Stages are planned strictly in order; a leased
+       stage's `transitions` are the only VRAM movement between it and its
+       neighbours. `Arbiter.run_chain` executes one grant/release pair per
+       leased stage -- this function does not relax that lock, it only
+       reasons about what each pair would cost.
+    2. Reload versus refuse decided by number, and reload usually wins. A
+       stage refuses locally ONLY when it cannot fit even with everything
+       non-retained evicted -- computed here as the target GPU's
+       `gpu_budgets` figure minus whatever R10 (plus rule 4) keeps resident
+       through the lease. Otherwise the plan carries the reload cost in
+       `transitions`. `total_est_s` is exactly the number
+       `workflow_plan.ASK_ABOVE_S` is compared against by the caller; this
+       function does not itself decide to ask.
+    3. HR1 -- no stage plans into `unknown`. A footprint that is missing, or
+       whose own `basis` is "unknown", never renders as fit: it moves to
+       `cloud` when one is available, or `refused` with the explanation
+       naming what would measure it -- never placed on the strength of
+       nothing.
+    4. The retained set is a stage property. R10's sidekick, PLUS any
+       `resident` entry carrying `voice_bound: True` -- the seat a live voice
+       session is bound to survives every stage the same way, so section
+       2.6 step 4's failure (voice refused mid-chain) cannot happen from a
+       chain built here.
+    5. Vault stages cannot move to cloud (D2's resolution). A stage whose own
+       `touches_vault` is set, or that comes AFTER one in the same chain (the
+       composites-inherit-provenance rule, `_route_vault`'s rule extended per
+       section 6.2), has no cloud alternative and says why. This function
+       does not consult the vault or the egress gate itself -- `touches_vault`
+       is the caller's own answer from the router/egress layer, per the
+       rule's own text: "the planner asks the egress gate, it does not
+       decide." `strict_vault=True` is D2's stricter, default-off
+       alternative: once ANY stage touches the vault, no stage in the chain
+       (before or after it) may use cloud -- an inert setting until Stephen
+       picks between the two (D2 is his decision, not this function's).
+
+    `contract` is accepted, like `verdicts()`'s own, for the future Headroom
+    Contract (D1 -- not decided) and is NOT read for a VRAM-slack or
+    RAM-available floor: `contract_ok` here is the SAME R3/gpu-budget
+    arithmetic `plan()` and `verdicts()` already use -- every stage actually
+    PLACED locally (not refused, not moved to cloud) fits what is really left
+    after the retained set. A stage that correctly declined to overload the
+    machine -- by going to cloud or by refusing -- is the contract WORKING,
+    not a violation of it. D1's extra floors are not guessed at just to make
+    this look more finished than it is.
+
+    `video` is always `refused` locally (D8 -- no local backend exists) and
+    renders `where: "cloud"` whenever `cloud_ok` -- the one-sentence surface
+    section 5.3/8.2 describe, not a declared row per candidate model.
+    """
+    from agent_friday.services import residency_catalog as rc
+
+    resident = dict(resident or {})
+    budgets = gpu_budgets(profile)
+    multi_gpu = len(budgets) >= 2
+    exclusive_idx = _chain_stage_gpu_idx(budgets, multi_gpu)
+
+    # R10 + rule 4 -- model ids that survive every leased stage.
+    retained_ids: set = set()
+    for role, seat in resident.items():
+        if not seat:
+            continue
+        if role in RETAINED_THROUGH_LEASE and seat.get("model_id"):
+            retained_ids.add(seat["model_id"])
+        if seat.get("voice_bound") and seat.get("model_id"):
+            retained_ids.add(seat["model_id"])
+
+    # `current`: role -> model_id that BELONGS in that role, seeded from what
+    # is really resident right now. Entries are never deleted, even while a
+    # lease has that role's model standing down -- `displaced_now` /
+    # `_restore_before` is what makes that temporary, and every stage calls
+    # it before its own logic runs, so `current` is always an accurate
+    # picture of "what is loaded right now" at the moment each stage reads
+    # it.
+    current = {role: seat.get("model_id") for role, seat in resident.items()
+              if seat and seat.get("model_id")}
+    current_device = {role: seat.get("device") for role, seat in
+                      resident.items() if seat}
+    current_vram = {role: seat.get("vram_mib") or 0
+                    for role, seat in resident.items() if seat}
+
+    # Per-GPU running total, so `peak_mib` is the largest CONCURRENT
+    # commitment this chain ever makes -- a retained sidekick sitting beside
+    # a render is the number that actually matters (section 3.2), not
+    # either figure alone.
+    gpu_used: dict = {}
+    for role, dev in current_device.items():
+        if dev and str(dev).startswith("gpu:"):
+            idx = int(dev.split(":")[1])
+            gpu_used[idx] = gpu_used.get(idx, 0) + current_vram.get(role, 0)
+
+    out_stages: list = []
+    transitions: list = []
+    displaced_now: list = []      # roles the last leased stage stood down
+    peak_mib = max(gpu_used.values()) if gpu_used else 0
+    total_est_s = 0.0
+    # Two flags, not one -- a stt/tts stage whose HOST RAM was never measured
+    # (§2.5's "uncounted" voice figure, Phase 2's own U6) makes `total_est_s`
+    # honestly unknown but says NOTHING about whether the GPU stages fit: a
+    # CPU service's footprint_mib is always 0, known, not a VRAM guess. Only
+    # collapsing `peak_mib`/`contract_ok` to None when a GPU-relevant figure
+    # is actually missing keeps HR1 honest without making every real chain
+    # (voice RAM is unmeasured on every machine until `friday measure voice`
+    # runs, headroom.md §12 Phase 2.2) report "unknown" on axes that were
+    # never in question.
+    gpu_unknown = False
+    time_unknown = False
+    contract_ok = True
+
+    any_vault = any(bool(s.get("touches_vault")) for s in stages)
+    vault_from = None
+
+    def _touch_peak():
+        nonlocal peak_mib
+        if gpu_used:
+            peak_mib = max(peak_mib, max(gpu_used.values()))
+
+    def _restore_before(idx: int):
+        """The transition that reloads whatever the last leased stage stood
+        down -- attached to the stage about to run, or to `len(stages)` when
+        the chain ends still displaced (which `Arbiter.release()`'s own
+        `_restore_pinned` performs for real, HR10)."""
+        nonlocal displaced_now, time_unknown
+        if not displaced_now:
+            return
+        loads, est, basis = [], 0.0, "measured"
+        for role in displaced_now:
+            mid = current.get(role)
+            if not mid:
+                continue
+            fp = rc.footprint(mid, profile)
+            load_s = (fp or {}).get("load_s")
+            if load_s is None:
+                time_unknown = True
+                basis = "unknown"
+            else:
+                est += load_s
+            loads.append(mid)
+            dev = current_device.get(role)
+            if dev and str(dev).startswith("gpu:"):
+                gidx = int(dev.split(":")[1])
+                gpu_used[gidx] = gpu_used.get(gidx, 0) + current_vram.get(
+                    role, 0)
+        if loads:
+            transitions.append({
+                "before_stage": idx, "evict": [], "load": loads,
+                "est_s": round(est, 1) if basis != "unknown" else None,
+                "basis": basis})
+            _touch_peak()
+        displaced_now = []
+
+    def _cloud_stage(role, model_id, why):
+        return {"role": role, "model_id": model_id, "where": "cloud",
+               "footprint_mib": None, "basis": "declared",
+               "est_work_s": None, "refusal": None, "note": why}
+
+    def _refused_stage(role, model_id, rule_id, why, basis="unknown"):
+        return {"role": role, "model_id": model_id, "where": "refused",
+               "footprint_mib": None, "basis": basis, "est_work_s": None,
+               "refusal": _refusal(role, model_id, rule_id, why)}
+
+    for i, raw in enumerate(stages):
+        role = resolve_role(raw.get("role"))
+        model_id = raw.get("model_id") or _chain_default_model(role, resident)
+        units = raw.get("units", 1)
+        if bool(raw.get("touches_vault")) and vault_from is None:
+            vault_from = i
+        vault_blocked = (vault_from is not None and i >= vault_from) or \
+            (strict_vault and any_vault)
+        force_cloud = (_alt == i)
+
+        _restore_before(i)   # whatever the PRIOR leased stage stood down
+
+        # -- video: no local backend exists at all (D8). --------------------
+        if role == "video":
+            if cloud_ok and not vault_blocked:
+                out_stages.append(_cloud_stage(
+                    role, model_id, "video runs in the cloud on every "
+                    "machine today -- no local backend exists"))
+            else:
+                out_stages.append(_refused_stage(
+                    role, model_id, "R5",
+                    "no local video backend exists" +
+                    ("; this chain reads vault-tier material, so no cloud "
+                     "alternative is offered for this stage" if vault_blocked
+                     else "; no cloud provider is configured either"),
+                    basis="declared"))
+            continue
+
+        # -- CPU services: always placeable, never gate on VRAM. ------------
+        if role in ("stt", "tts"):
+            fp = rc.footprint(model_id, profile) if model_id else None
+            work_s = None
+            if fp and fp.get("work_s_per_unit") is not None:
+                work_s = round(fp["work_s_per_unit"] * units, 2)
+            elif fp is None:
+                time_unknown = True
+            out_stages.append({
+                "role": role, "model_id": model_id, "where": "cpu",
+                "footprint_mib": 0, "basis": (fp or {}).get("basis")
+                or "unknown", "est_work_s": work_s, "refusal": None})
+            if work_s is not None:
+                total_est_s += work_s
+            continue
+
+        # -- image: R5, exclusive lease, a real footprint per Phase 2. ------
+        if role == "image":
+            if force_cloud:
+                out_stages.append(_cloud_stage(
+                    role, model_id, "moved to the cloud for this "
+                    "alternative"))
+                continue
+            if not budgets:
+                if cloud_ok and not vault_blocked:
+                    out_stages.append(_cloud_stage(
+                        role, model_id,
+                        "no GPU on this profile to lease locally"))
+                else:
+                    out_stages.append(_refused_stage(
+                        role, model_id, "R5",
+                        "no GPU to lease, and no cloud alternative "
+                        "available", basis="declared"))
+                continue
+            fp = rc.footprint(model_id, profile) if model_id else None
+            basis = (fp or {}).get("basis")
+            need = (fp or {}).get("vram_mib")
+            if fp is None or basis == "unknown" or need is None:
+                gpu_unknown = True
+                time_unknown = True
+                if cloud_ok and not vault_blocked:
+                    out_stages.append(_cloud_stage(
+                        role, model_id,
+                        "%s has not been measured on this machine yet"
+                        % model_id))
+                else:
+                    out_stages.append(_refused_stage(
+                        role, model_id, "R3",
+                        "%s has no measured or declared footprint, and no "
+                        "cloud alternative is available" % model_id))
+                continue
+            # A real number in hand (headroom.md section 12 Phase 2.3). R5:
+            # exclusive of everything except the retained set on THIS GPU.
+            retained_here = 0
+            evict_roles = []
+            for r, mid in current.items():
+                if current_device.get(r) != ("gpu:%d" % exclusive_idx):
+                    continue
+                if mid in retained_ids:
+                    retained_here += current_vram.get(r, 0)
+                else:
+                    evict_roles.append(r)
+            avail = _chain_gpu_available(budgets, exclusive_idx)
+            lease_budget = max(0, avail - retained_here)
+            if need <= lease_budget:
+                for r in evict_roles:
+                    gpu_used[exclusive_idx] = gpu_used.get(
+                        exclusive_idx, 0) - current_vram.get(r, 0)
+                displaced_now = evict_roles
+                load_s = fp.get("load_s")
+                if evict_roles:
+                    transitions.append({
+                        "before_stage": i,
+                        "evict": [current[r] for r in evict_roles],
+                        "load": [], "est_s": load_s, "basis": basis})
+                # Captures the render's own peak, then releases it: the
+                # lease gives the GPU back at the end of THIS stage (the real
+                # `Arbiter.release()` stops ComfyUI), so `gpu_used` must not
+                # carry the image model's footprint into the NEXT stage's
+                # accounting -- only `retained_here` (the sidekick) survives.
+                gpu_used[exclusive_idx] = retained_here + need
+                _touch_peak()
+                gpu_used[exclusive_idx] = retained_here
+                if load_s is None:
+                    time_unknown = True
+                out_stages.append({
+                    "role": role, "model_id": model_id, "where": "leased",
+                    "footprint_mib": need, "basis": basis,
+                    "est_work_s": fp.get("work_s_per_unit"),
+                    "refusal": None, "retained_mib": retained_here,
+                    "exclusive_of": [current[r] for r in evict_roles]})
+                total_est_s += (fp.get("work_s_per_unit") or 0) + \
+                    (load_s or 0)
+            elif basis == "measured":
+                # HR18 -- only a MEASURED shortfall refuses. This is the
+                # real, 2026-09-04 number: it can fail to fit even with
+                # everything but the retained set evicted (this phase's
+                # report names the fixture this happens on).
+                if cloud_ok and not vault_blocked:
+                    out_stages.append(_cloud_stage(
+                        role, model_id,
+                        "measured %d MiB needed, only %d MiB free with the "
+                        "retained set on this card -- refused locally (R3)"
+                        % (need, lease_budget)))
+                else:
+                    out_stages.append(_refused_stage(
+                        role, model_id, "R3",
+                        "measured %d MiB needed, only %d MiB free even with "
+                        "everything but the retained set evicted, and no "
+                        "cloud alternative is available"
+                        % (need, lease_budget), basis=basis))
+                    contract_ok = False
+            else:
+                # declared/derived -- HR18 never refuses on its own; offered,
+                # marked unconfirmed, per section 5.2's "ready-but".
+                for r in evict_roles:
+                    gpu_used[exclusive_idx] = gpu_used.get(
+                        exclusive_idx, 0) - current_vram.get(r, 0)
+                displaced_now = evict_roles
+                if evict_roles:
+                    transitions.append({
+                        "before_stage": i,
+                        "evict": [current[r] for r in evict_roles],
+                        "load": [], "est_s": fp.get("load_s"),
+                        "basis": basis})
+                # Captures the render's own peak, then releases it: the
+                # lease gives the GPU back at the end of THIS stage (the real
+                # `Arbiter.release()` stops ComfyUI), so `gpu_used` must not
+                # carry the image model's footprint into the NEXT stage's
+                # accounting -- only `retained_here` (the sidekick) survives.
+                gpu_used[exclusive_idx] = retained_here + need
+                _touch_peak()
+                gpu_used[exclusive_idx] = retained_here
+                out_stages.append({
+                    "role": role, "model_id": model_id, "where": "leased",
+                    "footprint_mib": need, "basis": basis,
+                    "est_work_s": fp.get("work_s_per_unit"),
+                    "refusal": None, "retained_mib": retained_here,
+                    "exclusive_of": [current[r] for r in evict_roles],
+                    "note": "the model's own guidance says %d MiB; not "
+                            "confirmed on this machine" % need})
+                total_est_s += (fp.get("work_s_per_unit") or 0) + \
+                    (fp.get("load_s") or 0)
+            continue
+
+        # -- every other role: text seats -- resident/leased/cloud/refused. -
+        if force_cloud:
+            out_stages.append(_cloud_stage(
+                role, model_id, "moved to the cloud for this alternative"))
+            continue
+        if model_id and current.get(role) == model_id:
+            # Already loaded (`_restore_before` already put it back if a
+            # prior stage had stood it down) -- nothing to do.
+            fp = rc.footprint(model_id, profile)
+            out_stages.append({
+                "role": role, "model_id": model_id,
+                "where": ("resident" if residency_of(role) == RESIDENT
+                          else "leased"),
+                "footprint_mib": current_vram.get(role,
+                                                  (fp or {}).get("vram_mib")),
+                "basis": (fp or {}).get("basis") or "measured",
+                "est_work_s": None, "refusal": None})
+            continue
+        if model_id is None:
+            if role in ASSIGNED_ROLES:
+                # R11's own meaning: a role the USER chooses, not the policy
+                # -- unset is a configuration gap, not a hardware question,
+                # so there is no cloud alternative to offer for it either.
+                out_stages.append(_refused_stage(
+                    role, None, "R11",
+                    "no model assigned to %s for this chain" % role))
+            elif cloud_ok and not vault_blocked:
+                # interactive_brain/heavy_hitter/sidekick/sidekick_heavy: the
+                # policy would normally choose one, and on this profile it
+                # has nothing to choose (P6's unified-memory backend gap,
+                # e.g.) -- the honest analogue of image's "no GPU -> cloud"
+                # escalation, not a configuration refusal.
+                out_stages.append(_cloud_stage(
+                    role, None,
+                    "no local model is available for %s on this profile"
+                    % role))
+            else:
+                out_stages.append(_refused_stage(
+                    role, None, "R3",
+                    "no local model is available for %s on this profile, "
+                    "and no cloud alternative is available" % role))
+            continue
+        # A new placement, or a reload of a role a leased stage stood down.
+        fp = rc.footprint(model_id, profile)
+        need = (fp or {}).get("vram_mib")
+        basis = (fp or {}).get("basis")
+        if fp is None or basis == "unknown":
+            gpu_unknown = True
+            time_unknown = True
+            if cloud_ok and not vault_blocked:
+                out_stages.append(_cloud_stage(
+                    role, model_id,
+                    "%s has not been measured on this machine yet"
+                    % model_id))
+            else:
+                out_stages.append(_refused_stage(
+                    role, model_id, "R3",
+                    "%s has no measured or declared footprint" % model_id))
+            continue
+        idx = exclusive_idx
+        used_elsewhere = sum(
+            current_vram.get(r, 0) for r, dev in current_device.items()
+            if dev == ("gpu:%d" % idx) and r != role)
+        avail = max(0, _chain_gpu_available(budgets, idx) - used_elsewhere) \
+            if idx is not None else 0
+        if need is None or basis != "measured" or need <= avail:
+            current[role] = model_id
+            current_device[role] = ("gpu:%d" % idx) if idx is not None \
+                else "cpu"
+            current_vram[role] = need or 0
+            if idx is not None:
+                gpu_used[idx] = gpu_used.get(idx, 0) + (need or 0)
+                _touch_peak()
+            transitions.append({
+                "before_stage": i, "evict": [], "load": [model_id],
+                "est_s": (fp or {}).get("load_s"), "basis": basis})
+            out_stages.append({
+                "role": role, "model_id": model_id,
+                "where": "leased" if idx is not None else "cpu",
+                "footprint_mib": need, "basis": basis,
+                "est_work_s": None, "refusal": None})
+            if need is None:
+                # Placed on a `declared`/`derived` figure with no VRAM
+                # number at all (HR18 never refuses on it, but the GPU
+                # commitment genuinely is not known — do not count it as a
+                # confident 0 MiB).
+                gpu_unknown = True
+            if (fp or {}).get("load_s") is None:
+                time_unknown = True
+            else:
+                total_est_s += fp["load_s"]
+        else:
+            if cloud_ok and not vault_blocked:
+                out_stages.append(_cloud_stage(
+                    role, model_id,
+                    "measured %d MiB needed, only %d MiB free -- refused "
+                    "locally (R3)" % (need, avail)))
+            else:
+                out_stages.append(_refused_stage(
+                    role, model_id, "R3",
+                    "measured %d MiB needed, only %d MiB free, and no "
+                    "cloud alternative is available" % (need, avail),
+                    basis=basis))
+                contract_ok = False
+
+    _restore_before(len(stages))
+
+    plan_out = {
+        "stages": out_stages,
+        "transitions": transitions,
+        "retained": sorted(retained_ids),
+        "peak_mib": None if gpu_unknown else peak_mib,
+        "total_est_s": None if time_unknown else round(total_est_s, 1),
+        "contract_ok": None if gpu_unknown else contract_ok,
+        "alternatives": [],
+    }
+
+    if _alt is None:
+        alts = []
+        for i, raw in enumerate(stages):
+            role = resolve_role(raw.get("role"))
+            st = out_stages[i]
+            if st["where"] in ("cloud", "refused") or role in ("stt", "tts"):
+                continue
+            blocked = (vault_from is not None and i >= vault_from) or \
+                (strict_vault and any_vault)
+            if blocked or not cloud_ok:
+                continue
+            alt = plan_chain(profile, entries, stages, contract, resident,
+                             cloud_ok=cloud_ok, strict_vault=strict_vault,
+                             _alt=i)
+            alts.append({"moved_stage": i, "role": role, "plan": alt})
+        if cloud_ok:
+            alts.append({
+                "execution": "when_away",
+                "note": "the whole chain, parked until the machine is idle, "
+                        "then run under one lease -- same placement, no "
+                        "urgency.",
+                "stages": out_stages,
+            })
+        plan_out["alternatives"] = alts
+
+    return plan_out

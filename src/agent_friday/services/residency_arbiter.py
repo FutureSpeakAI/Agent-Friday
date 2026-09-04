@@ -30,6 +30,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 from agent_friday.core import runtime_dir
@@ -54,6 +55,41 @@ TIMEOUT_MULTIPLE = 3.0
 
 class TransitionError(RuntimeError):
     pass
+
+
+# ── Chain cancellation — the SAME job-flag pattern `local_image.py` already
+# uses (headroom.md §6.5: "Cancellation reuses local_image's job-flag
+# pattern"). A chain is not one job with several internal phases (the case
+# `local_image`'s own flag was built for) — it is several INDEPENDENT
+# grant/release cycles run in sequence by `Arbiter.run_chain`, so this is its
+# own flag, of the identical shape, rather than a second use of
+# `local_image`'s: a cancelled chain must not be confused with a cancelled
+# render that happens to be one of its stages.
+_CHAIN_CANCELLED: set = set()
+_CHAIN_CANCEL_LOCK = threading.Lock()
+
+
+def request_chain_cancel(chain_id: str) -> bool:
+    """Mark a chain cancelled. Safe to call before it has really begun."""
+    if not chain_id:
+        return False
+    with _CHAIN_CANCEL_LOCK:
+        _CHAIN_CANCELLED.add(str(chain_id))
+    return True
+
+
+def is_chain_cancelled(chain_id) -> bool:
+    if not chain_id:
+        return False
+    with _CHAIN_CANCEL_LOCK:
+        return str(chain_id) in _CHAIN_CANCELLED
+
+
+def clear_chain_cancel(chain_id) -> None:
+    if not chain_id:
+        return
+    with _CHAIN_CANCEL_LOCK:
+        _CHAIN_CANCELLED.discard(str(chain_id))
 
 
 # The process-wide Arbiter, set by server._residency_boot. None means the
@@ -1398,6 +1434,143 @@ class Arbiter:
         if self.lease and time.time() > self.lease.get("expires_at", 0):
             return self.release()
         return {"ok": True, "note": "not due"}
+
+    # ── chains ──────────────────────────────────────────────────────────────
+
+    def run_chain(self, plan: dict, on_stage, *,
+                  chain_id: str | None = None) -> dict:
+        """Execute a `ChainPlan` (`residency_policy.plan_chain`), stage by
+        stage (headroom.md §6.5).
+
+        `on_stage(stage) -> {"seconds": float, "vram_mib": int} | None` is
+        the caller's own work — this method does not know how to transcribe
+        audio or run ComfyUI, only how to sequence leases around whatever
+        `on_stage` actually does. It is called once per stage, `resident`,
+        `leased`, `cpu` and `cloud` alike, so a chain's cloud stages still
+        run (they just never touch a lease).
+
+        For each stage: re-check the machine via a fresh
+        `machine_monitor.sample()`/`verdict()` at the boundary. If the
+        DISPLAY RESERVE is breached, stop BEFORE the stage, release
+        whatever lease is held, and raise the three-way through the
+        existing `workflow_plan.build()`/`decide()` path, naming the stage
+        — this is the one breach response this phase builds (§7's
+        display-reserve row); a lesser VRAM-slack or RAM-floor breach is
+        D1-gated and not answered here (`machine_monitor.verdict()` itself
+        already reports those as `basis: "unknown"`, never `breached`, so
+        there is nothing for this method to act on for them yet).
+        Otherwise: `grant()` if the stage is `leased`, run `on_stage`,
+        `release()`. A stage's real footprint/wall-clock, when `on_stage`
+        reports one, is recorded through `record_measurement` (HR10) — a
+        chain is the cheapest measurement job there is, per that section's
+        own line.
+
+        Cancellation reuses `local_image`'s job-flag pattern, as its own
+        flag (`request_chain_cancel`/`is_chain_cancelled`/
+        `clear_chain_cancel`, module-level above): checked before every
+        stage, cleared when the chain ends for any reason.
+        """
+        from agent_friday.services import machine_monitor as mm
+        from agent_friday.services import workflow_plan as wfp
+
+        chain_id = chain_id or uuid.uuid4().hex[:12]
+        stages = list(plan.get("stages") or [])
+        results = []
+        try:
+            for i, stage in enumerate(stages):
+                role = stage.get("role")
+                if is_chain_cancelled(chain_id):
+                    if self.lease is not None:
+                        self.release()
+                    results.append({"stage": i, "role": role,
+                                    "status": "cancelled"})
+                    break
+
+                # §6.5 / §7 — the display-reserve row, checked live at the
+                # boundary, before committing to this stage.
+                try:
+                    sample = mm.sample(
+                        ours_resident_mib=self._ours_resident_mib())
+                    verdict = mm.verdict(sample, profile=self.profile)
+                except Exception as e:
+                    verdict = None
+                    print(f"  [arbiter] chain boundary sample failed "
+                          f"(continuing): {e}")
+                if verdict and verdict.get("display", {}).get("status") == \
+                        "breached":
+                    if self.lease is not None:
+                        self.release()
+                    why = verdict["display"]["explanation"]
+                    proposal = wfp.build(
+                        "The graphics card is needed elsewhere",
+                        [{"title": "Continue the chain (%s)" % role,
+                          "detail": "%s Stopped before stage %d (%s)."
+                                   % (why, i, role),
+                          "cls": "interactive"}],
+                        summary="The display reserve was breached before "
+                                "stage %d (%s): %s" % (i, role, why))
+                    results.append({
+                        "stage": i, "role": role, "status": "breached",
+                        "verdict": verdict["display"],
+                        "proposal_id": proposal["id"]})
+                    break
+
+                where = stage.get("where")
+                if where == "leased":
+                    kind = "image_job" if role in ("image", "video") \
+                        else "heavy_turn"
+                    granted = self.grant(kind)
+                    if not granted.get("ok"):
+                        results.append({
+                            "stage": i, "role": role, "status": "refused",
+                            "error": granted.get("error")})
+                        break
+                    t0 = time.time()
+                    try:
+                        out = on_stage(stage) or {}
+                    finally:
+                        self.release()
+                    seconds = out.get("seconds", round(time.time() - t0, 2))
+                    self._record_chain_measurement(stage, out, seconds)
+                    results.append({"stage": i, "role": role,
+                                    "status": "ran", "seconds": seconds})
+                else:
+                    t0 = time.time()
+                    out = on_stage(stage) or {}
+                    seconds = out.get("seconds", round(time.time() - t0, 2))
+                    results.append({"stage": i, "role": role,
+                                    "status": "ran", "seconds": seconds,
+                                    "where": where})
+        finally:
+            clear_chain_cancel(chain_id)
+        return {"chain_id": chain_id, "results": results}
+
+    def _record_chain_measurement(self, stage: dict, out: dict,
+                                  seconds: float) -> None:
+        """HR10 — a chain records what it measured. Only for a leased stage
+        that actually ran (a refusal or a cloud stage never reaches here) and
+        only when `on_stage` reported real numbers; a stage that reports
+        nothing records nothing rather than a placeholder (HR6)."""
+        model_id = stage.get("model_id")
+        vram_mib = out.get("vram_mib")
+        if not model_id or vram_mib is None:
+            return
+        role = stage.get("role")
+        try:
+            fp = rc.make_footprint(
+                modality="image" if role in ("image", "video") else "text",
+                device="gpu", basis="measured",
+                measured_at=time.strftime("%Y-%m-%d"),
+                vram_mib=vram_mib, load_s=out.get("load_s"),
+                unit="image" if role in ("image", "video") else "token",
+                work_s_per_unit=seconds if role in ("image", "video")
+                else None,
+                artifact_bytes=out.get("artifact_bytes"))
+            rc.record_footprint(model_id, rc.profile_fingerprint(self.profile),
+                                fp)
+        except Exception as e:
+            print(f"  [arbiter] could not record chain measurement for "
+                  f"{model_id!r} (continuing): {e}")
 
     # ── internals ───────────────────────────────────────────────────────────
 
