@@ -569,7 +569,15 @@ def timeseries(rng="month", bucket="day"):
     for ts, cost in rows:
         key = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
         b = buckets.setdefault(key, {"date": key, "usd": 0.0, "calls": 0})
-        b["usd"] += cost
+        # cost is NULL for a call whose model this build could not verify a
+        # real rate for (UNPRICED_MODELS, findings.jsonl F50/F64) -- summary()
+        # already excludes NULL from its SQL-level SUM via COALESCE; this
+        # loop sums in Python, so it must skip None explicitly or `+=` raises
+        # TypeError the first time an unpriced call lands in the range
+        # (found via a real crash: F64's investigation of an order-dependent
+        # test failure traced to exactly this -- not hypothetical).
+        if cost is not None:
+            b["usd"] += cost
         b["calls"] += 1
     return [{"date": k, "usd": round(v["usd"], 4), "calls": v["calls"]}
             for k, v in sorted(buckets.items())]
