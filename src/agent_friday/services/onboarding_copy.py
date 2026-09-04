@@ -79,9 +79,11 @@ keep a spare key."""
 # and save it to start.bat, which is the file the installer deletes and which
 # sat next to the API keys in plain text. That option is gone, not reworded.
 VAULT_LOCATION = """\
-Friday stores it in this computer's credential manager, not in any file you
-could open. That is deliberate: an earlier version kept it in a startup script
-inside her own program folder, which the installer replaces when she updates."""
+Friday stores it in this computer's credential manager, and also, as a
+backup, in an encrypted file only this Windows account can read. Neither
+copy is readable as plain text by opening it. That is deliberate: an earlier
+version kept it in a startup script inside her own program folder, which the
+installer replaces when she updates."""
 
 
 ROUTING_TITLE = "Where your words go"
@@ -103,7 +105,9 @@ ROUTING_CHOICES = (
      "Friday thinks at Anthropic. Fastest to set up, and the sharpest answers."),
     ("local_only",
      "On this computer only",
-     "Nothing is sent anywhere, ever."),
+     "This computer for everything. If she can't reach a local model, she"
+     " currently falls back to the cloud rather than refuse — a stricter,"
+     " fails-closed mode is being considered."),
     ("local_preferred",
      "Both",
      "This computer by default, the cloud when it would clearly help."),

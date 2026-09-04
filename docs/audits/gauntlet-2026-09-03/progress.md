@@ -161,26 +161,116 @@ existing fallback. Wired into `_gate_messages()` alongside the existing
 - `pytest tests/gauntlet/` after this fix: 11/12 pass, the one deliberate F3 failure (queued finding) unchanged.
 - Full `pytest tests/unit tests/api --tb=no -q` running now — this one touches a security-critical shared function (`_gate_messages`) used by every cloud call site including the existing adversarial egress tests, so the full-suite result matters more than usual for this fix specifically.
 
-## ⚠ HIGHEST-PRIORITY QUEUE ITEM — please read first
+## ⚠ HIGHEST-PRIORITY QUEUE ITEM — please read first, decision needed
 
-**F10 — "On this computer only... Nothing is sent anywhere, ever" is false
-by default.** Onboarding's own local_only copy is an absolute, unqualified
-privacy promise. `routing/model_router.py`'s `_route_basic()` silently
-routes to cloud when Ollama isn't running or no local model is installed —
-in BOTH of those branches the `fallback_to_cloud` check is either dead code
-(both its branches return the same `provider: "cloud"`) or entirely absent.
-`setup_wizard.py` also never sets `fallback_to_cloud=False` when a user
-picks local_only — it only writes `mode`. `routes/chat.py` has a correct
-"LOCAL ONLY MEANS LOCAL ONLY" refusal already, but it only fires when the
-router *already chose local* and the live call then fails mid-request — it
-never runs when the router decided cloud up front, which is exactly this
-case. **Not fixed tonight.** This needs coordinated changes across 3 files
-and a real product decision (what should local_only actually DO when it
-truly cannot avoid cloud — refuse with an error, matching the existing
-mid-request pattern? something else?) that affects the app's most
-safety-critical default. Getting the failure shape wrong risks crashing
-callers that assume a local result always carries a model. Full evidence in
-findings.jsonl F10. Please look at this first.
+**F10 — the local-only privacy promise is false by default, and this is
+worse than a leak: a user made a decision based on it.** (Framing per
+Stephen's 00:33 check-in — a false privacy promise in a product whose
+entire premise is privacy deserves more care than a routing bug.)
+
+**The question, precisely:** when the user has chosen local-only and no
+local model can currently be reached (Ollama isn't running, or nothing
+installed fits the task), should Friday —
+
+- **(A) fail closed** — refuse the turn and tell the user why, matching the
+  "LOCAL ONLY MEANS LOCAL ONLY" pattern `routes/chat.py:941-987` *already*
+  uses for the sibling case (a live Ollama call that fails mid-request)?
+  **Consequence:** Friday sometimes can't answer at all in local-only mode.
+  Honest, but a real capability loss whenever Ollama is down or between
+  model installs.
+- **(B) fall back to cloud, but say so** — keep working, but tell the user
+  in the moment that this specific turn left the device (a visible notice,
+  not a silent default)? **Consequence:** always answers, but "local-only"
+  stops meaning "never leaves this device" and starts meaning "prefers this
+  device" — which is what `local_preferred` already promises, so this
+  would make the two modes nearly redundant unless local-only's notice is
+  loud enough to matter.
+
+Both are legitimate; this is Stephen's call, not mine, because it trades
+off capability against the specific guarantee the mode's name makes.
+
+**Why it's broken today:** `routing/model_router.py`'s `_route_basic()`
+silently routes to cloud when Ollama isn't running or no local model fits —
+on 2 of its 3 relevant branches the `fallback_to_cloud` check is either
+dead code (both branches return the identical `provider: "cloud"`) or
+entirely absent. `setup_wizard.py` also never sets `fallback_to_cloud=False`
+when a user picks local_only — it only writes `mode`. Closing this needs
+coordinated changes across those 2 files plus confirming callers handle
+whatever new failure shape option (A) would introduce without crashing —
+genuinely not a one-line fix, so the router/wizard behavior stays queued.
+
+**What isn't a product decision, and IS fixed now:** regardless of which
+way (A)/(B) goes, the copy was simply false either way, so it no longer
+makes an absolute claim. `onboarding_copy.py`'s `ROUTING_CHOICES` local_only
+description now reads: *"This computer for everything. If she can't reach a
+local model, she currently falls back to the cloud rather than refuse — a
+stricter, fails-closed mode is being considered."* — accurate to today's
+real behavior, and it sets up whichever way the decision above goes without
+needing a second copy change. Probe:
+[tests/gauntlet/test_onboarding_copy_no_false_absolutes.py](../../../tests/gauntlet/test_onboarding_copy_no_false_absolutes.py)
+(demonstrates the fix by failing against the literal old string).
+
+Full evidence in findings.jsonl F10. Please look at this first and answer
+(A) or (B) — the router-behavior fix follows once you do.
+
+### Fix #5 — onboarding copy corrections: local-only's false absolute (F10 copy half) + vault passphrase overstatement (F11)
+**File:** [src/agent_friday/services/onboarding_copy.py](../../../src/agent_friday/services/onboarding_copy.py)
+**Finding:** `VAULT_LOCATION` said the passphrase is stored "not in any
+file you could open." `services/vault_passphrase.py`'s own docstring says
+it writes BOTH the keychain and a DPAPI-wrapped file on disk as a durable
+backup — a real file that exists and can be opened; its bytes are just
+DPAPI ciphertext, unreadable as plaintext without the same Windows account.
+**Fix:** corrected to describe both storage homes accurately (credential
+manager + an encrypted backup file), keeping the actual security property
+(neither is readable as plain text) intact.
+**Probe:** [tests/gauntlet/test_onboarding_copy_no_false_absolutes.py](../../../tests/gauntlet/test_onboarding_copy_no_false_absolutes.py) — `test_vault_location_no_longer_claims_no_file_exists` (the same file's other test, `test_local_only_no_longer_claims_an_absolute_never`, covers F10's copy half above).
+**Note:** unlike F10, this one had no attached product decision — the old
+copy was simply inaccurate, so it's fixed outright, not queued.
+
+## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
+
+**1. GPU context during pytest (rule crossed).** Root-caused via static
+reading, not by re-running nvidia-smi (per the standing "don't run it at
+all" rule — the investigation itself had to stay GPU-safe). `services/
+sensitivity_classifier.py:240`, `pipeline/context_pruner.py:152`, and
+`services/prewarm.py:65` all call `SentenceTransformer(name)` with no
+`device=` argument. sentence-transformers' documented default (stable
+across the pinned `>=2.2` range) auto-selects CUDA via
+`torch.cuda.is_available()` when a GPU is present — that's almost certainly
+what nvidia-smi caught at 00:31 (the classifier's Layer 3 lazy-loading
+during test collection/execution), not an actual conversational-model load.
+**Remediation:** `CUDA_VISIBLE_DEVICES=""` set for every pytest invocation
+from this point forward — the NVIDIA driver reports zero devices with this
+set, so `torch.cuda.is_available()` returns False and no context can be
+created, full stop. This is a launch-time environment variable, not a code
+change, so it doesn't touch `tests/conftest.py` (off-limits — existing test
+file). Not independently re-verified via nvidia-smi (deliberately, to avoid
+touching the tool again) — the confidence here is the well-documented,
+deterministic CUDA_VISIBLE_DEVICES contract, not a live re-check. **Open
+question for Stephen, not decided unilaterally:** should `tests/conftest.py`
+itself set this for every contributor's run? That's a real test-suite
+correction I'm not positioned to make (off-limits file), noted here so it
+doesn't get lost.
+
+**2. claims.jsonl bookkeeping (fixed).** Was empty; coverage.md said every
+corpus source UNSTARTED despite progress.md describing a completed
+round-1 extraction pass — a real bookkeeping failure, not a wrong-file
+mixup. Backfilled `claims.jsonl` with C1-C90, transcribed from the round-1
+and round-2 agents' actual reports (quotes + locations + linked finding or
+an honest `noted_not_independently_chased` status where a claim was read
+but not individually traced to a verdict). coverage.md's corpus table
+corrected to match.
+
+**3. Suite verification rests on exit code alone (in progress).** `-q`
+piped through `tail -5` in the earlier runs apparently ate the actual
+"N passed" summary line — re-running now without that pipe, reading the
+full output file directly, specifically to capture the real count rather
+than trust exit 0 alone. Result recorded below once it lands.
+
+**4. F10 sharpened.** See the rewritten queue item above: posed as an
+explicit (A) fail-closed / (B) fall-back-with-notice choice with
+consequences for each, and the copy corrected now regardless of which way
+that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
 
