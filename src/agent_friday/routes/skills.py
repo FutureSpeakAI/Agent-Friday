@@ -276,7 +276,27 @@ def ollama_pull_preflight():
 
 @skills_bp.route('/api/ollama/pull', methods=['POST'])
 def ollama_pull():
-    """Pull/download an Ollama model. Returns immediately; poll /api/ollama/status."""
+    """Pull/download an Ollama model. Returns immediately; poll /api/ollama/status.
+
+    Refuses to start when the SYSTEM volume's disk floor is breached
+    (headroom.md §7's disk-floor row: "refuse every load and every
+    fetch"; HR5, `machine_monitor.disk_system_free_mib` — a different
+    volume from the one `/api/ollama/pull/preflight` above already
+    checks). This is the ONE existing automated fetch path in this tree
+    (`routes/residency.py`'s pre-fetch card routes text pulls here); other
+    modalities have no automated fetch to refuse.
+    """
+    try:
+        from agent_friday.services import machine_monitor as _mm
+        _s = _mm.last_sample() or _mm.sample()
+        _v = _mm.disk_system_verdict(_s) or {}
+        if _v.get("status") == "breached":
+            return jsonify({"error": (
+                "Free space on the system drive is critically low (%s) -- "
+                "Friday will not start a fetch until this clears."
+                % _v.get("explanation", ""))}), 409
+    except Exception:
+        pass
     try:
         data = request.get_json(silent=True) or {}
         model_name = data.get('model', '').strip()

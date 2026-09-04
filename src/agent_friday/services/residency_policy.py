@@ -1596,20 +1596,18 @@ def _runs_well_verdict(fp: dict, basis: str, profile: dict,
     """Will the machine stay usable and will it finish in reasonable time?
 
     Reads RAM against `requires.ram_recommended_mib` / `requires.ram_min_mib`
-    (declared) and `host_ram_mib` (measured, CPU services). A `degraded`
-    verdict is never a refusal on its own axis — `fits` already carried
-    HR18's refuse-only-when-measured rule, and `runs_well` has no `refused`
-    value at all (§5.2's table): the worst it says is `degraded`, with the
-    reason named, and the fetch stays offered (D4).
+    (declared), `host_ram_mib` (measured, CPU services), and this model's
+    recorded thrash history on this profile (`residency_catalog.
+    thrash_degraded`, headroom.md §7). A `degraded` verdict is never a
+    refusal on its own axis — `fits` already carried HR18's
+    refuse-only-when-measured rule, and `runs_well` has no `refused` value
+    at all (§5.2's table): the worst it says is `degraded`, with the reason
+    named, and the fetch stays offered (D4).
     """
     requires = fp.get("requires") or {}
     ram_rec = requires.get("ram_recommended_mib")
     ram_min = requires.get("ram_min_mib")
     host_ram = fp.get("host_ram_mib")
-    if ram_rec is None and ram_min is None and host_ram is None:
-        return _unknown_verdict(
-            "no RAM or throughput figure recorded for %s on this machine"
-            % model_id)
 
     ram = profile.get("ram") or {}
     avail = ram.get("available_mib") or ram.get("total_mib")
@@ -1627,9 +1625,33 @@ def _runs_well_verdict(fp: dict, basis: str, profile: dict,
             problems.append(
                 "measured %d MiB host RAM at load, %d MiB available"
                 % (host_ram, avail))
+
+    # §5.2's own "decided from" column for runs_well names "the thrash
+    # history for this model on this profile" alongside the RAM figures
+    # above. `residency_arbiter.Arbiter._on_thrash_breach` (headroom.md §7)
+    # writes this the moment a sustained thrash signature fires against a
+    # leased seat; reading it back here is what makes that a standing
+    # verdict rather than a one-time log line the next `verdicts()` call
+    # never sees.
+    try:
+        from agent_friday.services import residency_catalog as cat
+        thrash = cat.thrash_degraded(model_id, cat.profile_fingerprint(profile))
+    except Exception:
+        thrash = None
+    if thrash:
+        problems.append(
+            "thrashing observed on %s: %s"
+            % (thrash.get("at") or "an earlier run",
+               thrash.get("explanation")
+               or "sustained low-power/high-utilisation GPU signature"))
+
     if problems:
         return {"status": "degraded", "basis": basis,
                "explanation": "; ".join(problems)}
+    if ram_rec is None and ram_min is None and host_ram is None:
+        return _unknown_verdict(
+            "no RAM or throughput figure recorded for %s on this machine"
+            % model_id)
     return {"status": "ready", "basis": basis,
            "explanation": "fits within the measured/declared RAM guidance"}
 

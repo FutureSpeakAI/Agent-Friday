@@ -1056,6 +1056,9 @@ class Arbiter:
         self.transitions = []           # audit trail, with timings
         self._lock = threading.Lock()
         self._replan_lock = threading.Lock()
+        # model_id -> last time §7's thrash row actually recorded a mark
+        # (respond_to_monitor's own debounce; see _THRASH_MARK_INTERVAL_S).
+        self._last_thrash_mark: dict = {}
 
     # ── planning ────────────────────────────────────────────────────────────
 
@@ -1359,6 +1362,34 @@ class Arbiter:
                         "refused": {"rule_id": "R-DISPLAY-RESERVE"}}
             except Exception:
                 pass
+            # DISK SYSTEM-VOLUME FLOOR, headroom.md §7's disk-floor row:
+            # "refuse every load and every fetch". The EXISTING
+            # `check_disk_headroom` (R8) watches the volume the MODEL STORE
+            # lives on; this is the separate HR5 gap `machine_monitor`
+            # closes -- the volume Windows itself is installed on, where
+            # the pagefile and `~/.friday` live no matter what
+            # `OLLAMA_MODELS` points at, and the one the 2026-09-04
+            # `friday_test_home_*` leak actually filled to 0 bytes. Uses
+            # the SAME `DISK_FLOOR_MIB` (10 GiB, R8) rather than a new
+            # number -- not D1-gated.
+            try:
+                from agent_friday.services import machine_monitor as mm
+                _mon_s = mm.last_sample() or mm.sample(
+                    ours_resident_mib=self._ours_resident_mib())
+                # `disk_system_verdict`, not `verdict()` -- the latter also
+                # advances the shared thrash-history window and would cost
+                # this admission check a "tick" of thrash state on every
+                # single grant(), which is not this check's to spend.
+                _disk_v = mm.disk_system_verdict(_mon_s) or {}
+                if _disk_v.get("status") == "breached":
+                    self.state = STATE_DEFAULT
+                    return {"ok": False, "error": (
+                        "not enough free space on the system volume to "
+                        "start a new load: %s"
+                        % _disk_v.get("explanation", "")),
+                        "refused": {"rule_id": "R-DISK-SYSTEM"}}
+            except Exception:
+                pass
             self.state = STATE_TRANSITIONING
             t0 = time.time()
             try:
@@ -1571,6 +1602,168 @@ class Arbiter:
         except Exception as e:
             print(f"  [arbiter] could not record chain measurement for "
                   f"{model_id!r} (continuing): {e}")
+
+    # ── intrusion response (headroom.md §7, §12 Phase 5) ───────────────────
+    #
+    # `machine_monitor` is a sampler, not a decider (its own module
+    # docstring: "it only ever reports"). Its `tick()` calls
+    # `respond_to_monitor` below on every sample -- 5s cadence while a lease
+    # is held, 60s at rest -- as a DISPATCH, not a decision: the reading is
+    # handed to the ONE thing in this process allowed to act on it. Every
+    # action from here on touches only Friday's own leases, seats and
+    # registered jobs (HR7) -- never a PID this process did not start or
+    # register.
+    #
+    # Only the rows §7's table lists as NOT D1-gated are answered:
+    #   * display reserve breached  -> cancel + release, regardless of what
+    #     kind of lease is held ("anything")
+    #   * thrash signature breached, while a lease is held -> log + mark the
+    #     leased model's footprint degraded (the phase's own resolution:
+    #     NOT wired as equivalent to a VRAM-slack breach, since that state
+    #     does not exist under D1)
+    # The disk-system floor's response ("refuse every load and fetch") is
+    # answered at the point of refusal instead -- `grant()`'s own
+    # R-DISK-SYSTEM check above, and `routes/skills.ollama_pull` for
+    # fetches -- because refusing admission IS "release leases at the
+    # boundary": nothing new is granted, and whatever is already running
+    # releases through its own existing completion path rather than being
+    # torn down mid-job (that forced tear-down is the display-reserve row's
+    # job, not this one's).
+    #
+    # `vram_slack`/`ram_available` breaches are not read here at all --
+    # `machine_monitor.verdict()` reports them `basis: "unknown"` on every
+    # machine today (D1 not decided), and there is nothing for this method
+    # to act on until that changes.
+
+    #: Debounce for the thrash log/record, matching `machine_monitor.
+    #: _LOG_INTERVAL_S`'s own reasoning: a sustained breach fires on every
+    #: 5s tick for as long as it lasts, and re-recording (and re-printing)
+    #: the same mark every 5s would drown the log the way the 2026-09-01
+    #: uncapped rejection line already did once.
+    _THRASH_MARK_INTERVAL_S = 300.0
+
+    def respond_to_monitor(self, sample_: dict, verdict: dict) -> dict | None:
+        """§7's ladder, the rows this phase answers. Called by
+        `machine_monitor.tick()`; safe to call with no lease held (a no-op)
+        and safe to call repeatedly (idempotent — `release()` with nothing
+        held is already a no-op, and the thrash mark is debounced above).
+        """
+        if self.lease is None:
+            return None
+        display = (verdict or {}).get("display") or {}
+        if display.get("status") == "breached":
+            return self._on_display_breach(display)
+        thrash = (verdict or {}).get("thrash") or {}
+        if thrash.get("status") == "breached":
+            return self._on_thrash_breach(sample_, thrash)
+        return None
+
+    def _cancel_inflight_render(self) -> list:
+        """Cancel any OF OUR OWN in-flight `local_image` renders (HR7).
+
+        Found through `core.PROCESSES` — the SAME registry
+        `POST /api/processes/<pid>/cancel` already reads (`routes/
+        tasks.py`) — filtered to `image-*` ids that have not already
+        finished. Never reaches for a PID outside that registry, and never
+        touches ComfyUI or a GPU process this Arbiter did not itself start
+        (`self.comfy`, stopped through `release()` below, not here).
+        """
+        cancelled = []
+        try:
+            from agent_friday.core import PROCESSES, PROCESSES_LOCK
+            from agent_friday.services import local_image as li
+            with PROCESSES_LOCK:
+                live = [pid for pid, p in PROCESSES.items()
+                       if str(pid).startswith("image-")
+                       and (p or {}).get("status") not in
+                       ("completed", "error", "cancelled")]
+            for pid in live:
+                try:
+                    li.request_cancel(pid)
+                    li.interrupt_comfy()
+                except Exception:
+                    continue
+                with PROCESSES_LOCK:
+                    p = PROCESSES.get(pid)
+                    if p is not None:
+                        p["status"] = "cancelled"
+                        p["ended"] = time.time()
+                        p["label"] = ("Cancelled: the display reserve was "
+                                      "breached (headroom.md §7)")
+                cancelled.append(pid)
+        except Exception as e:
+            print(f"  [arbiter] could not cancel an in-flight render "
+                  f"(continuing): {e}")
+        return cancelled
+
+    def _on_display_breach(self, display_verdict: dict) -> dict:
+        """§7 — "display reserve breached | anything": cancel any in-flight
+        render, release every lease, evict leased seats. Keep the retained
+        sidekick (R10) only if it still fits the reserve once the lease's
+        own draw is gone; otherwise it goes too. This is the 2026-08-17
+        monitor-loss case, answered for real this phase.
+        """
+        why = display_verdict.get("explanation", "")
+        cancelled = self._cancel_inflight_render()
+        rel = self.release()
+        evicted_retained = []
+        try:
+            from agent_friday.services import machine_monitor as mm
+            s2 = mm.sample(ours_resident_mib=self._ours_resident_mib())
+            v2 = mm.verdict(s2, profile=self.profile, _track_history=False)
+            if (v2.get("display") or {}).get("status") == "breached":
+                # Releasing OUR OWN lease did not clear it -- something
+                # else on the card is the cause, and §7's line is explicit
+                # that the retained sidekick is not exempt from that:
+                # "Keep the retained sidekick only if it still fits inside
+                # the reserve; otherwise it goes too."
+                with self._lock:
+                    for model_id in list(self._retained_models()):
+                        if not model_id:
+                            continue
+                        self.llama.evict(model_id)
+                        self.ollama.evict(model_id)
+                        evicted_retained.append(model_id)
+        except Exception as e:
+            print(f"  [arbiter] post-release display-reserve recheck "
+                  f"failed (continuing): {e}")
+        self._record("intrusion-display-breach", "monitor", None, 0.0)
+        print(f"  [arbiter] display reserve breached ({why}) -- cancelled "
+              f"{len(cancelled)} render(s), released every lease"
+              + (f", evicted the retained seat(s) {evicted_retained} "
+                 "(still short even after release)" if evicted_retained
+                 else "") + " (headroom.md §7, HR7)")
+        return {"action": "display_breach", "cancelled_render": cancelled,
+               "release": rel, "evicted_retained": evicted_retained,
+               "explanation": why}
+
+    def _on_thrash_breach(self, sample_: dict, thrash_verdict: dict) -> dict | None:
+        """§7's thrash row, as this phase resolves it: log, and mark the
+        currently-leased model's footprint degraded with the sample
+        attached, so `runs_well` reflects it next time (§5.2) — NOT wired
+        as equivalent to a VRAM-slack breach, since that state does not
+        exist under D1 (§13 D1).
+        """
+        model_id = (self.lease or {}).get("model_id")
+        if not model_id:
+            return None
+        now = time.time()
+        last = self._last_thrash_mark.get(model_id, 0.0)
+        if (now - last) < self._THRASH_MARK_INTERVAL_S:
+            return None
+        self._last_thrash_mark[model_id] = now
+        why = thrash_verdict.get("explanation", "sustained thrash signature")
+        try:
+            rc.record_thrash_degraded(
+                model_id, rc.profile_fingerprint(self.profile), sample_, why)
+        except Exception as e:
+            print(f"  [arbiter] could not record thrash degradation for "
+                  f"{model_id!r} (continuing): {e}")
+        self._record("intrusion-thrash-breach", "monitor", model_id, 0.0)
+        print(f"  [arbiter] thrash signature breached while {model_id!r} is "
+              f"leased -- {why} (marked degraded, headroom.md §7)")
+        return {"action": "thrash_breach", "model_id": model_id,
+               "explanation": why}
 
     # ── internals ───────────────────────────────────────────────────────────
 
