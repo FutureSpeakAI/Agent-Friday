@@ -39,15 +39,30 @@ os.environ.setdefault("FRIDAY_REAL_HOME", str(Path.home()))
 
 
 def _sweep_stale_test_homes(base: Path, max_age_seconds: float = 3600) -> None:
-    """Best-effort cleanup of temp homes orphaned by a killed/crashed prior
-    run. `pytest_sessionfinish` below removes THIS run's own temp home on a
-    normal exit, but a process that never reaches that hook (Ctrl+C, OOM
-    kill, a hard crash) leaves its directory behind forever. Confirmed to
-    have accumulated 3,858 such directories since June (up to 781MB each),
-    which drove the real disk to 0 bytes free and crashed the live app with
-    a stack overflow (2026-09-03, see docs/audits/gauntlet-2026-09-03).
-    Swept here, at collection time rather than only at exit, so a machine
-    that never runs a suite to completion still self-heals on the next run.
+    """Best-effort cleanup of temp homes orphaned by a prior run.
+
+    CORRECTION (gauntlet-2026-09-03 F65): this used to say the only case it
+    catches is a process that never reached `pytest_sessionfinish` (Ctrl+C,
+    OOM kill, a hard crash). That undersold it. A NORMAL exit that touches
+    `conversation_memory` (ChromaDB's HNSW index writer, `data_level0.bin`
+    under `.friday/memory/conversations/<uuid>/`) reliably leaves that file
+    Windows-locked past `pytest_sessionfinish`'s whole retry budget (~0.75s
+    total) too -- confirmed directly, reproducibly, on ordinary
+    `pytest tests/gauntlet/` runs that never crashed, and a `gc.collect()`
+    before the retry loop does NOT fix it (tested), meaning this isn't a
+    Python-refcount/GC-timing gap -- something holds the OS-level handle
+    open past that whole window. This sweep is therefore this suite's REAL
+    backstop for that case too, not just a crash-recovery fallback -- it's
+    also the only thing that removes a normal ChromaDB-touching run's own
+    temp home if it fails.
+
+    Originally: accumulated 3,858 such directories since June (up to 781MB
+    each), which drove the real disk to 0 bytes free and crashed the live
+    app with a stack overflow (2026-09-03, see docs/audits/
+    gauntlet-2026-09-03). Swept here, at collection time rather than only
+    at exit, so a machine that never runs a suite to completion still
+    self-heals on the next run -- which, per the correction above, now
+    includes "ran to completion normally but ChromaDB kept a handle open."
     """
     try:
         for entry in base.glob("friday_test_home_*"):
@@ -161,18 +176,17 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Remove this run's temp home on a normal exit. The startup sweep above
-    catches the case where this never fires (a killed/crashed process).
+    """Best-effort: try to remove this run's temp home on a normal exit.
 
-    Retried a few times with a short backoff before falling back to
-    best-effort: on Windows, a single-shot rmtree(ignore_errors=True) can
-    silently leave a directory behind (no error, no trace) if any file
-    inside it is still momentarily locked at this exact instant (a
-    logging.FileHandler, an open sqlite connection, a thread mid-teardown)
-    -- Windows can't delete an open file, POSIX can. These handles are
-    normally released within milliseconds of process/thread teardown
-    completing, so a short retry loop turns a rare, hard-to-reproduce leak
-    into a reliable cleanup without meaningfully slowing the test run.
+    CORRECTION (gauntlet-2026-09-03 F65): this used to call the retry loop
+    below "a reliable cleanup" for anything but "a rare, hard-to-reproduce
+    leak." Not true for a run that touches `conversation_memory` -- see
+    `_sweep_stale_test_homes()`'s corrected docstring above for the
+    evidence. Most SQLite/file-handle locks genuinely do clear within this
+    window; ChromaDB's HNSW index file does not, reliably, and this
+    function has no way to force that release from here. The real backstop
+    for that case is the startup sweep above, on whatever pytest run
+    touches this directory next -- not this retry loop.
     """
     for _delay in (0, 0.05, 0.1, 0.2, 0.4):
         if _delay:
