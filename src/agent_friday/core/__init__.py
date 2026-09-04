@@ -1436,6 +1436,16 @@ DEFAULT_SETTINGS = {
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
     "cite_sources": False,                # Source Production Mode — inline citations on every factual claim
+    # The pause-forecast "don't warn me again" escape hatch (index.html's
+    # seat-pause confirmation dialog) POSTs this key correctly wrapped in
+    # {"settings": {...}}, so it survives the whitelist read/write cycle --
+    # but it had no DEFAULT_SETTINGS entry at all, so _load_settings_raw()'s
+    # whitelist silently dropped it on every save. The dialog appeared to
+    # remember the choice for the rest of that browser tab (optimistic
+    # client-side state) and then nagged again on the next reload/restart,
+    # same defect class as knowledge_graph above (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl).
+    "pause_warnings_off": False,
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
@@ -2047,7 +2057,12 @@ def _load_settings():
 #: Settings blocks merged FIELD BY FIELD rather than replaced wholesale.
 #: Everything else in a delta overwrites its key, which is correct for scalars
 #: and lists and catastrophic for a config block a caller only partly edited.
-_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing")
+#: "content" joined 2026-09-04: the Content workspace's global-controls Save
+#: button only ever sends {staging_base_url, conflict_window_hours} (the two
+#: fields it edits) — without deep-merge that wholesale-replaces the block,
+#: silently resetting `enabled` and `psi_daily_cap` to nothing every time
+#: (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
 
 
 def _save_settings(data):

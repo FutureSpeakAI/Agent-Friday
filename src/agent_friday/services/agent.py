@@ -2888,9 +2888,14 @@ def chain_run_status(name):
         rows = [dict(t) for t in TASKS.values() if t.get('chain') == slug]
     rows.sort(key=lambda t: t.get('created') or 0)
     # Only the latest run: walk back from the end until chain_step resets.
+    # Strictly less-than, not <=: _retry_chain_step() spawns a retry at the
+    # SAME chain_step as the failed attempt, and a same-step retry must not
+    # look like a fresh run restarting at step 0 (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl) -- only a step index that actually
+    # goes backward is a new run.
     latest = []
     for t in rows:
-        if latest and int(t.get('chain_step', 0)) <= int(latest[-1].get('chain_step', 0)):
+        if latest and int(t.get('chain_step', 0)) < int(latest[-1].get('chain_step', 0)):
             latest = []
         latest.append(t)
     def _norm(st):
@@ -2904,7 +2909,12 @@ def chain_run_status(name):
         return st
     out_steps = []
     for i, s in enumerate(steps):
-        row = next((t for t in latest if int(t.get('chain_step', -1)) == i), None)
+        # `latest` can hold more than one row per step index now that a
+        # same-step retry no longer resets the accumulator (see above) --
+        # `rows` is sorted ascending by creation time, so the LAST match is
+        # the most recent attempt (the retry's real outcome), not the first
+        # (the original failure it retried).
+        row = next((t for t in reversed(latest) if int(t.get('chain_step', -1)) == i), None)
         out_steps.append({
             'index': i, 'name': s.get('name'),
             'status': _norm((row or {}).get('status')),
