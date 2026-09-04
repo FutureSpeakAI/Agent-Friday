@@ -2,10 +2,23 @@
 Agent Friday — Scoped Subagent Delegation
 Inspired by patterns in Goose (Apache-2.0). All code is original.
 
-Spawn isolated agents with restricted tool sets for parallel safe execution.
+Tracks scoped tasks (spawn_scoped_task/get_scoped_task/list_scoped_tasks,
+genuinely used by routes/ext_security.py). CORRECTION (gauntlet-2026-09-03
+F56): "restricted tool sets for parallel safe execution" overclaimed --
+ScopedTask.is_tool_allowed()/check_tool_permission() are this module's own
+enforcement primitives, and neither is called anywhere outside this file.
+The REAL governance gate on the tool-execution path (agent.py's Ring
+dispatch) enforces scope via a separate module, services/subagents.py's
+scope_check(), confirmed wired in there. This module tracks and lists
+scoped tasks; it does not itself restrict what tool a task can call.
+Whether to also wire this module's own check into the real dispatch path
+(defense in depth, since two independently-implemented enforcement points
+existing is itself worth a second look) was not decided here -- that
+touches a live security boundary and deserves more than a docstring-sweep
+pass.
 """
 import threading, uuid, time
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Active scoped tasks
 _SCOPED_TASKS = {}
@@ -85,13 +98,28 @@ def list_scoped_tasks(include_completed: bool = False) -> list:
 
 
 def cleanup_old_tasks(max_age_hours: int = 24):
-    """Remove completed tasks older than max_age_hours."""
+    """Remove completed tasks older than max_age_hours.
+
+    Fixed (gauntlet-2026-09-03 F56): `cutoff` was computed but never
+    compared against anything, and the removal loop was a bare `pass`
+    ("Actually keep them for now") -- this never removed a single task,
+    regardless of age, since the function was written. `completed_at` is
+    a naive UTC ISO-format string (datetime.utcnow().isoformat()), not a
+    float timestamp -- parsed and explicitly marked UTC before comparing
+    against `cutoff` (time.time()), so this doesn't silently drift by the
+    local UTC offset on a naive .timestamp() call.
+    """
     cutoff = time.time() - (max_age_hours * 3600)
     with _SCOPED_LOCK:
         to_remove = []
         for tid, task in _SCOPED_TASKS.items():
             if task.status in ("complete", "failed") and task.completed_at:
-                # Rough check
-                to_remove.append(tid)
-        for tid in to_remove[-50:]:  # Keep last 50 for audit
-            pass  # Actually keep them for now
+                try:
+                    completed_ts = (datetime.fromisoformat(task.completed_at)
+                                   .replace(tzinfo=timezone.utc).timestamp())
+                except (TypeError, ValueError):
+                    continue
+                if completed_ts < cutoff:
+                    to_remove.append(tid)
+        for tid in to_remove:
+            del _SCOPED_TASKS[tid]

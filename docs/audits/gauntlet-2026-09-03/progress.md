@@ -1777,9 +1777,145 @@ covering the remaining ~140 modules in alphabetical chunks of 28, each
 instructed to extract checkable factual claims from docstrings, verify
 each against the actual code (HOLDS/BROKEN/UNREACHED), and report back for
 consolidation rather than writing to claims.jsonl/findings.jsonl directly
-(avoids concurrent-write corruption across 5 agents). Results pending;
-will be consolidated into claims.jsonl and any new findings written up
-individually once all 5 report back.
+(avoids concurrent-write corruption across 5 agents).
+
+### Round 11 — claim-corpus sweep results, triaged and fixed (2026-09-04, afternoon/evening)
+
+All 5 agents reported back. Combined: 94 HOLDS claims (now C150-C243 in
+`claims.jsonl`, closing the "flat at 149" gap) and 10 real findings — every
+one triaged to a disposition, 9 fixed with a red/green proof test under
+`tests/gauntlet/`, 0 left mid-air. Findings F54-F63 (plus F64, a self-finding
+surfaced while verifying this round — see below):
+
+- **F54 — content_policies.py, SEVERE, fixed.** The asimov-standard H1-H4
+  harm floor (CSAM/deepfake/doxxing/violence, BLOCK at severity_threshold
+  0.0) was silently skipped for content classified only via
+  `content_metadata` categories with no title/description text — the
+  category-loop's `if pack_id == ALWAYS_ON_PACK: continue` assumed the
+  separate text-based `moderation.scan()` pre-check already covered it, but
+  that check only runs when text is non-empty. A submission naming
+  `categories=["CSAM"]` with no text hit neither path. Confirmed
+  `evaluate_content()` is live via 4 real call sites (defederation.py,
+  marketplace.py, dissent_gate.py's Law 1 floor, moderation.py itself).
+  Fixed by removing the skip; 5 new tests, 67 pre-existing tests unaffected.
+- **F55 — boot_guard.py + server.py, fixed.** `_confirm_boot()` promoted
+  every boot to known-good after a bare 20-second sleep, with no check that
+  anything was ever served — contradicting the module's own stated bar
+  ("completed a startup and then served a request"). Added
+  `boot_guard.wait_for_health()` (real HTTP self-check, retry/backoff);
+  server.py now only calls `mark_boot_succeeded()` on a genuine 2xx. 4 new
+  tests against a real local HTTP server; 18 pre-existing tests unaffected.
+- **F56 — scoped_agents.py, fixed.** Two defects: `cleanup_old_tasks()`
+  computed a cutoff but never compared anything to it (bare `pass`, "keep
+  them for now") — never removed a task, ever. Separately, this module's
+  own tool-permission enforcement (`is_tool_allowed`/`check_tool_permission`)
+  is called nowhere outside itself; the real gate is `services/subagents.py`'s
+  `scope_check()`, confirmed wired into `agent.py`'s Ring dispatch. Fixed
+  the cleanup no-op; corrected the docstring on the enforcement overclaim
+  (wiring this module's own check into the real dispatch path is a live
+  security-boundary decision, left to Stephen). 4 new tests.
+- **F57 — research/harness.py, fixed.** `_pseudo_toolcall_check()` called
+  `find_pseudo_toolcalls(text)` — missing the required `tool_names` arg —
+  which raised `TypeError` on every call, silently caught and treated as
+  "cannot check, assume fine." The integrity check had never actually run
+  once since being written. Fixed by importing `CLAUDE_TOOLS` and passing
+  the name list. 3 new tests (first attempt used plain prose and correctly
+  failed to trigger the detector — matches tool_integrity.py's own
+  by-design "a bare word is never a leak" rule — fixed by using the real
+  pseudo-syntax form).
+- **F58 — predictive_workspaces.py, fixed.** `_warm_workspace()`'s resolver
+  looked candidate function names up via `globals()` against its own
+  module namespace, which nothing ever populated — every warm attempt
+  silently returned False, forever, for every workspace, even though the
+  scheduled boot/hourly prewarm loop genuinely ran. Fixed for
+  messages/wiki/contacts (real, importable target functions now imported
+  lazily, function-local, to preserve this module's documented low
+  position in the service DAG). "news" and "calendar" turned into honest,
+  documented no-ops rather than dead references to 5 function names that
+  don't exist anywhere: calendar has no cache at all to warm
+  (`_events_for_day()` hits Google's API live, every time); news already
+  renders from a fast on-disk cache directly, and the only slow step
+  (`_generate_front_page()`) does real costed generation on its own
+  schedule — calling it opportunistically from an hourly prewarm risks
+  duplicate generation and unbudgeted spend for no benefit. 7 new tests.
+- **F59 — prompt_manager.py, fixed.** `create_default_manager()` had zero
+  callers anywhere (the real per-request system prompt never adopted
+  `PromptManager`) and was self-contradictory even on its own terms — its
+  docstring claimed pre-registered segments, but its body never called
+  `.set()` for any. Removed rather than guessed at (inventing which
+  segments belong is a design decision, not a docstring fix — the same
+  class of mistake F50 already cost this audit once). 2 new tests.
+- **F60 — ambient_awareness.py, fixed (docstring only).** Of three claimed
+  adaptive behaviors, only the holo-scene tint is real end-to-end
+  (verified into index.html: polls `/api/ambient/state` every 60s,
+  `scene_mood` reaches `fridayVibe.setSystemMood()`). The other two —
+  shorter replies, suppressed interruptions — are computed into `hints`
+  every call but never consumed: the frontend's poll handler only reads
+  `scene_mood`, and `ambient_prompt_directive()` (the function that would
+  splice a directive into a system prompt) has zero callers anywhere.
+  Corrected the docstring precisely; wiring either gap in is a real UX
+  decision left undone here. 3 new tests pin that the backend half still
+  works correctly, so a future wiring pass has something real to consume.
+- **F61 — compute_client.py, fixed (docstring only).** "The Orchestrator
+  can delegate to federation peers via this client" overclaims —
+  `services/orchestrator.py` never imports or calls anything here; no
+  automatic fallback exists. What's real: 4 of 5 public functions are
+  wired to manual/external routes in `routes/compute.py`. `await_result()`
+  is additionally dead on top of that — no route calls it either.
+  Corrected the docstring.
+- **F62 — gpu_headroom.py, fixed (docstring only).** "Any job... asks here
+  first" overclaims — `residency_arbiter.py`, the highest-stakes VRAM
+  consumer and the exact subsystem this module's own origin story (the
+  238 MiB display-drop incident) is about, uses a separately-implemented
+  `hardware_profile.vram_headroom()`/`display_reserve_mib()` instead. Two
+  parallel, non-shared "don't take the display's VRAM" implementations
+  exist; disclosed, not reconciled (a real architecture decision).
+- **F63 — six bundled minor doc-drift corrections, fixed.** scene_dna.py
+  (wrong consumer list — take_comparison.py was never one), seat_
+  transparency.py (wrong third call site — /api/chat/send, not "the model
+  catalog route"), file_grants.py (on_file_read() claimed for search_files
+  too; file_search.py's own self-disclosed WO-17 gap says otherwise),
+  web_search.py (stale 2-backend description predating Firecrawl),
+  publisher.py (stale "1-minute interval," actually loosened to 15),
+  capability_preflight.py (report()/status() split credited to one
+  function). Each a narrow, low-stakes prose correction with no behavior
+  change; bundled as one finding rather than six near-duplicate rows.
+- **F53 — memory_proposals.py, DISPOSITIONED THIS ROUND (was
+  confirmed_pending_action from round 10).** The module was fully built
+  and correct — `propose()`/`pending()`/`approve()`/`reject()`/`state()` —
+  but had no caller anywhere: no route, no CLI command, nothing, despite
+  its own docstring explicitly promising a manual door
+  ("`propose()` is something the user RUNS, and its output is shown to him
+  before any of it becomes durable"). Added `routes/memory_proposals.py`
+  (5 thin routes, one per function, matching this codebase's own
+  established `routes/compute.py` convention) and registered it in
+  server.py's frozen-build fallback manifest. Deliberately did NOT build a
+  review UI — where this lives in the app is Stephen's call, not a
+  docstring-sweep decision. 6 new tests confirm all 5 routes respond
+  correctly and the blueprint actually registers. This converts the
+  finding from "no door of any kind" to "reachable via API, no UI yet" —
+  the underlying problem (memory_dreaming's regex extractor pulling 0
+  facts from 215 real turns) now has a working, callable fix.
+- **F64 — this round's own verification, self-finding.** While confirming
+  F54-F63 hadn't regressed `tests/unit/`+`tests/api/`, found 15 tests
+  across 7 files that fail when the full suite runs as one invocation but
+  pass when run alone. Rigorously isolated via a stash-based A/B (this
+  round's changes stashed out by exact SHA, applied back afterward, never
+  a bare pop): the identical 15 tests fail on a clean HEAD checkout too —
+  proving this is a pre-existing test-order/state-pollution defect,
+  unrelated to this round's fixes, not something introduced here. Logged
+  rather than silently noted, per F52's precedent (the audit's own tooling
+  is not exempt from its own thesis) — NOT root-caused or fixed; which
+  earlier test leaks what module-level state is its own investigation,
+  out of scope for a docstring-sweep pass. Practical takeaway recorded for
+  Stephen: only a green run of the FULL suite is trustworthy for those 7
+  files — a green run of any narrower subset, which this whole audit used
+  repeatedly to verify individual fixes, is not proof of the same result
+  in the real run order.
+
+All of round 11's fixes ran clean through `tests/gauntlet/` (exit 0) after
+landing. `tests/unit/`+`tests/api/` reproduces F64's pre-existing 15-test
+gap both with and without this round's changes (see F64) — otherwise clean.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight

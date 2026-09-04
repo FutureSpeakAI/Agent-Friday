@@ -162,6 +162,33 @@ def mark_boot_succeeded() -> None:
     _write(ATTEMPT_FILE, a)
 
 
+def wait_for_health(url: str, attempts: int = 6, initial_delay: float = 2.0,
+                    timeout: float = 5.0) -> bool:
+    """Poll `url` (a local self-health-check endpoint) with backoff; True the
+    moment a real 2xx response comes back, False if every attempt fails.
+
+    This is the "and then served a request" half of this module's own
+    headline claim (see the module docstring) -- extracted from server.py's
+    boot-confirmation thread so the retry/backoff behavior itself has a real
+    test, rather than only living inside a thread nested in the startup
+    function (gauntlet-2026-09-03 F55: before this existed, the caller
+    skipped this check entirely and promoted every boot to known-good after
+    a fixed sleep, regardless of whether anything was actually being served).
+    """
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    for attempt in range(max(1, attempts)):
+        try:
+            with _ureq.urlopen(url, timeout=timeout) as resp:
+                if 200 <= resp.status < 300:
+                    return True
+        except (_uerr.URLError, OSError, TimeoutError):
+            pass
+        if attempt < attempts - 1:
+            time.sleep(initial_delay * (attempt + 1))
+    return False
+
+
 def failing_to_boot() -> bool:
     return int(_read_attempt().get("consecutive_failures", 0)) >= MAX_FAILED_BOOTS
 
