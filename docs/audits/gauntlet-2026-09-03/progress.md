@@ -102,6 +102,49 @@ failures visible in the dot output, ran well past tests/README.md's claimed
 or the doc's timing claim). This batch's 2 landed fixes are clean against
 the whole suite.
 
+### Fix #3 — MCP restart() bypassed the security-disable gate (F8, BROKEN)
+**File:** [src/agent_friday/mcp_client.py](../../../src/agent_friday/mcp_client.py)
+**Finding:** `extension_security.gate_mcp_config()` blocks a connector at boot
+whose launch command trips the destructive/download-and-execute scanner,
+which becomes `sp.status = "disabled"`. `MCPManager.start_all()` and
+`MCPManager.authorize()` both correctly check for that status and refuse.
+`MCPManager.restart()` did not — it unconditionally called `sp.stop()` then
+`sp.start()`. Since `POST /api/mcp/restart` is the single most natural thing
+an operator does after seeing a blocked connector's (mislabeled — see F9,
+queued) status, a security-blocked server could be started for real just by
+clicking Restart.
+**Fix:** added the same `if sp.status == "disabled": return False` guard
+`start_all()` already has, at the top of `restart()`.
+**Probe:** [tests/gauntlet/test_mcp_restart_respects_disabled.py](../../../tests/gauntlet/test_mcp_restart_respects_disabled.py)
+**Evidence:**
+- RED before fix: `restart()` called `sp.start()` on a disabled server.
+- GREEN after fix: both tests pass (including a no-op-shaped sanity check that restart still works for a *non*-disabled server — the guard is specific, not a blanket refusal).
+- RED again after reverting via `git stash` (no-op check) — same failure, same reason.
+- Fix reapplied from the stash; stash entry dropped.
+- `pytest tests/gauntlet/` after this fix: 9/9 pass except the one deliberately-red F3 probe (queued finding, correct state).
+- Full `pytest tests/unit tests/api --tb=no -q` run in background after this fix — result recorded below once it lands.
+
+## ⚠ HIGHEST-PRIORITY QUEUE ITEM — please read first
+
+**F10 — "On this computer only... Nothing is sent anywhere, ever" is false
+by default.** Onboarding's own local_only copy is an absolute, unqualified
+privacy promise. `routing/model_router.py`'s `_route_basic()` silently
+routes to cloud when Ollama isn't running or no local model is installed —
+in BOTH of those branches the `fallback_to_cloud` check is either dead code
+(both its branches return the same `provider: "cloud"`) or entirely absent.
+`setup_wizard.py` also never sets `fallback_to_cloud=False` when a user
+picks local_only — it only writes `mode`. `routes/chat.py` has a correct
+"LOCAL ONLY MEANS LOCAL ONLY" refusal already, but it only fires when the
+router *already chose local* and the live call then fails mid-request — it
+never runs when the router decided cloud up front, which is exactly this
+case. **Not fixed tonight.** This needs coordinated changes across 3 files
+and a real product decision (what should local_only actually DO when it
+truly cannot avoid cloud — refuse with an error, matching the existing
+mid-request pattern? something else?) that affects the app's most
+safety-critical default. Getting the failure shape wrong risks crashing
+callers that assume a local result always carries a model. Full evidence in
+findings.jsonl F10. Please look at this first.
+
 ## QUEUED FOR STEPHEN
 
 ### Q1 — context_retention_days is decorative (F3, BROKEN)
