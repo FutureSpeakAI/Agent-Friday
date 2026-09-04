@@ -3,7 +3,75 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.6.6**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.11.0**
+>
+> Entries for 5.7.0 through 5.10.0 are not recorded here — those releases
+> were tagged without a changelog entry. This file resumes at 5.11.0 rather
+> than reconstructing the gap after the fact.
+
+---
+
+## [5.11.0] — 2026-09-03
+
+Merges four branches built and verified separately: security-boundary
+enforcement, the retirement of a self-approving consent tool, boot-guard
+rollback hardening, and the knowledge-graph conversation fix. Full unit and
+API suites green on the merged code, not just on each branch alone.
+
+### Fixed
+
+- **The knowledge graph's conversation source has never indexed a single
+  turn.** It called a method (`recent_turns`) that never existed and read a
+  field (`content`) the real method never returns; a bare `except Exception:
+  return []` made the resulting crash indistinguishable from "no
+  conversations yet." Conversations now actually reach the knowledge graph.
+- **`knowledge_graph` settings were silently discarded.** The key was never
+  declared in the settings whitelist, so every change made in Settings →
+  Knowledge saved to disk but was dropped on every read.
+- **Two dead Privacy controls, removed or fixed.** The "EGRESS GATE / Cloud
+  Mode" toggle wrote a setting nothing read; removed. "Local-Only Mode" in
+  `ui_parts/app.html` wrote a key the server never read; fixed to match
+  `index.html`, which already had it right.
+- **A settings control that writes a key nothing reads can no longer ship
+  silently.** `scripts/check_settings_readers.py`, wired into both pytest
+  and the pre-commit hook, catches the class of bug above before it lands
+  again.
+- **Ten of eleven places where private context could reach a cloud AI
+  provider ungated are closed**, including the Gemini Live voice system
+  instruction (previously protected only by a vault-assembly gate you have
+  deliberately left off), live microphone audio (no record of it existed
+  anywhere), and a real bypass found while fixing this: the channel "send
+  test message" button could push unfiltered text out Telegram/Discord
+  directly. See `docs/design/security-boundary.md` for the eleventh
+  (deferred — needs a font/asset self-hosting decision) and the full list.
+- **A tool that let Friday's own AI grant itself permission to send data to
+  the cloud is removed.** `enterprise_consent_grant` and the
+  policy-rewriting half of `enterprise_cloud_gate` are gone from the
+  friday-core MCP layer; a first-boot migration revokes any standing
+  permission a model may have already minted under it.
+- **Federation endpoint hardening.** `/api/federation/compute/request` and
+  two siblings now carry the same auth marker as the rest of the file, for
+  consistency — though the app's existing blanket auth check already
+  covered them; see the session report for what this does and doesn't
+  close. The underlying risk (a "run a Python script" capability gated
+  only by a caller-stated trust score) is not fixed here and needs a real
+  design decision.
+- **Boot-guard's self-edit rollback could not actually have protected a
+  boot.** It covered two files; a bad self-edit to anything in
+  `src/agent_friday` or `index.html` — everything that actually runs —
+  was invisible to it. Coverage now includes the real package root and
+  `index.html`; snapshots are staged-and-swapped with a completion marker
+  so a crash mid-snapshot can't leave a corrupt restore point; and
+  `check_self_edit`/`check_scope`, previously unwired, now actually gate
+  `code_apply`.
+
+### New
+
+- **The retrieval ledger.** Every prompt assembly — filtered or not, local
+  or cloud — now writes a permanent local record of which sections went
+  in, how sensitive each was rated, and how large, without ever recording
+  content. Closes the gap where an ungated cloud prompt left no trace of
+  what it carried.
 
 ---
 
