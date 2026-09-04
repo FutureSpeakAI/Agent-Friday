@@ -2684,9 +2684,20 @@ if sock is not None:
                         # over (browser reconnected while this handler's socket
                         # is half-open), stop renewing — fighting the new
                         # handler for the Gemini session corrupts the handle
-                        # cache and duplicates the conversation.
+                        # cache and duplicates the conversation. Every OTHER
+                        # way this loop ends a call the browser didn't ask to
+                        # end (local-only above, the giveup/GoAway paths
+                        # below) sends a status/error frame before done.set()
+                        # -- _safe_send() itself no-ops once done is set, so
+                        # this is the one exit that must send first. Without
+                        # it, opening voice mode in a second tab silently
+                        # killed the first tab's call with no signal at all
+                        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
                         if not _live_conn_current(_conn_gen):
                             _vlog('superseded by a newer voice connection — zombie handler exiting')
+                            _safe_send({"type": "status",
+                                       "text": "this call ended — voice was opened in another "
+                                                "window or tab"})
                             done.set()
                             break
                         _use_handle = (resume_handle[0]

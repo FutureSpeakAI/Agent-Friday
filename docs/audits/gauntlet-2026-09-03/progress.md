@@ -709,6 +709,28 @@ remain open/queued for you; closing the seam means fresh sweeps stopped
 finding anything new twice in a row, not that every queued item on it is
 resolved. See coverage.md for the full round-by-round history.
 
+### Fix #16 — a second browser tab silently killed the first tab's voice call (F39)
+**File:** [src/agent_friday/routes/voice.py](../../../src/agent_friday/routes/voice.py)
+**Finding:** every other reason `/ws/live`'s reconnect loop ends a call the
+browser didn't ask for (local-only turned on mid-call, F33; the handle-
+retry giveup; a hard connect failure) sends a status/error frame before
+`done.set()` — `_safe_send()` itself no-ops once `done` is set, so this
+ordering is load-bearing. The "zombie fence" branch (fires when a second
+`/ws/live` connection — e.g. a second browser tab — supersedes this one,
+per the single global connection-generation slot) broke that pattern: it
+set `done` with no notification at all. A second tab silently ended the
+first tab's live call with zero signal to the user.
+**Fix:** added the same `_safe_send(...)` call the sibling local-only
+branch already has, before `done.set()`.
+**Probe:** [tests/gauntlet/test_voice_zombie_fence_notifies.py](../../../tests/gauntlet/test_voice_zombie_fence_notifies.py)
+**Evidence:** RED before fix → GREEN after (2/2, including a no-op-shaped
+check that the sibling branch this fix was modeled on still notifies
+correctly) → RED again on `git stash` revert → fix reapplied, stash
+dropped. Full `tests/gauntlet/` green (only the 2 pre-existing by-design
+reds).
+**Batch verification, Fix #16:** full unit+API suite running now — result
+to follow below once complete.
+
 ## Retroactive revert verification — F1, F2, F8, F11, F12
 
 These five landed before the red→green→red-on-revert discipline was
@@ -826,6 +848,21 @@ consequences for each, and the copy corrected now regardless of which way
 that goes (Fix #5, just below the queue item).
 
 ## QUEUED FOR STEPHEN
+
+### F40 — the Federation panel's per-peer ask/allow/block trust control does nothing
+The dropdown reads as a real lever (color-coded amber/green/red, defaults
+to "ask") — marking a peer "block" should stop its federation traffic.
+It can't: the UI's save call POSTs to a route that doesn't exist
+(swallowed by an empty error handler, so the click looks like it worked),
+and even the underlying DB column is never read anywhere that would gate
+behavior — every peer is processed identically regardless of its pref.
+Compounds the already-queued F22 (a peer's settings-sync push can
+overwrite your real settings.json): the one control meant to stop a given
+peer stops nothing. Not fixed because the right semantics for "ask"
+specifically (presumably: pause for interactive approval, a flow that
+doesn't exist yet) is a real federation-protocol design decision, not
+mechanical wiring — building only "allow"/"block" would just move the
+false promise onto "ask." Evidence in findings.jsonl F40.
 
 ### Q23 — F31's own cost cap can silently, permanently drop chunks from multi-chunk files (gated_cloud mode only)
 A side effect of tonight's own F31 fix, not present before the cap
