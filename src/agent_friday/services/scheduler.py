@@ -793,6 +793,19 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] memory_dreaming unavailable: {e}")
 
+    # knowledge-graph-reindex — nightly Tier A rebuild + Tier B delta at 03:30,
+    # after memory dreaming (03:00) so freshly consolidated facts make it into
+    # the graph. This was ported from notifications._register_default_daily_jobs
+    # (orphaned by the scheduler migration — nothing called that function, so
+    # this job never ran; see docs/audits/gauntlet-2026-09-03/findings.jsonl F1).
+    try:
+        from agent_friday.services.notifications import _run_knowledge_reindex_job
+        register_builtin_task("knowledge_graph_reindex", _run_knowledge_reindex_job,
+                              label="Knowledge graph reindex", default_trigger="daily",
+                              default_spec={"hour": 3, "minute": 30}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] knowledge_graph_reindex unavailable: {e}")
+
     # learning-epoch (v5) — weekly mine→promote cycle over task outcomes.
     try:
         from agent_friday.services.learning_loop import run_epoch as _learn_epoch

@@ -1,0 +1,38 @@
+fix(gauntlet): wire the orphaned nightly KG reindex + close provider_health's google/comfyui/higgsfield gap
+
+Batch 1 of the gauntlet audit's fix mandate. Both fixes proven red->green->
+red-on-revert under tests/gauntlet/, then run together against the full
+unit+API suite (exit code 0, no regressions).
+
+- scheduler.py: the nightly knowledge-graph reindex job was registered
+  inside notifications._register_default_daily_jobs(), a function orphaned
+  by the scheduler migration and never called from anywhere. Ported it into
+  _register_default_builtin_tasks(), the registrar start_scheduler() (and
+  therefore server boot) actually calls.
+
+- provider_health.py + local_image.py: the deep-check path proved real
+  inference for ollama/anthropic/openai-compatible (13/16 providers, 11 of
+  them only because they share one type) but silently fell back to a
+  decorative "key present"/unconditional "ok" for google, local-comfyui,
+  and higgsfield — the same defect class as the historical two-providers-
+  special-cased bug, recurring with a different residual set. Added a real
+  google inference probe (mirrors the existing anthropic branch), a
+  local_image.is_reachable() liveness check for comfyui, and wired
+  higgsfield to provider_registry.is_provider_available()'s existing
+  correct MCP-connector check that provider_health never called.
+
+- tests/gauntlet/test_context_retention_days_is_decorative.py: pins a third
+  finding (context_retention_days persists/reads back but nothing ever
+  prunes a log by age) as a deliberately-red probe. Not fixed — automating
+  deletion of the user's own log data overnight, unsupervised, is queued
+  for Stephen (progress.md Q1), not a unilateral call.
+
+Also folds in operational corrections handed off from the session that
+authored the gauntlet-loop prompt: corrected per-seam exit criteria
+(coverage.md), a ~/.friday read policy for subagents, a tightened
+GET-safety rule for the live instance, and reclassifies the screenshot/
+vision-path finding (F4) as HOLDS after independent re-verification showed
+the fix already landed 2026-08-23 — KNOWN_ISSUES.md's text was just 18
+seconds stale (queued as Q3, trivial doc correction).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
