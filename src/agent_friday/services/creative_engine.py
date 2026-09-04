@@ -858,6 +858,27 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     if not allowed:
         return {"status": "blocked", "reason": reason}
 
+    # ── Routed local video generation. ────────────────────────────────────
+    # Same rationale and placement as generate_image()'s local_image branch:
+    # checked before `is_available()`, which only asks whether the *Gemini*
+    # client is configured — an on-device generation must not be refused for
+    # want of a cloud credential it never uses. `is_installed` (not mere
+    # membership) so a half-downloaded model falls through to cloud instead of
+    # failing partway through a render.
+    try:
+        from agent_friday.services import local_video as _local_video
+        _requested_lv = model or _configured_video_model()
+        if (_requested_lv in _local_video.MODELS
+                and _local_video.is_installed(_requested_lv)):
+            out = _local_video.generate(prompt, aspect_ratio=aspect_ratio,
+                                        duration_seconds=duration_seconds or 0,
+                                        model=_requested_lv)
+            out.setdefault("api_model", out.get("model") or _requested_lv)
+            out.setdefault("prompt", prompt)
+            return out
+    except Exception as _lv_err:                 # never break the cloud path
+        log.warning("local video dispatch skipped: %s", _lv_err)
+
     # ── Higgsfield-seated video models. ───────────────────────────────────
     # Before the `is_available()` Gemini check, for the same reason as the
     # image path: a Seedance or Kling generation must not be refused for want

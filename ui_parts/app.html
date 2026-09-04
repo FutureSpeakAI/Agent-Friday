@@ -7915,6 +7915,15 @@ function SettingsTabModels({s,save}){
         </div>
       </StRow>;
     }
+    // Creative's picked model may carry a `note` (a real trade-off — steps,
+    // speed, resolution limits) and a `licence`/`licence_note` (real
+    // conditions on using it — commercial-use thresholds, personal-use-only
+    // restrictions). A <select> can't show rich subtext per option, so this
+    // renders the CURRENTLY selected model's note/licence as a line below the
+    // dropdown instead — updates the moment the selection changes, same
+    // derived-state-from-mc.byId read the "via Model Browser" label above
+    // already relies on.
+    const selMeta=role==='creative'?mc.byId[s[key]]:null;
     return <StRow key={key} label={label} desc={desc}>
       <select className="input" style={{width:'100%'}} value={s[key]||''} onChange={e=>save({[key]:e.target.value})}>
         <option value="">— default —</option>
@@ -7924,6 +7933,13 @@ function SettingsTabModels({s,save}){
         {s[key]&&!models.some(m=>m.id===s[key])&&<option value={s[key]}>{mc.byId[s[key]]?((mc.byId[s[key]].label||s[key])+' (via Model Browser)'):(s[key]+' (no longer offered)')}</option>}
         {models.map(m=><option key={m.id} value={m.id} disabled={m.available===false}>{(m.label||m.id)+(m.available===false?' — needs '+(m.needs_key||'setup'):'')}</option>)}
       </select>
+      {selMeta&&(selMeta.note||selMeta.licence||selMeta.licence_note)&&
+        <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',marginTop:6,lineHeight:1.5}}>
+          {selMeta.note&&<div>{selMeta.note}</div>}
+          {(selMeta.licence||selMeta.licence_note)&&<div style={{color:'#ffb347'}}>
+            {selMeta.licence}{selMeta.licence&&selMeta.licence_note?' — ':''}{selMeta.licence_note}
+          </div>}
+        </div>}
     </StRow>;
   };
   return <div>
@@ -8150,6 +8166,9 @@ function SettingsTabPrivacy({s,save}){
       </div>}
       {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+    </StSection>
+    <StSection title="CLOUD MODE">
+      <StToggle label="Unrestricted Cloud" value={!!(s.model_routing||{}).unrestricted_cloud} onChange={()=>save({model_routing:{...(s.model_routing||{}),unrestricted_cloud:!(s.model_routing||{}).unrestricted_cloud}})} desc="Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."/>
     </StSection>
     <StSection title="YOUR DATA">
       <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists.</div>
@@ -8538,6 +8557,13 @@ function ModelBrowser({save}){
             <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>
               {modIcons(m)}{m.provider_label} · ctx {fmtCtx(m.context_window)} · {fmtPrice(m)}{m.supports_tools===true?' · tools ✓':m.supports_tools===false?' · no tools':''}{m.available?'':' · needs key'}
             </div>
+            {/* Creative-only rows carry the real trade-off (steps, speed,
+                resolution) and licence terms — surfaced here, not just in the
+                Settings dropdown, since Model Browser is the other place these
+                get picked (the Image/Video buttons a few lines down). */}
+            {(m.note||m.licence)&&<div style={{fontSize:10,color:'rgba(255,255,255,0.3)',marginTop:2}}>
+              {m.note}{m.note&&m.licence?' · ':''}{m.licence&&<span style={{color:'#ffb347'}}>{m.licence}</span>}
+            </div>}
           </div>
           <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as orchestrator (main brain)" onClick={()=>useAs('orchestrator_model',m.id)}>Orchestrator</button>
           <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} title="Use as sub-agent model" onClick={()=>useAs('subagent_model',m.id)}>Subagent</button>
@@ -8659,7 +8685,15 @@ function SettingsTabAbout(){
   </div>;
 }
 function SettingsTabKnowledge({s,save}){
-  const kg=s.knowledge_graph||{};
+  const kg0=s.knowledge_graph||{};
+  // Defensive normalization: settings.json can still carry the pre-2026-09-03
+  // values ("local_only"/"gated_cloud") until this specific key is next saved
+  // — the backend migrates them on every read (kg_settings()), but this GET
+  // /api/settings response is the raw file, so the dropdown does the same
+  // translation rather than rendering blank against an <option> that no
+  // longer exists.
+  const _modeMap={local_only:'local',gated_cloud:'cloud'};
+  const kg={...kg0,indexing_mode:_modeMap[kg0.indexing_mode]||kg0.indexing_mode||'local'};
   const src=kg.index_sources||{wiki:true,conversations:true,cognitive:true,soul:true};
   const patch=(p)=>save({knowledge_graph:{...kg,index_sources:src,...p}});
   const patchSrc=(k,v)=>save({knowledge_graph:{...kg,index_sources:{...src,[k]:v}}});
@@ -8682,12 +8716,13 @@ function SettingsTabKnowledge({s,save}){
     <div style={{fontSize:11,color:'#889',marginBottom:14}}>Friday's second brain: the wiki as a linked galaxy plus an LLM-extracted semantic layer. The wiki markdown is always the source of truth — the graph is derived and can be rebuilt at any time.</div>
 
     <div style={row}>
-      <div><div style={lbl}>Semantic indexing</div><div style={sub}>Where Tier-B LLM extraction runs. Local only = nothing ever leaves this machine.</div></div>
-      <select style={sel} value={kg.indexing_mode||'local_only'} onChange={e=>patch({indexing_mode:e.target.value})}>
-        <option value="local_only">Local only (private, default)</option>
-        <option value="gated_cloud">Gated cloud (public content only, sealed)</option>
+      <div><div style={lbl}>Semantic indexing</div><div style={sub}>Where Tier-B LLM extraction runs — your choice, not automatic. Local: nothing ever leaves this machine. Cloud: routes through Friday's normal cloud privacy rules{(s.model_routing||{}).unrestricted_cloud?' — currently UNRESTRICTED, see Privacy & Security':''}.</div></div>
+      <select style={sel} value={kg.indexing_mode||'local'} onChange={e=>patch({indexing_mode:e.target.value})}>
+        <option value="local">Local (private, default)</option>
+        <option value="cloud">Cloud (frontier models)</option>
       </select>
     </div>
+    <div style={{...sub,marginTop:-6,marginBottom:9}}>Active now: <b style={{color:kg.indexing_mode==='cloud'?'#ff9f43':'#4ade80'}}>{kg.indexing_mode==='cloud'?'CLOUD':'LOCAL'}</b></div>
 
     <div style={row}>
       <div><div style={lbl}>Nightly reindex</div><div style={sub}>03:30, right after memory dreaming, so new facts join the galaxy.</div></div>

@@ -381,6 +381,18 @@ def cancel_process(pid):
                 stopped.append("image sampling")
         except Exception:
             pass
+    elif str(pid).startswith("video-"):
+        # Same shape as the image branch above — local_video shares
+        # local_image's cancel-flag/interrupt plumbing rather than duplicating
+        # it, so this is the one other place that needs to know its prefix.
+        try:
+            from agent_friday.services import local_video as _lv
+            _lv.request_cancel(pid)
+            stopped.append("the job")
+            if _lv.interrupt_comfy():
+                stopped.append("video sampling")
+        except Exception:
+            pass
 
     # 2. The lease. The generation releases it itself on the way out, which is
     #    the tidier path because it also stops ComfyUI in the right order — so

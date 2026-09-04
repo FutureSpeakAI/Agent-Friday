@@ -33194,6 +33194,15 @@ function SettingsTabModels({
         placeholder: 'Search all models for ' + label.toLowerCase() + '…'
       })));
     }
+    // Creative's picked model may carry a `note` (a real trade-off — steps,
+    // speed, resolution limits) and a `licence`/`licence_note` (real
+    // conditions on using it — commercial-use thresholds, personal-use-only
+    // restrictions). A <select> can't show rich subtext per option, so this
+    // renders the CURRENTLY selected model's note/licence as a line below the
+    // dropdown instead — updates the moment the selection changes, same
+    // derived-state-from-mc.byId read the "via Model Browser" label above
+    // already relies on.
+    const selMeta = role === 'creative' ? mc.byId[s[key]] : null;
     return /*#__PURE__*/React.createElement(StRow, {
       key: key,
       label: label,
@@ -33215,7 +33224,18 @@ function SettingsTabModels({
       key: m.id,
       value: m.id,
       disabled: m.available === false
-    }, (m.label || m.id) + (m.available === false ? ' — needs ' + (m.needs_key || 'setup') : '')))));
+    }, (m.label || m.id) + (m.available === false ? ' — needs ' + (m.needs_key || 'setup') : '')))), selMeta && (selMeta.note || selMeta.licence || selMeta.licence_note) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.4)',
+        marginTop: 6,
+        lineHeight: 1.5
+      }
+    }, selMeta.note && /*#__PURE__*/React.createElement("div", null, selMeta.note), (selMeta.licence || selMeta.licence_note) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#ffb347'
+      }
+    }, selMeta.licence, selMeta.licence && selMeta.licence_note ? ' — ' : '', selMeta.licence_note)));
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "CAPABILITY ROUTING"
@@ -33986,6 +34006,18 @@ function SettingsTabPrivacy({
       }
     }),
     desc: "Force all AI processing to local models. Cloud providers receive no vault data."
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "CLOUD MODE"
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Unrestricted Cloud",
+    value: !!(s.model_routing || {}).unrestricted_cloud,
+    onChange: () => save({
+      model_routing: {
+        ...(s.model_routing || {}),
+        unrestricted_cloud: !(s.model_routing || {}).unrestricted_cloud
+      }
+    }),
+    desc: "Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "YOUR DATA"
   }, /*#__PURE__*/React.createElement("div", {
@@ -35317,7 +35349,22 @@ function ModelBrowser({
       color: 'rgba(255,255,255,0.35)',
       fontFamily: 'JetBrains Mono'
     }
-  }, modIcons(m), m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key')), /*#__PURE__*/React.createElement("button", {
+  }, modIcons(m), m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key'),
+  // Creative-only rows carry the real trade-off (steps, speed, resolution)
+  // and licence terms — surfaced here, not just in the Settings dropdown,
+  // since Model Browser is the other place these get picked (the
+  // Image/Video buttons a few lines down).
+  (m.note || m.licence) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.3)',
+      marginTop: 2
+    }
+  }, m.note, m.note && m.licence ? ' · ' : '', m.licence && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#ffb347'
+    }
+  }, m.licence))), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 10,
@@ -35760,7 +35807,15 @@ function SettingsTabKnowledge({
   s,
   save
 }) {
-  const kg = s.knowledge_graph || {};
+  const kg0 = s.knowledge_graph || {};
+  // Defensive normalization: settings.json can still carry the pre-2026-09-03
+  // values ("local_only"/"gated_cloud") until this specific key is next saved
+  // -- the backend migrates them on every read (kg_settings()), but this GET
+  // /api/settings response is the raw file, so the dropdown does the same
+  // translation rather than rendering blank against an <option> that no
+  // longer exists.
+  const _modeMap = { local_only: 'local', gated_cloud: 'cloud' };
+  const kg = { ...kg0, indexing_mode: _modeMap[kg0.indexing_mode] || kg0.indexing_mode || 'local' };
   const src = kg.index_sources || {
     wiki: true,
     conversations: true,
@@ -35852,17 +35907,21 @@ function SettingsTabKnowledge({
     style: lbl
   }, "Semantic indexing"), /*#__PURE__*/React.createElement("div", {
     style: sub
-  }, "Where Tier-B LLM extraction runs. Local only = nothing ever leaves this machine.")), /*#__PURE__*/React.createElement("select", {
+  }, "Where Tier-B LLM extraction runs — your choice, not automatic. Local: nothing ever leaves this machine. Cloud: routes through Friday's normal cloud privacy rules" + ((s.model_routing || {}).unrestricted_cloud ? " — currently UNRESTRICTED, see Privacy & Security" : "") + ".")), /*#__PURE__*/React.createElement("select", {
     style: sel,
-    value: kg.indexing_mode || 'local_only',
+    value: kg.indexing_mode || 'local',
     onChange: e => patch({
       indexing_mode: e.target.value
     })
   }, /*#__PURE__*/React.createElement("option", {
-    value: "local_only"
-  }, "Local only (private, default)"), /*#__PURE__*/React.createElement("option", {
-    value: "gated_cloud"
-  }, "Gated cloud (public content only, sealed)"))), /*#__PURE__*/React.createElement("div", {
+    value: "local"
+  }, "Local (private, default)"), /*#__PURE__*/React.createElement("option", {
+    value: "cloud"
+  }, "Cloud (frontier models)"))), /*#__PURE__*/React.createElement("div", {
+    style: {...sub, marginTop: -6, marginBottom: 9}
+  }, "Active now: ", /*#__PURE__*/React.createElement("b", {
+    style: {color: kg.indexing_mode === 'cloud' ? '#ff9f43' : '#4ade80'}
+  }, kg.indexing_mode === 'cloud' ? 'CLOUD' : 'LOCAL')), /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: lbl
