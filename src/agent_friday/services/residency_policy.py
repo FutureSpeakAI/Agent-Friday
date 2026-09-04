@@ -1507,6 +1507,180 @@ def check_disk_headroom(profile: dict, artifact_mib: int) -> dict:
     }
 
 
+# ── Verdicts — three axes, never "compatible" (headroom.md §5.2) ────────────
+
+def _unknown_verdict(why: str) -> dict:
+    return {"status": "unknown", "basis": "unknown", "explanation": why}
+
+
+def _fits_verdict(fp: dict, basis: str, profile: dict, model_id: str) -> dict:
+    """Can it be placed under the contract at all?
+
+    R2/R3/R8 arithmetic today (no D1 Contract yet — see `verdicts()`'s own
+    docstring). `ready-but` here specifically covers the case the table names
+    it for on a DECLARED number: the model's own guidance is the only figure
+    that exists, so whether it truly fits is contingent on evicting other
+    seats and confirming it — exactly the thing only a real placement (the
+    chain planner, headroom.md §6, not built in this phase) can settle. HR18:
+    that contingency is rendered as `ready-but`, never `refused` — only a
+    MEASURED shortfall refuses.
+    """
+    if fp.get("device") == "cpu":
+        # CPU services take no VRAM; R2 (host RAM) is runs_well's question.
+        return {"status": "ready", "basis": basis,
+               "explanation": "%s runs on CPU; no VRAM to place" % model_id}
+
+    vram_mib = fp.get("vram_mib")
+    vram_min = (fp.get("requires") or {}).get("vram_min_mib")
+    need = vram_mib if vram_mib is not None else vram_min
+    if need is None:
+        return _unknown_verdict(
+            "%s has no measured or declared VRAM figure" % model_id)
+
+    budgets = gpu_budgets(profile)
+    if not budgets:
+        # A GPU-only model with no GPU on the profile: this is a genuine,
+        # rule-backed refusal (R5) regardless of basis — there is no card to
+        # be wrong about, so HR18's "declared never refuses" does not apply.
+        return {"status": "refused", "basis": basis, "rule_id": "R5",
+               "explanation": "%s needs a GPU; none on this profile"
+                              % model_id}
+    free = max((b.get("available_mib") or 0) for b in budgets)
+
+    if free >= need:
+        return {"status": "ready", "basis": basis, "vram_mib": need,
+               "free_mib": free,
+               "explanation": "%d MiB needed, %d MiB free" % (need, free)}
+    # HR18 — only a MEASURED shortfall refuses. Gated on `basis`, not on
+    # which field carried the number: a `declared` footprint can still set
+    # `vram_mib` directly (not only `requires.vram_min_mib`), and it must
+    # not refuse either way.
+    if basis != "measured":
+        return {"status": "ready-but", "basis": basis, "vram_mib": need,
+               "free_mib": free,
+               "explanation": (
+                   "the model's own guidance says at least %d MiB; not "
+                   "confirmed on this machine (%d MiB free after the "
+                   "existing seats) — a declared figure is never a refusal"
+                   % (need, free))}
+    return {"status": "refused", "basis": basis, "rule_id": "R3",
+           "vram_mib": need, "free_mib": free,
+           "explanation": "measured %d MiB needed, only %d MiB free"
+                          % (need, free)}
+
+
+def _runs_well_verdict(fp: dict, basis: str, profile: dict,
+                       model_id: str) -> dict:
+    """Will the machine stay usable and will it finish in reasonable time?
+
+    Reads RAM against `requires.ram_recommended_mib` / `requires.ram_min_mib`
+    (declared) and `host_ram_mib` (measured, CPU services). A `degraded`
+    verdict is never a refusal on its own axis — `fits` already carried
+    HR18's refuse-only-when-measured rule, and `runs_well` has no `refused`
+    value at all (§5.2's table): the worst it says is `degraded`, with the
+    reason named, and the fetch stays offered (D4).
+    """
+    requires = fp.get("requires") or {}
+    ram_rec = requires.get("ram_recommended_mib")
+    ram_min = requires.get("ram_min_mib")
+    host_ram = fp.get("host_ram_mib")
+    if ram_rec is None and ram_min is None and host_ram is None:
+        return _unknown_verdict(
+            "no RAM or throughput figure recorded for %s on this machine"
+            % model_id)
+
+    ram = profile.get("ram") or {}
+    avail = ram.get("available_mib") or ram.get("total_mib")
+    problems = []
+    if avail:
+        if ram_rec and avail < ram_rec:
+            problems.append(
+                "the model's own guidance recommends %d MiB RAM; this "
+                "machine has %d" % (ram_rec, avail))
+        if ram_min and avail < ram_min:
+            problems.append(
+                "needs at least %d MiB RAM; this machine has %d"
+                % (ram_min, avail))
+        if host_ram and avail < host_ram:
+            problems.append(
+                "measured %d MiB host RAM at load, %d MiB available"
+                % (host_ram, avail))
+    if problems:
+        return {"status": "degraded", "basis": basis,
+               "explanation": "; ".join(problems)}
+    return {"status": "ready", "basis": basis,
+           "explanation": "fits within the measured/declared RAM guidance"}
+
+
+def _worth_it_verdict(fp: dict, basis: str) -> dict:
+    """Is the output something the user wants? Licence and quality only —
+    HR16: shown, never enforced. Absence of either is not a demerit; a row
+    with neither reads plainly `ready` and, per §8.2, "licence not
+    recorded" rather than a withheld verdict."""
+    licence = fp.get("licence")
+    quality = fp.get("quality_note")
+    if licence is None and quality is None:
+        return {"status": "ready", "basis": basis,
+               "explanation": "no licence or quality note recorded"}
+    bits = []
+    if licence:
+        bits.append(licence.get("note") or licence.get("name")
+                    or "licence recorded — see the row for the URL")
+    if quality:
+        bits.append(quality)
+    return {"status": "ready-but", "basis": basis, "explanation": "; ".join(bits)}
+
+
+def verdicts(entry: dict, profile: dict, contract=None) -> dict:
+    """`{fits, runs_well, worth_it}` — three axes, never a single
+    "compatible" (headroom.md §5.2).
+
+    `entry` is a CatalogEntry (`residency_catalog.entry()` / `store_entry()`)
+    or any dict carrying at least `model_id`; the Footprint itself is looked
+    up from `residency_catalog.footprint()`, not read off `entry`, because a
+    Footprint outlives any one CatalogEntry snapshot.
+
+    `contract` is accepted for the future Headroom Contract (D1 — not
+    decided, see `headroom_contract.py`'s own docstring) and is NOT read:
+    this degrades to the EXISTING R2/R3/R8 budget arithmetic
+    (`gpu_budgets`, `ram_budget`) rather than inventing D1's slack/RAM-floor
+    numbers, so `verdicts()` is usable today instead of waiting on it.
+
+    **HR1** — a verdict without a basis is not a verdict. No footprint, or a
+    footprint whose own `basis` is `"unknown"`, returns `unknown` on ALL
+    THREE axes; nothing here ever renders `ready` from nothing.
+    **HR2** — three axes are always returned; there is no combined verdict.
+    **HR18** — a `declared` number never refuses. Only a `measured` shortfall
+    produces `status: "refused"` (see `_fits_verdict`); a declared one
+    becomes `ready-but`, and `runs_well` has no `refused` state at all.
+    """
+    from agent_friday.services import residency_catalog as cat
+
+    model_id = (entry or {}).get("model_id") if isinstance(entry, dict) \
+        else None
+    fp = cat.footprint(model_id, profile) if model_id else None
+
+    if fp is None:
+        why = ("%s has not been measured on this machine" % model_id
+              if model_id else "no model_id given")
+        return {"fits": _unknown_verdict(why),
+               "runs_well": _unknown_verdict(why),
+               "worth_it": _unknown_verdict(why)}
+
+    basis = fp.get("basis")
+    if basis not in ("measured", "derived", "declared"):
+        why = "%s's footprint carries no basis Friday can act on" % model_id
+        return {"fits": _unknown_verdict(why),
+               "runs_well": _unknown_verdict(why),
+               "worth_it": _unknown_verdict(why)}
+
+    return {
+        "fits": _fits_verdict(fp, basis, profile, model_id),
+        "runs_well": _runs_well_verdict(fp, basis, profile, model_id),
+        "worth_it": _worth_it_verdict(fp, basis),
+    }
+
+
 def num_ctx_for_model(model_id: str, default: int = TOOL_SEAT_NUM_CTX) -> int:
     """The context the PLAN specifies for whichever seat holds `model_id`.
 

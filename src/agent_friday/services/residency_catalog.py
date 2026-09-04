@@ -312,6 +312,191 @@ def record_measurement(model_id: str, fingerprint: str,
     _save_store(data)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Footprint — what a model costs, for EVERY modality (headroom.md §5.1)
+#
+#  A CatalogEntry's per-num_ctx `measured` rows only ever described text: VRAM
+#  at a stated context, tokens/s, cold-load seconds. Image, voice and video
+#  have no `num_ctx` at all, so the seat that plans them (`residency_policy`
+#  image/stt/tts) either fabricated one (`vram_mib: None`) or was never
+#  written. Footprint is the one shape that covers all six modalities, and it
+#  lives in the SAME store as the text rows -- `record_measurement` /
+#  `measurements()` above, keyed at `num_ctx: None` for anything that is not
+#  a language model -- rather than a second parallel store, because §5.1 asks
+#  for "one footprint per (model_id, profile_fingerprint)" through "the
+#  existing record_measurement", not a new persistence path.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FOOTPRINT_MODALITIES = ("text", "embed", "image", "video", "stt", "tts")
+FOOTPRINT_DEVICES = ("gpu", "cpu")
+FOOTPRINT_BASES = ("measured", "derived", "declared", "unknown")
+
+# The record's own field order, verbatim from headroom.md §5.1. `measurements()`
+# already returns dicts carrying extra bookkeeping (`num_ctx`, `source`); this
+# is what `footprint()` below trims a stored row down to before handing it out,
+# so a caller sees exactly the shape the spec defines and nothing else.
+FOOTPRINT_FIELDS = (
+    "modality", "device", "vram_mib", "host_ram_mib", "artifact_bytes",
+    "load_s", "unit", "work_s_per_unit", "requires", "licence",
+    "quality_note", "basis", "measured_at",
+)
+
+
+def make_footprint(*, modality: str, device: str, basis: str,
+                   vram_mib: int | None = None,
+                   host_ram_mib: int | None = None,
+                   artifact_bytes: int | None = None,
+                   load_s: float | None = None,
+                   unit: str | None = None,
+                   work_s_per_unit: float | None = None,
+                   requires: dict | None = None,
+                   licence: dict | None = None,
+                   quality_note: str | None = None,
+                   measured_at: str | None = None) -> dict:
+    """Build one Footprint record (§5.1), with the two guards a hand-built
+    dict would not get for free:
+
+    HR1 -- a verdict without a `basis` is not a verdict. `basis` is required
+    and must be one of the four the spec names; there is no silent default
+    that would let a caller forget it and have the record read as "unknown"
+    by accident, or worse, as something more confident than it is.
+
+    HR6 -- an idle reading is never written as a footprint. `measured_at` is
+    set only by a job that actually ran the model, so a `basis="measured"`
+    record with no `measured_at` is refused here rather than accepted and
+    trusted downstream.
+    """
+    if modality not in FOOTPRINT_MODALITIES:
+        raise ValueError("modality must be one of %s, got %r"
+                         % (FOOTPRINT_MODALITIES, modality))
+    if device not in FOOTPRINT_DEVICES:
+        raise ValueError("device must be one of %s, got %r"
+                         % (FOOTPRINT_DEVICES, device))
+    if basis not in FOOTPRINT_BASES:
+        raise ValueError("basis must be one of %s, got %r"
+                         % (FOOTPRINT_BASES, basis))
+    if basis == "measured" and not measured_at:
+        raise ValueError(
+            "a basis='measured' footprint must carry measured_at -- HR6, "
+            "an idle reading is never written as a footprint")
+    return {
+        "modality": modality, "device": device,
+        "vram_mib": vram_mib, "host_ram_mib": host_ram_mib,
+        "artifact_bytes": artifact_bytes, "load_s": load_s,
+        "unit": unit, "work_s_per_unit": work_s_per_unit,
+        "requires": requires, "licence": licence,
+        "quality_note": quality_note,
+        "basis": basis, "measured_at": measured_at,
+    }
+
+
+def record_footprint(model_id: str, fingerprint: str, fp: dict) -> None:
+    """Persist a Footprint through the existing measurement store.
+
+    `num_ctx: None` is the sentinel that keeps a Footprint from colliding
+    with a text model's per-context rows in the SAME `model_id` bucket (an
+    image or voice model never has one of its own, so the collision cannot
+    happen the other way): `measurements()` already merges "store beats seed
+    at the same num_ctx", and None is a valid, stable dict key there.
+    """
+    record_measurement(model_id, fingerprint, dict(fp, num_ctx=None))
+
+
+def _footprint_from_text_row(row: dict) -> dict:
+    """Migrate one legacy per-num_ctx text measurement into a Footprint,
+    without retyping SEED_MEASUREMENTS -- §12 Phase 2 item 1: "migrated, not
+    retyped". `ms_per_token` is milliseconds; Footprint's `work_s_per_unit`
+    is SECONDS per unit (token), per §5.1's own field name.
+
+    Every SEED_MEASUREMENTS row already carries `measured_at` and was a real
+    daemon read (`residency_catalog.py`'s own module docstring: "VRAM read
+    from the daemon's own /api/ps ... None of these models had ever been
+    measured"), so basis is `measured` here even for a seed row -- source
+    ("seed" vs "measured") says WHERE it was recorded, not WHETHER it was.
+    """
+    ms = row.get("ms_per_token")
+    modality = "embed" if is_embedding(row.get("_model_id") or "") else "text"
+    return make_footprint(
+        modality=modality, device="gpu",
+        vram_mib=row.get("vram_mib"),
+        load_s=row.get("cold_load_s"),
+        unit="token",
+        work_s_per_unit=(ms / 1000.0) if ms else None,
+        basis="measured",
+        measured_at=row.get("measured_at"),
+    )
+
+
+# Facts about a model that are NOT tied to any one machine: a licence, an
+# upstream "requires N GB VRAM" claim, a modality with no local backend at
+# all. Looked up by `footprint()` as the last resort, below anything actually
+# measured or seeded for a specific profile fingerprint -- a declared fact is
+# always available (a licence does not change per GPU), while a measured one
+# only exists where someone ran it. All entries are `basis="declared"`; HR18
+# means none of them may ever produce a `refused` verdict, only `degraded` /
+# `ready-but` (residency_policy.verdicts()).
+DECLARED_FOOTPRINTS: dict = {
+    # nemo_voice.MIN_VRAM_GB=4.0, VERIFIED -- the Tier-2 GPU voice gate. No
+    # measurement job exists for it (headroom.md §12 Phase 2 item 3: "declared
+    # ... no measurement needed, it's explicitly declared per the spec").
+    "nvidia/nemotron-3.5-asr-streaming-0.6b": make_footprint(
+        modality="stt", device="gpu", basis="declared",
+        requires={"vram_min_mib": 4096},
+        licence={"name": "OpenMDW-1.1",
+                "note": "NVIDIA Open Model Dataset & Weight License",
+                "url": "https://developer.download.nvidia.com/licenses/"
+                       "nvidia-open-model-dataset-weight-license-1.1.pdf"},
+        quality_note="GPU streaming ASR; falls back to the CPU tier below "
+                     "4 GB free VRAM",
+    ),
+    # model_plan.EMBEDDER -- the CPU sentence-transformers embedder
+    # conversation_memory actually calls, distinct from the qwen3-embedding
+    # Ollama seat above (which already has a measured row).
+    "all-MiniLM-L6-v2": make_footprint(
+        modality="embed", device="cpu", basis="declared",
+        artifact_bytes=90 * 1024 * 1024,
+        requires={"ram_min_mib": 256},
+    ),
+}
+
+
+def footprint(model_id: str, profile: dict) -> dict | None:
+    """The Footprint for `model_id` on `profile`'s fingerprint, or `None` if
+    nothing has ever been recorded for it here.
+
+    `None` is a stronger statement than a footprint with `basis="unknown"`:
+    it means no row exists at all, so a caller (`verdicts()` in
+    `residency_policy`) that wants HR1's "unknown never renders as fit" can
+    treat either the same way -- absent or explicitly unknown both fail to
+    fit.
+    """
+    fp = profile_fingerprint(profile)
+    rows = measurements(model_id, fp)
+    if rows:
+        # Non-text rows were written directly in Footprint shape via
+        # `record_footprint` (num_ctx=None, a `modality` field present). Take
+        # the newest -- `measurements()` already resolved "store beats seed"
+        # per ctx, and there is only one ctx (None) for these.
+        direct = [r for r in rows if r.get("num_ctx") is None
+                 and "modality" in r]
+        if direct:
+            return {k: direct[-1].get(k) for k in FOOTPRINT_FIELDS}
+        # Text rows: migrate the legacy per-num_ctx shape. Use the LARGEST
+        # measured context, the same "never extrapolate downward into
+        # optimism" rule `vram_at()` applies just above -- under-reporting a
+        # footprint's VRAM is the error that fails at load time, not the
+        # safe direction.
+        text_rows = [r for r in rows if r.get("num_ctx") is not None]
+        if text_rows:
+            return _footprint_from_text_row(
+                dict(text_rows[-1], _model_id=model_id))
+    # Nothing measured on THIS machine for this model: a model-level declared
+    # fact (a licence, an upstream VRAM claim) still beats returning nothing,
+    # because it is the one axis `verdicts()` may report without a live
+    # measurement (HR18 -- declared informs, never refuses).
+    return DECLARED_FOOTPRINTS.get(model_id)
+
+
 def baseline_ms_per_token(model_id: str, fingerprint: str) -> float | None:
     """Sustained generation speed, from long runs. Used for planning."""
     vals = [m["ms_per_token"] for m in measurements(model_id, fingerprint)
