@@ -1917,6 +1917,51 @@ All of round 11's fixes ran clean through `tests/gauntlet/` (exit 0) after
 landing. `tests/unit/`+`tests/api/` reproduces F64's pre-existing 15-test
 gap both with and without this round's changes (see F64) — otherwise clean.
 
+### Round 12 — two corrections from Stephen (2026-09-04, evening)
+
+**F29's ledger bookkeeping resolved.** F29's code fix (the "coming soon"
+minor-mode gallery copy, ruled on by Stephen earlier today) was already
+correctly landed and verified — re-checked directly before touching
+anything: `core/__init__.py`'s DEFAULT_SETTINGS comment, both HTML files'
+gallery banners, and the 5-test probe (`test_minor_mode_doc_no_false_
+gallery_claim.py`) all confirmed present and passing. What was wrong was
+purely presentational: the finding's own `queue_reason` field still read
+"Stephen needs to see this first" verbatim, sitting alongside `status:
+"fixed"` and a full `fix_note` — an active-sounding appeal on an already-
+resolved item, exactly the kind of signal an outside check would (and
+did) read as still-open regardless of the status field next to it.
+Renamed to `queue_reason_historical` with an explicit "NOT a live ask"
+prefix, folding the original reasoning in as record rather than
+demand. No code change; the code was never wrong.
+
+**F65 — the 88-directory question, determined and root-caused.** Not a
+fourth instance of F47/F49/F51's bug class (a test bypassing the shared
+fixture) — these are all created by conftest.py's own correct, blessed
+mechanism. Root cause isolated directly, with temporary instrumentation
+added and then fully reverted (`git diff tests/conftest.py` confirmed
+clean before writing this up): any pytest run touching
+`conversation_memory` leaves ChromaDB's HNSW index file
+(`data_level0.bin`) Windows-locked past `pytest_sessionfinish`'s entire
+retry budget, on a completely normal, non-crashed exit — reproduced
+repeatedly, and `gc.collect()` before the retry does NOT fix it (tested
+directly), ruling out a simple Python-refcount/GC-timing explanation.
+Small or ChromaDB-untouched tests clean up perfectly every time (10/10
+and 6/6 controlled trials). The existing self-heal (`_sweep_stale_test_
+homes`, collection-time, >1hr-old) does genuinely work — 3 consecutive
+full-suite runs monotonically reduced the count (49→34→24→16) — so this
+is real but not urgent: self-heals within roughly an hour of someone next
+running pytest, not disk-pressure territory (268MB measured, 138.99GB
+free on the real drive). Corrected two overclaiming docstrings in
+`tests/conftest.py` (the retry loop was called "a reliable cleanup" for
+anything but "a rare, hard-to-reproduce leak" — not true for this case).
+Not fixed at the code level: closing the actual ChromaDB client handle
+explicitly is the real mitigation, and is a genuine change to test
+infrastructure that has already been the site of three incidents today
+— making it without room to verify it doesn't cause a fourth, on a
+problem that's measurably not urgent, was the wrong trade to make
+unprompted. See F65 for the two lower-risk options left for a future
+pass.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
