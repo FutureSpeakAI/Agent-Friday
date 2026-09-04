@@ -554,6 +554,155 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
     }
 
 
+# ── The onboarding starting set (headroom.md §9, §12 Phase 6) ───────────────
+#
+# One call chain -- hardware_profile.get() (the caller's `profile`) ->
+# model_plan.plan() for the brain -> plan_chain() for the interview's own
+# chain [stt, interactive_brain, tts] and, separately, [..., image] -- per
+# section 9's shape verbatim. Reuses `local_models_catalog()`'s row shape
+# (Phase 4) for brain/voice/image rather than inventing a second one, so the
+# wizard's Hardware Check renders through the SAME `LocalModelRow` component
+# Settings does (HR2: no second rendering path, no combined "compatible").
+#
+# D1 is not decided (`headroom_contract.py`'s own docstring). `contract`
+# below reports only what Phase 0 built honestly -- the display reserve --
+# never a fabricated working/away/yield level or a VRAM-slack/RAM-available
+# floor this document did not build.
+
+def build_starter_set(profile: dict) -> dict:
+    from agent_friday.services import model_plan as mp
+    from agent_friday.services import residency_policy as rp
+    from agent_friday.services import headroom_contract as hc
+    from agent_friday.services import local_image as li
+    from agent_friday.routing.ollama_manager import get_manager
+
+    sizes = _ollama_sizes()
+    lm = local_models_catalog(profile, sizes)
+
+    # What is already on the machine, and what of that can actually hold a
+    # conversation -- the same two lookups `cli.py`'s own planning call makes,
+    # so a starter set proposed at onboarding cannot disagree with `friday
+    # models` run right after it.
+    installed = None
+    try:
+        mgr = get_manager()
+        installed = ([m.get("name") for m in (mgr.list_models() or [])]
+                    if mgr.is_available() else None)
+    except Exception:
+        installed = None
+    conversational = None
+    try:
+        from agent_friday.services import local_seats
+        conversational = [n for n, _ in local_seats.installed()]
+    except Exception:
+        pass
+
+    mp_plan = mp.plan(profile, installed=installed, conversational=conversational)
+    brain_tier = next((t for t in mp_plan.get("tiers", [])
+                       if t.get("id") == "brain"), None)
+    brain_id = None
+    if brain_tier and brain_tier.get("models"):
+        brain_id = brain_tier["models"][0].get("id")
+    elif brain_tier and brain_tier.get("alternatives"):
+        # Already installed and picked -- `models` is empty because there is
+        # nothing left to download, but `alternatives` still names the pick.
+        default_alt = next((a for a in brain_tier["alternatives"]
+                            if a.get("default")), None)
+        brain_id = (default_alt or {}).get("id")
+    brain_row = (next((r for r in lm["text"] if r["model_id"] == brain_id),
+                      None) if brain_id else None)
+    # The FULL LocalModelRow-shaped row when there is one (label, installed,
+    # licence, summary -- everything `LocalModelRow` in index.html already
+    # knows how to draw), plus the two fields that are §9's own, not that
+    # component's: `download_gib` (the WHOLE plan's download, not per-row --
+    # `model_plan.plan()`'s tiers never populate a size on the brain row
+    # itself) and `why` (the planner's own human sentence for the pick, kept
+    # separate from `verdicts` because it explains the CHOICE among
+    # alternatives, not any one axis).
+    brain = dict(brain_row) if brain_row else {"model_id": brain_id,
+                                                "verdicts": None}
+    brain["download_gib"] = mp_plan.get("download_gib")
+    brain["why"] = (brain_tier or {}).get("reason")
+
+    stt_row = next((r for r in lm["voice"]
+                    if r["model_id"] == rp.DEFAULT_STT_MODEL), None)
+    tts_row = next((r for r in lm["voice"]
+                    if r["model_id"] == rp.DEFAULT_TTS_MODEL), None)
+    voice = {"stt": stt_row, "tts": tts_row, "where": "cpu"}
+
+    image_row = next((r for r in lm["image"] if r["model_id"] == li.MODEL_ID),
+                     None)
+    image_fits = ((image_row or {}).get("verdicts") or {}).get("fits") or {}
+    # Full row again (label/installed/licence/summary), same reasoning as
+    # `brain` above -- one shape, rendered by one component.
+    image = dict(image_row) if image_row else {"model_id": li.MODEL_ID,
+                                                "verdicts": None}
+    # D8-shaped: no row for a candidate nothing can serve, but a REFUSED or
+    # UNMEASURED local row still gets its one honest alternative named
+    # (§6.4), the same "never a refusal with no next step" rule the chain
+    # planner itself follows.
+    image["alternative"] = ("cloud" if image_fits.get("status")
+                            in (None, "refused", "unknown") else None)
+
+    try:
+        from agent_friday import core
+        cloud_ok = bool(getattr(core, "ANTHROPIC_API_KEY", None) or
+                        getattr(core, "GEMINI_API_KEY", None))
+    except Exception:
+        cloud_ok = False
+
+    # Nothing is resident yet at onboarding -- `resident={}` is the honest
+    # starting point for "what would running this chain cost from here",
+    # distinct from `/api/work/forecast`'s own use of the LIVE arbiter plan
+    # for a chain mid-session (`routes/work_plan.py`). `plan_chain` has no
+    # notion of "the default brain" the way it does for stt/tts/image
+    # (`_chain_default_model`) -- an `interactive_brain` stage with no
+    # `model_id` and nothing resident goes straight to cloud (or refuses),
+    # per its own rules for `ASSIGNED_ROLES`-shaped roles. Naming `brain_id`
+    # explicitly is what makes the interview's chain actually price the
+    # model `model_plan.plan()` just picked, rather than silently reporting
+    # "no local model available" for a machine that plainly has one.
+    brain_stage = {"role": "interactive_brain"}
+    if brain_id:
+        brain_stage["model_id"] = brain_id
+    voice_stages = [{"role": "stt"}, brain_stage, {"role": "tts"}]
+    image_stages = [{"role": "stt"}, brain_stage,
+                    {"role": "image", "units": 1}, {"role": "tts"}]
+    try:
+        chain_voice = rp.plan_chain(profile, [], voice_stages, resident={},
+                                    cloud_ok=cloud_ok)
+    except Exception as e:
+        chain_voice = {"error": str(e)}
+    try:
+        chain_with_image = rp.plan_chain(profile, [], image_stages,
+                                         resident={}, cloud_ok=cloud_ok)
+    except Exception as e:
+        chain_with_image = {"error": str(e)}
+
+    reserve = hc.resolve_display_reserve(profile)
+
+    return {
+        "brain": brain,
+        "voice": voice,
+        "image": image,
+        # D8: one sentence, no candidate row (§8.2, §14.2).
+        "video": "cloud",
+        "chain": {"voice_only": chain_voice, "with_image": chain_with_image},
+        # D1 not decided -- the honest subset: the display reserve alone,
+        # never a fabricated working/away/yield level (headroom_contract.py).
+        "contract": {
+            "display_reserve_mib": reserve.get("mib"),
+            "basis": reserve.get("basis"),
+            "sources": reserve.get("sources"),
+            "note": "the full Headroom Contract (working/away/yield levels, "
+                    "VRAM-slack and RAM-available floors) is not decided "
+                    "(D1); this is the one piece built without it -- the "
+                    "live display reserve.",
+        },
+        "floor_model": mp.FLOOR_MODEL,
+    }
+
+
 @intelligence_bp.route("/api/intelligence")
 def api_intelligence():
     from agent_friday.services.model_catalog import build_catalog

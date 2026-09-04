@@ -210,6 +210,39 @@ class TestRecommendModels:
         recs = mgr.recommend_models(hardware={"vram_gb": 8, "ram_gb": 32})
         assert any(r["tier"] == "medium" for r in recs)
 
+    # ── HR15 (headroom.md) — this is a THIN READER now, not a second ladder ──
+
+    def test_every_suggested_name_is_a_tool_capable_brain_model(self, mgr):
+        """Every name this function can ever return must come from
+        `model_plan.BRAIN_MODELS` and be tool-capable — the exact property
+        that was missing when this table was its own hand-typed qwen3-only
+        list: `_pickable()`'s tool gate is the SAME gate `plan()` applies
+        before a model is ever chosen, and a suggestion that fails it would
+        recommend something Friday refuses to seat."""
+        from agent_friday.services import model_plan as mp
+        capable_ids = {m["id"] for m in mp.BRAIN_MODELS if m["tools"]}
+        for vram in (0, 4, 8, 12, 16, 24, 32, 48):
+            for ram in (0, 8, 16, 32, 64, 128):
+                for r in mgr.recommend_models(hardware=self._hw(vram, ram)):
+                    assert r["name"] in capable_ids, (
+                        f"{r['name']!r} is not a tool-capable row in "
+                        f"BRAIN_MODELS")
+
+    def test_reads_brain_models_live_not_a_copy(self, mgr, monkeypatch):
+        """The actual HR15 property: change the planner's own ladder and this
+        function's output changes with it, unprompted — proof there is no
+        second, independently-typed table to fall out of sync again."""
+        from agent_friday.services import model_plan as mp
+        fake = tuple(dict(m) for m in mp.BRAIN_MODELS) + (
+            {"id": "made-up:1b", "gib": 0.5, "min_ram_gib": 1, "tools": True,
+             "vram_gib": 0.5, "basis": "test", "note": "a row that only "
+             "exists inside this test"},)
+        monkeypatch.setattr(mp, "BRAIN_MODELS", fake)
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=1))
+        assert any(r["name"] == "made-up:1b" for r in recs), (
+            "recommend_models did not pick up a new BRAIN_MODELS row — it "
+            "is reading a copy, not the live table")
+
 
 # ── invalidate_cache ──────────────────────────────────────────────────────────
 
