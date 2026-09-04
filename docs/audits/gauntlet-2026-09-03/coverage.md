@@ -65,13 +65,19 @@ Green-everywhere is not the bar. Judged-everywhere is.
 
 ## Claim corpus extraction
 
-**[SYNC 2026-09-04, afternoon: claims.jsonl is still flat at C1-C149, exactly
-as it was at the 08:32 mark below — genuinely stale, not just this table.
-Stephen's own instruction after the disk/pricing corrections above: this is
-the more valuable direction going forward, since an unexamined claim is a
-place nobody has looked at all, versus a seam already swept 5-6 times.
-Resuming the docstring walk below (~50 service modules still unwalked) as
-the next action, not another seam sweep.]**
+**[SYNC 2026-09-04, evening: the docstring walk named directly below is now
+COMPLETE. 5 parallel fresh-context agents covered all ~140 remaining
+`src/agent_friday/services/*.py` modules (28 each, alphabetical chunks);
+combined with the 12 already walked, every service module's docstrings have
+now been read and checked at least once. Result: 94 new HOLDS claims
+(C150-C243, closing the "flat at 149" gap) and 10 real findings, all 10
+triaged to a fixed disposition (F53 through F64 — see findings.jsonl and
+progress.md's Round 11 for the full list). claims.jsonl is current as of
+this sync. What's still NOT done: `index.html`/`ui_parts/app.html`'s full
+line-by-line disclosure-string corpus beyond what F45/F46/Q19/F11 already
+covered, and a second independent pass over the now-243-claim corpus (this
+was each module's FIRST walk, not a second confirming sweep) — both remain
+open for a future round.]**
 
 **Correction 2026-09-04 (Stephen's check-in):** this table previously said
 UNSTARTED for every source despite progress.md describing a completed round-1
@@ -105,6 +111,6 @@ DONE" rows below are still exactly that.
 | tests/README.md | EXTRACTED (C74-C77) — 2 of 4 claims checked (route count, suite timing) found to be planning claims rather than assertions/facts, per Stephen's explicit correction; treated as corpus items to judge, not trusted |
 | index.html (settings labels, disclosures, Saved affordances) | EXTRACTED (C78-C82) — settings-panel toggles covered; broader disclosure-string sweep (onboarding aside) not exhaustive |
 | ui_parts/app.html (same) | EXTRACTED (C136-C143 among C136-C149) — full disclosure-string surface read end to end (tooltips, settings copy, onboarding/wizard text, kill-switch/toast copy), not just the component-presence divergence check; found F45, F46, and 3 more loci of Q19/F11's already-known defects |
-| src/agent_friday/services/*.py docstrings | EXTRACTED for 12 modules total — onboarding_copy.py, provider_health.py, cost_meter.py, egress_gate.py (C83-C90, prior round) plus creative_engine.py, music_engine.py, sensitivity_classifier.py, vault_passphrase.py, connector_secrets.py, extension_security.py (C143-C149 among C136-C149; wiki_engine.py/federation.py checked, nothing new beyond existing corpus). Found F44 (severe) and C144 (low severity, fixed). Remaining service modules not yet individually walked. |
+| src/agent_friday/services/*.py docstrings | **COMPLETE — all ~153 modules walked at least once.** First 12 (onboarding_copy.py, provider_health.py, cost_meter.py, egress_gate.py, creative_engine.py, music_engine.py, sensitivity_classifier.py, vault_passphrase.py, connector_secrets.py, extension_security.py, wiki_engine.py, federation.py — C83-C90, C136-C149) found F44 (severe, fixed) and C144. The remaining ~140 (5 parallel agents, alphabetical batches of 28) found 94 more HOLDS (C150-C243) and 10 real findings, all fixed this round: F53 (memory_proposals.py, no caller anywhere — added routes/memory_proposals.py), F54 (content_policies.py, SEVERE — H1-H4 harm floor silently bypassed for category-only content), F55 (boot_guard.py/server.py — boot confirmed by a timer, not a real served request), F56 (scoped_agents.py — cleanup no-op + tool-permission enforcement overclaim), F57 (research/harness.py — integrity check always TypeError'd, silently swallowed, never actually ran), F58 (predictive_workspaces.py — prewarm resolver looked up names nothing ever imported, always a no-op), F59 (prompt_manager.py — dead, self-contradictory constructor, removed), F60 (ambient_awareness.py, docstring only — 2 of 3 claimed adaptive behaviors computed but never consumed), F61 (compute_client.py, docstring only — Orchestrator never actually calls this), F62 (gpu_headroom.py, docstring only — the one subsystem its origin story is about uses a different implementation), F63 (6 bundled minor doc-drift corrections). F64: a pre-existing tests/unit+tests/api order-dependence defect (15 tests fail full-suite-only) found while verifying this round didn't regress anything — confirmed unrelated to this round's changes via a stash-based A/B against clean HEAD, logged not fixed (root-causing which earlier test pollutes state is a separate investigation). See progress.md's Round 11 for full detail on each. |
 | src/agent_friday/routes/*.py docstrings | EXTRACTED (C91-C133) — all 61 route files read at the module-docstring level (or confirmed to carry only a shared boilerplate header); ~30 files had at least one checkable factual claim worth extracting, ~30 were pure route-enumeration with nothing to extract. Verified on the spot (not just extracted): all 15 claims that looked strong enough to double-check held against the actual code, no contradiction found. Depth still shallow on the ~15 largest files (chat.py, code.py, insights.py, news.py, workflows.py) — function-level docstrings there were sampled via grep, not read end to end. |
 | Implicit claims: exported fns / UI controls / settings keys / routes / scheduled jobs / worker adapters actually reachable | IN PROGRESS — this is the core method used throughout (F1, F8, F9, F12 are all reachability findings), not a one-time pass; continues every round |

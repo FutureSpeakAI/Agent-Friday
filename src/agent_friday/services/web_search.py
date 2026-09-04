@@ -22,8 +22,11 @@ know about because it was found live on 2026-08-17):
      `status` that distinguishes them, and `canary()` settles it by asking a
      question with a known stable answer.
 
-Backends, in order: Brave Web Search when BRAVE_SEARCH_API_KEY is set (the
-paid general-search key Q1 approved), DuckDuckGo HTML otherwise. The DDG path
+Backends, in order (corrected gauntlet-2026-09-03 F63 — this used to describe
+a two-backend world that predated Firecrawl and never mentioned it):
+Firecrawl leads, Brave Web Search next when BRAVE_SEARCH_API_KEY is set (the
+paid general-search key Q1 approved), DuckDuckGo HTML last. See
+active_backend()'s own docstring for the authoritative chain. The DDG path
 is a scrape and is labelled as one — when it breaks again, the caller finds
 out rather than receiving an error page dressed as research.
 """

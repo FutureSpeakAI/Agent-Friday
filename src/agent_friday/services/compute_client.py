@@ -2,15 +2,27 @@
 Agent Friday — Compute Client (Friday outsourcing work to peers)
 FutureSpeak.AI · Asimov's Mind
 
-When local adapters can't handle a task (no GPU, busy, no capability),
-the Orchestrator can delegate to federation peers via this client.
-All outbound jobs go through the egress gate.
+Lets Friday delegate a task to federation peers when local adapters can't
+handle it (no GPU, busy, no capability). All outbound jobs go through the
+egress gate.
+
+CORRECTION (gauntlet-2026-09-03 F61): "the Orchestrator can delegate...via
+this client" overclaims a wiring that doesn't exist. services/orchestrator.py
+never imports or calls anything in this module -- there is no automatic
+fallback where a local-adapter failure triggers federation delegation. What's
+real: find_providers/request_job/rate_provider/get_sent_jobs are each wired
+to a route in routes/compute.py, so delegation is reachable as a manual/
+external API call, just not something the Orchestrator invokes on its own
+when it hits local incapacity. await_result() is dead on top of that -- no
+route calls it either (the wired routes poll /api/federation/compute/status/
+<job_id> once per call instead of blocking here), so it has no caller of any
+kind, internal or external.
 
 Public API
 ----------
 find_providers(capability_type)              → list[dict]  (CapabilityCards)
 request_job(provider_id, task_spec, mψ)     → dict  (JobRequest)
-await_result(job_id, timeout)               → dict  (JobResult)
+await_result(job_id, timeout)               → dict  (JobResult) -- see correction above: unreachable, no caller
 rate_provider(job_id, quality_score)         → bool  (updates trust)
 get_sent_jobs(limit)                         → list[dict]
 """

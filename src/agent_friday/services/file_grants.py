@@ -11,8 +11,12 @@ manual bypass outside it.
 
 THE MECHANISM: a second feeder of the span registry the news fix already
 uses. No send-time exemption API exists here — nothing accepts a flag on a
-call. `on_file_read()` is called by read_file/search_files at the moment a
-file is actually read; if the resolved path carries a live grant, it
+call. `on_file_read()` is called by read_file at the moment a file is
+actually read (NOT by search_files — a content-search snippet from a
+granted file still gates normally; file_search.py's own `_search_content()`
+already discloses this as its "WO-17 KNOWN GAP," failing toward gating
+rather than leaking, corrected here to match — gauntlet-2026-09-03 F63);
+if the resolved path carries a live grant, it
 registers that read's exact paragraphs with `egress_gate.register_public_text
 (text, origin="user-grant:<id>")`, exactly as news_engine registers a
 fetched article. A prompt-injected model cannot register spans: the only way

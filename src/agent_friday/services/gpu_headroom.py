@@ -20,6 +20,19 @@ runs somewhere else, or waits.
 This module only ever REPORTS. It never evicts, never kills, and never takes
 the decision away from the Arbiter — a headroom checker that started freeing
 memory on its own would be a second, quieter allocator fighting the first.
+
+CORRECTION (gauntlet-2026-09-03 F62): "any job... asks here first" overclaims.
+`residency_arbiter.py` — the highest-stakes VRAM consumer, and the exact
+subsystem that caused the 238 MiB incident above — does not import this
+module at all. It uses a separately-implemented display-reserve check,
+`hardware_profile.vram_headroom()` / `display_reserve_mib()`, apparently
+written to address the same incident. This module's own `check()`/
+`gpu_memory()` do have real callers (research/harness.py, scheduler.py's
+background jobs; `display_at_risk()` for reporting) — it is not dead code —
+but the subsystem this docstring's own origin story is about does not
+consult it. Two parallel, non-shared implementations of the same "don't
+take the display's VRAM" check exist; this was not reconciled here (a real
+architecture decision, not a docstring fix), only disclosed.
 """
 from __future__ import annotations
 
