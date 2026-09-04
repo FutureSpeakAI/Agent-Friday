@@ -440,8 +440,14 @@ def _generate_media_daily(date_str, choice, path):
                                                  aspect_ratio="16:9", allow_demo=True)
         elif mode == "music-clip":
             from agent_friday.services import music_engine
-            res = music_engine.generate_music(concept, model="lyria-clip",
-                                              duration_seconds=30)
+            # No model= override: let resolve_music_model() honor the
+            # user's capability_routing.creative_music seat choice, the
+            # same as every other music_engine.generate_music() call site
+            # (services/agent.py, routes/creations.py, creative_pipeline.py)
+            # -- this one alone hardcoded lyria-clip and silently ignored a
+            # user's chosen music model (docs/audits/gauntlet-2026-09-03/
+            # findings.jsonl).
+            res = music_engine.generate_music(concept, duration_seconds=30)
         elif mode == "short-production":
             from agent_friday.services import creative_pipeline as cp
             run = cp.create_run("full-production", {"logline": concept})

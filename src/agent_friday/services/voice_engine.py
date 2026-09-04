@@ -728,10 +728,25 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
             "local-only mode is on and no local voice engine is ready — "
             "refusing to send spoken text to Gemini TTS")
 
+    # local_preferred means "local first, cloud when it helps" — the same
+    # idiom routes/chat.py:369 (vision) and routes/core_routes.py:1085
+    # (file-upload analyze) already use (`mode in ('local_only',
+    # 'local_preferred')`). Before this, TTS ignored local_preferred
+    # entirely and went straight to Gemini whenever a key was present,
+    # contradicting the mode's own definition (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl). Unlike local_only above, a
+    # local_preferred TTS failure still falls through to Gemini below —
+    # "preferred," not absolute.
     try:
-        _prefer_local = allow_local and ((not core.GEMINI_API_KEY) or _network_is_offline())
+        _local_preferred = str(((_load_settings() or {}).get('model_routing') or {})
+                               .get('mode') or '').strip().lower() == 'local_preferred'
     except Exception:
-        _prefer_local = allow_local and not core.GEMINI_API_KEY
+        _local_preferred = False
+    try:
+        _prefer_local = allow_local and (_local_preferred or (not core.GEMINI_API_KEY)
+                                         or _network_is_offline())
+    except Exception:
+        _prefer_local = allow_local and (_local_preferred or not core.GEMINI_API_KEY)
     if _prefer_local:
         _buf = _synthesize_tts_wav_local(text)
         if _buf is not None:
