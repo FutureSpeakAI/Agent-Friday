@@ -2075,6 +2075,51 @@ fixes in place — exit 0, all tests pass, no exceptions or skips beyond
 the pre-existing 8. `tests/gauntlet/` also reconfirmed green after both
 changes.
 
+**The standing rule changed, rather than being exceptioned a fourth
+time (Stephen's own call).** Three separate edits to pre-existing test
+files outside `tests/gauntlet/` (`tests/conftest.py`/F47,
+`tests/test_egress_adversarial.py`/F51, `tests/unit/test_vault_gate_is_
+honest.py`/F64), each individually justified and each individually
+recorded as a one-time exception, is a pattern — "a rule that keeps
+getting crossed for good reasons is a bad rule, not a discipline
+problem." **New rule, effective this round forward:** an existing test
+file may be modified directly, without treating it as an exception,
+when **the test itself is the defect** — a leaking fixture, an
+order-dependence, a non-isolating setup — subject to two conditions:
+(1) record it here, in progress.md, with what was wrong and why the
+change is a fix rather than a convenience; (2) never weaken an
+assertion to make something pass — if an existing test goes red because
+the *code* is wrong, that stays a finding, full stop. The line the rule
+now draws is fixing a broken instrument versus adjusting the instrument
+to agree with the code. `tests/gauntlet/` remains the exclusive home for
+every *new* probe; this only ever concerns editing what's already there.
+
+Recording the three that motivated the change, retroactively unified
+under this framing (each was already individually justified above; this
+is the consolidated record the new rule asks for going forward):
+- **`tests/conftest.py` (F47).** The shared isolation fixture itself
+  leaked a temp home on a second same-process import
+  (`tests/gauntlet/test_conftest_leak_end_to_end.py` proves it fixed).
+  Fix, not convenience: the fixture's whole job is isolation; failing at
+  that job is the defect.
+- **`tests/test_egress_adversarial.py` (F51).** Hand-rolled its own
+  isolated home instead of the shared one, leaking 327 directories over
+  ~2.5 months. Fix, not convenience: an unmanaged leak is not a
+  legitimate test behavior to preserve.
+- **`tests/unit/test_vault_gate_is_honest.py` (F64).** Wrote real
+  settings via `_save_settings()` into the session-shared settings.json
+  and never restored `model_routing.mode`, silently misrouting every
+  later test in the session. Fix, not convenience: matches an
+  already-established pattern (`test_kg_indexer.py`'s `restore_kg_
+  settings` fixture) for the identical defect shape on a different
+  settings block — this test just hadn't been given the same treatment.
+
+In all three cases the assertion under test was never touched or
+weakened — only the isolation/cleanup surrounding it changed. No test
+has gone red under this rule because the code was wrong and been
+"fixed" by softening it; that would stay a finding, not become a test
+edit, per condition 2 above.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
