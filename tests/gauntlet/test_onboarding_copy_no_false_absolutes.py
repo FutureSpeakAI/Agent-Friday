@@ -29,17 +29,36 @@ from agent_friday.services import onboarding_copy as oc
 
 
 _OLD_LOCAL_ONLY_CLAIM = "Nothing is sent anywhere, ever."
-_OLD_VAULT_CLAIM = "not in any file you could open"
+# NOT "not in any file you could open" -- VAULT_LOCATION is a triple-quoted
+# multi-line string, and the real pre-fix text wrapped exactly between "you"
+# and "could" ("...not in any file you\ncould open..."), so that longer
+# substring never matched the real string on either side of the fix and
+# this probe passed vacuously both before and after (found 2026-09-04 while
+# actually running the revert-check this probe had never been given --
+# see findings.jsonl F11). Kept to a substring that stays on one physical
+# source line so a future rewrap can't quietly reintroduce the same gap.
+_OLD_VAULT_CLAIM = "not in any file"
 
 
 def _old_strings_would_fail_these_assertions():
-    """Not a real test -- just documents that the assertions below are
-    discriminating (they fail against the pre-fix text), so a reviewer
-    doesn't have to trust that in the abstract."""
+    """A real check, not just documentation: proves the assertions below
+    are discriminating by running them against the ACTUAL pre-fix
+    VAULT_LOCATION text (not a hand-typed reconstruction, which is exactly
+    what hid this probe's original bug), so this file cannot silently pass
+    vacuously again. Prefixed with test_ so pytest actually runs it --
+    the original version of this helper was never collected at all."""
     assert _OLD_LOCAL_ONLY_CLAIM.strip().rstrip(".").lower() == \
         "nothing is sent anywhere, ever"
-    assert _OLD_VAULT_CLAIM in "Friday stores it in this computer's " \
-        "credential manager, not in any file you could open."
+    _real_old_vault_location = (
+        "Friday stores it in this computer's credential manager, not in any file you\n"
+        "could open. That is deliberate: an earlier version kept it in a startup script\n"
+        "inside her own program folder, which the installer replaces when she updates."
+    )
+    assert _OLD_VAULT_CLAIM in _real_old_vault_location
+
+
+def test_the_old_claim_fixtures_are_discriminating():
+    _old_strings_would_fail_these_assertions()
 
 
 class TestOnboardingCopyNoFalseAbsolutes:

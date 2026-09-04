@@ -98,10 +98,11 @@ model in the table above calls tools natively and uses them fully offline, with 
 that flag is re-checked against the daemon after every install rather than trusted from a
 table. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §3.
 
-On first run, Friday greets you by voice and walks you through setup. Cloud keys are
-*optional upgrades* for sharper reasoning, image/video generation, and richer voice — add
-them any time in Settings (creative/voice degrade gracefully with a clear notice until you
-do).
+On first run, Friday walks you through setup with a short wizard — in the browser, or
+`friday setup` in a terminal; onboarding itself is silent, text and click-through, not
+voice. Cloud keys are *optional upgrades* for sharper reasoning, image/video generation,
+and richer voice — add them any time in Settings (creative/voice degrade gracefully with a
+clear notice until you do).
 
 **Adding cloud keys (optional).** The recommended way is `friday setup` — it
 stores each key **encrypted** via the credential store (DPAPI/AES-256-GCM),

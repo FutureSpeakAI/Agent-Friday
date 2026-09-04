@@ -13,51 +13,139 @@ at f000f07. Never pushed. Main checkout at
 unrelated in-progress uncommitted work (knowledge-graph/credential-store
 changes) that does not belong to this task.
 
-## Morning summary — read this section first, the rest is detail
+## Honest limits, up front
 
-Good morning. Overnight, unattended: **22 real defects fixed** with full
-red→green→red-on-revert proof and a green full suite after every batch,
-**~25 items queued** for you because they're judgment calls or too risky to
-land unattended, and the seam-by-seam sweep continues below and in
-`coverage.md`/`findings.jsonl`. In priority order:
+Before anything else, what this run did NOT do, so nothing below reads
+stronger than it is:
 
-1. **Your live app spent real money overnight, unattended (F31), and the
-   fix cannot stop it — see the very next section.** Not your hypothesis
-   (health-check billing) — a KG reindex with no cost cap that ran for
-   hours. Fixed here, but only takes effect on restart.
-2. **A real credential leak, found and fixed (F32).** Every MCP connector
-   you've added — any third-party `npx`/`pip` package — was receiving your
-   live decrypted Anthropic/OpenAI/Gemini/vault keys in its own process
-   environment, with zero filtering, despite code that was clearly built to
-   prevent exactly this and simply never got wired in.
-3. **The single most important open question tonight (Q19), not fixed,
-   needs your read:** `local_only` and `local_preferred` modes' own stated
-   promises are false for ordinary interactive chat — not an edge case, the
-   most common thing you do. This is queued, not fixed, because the code
-   carries your own dated 2026-08-16 decision to keep chat fast on cloud,
-   and reversing it is a real trade-off only you should make.
-4. **Five more local-only/privacy enforcement gaps closed the same night**
-   (F33: an open Gemini Live call kept streaming to the cloud after
-   local-only was turned on mid-call; F34: a KG chunk marked "must stay
-   local" could still reach the cloud if you'd picked a cloud reasoning
-   model; F35: a vault-forced route could still fall back to cloud on a
-   local failure, in the one function that was missing a guard its sibling
-   already had; F36: the MCP tool-call audit/sanitize mechanism — same
-   shape as item 2, on the tool-call path instead of the spawn path — was
-   also never wired in; F37: the always-on "related pages" context that
-   goes into every system prompt could leak real content from a page you'd
-   put in an encrypted wiki section, to any provider including cloud).
-5. Everything else — 10 more fixes (F1, F2, F8, F10-copy, F11, F12, F26,
-   F27, F28, and F13 sharpened into a 5th UI-mirror gap) and ~25 queued
-   items (Q1, Q4, Q16-Q23 and more) — is detailed below and in
-   `findings.jsonl`/`coverage.md`. Nothing else tonight rose to "wake him
-   up for this" the way items 1-4 did.
+- **1 of 12 seams closed.** Only "MCP and connector registration" hit the
+  audit's own 2-consecutive-clean-sweep bar. The other 11 are still open —
+  several got close and then a fresh sweep found one more real thing,
+  which is why they reset. Per-seam status is in `coverage.md`.
+- **The claim corpus stopped growing at 00:51.** `claims.jsonl` has been
+  flat at 90 entries since commit `16450bd` — extraction effectively
+  stopped after round 2. A claim that was never extracted was never
+  judged, so "swept" below means "swept against the claims we pulled,"
+  not "swept against everything the corpus contains." Confirmed not
+  walked at all: `src/agent_friday/routes/*.py` docstrings, across all
+  ~61 route files. `coverage.md`'s own claim-corpus table names a few
+  other partial sources (`ui_parts/app.html`'s disclosure strings,
+  `THREAT_MODEL.md`'s untraced claims) — treat that table as the honest
+  boundary of what this run actually checked, not this summary's tone.
+- **Startup wiring stayed parked.** Static analysis only — see JUDGMENT
+  CALL 1. Nothing about boot sequencing was dynamically verified.
+- **Five early fixes (F1, F2, F8, F11, F12) shipped without a documented
+  revert step**, before the red→green→red-on-revert discipline was
+  tightened partway through the night. All five have now been run through
+  that check retroactively (see "Retroactive revert verification," just
+  below the fixed ledger) — genuinely confirmed now, but they weren't
+  when they first landed, and one of them (F11) turned up a real bug in
+  its own probe in the process. Worth knowing before trusting the "22
+  fixes, full proof" framing at face value.
 
-No seam has reached the audit's own 2-consecutive-clean-sweep closure bar
-yet — several got close and then a fresh sweep found one more thing, which
-given how much real material turned up (including the four items above) is
-the audit working as intended, not a sign it's stuck. The loop continues
-after this section.
+## What you need to decide — ranked, one sentence each
+
+25 items are queued because they're judgment calls, not because they're
+unimportant. Ranked by how much rides on the answer:
+
+1. **Q19 (SEVERE).** `local_only` and `local_preferred` don't actually keep
+   ordinary chat local by default — the most common thing you do with
+   Friday. Decide: tighten the router to match the mode's own promise (chat
+   gets slower/lower-quality on a local seat), or rewrite what the modes
+   claim to guarantee. This is the one the whole "privacy-first" premise
+   rests on — read it first.
+2. **F29 (child safety, high priority).** `minor_mode`'s own settings
+   description promises adult content is hidden in the gallery when it's
+   on; nothing hides it. Decide: build the hide, or correct the promise —
+   either way this shouldn't sit queued long.
+3. **F10's router half** (the copy was already fixed; the behavior wasn't).
+   Decide: should `local_only` fail closed and refuse when no local model
+   is reachable, or fall back to cloud with a visible notice? Same family
+   of question as Q19, on a different code path.
+4. **F18.** Vault-forced local-only answers are watered-down on at least
+   one entry point outside `/api/chat`, not leaked — but "vault access
+   always gets the full local answer" isn't true everywhere. Decide if
+   that's worth closing now or living with.
+5. **F30.** When a background task's local seat fails and it falls back to
+   another provider, the fallback doesn't always re-apply the right
+   content gating for where it actually landed. Decide if this needs a
+   structural fix or is an acceptable, documented gap.
+6. **F21.** The two voice websockets don't obviously enforce the same
+   "refuse if auth isn't configured" posture your HTTP routes do. Decide
+   if voice needs the identical fail-closed rule or its own reasoning.
+7. **Q16.** The unattended daily "short-production" creation skips its own
+   pipeline's human-review checkpoints before the expensive spend and
+   before publishing. Decide: keep it fully autonomous, or make it pause
+   and wait for you like every other caller of that pipeline does.
+8. **Q6 / Q7 / Q11 / Q13 (money visibility, four related findings).**
+   Image/video/music generation, several opt-in provider catalogs, and
+   Gemini voice calls aren't metered at all — including the ones your
+   daily-creation budget gate is supposed to be checking against. Decide
+   if real-dollar visibility into these needs to happen now or can wait.
+9. **F25.** Scheduled jobs (news, digests, KG reindex, etc.) get zero
+   retries by default — one bad minute silently skips a whole day's run.
+   Decide if that's the right default or too brittle.
+10. **Q21.** Nothing in the product would tell you a background job has
+    been running too long — the exact blind spot that let F31 (below) run
+    for hours before anyone noticed. Decide if a job-duration watchdog is
+    worth building now.
+11. **Q18.** Friday has a content-based "this looks like heavy work, I
+    should ask" heuristic that's fully built and never called; the thing
+    that actually asks is a different, load-time-only heuristic. Decide
+    whether to wire the two together or drop the unused one.
+12. **F9.** A connector blocked by the security scanner shows up as a
+    generic error, not "this was blocked for a security reason" — so the
+    natural next click (Restart) used to defeat the block (now fixed
+    separately). Decide if the status message should say why.
+13. **F3.** The context-log "Retention Period" setting doesn't delete
+    anything automatically. Decide: build the automatic sweep, or change
+    the setting's copy to say it's manual.
+14. **Q9 / Q10 (knowledge graph hygiene, two related gaps).** Asking Friday
+    to forget someone doesn't scrub her graph's text descriptions of them,
+    just entity titles; and nothing ever prunes or corrects old graph
+    entries. Decide if either is worth building now.
+15. **Q23.** A side effect of tonight's own F31 fix: in `gated_cloud` mode
+    with a large backlog, some chunks from multi-chunk files can get
+    silently, permanently skipped. Decide if it's worth the restructuring
+    to fix now (doesn't affect the default `local_only` mode).
+16. **Q17.** The "Go Off Record" toggle says it disables logging "for this
+    session," but nothing ever turns logging back on automatically.
+    Decide: wire a real reset point, or reword the toggle.
+17. **Q20.** A documented settings key (`task_overrides.voice`) does
+    nothing — voice turns are never classified in a way that would let it
+    fire. Low stakes; decide if it's worth wiring up or removing from docs.
+18. **Q5 / Q8 (installer, two low-severity items).** The installer's
+    embedder claim is inaccurate on its own recommended no-GPU path, and a
+    computed disk-space warning never actually blocks a download. Both
+    minor; decide if they're worth a doc/code touch.
+19. **F22.** A federation settings-sync push could in principle broadcast
+    stale in-memory config instead of what's actually saved — not
+    confirmed exploitable, but the guarantee isn't airtight. Decide if
+    it's worth hardening now.
+20. **F24.** The five onboarding persona/distribution presets mostly don't
+    do what their descriptions claim. Decide: build them out, or simplify
+    the copy to match what they actually do.
+21. **Q22.** The MCP connector allowlist remembers approval by server name,
+    not by the exact command it approved — editing an approved server's
+    command inherits the old approval. Decide if that's the UX trade-off
+    you want.
+
+(Q1/Q4 and a handful of smaller HOLDS/observations are in `findings.jsonl`
+and `coverage.md` but didn't make this list — genuinely lower-stakes than
+the 21 above.)
+
+## What got fixed without asking
+
+22 real defects landed with full red→green→red-on-revert proof and a green
+full suite after every batch (five of them — F1, F2, F8, F11, F12 —
+originally without the revert step; see the honest-limits note above and
+the retroactive-verification section below the fixed ledger). The two most
+consequential: **F31**, a live cost incident that spent real money
+overnight (detail immediately below), and **F32**, a credential leak where
+every MCP connector received Friday's live decrypted secrets. Five more
+close local-only/privacy enforcement gaps the same class as Q19 above but
+narrow enough to fix outright (F33, F34, F35, F36, F37) — see the FIXED
+LEDGER for all 22. Nothing else tonight rose to "wake him up for this."
 
 ## ⚠⚠ READ THIS FIRST — live production is still spending money right now (F31)
 
@@ -102,15 +190,24 @@ and prove it does not touch the default local_only path. Full
 `test_kg_indexer.py` suite (18 tests) and the full unit+API suite both
 green after.
 
-**This fix cannot stop tonight's bleeding.** It lives in an isolated
-worktree; nothing here reaches the live process until Stephen restarts it,
-and per his own explicit instruction the live app is deliberately not being
-touched or restarted overnight. The reindex will keep billing at roughly
-$10/hour until it either exhausts its own backlog on its own, or he
-restarts with this fix applied. **He should expect a real number
-meaningfully larger than the $27.41/1,029-calls snapshot he had at 23:45
-by the time he reads this** — the mechanism was still active at ~03:04 and
-nothing in this run could stop it.
+**Update — the live app was in fact restarted, and this is resolved, not
+an open contradiction.** This section originally said the fix "cannot stop
+tonight's bleeding" because this worktree is isolated from the live
+process and nothing here would ever touch it unattended. That claim is
+still true — this session never touched the live app. But an independent
+check found the live process actually restarted at 03:35:47, with
+`settings.json` rewritten roughly 30 seconds before that. Left alone, that
+would be an unexplained anomaly sitting in a security audit's own ledger —
+exactly the kind of loose thread that wastes a morning. It isn't one:
+Stephen ordered that restart himself, through a different session, once
+F31 was diagnosed, specifically to stop the spend. So the bleeding did NOT
+continue indefinitely as this section originally implied — it stopped at
+03:35:47, roughly 3.5 hours after the 23:45 snapshot of $27.41/1,029
+calls, and however much accrued in that window is the real, bounded final
+number, not something still running as he reads this. This session's own
+fix (`MAX_CLOUD_EXTRACT_CALLS`) was never installed to the live app either
+way — it lives in this worktree only — so the restart, not this fix, is
+what actually stopped it.
 
 Generalization he asked for is done: `/api/seat-gate/statuses`,
 `/api/processes`, `/api/tasks`, and every other polled status/residency
@@ -580,6 +677,84 @@ RED again on `git stash` revert → fix reapplied, stash dropped. Full
 `tests/gauntlet/` green (only the 2 pre-existing by-design reds).
 **Batch verification, Fixes #13+#14 together:** full unit+API suite
 running now — result to follow below once complete.
+
+### Fix #15 — README.md's "greets you by voice" onboarding claim is false (F38)
+**File:** [README.md](../../../README.md)
+**Finding:** README said Friday "greets you by voice and walks you through
+setup" on first run. Both onboarding surfaces are silent: the browser
+`SetupWizard` is pure click-through React with no audio call anywhere
+(`WIZARD_VOICES` there is a persona picker for *later*, not a greeting
+played now), and the CLI `setup_wizard.py` drives the same steps via
+`rich` text prompts only. The only "greeting" logic anywhere in the
+codebase lives inside an already-open, user-initiated Gemini Live voice
+call — not wired to first launch at all.
+**Fix:** corrected the sentence to describe today's real onboarding (a
+silent wizard, browser or `friday setup`) — a pure documentation
+correction, no product decision involved; voice remains available
+afterward as an opt-in mode, unaffected.
+**Probe:** [tests/gauntlet/test_readme_onboarding_is_not_voice.py](../../../tests/gauntlet/test_readme_onboarding_is_not_voice.py)
+**Evidence:** RED before fix → GREEN after (2/2, including a grounding
+check that `setup_wizard.py` genuinely has no audio-playback call) → RED
+again on `git stash` revert → fix reapplied, stash dropped. Full
+`tests/gauntlet/` green (only the 2 pre-existing by-design reds).
+
+### MCP and connector registration — formally CLOSED
+2 consecutive clean sweeps achieved (rounds 5 and 6 tonight, after F32 and
+F36 both landed) — this seam meets the audit's own exit bar. F9 and Q22
+remain open/queued for you; closing the seam means fresh sweeps stopped
+finding anything new twice in a row, not that every queued item on it is
+resolved. See coverage.md for the full round-by-round history.
+
+## Retroactive revert verification — F1, F2, F8, F11, F12
+
+These five landed before the red→green→red-on-revert discipline was
+tightened partway through the night, so their original evidence was
+"probe exists and is green," not the full three-step proof every later
+fix got. Run properly just now, after Stephen flagged the gap:
+
+- **F1 + F2** (`scheduler.py`, `provider_health.py`, `local_image.py`,
+  commit `f35c0b5`): reverted all three files to their pre-fix content,
+  ran `test_kg_nightly_reindex_registered.py` +
+  `test_provider_health_google_comfyui_higgsfield.py` — 6/6 fail cleanly.
+  Restored; 6/6 pass again.
+- **F8** (`mcp_client.py`, commit `907ba0e`): `mcp_client.py` has been
+  touched three more times since (F28, F32, F36), so a whole-file revert
+  would have clobbered their fixes too — instead, extracted F8's own diff
+  hunk and reverse-applied *only that hunk*. `test_mcp_restart_respects_
+  disabled.py` fails cleanly (1/2) while all of F28's/F32's/F36's own
+  probes stay green (12/12) — proof this fix is independently real, not
+  just correlated with the others. Restored; all 13 green again.
+- **F11** (`onboarding_copy.py`, commit `16450bd`): reverted to pre-fix
+  content and found a real bug in the probe itself, not just a missing
+  step — see the next item.
+- **F12** (`egress_gate.py`, commit `c9a5a6f`): reverted to pre-fix
+  content, ran `test_egress_gate_tool_calls_openai_shape.py` — 2/3 fail
+  cleanly (the third is a no-op-shaped structural check, correctly
+  unaffected either way). Restored; 3/3 pass again.
+
+**F11's probe was silently broken since it was written, and this is the
+kind of thing running the actual revert check catches that skipping it
+doesn't.** `VAULT_LOCATION` is a triple-quoted multi-line string, and the
+real pre-fix text wrapped exactly between "you" and "could" — the probe's
+old-claim substring (`"not in any file you could open"`, written as one
+line) never matched the real string's `"...you\ncould..."` on either side
+of the fix, so the assertion passed vacuously whether the fix was present
+or not. The one place this should have been caught — a helper documenting
+that the old-claim string was discriminating — checked a hand-typed,
+single-line reconstruction of the old text instead of the real one, and
+wasn't even prefixed `test_` so pytest never ran it at all. Fixed now:
+the probe's substring is `"not in any file"` (stays on one physical
+source line, can't be silently defeated by a rewrap), and the
+discriminating-fixture check is a real test that runs against the actual
+multi-line text. Re-verified: 2/3 fail cleanly against the reverted file
+(now catching both F10's and F11's old claims correctly), 3/3 pass
+restored. The underlying `onboarding_copy.py` fix itself was always
+correct — read directly, it does what F10/F11 claim — only the probe that
+was supposed to prove it had the bug.
+
+All five fixes are now retroactively confirmed with the same evidence
+standard as the other 17. Full `tests/gauntlet/` suite re-run after all
+five checks: only the 2 pre-existing by-design reds, no regressions.
 
 ## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
 
