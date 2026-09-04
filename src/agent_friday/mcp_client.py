@@ -97,6 +97,7 @@ class MCPServerProcess:
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         log: Callable[[str], None] | None = None,
+        trust_level: str = "sandboxed",
     ) -> None:
         self.name = name
         self.command = command
@@ -104,6 +105,10 @@ class MCPServerProcess:
         self.env = dict(env or {})
         self.cwd = cwd
         self._log = log or (lambda _m: None)
+        # Defaults to the filtered level (extension_security.get_trust_level
+        # does the same) -- a server config has to opt IN to "trusted" to
+        # ever see Friday's own inherited secrets, not opt out of leaking them.
+        self.trust_level = trust_level
 
         self.proc: subprocess.Popen | None = None
         self.tools: list[dict] = []           # raw MCP tool dicts (inputSchema form)
@@ -130,7 +135,17 @@ class MCPServerProcess:
         return resolved or self.command
 
     def _spawn(self) -> None:
-        full_env = os.environ.copy()
+        # The inherited parent environment holds Friday's OWN live decrypted
+        # secrets (credential_store.bootstrap_provider_env() writes provider
+        # API keys, the vault key, etc. into os.environ at boot -- see
+        # server.py -- well before any MCP server is spawned). Filtering here,
+        # before this connector's own (still-encrypted) env is layered on top
+        # below, is the one enforcement point: nothing upstream of this call
+        # was gating what a child process inherits, despite
+        # extension_security.ENV_BLOCKLIST/sanitize_env_for_mcp existing
+        # specifically for this and never being called from anywhere.
+        from agent_friday.services import extension_security as _extsec
+        full_env = _extsec.sanitize_env_for_mcp(os.environ.copy(), self.trust_level)
         # self.env holds connector credentials ENCRYPTED (see
         # services/connector_secrets) so they are ciphertext everywhere they
         # can be observed — on disk, in this object, and in the raw-config
@@ -766,6 +781,7 @@ class MCPManager:
                         log=self._log,
                     )
                 else:
+                    from agent_friday.services import extension_security as _extsec
                     sp = MCPServerProcess(
                         name=name,
                         command=spec.get("command", ""),
@@ -773,6 +789,7 @@ class MCPManager:
                         env=spec.get("env", {}),
                         cwd=spec.get("cwd"),
                         log=self._log,
+                        trust_level=_extsec.get_trust_level(spec),
                     )
                 if spec.get("enabled") is False:
                     # Keep a stopped placeholder so status() still lists it.
