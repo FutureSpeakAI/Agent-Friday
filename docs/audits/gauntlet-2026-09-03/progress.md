@@ -2246,6 +2246,90 @@ real design questions flagged per finding, not decided unilaterally
 where the choice affects a live security boundary or a user-facing
 surface this pass didn't have full visibility into.
 
+### Round 15 — timing clarification, the real temp-leak owner found, two ledger corrections (2026-09-04, evening)
+
+**Startup wiring: it was already done, timing crossed in transit.**
+Stephen checked coverage.md at 16:45, 17:35, and 18:30 and each time saw
+PARKED. Round 14's work — the real, isolated dynamic boot, F67-F70 — was
+committed at 18:35:50, five minutes after his last check. No obstacle,
+no stub-vs-production-code ruling needed (the isolated-boot approach
+never required editing production source). Confirmed directly by
+re-reading the committed file and the commit timestamp before answering,
+rather than asserting from memory of having done the work.
+
+**The temp-leak "owner," not a fourth instance.** F47, F51, and F65 had
+each fixed a real leak, but a full accounting of every `friday_*`-
+prefixed directory in `%TEMP%` — not just re-checking the one pattern
+(`friday_test_home_*`) all three had focused on — found 1,569 total,
+of which that pattern accounted for exactly 4. `friday_worker_*`
+accounted for 1,533: a completely different mechanism, never named by
+any prior fix, living in `src/agent_friday/services/worker_adapters/
+python_script_adapter.py` — **production code**, not test isolation.
+`_run()` created a fresh `tempfile.mkdtemp(prefix="friday_worker_")` on
+every worker-task invocation and never removed it — no cleanup on
+success, failure, timeout, or exception, ever, in real use as much as
+under test. Filed as **F71**. Fixed by adding a bounded sweep (mirroring
+`tests/conftest.py`'s own already-reviewed `_sweep_stale_test_homes()`
+shape) rather than an immediate rmtree — a completed job's `artifacts`
+are file paths inside this directory, surfaced to callers
+(`orchestrator.py:109`) for them to read after the job returns, so
+immediate deletion would remove the very files a caller was just handed
+paths to. Retention: 1 hour. Red-on-revert proven (3 new tests in
+`tests/gauntlet/test_python_script_adapter_workdir_cleanup.py`). Running
+the fixed path even once swept nearly the entire backlog as a side
+effect: 1,569 → 6 in one test invocation, no separate manual reclaim
+needed beyond exercising the fix.
+
+**A regression in the fix itself, found by the fix's own verification,
+not shipped unnoticed.** The first version called the sweep
+synchronously inline at the start of `_run()`. That added real latency
+(a `%TEMP%` glob+stat, worse with 1,500+ stale entries to check) to
+`_run()`'s own critical path, before the worker subprocess even starts —
+enough to regress `tests/api/test_compute_federation_auth.py`'s RCE-PoC
+test, which polls a marker file's existence then immediately reads its
+content: a narrow, pre-existing TOCTOU gap between file-creation and
+content-being-flushed that the added latency shifted into the failure
+window. Confirmed as a genuine regression via the same stash-based A/B
+this audit has used throughout (failed with the fix, passed 5/5 at clean
+HEAD) before touching anything further. Fixed by moving the sweep onto
+its own fire-and-forget daemon thread — cleanup housekeeping must never
+sit on the path to real work. Reran the previously-failing test 5
+consecutive times after the correction: 5/5 clean. Full `tests/
+gauntlet/` + the two affected test files together: green.
+
+**Honest accounting, not claimed as a clean multi-month leak.** Nearly
+all 1,533 `friday_worker_*` directories were created within roughly one
+hour of this investigation, not accumulated gradually since the original
+disk incident the way F47's and F51's leaks were — almost certainly this
+audit's own heavy test activity tonight (F64's bisection alone ran dozens
+of overlapping `tests/unit/` subsets). This doesn't make the defect less
+real: it is unconditional and would accumulate identically, just more
+slowly, from ordinary production use of the orchestrator's Python-script
+worker path. This audit's own intensive testing compressed what would
+otherwise be gradual accumulation into one evening — which is exactly
+how the full accounting caught it.
+
+**F66 and F37: two ledger corrections, both requested explicitly rather
+than left implicit.** F66's verdict now states directly, not just
+demonstrates: the fabricated pricing F50 removed had been masking this
+exact production bug — before F50, every call got a plausible float
+`cost_usd`, so `timeseries()`'s sum never saw a `None` and never crashed;
+correcting the fabrication made a real, pre-existing defect newly
+reachable, not newly introduced. A direct argument against the shortcut
+F50 was itself logged for: invented numbers don't just misinform, they
+can hide a second defect behind a value that always type-checks. F37's
+verdict now states, verified rather than asserted: this is at minimum
+the fourth distinct place this audit found in one cycle where tier-
+protected content could reach a destination its tier was supposed to
+keep it from — after F16 (voice pipeline, fixed), F30 (background-task
+fallback not re-applying tier gating, still queued), and F34 (KG Tier-B's
+"local only" claim broken by a discarded pinned flag, fixed) — each a
+different subsystem, same underlying shape. And separately: the first
+fix for F37 itself was proven wrong by cold re-verification (a case-
+mismatch made it a no-op for a section named "Private," the exact
+capitalization the real indexer produces) — already detailed in F37's
+own fix_note, now also stated where it's immediately visible.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
