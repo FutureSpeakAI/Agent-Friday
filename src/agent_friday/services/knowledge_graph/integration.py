@@ -55,8 +55,20 @@ def knowledge_context_block(message: str, max_items: int = 3) -> list[str]:
     except Exception:
         encrypted_sections = set()
     lines = []
+    # _wiki_encrypted_sections() always returns LOWERCASED names (it lower()s
+    # every configured section on the way in) -- but a candidate's `section`
+    # here is the raw, case-preserved directory name from wiki_graph.py's
+    # indexing (`section = rel.split("/")[0]`, never lowercased there). A
+    # section literally named "Private" (any case other than what the user
+    # typed into settings) compared unlowered against this set never
+    # matches, silently defeating this whole filter for that section --
+    # confirmed hermetically by an independent verification pass tonight
+    # (docs/audits/gauntlet-2026-09-03/findings.jsonl F37). wiki_engine.py's
+    # own _wiki_path_is_sensitive() already lower()s its side of this exact
+    # comparison; mirrored here.
     safe_candidates = [c for c in (result.get("candidates") or [])
-                       if c.get("section") not in encrypted_sections]
+                       if str(c.get("section") or "").strip().lower()
+                       not in encrypted_sections]
     for c in safe_candidates[:max_items]:
         if c.get("summary"):
             lines.append(f"- {c['title']} ({c['page']}): {c['summary'][:160]}")

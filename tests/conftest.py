@@ -18,8 +18,10 @@ Unit only (fast): pytest tests/unit -q
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # ── Hermetic environment — MUST run before any `import server` ────────────────
@@ -35,7 +37,63 @@ from pathlib import Path
 # runtime stack, which by definition do not exist under an isolated home.
 os.environ.setdefault("FRIDAY_REAL_HOME", str(Path.home()))
 
-_TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_test_home_"))
+
+def _sweep_stale_test_homes(base: Path, max_age_seconds: float = 3600) -> None:
+    """Best-effort cleanup of temp homes orphaned by a killed/crashed prior
+    run. `pytest_sessionfinish` below removes THIS run's own temp home on a
+    normal exit, but a process that never reaches that hook (Ctrl+C, OOM
+    kill, a hard crash) leaves its directory behind forever. Confirmed to
+    have accumulated 3,858 such directories since June (up to 781MB each),
+    which drove the real disk to 0 bytes free and crashed the live app with
+    a stack overflow (2026-09-03, see docs/audits/gauntlet-2026-09-03).
+    Swept here, at collection time rather than only at exit, so a machine
+    that never runs a suite to completion still self-heals on the next run.
+    """
+    try:
+        for entry in base.glob("friday_test_home_*"):
+            try:
+                if time.time() - entry.stat().st_mtime > max_age_seconds:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+_PID_TAG = f"{os.getpid()}:"
+_EXISTING_TEST_HOME = os.environ.get("_FRIDAY_TEST_HOME", "")
+if _EXISTING_TEST_HOME.startswith(_PID_TAG):
+    # This module is executing a SECOND time in the SAME process (see the
+    # docstring above pytest_sessionfinish for why that happens routinely
+    # -- any test doing `import tests.conftest` re-runs this whole file).
+    # Reuse the temp home the FIRST execution already created and
+    # registered with pytest, instead of minting a brand new one here.
+    # Before this guard, every second execution created its own real
+    # tempfile.mkdtemp() directory that pytest's plugin system never knew
+    # about -- only the FIRST (pytest-registered) module instance's
+    # pytest_sessionfinish ever runs, so this second directory was
+    # orphaned on every single run that imported tests.conftest anywhere,
+    # a 100%-reproducible leak (unlike the Windows-file-lock race the
+    # retry logic below defends against) -- confirmed directly: a
+    # controlled before/after directory count showed exactly +1 per run
+    # of a test file that imports tests.conftest, with zero relation to
+    # how heavy that test otherwise was (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl F47).
+    #
+    # The PID prefix matters: this env var is inherited by any subprocess
+    # a test spawns (e.g. one that shells out to `pytest` itself, per
+    # tests/gauntlet/test_conftest_leak_end_to_end.py). Without checking
+    # the PID, a CHILD process would see its PARENT's already-set env var
+    # and wrongly reuse the parent's still-in-use _TEST_HOME instead of
+    # creating its own -- breaking isolation between them and racing the
+    # parent's own eventual cleanup. Keying on os.getpid() means only a
+    # second import inside the SAME process matches; a genuinely new
+    # process always takes the "mint a fresh one" branch below.
+    _TEST_HOME = Path(_EXISTING_TEST_HOME[len(_PID_TAG):])
+else:
+    _sweep_stale_test_homes(Path(tempfile.gettempdir()))
+    _TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_test_home_"))
+    os.environ["_FRIDAY_TEST_HOME"] = f"{_PID_TAG}{_TEST_HOME}"
 os.environ["FRIDAY_TESTING"] = "1"
 os.environ["USERPROFILE"] = str(_TEST_HOME)
 os.environ["HOMEDRIVE"] = _TEST_HOME.drive or "C:"
@@ -100,6 +158,33 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.get_closest_marker("network"):
             item.add_marker(skip_network)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Remove this run's temp home on a normal exit. The startup sweep above
+    catches the case where this never fires (a killed/crashed process).
+
+    Retried a few times with a short backoff before falling back to
+    best-effort: on Windows, a single-shot rmtree(ignore_errors=True) can
+    silently leave a directory behind (no error, no trace) if any file
+    inside it is still momentarily locked at this exact instant (a
+    logging.FileHandler, an open sqlite connection, a thread mid-teardown)
+    -- Windows can't delete an open file, POSIX can. These handles are
+    normally released within milliseconds of process/thread teardown
+    completing, so a short retry loop turns a rare, hard-to-reproduce leak
+    into a reliable cleanup without meaningfully slowing the test run.
+    """
+    for _delay in (0, 0.05, 0.1, 0.2, 0.4):
+        if _delay:
+            time.sleep(_delay)
+        try:
+            shutil.rmtree(_TEST_HOME)
+            return
+        except FileNotFoundError:
+            return  # already gone
+        except OSError:
+            continue
+    shutil.rmtree(_TEST_HOME, ignore_errors=True)
 
 
 @pytest.fixture

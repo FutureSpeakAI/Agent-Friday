@@ -18,11 +18,30 @@ model_routing.vault_cloud_fallback's "deny"/"warn" contract.
 This probe must be RED before the fix (a refuse=True verdict is ignored;
 a vault_access=True local route still tries cloud on local failure) and
 GREEN after.
+
+CORRECTION (2026-09-04, caught by an independent cold re-verification of
+this fix): _generate_text() has a demo-mode gate (services/model_router.py,
+just above the router consult) that returns a canned placeholder and
+returns EARLY -- before the router is ever consulted -- whenever
+demo_mode.is_demo() is true, which it is by default whenever no provider
+has a usable key/model. This probe never patched that gate. On this
+developer's machine a real provider key happens to be present in the
+ambient environment, so is_demo() returns False here and the router path
+below it actually runs -- but on any machine without one (a fresh clone,
+CI, a sandboxed re-run), is_demo() would return True, `_generate_text`
+would return the demo placeholder before ever reaching the refuse/
+vault_access logic under test, and every assertion below would still pass
+(zero provider calls, because NOTHING was called) regardless of whether
+the fix exists at all. The evidence didn't travel. Fixed by explicitly
+forcing demo_mode.is_demo() to False in every test here, so the test is
+deterministic and actually exercises the routed code path on any machine,
+not just one with an ambient key.
 """
 from __future__ import annotations
 
 import agent_friday.routing.model_router as rr
 import agent_friday.services.model_router as mr
+import agent_friday.services.demo_mode as demo_mode
 
 MSG = [{"role": "user", "content": "what's my vault passphrase policy?"}]
 
@@ -36,6 +55,11 @@ class _FakeRouter:
 
 
 def _patch_router(monkeypatch, result):
+    # Force past the demo-mode gate FIRST: it runs before the router is
+    # even consulted, so without this the test's outcome depends on
+    # whether the machine running it happens to have a real provider key
+    # in its ambient environment -- see the CORRECTION note above.
+    monkeypatch.setattr(demo_mode, "is_demo", lambda *a, **k: False)
     monkeypatch.setattr(rr, "get_router", lambda *a, **k: _FakeRouter(result))
 
 
