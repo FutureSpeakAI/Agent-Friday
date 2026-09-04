@@ -122,10 +122,11 @@ unimportant. Ranked by how much rides on the answer:
     embedder claim is inaccurate on its own recommended no-GPU path, and a
     computed disk-space warning never actually blocks a download. Both
     minor; decide if they're worth a doc/code touch.
-19. **F22.** A federation settings-sync push could in principle broadcast
-    stale in-memory config instead of what's actually saved — not
-    confirmed exploitable, but the guarantee isn't airtight. Decide if
-    it's worth hardening now.
+19. **F22 / F40 (federation, two related gaps).** A settings-sync push
+    could in principle broadcast stale in-memory config instead of what's
+    saved; separately, the Federation panel's per-peer "block" control has
+    no backend route and enforces nothing at all — clicking it silently
+    does nothing. Decide if either needs building/hardening now.
 20. **F24.** The five onboarding persona/distribution presets mostly don't
     do what their descriptions claim. Decide: build them out, or simplify
     the copy to match what they actually do.
@@ -140,7 +141,7 @@ the 21 above.)
 
 ## What got fixed without asking
 
-22 real defects landed with full red→green→red-on-revert proof and a green
+23 real defects landed with full red→green→red-on-revert proof and a green
 full suite after every batch (five of them — F1, F2, F8, F11, F12 —
 originally without the revert step; see the honest-limits note above and
 the retroactive-verification section below the fixed ledger). The two most
@@ -148,8 +149,10 @@ consequential: **F31**, a live cost incident that spent real money
 overnight (detail immediately below), and **F32**, a credential leak where
 every MCP connector received Friday's live decrypted secrets. Five more
 close local-only/privacy enforcement gaps the same class as Q19 above but
-narrow enough to fix outright (F33, F34, F35, F36, F37) — see the FIXED
-LEDGER for all 22. Nothing else tonight rose to "wake him up for this."
+narrow enough to fix outright (F33, F34, F35, F36, F37), plus F38 (a false
+onboarding claim in README.md) and F39 (a second browser tab silently
+killing a voice call with no notification) — see the FIXED LEDGER for all
+23. Nothing else tonight rose to "wake him up for this."
 
 ## ⚠⚠ READ THIS FIRST — live production is still spending money right now (F31)
 
