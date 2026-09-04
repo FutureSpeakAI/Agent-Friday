@@ -39,3 +39,24 @@ explicitly before it happens.
 ### Round 0 — setup (2026-09-03)
 Worktree + scaffold created. No findings yet. Launching claim-extraction
 agents and first-wave finders next.
+
+### Round 1 — first wave launched (2026-09-03, in progress)
+6 background agents launched, all fresh-context, all instructed not to
+mutate the live app or this worktree:
+1. Claim extraction: THREAT_MODEL.md, KNOWN_ISSUES.md, docs/FILE_GRANTS.md
+2. Claim extraction: README.md, RELEASE_NOTES.md, docs/CONFIGURATION.md,
+   docs/API.md, tests/README.md
+3. UI claim extraction + direct probe of the `settings-readers-check`
+   pre-commit hook (it printed "OK" on a commit that touched none of the
+   files it claims to check — flagged for verification, not yet a finding)
+4. Finder: knowledge-graph ingest → retrieval seam (checking for
+   recurrence of the "indexer calls a nonexistent method, swallowed" class)
+5. Finder: settings write → read seam, privacy/egress toggles specifically
+   (checking for recurrence of the "Saved but nothing reads it" class)
+6. Finder: provider-health / router-to-seat seam (checking for recurrence
+   of the "special-cased two providers, six misreport" class)
+
+None have reported back yet. Meanwhile doing static-only startup-wiring
+analysis myself (reading server.py's daemon block / _residency_boot) to
+either clear or park the dynamic second-instance boot question — see
+JUDGMENT CALL 1 above. Not booting anything yet.
