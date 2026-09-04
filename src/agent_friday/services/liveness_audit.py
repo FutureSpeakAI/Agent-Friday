@@ -449,6 +449,60 @@ def _probe_seat_drift():
     return out
 
 
+def _probe_machine_monitor():
+    """The headroom monitor (`docs/design/headroom.md` §4.3, §8.4).
+
+    RAN — a sample in the last two minutes (the loop's own cadence is 60s at
+    rest, 5s under a lease; two minutes is generous headroom above the rest
+    cadence rather than a tight coupling to it).
+    PRODUCED — a non-`None` GPU row when the machine actually has a GPU
+    (`hardware_profile.get()` says so); a monitor that samples an empty list
+    on a machine with a card would be the exact "reports healthy, produces
+    nothing" shape this file exists to catch.
+    CONSUMED — the Arbiter's chain-boundary re-check citing a sample id.
+    That is Phase 3 (`docs/design/headroom.md` §12), not built yet, so this
+    reads `ORPHANED` on every machine until it lands. Per the Phase 1
+    acceptance note, that is the EXPECTED reading right now, not a defect —
+    named here so it does not silently read `ok` in the meantime.
+    """
+    try:
+        from agent_friday.services import machine_monitor as mm
+        from agent_friday.services import hardware_profile as hwp
+    except Exception as e:
+        return [_result("machine monitor", tier="hardware", status=EMPTY,
+                        detail="probe failed: %s" % e)]
+    age = mm.last_sample_age_s()
+    ran = age is not None and age < 120
+    if not ran:
+        return [_result(
+            "machine monitor", tier="hardware", status=EMPTY,
+            ran=False, produced=False, consumed=False,
+            consumer="THE MACHINE panel; the chain boundary check "
+                     "(§12 Phase 3)",
+            detail=("no sample in the last two minutes"
+                    if age is None else
+                    "last sample was %.0fs ago, past the two-minute window"
+                    % age))]
+    s = mm.last_sample() or {}
+    gpus = s.get("gpus") or []
+    try:
+        expects_gpu = bool((hwp.get() or {}).get("gpus"))
+    except Exception:
+        expects_gpu = bool(gpus)
+    produced = (not expects_gpu) or bool(
+        gpus and gpus[0].get("free_mib") is not None)
+    return [_result(
+        "machine monitor", tier="hardware",
+        status=(ORPHANED if produced else EMPTY),
+        ran=True, produced=produced, consumed=False,
+        consumer="the chain boundary check (§12 Phase 3 — not built yet; "
+                 "this stays ORPHANED, expected, until it lands)",
+        detail=("last sample %.0fs ago, %d GPU row(s)%s"
+                % (age, len(gpus),
+                   "" if produced else
+                   " -- no usable GPU row despite a detected GPU")))]
+
+
 def audit() -> dict:
     """Run every probe. Returns {generated_at, summary, findings[]}."""
     findings = []
@@ -481,6 +535,10 @@ def audit() -> dict:
         findings += _probe_seat_drift()
     except Exception as e:
         _log.warning("seat drift probe failed: %s", e)
+    try:
+        findings += _probe_machine_monitor()
+    except Exception as e:
+        _log.warning("machine monitor probe failed: %s", e)
     try:
         findings += _probe_schedules()
     except Exception as e:

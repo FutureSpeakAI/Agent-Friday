@@ -24,7 +24,6 @@ memory on its own would be a second, quieter allocator fighting the first.
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 
 _log = logging.getLogger("friday.gpu_headroom")
@@ -66,31 +65,31 @@ def gpu_memory() -> list[dict] | None:
 
     None is a real answer and callers must treat it as "cannot verify", not as
     "plenty free" — the whole point is to fail toward leaving the desktop alone.
+
+    Reads `machine_monitor.gpu_rows()` rather than calling `nvidia-smi`
+    itself (`docs/design/headroom.md` §4.3, §12 Phase 1: one nvidia-smi call
+    for the whole tree, not two disagreeing ones). `machine_monitor` extends
+    the same query string this function used to own with the four fields the
+    monitor's thrash signature needs; this function keeps its own short
+    cache on top so a caller that only wants the four original fields is not
+    coupled to the monitor's cache lifetime.
     """
     now = time.time()
     if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
         return _CACHE["data"]
     try:
-        out = subprocess.run(
-            ["nvidia-smi",
-             "--query-gpu=name,memory.total,memory.used,memory.free",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=15,
-        )
-        if out.returncode != 0:
-            return None
-        gpus = []
-        for line in out.stdout.strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 4:
-                continue
-            gpus.append({"name": parts[0], "total_mib": int(parts[1]),
-                         "used_mib": int(parts[2]), "free_mib": int(parts[3])})
-        _CACHE.update({"ts": now, "data": gpus or None})
-        return gpus or None
+        from agent_friday.services import machine_monitor as mm
+        rows = mm.gpu_rows()
     except Exception as e:
-        _log.debug("nvidia-smi unavailable: %s", e)
+        _log.debug("machine_monitor unavailable: %s", e)
         return None
+    if not rows:
+        return None
+    gpus = [{"name": r.get("name"), "total_mib": r.get("total_mib"),
+            "used_mib": r.get("used_mib"), "free_mib": r.get("free_mib")}
+           for r in rows]
+    _CACHE.update({"ts": now, "data": gpus or None})
+    return gpus or None
 
 
 def check(need_mib: int, *, reserve_mib: int | None = None) -> dict:
