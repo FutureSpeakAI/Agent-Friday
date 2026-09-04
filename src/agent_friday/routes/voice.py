@@ -837,7 +837,12 @@ def _local_brain_ready() -> bool:
     """
     try:
         from agent_friday.services import local_seats as _seats
-        return bool(_seats.resolve("reasoning"))
+        # "brain" is the ROLE token _ROLE_TO_CAPABILITY maps to the
+        # "reasoning" capability -- passing "reasoning" itself isn't a
+        # valid role, so _configured() returned None immediately and this
+        # never consulted the user's actual orchestrator model
+        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+        return bool(_seats.resolve("brain"))
     except Exception:
         return False
 
@@ -1447,7 +1452,12 @@ if sock is not None:
                     _brain = None
                     try:
                         from agent_friday.services import local_seats as _seats
-                        _brain = _seats.resolve("reasoning")
+                        # Same fix as _local_brain_ready() above: "brain" is
+                        # the role token, not "reasoning" (the capability it
+                        # maps to) -- the wrong token silently fell through
+                        # to the smallest installed model instead of the
+                        # user's configured orchestrator model.
+                        _brain = _seats.resolve("brain")
                     except Exception:
                         pass
                     reply, _trace = _generate_agent(
@@ -1641,6 +1651,31 @@ if sock is not None:
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
+            except Exception:
+                pass
+            return
+
+        # Local-only is an absolute override (the same guarantee F16 already
+        # enforces for _resolve_voice_engine and _synthesize_tts_wav) — it
+        # must win at the actual dispatch point too, not just in the
+        # advisory /api/voice/session-info recommendation. Before this, a
+        # stale tab that fetched session-info before local-only was turned
+        # on (or any client that connects to /ws/live directly, bypassing
+        # the recommendation) could stream mic audio and conversation text
+        # to Gemini regardless of the setting (docs/audits/
+        # gauntlet-2026-09-03/findings.jsonl).
+        try:
+            _ws_local_only = str(((_load_settings() or {}).get('model_routing') or {})
+                                 .get('mode') or '').strip().lower() == 'local_only'
+        except Exception:
+            _ws_local_only = False
+        if _ws_local_only:
+            _vlog('REFUSED — local-only mode is on, /ws/live is a cloud path')
+            try:
+                ws.send(json.dumps({
+                    "type": "error",
+                    "error": "local-only mode is on — voice will not use "
+                             "Gemini Live; use the local voice engine instead"}))
             except Exception:
                 pass
             return
