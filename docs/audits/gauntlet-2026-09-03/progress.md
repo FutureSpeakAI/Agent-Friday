@@ -261,8 +261,8 @@ an honest `noted_not_independently_chased` status where a claim was read
 but not individually traced to a verdict). coverage.md's corpus table
 corrected to match.
 
-**3. Suite verification rests on exit code alone (in progress).** Re-ran
-without the `tail -5` pipe — the summary line is STILL missing from the
+**3. Suite verification rests on exit code alone — RESOLVED.** Re-ran
+without the `tail -5` pipe — the summary line was STILL missing from the
 captured output even reading the full file directly (progress dots to
 100%, then just `[exited with code 0]`, no "N passed" line at all). So the
 pipe wasn't the cause; something about this background-capture path drops
@@ -270,9 +270,22 @@ pytest's final terminal-writer output specifically (pytest.ini's own
 `addopts` has nothing that would suppress it — confirmed, no custom
 reporter, no `-p no:terminal`). Rather than keep guessing at the terminal
 capture, switched to `--junit-xml=<path>`, which pytest writes to disk
-directly regardless of what happens to the captured stdout — a
-deterministic count that can't be a vacuous "collected but not run" false
-positive. Running now; real numbers recorded below once it lands.
+directly regardless of what happens to the captured stdout — immune to
+whatever swallows the terminal summary. **Result:**
+`<testsuite tests="6697" errors="0" failures="0" skipped="8" time="601.669">`
+— 6697 test items genuinely executed (6689 passed + 8 skipped), zero
+failures, zero errors, in 601.67s (~10 minutes, matching the aborted Fable
+session's independent observation that this suite exceeds 10 minutes in
+this environment). Deterministic proof the suite actually ran rather than
+being vacuously collected-and-skipped. This XML run happened after Fix #5,
+so it confirms the full current state (Fixes #1-#5 together) is clean.
+
+**Side observation, not chased further:** 6697 is far more than
+tests/README.md's and pytest.ini's own claimed "~1,870"/"~1850". Most
+likely explanation is counting methodology (JUnit counts every
+parametrized case separately; the doc figures may count test functions
+pre-expansion) rather than the doc being wrong outright — flagged as a
+corpus item worth someone reconciling, not asserted as a confirmed defect.
 
 **4. F10 sharpened.** See the rewritten queue item above: posed as an
 explicit (A) fail-closed / (B) fall-back-with-notice choice with
