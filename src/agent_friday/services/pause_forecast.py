@@ -359,10 +359,88 @@ def before_drain(cls: str = "heavy") -> dict:
     }
 
 
+def before_chain(plan: dict, *, cloud_ok: bool = True) -> dict:
+    """headroom.md §8.1's five lines, as data: what / where / what stands
+    down / how long / what the machine will feel like. Phase 4 owns
+    RENDERING this; this function only builds it, from a
+    `residency_policy.plan_chain` ChainPlan.
+
+    A chain that never takes a lease (every stage `resident`/`cpu`/`cloud`)
+    does not pause anything — `_no_pause`, same as `before_local_turn`'s own
+    "already loaded" case: warning before every ordinary chain would be the
+    same noise this module's own docstring already refuses to produce for a
+    seat that is simply loaded and answering.
+    """
+    stages = plan.get("stages") or []
+    leased = [s for s in stages if s.get("where") == "leased"]
+    if not leased:
+        return _no_pause(
+            "nothing in this chain takes an exclusive lease -- every stage "
+            "runs resident, on CPU, or in the cloud.")
+
+    evicted_ids = sorted({m for t in (plan.get("transitions") or [])
+                         for m in (t.get("evict") or [])})
+    retained = list(plan.get("retained") or [])
+    seconds = plan.get("total_est_s")
+
+    # 1. What.
+    label = {"image": "Make an image", "video": "Make a video"}
+    what = "; ".join(
+        "%s (%s, on this machine)" % (label.get(s["role"], s["role"]),
+                                      s.get("model_id"))
+        for s in leased) or "Run this chain locally"
+
+    # 2. Where.
+    where = [{"role": s.get("role"), "model_id": s.get("model_id"),
+             "where": s.get("where")} for s in stages]
+
+    # 3. What stands down.
+    if evicted_ids and retained:
+        stands_down = ("%s steps aside for it. Friday keeps answering on %s."
+                       % (", ".join(evicted_ids), ", ".join(retained)))
+    elif evicted_ids:
+        stands_down = "%s steps aside for it." % ", ".join(evicted_ids)
+    else:
+        stands_down = ("Nothing steps aside — this chain has room beside "
+                       "what is already running.")
+
+    # 4. How long.
+    confidence = CERTAIN if seconds is not None else POSSIBLE
+    basis = "measured" if seconds is not None else ROUGH_DEFAULT_BASIS
+    how_long = (_plural(seconds) if seconds is not None else
+               "not fully measured on this machine yet")
+
+    # 5. What the machine will feel like — the contract verdict in a
+    # sentence, per §8.1's own wording ("Your screen and browser keep their
+    # memory. 1.0 GB of headroom stays free.").
+    contract_ok = plan.get("contract_ok")
+    if contract_ok is False:
+        feel = ("This does not fit under the current reserve — one or more "
+                "stages moved to the cloud instead of overloading the "
+                "card.")
+    elif contract_ok is None:
+        feel = ("Part of this has not been measured on this machine yet, "
+                "so how it will feel is not fully known.")
+    else:
+        feel = "Your screen and browser keep their memory throughout."
+
+    why = "%s. %s %s" % (what, stands_down, feel)
+    return {
+        "will_pause": True, "seconds": seconds, "confidence": confidence,
+        "basis": basis, "why": why,
+        "what": what, "where": where, "stands_down": stands_down,
+        "how_long": how_long, "feel": feel,
+        "affects": evicted_ids, "stays_awake": retained,
+        "options": _options(seconds or 0, cloud_ok=cloud_ok),
+        "checked_at": time.time(),
+    }
+
+
 def forecast(kind: str, **kw) -> dict:
     """One entry point, so callers do not each pick their own vocabulary."""
     fn = {"local_turn": before_local_turn, "heavy_lease": before_heavy_lease,
-          "image": before_image, "drain": before_drain}.get(kind)
+          "image": before_image, "drain": before_drain,
+          "chain": before_chain}.get(kind)
     if fn is None:
         return _no_pause("unknown forecast kind %r" % kind)
     return fn(**kw)

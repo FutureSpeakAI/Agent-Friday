@@ -140,6 +140,70 @@ SEED_MEASUREMENTS: dict = {
              "pct_gpu": 100, "cold_load_s": 3.0,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
         ],
+        # Image footprints, headroom.md §12 Phase 2.3 -- [Stephen / GPU],
+        # measured 2026-09-04 under the Arbiter's own `image_job` lease
+        # (`friday measure <model_id>`, `footprint_measure.measure_image_model`).
+        # These rows are written as plain dicts rather than through
+        # `make_footprint()` because SEED_MEASUREMENTS (this dict) is defined
+        # before that function exists in the file; the shape matches it
+        # exactly (`FOOTPRINT_FIELDS` plus the `num_ctx: None` sentinel
+        # `record_footprint` uses), so `footprint()`'s "direct row" branch
+        # reads them identically either way.
+        #
+        # Phase 2's own commit measured these for real (see `local_image.py`'s
+        # module docstring) but only ever called `record_footprint()`, which
+        # writes to the per-machine runtime store
+        # (`runtime_dir()/residency/measurements.json`, NOT version
+        # controlled) -- never to this seed table. Per §5.1, "living in
+        # SEED_MEASUREMENTS for the reference instance" is exactly the
+        # committed half of that sentence, and it was the half left undone:
+        # on any checkout other than the one machine that ran the
+        # measurement, `footprint("z-image-turbo-fp8", P1)` returned `None`
+        # and every chain plan had to treat the image stage as `unknown`
+        # again. Phase 3 needs a real number to plan a chain honestly, so
+        # this closes that gap rather than re-deriving it. Two runs were
+        # recorded for Z-Image (10,120-10,453 MiB); the HIGHER figure is
+        # seeded here, the same "never extrapolate downward into optimism"
+        # rule `vram_at()` already applies to context measurements -- a
+        # footprint that under-reports its own VRAM is the error that fails
+        # at load time, not the safe direction. `local_image.py`'s own
+        # docstring already cites 10,453 as the headline number.
+        "z-image-turbo-fp8": [
+            {
+                "modality": "image", "device": "gpu", "vram_mib": 10453,
+                "host_ram_mib": None, "artifact_bytes": 14535245332,
+                "load_s": 24.52, "unit": "image", "work_s_per_unit": 49.6,
+                "requires": None,
+                "licence": {
+                    "name": "Apache License 2.0",
+                    "note": "Apache License 2.0 — commercial and "
+                            "private use, modification and redistribution "
+                            "permitted",
+                    "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+                },
+                "quality_note": "turbo: 8 steps, fast",
+                "basis": "measured", "measured_at": "2026-09-04",
+                "num_ctx": None,
+            },
+        ],
+        "sd3.5-medium-fp8": [
+            {
+                "modality": "image", "device": "gpu", "vram_mib": 10621,
+                "host_ram_mib": None, "artifact_bytes": 11638004202,
+                "load_s": 20.01, "unit": "image", "work_s_per_unit": 50.1,
+                "requires": None,
+                "licence": {
+                    "name": "Stability AI Community License",
+                    "note": "Stability AI Community License — free "
+                            "below $1M annual revenue; attribution required "
+                            "when redistributed",
+                    "url": None,
+                },
+                "quality_note": "30 steps, higher fidelity, slower",
+                "basis": "measured", "measured_at": "2026-09-04",
+                "num_ctx": None,
+            },
+        ],
     }
 }
 

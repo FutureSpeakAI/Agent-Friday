@@ -30,10 +30,22 @@ def isolated_store(monkeypatch, tmp_path):
 
 
 def _store_is_empty_for(model_id):
-    """No DIRECT footprint row (num_ctx=None) was ever written for
-    `model_id` — the shape HR6 forbids reaching by any blocked path."""
-    rows = rc.measurements(model_id, rc.P1_FINGERPRINT)
-    return not any(r.get("num_ctx") is None for r in rows)
+    """No DIRECT footprint row (num_ctx=None) was ever WRITTEN for
+    `model_id` on a blocked path — the shape HR6 forbids reaching that way.
+
+    Reads the LIVE store only (`rc._load_store()`), not
+    `rc.measurements()`'s seed-merged view: Phase 3 committed real,
+    measured Z-Image/SD 3.5 footprints into `SEED_MEASUREMENTS` (closing
+    the gap where Phase 2's own real measurement lived only in the
+    per-machine runtime store, never in source), so `measurements()` now
+    legitimately returns a row for these two model ids even when this
+    test's own blocked path wrote nothing at all. Checking the live store
+    directly is the same "nothing was recorded" assertion this helper has
+    always made — a seed row was never "recorded" by anything this test
+    ran, so it must not count as a violation of it.
+    """
+    live = (rc._load_store().get(rc.P1_FINGERPRINT) or {}).get(model_id, [])
+    return not any(r.get("num_ctx") is None for r in live)
 
 
 # ── image: blocked paths write nothing ──────────────────────────────────────

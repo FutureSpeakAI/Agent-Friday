@@ -143,11 +143,19 @@ def forecast_pause():
     Meant to be called BEFORE the thing happens — that is the whole point.
     Warning afterwards is just narrating a wait that already annoyed someone.
 
-    `kind` is one of local_turn / heavy_lease / image / drain. A caller that
-    does not know which it wants can pass `local_turn` with the seat's model
-    and get the common case: the first message of a session, where the seat is
-    not resident and the reply takes ~13 s longer than every message after it
-    for no visible reason.
+    `kind` is one of local_turn / heavy_lease / image / drain / chain. A
+    caller that does not know which it wants can pass `local_turn` with the
+    seat's model and get the common case: the first message of a session,
+    where the seat is not resident and the reply takes ~13 s longer than
+    every message after it for no visible reason.
+
+    `chain` (headroom.md §12 Phase 3.3) is the odd one out: it needs a
+    `ChainPlan`, not just a model id, so it computes one from
+    `residency_policy.plan_chain` against the live Arbiter's profile,
+    catalog and CURRENT seats (`arb.plan["seats"]`, per `plan_chain`'s own
+    "resident is what is actually loaded right now" contract) before handing
+    it to `pause_forecast.before_chain`. `stages` in the request body is
+    `plan_chain`'s own `[{role, model_id?, units?, touches_vault?}]` shape.
     """
     from agent_friday.services import pause_forecast as pf
 
@@ -166,6 +174,24 @@ def forecast_pause():
         kw = {"cloud_ok": _cloud_available()}
     elif kind == "drain":
         kw = {"cls": body.get("class") or "heavy"}
+    elif kind == "chain":
+        stages = body.get("stages") or []
+        if not stages:
+            return jsonify({"error": "no stages given for a chain forecast"}
+                           ), 400
+        from agent_friday.services import residency_arbiter as ra
+        from agent_friday.services import residency_policy as rp
+        arb = ra.get_arbiter()
+        if arb is None:
+            return jsonify({"error": "the residency layer is not governing "
+                                     "this process"}), 400
+        plan = rp.plan_chain(
+            arb.profile, arb.entries, stages,
+            resident=(arb.plan or {}).get("seats") or {},
+            cloud_ok=_cloud_available(),
+            strict_vault=bool(body.get("strict_vault")))
+        return jsonify({"plan": plan,
+                        **pf.before_chain(plan, cloud_ok=_cloud_available())})
     return jsonify(pf.forecast(kind, **kw))
 
 
