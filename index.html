@@ -32877,11 +32877,211 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       })));
 }
 
+// ── LOCAL MODELS ON THIS MACHINE (headroom.md §8.2, §12 Phase 4) ───────────
+//
+// HR1/HR2 travel here from the server, they are not decided in the browser:
+// every row's three axes come straight from `verdicts()` in
+// `residency_policy.py`, and this file only ever renders what that function
+// already decided. No row is ever labelled with one combined yes/no verdict
+// (HR2), and a row with no basis at all reads "not measured", never a green
+// tick (HR1).
+
+const _AXIS_SKIN = {
+  ready:        { c: '#00ff80', t: 'Ready' },
+  'ready-but':  { c: '#00d4ff', t: 'Ready, with caveats' },
+  degraded:     { c: '#f59e0b', t: 'Degraded' },
+  refused:      { c: '#ff4d6d', t: 'Refused' },
+  unknown:      { c: 'rgba(255,255,255,0.35)', t: 'Not measured' },
+};
+
+function AxisBadge({ axisLabel, v }) {
+  if (!v) return null;
+  const skin = _AXIS_SKIN[v.status] || _AXIS_SKIN.unknown;
+  return E('span', {
+    title: axisLabel + ': ' + (v.explanation || v.status) + ' (basis: ' + v.basis + ')',
+    style: {
+      fontSize: 9, fontFamily: 'JetBrains Mono', color: skin.c,
+      border: '1px solid ' + skin.c + '55', background: skin.c + '14',
+      borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
+    },
+  }, axisLabel + ': ' + skin.t);
+}
+
+function LocalModelRow({ r, onFetch }) {
+  const v = r.verdicts || {};
+  const allUnknown = ['fits', 'runs_well', 'worth_it']
+    .every(k => (v[k] || {}).basis === 'unknown');
+  return E('div', {
+    key: r.model_id,
+    style: { borderTop: '1px solid rgba(255,255,255,0.05)', padding: '9px 2px' },
+  },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' } },
+      E('span', {
+        style: {
+          fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.92)',
+          flex: '1 1 200px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+        },
+        title: r.model_id,
+      }, r.label),
+      E('span', {
+        style: {
+          fontSize: 9, fontFamily: 'JetBrains Mono',
+          color: r.installed === true ? '#00ff80' : r.installed === false ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.3)',
+        },
+      }, r.installed === true ? 'installed' : r.installed === false ? 'not installed' : 'installed: unknown'),
+      E(AxisBadge, { axisLabel: 'Fits', v: v.fits }),
+      E(AxisBadge, { axisLabel: 'Runs well', v: v.runs_well }),
+      E(AxisBadge, { axisLabel: 'Worth it', v: v.worth_it }),
+      !r.installed && E('button', {
+        onClick: () => onFetch(r.model_id),
+        style: {
+          cursor: 'pointer', background: 'rgba(0,212,255,0.10)',
+          border: '1px solid rgba(0,212,255,0.35)', borderRadius: 5,
+          padding: '3px 9px', color: '#cfefff', fontFamily: 'JetBrains Mono', fontSize: 10,
+        },
+      }, 'Fetch')),
+    r.licence && E('div', {
+      style: { fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+    }, 'Licence: ' + r.licence),
+    allUnknown && E('div', {
+      style: { fontSize: 10, color: 'rgba(255,255,255,0.42)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+    }, 'Not measured on this machine. Fetch it and Friday will measure it the first time it runs.'));
+}
+
+/** The pre-fetch card: what / where / what stands down / how long / what it
+ * will feel like (§8.1's five lines), reusing PauseWarning's shape rather
+ * than inventing new markup. Read-only until Fetch is pressed. */
+function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
+  const [card, setCard] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setCard(null); setErr(null);
+    apiFetch('/api/models/fetch/preflight?model=' + encodeURIComponent(modelId))
+      .then(r => r.json()).then(d => {
+        if (!live) return;
+        if (d.status !== 'ok') { setErr(d.message || 'could not read this model'); return; }
+        setCard(d);
+      }).catch(e => live && setErr(String(e)));
+    return () => { live = false; };
+  }, [modelId]);
+
+  const wrap = (children) => E('div', {
+    style: {
+      margin: '10px 0', border: '1px solid rgba(0,212,255,0.35)', borderRadius: 9,
+      padding: 12, background: '#111726',
+    },
+  }, children);
+
+  if (err) return wrap(
+    E('div', { style: { fontSize: 11, color: '#f59e0b', marginBottom: 6 } }, err),
+    E('button', {
+      onClick: onClose,
+      style: {
+        background: 'none', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6,
+        padding: '5px 10px', color: 'rgba(255,255,255,0.7)', cursor: 'pointer',
+        fontFamily: 'JetBrains Mono', fontSize: 10.5,
+      },
+    }, 'Close'));
+
+  if (!card) return wrap(E('div', {
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono' },
+  }, 'Checking the machine…'));
+
+  const c = card.card;
+  const line = (label, text) => text && E('div', {
+    key: label,
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.75)', lineHeight: 1.5, marginBottom: 4 },
+  }, E('span', { style: { color: 'rgba(255,255,255,0.4)' } }, label + ': '), text);
+
+  return wrap(
+    E('div', {
+      style: { fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff', marginBottom: 8 },
+    }, c.what),
+    line('Where', c.where),
+    line('What stands down', c.what_stands_down),
+    line('How long', (c.how_long || {}).note),
+    line('What it will feel like', c.feel),
+    E('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+      E('button', {
+        onClick: () => onConfirm(card), disabled: confirming,
+        style: {
+          cursor: confirming ? 'default' : 'pointer',
+          background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.45)',
+          borderRadius: 6, padding: '6px 12px', color: '#cfefff',
+          fontFamily: 'JetBrains Mono', fontSize: 10.5,
+        },
+      }, confirming ? 'Fetching…' : 'Fetch'),
+      E('button', {
+        onClick: onClose,
+        style: {
+          background: 'none', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6,
+          padding: '6px 12px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer',
+          fontFamily: 'JetBrains Mono', fontSize: 10.5,
+        },
+      }, 'Cancel')));
+}
+
+const _MODALITY_HEADING = {
+  text: 'TEXT', image: 'IMAGE', voice: 'VOICE', embed: 'EMBEDDING',
+};
+
+function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching, fetchMsg }) {
+  const sections = ['text', 'image', 'voice', 'embed'];
+  return E(StSection, { title: 'LOCAL MODELS ON THIS MACHINE' },
+    E('div', {
+      style: {
+        fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
+        lineHeight: 1.6, marginBottom: 8,
+      },
+    }, 'One row per model Friday can run locally, installed or not. Three separate ' +
+       'axes, never one combined yes/no — a row with no basis says so plainly ' +
+       'instead of guessing.'),
+    sections.map(sec => {
+      const rows = lm[sec] || [];
+      if (!rows.length) return null;
+      return E('div', { key: sec, style: { marginTop: 10 } },
+        E('div', {
+          style: {
+            fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+            color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 2,
+          },
+        }, _MODALITY_HEADING[sec] || sec),
+        rows.map(r => E(LocalModelRow, { key: r.model_id, r: r, onFetch: setFetchFor })));
+    }),
+    E('div', {
+      style: {
+        marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)',
+        fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+        color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase',
+      },
+    }, 'VIDEO'),
+    E('div', {
+      style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+    }, lm.video_note || 'Video runs in the cloud on every machine today.'),
+    fetchFor && E(FetchPreflightCard, {
+      modelId: fetchFor, onClose: () => setFetchFor(null),
+      onConfirm: confirmFetch, confirming: fetching,
+    }),
+    fetchMsg && E('div', {
+      style: {
+        fontSize: 10, fontFamily: 'JetBrains Mono', color: '#f59e0b',
+        marginTop: 8, lineHeight: 1.5,
+      },
+    }, fetchMsg));
+}
+
 function SettingsTabIntelligence() {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
   const [savingMode, setSavingMode] = useState(null);
+  // LOCAL MODELS ON THIS MACHINE (headroom.md §8.2) -- the pre-fetch card
+  // and the one message line that reports what a fetch attempt did.
+  const [fetchFor, setFetchFor] = useState(null);   // model_id or null
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState('');
+  const [yielding, setYielding] = useState(false);
 
   const pick = (key, m) => {
     setSaving(key);
@@ -32917,6 +33117,53 @@ function SettingsTabIntelligence() {
   const vram = mach.vram || {};
   const ram = mach.ram || {};
   const vUsed = (vram.total_mib || 0) - (vram.free_mib || 0);
+  // §8.3's third bar: the SYSTEM volume (the pagefile, ~/.friday, logs),
+  // watched regardless of where models live (HR5) -- against the EXISTING
+  // DISK_FLOOR_MIB (R8), not a new number.
+  const diskSys = mach.disk_system || {};
+  const diskUsed = (diskSys.total_mib || 0) - (diskSys.free_mib || 0);
+  const contract = mach.contract || {};
+
+  const confirmFetch = (card) => {
+    const modelId = card.model_id;
+    const modality = (card.row || {}).modality;
+    setFetching(true);
+    if (modality === 'text') {
+      // The ONE automated fetch path that exists today (headroom.md §8.2):
+      // Ollama artifacts. HR10 -- this reports "pulling", not "installed";
+      // the row only reads installed once reload() sees it in the store.
+      apiFetch('/api/ollama/pull', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      }).then(r => r.json()).then(() => {
+        setFetchMsg('Pulling ' + modelId + ' — progress shows as a process orb. ' +
+          'This row updates once the model store actually lists it.');
+        setTimeout(reload, 6000);
+      }).catch(e => setFetchMsg('Could not start the fetch: ' + e))
+        .finally(() => { setFetching(false); setFetchFor(null); });
+    } else {
+      // No automated download exists yet for image/voice/embed weights in
+      // this build (local_image's ComfyUI files, the voice engines' own
+      // model dirs) -- HR10 forbids a SECOND success path, so this says so
+      // rather than pretending to fetch something nothing here downloads.
+      setFetchMsg(modelId + ' has no automated fetch in this build yet — ' +
+        'its files are installed manually. Once they are on disk, use ' +
+        '"friday measure ' + modelId + '" so this row can show a real verdict.');
+      setFetching(false);
+      setFetchFor(null);
+    }
+    setTimeout(() => setFetchMsg(''), 15000);
+  };
+
+  const pressYield = () => {
+    setYielding(true);
+    apiFetch('/api/machine/level', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'yield' }),
+    }).then(r => r.json()).then(d2 => {
+      alert(d2.message || 'Noted.');
+    }).catch(() => {}).finally(() => setYielding(false));
+  };
 
   const setMode = (id) => {
     setSavingMode(id);
@@ -33051,6 +33298,47 @@ function SettingsTabIntelligence() {
         sub: Math.round((ram.available_mib || 0) / 1024) + ' GB free of ' +
              Math.round(ram.total_mib / 1024) + ' GB',
       }),
+      // §8.3's third bar: the SYSTEM volume, against the EXISTING
+      // DISK_FLOOR_MIB (R8) -- not a new number. Independent of wherever
+      // OLLAMA_MODELS points; this is the drive the pagefile and
+      // ~/.friday live on, and it is the one the 2026-09-04 incident
+      // filled to zero while none of the model-store checks noticed (HR5).
+      diskSys.total_mib && E(Bar, {
+        label: 'System drive (Windows, Friday’s own data)',
+        used: diskUsed, total: diskSys.total_mib, reserve: diskSys.floor_mib,
+        sub: Math.round((diskSys.free_mib || 0) / 1024) + ' GB free of ' +
+             Math.round(diskSys.total_mib / 1024) + ' GB',
+      }),
+      // Contract level (§8.3 item 4). The full working/away/yield Contract
+      // is D1 -- Stephen's decision, not made. This line is only the idle
+      // timer work_queue already tracks, next to a button that is honest
+      // about being a stub: nothing here actually releases a lease or
+      // changes what the planner enforces yet.
+      E('div', {
+        style: {
+          display: 'flex', alignItems: 'center', gap: 8, marginTop: 8,
+          fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.5)',
+        },
+      },
+        E('span', null, 'Posture: '),
+        E('span', { style: { color: 'rgba(255,255,255,0.8)' } }, contract.level || 'working'),
+        !contract.levels_enforced && E('span', {
+          title: 'The full working/away/yield Contract is not built yet (headroom.md D1) — this label does not change what is enforced.',
+          style: { color: 'rgba(255,255,255,0.32)' },
+        }, '(not yet enforced)'),
+        typeof contract.idle_s === 'number' && E('span', {
+          style: { color: 'rgba(255,255,255,0.35)' },
+        }, '· idle ' + Math.round(contract.idle_s) + 's'),
+        E('button', {
+          onClick: pressYield, disabled: yielding,
+          title: 'Tell Friday you need the machine now. Today this is noted but not enforced.',
+          style: {
+            cursor: yielding ? 'default' : 'pointer', marginLeft: 'auto',
+            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 5, padding: '3px 9px', color: 'rgba(255,255,255,0.75)',
+            fontFamily: 'JetBrains Mono', fontSize: 10,
+          },
+        }, yielding ? 'noting…' : 'I need my machine')),
       E('div', {
         style: { fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.55)', marginTop: 6 },
       },
@@ -33086,6 +33374,14 @@ function SettingsTabIntelligence() {
         heading: 'Worth knowing',
         blurb: null,
       })),
+
+    // ── LOCAL MODELS ON THIS MACHINE ────────────────────────────────────────
+    // headroom.md §8.2. Not a new tab -- 65f70ce fixed a round of links to
+    // Settings tabs that did not exist, and the machine already lives here.
+    E(LocalModelsSection, {
+      lm: d.local_models || {}, fetchFor: fetchFor, setFetchFor: setFetchFor,
+      confirmFetch: confirmFetch, fetching: fetching, fetchMsg: fetchMsg,
+    }),
 
     // ── PROVIDERS ────────────────────────────────────────────────────────────
     E(StSection, { title: 'PROVIDERS' },

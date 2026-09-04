@@ -124,6 +124,127 @@ def machine():
     return jsonify({"status": "ok", "sample": s, "verdict": v})
 
 
+@residency_bp.route("/api/models/fetch/preflight", methods=["GET"])
+@login_required
+def fetch_preflight():
+    """The pre-fetch card (headroom.md §8.1, §8.2, §12 Phase 4 item 1): five
+    lines the user can read in the time it takes to decide, for one model
+    named by `?model=`. Reuses the shape of the existing forecast card
+    (`PauseWarning` in index.html) rather than inventing new markup.
+
+    Read-only: this looks the model up, samples the machine once, and does
+    the arithmetic. It does not start the fetch -- that stays the existing
+    `/api/ollama/pull` / `model_store` paths (HR10: a fetch reports success
+    only when the store lists the artifact, and this route never touches
+    that decision).
+    """
+    model_id = (request.args.get("model") or "").strip()
+    if not model_id:
+        return jsonify({"status": "error",
+                        "message": "?model= is required"}), 400
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        from agent_friday.services import machine_monitor as mm
+        from agent_friday.services import residency_policy as rp
+        # Deferred: routes.intelligence imports routes.residency inside ITS
+        # own functions too (for /api/residency/status), so this stays a
+        # function-local import on both sides rather than a module-level
+        # cycle.
+        from agent_friday.routes.intelligence import (
+            local_models_catalog, _ollama_sizes)
+
+        profile = hwp.get()
+        cat = local_models_catalog(profile, _ollama_sizes())
+        row = next((r for section in ("text", "image", "voice", "embed")
+                   for r in cat.get(section) or []
+                   if r["model_id"] == model_id), None)
+        if row is None:
+            return jsonify({
+                "status": "error",
+                "message": "%r is not a model Friday knows how to run "
+                          "locally" % model_id}), 404
+
+        s = mm.sample(ours_resident_mib=0)
+        v = mm.verdict(s, _track_history=False)
+
+        dl_gib = row.get("download_gib")
+        dl_mib = round(dl_gib * 1024) if dl_gib else None
+        store_free = (profile.get("disk") or {}).get("free_mib")
+        sys_free = s.get("disk_system_free_mib")
+        store_after = (store_free - dl_mib
+                       if store_free is not None and dl_mib else store_free)
+        # A model download writes to the model store, not the system volume,
+        # unless they are literally the same drive -- shown unconditionally
+        # anyway (HR5: the system volume is watched regardless of where
+        # models live) rather than guessing whether the two paths coincide.
+        sys_after = sys_free
+
+        disk_line = None
+        if store_after is not None:
+            disk_line = "disk after: %.1f GB" % (store_after / 1024.0)
+            if sys_after is not None:
+                disk_line += "; system volume after: %.1f GB" % (
+                    sys_after / 1024.0)
+            if store_after < rp.DISK_FLOOR_MIB or (
+                    sys_after is not None and sys_after < rp.DISK_FLOOR_MIB):
+                disk_line += (" -- below the %.0f GB floor; Friday will "
+                             "refuse this fetch" % (rp.DISK_FLOOR_MIB / 1024.0))
+        else:
+            disk_line = "free disk could not be read"
+
+        card = {
+            "what": "Fetch %s (%s)." % (row["label"], row["modality"]),
+            "where": row["label"] + (
+                " -- GPU" if row["modality"] in ("text", "image") else
+                " -- CPU" if row["modality"] in ("stt", "tts", "embed") else ""),
+            "what_stands_down": "Nothing changes until you choose to use "
+                                "it. " + disk_line,
+            "how_long": (
+                {"basis": "unknown",
+                 "note": "download time depends on your network connection "
+                        "-- not estimated"}
+                if dl_mib else
+                {"basis": "unknown",
+                 "note": "no download size is recorded for this model yet"}),
+            "feel": ((v.get("display") or {}).get("explanation")
+                     or "Machine state could not be read."),
+        }
+        return jsonify({"status": "ok", "model_id": model_id, "row": row,
+                        "card": card})
+    except Exception as e:
+        return jsonify({"status": "error",
+                        "message": "%s: %s" % (type(e).__name__, e)}), 500
+
+
+@residency_bp.route("/api/machine/level", methods=["POST"])
+@login_required
+def machine_level():
+    """The 'I need my machine' / yield button (headroom.md §8.1, §8.3,
+    §12 Phase 4 item 3).
+
+    STUBBED, deliberately: the full working/away/yield Headroom Contract is
+    **D1** (spec §13), and D1 is not decided -- there is no Phase 5 handler
+    in this tree that actually stands leases down or changes what the
+    planner enforces. This route exists so the button in Settings is not
+    dead (a click that goes nowhere is its own invisible-success defect,
+    KNOWN_ISSUES.md §1), and it says exactly what it is: accepted, and not
+    yet enforced. When Phase 5 lands, this becomes the real handler; nothing
+    about this response shape needs to change for that to happen.
+    """
+    data = request.get_json(silent=True) or {}
+    level = data.get("level") or "yield"
+    return jsonify({
+        "status": "ok",
+        "accepted": True,
+        "enforced": False,
+        "level_requested": level,
+        "message": "Noted, but nothing enforces machine levels yet -- "
+                   "working/away/yield is a decision Stephen has not made "
+                   "(headroom.md D1). This click does not release or stand "
+                   "anything down.",
+    })
+
+
 @residency_bp.route("/api/residency/replan", methods=["POST"])
 @login_required
 def replan():

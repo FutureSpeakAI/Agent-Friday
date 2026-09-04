@@ -187,6 +187,26 @@ def _disk_system_free_mib() -> int | None:
         return None
 
 
+def disk_system_total_mib() -> int | None:
+    """Total size of the volume `_disk_system_free_mib` watches — public,
+    unlike its sibling, because it exists only so a caller can draw a bar
+    (§8.3's third bar: system disk against the existing `DISK_FLOOR_MIB`).
+    `sample()`'s own shape is not extended with this: nothing in §4.3's
+    contract needs a total, only the free figure a floor is checked
+    against, and adding an unused field to every recorded sample would be
+    the wrong module owning a surface concern (`routes/intelligence.py` is
+    where §8.3 lives). Same anchor logic as `_disk_system_free_mib`, so the
+    two numbers describe the same volume."""
+    try:
+        root = os.environ.get("SystemRoot") or os.environ.get("windir")
+        anchor = Path(root).anchor if root else os.sep
+        if not anchor:
+            anchor = os.sep
+        return round(shutil.disk_usage(anchor).total / 1048576)
+    except Exception:
+        return None
+
+
 def _foreign_vram_mib(gpu_row: dict, ours_resident_mib: int) -> int | None:
     """VRAM on this card held by tenants that are not us, or `None`.
 
