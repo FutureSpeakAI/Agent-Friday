@@ -320,3 +320,64 @@ class TestIndexPass:
         b_after = {e["id"] for e in store.load("entities")
                    if e.get("tier") == "B"}
         assert b_after == b_before
+
+
+class TestCloudExtractionCap:
+    """Gauntlet finding, live incident 2026-09-04: extraction had no cap on
+    cloud-eligible LLM calls per pass. When the corpus is large and the
+    routed cheap/free provider is unhealthy, model_router's own circuit
+    breaker (correct for chat) reroutes every remaining chunk straight to
+    the paid frontier default -- a single Tier B pass ran unattended for
+    7+ hours at ~$10/hour because nothing would ever stop asking.
+    MAX_CLOUD_EXTRACT_CALLS bounds cloud-eligible attempts per pass; chunks
+    past the cap stay stale for the next delta pass instead."""
+
+    def test_cloud_extraction_stops_at_the_cap(self, tmp_path, monkeypatch):
+        import agent_friday.services.egress_gate as eg
+        import agent_friday.services.knowledge_graph as kg
+        monkeypatch.setattr(kg, "_load_settings", lambda: {
+            "knowledge_graph": {
+                "indexing_mode": "gated_cloud",
+                "index_sources": {"wiki": False, "soul": False,
+                                  "cognitive": False, "conversations": False},
+            }})
+        monkeypatch.setattr(eg, "gate_operational", lambda: True)
+        monkeypatch.setattr(indexer, "MAX_CLOUD_EXTRACT_CALLS", 2)
+
+        fake_chunks = [{
+            "id": f"chunk_{i}", "source_path": f"wiki/fake_{i}.md",
+            "text": f"Fake chunk {i} about GraphRAG and Friday.",
+            "sensitivity": 1, "provenance": {"sensitivity": 1},
+        } for i in range(5)]
+        monkeypatch.setattr(indexer, "gather_chunks", lambda: fake_chunks)
+
+        store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+        llm = RecordingLLM()
+        info = indexer.reindex_tier_b(store=store, mode="full", llm=llm)
+
+        extract_calls = [c for c in llm.calls if "-Goal-" in c["text"]]
+        assert len(extract_calls) == 2, (
+            "a 5-chunk corpus with a cap of 2 made %d cloud-eligible "
+            "extraction calls instead of stopping at the cap"
+            % len(extract_calls)
+        )
+        assert info["skipped_cloud_cap"] == 3, (
+            "the 3 chunks past the cap should be reported as skipped, not "
+            "silently dropped or counted as failures"
+        )
+        assert info["extract_failures"] == 0, (
+            "chunks left for the next pass are a deferral, not a failure"
+        )
+
+    def test_local_only_mode_is_unaffected_by_the_cap(self, wiki_home, tmp_path,
+                                                       monkeypatch):
+        """No-op-shaped sanity check: local_only pins every chunk to the local
+        model (pinned=True), so the cap -- which only counts cloud-eligible
+        calls -- must never trigger for it. Reuses the existing single-page
+        wiki_home fixture (already indexing_mode='local_only' by default)."""
+        monkeypatch.setattr(indexer, "MAX_CLOUD_EXTRACT_CALLS", 0)
+        store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+        llm = RecordingLLM()
+        info = indexer.reindex_tier_b(store=store, mode="full", llm=llm)
+        assert info["skipped_cloud_cap"] == 0
+        assert info["extracted"] > 0
