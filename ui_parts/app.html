@@ -7495,7 +7495,7 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
             </div>
             <div style={{marginTop:22,textAlign:'left',padding:'12px 14px',borderRadius:8,border:'1px solid rgba(124,58,237,0.25)',background:'rgba(124,58,237,0.05)'}}>
               <div style={{fontSize:11,color:'rgba(200,180,255,0.9)',fontFamily:'JetBrains Mono',marginBottom:6,letterSpacing:'.04em'}}>🔐 ENCRYPT YOUR VAULT (RECOMMENDED)</div>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:8,lineHeight:1.6}}>A passphrase encrypts private data (finance, health, notes) at rest with AES-256-GCM. Stored in your OS keychain — never on disk. Leave blank to set it later in Settings → Privacy.</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:8,lineHeight:1.6}}>A passphrase encrypts private data (finance, health, notes) at rest with AES-256-GCM. Stored in your OS keychain, with an encrypted on-disk backup only this account can read. Leave blank to set it later in Settings → Privacy.</div>
               <input type="password" value={data.vault_passphrase||''} onChange={e=>onChange({vault_passphrase:e.target.value})} placeholder="Vault passphrase (optional)"
                 style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(124,58,237,0.3)',borderRadius:6,padding:'9px 12px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',boxSizing:'border-box'}}/>
             </div>
@@ -8141,7 +8141,7 @@ function SettingsTabPrivacy({s,save}){
         </div>
       </div>}
       {!armed&&<div style={{padding:'12px 14px',background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:8,marginBottom:14}}>
-        <div style={{fontSize:11,color:'rgba(255,210,140,0.9)',marginBottom:8,lineHeight:1.6}}>Your vault is <b>not encrypted at rest</b>. Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain — never on disk, never sent anywhere).</div>
+        <div style={{fontSize:11,color:'rgba(255,210,140,0.9)',marginBottom:8,lineHeight:1.6}}>Your vault is <b>not encrypted at rest</b>. Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain, with an encrypted on-disk backup only this account can read — never sent anywhere).</div>
         <div style={{display:'flex',gap:6}}>
           <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Vault passphrase (min 6 chars)" className="input" style={{flex:1}}/>
           <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap'}} disabled={armBusy} onClick={armPassphrase}>{armBusy?'Arming…':'Encrypt Vault'}</button>
