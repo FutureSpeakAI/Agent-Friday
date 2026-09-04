@@ -760,9 +760,15 @@ def api_health_full():
             installed = [m.get("name", "") for m in (mgr.list_models() if avail else [])]
         except Exception:
             installed = []
+        from agent_friday.services import model_plan
         out["hardware"] = {**hw, "suggested_models": mgr.recommend_models(hw),
                            "ollama_available": avail,
-                           "installed_models": installed}
+                           "installed_models": installed,
+                           # The setup wizard's floor-model pull button reads this
+                           # instead of a literal — see index.html's
+                           # WizardGemmaPull (H3: a value copied by hand into a
+                           # sixth site is a sixth default that can drift).
+                           "floor_model": model_plan.FLOOR_MODEL}
     except Exception as e:
         out["hardware"] = {"error": str(e)}
 

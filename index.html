@@ -30131,10 +30131,29 @@ const WIZARD_STEPS = [{
   title: 'Ready to Launch',
   subtitle: 'Your agent is configured'
 }];
-// H5 — first-run bundled-Gemma pull. Shown in the hardware step: if Ollama is
-// running but the default local model (gemma3:4b) isn't pulled yet, offer a
-// one-click download so "works with zero keys" is actually true on first run.
-const BUNDLED_MODEL = 'gemma3:4b';
+// H5 — first-run bundled-model pull. Shown in the hardware step: if Ollama is
+// running but the floor model (model_plan.FLOOR_MODEL, served as
+// hw.floor_model by /api/health/full) isn't pulled yet, offer a one-click
+// download so "works with zero keys" is actually true on first run.
+//
+// The floor model comes from the backend rather than a literal here — defect
+// H3 was fixed at five Python sites on 2026-08-26 (model_plan.FLOOR_MODEL)
+// but this wizard kept its own hard-coded 'gemma3:4b', the one row in the
+// ladder that cannot call tools. Do not reintroduce a literal model id here.
+//
+// exactTag mirrors model_setup._resolves: a bare family name (no ":") matches
+// any tag of the family, a specific tag must match exactly or with a
+// quantisation suffix ("-suffix"). The family-prefix match this replaced
+// (startsWith('gemma3')) is what let `gemma4:e2b` read as installed when only
+// `gemma4:12b` was present.
+function exactTag(names, modelId) {
+  if (!modelId) return false;
+  const tags = (names || []).map(String);
+  if (modelId.indexOf(':') === -1) {
+    return tags.some(t => t.split(':')[0] === modelId);
+  }
+  return tags.some(t => t === modelId || t.startsWith(modelId + '-'));
+}
 function WizardGemmaPull({
   hw
 }) {
@@ -30144,11 +30163,11 @@ function WizardGemmaPull({
   React.useEffect(() => () => {
     if (pollRef.current) clearInterval(pollRef.current);
   }, []);
+  const BUNDLED_MODEL = hw && hw.floor_model;
   const has = React.useMemo(() => {
-    const names = hw && hw.installed_models || [];
-    return names.some(n => String(n).startsWith('gemma3:4b') || String(n).startsWith('gemma3'));
-  }, [hw]);
-  if (!hw) return null;
+    return exactTag(hw && hw.installed_models, BUNDLED_MODEL);
+  }, [hw, BUNDLED_MODEL]);
+  if (!hw || !BUNDLED_MODEL) return null;
   if (!hw.ollama_available) {
     return /*#__PURE__*/React.createElement("div", {
       style: {
@@ -30204,7 +30223,7 @@ function WizardGemmaPull({
       pollRef.current = setInterval(() => {
         fetch('/api/ollama/status').then(r => r.json()).then(st => {
           const models = (st.models || []).map(m => m.name || m);
-          if (models.some(n => String(n).startsWith('gemma3'))) {
+          if (exactTag(models, BUNDLED_MODEL)) {
             clearInterval(pollRef.current);
             setState('done');
           } else setDetail('Downloading… (~3 GB, this can take a few minutes)');
@@ -30234,7 +30253,7 @@ function WizardGemmaPull({
     style: {
       color: '#00d4ff'
     }
-  }, BUNDLED_MODEL), " (Google's open Gemma 3 4B, ~3 GB) so Friday chats fully on-device with no API key."), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
+  }, BUNDLED_MODEL), " so Friday chats fully on-device with no API key."), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(0,212,255,0.8)',
