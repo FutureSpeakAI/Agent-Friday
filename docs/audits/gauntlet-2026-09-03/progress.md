@@ -122,7 +122,44 @@ clicking Restart.
 - RED again after reverting via `git stash` (no-op check) — same failure, same reason.
 - Fix reapplied from the stash; stash entry dropped.
 - `pytest tests/gauntlet/` after this fix: 9/9 pass except the one deliberately-red F3 probe (queued finding, correct state).
-- Full `pytest tests/unit tests/api --tb=no -q` run in background after this fix — result recorded below once it lands.
+- Full `pytest tests/unit tests/api --tb=no -q` run in background: **exit code 0**, no regressions from fixes #1-#3 together.
+
+### Fix #4 — egress_gate had no handling for the OpenAI-shape tool_calls wire field (F12, hardening)
+**File:** [src/agent_friday/services/egress_gate.py](../../../src/agent_friday/services/egress_gate.py)
+**Finding:** `_gate_messages()` gates the Anthropic `tool_use` block shape
+(a real historical leak, already fixed — see `_gate_tool_use`'s docstring:
+"a local seat that falls back to cloud carries its own tool calls with
+it"), but had zero handling for the OpenAI-compatible wire shape's
+equivalent: an assistant message's `tool_calls[].function.arguments` (a
+JSON-encoded string carrying the same kind of real user data). A dedicated
+verifier traced every retry-with-provider-switch path in the codebase at
+the object-identity level (worker adapters, compute_client, scheduler
+retries, orchestrator, `_generate_agent`'s cloud/local ladder, chat.py's
+inline fallback + redispatch closures) and confirmed **none of them
+currently reuse a caller-supplied messages list across a provider switch**
+— each rebuilds a fresh plain `{role, content}` copy. So this specific gap
+could not be triggered by any code that exists today in this worktree.
+**Fixed anyway, as hardening**, per the verifier's own recommendation: one
+accidental future refactor (e.g. `_call_ollama`/`_call_openai` "optimized"
+to reuse the passed-in list directly) would make it live, and the fix
+costs nothing — it mirrors the existing, already-battle-tested
+`_gate_tool_use` pattern rather than inventing new policy.
+**Fix:** added `_gate_tool_calls()`, gating every string value inside each
+`tool_calls[].function.arguments` JSON payload (parsed, gated via the
+existing `_gate_arg_values`, then re-serialized — OpenAI's wire format
+requires `arguments` to remain a JSON string) while preserving `id`/`type`/
+`function.name` for replay pairing; falls back to opaque-text gating for a
+malformed non-JSON arguments string, mirroring `_gate_tool_result`'s
+existing fallback. Wired into `_gate_messages()` alongside the existing
+`content` handling.
+**Probe:** [tests/gauntlet/test_egress_gate_tool_calls_openai_shape.py](../../../tests/gauntlet/test_egress_gate_tool_calls_openai_shape.py)
+**Evidence:**
+- RED before fix: a planted sensitive value (SSN pattern) in a tool-call argument survived `_gate_messages()` byte-for-byte, both the JSON and non-JSON-fallback cases.
+- GREEN after fix: all 3 tests pass, including a no-op-shaped structural check (call id, function name, and non-sensitive argument keys/values all preserved — the fix redacts content, not shape).
+- RED again after reverting via `git stash` (no-op check) — same 2 failures, same reasons.
+- Fix reapplied from the stash; stash entry dropped.
+- `pytest tests/gauntlet/` after this fix: 11/12 pass, the one deliberate F3 failure (queued finding) unchanged.
+- Full `pytest tests/unit tests/api --tb=no -q` running now — this one touches a security-critical shared function (`_gate_messages`) used by every cloud call site including the existing adversarial egress tests, so the full-suite result matters more than usual for this fix specifically.
 
 ## ⚠ HIGHEST-PRIORITY QUEUE ITEM — please read first
 
