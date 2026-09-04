@@ -32,6 +32,14 @@ from agent_friday.core import FRIDAY_DIR, _load_settings
 
 DB_PATH = FRIDAY_DIR / "costs.db"
 
+# Google Workspace APIs (Calendar, Gmail, Drive — services/calendar_engine.py,
+# calendar_write.py, google_accounts.py, routes/calendar.py) are deliberately
+# NOT metered here. At realistic single-user personal-account volume these sit
+# under Google's free/quota-based tier — the real risk is quota throttling or
+# an error, not a bill — so there is nothing to record. Stated explicitly so
+# a future reader can tell "verified free, intentionally unmetered" apart
+# from "someone forgot" (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+#
 # ── Per-direction pricing (USD per 1K tokens) ────────────────────────────────
 # Real pricing is input ≠ output. Unknown models fall back to the blended
 # provider_registry rate (used for both directions) or 0 for local/on-device.
