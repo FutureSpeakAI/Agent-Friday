@@ -22,16 +22,20 @@ stronger than it is:
   audit's own 2-consecutive-clean-sweep bar. The other 11 are still open —
   several got close and then a fresh sweep found one more real thing,
   which is why they reset. Per-seam status is in `coverage.md`.
-- **The claim corpus stopped growing at 00:51.** `claims.jsonl` has been
-  flat at 90 entries since commit `16450bd` — extraction effectively
-  stopped after round 2. A claim that was never extracted was never
-  judged, so "swept" below means "swept against the claims we pulled,"
-  not "swept against everything the corpus contains." Confirmed not
-  walked at all: `src/agent_friday/routes/*.py` docstrings, across all
-  ~61 route files. `coverage.md`'s own claim-corpus table names a few
-  other partial sources (`ui_parts/app.html`'s disclosure strings,
-  `THREAT_MODEL.md`'s untraced claims) — treat that table as the honest
-  boundary of what this run actually checked, not this summary's tone.
+- **The claim corpus stopped growing at 00:51, then got one gap closed.**
+  `claims.jsonl` sat flat at 90 entries from commit `16450bd` until this
+  morning — extraction stopped after round 2. A claim that was never
+  extracted was never judged, so "swept" below still means "swept against
+  the claims we pulled," not "swept against everything the corpus
+  contains." Stephen named `src/agent_friday/routes/*.py` docstrings
+  specifically as unwalked; that one gap is now closed (C91-C133, all 61
+  route files read at the docstring level, 15 of the strongest claims
+  independently verified, no new findings surfaced). Everything else
+  `coverage.md`'s claim-corpus table already flagged as partial or not-
+  done — `ui_parts/app.html`'s disclosure strings, deeper per-file
+  service-module docstrings, `THREAT_MODEL.md`'s untraced claims — is
+  still exactly that; treat that table as the honest boundary of what
+  this run actually checked, not this summary's tone.
 - **Startup wiring stayed parked.** Static analysis only — see JUDGMENT
   CALL 1. Nothing about boot sequencing was dynamically verified.
 - **Five early fixes (F1, F2, F8, F11, F12) shipped without a documented

@@ -45,6 +45,15 @@ of `verified_holds` / `verified_BROKEN*` / `noted_not_independently_chased`
 (extracted and read, but not individually traced to a verdict this round —
 honestly marked as such, not silently dropped).
 
+**Second correction 2026-09-04 (Stephen's morning check-in):** the corpus
+had genuinely stopped growing after that — flat at C1-C90 from 00:51
+until now, meaning nothing extracted since round 2 had been judged at
+all. Stephen named `routes/*.py` docstrings specifically as unwalked;
+that gap is now closed (C91-C133, all 61 route files read at the
+docstring level — see the updated row below). No other corpus source has
+been extended since round 2; the other "PARTIAL"/"NOT SYSTEMATICALLY
+DONE" rows below are still exactly that.
+
 | Source | Status |
 |---|---|
 | THREAT_MODEL.md | EXTRACTED (C1-C13) — 4 independently verified, 9 noted-not-chased |
@@ -58,5 +67,5 @@ honestly marked as such, not silently dropped).
 | index.html (settings labels, disclosures, Saved affordances) | EXTRACTED (C78-C82) — settings-panel toggles covered; broader disclosure-string sweep (onboarding aside) not exhaustive |
 | ui_parts/app.html (same) | PARTIAL — covered via the divergence check (F7), not independently re-read end to end |
 | src/agent_friday/services/*.py docstrings | PARTIAL — onboarding_copy.py, provider_health.py, cost_meter.py, egress_gate.py docstrings specifically checked (C83-C90); not every service module's docstrings individually corpus-walked |
-| src/agent_friday/routes/*.py docstrings | NOT SYSTEMATICALLY DONE — individual routes checked as part of seam work, no dedicated docstring sweep across all ~61 route files |
+| src/agent_friday/routes/*.py docstrings | EXTRACTED (C91-C133) — all 61 route files read at the module-docstring level (or confirmed to carry only a shared boilerplate header); ~30 files had at least one checkable factual claim worth extracting, ~30 were pure route-enumeration with nothing to extract. Verified on the spot (not just extracted): all 15 claims that looked strong enough to double-check held against the actual code, no contradiction found. Depth still shallow on the ~15 largest files (chat.py, code.py, insights.py, news.py, workflows.py) — function-level docstrings there were sampled via grep, not read end to end. |
 | Implicit claims: exported fns / UI controls / settings keys / routes / scheduled jobs / worker adapters actually reachable | IN PROGRESS — this is the core method used throughout (F1, F8, F9, F12 are all reachability findings), not a one-time pass; continues every round |
