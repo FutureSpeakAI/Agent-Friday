@@ -48,3 +48,38 @@ class TestWsLiveRespectsLocalOnly:
             "so a local-only connection is refused before any Gemini work "
             "happens, matching the fail-closed pattern F16 established"
         )
+
+    def test_ws_live_rechecks_local_only_before_every_renewal_leg(self):
+        """The connect-time gate above only covers the FIRST Gemini
+        connection. /ws/live's own comments say a single Gemini Live
+        connection is capped (~10 min) and the reconnect loop is what makes
+        an hours-long call possible by re-dialing Gemini for each new leg --
+        so turning local-only on mid-call must stop the NEXT renewal, not
+        just future new connections. Pins that the reconnect loop
+        ('Reconnect loop' section, guarded by `while not done.is_set():`)
+        itself re-checks local_only, not only the code that runs once before
+        the loop starts."""
+        src = inspect.getsource(vr)
+        i_ws_live_def = src.index("def ws_live(ws):")
+        body = src[i_ws_live_def:]
+        i_next_def = body.index("\n    def ", 1) if "\n    def " in body[1:] else len(body)
+        body = body[:i_next_def]
+
+        i_reconnect_loop = body.index("Reconnect loop")
+        renewal_body = body[i_reconnect_loop:]
+
+        assert "local_only" in renewal_body, (
+            "the reconnect/renewal loop never mentions local_only at all -- "
+            "the connect-time gate is checked exactly once, so turning "
+            "local-only on mid-call has no effect on a call already in "
+            "progress: audio keeps streaming to Gemini for every subsequent "
+            "renewal leg of what the code's own comments say can be an "
+            "hours-long call"
+        )
+        i_renewal_check = renewal_body.index("local_only")
+        i_first_connect_attempt = renewal_body.index("active_client.aio.live.connect")
+        assert i_renewal_check < i_first_connect_attempt, (
+            "local_only is mentioned somewhere in the renewal loop, but not "
+            "before the first leg-connect attempt inside it -- the recheck "
+            "must run before Gemini is redialed for a new leg, not after"
+        )

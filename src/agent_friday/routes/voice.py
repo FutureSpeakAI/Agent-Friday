@@ -2657,6 +2657,29 @@ if sock is not None:
                     leg = 0
                     _quick_deaths = 0   # consecutive legs that died <10s after connect
                     while not done.is_set():
+                        # Local-only is checked once at connect, above -- but
+                        # THIS loop exists specifically to keep one logical
+                        # call alive across many ~10-min Gemini legs, and a
+                        # renewal re-dials Gemini exactly like the first
+                        # connect did. Without rechecking here, turning
+                        # local-only on mid-call has no effect on a call
+                        # already in progress: audio keeps streaming to
+                        # Gemini for as long as the call runs, which the
+                        # renewal loop's own docstring says can be hours
+                        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+                        try:
+                            _renewal_local_only = str(
+                                ((_load_settings() or {}).get('model_routing') or {})
+                                .get('mode') or '').strip().lower() == 'local_only'
+                        except Exception:
+                            _renewal_local_only = False
+                        if _renewal_local_only:
+                            _vlog('local-only mode turned on mid-call — ending this Gemini Live call instead of renewing')
+                            _safe_send({"type": "status",
+                                       "text": "local-only mode is on — ending this call; "
+                                                "use the local voice engine instead"})
+                            done.set()
+                            break
                         # Zombie fence: if a NEWER /ws/live handler has taken
                         # over (browser reconnected while this handler's socket
                         # is half-open), stop renewing — fighting the new

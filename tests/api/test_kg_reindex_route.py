@@ -26,6 +26,13 @@ def test_reindex_tier_b_sync(client, seeded_wiki, patch_app):
     # return a parseable extraction so the pass produces entities.
     patch_app("_generate_text",
               lambda *a, **k: canned)
+    # Gauntlet F34: local_only (this test's mode, asserted below) is a
+    # PINNED chunk, and indexer._llm() now calls _call_ollama directly for
+    # those instead of _generate_text -- _generate_text's stub alone no
+    # longer covers the default indexing_mode. Same tuple shape as
+    # conftest's own stub_llm fixture.
+    patch_app("_call_ollama",
+              lambda *a, **k: (canned, []))
 
     r = client.post("/api/knowledge-graph/reindex",
                     json={"tier": "B", "mode": "full", "sync": True})
