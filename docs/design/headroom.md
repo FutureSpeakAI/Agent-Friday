@@ -312,14 +312,21 @@ residency failures as Windows paged allocations in and out. **354 MiB** was the 
 between working and thrashing. Separately (§2.4, MEASURED by another session), a disk filling to
 zero crashed the live app outright.
 
+**The tree holds one prior instance of the same shape, MEASURED.** The `--n-cpu-moe` sweep on
+2026-08-15 found that at 16 CPU layers "throughput collapses from 21.6 to 5.5 tok/s while VRAM
+saturates (~11.8 GB of 12.28) and host RAM climbs to 31.6 GB of 31.9 — the allocator thrashes
+rather than erroring" (`phase-a-report.md:252`; restated at
+`residency-implementation-report.md:172`). It was handled then by backing off one step. Nothing
+was built to notice the next one.
+
 Three design facts follow, and every later section is built on them.
 
 **3.1 The failure mode is degradation, not refusal.** Everything in `residency_policy` is a
 refusal rule: it either places a seat or explains why not. The run above would have been
-*placed* by every rule in the file — 354 MiB clears the 1,024 reserve on paper. A system that
-only refuses cannot protect a machine from something that fits. It needs a second kind of
-check that runs *after* placement, against the live machine, and can say "this is fitting and
-it is still wrong."
+*placed* by every rule in the file — 354 MiB clears the 1,024 reserve on paper, and the August
+spill loaded successfully at 16 layers. A system that only refuses cannot protect a machine
+from something that fits. It needs a second kind of check that runs *after* placement, against
+the live machine, and can say "this is fitting and it is still wrong."
 
 **3.2 The margin is smaller than any single allocation.** 354 MiB is less than the KV cache of
 a small context bump. A reserve computed once and planned into exactly is a reserve of zero the
@@ -904,9 +911,13 @@ fabricate a measurement**: anything unmeasured stays `unknown` and the surface s
 marked **[Stephen / GPU]** are recorded by him or by a session with GPU permission, then
 committed. Work in a worktree off `integration/release-2026-09-03`; do not touch
 `gauntlet-audit-2026-09-03`. UI edits go through `scripts/ui_stage.py` (`index.html` is the
-served source of truth, **VERIFIED**, `ui_stage.py:SERVED`); whether `ui_parts/app.html` must
-mirror a given edit is **UNKNOWN** to this document — check `git log -5 -- ui_parts/app.html`
-and follow the pattern the Workflows dock used (memory: it edits both).
+served source of truth, **VERIFIED**, `ui_stage.py:SERVED`). A pre-commit hook,
+`settings-readers-check`, fails a commit unless every written settings key has a
+`DEFAULT_SETTINGS` entry, a reader, and **agreement between `index.html` and
+`ui_parts/app.html`** (**VERIFIED** — it ran on this document's own commit). So any new
+settings key this work writes (the contract level, `pause_warnings_off`'s siblings) must appear
+in both files and in `core.DEFAULT_SETTINGS`, or the hook refuses it. Whether *non-settings*
+UI edits must be mirrored remains **UNKNOWN**: check `git log -5 -- ui_parts/app.html`.
 
 ### Phase 0 — the drifts (small, test-backed, no design risk)
 
@@ -1094,7 +1105,7 @@ refresh cadence for disk.
 | U5 | Whether DxgKrnl residency-failure events are readable via `Get-WinEvent` | try it on P1 during a known-thrash run |
 | U6 | Host RAM of whisper `small` int8 and Piper | RSS delta across `load()`, §12 Phase 2.2 |
 | U7 | Z-Image's licence | the model's own repository |
-| U8 | Whether `ui_parts/app.html` must mirror Intelligence-tab edits | `git log -5 -- ui_parts/app.html` |
+| U8 | Whether `ui_parts/app.html` must mirror non-settings Intelligence-tab edits (settings keys must agree — the `settings-readers-check` hook enforces it) | `git log -5 -- ui_parts/app.html` |
 | U9 | The thrash thresholds (90 % / 0.4 / 5×) | the REPORTED fixture plus one healthy-load fixture, §12 Phase 1.4 |
 
 **REPORTED (from the brief, not in the tree):** 11,928 / 12,282 MiB; ~7 s → ~57 s; 51 W of
