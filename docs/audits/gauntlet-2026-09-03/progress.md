@@ -124,6 +124,9 @@ clicking Restart.
 - `pytest tests/gauntlet/` after this fix: 9/9 pass except the one deliberately-red F3 probe (queued finding, correct state).
 - Full `pytest tests/unit tests/api --tb=no -q` run in background: **exit code 0**, no regressions from fixes #1-#3 together.
 
+### Fixes #6-#7 — F19 (voice brain-seat resolve() typo) and #20 (F16 was incomplete: /ws/live had no local-only gate at all)
+See findings.jsonl F19/F20 for full evidence. Both proven red->green->red-on-revert. Batch full-suite: `<testsuite tests="6697" errors="0" failures="0" skipped="8" time="577.057">` — clean, confirms this batch alongside every prior fix.
+
 ### Fix #4 — egress_gate had no handling for the OpenAI-shape tool_calls wire field (F12, hardening)
 **File:** [src/agent_friday/services/egress_gate.py](../../../src/agent_friday/services/egress_gate.py)
 **Finding:** `_gate_messages()` gates the Anthropic `tool_use` block shape
