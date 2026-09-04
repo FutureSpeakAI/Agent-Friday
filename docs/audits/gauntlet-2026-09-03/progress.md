@@ -22,20 +22,25 @@ stronger than it is:
   audit's own 2-consecutive-clean-sweep bar. The other 11 are still open —
   several got close and then a fresh sweep found one more real thing,
   which is why they reset. Per-seam status is in `coverage.md`.
-- **The claim corpus stopped growing at 00:51, then got one gap closed.**
-  `claims.jsonl` sat flat at 90 entries from commit `16450bd` until this
-  morning — extraction stopped after round 2. A claim that was never
-  extracted was never judged, so "swept" below still means "swept against
-  the claims we pulled," not "swept against everything the corpus
-  contains." Stephen named `src/agent_friday/routes/*.py` docstrings
-  specifically as unwalked; that one gap is now closed (C91-C133, all 61
-  route files read at the docstring level, 15 of the strongest claims
-  independently verified, no new findings surfaced). Everything else
-  `coverage.md`'s claim-corpus table already flagged as partial or not-
-  done — `ui_parts/app.html`'s disclosure strings, deeper per-file
-  service-module docstrings, `THREAT_MODEL.md`'s untraced claims — is
-  still exactly that; treat that table as the honest boundary of what
-  this run actually checked, not this summary's tone.
+- **The claim corpus stopped growing at 00:51, then all three explicitly-
+  named gaps got closed, one by one, as this run continued.** `claims.
+  jsonl` sat flat at 90 entries from commit `16450bd` until early this
+  morning. A claim that was never extracted was never judged, so "swept"
+  below still means "swept against the claims we pulled," not "swept
+  against everything the corpus contains" — worth remembering even now
+  that the named gaps are closed. In order: `routes/*.py` docstrings
+  (C91-C133, all 61 files, no new findings) — closed first, no new
+  findings. Then, per an explicit follow-up instruction naming the three
+  remaining gaps `coverage.md` had flagged: `THREAT_MODEL.md` fully
+  chased end to end (all 298 lines, every previously-unverified claim
+  traced into current code — found F42, F43 [fixed], Q27); `ui_parts/
+  app.html`'s disclosure strings read in full (found F45, F46, plus 3
+  more loci of Q19's and F11's already-known defects); 6 more service
+  modules' docstrings walked (found F44 [fixed, severe — a live gap in
+  tonight's own F32 security fix] and a low-severity docstring
+  correction). `claims.jsonl` is now at 149 entries. What's genuinely
+  still not walked: deeper docstrings in the remaining ~50 service
+  modules beyond the 12 now covered — `coverage.md`'s table is current.
 - **Startup wiring stayed parked.** Static analysis only — see JUDGMENT
   CALL 1. Nothing about boot sequencing was dynamically verified.
 - **Five early fixes (F1, F2, F8, F11, F12) shipped without a documented
@@ -49,7 +54,8 @@ stronger than it is:
 
 ## What you need to decide — ranked, one sentence each
 
-25 items are queued because they're judgment calls, not because they're
+33 items are queued (28 in the ranked list below, plus Q1/Q4/H-series
+observations) because they're judgment calls, not because they're
 unimportant. Ranked by how much rides on the answer. **One set of five is
 handled separately, as its own five-minute document, not folded into this
 list:** [decisions-five-dead-settings.md](decisions-five-dead-settings.md)
@@ -141,13 +147,48 @@ tackling the rest of this list.
     command inherits the old approval. Decide if that's the UX trade-off
     you want.
 
+**Items 22-28 below were found after this list was first ranked (the root-
+cause and claim-corpus follow-up work) — appended rather than fully
+re-sorting the list above, but read #23 and #24 with the same urgency as
+the top of this list; they're not lower-stakes than their position implies.**
+
+22. **Q24.** Manual "Run Now" can race a schedule into executing twice
+    concurrently, and the scheduler's own nightly KG reindex bypasses even
+    the manual reindex route's lock entirely. Decide: should Run Now
+    refuse outright while a run is in progress, queue behind it, or keep
+    the override but add a real lock?
+23. **F45.** The content-publishing "Global kill switch" has no backend
+    route at all — it always fails silently-to-the-user's-eye (a 404
+    behind a disclosed error). Decide whether to build the missing route
+    now; this is an emergency-stop control that currently stops nothing.
+24. **F42.** THREAT_MODEL.md's central claim — signed manifests are
+    verified before every action — doesn't match the real gate, which is
+    ring-based and never touches the signing/verification code at all.
+    Decide: wire real verification into the busiest gate in the codebase
+    (a real perf/behavior cost), or correct what the threat model claims
+    the product's core defense actually is.
+25. **F46.** The "Staging host" copy promises automatic unguessable-path
+    asset staging with deletion after publish; none of that pipeline
+    exists — the user must supply an already-public URL themselves.
+    Decide whether building real staging is worth prioritizing.
+26. **Q26.** The root cause behind every cost-metering gap tonight (Q6,
+    Q7, Q11, Q13) — see the dedicated writeup below the fixed ledger for
+    the full priority order (which parts are mechanical-pending-a-
+    verified-rate vs. genuine per-provider design work).
+27. **Q25.** A whole Settings UI section polls the schedule API and
+    renders nothing — dead code, no user impact today. Decide: delete or
+    build out.
+28. **Q27.** Dependencies aren't actually pinned despite THREAT_MODEL.md
+    saying they are. Low severity; a project-wide maintenance-policy
+    choice, not urgent.
+
 (Q1/Q4 and a handful of smaller HOLDS/observations are in `findings.jsonl`
 and `coverage.md` but didn't make this list — genuinely lower-stakes than
-the 21 above.)
+the 28 above.)
 
 ## What got fixed without asking
 
-23 real defects landed with full red→green→red-on-revert proof and a green
+26 real defects landed with full red→green→red-on-revert proof and a green
 full suite after every batch (five of them — F1, F2, F8, F11, F12 —
 originally without the revert step; see the honest-limits note above and
 the retroactive-verification section below the fixed ledger). The two most
@@ -156,9 +197,14 @@ overnight (detail immediately below), and **F32**, a credential leak where
 every MCP connector received Friday's live decrypted secrets. Five more
 close local-only/privacy enforcement gaps the same class as Q19 above but
 narrow enough to fix outright (F33, F34, F35, F36, F37), plus F38 (a false
-onboarding claim in README.md) and F39 (a second browser tab silently
-killing a voice call with no notification) — see the FIXED LEDGER for all
-23. Nothing else tonight rose to "wake him up for this."
+onboarding claim in README.md), F39 (a second browser tab silently
+killing a voice call with no notification), F41 (a scheduled task's
+failure traceback silently discarded under the packaged app's runtime),
+F43 (an unpermissioned private signing key), and F44 (F32's own secret
+blocklist named two fake env vars instead of the real vault passphrase —
+found while re-checking tonight's own earlier fix, per explicit request)
+— see the FIXED LEDGER for all 26. Nothing else tonight rose to "wake him
+up for this."
 
 ## ⚠⚠ READ THIS FIRST — live production is still spending money right now (F31)
 
