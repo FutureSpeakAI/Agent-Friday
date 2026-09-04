@@ -94,6 +94,36 @@ def status():
     })
 
 
+@residency_bp.route("/api/machine", methods=["GET"])
+@login_required
+def machine():
+    """One reading of the machine, and the honest verdict on it.
+
+    `docs/design/headroom.md` §4.3. Read-only: costs one `nvidia-smi` call
+    and (on Windows) one PowerShell counter probe, both cached briefly by
+    `machine_monitor`, so polling this route is cheap. `verdict.vram_slack`
+    and `verdict.ram_available` read `basis: "unknown"` on every machine
+    today — that half of the Headroom Contract is D1, not decided (see
+    `machine_monitor`'s own docstring).
+    """
+    try:
+        from agent_friday.services import machine_monitor as mm
+    except Exception as e:
+        return jsonify({"status": "error",
+                        "message": "%s: %s" % (type(e).__name__, e)}), 500
+    ours = 0
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
+        if arb is not None:
+            ours = arb._ours_resident_mib()
+    except Exception:
+        pass
+    s = mm.sample(ours_resident_mib=ours)
+    v = mm.verdict(s)
+    return jsonify({"status": "ok", "sample": s, "verdict": v})
+
+
 @residency_bp.route("/api/residency/replan", methods=["POST"])
 @login_required
 def replan():

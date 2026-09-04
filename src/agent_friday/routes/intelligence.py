@@ -600,6 +600,27 @@ def api_intelligence():
             "reserve_mib": ram.get("os_reserve_mib"),
         }
 
+    # The headroom monitor's own reading (docs/design/headroom.md §4.3,
+    # §12 Phase 1) -- so THE MACHINE reads one source for utilisation/power/
+    # disk-system/thrash instead of a page-specific probe. `vram`/`ram`
+    # above are left exactly as they were (§8.3's correction is Phase 4's
+    # job, not this one's); this is purely additive.
+    try:
+        from agent_friday.services import machine_monitor as mm
+        _mon_sample = mm.last_sample() or mm.sample()
+        # _track_history=False: this route can be polled far faster than the
+        # loop's own 60s/5s cadence, and re-appending the SAME cached sample
+        # on every poll would pollute the thrash window with duplicates
+        # instead of the three distinct, cadence-spaced readings the
+        # signature is defined against. The loop's own tick() is the only
+        # writer of that shared history; this call only reads it.
+        machine["monitor"] = {
+            "sample": _mon_sample,
+            "verdict": mm.verdict(_mon_sample, _track_history=False),
+        }
+    except Exception:
+        pass
+
     # ── Providers, including whether they have ever actually served ──────────
     #
     # Attribution is by MODEL, not by matching provider-name strings. The cost

@@ -399,6 +399,19 @@ if not _TESTING:
     if os.environ.get("FRIDAY_NO_ARBITER") != "1":
         threading.Thread(target=_residency_boot, daemon=True).start()
 
+    # Machine monitor (docs/design/headroom.md §4.3): read-only telemetry --
+    # GPU utilisation/power/clocks, RAM available, free space on the SYSTEM
+    # volume, foreign VRAM occupancy. Samples at boot, then 60s at rest / 5s
+    # under a held lease. Boots independently of the Arbiter (it still wants
+    # a machine reading under FRIDAY_NO_ARBITER=1) and is itself inert under
+    # FRIDAY_TESTING=1 (start_loop()'s own guard, matching every other
+    # background loop here).
+    try:
+        from agent_friday.services import machine_monitor as _mm
+        _mm.start_loop()
+    except Exception as _mm_err:
+        print(f"  Machine monitor: unavailable ({_mm_err})")
+
 
 def _resolve_bind_port():
     """Resolve the port to bind, tolerating an already-in-use port.
