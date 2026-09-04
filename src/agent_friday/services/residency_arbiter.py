@@ -1305,7 +1305,10 @@ class Arbiter:
             # waving a mouse at a dead screen wondering what happened.
             try:
                 from agent_friday.services.hardware_profile import vram_headroom
-                _hd = vram_headroom()
+                from agent_friday.services.headroom_contract import (
+                    resolve_display_reserve)
+                _reserve = resolve_display_reserve(self.profile)
+                _hd = vram_headroom(reserve_mib=_reserve["mib"])
                 if _hd.get("total_mib") and not _hd.get("ok"):
                     self.state = STATE_DEFAULT
                     return {"ok": False, "error": (

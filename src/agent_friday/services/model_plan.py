@@ -307,6 +307,20 @@ FREE_DISK_FLOOR_GIB = 10.0  # rule R8
 #: This comes off the CARD, and it is now the only thing that does — a model's
 #: own overhead lives inside its `vram_gib` (see RUNTIME_OVERHEAD_GIB), where it
 #: is counted exactly once.
+#:
+#: NOT read from `services/headroom_contract.resolve_display_reserve()`.
+#: `install.ps1`'s generated ladder (`scripts/gen_installer_ladder.py`) needs
+#: this exact value baked in as a static number, because the installer runs
+#: before Python exists and cannot call that function -- so this constant
+#: has to stay a constant for THAT use regardless. This module's own runtime
+#: uses (`_usable_vram_gib`, `friday models`) could in principle call the
+#: live function instead; left unchanged here because it already equals the
+#: reconciled figure (2.5 GiB == `hardware_profile.MIN_DISPLAY_RESERVE_MIB
+#: ["windows"]` == 2,560 MiB) and switching only the runtime use to a live
+#: call would leave the two (still-correct) numbers looking coincidental
+#: rather than reconciled. Named here so a future reader sees this and the
+#: other four display-reserve sites together rather than re-discovering the
+#: same six numbers (`docs/design/headroom.md` §2.2).
 DISPLAY_RESERVE_GIB = 2.5   # rule R3
 
 #: What a local image model needs on the card, on top of the display reserve.

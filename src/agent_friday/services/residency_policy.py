@@ -123,6 +123,14 @@ ASSIGNED_ROLES = ("orchestrator", "sidekick_fast", "function_manager",
 
 # ── Rules as data ────────────────────────────────────────────────────────────
 
+# NOT the display reserve `services/headroom_contract.resolve_display_reserve()`
+# reconciles -- this is planner SLACK on top of the baseline (see
+# `gpu_budgets()` below: `available_mib = total - VRAM_RESERVE_MIB - baseline`),
+# a buffer against the margin §3.2 of `docs/design/headroom.md` measured
+# (354 MiB was the gap between working and thrashing). Left at its existing
+# value: closing the display-reserve hole does not, on its own, tell us
+# whether 1,024 MiB of additional slack is still the right number -- that is
+# entangled with D1 (the Contract's own VRAM-slack floor, not yet decided).
 VRAM_RESERVE_MIB = 1024          # R3
 RAM_CEILING_HARD = 0.75          # R2
 RAM_CEILING_TARGET = 0.65        # R2
