@@ -30902,55 +30902,9 @@ function SetupWizard({
     }
   }, hw.ram_gb ? hw.ram_gb + ' GB RAM' : '—', hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : ''))), /*#__PURE__*/React.createElement(WizardGemmaPull, {
     hw: hw
-  }), hw.suggested_models && hw.suggested_models.length ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.5)',
-      fontFamily: 'JetBrains Mono',
-      marginBottom: 8
-    }
-  }, "SUGGESTED LOCAL MODELS"), hw.suggested_models.map(m => /*#__PURE__*/React.createElement("div", {
-    key: m.name,
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: 10,
-      padding: '8px 12px',
-      borderRadius: 6,
-      background: 'rgba(255,255,255,0.02)',
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      color: '#00d4ff'
-    }
-  }, m.name), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.4)',
-      textAlign: 'right'
-    }
-  }, m.task))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.3)',
-      fontFamily: 'JetBrains Mono',
-      marginTop: 6
-    }
-  }, "Ollama ", hw.ollama_available ? 'is running — these are ready to pull' : 'is not installed — add it to run these on-device', ".")) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.45)',
-      lineHeight: 1.6
-    }
-  }, "This machine will run Friday in ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#00d4ff'
-    }
-  }, "cloud mode"), " using your connected provider(s). On-device models want more RAM/VRAM \u2014 you can always add Ollama later."))), step === 5 && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement(WizardStarterSetSection, {
+    hw: hw
+  }))), step === 5 && /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: 'center',
       padding: '14px 0'
@@ -33069,6 +33023,81 @@ function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching,
         marginTop: 8, lineHeight: 1.5,
       },
     }, fetchMsg));
+}
+
+// ── Wizard Hardware Check -- the starter set (headroom.md §9, §12 Phase 6) ──
+//
+// Renders `hw.starter_set` (from /api/health/full, routes/intelligence.py's
+// build_starter_set) through the SAME `LocalModelRow` component Settings ->
+// Intelligence -> LOCAL MODELS ON THIS MACHINE uses (§8.2, Phase 4) — no
+// second rendering path, no combined "compatible" (HR2). This replaces the
+// old SUGGESTED LOCAL MODELS block, which read `hw.suggested_models`
+// (`ollama_manager.recommend_models` — a second, disagreeing ladder, HR15)
+// and rendered a bare name/task pair with no fit verdict at all: a card too
+// small for the model it "suggested" looked identical to one with room to
+// spare.
+//
+// `onFetch` is a no-op here on purpose. LocalModelRow's Fetch button and the
+// pre-fetch card (FetchPreflightCard) are Settings -> Intelligence features
+// (§8.2) that need a `fetchFor`/confirm flow this step does not have its own
+// state for; the wizard's own one-click pull stays WizardGemmaPull, rendered
+// just above this section. A future pass CAN wire Fetch here by lifting that
+// state up — nothing about this component's shape blocks it.
+function WizardStarterSetSection({ hw }) {
+  const ss = hw && hw.starter_set;
+  if (!ss || ss.error) return null;
+
+  const brainFits = ((ss.brain || {}).verdicts || {}).fits || {};
+  const hasLocalBrain = !!(ss.brain && ss.brain.model_id) &&
+    brainFits.status !== 'refused';
+  const hasLocalVoice = !!(ss.voice && (ss.voice.stt || ss.voice.tts));
+  const anyLocal = hasLocalBrain || hasLocalVoice;
+
+  const noop = () => {};
+
+  if (!anyLocal) {
+    // The register this document holds throughout (§10.4, vault-first-
+    // onboarding.md §7): a machine with no local seat still gets a working
+    // product description, never an apology.
+    return E('div', {
+      style: { fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 },
+    },
+      'This machine will run Friday in ',
+      E('span', { style: { color: '#00d4ff' } }, 'cloud mode'),
+      ' using your connected provider(s). On-device models want more RAM/VRAM — you can always add one later.');
+  }
+
+  return E('div', null,
+    E('div', {
+      style: {
+        fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono',
+        marginBottom: 8,
+      },
+    }, 'WHAT THIS MACHINE CAN RUN'),
+    ss.brain && ss.brain.model_id && E('div', { key: 'brain' },
+      E(LocalModelRow, { r: ss.brain, onFetch: noop }),
+      ss.brain.why && E('div', {
+        style: {
+          fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono',
+          margin: '2px 0 8px', lineHeight: 1.5,
+        },
+      }, ss.brain.why)),
+    ss.voice && ss.voice.stt && E(LocalModelRow, { key: 'stt', r: ss.voice.stt, onFetch: noop }),
+    ss.voice && ss.voice.tts && E(LocalModelRow, { key: 'tts', r: ss.voice.tts, onFetch: noop }),
+    ss.image && ss.image.model_id && E('div', { key: 'image' },
+      E(LocalModelRow, { r: ss.image, onFetch: noop }),
+      ss.image.alternative === 'cloud' && E('div', {
+        style: {
+          fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono',
+          margin: '2px 0 8px',
+        },
+      }, 'Images run in the cloud on this machine today.')),
+    E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono',
+        marginTop: 6,
+      },
+    }, ss.video === 'cloud' ? 'Video runs in the cloud on every machine today.' : (ss.video || '')));
 }
 
 function SettingsTabIntelligence() {
