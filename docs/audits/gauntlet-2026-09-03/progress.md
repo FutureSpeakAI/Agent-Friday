@@ -336,6 +336,25 @@ probably not a THREAT_MODEL contradiction — but worth checking against
 `local_preferred`'s own UI help text before closing. Not yet checked; low
 priority, noted for a future sweep.
 
+## Observed anomaly, not a confirmed finding (2026-09-04)
+
+One `-k "voice"` test run printed `[MEMORY] sentence-transformers embedder
+unavailable, using ChromaDB default: [WinError 10038] An operation was
+attempted on something that is not a socket`, followed by a live download
+of ChromaDB's default ONNX embedder (~79MB) from the internet — inside
+what tests/README.md calls an "offline suite" that "needs... no network."
+Checked whether this was caused by the CUDA_VISIBLE_DEVICES="" remediation
+from earlier tonight: it is NOT — `SentenceTransformer('all-MiniLM-L6-v2')`
+loads cleanly in isolation both with and without that env var set. The
+WinError 10038 (a Windows socket-handle error, often a multiprocessing/
+resource-tracker artifact) more plausibly comes from running many
+sequential pytest invocations back-to-back in one long session tonight
+(this session's own test methodology) than from a defect in the shipped
+suite under normal single-invocation use. Not chased further — recorded
+honestly as an observed anomaly with uncertain cause and NOT logged as a
+confirmed finding, since I could not reproduce or attribute it cleanly.
+Worth a look if it recurs.
+
 ## Scope addition (2026-09-04): visual-notes.md, capture-only
 
 Stephen: a visual/aesthetics pass on the liquid UI workspaces is a
