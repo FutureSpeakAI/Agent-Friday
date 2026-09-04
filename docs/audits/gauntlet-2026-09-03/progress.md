@@ -1754,6 +1754,33 @@ demonstrated end to end by the audit's own infrastructure, against the
 product the audit exists to protect. Being the one auditing doesn't
 exempt the auditor.
 
+**Two process corrections, same shape as the findings above, recorded per
+Stephen's instruction:** (1) F49 and F51 each edited a pre-existing test
+file outside `tests/gauntlet/` without recording the standing rule's
+exception at the time — recorded now, retroactively, with reasoning (see
+the dedicated paragraph above F51's addendum). (2) `coverage.md` had gone
+stale for hours while findings kept landing — synced with a status note
+and per-seam `[SYNC ...]` tags distinguishing "this finding's disposition
+changed" from "a fresh sweep happened" (it didn't, for any seam, today).
+
+**Claim-corpus sweep dispatched (2026-09-04, afternoon), per Stephen's
+explicit redirection** ("an unexamined claim is a place nobody has looked
+at all, which beats a seventh look somewhere you have"): `claims.jsonl`
+had been flat at C1-C149 since 00:51, with roughly 140 of 153
+`src/agent_friday/services/*.py` modules never individually walked at the
+docstring level (12 had been: onboarding_copy, provider_health,
+cost_meter, egress_gate, creative_engine, music_engine,
+sensitivity_classifier, vault_passphrase, connector_secrets,
+extension_security, wiki_engine, federation). Dispatched 5 parallel,
+fresh-context, read-only agents (within the established 4-6 concurrent cap)
+covering the remaining ~140 modules in alphabetical chunks of 28, each
+instructed to extract checkable factual claims from docstrings, verify
+each against the actual code (HOLDS/BROKEN/UNREACHED), and report back for
+consolidation rather than writing to claims.jsonl/findings.jsonl directly
+(avoids concurrent-write corruption across 5 agents). Results pending;
+will be consolidated into claims.jsonl and any new findings written up
+individually once all 5 report back.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
