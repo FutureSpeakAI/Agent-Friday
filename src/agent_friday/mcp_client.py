@@ -771,6 +771,13 @@ class MCPManager:
         sp = self.servers.get(name)
         if sp is None:
             return False
+        if sp.status == "disabled":
+            # start_all() (above) and authorize() both refuse a server
+            # extension_security.gate_mcp_config() blocked at boot; restart()
+            # did not, so the single most natural remediation an operator
+            # reaches for after seeing a blocked connector's status actually
+            # started it for real (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+            return False
         sp.stop()
         ok = sp.start()
         if ok and on_ready:
