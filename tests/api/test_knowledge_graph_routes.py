@@ -34,7 +34,7 @@ def test_summary(client, seeded_wiki):
     assert d["status"] == "ok"
     assert d["counts"]["entities"] >= 2
     assert isinstance(d["communities"], list)
-    assert d["settings"]["indexing_mode"] == "local_only"
+    assert d["settings"]["indexing_mode"] == "local"
 
 
 def test_graph_returns_layout_positions(client, seeded_wiki):

@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 from . import kg_settings
 from . import structural_query
-from .indexer import _prompt, _llm
+from .indexer import _prompt, _llm, CloudIndexingDisabled, LocalIndexingUnavailable
 from .store import KnowledgeGraphStore
 
 MAX_MAP_REPORTS = 8
@@ -87,7 +87,7 @@ def local_search(question: str,
                  llm=None) -> dict[str, Any]:
     store = store or KnowledgeGraphStore()
     call = llm or _llm
-    mode = str(kg_settings().get("indexing_mode", "local_only"))
+    mode = str(kg_settings().get("indexing_mode", "local"))
     ents = _match_entities(question, store)
     if not ents:
         return {"mode": "local", "answer": None,
@@ -114,8 +114,19 @@ def local_search(question: str,
               .replace("{context_data}", "\n".join(ctx_lines))
               .replace("{response_type}", "concise paragraph"))
     sens = _max_sensitivity(ents)
-    answer = call([{"role": "user", "content": question}], system, sens, mode,
-                  orb_label="🧠 local search")
+    try:
+        answer = call([{"role": "user", "content": question}], system, sens,
+                      mode, orb_label="🧠 local search")
+    except (CloudIndexingDisabled, LocalIndexingUnavailable) as e:
+        # The chosen indexing_mode isn't currently viable (no installed
+        # local model, or the egress gate is down) -- a query is a
+        # read, not an index run, so it degrades to "no answer" here
+        # rather than the fail-fast refusal reindex_tier_b uses; the
+        # entities themselves (already indexed) still come back below.
+        return {"mode": "local", "answer": None, "note": str(e),
+                "entities": [{"id": e_["id"], "title": e_["title"],
+                              "provenance": e_.get("provenance")}
+                             for e_ in ents]}
     return {"mode": "local", "answer": answer,
             "entities": [{"id": e["id"], "title": e["title"],
                           "provenance": e.get("provenance")} for e in ents]}
@@ -126,7 +137,7 @@ def global_search(question: str,
                   llm=None) -> dict[str, Any]:
     store = store or KnowledgeGraphStore()
     call = llm or _llm
-    mode = str(kg_settings().get("indexing_mode", "local_only"))
+    mode = str(kg_settings().get("indexing_mode", "local"))
     reports = _reports(store)[:MAX_MAP_REPORTS]
     if not reports:
         return {"mode": "global", "answer": None,
@@ -171,8 +182,13 @@ def global_search(question: str,
               .replace("{response_type}", "concise, well-structured answer")
               .replace("{max_length}", "400"))
     sens = _max_sensitivity(reports)
-    answer = call([{"role": "user", "content": question}], system, sens, mode,
-                  orb_label="🧠 global search (reduce)")
+    try:
+        answer = call([{"role": "user", "content": question}], system, sens,
+                      mode, orb_label="🧠 global search (reduce)")
+    except (CloudIndexingDisabled, LocalIndexingUnavailable) as e:
+        return {"mode": "global", "answer": None, "note": str(e),
+                "reports_used": [r.get("title") for r in reports],
+                "points": points[:12]}
     return {"mode": "global", "answer": answer,
             "reports_used": [r.get("title") for r in reports],
             "points": points[:12]}
