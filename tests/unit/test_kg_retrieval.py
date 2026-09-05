@@ -80,6 +80,27 @@ class TestLocalSearch:
         out = retrieval.local_search("anything", store=store, llm=StubLLM())
         assert out["answer"] is None
 
+    def test_no_viable_mode_degrades_instead_of_500ing(
+            self, seeded_store, monkeypatch):
+        """2026-09-03 regression: _resolve_model started raising
+        LocalIndexingUnavailable/CloudIndexingDisabled once it actually
+        checked whether a local model is installed. A QUERY is a read, not
+        an index run -- it must degrade to "no answer", the same shape as
+        an empty index, not bubble an unhandled exception into a 500 for
+        every user whose chosen mode isn't currently viable."""
+        from agent_friday.services.knowledge_graph import indexer
+        monkeypatch.setattr(indexer, "_available_local_model", lambda: None)
+        # Force mode="local" regardless of whatever indexing_mode the real
+        # settings.json on the machine running this test happens to hold.
+        monkeypatch.setattr(retrieval, "kg_settings",
+                            lambda: {"indexing_mode": "local"})
+        # llm=None -> exercises the real default `_llm`, not a stub, so the
+        # real _resolve_model call inside it is what's under test here.
+        out = retrieval.local_search("what is graphrag?", store=seeded_store)
+        assert out["answer"] is None
+        assert out["note"]
+        assert out["entities"], "the already-indexed entities must still come back"
+
 
 class TestGlobalSearch:
     def test_map_reduce_over_reports(self, seeded_store):
@@ -109,6 +130,35 @@ class TestGlobalSearch:
         out = retrieval.global_search("themes?", store=store, llm=StubLLM())
         assert out["answer"] is None
         assert "reindex" in out["note"]
+
+    def test_no_viable_mode_at_reduce_stage_degrades_instead_of_500ing(
+            self, seeded_store):
+        """2026-09-03 regression, reduce-stage half: the map stage's
+        existing `except Exception: continue` already swallows a resolve
+        failure per-report, but the reduce call sits outside that loop and
+        had no equivalent guard -- an indexing_mode that stops being viable
+        between the map and reduce stages (or right at the reduce call)
+        must still degrade to "no answer", not 500. Map succeeds here so
+        the reduce stage's own try/except (not the map loop's) is what's
+        actually exercised."""
+        map_reply = json.dumps({"points": [
+            {"description": "Friday relies on GraphRAG", "score": 90}]})
+        from agent_friday.services.knowledge_graph.indexer import \
+            LocalIndexingUnavailable
+
+        class ReduceFailsLLM(StubLLM):
+            def __call__(self, messages, system, sensitivity, mode,
+                         orb_label=None):
+                super().__call__(messages, system, sensitivity, mode)
+                if "{report_data}" not in (system or "") and \
+                        "Friday relies" in (system or ""):
+                    raise LocalIndexingUnavailable("model vanished mid-run")
+                return map_reply
+
+        out = retrieval.global_search("what are the big themes?",
+                                      store=seeded_store, llm=ReduceFailsLLM())
+        assert out["answer"] is None
+        assert out["note"]
 
 
 class TestRouter:

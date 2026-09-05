@@ -173,6 +173,37 @@ def _is_cloud(provider: str) -> bool:
     return not is_local_provider(provider)
 
 
+# ── Unrestricted cloud mode ─────────────────────────────────────────────────
+# Stephen's explicit instruction, 2026-09-03: "cloud only mode means no
+# privacy safeguards, Friday operates completely with cloud models and no
+# local inference. this mode must be in the app. when active, no feature or
+# data is held back from the cloud."
+#
+# This is a real, separate flag — NOT the pre-existing `model_routing.mode:
+# "cloud_only"`, which has always meant provider ROUTING PREFERENCE only
+# (which provider gets first dibs) and has never touched the gate; the two
+# are easy to conflate by name, so this one is spelled out differently.
+# `model_routing.unrestricted_cloud` defaults to False and is read fresh
+# every call, never cached — a setting this consequential must never be
+# stale across a toggle.
+_UNRESTRICTED_KEY = "unrestricted_cloud"
+
+
+def is_unrestricted_cloud() -> bool:
+    """True when Stephen has explicitly turned off every privacy safeguard.
+
+    Default False. Read failures fail CLOSED (safeguards stay on) — the
+    inverse of every other fail-open risk in this module, because this flag
+    is the one thing capable of turning EVERY other protection off at once.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        cfg = (_load_settings() or {}).get("model_routing") or {}
+        return bool(cfg.get(_UNRESTRICTED_KEY, False))
+    except Exception:
+        return False
+
+
 def _classify_cloud(text: str) -> int:
     """Classify content for cloud egress.
 
@@ -701,6 +732,21 @@ def _gate_text_span(text: str, provider: str, field: str,
     if not text or not isinstance(text, str):
         return text
 
+    if is_unrestricted_cloud():
+        # Stephen's explicit instruction, 2026-09-03: "cloud only mode means
+        # no privacy safeguards ... when active, no feature or data is held
+        # back from the cloud." Off by default (see is_unrestricted_cloud).
+        # Deliberately ahead of the never-send floor below — "no data is
+        # held back" was stated in exactly those terms, not "except the
+        # watchlist". This is the ONLY bypass of that floor anywhere in the
+        # codebase; every other caller of the never-send check is untouched.
+        # Still logged, same as every other verdict — a permissive posture
+        # is not a silent one (B3: nothing goes quiet).
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             "unrestricted cloud mode — gating bypassed (never-send list "
+             "included), tier classification skipped", log_path)
+        return text
+
     # ── §5.3 the never-list: the floor, and it moves for nothing ──
     # Found by the probe battery on 2026-08-17, before this layer ever shipped:
     # the never-send check originally lived inside the judgment appeal, so with
@@ -1035,6 +1081,10 @@ def _gate_tool_prose(text: str, provider: str, field: str,
     """
     if not text or not isinstance(text, str):
         return text
+    if is_unrestricted_cloud():
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             "unrestricted cloud mode — tool-prose gating bypassed", log_path)
+        return text
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
@@ -1364,6 +1414,18 @@ def seal_outbound(
     """
     if not _is_cloud(provider):
         return payload  # stays on-device, no gating needed
+
+    if is_unrestricted_cloud():
+        # Fast path for the same instruction as _gate_text_span's — skips the
+        # PII scrub too (a masking step, not a block, but still "holding
+        # something back" by the letter of "no data is held back"). Callers
+        # that reach fields via _gate_text/_gate_tool_prose directly, rather
+        # than through here, get the same bypass at those functions — this
+        # is strictly a shortcut, not the only enforcement point.
+        _log(provider, "*", Tier.SENSITIVE, "allow",
+             "unrestricted cloud mode — seal_outbound bypassed entirely "
+             "(no scrub, no gating)", None)
+        return payload
 
     sealed = dict(payload)
 

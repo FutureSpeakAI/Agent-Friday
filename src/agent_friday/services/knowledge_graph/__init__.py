@@ -25,12 +25,24 @@ KG_DIR = FRIDAY_DIR / "knowledge-graph"
 # Defaults live here (not in core.DEFAULT_SETTINGS) so the knowledge graph is
 # fully self-contained: settings.json only needs a "knowledge_graph" block when
 # the user changes something.
+#: Legacy indexing_mode values, mapped to the current two-value choice.
+#: "gated_cloud" existed briefly (2026-09-03) as a per-TIER compromise —
+#: TIER_1 could ride the cloud route, TIER_2/3 stayed pinned local no
+#: matter what the user picked. Replaced the same day: "he is not asking
+#: for a system that decides for people, he's asking for one that does
+#: what the person picked" — a strict per-user choice, "local" or "cloud",
+#: with the egress gate (not this module) deciding what content is safe to
+#: send. A settings.json written under the old scheme still reads
+#: correctly rather than silently reverting to the default.
+_LEGACY_INDEXING_MODES = {"local_only": "local", "gated_cloud": "cloud"}
+
 KG_DEFAULT_SETTINGS = {
     "enabled": True,
-    # "local_only"  — Tier B indexing uses local providers exclusively (default).
-    # "gated_cloud" — TIER_1 content may use cloud models through the egress
-    #                 gate; TIER_2/3 stays local-only regardless.
-    "indexing_mode": "local_only",
+    # "local"  — Tier B indexing always uses an installed local model
+    #            (default). Nothing ever reaches the network.
+    # "cloud"  — Tier B always routes through the egress-gated cloud
+    #            default, same rules as every other cloud call in the app.
+    "indexing_mode": "local",
     "power_indexer": "native",           # "native" | "microsoft" (opt-in)
     "index_sources": {
         "wiki": True,
@@ -59,6 +71,11 @@ def kg_settings() -> dict:
             merged[k].update(v)
         else:
             merged[k] = v
+    mode = merged.get("indexing_mode")
+    if mode in _LEGACY_INDEXING_MODES:
+        merged["indexing_mode"] = _LEGACY_INDEXING_MODES[mode]
+    elif mode not in ("local", "cloud"):
+        merged["indexing_mode"] = "local"   # unrecognized -> the private default
     return merged
 
 

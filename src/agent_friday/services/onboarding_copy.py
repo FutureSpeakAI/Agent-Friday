@@ -91,7 +91,7 @@ Friday needs a language model to think with, and there are two places it can
 run.
 
 On this computer, where nothing leaves. That needs a graphics card with about
-6.5 GB free for the smallest model that can still use her tools, and more for a
+4.3 GB free for the smallest model that can still use her tools, and more for a
 better one.
 
 Or in the cloud, at Anthropic or Google, where your messages are sent over an
@@ -156,11 +156,14 @@ you should know about it before you meet it."""
 
 # FACT-FIX 1, continued -- the sentence the map needed and did not have.
 CLOUD_ACK_MAP = """\
-What she builds less of. That nightly map has two layers. The first links your
-pages together by what they reference, and works anywhere. The second reads the
-text and works out who and what you were talking about, and it only runs on a
-model on this computer. Without one you get the first layer and not the second,
-so the map is a set of connections rather than an understanding."""
+What she builds less of, by default. That nightly map has two layers. The
+first links your pages together by what they reference, and works anywhere.
+The second reads the text and works out who and what you were talking about.
+By default that second layer runs on a model on this computer; you can point
+it at the cloud instead in Settings -> Knowledge Graph, the same choice as
+everywhere else in this screen. Without a working local model, and without
+choosing cloud for it, you get the first layer and not the second, so the map
+is a set of connections rather than an understanding."""
 
 CLOUD_ACK_PROMISE = """\
 What we cannot promise. The thing that recognises sensitive material is a

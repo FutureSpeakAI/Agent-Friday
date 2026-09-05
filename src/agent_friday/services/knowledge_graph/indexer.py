@@ -6,19 +6,33 @@ prompt pipeline (vendored verbatim from graphrag-workbench under prompts/),
 merges duplicate entities, detects communities (reusing Tier A's detector),
 writes LLM community reports, and embeds entity text locally.
 
-Sovereignty rules (non-negotiable, spec §5.4):
+Routing rules, revised 2026-09-03 (superseding the original spec §5.4
+tier-based sovereignty rule, which pinned TIER_2/3 chunks local no matter
+what the user chose for this — that was a per-tier override of a per-user
+choice, and it is gone: "he is not asking for a system that decides for
+people, he's asking for one that does what the person picked"):
   * The indexer NEVER opens a socket. Every LLM call goes through
     model_router._generate_text, which seals cloud payloads via
-    egress_gate.seal_outbound.
-  * classify-before-extract: each chunk's sensitivity is resolved BEFORE any
-    LLM call. TIER_3 chunks are indexed with a local provider or skipped —
-    never sent to cloud, in any mode.
-  * indexing_mode "local_only" (the default) pins every call to the local
-    model. "gated_cloud" lets TIER_1 chunks use the routed cloud model
-    (still sealed); TIER_2/3 stay local.
-  * egress_gate.gate_operational() == False disables cloud indexing outright.
+    egress_gate.seal_outbound (or, when the user has separately chosen
+    model_routing.unrestricted_cloud, passes them through with a ledger
+    row and no other change — the same rule as everywhere else in the app).
+  * indexing_mode is a strict PER-USER CHOICE, not a per-chunk decision:
+    "local" (the default) always uses an installed local model — nothing
+    for this pass ever reaches the network, at any sensitivity. "cloud"
+    always routes through the egress-gated cloud default — what content
+    actually reaches the wire is the gate's decision, uniformly, the same
+    way it decides for every other cloud call in the app.
+  * classify-before-extract still holds: each chunk's sensitivity is
+    resolved before any LLM call, and travels with it as an INPUT to the
+    egress gate's own decision — it no longer overrides the user's mode
+    choice here.
+  * egress_gate.gate_operational() == False disables cloud indexing
+    outright; a missing/uninstalled local model disables local indexing
+    outright — both checked ONCE at the top of reindex_tier_b, not
+    discovered one failed chunk at a time.
   * Derived records inherit their source's sensitivity, so the store
-    encrypts anything derived from TIER_2/3 sources at rest.
+    encrypts anything derived from TIER_2/3 sources at rest, regardless of
+    which mode produced them.
 """
 
 from __future__ import annotations
@@ -225,8 +239,16 @@ class CloudIndexingDisabled(RuntimeError):
     pass
 
 
+class LocalIndexingUnavailable(RuntimeError):
+    """Raised when mode="local" is chosen but nothing installed can run
+    extraction. Distinct from CloudIndexingDisabled so a caller (or a log)
+    can tell which side of the choice failed."""
+    pass
+
+
 def _local_model() -> str:
-    """The local model to index with, falling back to model_plan's floor.
+    """The user's PREFERRED local model name — a name, not a promise it is
+    installed. `_available_local_model()` below is what actually checks.
 
     The fallback was `gemma3:4b` in both branches — defect H3 again. Indexing
     does not itself call tools, so this one was harmless in practice, which is
@@ -242,15 +264,70 @@ def _local_model() -> str:
         return FLOOR_MODEL
 
 
+def _available_local_model() -> Optional[str]:
+    """The local model Tier B will actually use, or None if nothing
+    installed can do the job.
+
+    2026-09-03, item #1 of the "default is broken for everyone" instruction:
+    `_local_model()` names a model with no check that it is INSTALLED. On a
+    fresh install where the user picked Claude-only (no local model ever
+    downloaded) or a different rung of the ladder, every extraction call
+    failed against a model that was never on the machine — one call at a
+    time, 348 times on the reference machine, before anyone found out. This
+    asks Ollama what is actually there.
+
+    Preference order: the configured/floor preference (`_local_model()`), if
+    it is installed and tool-capable; otherwise the smallest installed
+    tool-capable model, by the same ladder `model_plan.BRAIN_MODELS` already
+    orders by footprint; otherwise None — meaningfully different from a
+    fallback string, because "no model" must be a distinguishable state a
+    caller can act on, not silently become gemma3:4b (which cannot call
+    tools and was never a real answer either).
+    """
+    try:
+        from agent_friday.services.model_plan import TOOL_CAPABLE_IDS, BRAIN_MODELS
+        from agent_friday.routing.ollama_manager import get_manager
+        installed = {m.get("name") or m.get("model")
+                    for m in (get_manager().list_models() or [])}
+    except Exception:
+        return None
+    capable_installed = installed & TOOL_CAPABLE_IDS
+    if not capable_installed:
+        return None
+    preferred = _local_model()
+    if preferred in capable_installed:
+        return preferred
+    for m in BRAIN_MODELS:
+        if m["id"] in capable_installed:
+            return m["id"]
+    return None
+
+
 def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
     """Return (model, is_local_pin) for a chunk.
 
-    local_only  → always the local model.
-    gated_cloud → TIER_1 rides the routed default (sealed by the egress
-                  gate downstream); TIER_2/3 pinned local. Cloud requires a
-                  healthy gate.
+    A strict PER-USER CHOICE (2026-09-03), not a per-tier override: earlier
+    versions of this function pinned "sensitive" chunks local even when the
+    user had chosen "cloud" for this. "He is not asking for a system that
+    decides for people, he's asking for one that does what the person
+    picked" — so that second-guessing is gone. `sensitivity` stays a
+    parameter for call-site compatibility; it no longer changes the
+    decision here. What content is actually safe to send is the egress
+    gate's job, the same as every other cloud call in the app: tier-based
+    redaction normally, or a full pass-through under the separate,
+    explicitly-chosen `model_routing.unrestricted_cloud` — this function
+    only decides ROUTING (local vs. cloud), never content.
+
+    mode "local" → the model resolved by `_available_local_model()`
+                    (raises LocalIndexingUnavailable if nothing qualifies —
+                    see the fail-fast check at the top of reindex_tier_b,
+                    which is where this is actually meant to be caught;
+                    this per-chunk path is the safety net, not the primary
+                    check, so a model that disappears mid-run cannot fall
+                    through to cloud silently).
+    mode "cloud" → the routed default; requires a healthy egress gate.
     """
-    if mode == "gated_cloud" and sensitivity <= 1:
+    if mode == "cloud":
         try:
             from agent_friday.services.egress_gate import gate_operational
             if not gate_operational():
@@ -260,8 +337,13 @@ def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
             raise
         except Exception:
             raise CloudIndexingDisabled("egress gate unavailable")
-        return None, False                 # routed default (cloud allowed)
-    return _local_model(), True
+        return None, False                 # routed default (egress-gated)
+    model = _available_local_model()
+    if model is None:
+        raise LocalIndexingUnavailable(
+            "local indexing selected, but no installed model can run "
+            "extraction (checked against the tool-capable ladder)")
+    return model, True
 
 
 def _llm(messages, system: Optional[str], sensitivity: int, mode: str,
@@ -331,12 +413,66 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     t0 = time.time()
     store = store or KnowledgeGraphStore()
     settings = kg_settings()
-    indexing_mode = str(settings.get("indexing_mode", "local_only"))
+    indexing_mode = str(settings.get("indexing_mode", "local"))
     call = llm or _llm
     say = progress or (lambda msg: None)
 
     chunks = gather_chunks()
     say(f"corpus: {len(chunks)} chunks")
+
+    # Fail FAST, not 348 times. Item #1 of the 2026-09-03 instruction: on a
+    # machine with no usable local model, the old code discovered that one
+    # doomed extraction call at a time, every single chunk, before ever
+    # saying so — the same shape of silent failure as the conversation-
+    # source bug fixed the same day, one layer up. Checked once, here,
+    # before any chunk is attempted.
+    #
+    # Gated on `call is _llm`: an injected `llm` (tests, or a caller
+    # bringing its own extraction function) owns its own backend and does
+    # not need a real Ollama or a real egress gate to exist -- that's the
+    # whole point of the injection point. Without this gate, every "local"
+    # unit test silently depends on whatever happens to be installed on the
+    # machine running pytest, which is exactly the kind of environment-
+    # dependent pass this file's own docstring ("nothing leaves the
+    # process") promises isn't happening.
+    if call is _llm and indexing_mode == "local" and _available_local_model() is None:
+        from agent_friday.services.model_plan import FLOOR_MODEL
+        say(f"TIER B CANNOT RUN: indexing_mode is 'local' but no installed "
+            f"model can run extraction. Pull one (e.g. 'ollama pull "
+            f"{FLOOR_MODEL}') or switch Settings -> Knowledge Graph to Cloud.")
+        return {
+            "tier": "B", "mode": indexing_mode, "chunks": len(chunks),
+            "extracted": 0, "extract_failures": 0, "first_failure": None,
+            "degraded": True, "skipped_tier3": 0, "entities": 0,
+            "relationships": 0, "communities": 0, "reports": 0,
+            "embedded": 0, "took_ms": int((time.time() - t0) * 1000),
+            "error": "no_local_model",
+            "message": f"Local indexing is selected, but no locally-installed "
+                       f"model can run extraction. Run 'ollama pull "
+                       f"{FLOOR_MODEL}' (or switch Settings -> Knowledge "
+                       f"Graph to Cloud) and try again.",
+        }
+    if call is _llm and indexing_mode == "cloud":
+        try:
+            from agent_friday.services.egress_gate import gate_operational
+            _cloud_ok = gate_operational()
+        except Exception:
+            _cloud_ok = False
+        if not _cloud_ok:
+            say("TIER B CANNOT RUN: indexing_mode is 'cloud' but the egress "
+                "gate self-test failed — cloud indexing refused rather than "
+                "risk an unsealed send.")
+            return {
+                "tier": "B", "mode": indexing_mode, "chunks": len(chunks),
+                "extracted": 0, "extract_failures": 0, "first_failure": None,
+                "degraded": True, "skipped_tier3": 0, "entities": 0,
+                "relationships": 0, "communities": 0, "reports": 0,
+                "embedded": 0, "took_ms": int((time.time() - t0) * 1000),
+                "error": "egress_gate_unavailable",
+                "message": "Cloud indexing is selected, but the egress "
+                           "gate's own self-test failed, so no chunk was "
+                           "sent. Fix the gate or switch to Local.",
+            }
 
     manifest = KnowledgeGraphManifest(base_dir=store.base)
     if mode == "delta":
@@ -367,15 +503,30 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
 
     for chunk in todo:
         sens = chunk["sensitivity"]
-        try:
-            model, pinned = _resolve_model(sens, indexing_mode)
-        except CloudIndexingDisabled:
-            if sens <= 1:
-                # cloud refused → degrade the whole pass to local
-                indexing_mode = "local_only"
-                model, pinned = _resolve_model(sens, indexing_mode)
-            else:
-                skipped_tier3 += 1
+        # `model`/`pinned` themselves are unused here -- this call exists
+        # purely for its exception, as a mid-run safety net behind the
+        # top-level fail-fast (a model disappearing or the gate going down
+        # partway through a run must not fall through to cloud silently).
+        # `_llm` re-resolves for real inside itself; an injected `llm`
+        # (tests, or a caller bringing its own extraction function) owns
+        # its own backend and doesn't need this machine's Ollama or gate
+        # to exist, so the safety net only runs for the real default path
+        # -- same reasoning as the top-level checks above.
+        if call is _llm:
+            try:
+                _resolve_model(sens, indexing_mode)
+            except (CloudIndexingDisabled, LocalIndexingUnavailable) as e:
+                # No per-tier degrade-to-local here anymore: the mode is the
+                # user's choice, not something this loop overrides chunk by
+                # chunk. The top-level check in reindex_tier_b already
+                # verified the chosen path was viable before this loop
+                # started; a mid-run failure here is the rare case (gate
+                # went down, model got uninstalled) and is counted like any
+                # other failure, not silently routed around.
+                say(f"resolve failed for {chunk['id']}: {e}")
+                extract_failures += 1
+                if first_failure is None:
+                    first_failure = f"{type(e).__name__}: {e}"
                 continue
         prompt = (extract_tpl
                   .replace("{entity_types}", ENTITY_TYPES)
@@ -572,21 +723,21 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     store.save_layout(layout_meta)
     manifest.save()
 
-    # Tier B used to fail SILENTLY and completely. `indexing_mode` defaults to
-    # "local_only", which pins every extraction call to the local model; on a
-    # machine with no local model every call raises, is caught above, and the
-    # chunk is skipped. Tier A still works, so the run reported success and
-    # produced a structural-only graph. The user was told the map was built.
-    #
-    # The onboarding now tells cloud-only users what they do and do not get.
-    # That sentence has to be backed by a run that says so out loud, so the
-    # failure is counted, named in the receipt, and stated plainly here.
+    # Tier B used to fail SILENTLY and completely: `indexing_mode` defaulted
+    # to a local model no install actually delivered, every call raised, was
+    # caught above, and the chunk was skipped -- Tier A still worked, so the
+    # run reported success and produced a structural-only graph. The
+    # no-viable-model case is now caught once, up front (see the fail-fast
+    # check near the top of this function); this remaining branch is for
+    # the rarer case where the chosen path WAS viable but every single call
+    # still failed for some other reason (a transient outage, a bad prompt
+    # template edit, etc.) -- still worth saying out loud, not the same
+    # failure as the one that motivated this whole rewrite.
     degraded = bool(chunks) and extracted == 0 and extract_failures > 0
     if degraded:
         say("TIER B PRODUCED NOTHING: all %d extraction calls failed (%s). "
             "The map has structural links only, not the semantic layer. "
-            "indexing_mode=%s pins extraction to a local model."
-            % (extract_failures, first_failure, indexing_mode))
+            "indexing_mode=%s." % (extract_failures, first_failure, indexing_mode))
     elif extract_failures:
         say("tier B: %d of %d chunks failed extraction"
             % (extract_failures, extract_failures + extracted))

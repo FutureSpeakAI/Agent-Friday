@@ -108,21 +108,33 @@ class TestSensitivity:
 
 
 class TestSettingsAndDirty:
-    def test_defaults_local_only_and_index_everything(self):
+    def test_defaults_local_and_index_everything(self):
         s = kg_settings()
-        assert s["indexing_mode"] == "local_only"
+        assert s["indexing_mode"] == "local"
         assert s["power_indexer"] == "native"
         assert all(s["index_sources"].values())
 
     def test_user_overlay_merges_nested(self, monkeypatch):
         import agent_friday.services.knowledge_graph as kg
         monkeypatch.setattr(kg, "_load_settings", lambda: {
-            "knowledge_graph": {"indexing_mode": "gated_cloud",
+            "knowledge_graph": {"indexing_mode": "cloud",
                                 "index_sources": {"conversations": False}}})
         s = kg.kg_settings()
-        assert s["indexing_mode"] == "gated_cloud"
+        assert s["indexing_mode"] == "cloud"
         assert s["index_sources"]["conversations"] is False
         assert s["index_sources"]["wiki"] is True  # untouched keys survive
+
+    def test_legacy_indexing_mode_values_still_read_correctly(self, monkeypatch):
+        """settings.json written before 2026-09-03 can still carry
+        "local_only"/"gated_cloud" -- kg_settings() migrates them on every
+        read rather than silently reverting to the default."""
+        import agent_friday.services.knowledge_graph as kg
+        monkeypatch.setattr(kg, "_load_settings", lambda: {
+            "knowledge_graph": {"indexing_mode": "local_only"}})
+        assert kg.kg_settings()["indexing_mode"] == "local"
+        monkeypatch.setattr(kg, "_load_settings", lambda: {
+            "knowledge_graph": {"indexing_mode": "gated_cloud"}})
+        assert kg.kg_settings()["indexing_mode"] == "cloud"
 
     def test_dirty_flag_cycle(self):
         mark_wiki_dirty("test")

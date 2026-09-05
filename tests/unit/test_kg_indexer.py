@@ -89,29 +89,92 @@ class TestParsing:
 
 
 class TestModelResolution:
-    def test_local_only_always_pins_local(self):
+    """2026-09-03: indexing_mode is a strict PER-USER choice, not a per-tier
+    override. The old `gated_cloud` mode pinned TIER_2/3 chunks local no
+    matter what the user picked; "cloud" now routes every sensitivity to the
+    gated cloud default uniformly, and "local" pins every sensitivity to
+    whatever installed model can actually run extraction -- what content is
+    safe to send is the egress gate's decision, not this function's."""
+
+    def test_local_mode_pins_the_available_model_at_every_sensitivity(
+            self, monkeypatch):
+        monkeypatch.setattr(indexer, "_available_local_model",
+                            lambda: "gemma4:e2b")
         for sens in (1, 2, 3):
-            model, pinned = indexer._resolve_model(sens, "local_only")
-            assert pinned is True and model
+            model, pinned = indexer._resolve_model(sens, "local")
+            assert pinned is True and model == "gemma4:e2b"
 
-    def test_gated_cloud_tier1_routes_cloud(self, monkeypatch):
+    def test_local_mode_raises_when_nothing_installed_can_run_it(
+            self, monkeypatch):
+        monkeypatch.setattr(indexer, "_available_local_model", lambda: None)
+        with pytest.raises(indexer.LocalIndexingUnavailable):
+            indexer._resolve_model(2, "local")
+
+    def test_cloud_mode_routes_every_sensitivity_the_same_way(
+            self, monkeypatch):
+        """The regression this replaces: TIER_2/3 no longer forces local
+        just because it's sensitive -- that second-guessing is gone, the
+        gate decides what's safe to send, not this function."""
         import agent_friday.services.egress_gate as eg
         monkeypatch.setattr(eg, "gate_operational", lambda: True)
-        model, pinned = indexer._resolve_model(1, "gated_cloud")
-        assert model is None and pinned is False
-
-    def test_gated_cloud_tier23_stays_local(self, monkeypatch):
-        import agent_friday.services.egress_gate as eg
-        monkeypatch.setattr(eg, "gate_operational", lambda: True)
-        for sens in (2, 3):
-            model, pinned = indexer._resolve_model(sens, "gated_cloud")
-            assert pinned is True and model
+        for sens in (1, 2, 3):
+            model, pinned = indexer._resolve_model(sens, "cloud")
+            assert model is None and pinned is False
 
     def test_dead_gate_blocks_cloud(self, monkeypatch):
         import agent_friday.services.egress_gate as eg
         monkeypatch.setattr(eg, "gate_operational", lambda: False)
         with pytest.raises(indexer.CloudIndexingDisabled):
-            indexer._resolve_model(1, "gated_cloud")
+            indexer._resolve_model(1, "cloud")
+
+
+class TestAvailableLocalModel:
+    """`_available_local_model()` -- the 2026-09-03 fix for the default that
+    was broken for everyone: `_local_model()` names a PREFERENCE with no
+    check it is installed. This is what actually asks Ollama."""
+
+    def _fake_manager(self, names):
+        class _Mgr:
+            def list_models(self):
+                return [{"name": n} for n in names]
+        return _Mgr()
+
+    def test_prefers_the_configured_model_when_installed(self, monkeypatch):
+        from agent_friday.services.model_plan import FLOOR_MODEL
+        monkeypatch.setattr(indexer, "_local_model", lambda: FLOOR_MODEL)
+        monkeypatch.setattr(
+            "agent_friday.routing.ollama_manager.get_manager",
+            lambda: self._fake_manager([FLOOR_MODEL, "gemma3:4b"]))
+        assert indexer._available_local_model() == FLOOR_MODEL
+
+    def test_falls_back_to_smallest_installed_tool_capable_model(
+            self, monkeypatch):
+        from agent_friday.services.model_plan import BRAIN_MODELS
+        capable = [m["id"] for m in BRAIN_MODELS if m["tools"]]
+        assert len(capable) >= 2, "need at least two rungs for this test"
+        smallest, other = capable[0], capable[-1]
+        # user's preference is a model that isn't installed
+        monkeypatch.setattr(indexer, "_local_model", lambda: other + "-nope")
+        monkeypatch.setattr(
+            "agent_friday.routing.ollama_manager.get_manager",
+            lambda: self._fake_manager([smallest, "gemma3:4b"]))
+        assert indexer._available_local_model() == smallest
+
+    def test_none_when_nothing_installed_can_call_tools(self, monkeypatch):
+        # gemma3:4b is on the ladder but cannot call tools (defect H3)
+        monkeypatch.setattr(
+            "agent_friday.routing.ollama_manager.get_manager",
+            lambda: self._fake_manager(["gemma3:4b"]))
+        assert indexer._available_local_model() is None
+
+    def test_none_when_ollama_is_unreachable(self, monkeypatch):
+        class _BrokenMgr:
+            def list_models(self):
+                raise RuntimeError("connection refused")
+        monkeypatch.setattr(
+            "agent_friday.routing.ollama_manager.get_manager",
+            lambda: _BrokenMgr())
+        assert indexer._available_local_model() is None
 
 
 class TestKnowledgeGraphSettingsPersistence:
@@ -152,7 +215,7 @@ class TestKnowledgeGraphSettingsPersistence:
         from agent_friday.services.knowledge_graph import kg_settings
 
         core._invalidate_settings_cache()
-        custom = {"indexing_mode": "gated_cloud",
+        custom = {"indexing_mode": "cloud",
                   "index_sources": {"wiki": True, "conversations": False,
                                      "cognitive": False, "soul": False}}
         core._save_settings({"knowledge_graph": custom})
@@ -160,13 +223,13 @@ class TestKnowledgeGraphSettingsPersistence:
 
         raw = core._load_settings_raw()
         assert raw.get("knowledge_graph", {}).get("indexing_mode") == \
-            "gated_cloud", (
+            "cloud", (
                 "the saved block did not survive _load_settings_raw() -- "
                 "'knowledge_graph' fell out of the DEFAULT_SETTINGS "
                 "whitelist again")
 
         merged = kg_settings()
-        assert merged["indexing_mode"] == "gated_cloud"
+        assert merged["indexing_mode"] == "cloud"
         assert merged["index_sources"]["conversations"] is False
         # Untouched defaults still fill in what the user never set.
         assert merged["nightly_reindex"] is True
@@ -181,7 +244,7 @@ class TestKnowledgeGraphSettingsPersistence:
         from agent_friday.services.knowledge_graph import kg_settings
 
         core._invalidate_settings_cache()
-        core._save_settings({"knowledge_graph": {"indexing_mode": "gated_cloud"}})
+        core._save_settings({"knowledge_graph": {"indexing_mode": "cloud"}})
         core._invalidate_settings_cache()
 
         stripped = {k: v for k, v in core.DEFAULT_SETTINGS.items()
@@ -191,7 +254,7 @@ class TestKnowledgeGraphSettingsPersistence:
         try:
             raw = core._load_settings_raw()
             assert "knowledge_graph" not in raw
-            assert kg_settings()["indexing_mode"] == "local_only"  # reverted
+            assert kg_settings()["indexing_mode"] == "local"  # reverted
         finally:
             core._invalidate_settings_cache()
 
@@ -320,3 +383,50 @@ class TestIndexPass:
         b_after = {e["id"] for e in store.load("entities")
                    if e.get("tier") == "B"}
         assert b_after == b_before
+
+
+class TestFailFast:
+    """2026-09-03, item #1: a mode that can't run must say so once, before
+    any chunk is attempted -- not fail per-chunk 348 times. These exercise
+    the REAL default path (`llm=None`, i.e. `call is _llm`) deliberately --
+    the checks are gated on that so an injected test/caller llm is never
+    blocked by a machine's real Ollama or gate state (TestIndexPass above
+    relies on that gate to stay hermetic)."""
+
+    def test_local_mode_refuses_before_touching_any_chunk(
+            self, wiki_home, tmp_path, monkeypatch):
+        monkeypatch.setattr(indexer, "_available_local_model", lambda: None)
+        store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+        info = indexer.reindex_tier_b(store=store, mode="full")  # llm=None
+        assert info["error"] == "no_local_model"
+        assert info["degraded"] is True
+        assert info["extracted"] == 0 and info["extract_failures"] == 0
+        assert info["chunks"] > 0  # the corpus was gathered, just not touched
+        assert [e for e in store.load("entities") if e.get("tier") == "B"] == []
+
+    def test_cloud_mode_refuses_when_gate_self_test_fails(
+            self, wiki_home, tmp_path, monkeypatch):
+        import agent_friday.services.knowledge_graph as kg
+        monkeypatch.setattr(kg, "_load_settings", lambda: {
+            "knowledge_graph": {
+                "indexing_mode": "cloud",
+                "index_sources": {"wiki": True, "soul": False,
+                                   "cognitive": False, "conversations": False}}})
+        import agent_friday.services.egress_gate as eg
+        monkeypatch.setattr(eg, "gate_operational", lambda: False)
+        store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+        info = indexer.reindex_tier_b(store=store, mode="full")  # llm=None
+        assert info["error"] == "egress_gate_unavailable"
+        assert info["degraded"] is True
+        assert info["extracted"] == 0
+
+    def test_injected_llm_bypasses_the_local_fail_fast(
+            self, wiki_home, tmp_path, monkeypatch):
+        """A caller supplying its own `llm` owns its own backend -- the
+        fail-fast exists to protect the real default path, not to demand
+        every test have a real Ollama running."""
+        monkeypatch.setattr(indexer, "_available_local_model", lambda: None)
+        store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
+        info = indexer.reindex_tier_b(store=store, mode="full", llm=RecordingLLM())
+        assert info.get("error") is None
+        assert info["entities"] == 2
