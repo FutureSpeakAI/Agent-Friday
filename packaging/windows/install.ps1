@@ -810,7 +810,14 @@ if ($ollamaOutcome.Installed) {
     Say-Detail 'Friday works out what this laptop can handle first, then downloads only that.'
     Say-Detail 'Between about 2.5 and 7.5 GB depending on the card. This is the longest wait.'
 
-    Set-HealAllowedModelTags @('gemma3:4b','qwen3:4b','qwen3:8b','gemma4:12b','qwen3:14b','qwen3:32b',
+    # Kept in sync with $brainLadder above (itself generated from
+    # model_plan.BRAIN_MODELS) -- this is the FOURTH place this exact ladder
+    # had to be told about, after model_plan.py, ollama_manager.py's
+    # _REC_LABELS, and $brainLadder itself. A tag missing here doesn't create
+    # a security hole (Assert-ModelTag fails closed, refusing to pull
+    # anything unlisted) -- it just means self-repair could not fetch a
+    # currently-valid rung if a chunk pull failed and needed retrying.
+    Set-HealAllowedModelTags @('gemma4:e2b','gemma4:e4b','gemma4:12b','gemma4:26b',
                               'embeddinggemma','nomic-embed-text')
 
     $before = @(Get-OllamaInstalledModels)
