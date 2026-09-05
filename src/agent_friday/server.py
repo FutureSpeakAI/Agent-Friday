@@ -318,10 +318,20 @@ if not _TESTING:
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
-        from agent_friday.services.credential_store import bootstrap_provider_env
-        _loaded_keys = bootstrap_provider_env()
-        if _loaded_keys:
-            print(f"  Provider keys: loaded {_loaded_keys} from encrypted store")
+        from agent_friday.services.credential_store import bootstrap_provider_env_detail
+        _pk_detail = bootstrap_provider_env_detail()
+        # CORRECTION (F68, 2026-09-04): this used to print only the bare
+        # success count, gated on it being nonzero -- so a run where every
+        # stored key failed to decrypt (Stephen's own real situation, 3 for
+        # 3) printed NOTHING at all, the least visible way this could fail.
+        # Gate on candidates existing at all, not on the count that succeeded.
+        if _pk_detail["candidates"]:
+            _msg = (f"  Provider keys: {_pk_detail['loaded']}/"
+                    f"{_pk_detail['candidates']} decrypted from encrypted store")
+            if _pk_detail["unreadable"]:
+                _msg += (f" -- UNREADABLE: {', '.join(_pk_detail['unreadable'])} "
+                         f"(reconnect via Settings)")
+            print(_msg)
     except Exception as _pk_err:
         print(f"  Provider keys: skipped ({_pk_err})")
 

@@ -2479,6 +2479,201 @@ test_skillopt_engine.py`, `tests/unit/test_learning_loop.py`,
 test_skillopt_llm_research.py`) reran clean after both behavioral
 fixes (F73, F74): 493 tests, zero failures.
 
+### Round 17 — Stephen rules on F67/F68, and the temp leak actually closed (2026-09-04)
+
+**F67 and F68 were sitting as `confirmed_pending_action` — Stephen ruled on
+both directly rather than leaving the design questions open**, per his own
+standing delegation over this queue.
+
+**F67 — inverted, not patched a fourth time.** Six missing provider-key
+names in `ENV_BLOCKLIST` was, in Stephen's own framing, "not three
+mistakes, it is one wrong design: an allowlist-shaped problem being
+solved with a denylist, where every new provider is a fresh chance to
+forget." Ruling: build a sandboxed connector's environment explicitly
+from what it needs, not from everything minus what someone remembered to
+strip. `extension_security.py`'s `ENV_BLOCKLIST` is gone; a new
+`SANDBOXED_ENV_ALLOWLIST` names every environment variable a sandboxed
+subprocess actually receives — `PATH`, temp/home vars, locale
+cross-platform, plus `SYSTEMROOT`/`APPDATA`/`PATHEXT`/etc. on Windows
+(researched, not guessed: `SYSTEMROOT` in particular is required for
+Windows' own crypto/socket APIs to initialize, which is why Node/npm-
+launched MCP servers — the common case here — can fail outright without
+it). `sanitize_env_for_mcp()`'s sandboxed/untrusted branch now builds the
+subprocess environment FROM that allowlist; the `trusted` branch (an
+operator's explicit opt-in to the full inherited environment) is
+untouched. One subtlety caught before it could become a silent
+regression: verified directly, on a live Windows machine, that
+`os.environ.copy()` (the real call site's input) degrades to a plain,
+case-SENSITIVE dict even though Windows' own `os.environ` is case-
+insensitive — a naive exact-case allowlist lookup would have silently
+dropped `SYSTEMROOT` if the OS happened to store it as `SystemRoot`,
+breaking every sandboxed connector on Windows while looking, on paper,
+like nothing had changed. Matches case-insensitively instead. Proof:
+reproduced Stephen's own exact ask — planted a fake key for a provider on
+NO list anywhere (not even a plausible-looking one; named for no reason
+but that it doesn't exist yet), spawned a sandboxed connector, confirmed
+it does not arrive. Red-on-revert: 4 of 10 tests in the existing
+`tests/gauntlet/test_mcp_env_leak_to_subprocess.py` failed against the
+reverted denylist code — including one whose PRE-fix assertion had
+required the exact opposite behavior ("the filter must be a denylist...
+not a broad allowlist," now corrected and explained inline, per the
+standing rule that editing an existing test is allowed when the test
+itself encoded the overruled design, logged rather than silently
+weakened). `routes/ext_security.py`'s dead `/api/security/env-blocklist`
+route (zero UI callers, confirmed) renamed to `/api/security/mcp-
+sandbox-env`, now honestly describing the real mechanism.
+
+**F68 — fixed exactly as asked, no design call needed.** `provider_key_
+status()` now attempts the real decrypt instead of checking file
+existence, returning `connected` / `present_but_unreadable` / `missing`.
+`bootstrap_provider_env()` kept its exact int-returning contract (the 4
+existing assertions in `test_stored_key_beats_start_bat_at_boot.py` that
+compare it directly to an int needed no changes) by becoming a thin
+wrapper around a new `bootstrap_provider_env_detail()`, which the boot
+log now uses to print `{loaded}/{candidates} decrypted` plus the broken
+provider names — gated on candidates existing at all, not on the count
+that succeeded, so a run where every key fails (Stephen's own situation,
+3 for 3) is still visible instead of printing nothing (the old gate was
+`if _loaded_keys:`, silently suppressed at zero). `provider_health.py`'s
+per-provider check now says "stored key present but could not be
+decrypted" instead of the generic "no API key" a never-configured
+provider gets — before `provider_key_status()` was fixed at all, a
+broken key actually looked FALSELY HEALTHY here ("ok"/"key present"),
+which is worse than either "missing" framing; fixing the status function
+first and then this detail message closes both layers of the same lie.
+Reproduced for real: a garbage blob prefixed with the module's own
+`_DPAPI_MAGIC` genuinely fails Windows DPAPI unprotect on this real
+machine (checked directly — plain garbage does NOT raise, since
+`unprotect()`'s plaintext fallback returns unrecognized bytes as-is; that
+simpler construction was tried and rejected before finding the one that
+actually reproduces a broken key). Red-on-revert: 5 of 9 new tests failed
+against the pre-fix code. Both F67 and F68 landed in one commit; full
+regression sweep across every test file touching either area, plus the
+full `tests/gauntlet/` suite, green.
+
+**The temp leak: closed, not re-bounded.** Stephen's framing was direct:
+"bounded is not the same as fixed, and this mechanism took his product
+down once. Either close it or state plainly in the finding what the
+bound is and why it can't be exceeded." F65 (round 12) had root-caused
+the mechanism precisely — ChromaDB's HNSW index file staying Windows-
+locked past `pytest_sessionfinish`'s retry budget on a completely normal
+exit — but deliberately left it unfixed, citing too many same-day
+test-infrastructure changes already. Between then and a later
+independent check the residual grew from 88 directories/268MB to 79
+directories/3.3GB: a ~14x jump in average size per leaked directory,
+which is what made "self-heals eventually" stop being a credible bound.
+Fixed for real this round, with room to verify: `conversation_memory.py`
+gained `close_conversation_memory()`, calling the process-wide singleton's
+ChromaDB client's own `.close()` — a real, documented API whose own
+docstring names this exact scenario verbatim ("particularly important
+for PersistentClient to avoid SQLite file locking issues"). `conftest.
+py`'s `pytest_sessionfinish` now calls it, best-effort and import-
+guarded, before attempting the rmtree. Reproduced deterministically both
+directions before writing the fix — without `close()`, an immediate
+`shutil.rmtree()` fails with the exact WinError 32 F65 documented, even
+with a full extra second of delay first (ruling out a simple timing
+race, consistent with F65's own `gc.collect()` finding); with `close()`
+called first, the same rmtree succeeds immediately, every time tried.
+Red-on-revert: 4 of 6 new same-process tests failed against reverted
+code. **Honest limit, stated rather than smoothed over**: a genuinely
+separate end-to-end check — spawning a real pytest SUBPROCESS that
+touches `conversation_memory` and counting temp homes before/after —
+did NOT reliably reproduce the original bug even before this fix landed
+(0 leaks across 4 trials, including a purpose-built minimal test file
+matching the tight write-then-exit timing that reliably reproduces the
+leak same-process). Something about a subprocess's own exit sequence
+releases the handle more reliably than continuing to run in the same
+process does; not root-caused further, since the same-process mechanism
+was already proven deterministically in both directions. That end-to-end
+test is kept as an ongoing sanity check, not cited as red-on-revert
+proof — its own docstring says so plainly, so it can't be mistaken for
+something it isn't.
+
+### Round 18 — nine findings' proof backfilled with real revert evidence (2026-09-04)
+
+**Stephen's audit of the ledger itself, not just its contents.** "Nine
+fixed entries still lack red-green-red inline — F6, F10, F18, Q16 and F72
+have nothing at all, and F1, F2, F8, F12 are covered only in prose
+elsewhere. Get those nine into a state where they can be checked, or mark
+them honestly as weaker." Three parallel research agents located each
+finding's exact fix and existing test coverage (all nine already had a
+real, adequate test file — the gap was entirely in what the ledger's own
+`fix_note` field said, not in missing tests), then the actual proof work
+was done directly, not delegated further.
+
+**F1, F2, F8 — genuine proof already existed, just not in the ledger.**
+progress.md's own "Retroactive revert verification" section (written
+earlier tonight after an unrelated check flagged these same five findings
+for shipping without a documented revert step) already recorded real
+`git`-based reverts and reruns for F1+F2 (`scheduler.py`/
+`provider_health.py`/`local_image.py`, 6/6 failed then passed) and F8
+(a surgical single-hunk reverse-apply of `mcp_client.py`, since three
+later fixes had touched the same file by then — 1/2 failed while F28's/
+F32's/F36's own probes stayed green at 12/12). Transcribed that evidence
+into each finding's own `fix_note` field — F1 and F2 had no `fix_note`
+key at all (they predate that part of the schema).
+
+**F12 — same story, plus a real second layer.** The retroactive section
+already covered F12's original `egress_gate.py` tool_calls-coverage fix
+(2/3 failed, reverted from commit `c9a5a6f`, restored to 3/3). Its
+`fix_note` field, though, held only a LATER, separate verification (a
+cross-provider retry-list-reuse safety check filed under the same ID) —
+both are real work, so the tool_calls evidence was prepended rather than
+overwriting the later addition.
+
+**F72 — docstring-only, revert-test correctly doesn't apply.** Matched
+the exact precedent F60/F61 already established for this shape of fix
+(module/function docstring corrected, zero behavioral code changed): a
+revert-test would prove nothing, since the 4 pinning tests call the
+function and assert on its real behavior, not its prose. Stated that
+explicitly rather than leaving F72 looking like a weaker, unproven
+cousin of the fixes that do carry full red-on-revert evidence.
+
+**F6, F10 (router half), F18, Q16 — genuinely never revert-tested before
+tonight, so actually done, not just documented.** Unlike the five above,
+these four had NO prior revert evidence anywhere, in the ledger or in
+progress.md — their tests' own docstrings *claimed* "red before, green
+after" without it ever having been checked. Each fix is already committed
+history, not an uncommitted working-tree change, so the usual `git stash`
+dance doesn't apply — used `git checkout <pre-fix-commit>^ -- <file>` to
+temporarily restore the exact pre-fix content (checking `git status`
+clean and the commit's own diff scope first, so a shared commit touching
+multiple findings' files couldn't accidentally clobber something else),
+ran the test, then `git checkout HEAD -- <file>` to restore, confirmed
+byte-identical to HEAD via `git diff --stat` before moving to the next
+one:
+- **F6** (`camera_auto_describe` removal, commit `56f8f5d`): both tests
+  failed cleanly against the pre-removal content across all 3 files
+  (`core/__init__.py`, `index.html`, `ui_parts/app.html`); 2/2 restored.
+- **F10's router half** (Q19's fix, commit `734f54c` — F10 has no
+  separate fix of its own, it inherits Q19's): 4 of 5
+  `test_local_only_mode_honors_its_own_promise.py` tests failed cleanly
+  against the pre-Q19 router (ordinary chat went to cloud, no-seat
+  silently fell back instead of refusing, a cloud override was honored,
+  local_preferred/smart both went to cloud); the 5th, an unrelated
+  structural check, correctly stayed green either way. 5/5 restored.
+- **F18** (`routes/chat.py`'s `_sys_for` closure, commit `56f8f5d`,
+  confirmed cleanly scoped within that batch commit's larger diff): 2 of
+  3 `test_chat_send_regates_for_predicted_provider.py` tests failed
+  cleanly (system prompt built for cloud despite a local prediction, no
+  `system_builder` threaded through at all); the 3rd, the predicted-cloud
+  falsifiability control, correctly stayed green either way. 3/3 restored.
+- **Q16** (`services/creations.py`'s `until_checkpoint=True`, commit
+  `f76b21a`, confirmed cleanly scoped within that batch commit): 3 of 4
+  `test_daily_short_production_honors_checkpoints.py` tests failed
+  cleanly (still `until_checkpoint=False`, a paused run returned `None`
+  instead of a real pending record — the exact "looks like total
+  failure" shape the fix closes — and no notification fired); the 4th,
+  the completed-run falsifiability control, correctly stayed green
+  either way. 4/4 restored.
+
+All six temporarily-reverted files (`core/__init__.py`, `index.html`,
+`ui_parts/app.html`, `model_router.py`, `routes/chat.py`,
+`services/creations.py`) confirmed byte-identical to `HEAD` via `git
+status`/`git diff --stat` before moving on, and again as a final check
+after all four were done. Full `tests/gauntlet/` suite reran clean
+afterward — no residual state from any of the temporary reverts.
+
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"

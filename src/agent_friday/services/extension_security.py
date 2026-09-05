@@ -2,9 +2,10 @@
 Agent Friday — Extension Security
 Inspired by patterns in Goose (Apache-2.0). All code is original.
 
-Env var blocklists, audit logging, Unicode sanitization, trust levels for MCP.
+Env var allowlist for sandboxed MCP subprocess environments, audit logging,
+Unicode sanitization, trust levels for MCP.
 """
-import os, re, json, time, hashlib, unicodedata
+import os, re, json, time, hashlib, sys, unicodedata
 from pathlib import Path
 from datetime import datetime
 
@@ -17,28 +18,59 @@ AUDIT_LOG = AUDIT_DIR / "mcp_audit.log"
 ALLOWLIST_FILE = AUDIT_DIR / "extension_allowlist.json"
 AUDIT_FILE = AUDIT_DIR / "extension_audit.jsonl"
 
-# Env vars MCP servers must NEVER see.
-# FRIDAY_VAULT_KEY/FRIDAY_HMAC_SECRET below are not real env var names used
-# anywhere in this codebase (grep-confirmed) -- vault_passphrase.py's own
-# _ENV_VARS is ("FRIDAY_VAULT_PASSPHRASE", "FRIDAY_PASSWORD"). FRIDAY_PASSWORD
-# was blocklisted; FRIDAY_VAULT_PASSPHRASE, the actual Sovereign Vault
-# decryption passphrase when a user sets it via environment variable, was
-# not -- meaning F32's sanitize_env_for_mcp() fix (which filters exactly
-# this set before spawning a sandboxed/untrusted stdio MCP server) would
-# not have stripped it, handing the vault passphrase to any ordinary
-# community MCP connector (docs/audits/gauntlet-2026-09-03/findings.jsonl).
-# The two stale names are left in place -- harmless, and removing them
-# fixes nothing; the defect was the missing real one.
-ENV_BLOCKLIST = {
-    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-    "OPENROUTER_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY",
-    "FRIDAY_PASSWORD", "FRIDAY_VAULT_PASSPHRASE",
-    "FRIDAY_VAULT_KEY", "FRIDAY_HMAC_SECRET",
-    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-    "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
-    "DATABASE_URL", "DB_PASSWORD", "REDIS_URL",
-    "STRIPE_SECRET_KEY", "TWILIO_AUTH_TOKEN",
+# CORRECTION (F67, external review commissioned by Stephen, ruled on
+# 2026-09-04): this used to be ENV_BLOCKLIST, a denylist of named secrets
+# stripped from the FULL inherited environment before spawning a
+# sandboxed/untrusted stdio MCP server. That shape failed three times in
+# one audit cycle for the same structural reason each time -- F32 built
+# it, F44 "fixed" it by naming two env vars (FRIDAY_VAULT_KEY,
+# FRIDAY_HMAC_SECRET) that don't exist anywhere in this codebase while the
+# real one (FRIDAY_VAULT_PASSPHRASE) stayed unlisted, and F67 then found
+# six more live, real provider-key env vars (MISTRAL_API_KEY,
+# DEEPSEEK_API_KEY, XAI_API_KEY, FIREWORKS_API_KEY, PERPLEXITY_API_KEY,
+# COHERE_API_KEY) that had never been added at all
+# (docs/audits/gauntlet-2026-09-03/findings.jsonl). A denylist has to name
+# every secret that will ever exist; every new provider this codebase
+# adds is a fresh chance to forget one. Stephen's ruling: invert it.
+#
+# SANDBOXED_ENV_ALLOWLIST names every environment variable a sandboxed
+# subprocess is given -- everything else in the parent process's
+# environment, named or not yet invented, simply never reaches it. A
+# forgotten name here breaks a connector loudly (it fails to start,
+# visible immediately) rather than leaking a secret silently. None of
+# these carry a secret by construction -- a provider API key was never
+# going to be named PATH -- so there is no list of provider names left to
+# keep in sync going forward.
+#
+# NOT to be confused with get_allowlist()/is_allowlisted() further below
+# in this file, which governs a different question entirely (which MCP
+# SERVER launch commands an operator has approved), not which environment
+# variables a server's own subprocess receives.
+_ENV_ALLOWLIST_COMMON = {
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM",
+    "TEMP", "TMP", "TMPDIR", "HOME",
 }
+
+# Node/npm/npx -- the most common stdio MCP server launcher in practice --
+# and native Windows CLI tools generally do not merely prefer these:
+# SYSTEMROOT in particular is required for Windows' own crypto/socket APIs
+# to initialize, so a child missing it can fail network calls outright,
+# not just behave oddly. APPDATA/LOCALAPPDATA hold npm's own cache/config.
+_ENV_ALLOWLIST_WINDOWS = {
+    "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+    "SYSTEMDRIVE", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+}
+
+_ENV_ALLOWLIST_POSIX = {
+    "SHELL", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
+}
+
+SANDBOXED_ENV_ALLOWLIST = _ENV_ALLOWLIST_COMMON | (
+    _ENV_ALLOWLIST_WINDOWS if sys.platform == "win32" else _ENV_ALLOWLIST_POSIX
+)
 
 # Trust levels for MCP servers
 TRUST_LEVELS = {
@@ -53,11 +85,28 @@ _ALLOWED_CONTROL = {"\n", "\r", "\t"}
 
 
 def sanitize_env_for_mcp(env: dict = None, trust_level: str = "sandboxed") -> dict:
-    """Filter environment variables based on trust level."""
-    if not TRUST_LEVELS.get(trust_level, {}).get("env_filter", True):
-        return env or dict(os.environ)
+    """Build the environment a spawned MCP server subprocess actually receives.
+
+    A "trusted" server (an operator's explicit opt-in) gets the full
+    inherited environment, unchanged -- that has always been an explicit
+    choice, not a leak. Every other trust level gets an environment built
+    FROM SANDBOXED_ENV_ALLOWLIST: only the names on it that are present in
+    the source are copied over. Never the inverse (inherit everything,
+    then strip a list of named secrets) -- see SANDBOXED_ENV_ALLOWLIST's
+    own comment for why that shape is retired, not just patched again.
+
+    Matches allowlist names case-insensitively: os.environ.copy() (the
+    caller's typical input) degrades to a plain, case-SENSITIVE dict even
+    though Windows' own os.environ is case-insensitive, so a variable this
+    process sees as "SystemRoot" could just as easily be stored as
+    "SYSTEMROOT" by the time it reaches here -- confirmed directly on a
+    live Windows environment before relying on it.
+    """
     base = env if env is not None else dict(os.environ)
-    return {k: v for k, v in base.items() if k not in ENV_BLOCKLIST}
+    if not TRUST_LEVELS.get(trust_level, {}).get("env_filter", True):
+        return base
+    allowed = {name.upper() for name in SANDBOXED_ENV_ALLOWLIST}
+    return {k: v for k, v in base.items() if k.upper() in allowed}
 
 
 def sanitize_unicode(text: str) -> str:

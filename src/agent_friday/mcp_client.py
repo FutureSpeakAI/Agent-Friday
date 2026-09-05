@@ -138,12 +138,15 @@ class MCPServerProcess:
         # The inherited parent environment holds Friday's OWN live decrypted
         # secrets (credential_store.bootstrap_provider_env() writes provider
         # API keys, the vault key, etc. into os.environ at boot -- see
-        # server.py -- well before any MCP server is spawned). Filtering here,
-        # before this connector's own (still-encrypted) env is layered on top
-        # below, is the one enforcement point: nothing upstream of this call
-        # was gating what a child process inherits, despite
-        # extension_security.ENV_BLOCKLIST/sanitize_env_for_mcp existing
-        # specifically for this and never being called from anywhere.
+        # server.py -- well before any MCP server is spawned). This is the
+        # one enforcement point: nothing upstream of this call gates what a
+        # child process inherits. sanitize_env_for_mcp() builds the
+        # sandboxed/untrusted subprocess's environment FROM
+        # extension_security.SANDBOXED_ENV_ALLOWLIST rather than filtering a
+        # named denylist out of the full inherited environment (F67 --
+        # the denylist shape leaked 3 times in a row as new providers were
+        # added and never backfilled into it; an allowlist has no such list
+        # to keep in sync, since a secret was never going to be named PATH).
         from agent_friday.services import extension_security as _extsec
         full_env = _extsec.sanitize_env_for_mcp(os.environ.copy(), self.trust_level)
         # self.env holds connector credentials ENCRYPTED (see
