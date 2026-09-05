@@ -216,13 +216,42 @@ class FridayTray:
                 pass
 
     def _watchdog(self) -> None:
+        """Poll every 5s and react to the server dying.
+
+        2026-09-04: this correctly detected a real crash (a stack overflow
+        that killed server.py outright — see KNOWN_ISSUES.md) within its
+        normal 5s cadence, and the only thing it did about it was relabel
+        its own tray menu. The server was down for 26 minutes before anyone
+        noticed, because nobody was looking at that menu — an hourly,
+        unrelated port check outside this app is what actually caught it.
+        `self.running == True and alive == False` is specifically the
+        crash shape: a deliberate stop (Quit / Restart) already sets
+        `self.running = False` synchronously in `stop_server()` before this
+        loop's next poll, so this branch does not fire for those. No
+        auto-restart here on purpose — resurrecting a crashed process on a
+        loop can mask a repeating fault, and whether Friday restarts
+        herself is Stephen's call, not this watchdog's. A notification is
+        not that call; it's just telling him.
+        """
         while True:
             time.sleep(5)
             proc = self.server_proc
             alive = (proc is not None and proc.poll() is None) or _port_in_use(PORT)
             if alive != self.running:
+                crashed = self.running and not alive
                 self.running = alive
                 self._refresh_menu()
+                if crashed and self.icon is not None:
+                    try:
+                        self.icon.notify(
+                            "Friday's server stopped unexpectedly. "
+                            "It has NOT been restarted automatically — "
+                            "open the tray menu to restart it, or check "
+                            "%s for what happened." % SERVER_STDERR_LOG,
+                            "Friday Desktop",
+                        )
+                    except Exception:
+                        pass
 
     def run(self) -> None:
         image = Image.open(ICON_PATH)
