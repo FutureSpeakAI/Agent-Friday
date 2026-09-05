@@ -745,6 +745,43 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   real method with its real field name; the bare except in both this function and
   the structurally identical `_cognitive_chunks()` now prints what failed instead
   of swallowing it.
+- **`_rss_results()`'s 20-second feed timeout was decorative — the pool
+  shutdown underneath it had none.** Found 2026-09-04 investigating the
+  server crash below. `_parse_feed()` handed the bare URL to
+  `feedparser.parse()`, which has no timeout of its own, so a feed server
+  that accepted the connection and then never finished sending blocked that
+  worker forever. `_rss_results()`'s `as_completed(futures, timeout=20)`
+  looked like a real ceiling on the whole fetch, but the `with
+  ThreadPoolExecutor(...) as pool:` block's own `__exit__` called
+  `pool.shutdown(wait=True)` unconditionally on the way out — an unbounded
+  join that ran regardless of whether the 20s timeout upstream had already
+  given up. Same species of bug as the settings toggles above: a control
+  that visibly bounds something and doesn't. Fixed:
+  `services/news_engine.py`'s `_parse_feed()` now fetches via
+  `urllib.request.urlopen(..., timeout=_RSS_FETCH_TIMEOUT_S)` (8s default,
+  overridable per call) instead of handing the URL straight to feedparser;
+  `_rss_results()` manages the pool explicitly and shuts it down with
+  `wait=False, cancel_futures=True` so a wedged worker is abandoned rather
+  than blocking the caller. Proven red→green→red against a real local
+  socket that accepts a connection and never answers
+  (`tests/unit/test_news_engine_feed_timeout.py`) — the fix genuinely
+  bounds the call; the old code genuinely didn't.
+- **The tray watchdog notices a dead server and tells no one.**
+  `friday_tray.py`'s `_watchdog()` polls every 5 seconds and correctly
+  detected the crash below within its normal cadence — and did exactly one
+  thing about it: relabelled its own right-click menu. The server was down
+  26 minutes before anyone knew; an unrelated hourly port check outside the
+  app is what actually caught it, not anything in Friday. Fixed
+  2026-09-04: the watchdog now calls `self.icon.notify(...)` (a native OS
+  toast via `pystray`) specifically on the running→dead transition — a
+  deliberate Quit/Restart already sets `self.running = False` synchronously
+  before the watchdog's next poll, so this does not fire for those, only
+  for an unexpected death. Deliberately does **not** auto-restart: a crash
+  loop can mask a repeating fault, and whether Friday resurrects herself is
+  a product decision, not the watchdog's to make unasked. Notifying is not
+  that decision; it's just telling him. Tested in
+  `tests/unit/test_tray_crash_notification.py`, red→green→red against the
+  pre-fix code.
 - **Five settings controls persist a value and read it back only to redraw
   themselves — nothing else in the app consumes them.** Found 2026-09-03 while
   calibrating the settings-readers checker above; not fixed, since each needs a
@@ -836,6 +873,49 @@ Listed separately from "broken" on purpose. These are not claims that things wor
   explains the failures after it landed. Deaths before it had a different cause that this
   investigation does not reach, and stderr was discarded in both cases, so the two failure
   modes are indistinguishable in the surviving evidence.
+- **What actually recursed at 08:13:36 on 2026-09-04.** `server.py` died with
+  `Windows fatal exception: stack overflow` — a genuine Windows SEH trap
+  (`faulthandler.enable()`, `hang_watchdog.py`), not a hang. The crashed
+  thread's own frame is unrecoverable (`Thread 0x00000000 <no Python
+  frame>`), so no line can be named with certainty. Two things are
+  established, not guessed: first, the hypothesis that this was
+  `knowledge_graph.indexing_mode=local` retrying against the machine's
+  missing local Gemma model is **ruled out**, not merely unconfirmed —
+  `_resolve_model`/`_available_local_model` is a straight-line lookup (list
+  installed models, check a set, return) with one fail-fast check and no
+  retry or self-call anywhere in the path, and nothing was scheduled to run
+  Tier B at that hour. Second, the crash dump caught
+  `news_engine._news_archiver_loop` mid-`ThreadPoolExecutor.shutdown` →
+  `join` (`news_engine.py:543`, before the same-day fix above), with a
+  sibling worker mid-`feedparser.parse()` → raw socket read
+  (`news_engine.py:515`) at the exact moment of the trap, and `friday.log`
+  /`orbs.jsonl`/`tasks.jsonl` all go silent at 08:01–08:03 and stay silent
+  until the crash — a background thread, not anything task-tracked. Leading
+  hypothesis, not a conclusion: a malformed or hostile feed hit deep/nested
+  XML parsing below the Python frame layer (expat or a C accelerator
+  underneath feedparser), which is exactly the shape that produces a raw
+  SEH overflow with **no Python frame** — ordinary Python-level recursion
+  hits `sys.getrecursionlimit()` first and raises a catchable
+  `RecursionError`, which this was not. A hang alone (the bug fixed above)
+  does not overflow a stack; it only explains why a worker could still be
+  alive, blocking, at that moment. Which feed was not chased — that needs
+  testing the archiver's feed list individually and is Stephen's call
+  whether to spend the time, not something to go hunting for alone. If it
+  recurs, this write-up plus a fresh `server_stderr.log` tail is what makes
+  the second one diagnosable in minutes instead of hours.
+- **The purpose-built hang watchdog did not catch its own crash.**
+  `hang_watchdog.py` installs two mechanisms: `faulthandler.enable()` (a
+  fatal-signal trap) and `faulthandler.dump_traceback_later()` re-armed on
+  every heartbeat (a timeout backstop for a thread that's merely stuck, not
+  crashed — see its own header, "FRIDAY HANG WATCHDOG (faulthandler
+  backstop)"). The 2026-09-04 crash was caught by the first mechanism only;
+  the backstop's own distinct header never appeared in the log, meaning the
+  hang-detection path built specifically for a stuck-thread scenario like
+  the news-archiver wedge above was blind to it — the fatal trap fired
+  first, or the backstop's own timeout window hadn't elapsed yet. Not
+  chased further. Worth carrying forward: the tool built to catch exactly
+  this class of failure didn't see it, and the next silent failure may be
+  caught by nothing at all.
 
 ---
 
