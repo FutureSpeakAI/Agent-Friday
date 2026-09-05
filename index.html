@@ -32966,11 +32966,11 @@ function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
 }
 
 const _MODALITY_HEADING = {
-  text: 'TEXT', image: 'IMAGE', voice: 'VOICE', embed: 'EMBEDDING',
+  text: 'TEXT', image: 'IMAGE', video: 'VIDEO', voice: 'VOICE', embed: 'EMBEDDING',
 };
 
 function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching, fetchMsg }) {
-  const sections = ['text', 'image', 'voice', 'embed'];
+  const sections = ['text', 'image', 'video', 'voice', 'embed'];
   return E(StSection, { title: 'LOCAL MODELS ON THIS MACHINE' },
     E('div', {
       style: {
@@ -32992,16 +32992,21 @@ function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching,
         }, _MODALITY_HEADING[sec] || sec),
         rows.map(r => E(LocalModelRow, { key: r.model_id, r: r, onFetch: setFetchFor })));
     }),
-    E('div', {
-      style: {
-        marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)',
-        fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
-        color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase',
-      },
-    }, 'VIDEO'),
-    E('div', {
-      style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono', marginTop: 3 },
-    }, lm.video_note || 'Video runs in the cloud on every machine today.'),
+    // Video now gets a real row like every other modality (see `sections`
+    // above) once local_video.MODELS has earned-availability entries. This
+    // static fallback is what a build with no video catalog data at all
+    // (lm.video absent — an older server, or the field genuinely empty)
+    // falls back to, so the section is never silently missing.
+    !(lm.video || []).length && E('div', { style: { marginTop: 10 } },
+      E('div', {
+        style: {
+          fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+          color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 2,
+        },
+      }, 'VIDEO'),
+      E('div', {
+        style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+      }, lm.video_note || 'Video runs in the cloud on every machine today.')),
     fetchFor && E(FetchPreflightCard, {
       modelId: fetchFor, onClose: () => setFetchFor(null),
       onConfirm: confirmFetch, confirming: fetching,
