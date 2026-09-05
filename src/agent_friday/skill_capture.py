@@ -115,7 +115,25 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
                         skill_name=sk.name,
                         inputs={"message": (message or "")[:500], "tools": tools},
                         outputs={"reply_len": rec["reply_len"]},
-                        metrics={"quality": score, "success": score},
+                        # CORRECTION (external review, commissioned by Stephen,
+                        # verified 2026-09-04): this used to send
+                        # {"quality": score, "success": score} -- keys
+                        # composite_score() never reads (it reads accuracy,
+                        # user_satisfaction, completeness, latency, cost), so
+                        # score=1.0 and score=0.0 produced the IDENTICAL
+                        # composite score. Reproduced directly: both landed
+                        # on 0.25 with default weights. `accuracy` is the one
+                        # dimension _success_score()'s semantics (no error,
+                        # non-trivial reply, no refusal prefix) can honestly
+                        # speak to -- it is deliberately NOT also copied into
+                        # user_satisfaction/completeness, which would fabricate
+                        # confidence this heuristic has no information about.
+                        # _success_score() itself remains a reply-shape check,
+                        # not real task verification (a separate, open
+                        # question -- see F75) -- this fix only ensures the
+                        # existing signal, weak as it is, is no longer
+                        # silently discarded before scoring.
+                        metrics={"accuracy": score},
                         duration_ms=float(duration_ms or 0.0),
                         error=error,
                     )

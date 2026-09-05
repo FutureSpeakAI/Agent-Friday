@@ -18,10 +18,19 @@ changes) that does not belong to this task.
 Before anything else, what this run did NOT do, so nothing below reads
 stronger than it is:
 
-- **1 of 12 seams closed.** Only "MCP and connector registration" hit the
-  audit's own 2-consecutive-clean-sweep bar. The other 11 are still open —
+- **1 of 13 seams closed.** Only "MCP and connector registration" hit the
+  audit's own 2-consecutive-clean-sweep bar. The other 12 are still open —
   several got close and then a fresh sweep found one more real thing,
   which is why they reset. Per-seam status is in `coverage.md`.
+- **Seam 13 (SkillOpt) opened 2026-09-04/05 from an external source, not
+  this audit's own sweep.** Stephen commissioned an outside review of the
+  public v5.10.0 repo; its 4 claims were independently re-verified against
+  current code (2 by re-running the reviewer's own reproductions, 2 by
+  executing scenarios the reviewer had only inspected) before any of them
+  were trusted or acted on. All 4 held. 3 fixed (F72 memory-rollback
+  docs, F73 promotion-on-no-signal, F74 discarded success signal), 1
+  escalated to Stephen as a genuine design question (F75, the success
+  detector's own weakness) rather than patched unilaterally. See Round 16.
 - **The claim corpus stopped growing at 00:51, then all three explicitly-
   named gaps got closed, one by one, as this run continued.** `claims.
   jsonl` sat flat at 90 entries from commit `16450bd` until early this
@@ -2329,6 +2338,146 @@ fix for F37 itself was proven wrong by cold re-verification (a case-
 mismatch made it a no-op for a section named "Private," the exact
 capitalization the real indexer produces) — already detailed in F37's
 own fix_note, now also stated where it's immediately visible.
+
+### Round 16 — seam 13 opened: SkillOpt, from an external review (2026-09-04/05)
+
+**A new investigation source, not this audit's own sweep methodology.**
+Stephen commissioned an outside review of the PUBLIC repo at commit
+`3d62eecc48531c921c352cc951c8be5f330ef71c` (tagged v5.10.0, 2026-09-02) —
+predating every fix this audit has landed since. Confirmed directly that
+commit is real and locally present but NOT an ancestor of this branch's
+HEAD (`git merge-base --is-ancestor` false), consistent with the public
+repo carrying a separately-filtered history. Per explicit instruction,
+every one of its 4 claims was re-verified against CURRENT code before
+being trusted or acted on — none were assumed correct just because an
+external review made them. SkillOpt (skill capture → scoring →
+promotion) had never been touched by any of this audit's twelve prior
+seams — opened as **seam 13**.
+
+**F72 — cognitive_memory.memory_rollback() doesn't restore anything
+(reviewer inspected, not executed; reproduced here).** The reviewer's
+own suggested test — write A, cutoff, overwrite with B, roll back, see
+whether you get A or nothing — was run directly against an isolated
+`CognitiveMemory` instance. Result: neither. `write_memory()` keeps no
+per-key version history at all (a second write unconditionally
+overwrites the first's on-disk file), so by the time rollback runs, the
+only copy of a key touched both before and after the cutoff is whatever
+the LATEST write left — never the earlier value. Rollback moves that
+single copy into `_rollback/<cutoff>/`; a repo-wide grep for the exact
+local variable name `rollback_dir` confirms nothing anywhere else ever
+reads it back. Reachable today via a real `@login_required` route
+(`POST /api/memory/rollback`), no UI currently calls it. Fixed as a
+documentation correction only — both the module and the method's
+docstrings now say plainly that this is a one-way purge, not a restore,
+with the exact reproduction that proves it. Did NOT build real
+point-in-time restore: that needs version history added to
+`write_memory()`, a genuine architecture change to a security-adjacent
+memory primitive, left as an open feature question for Stephen. 4 new
+tests in `tests/gauntlet/test_cognitive_memory_rollback_does_not_restore.py`
+pin the current, now-honestly-documented behavior, including a
+structural grep check that nothing silently grew a restore path since.
+
+**F73 and F74 — Stephen's own framing named these as "your thesis one
+level up," and reproduction confirmed both, in full.** Two claims the
+reviewer verified BY EXECUTION, not just reading:
+
+`skill_capture.capture()` sent `metrics={"quality": score, "success":
+score}` into `record_skill_run()`, but `skillopt_engine.composite_score()`
+only ever reads `accuracy`, `user_satisfaction`, `completeness`,
+`latency_ms`/`duration_ms`, and `cost_usd` — never `quality` or
+`success`. Reproduced exactly: with default weights, 1000ms duration,
+$0 cost, `{"quality":1.0,"success":1.0}` and `{"quality":0.0,"success":0.0}`
+both scored composite 0.25. Identical, matching the reviewer's own
+figure precisely. Filed as **F74**. `grep`-confirmed `skill_capture.py`
+was the SOLE production caller feeding chat-usage data into these
+particular skills at all (a second caller, `ui/liquid_ui.py`, correctly
+uses `accuracy`/`user_satisfaction`/`completeness` against three
+genuinely independent signals for a different skill namespace,
+`liquid:<feature_id>` — proving the right convention already existed
+elsewhere in this same codebase). Fixed narrowly: route `score` into
+`accuracy` only, not into `user_satisfaction`/`completeness` too, since
+those would fabricate confidence in dimensions the underlying heuristic
+has no information about. Because chat-driven skills had NO other real
+signal to dilute, this is a strict improvement over the constant 0.25
+every execution scored before — Stephen's own caution ("fixing the
+metric-name mismatch alone would make a bad signal count for more")
+would bite if a real signal existed to be drowned out; here there was
+none. Red-on-revert proven (2 of 4 new tests failed pre-fix, correctly).
+
+`_success_score()` itself is a pure reply-shape check — no error, a
+stripped reply ≥8 characters, no match against 4 hardcoded refusal
+prefixes → 1.0, with zero verification against `tool_trace` (which IS
+available at the call site) or any real outcome. Reproduced the
+reviewer's own example exactly: `"Done. I sent the email and booked
+your flight."` scores 1.0 with no evidence either action occurred; a
+fluent-prose FAILURE description scores identically for the same
+reason. Filed as **F75**, coupled to F74 by design. NOT fixed: a
+tempting mechanical patch (downgrade when prose claims an action but
+`tool_trace` is empty) was considered and rejected — it would silently
+misjudge any skill that legitimately needs zero tool calls to succeed,
+trading one defect for a different, less-visible one. Escalated to
+Stephen with two directions offered, neither chosen: skill-type-aware
+verification once such metadata exists, or surface the current score as
+an explicit low-confidence/"unverified" prior rather than a clean 1.0.
+
+**F73 — a validation gate that can't tell "no data" from "a real tie,"
+found only because the review insisted on execution, not reading.**
+`SkillOptEngine.run_epoch()`'s per-case loop substitutes
+`{"accuracy": 0.0}` for both candidate and baseline on an evaluator
+exception. That collapsed BOTH scores to the exact same value in every
+case — but not 0.0: `composite_score()` treats an absent `latency_ms`/
+`cost_usd` as PERFECT (both `normalize_latency`/`normalize_cost` return
+1.0 for zero/absent, meant for "fast and cheap," not "unknown"), so the
+degenerate fallback actually scored 0.25 under default weights.
+`ValidationGate.evaluate()`'s own tie-tolerance rule treats any
+`candidate_score >= baseline_score` with `improvement < 0.005` as a
+"marginal pass" — so a tied 0.25 vs 0.25 promotes, regardless of why it
+tied. Reproduced, by direct execution, all four scenarios the review
+asked for specifically because it had only inspected this one:
+evaluator raising on every case (promoted, pre-fix), no evaluator
+configured with zero prior execution history (promoted, pre-fix), an
+empty `eval_batch` (promoted, pre-fix), and — as a control — a real,
+working evaluator correctly finding a genuine regression (rejected,
+both before and after the fix, confirming the gate mechanism itself is
+sound). Separately confirmed `epoch.reason` recorded the evaluator's
+actual exception message, then was unconditionally overwritten
+afterward by the gate's own reason string — the diagnostic vanished
+even from a human reading the epoch's own record. Fixed: track whether
+any case was genuinely evaluated; an empty batch or zero real successes
+now short-circuits to `decision="inconclusive"` — completing a decision
+state (`"pending | promoted | rejected | inconclusive"`) the
+`TrainingEpoch` dataclass's own field comment already declared but
+`run_epoch()` had never actually produced — before the gate or
+`_promote()` are ever reached. A partial failure (some cases evaluated,
+some didn't) still reaches the gate as before, but the reason string
+now always names the failure count and the last error rather than
+losing it. Red-on-revert proven (5 of 7 new tests failed pre-fix; the 2
+that stayed green are the pre-existing-correct-behavior controls,
+correctly unaffected). Reachability, stated honestly: `run_epoch()` is
+currently unreachable from any live path at all — no route, no CLI
+subcommand, and the one currently-wired autoresearch pipeline
+(`skill_capture.run_nightly()` → `maybe_autoresearch()` →
+`AutoResearchLoop.maybe_trigger()`) never calls it, despite
+`AutoResearchLoop`'s own docstring naming it as pipeline step 5. Fixed
+now, before that documented-but-missing wiring lands — the one
+production instantiation (`get_engine()`'s singleton) always configures
+`evaluator=None`, precisely the worst-case input this bug mishandled.
+
+**Method note, since this round's source was different from every
+prior one.** All four claims were independently re-derived against
+current code — reading both sides of each interface (not just the side
+the reviewer quoted), then executing a reproduction script before
+writing anything down, exactly the same bar this audit has applied to
+its own findings all along. Where the reproduction matched the
+reviewer's own reported numbers exactly (F73's 0.25, F74's 0.25, F75's
+"Done. I sent the email and booked your flight." → 1.0), that is stated
+plainly rather than re-described as an independent discovery — the
+provenance is external, and credited as such in each finding's
+`found_by` field. Full suite (`tests/gauntlet/`, `tests/unit/
+test_skillopt_engine.py`, `tests/unit/test_learning_loop.py`,
+`tests/unit/test_learning_loop_lifecycle.py`, `tests/api/
+test_skillopt_llm_research.py`) reran clean after both behavioral
+fixes (F73, F74): 493 tests, zero failures.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
