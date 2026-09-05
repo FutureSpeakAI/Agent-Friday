@@ -331,6 +331,238 @@ def list_provider_keys() -> list:
     return [p.stem for p in _PROVIDER_KEYS_DIR.glob("*.key")]
 
 
+# ── Stale-vault-key recovery (2026-09-03) ───────────────────────────────────
+#
+# THE FAILURE THIS EXISTS FOR: the vault passphrase's durable homes
+# (services/vault_passphrase.py — the OS keychain, keyed by the FIXED,
+# machine-wide constants KEYRING_SERVICE/KEYRING_ACCOUNT, not scoped to any
+# particular install or HOME) can be overwritten by anything that calls
+# vault_passphrase.store() with a different value -- most often a rehearsal
+# or test run against a redirected HOME, which isolates ~/.friday but NOT the
+# keychain (see the 2026-08-30 incident this reproduces). When that happens,
+# every process derives a NEW vault key from then on, and any secret
+# encrypted under the OLD one becomes permanently unreadable to every FUTURE
+# process — except the one process, if any, that resolved the OLD passphrase
+# before the change and has kept running since. That process's cache is the
+# ONLY surviving copy, and it dies with the process: a crash, a reboot, or
+# (bitterly) the very restart that would load this fix.
+#
+# WHAT THIS CANNOT DO: rescue a secret once the process that could decrypt it
+# has already stopped. That is unrecoverable by construction — the same
+# design that guarantees a stored key can never be extracted through this
+# app's own API is exactly what makes it unextractable here too, once the
+# one process that held it is gone. This module was built AFTER exactly that
+# window closed on three real keys (2026-09-03); it could not have saved
+# them, and will not save the next three unless it is used from the process
+# that is still running.
+#
+# WHAT THIS DOES: give a currently-running process a way to save whatever it
+# CAN still decrypt, under whatever a brand-new process would derive right
+# now — so the secret survives that process's own eventual restart, which is
+# the one restart it can still get ahead of. A plaintext value is read once,
+# in this process, and is re-encrypted in this process; only ciphertext ever
+# touches disk, and the verification step below hashes rather than compares
+# a decrypted value directly, so no plaintext crosses a process boundary to
+# be checked either.
+
+def _derive_fresh_vault_key() -> bytes | None:
+    """The vault key a BRAND-NEW process would derive right now.
+
+    Deliberately bypasses every cache: `vault_passphrase.resolve(use_cache=
+    False)` re-reads the keychain/DPAPI-file/environment chain from scratch
+    rather than returning whatever this process resolved earlier (which may
+    itself be the stale value we are trying to move away from), and this
+    function never touches `_VAULT_KEY`/`_VAULT_KEY_READY` — this process's
+    own cache, which may hold the OLD key and must keep holding it for
+    everything else `credential_store` does in this same run, is left alone.
+
+    Returns None when there is nothing to derive against (no resolvable
+    passphrase, cryptography unavailable, or no salt has ever been
+    established — that last case means nothing has ever been vault-encrypted
+    on this machine, so there is no target key to reconcile toward).
+    """
+    if not _HAS_VC:
+        return None
+    from agent_friday.services import vault_passphrase as _vp
+    pw, _source = _vp.resolve(use_cache=False)
+    if not pw:
+        return None
+    if not _VAULT_CONFIG_FILE.exists():
+        return None
+    try:
+        cfg = json.loads(_VAULT_CONFIG_FILE.read_text(encoding="utf-8"))
+        salt_hex = cfg.get("salt_hex")
+        if not salt_hex:
+            return None
+        return _vc.derive_key(pw, bytes.fromhex(salt_hex))
+    except Exception:
+        return None
+
+
+def _verify_reencrypted_blob(path: Path, expected_sha256: str) -> bool:
+    """Prove a FRESH, SEPARATE process — not this one — can decrypt `path`
+    and that it recovers the expected content, without that content ever
+    being printed, logged, or returned. Only a hash crosses the process
+    boundary, compared here against a hash of the original that this
+    process already computed from the plaintext it holds; the two
+    plaintexts are never brought together anywhere to be diffed.
+
+    Returns False (never raises) on any failure to spawn, decrypt, or match
+    — a verification step that cannot itself confirm success must be
+    treated as a failure to verify, not as a pass.
+    """
+    src_dir = str(Path(__file__).resolve().parents[2])
+    script = (
+        "import sys, hashlib\n"
+        f"sys.path.insert(0, {src_dir!r})\n"
+        "from agent_friday.services.credential_store import read_secret\n"
+        "try:\n"
+        "    val = read_secret(sys.argv[1])\n"
+        "    print(hashlib.sha256(val).hexdigest())\n"
+        "except Exception:\n"
+        "    print('VERIFY_FAILED')\n"
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", script, str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return False
+    # LAST line, not the whole of stdout: `agent_friday.core`'s own import
+    # prints a "[FRIDAY] Loaded N environment variable(s)..." banner to
+    # STDOUT (core/__init__.py, ~line 873) as a side effect of importing it
+    # at all -- unrelated to this script, harmless, and not something to
+    # suppress globally for one caller. Our own `print(...)` is always the
+    # final line the child writes, banner or not.
+    lines = (proc.stdout or "").strip().splitlines()
+    out = lines[-1].strip() if lines else ""
+    return bool(out) and out == expected_sha256
+
+
+def reencrypt_stale_provider_keys(names: list[str] | None = None) -> dict:
+    """Re-encrypt every readable stored provider key under the vault key a
+    FRESH process would derive right now, so it survives this process's own
+    next restart. See the module note above for what this can and cannot do.
+
+    `names` restricts the run to specific providers; default is every key in
+    `list_provider_keys()`. Backs up `~/.friday/vault/` and
+    `~/.friday/providers/keys/` once, before touching anything, into a
+    timestamped sibling directory — so a mistake here costs nothing that
+    was recoverable before this ran.
+
+    Per key, atomically: read the plaintext THIS process can still decrypt;
+    if a fresh key cannot even be derived, stop entirely (nothing has been
+    touched yet) and say so; otherwise encrypt under the fresh key, write to
+    a temp file, and only replace the real file once a genuinely separate
+    subprocess has proven — by hash, never by value — that IT can decrypt
+    the temp file back to the same content. A key that fails any step is
+    left untouched and reported; it does not block the others.
+
+    Returns {"recovered": [names], "unchanged": [names], "failed":
+    [{"name", "reason"}], "backup_dir": str|None}.
+    """
+    import hashlib
+    import shutil
+    import time
+
+    result = {"recovered": [], "unchanged": [], "failed": [], "backup_dir": None}
+
+    fresh_key = _derive_fresh_vault_key()
+    if fresh_key is None:
+        result["failed"].append({
+            "name": "*", "reason": ("could not derive a fresh vault key -- no "
+                                     "resolvable passphrase, or no vault salt "
+                                     "has ever been established; nothing was "
+                                     "read or written")})
+        return result
+
+    targets = names if names is not None else list_provider_keys()
+    if not targets:
+        return result
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = core.FRIDAY_DIR / "backups" / f"vault-reencrypt-{stamp}"
+    try:
+        for sub in ("vault", "providers/keys"):
+            src = core.FRIDAY_DIR / sub
+            if src.exists():
+                dst = backup_root / sub
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(src, dst)
+        result["backup_dir"] = str(backup_root)
+    except Exception as e:
+        result["failed"].append({
+            "name": "*", "reason": f"backup failed, aborting before any write: {e}"})
+        return result
+
+    for name in targets:
+        real_path = _provider_key_path(name)
+        old_plain = None
+        try:
+            old_plain = get_provider_key(name)
+        except Exception:
+            pass
+        if old_plain is None:
+            result["failed"].append({
+                "name": name,
+                "reason": "this process cannot decrypt it either -- already lost"})
+            continue
+
+        old_hash = hashlib.sha256(old_plain.encode("utf-8")).hexdigest()
+        try:
+            new_blob = _vc.encrypt(old_plain.encode("utf-8"), fresh_key)
+        except Exception as e:
+            result["failed"].append({"name": name, "reason": f"encrypt failed: {e}"})
+            continue
+
+        # Does the FRESH key already decrypt the file on disk? Checked by
+        # decrypting with `fresh_key` explicitly -- never via read_secret()/
+        # _vault_key(), which would use THIS process's own (possibly stale)
+        # cached key and trivially "match" against itself regardless of
+        # whether the file is actually fresh-readable.
+        try:
+            already_fresh = (_vc.decrypt(real_path.read_bytes(), fresh_key)
+                             == old_plain.encode("utf-8"))
+        except Exception:
+            already_fresh = False
+        if already_fresh:
+            result["unchanged"].append(name)
+            continue
+
+        tmp_path = real_path.with_name(real_path.name + f".reencrypt-{stamp}.tmp")
+        try:
+            tmp_path.write_bytes(new_blob)
+            harden_permissions(tmp_path)
+        except Exception as e:
+            result["failed"].append({"name": name, "reason": f"temp write failed: {e}"})
+            continue
+
+        if _verify_reencrypted_blob(tmp_path, old_hash):
+            try:
+                tmp_path.replace(real_path)
+                harden_permissions(real_path)
+                result["recovered"].append(name)
+                audit_event("provider_key", "reencrypt", provider=name,
+                           method="vault", present=True)
+            except Exception as e:
+                result["failed"].append({
+                    "name": name,
+                    "reason": f"verified but the atomic swap itself failed: {e}"})
+        else:
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+            result["failed"].append({
+                "name": name,
+                "reason": ("a fresh subprocess could not decrypt the re-"
+                          "encrypted blob back to the same content -- "
+                          "original left untouched")})
+
+    return result
+
+
 def _env_key_for_provider(provider: str) -> str | None:
     """The environment variable a provider's auth expects (from the registry)."""
     try:
