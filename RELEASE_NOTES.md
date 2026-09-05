@@ -107,7 +107,9 @@ Measured against 5.6.5, existing vault, every prompt answered with Enter:
 
 ```
 original passphrase : the-users-original-passphrase
-wizard returned     : gFwCZBGllhg2rcpVrdC7xgnHcbOYK5K4
+wizard returned     : [REDACTED — a real generated passphrase from this
+                       measurement's rehearsal run was published here
+                       verbatim from 2026-08-29 to 2026-09-05; removed]
 vault decrypts      : False  (IntegrityError)
 ```
 
