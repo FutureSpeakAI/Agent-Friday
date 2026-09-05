@@ -87,6 +87,17 @@ stronger than it is:
   byte-identical to a pre-test backup). The same pass also found this
   audit's OWN verification command was never the one the project
   actually documents — see Round 19's F64 reopening for the full account.
+- **Wind-down housekeeping (2026-09-05, Round 21).** 13 entries had
+  `status: fixed` with stale `verdict` prose still reading `"queued"` —
+  corrected in place, original text kept for history. Q26 (a synthesis
+  finding, not a standalone fix) had no revert evidence of its own by
+  construction; cross-referenced to where its underlying fixes (Q6, Q7,
+  Q11) actually carry it. A disclosed incident — this audit's own dynamic-
+  boot test leaked Stephen's real `GEMINI_API_KEY` into an isolated test
+  server and it made one real, live, low-cost Gemini call before being
+  caught and killed — is recorded as **F77**, with the full mechanism
+  traced end to end rather than asserted. See Round 21 below and
+  `CLOSEOUT.md` for the complete account of all of this.
 
 ## Cold re-verification (2026-09-04) — corrections applied
 
@@ -2936,6 +2947,100 @@ statement to an entry that was never docstring-only.
 **Final verification**: full bare `pytest` reran clean of every failure
 this round addressed — down to the one, already-known, honestly-open
 `test_nemo_voice.py` flake.
+
+### Round 21 — wind-down: a disclosed incident, ledger housekeeping, close-out (2026-09-05)
+
+Stephen (relayed) read Round 19's silence correctly — the round had
+finished, not stalled — and gave the instruction to wind down rather than
+open Round 20 as a fresh hunt: findings flat at 111, seam counts unmoved
+since morning, remaining open items are design questions for him rather
+than defects to chase. Four things asked for before stopping: a close-out
+document, confirmation the worktree and its stashes are clean, and one
+incident to record plainly.
+
+**The Gemini incident — investigated properly, not asserted either way.**
+Stephen's message stated as established fact that the F67 dynamic-boot
+investigation's isolated test process "inherited Stephen's real
+`GEMINI_API_KEY` and made one live Gemini call before it was stripped."
+That directly contradicted this session's own inherited summary of the
+same investigation, which said the real key was checked and confirmed
+NOT to reach the spawned probe. Rather than picking one version, re-read
+the raw pre-compaction transcript line-by-line against current source to
+find out what actually happened. Both statements turned out to be true,
+about two different things: the real key genuinely never reached the
+spawned MCP-connector child (`env_dumper_mcp.py`) — `extension_security`'s
+blocklist correctly stripped it there, which is what F67 was actually
+investigating — but Stage 1's launch script never cleared the real key
+from the *top-level* isolated server process's own environment, and
+`core.py`'s module-level `GEMINI_API_KEY` reads directly from
+`os.environ` independent of the vault. The investigation's own routine
+`/api/health` liveness checks then triggered `provider_health.py`'s
+by-design real-inference probe (Decision D1), which used the real key for
+one genuine `generate_content` call before the assistant caught the risk,
+killed Stage 1, and relaunched Stage 2 with all real provider keys
+explicitly nulled. Full mechanism, confirmed against current code line by
+line, is now **F77** in the findings ledger — a disclosed self-incident,
+not a defect in Friday's own code (the always-real health probe is
+pre-existing, intentional, documented behavior); the actual gap was this
+audit's own test-harness hygiene, already corrected within the same
+investigation and now written down as a standing rule for any future
+dynamic boot. Cost stated as bounded (two-word prompt, ≤16 output tokens,
+lowest-cost Gemini tier) rather than a fabricated dollar figure, matching
+this ledger's existing discipline on unverified provider rates. This
+resolves the apparent contradiction: my inherited summary was incomplete
+(it only ever answered the MCP-child question), not wrong on the narrow
+thing it actually checked.
+
+**Stale verdict prose, corrected.** Scanned `findings.jsonl`
+programmatically for entries whose `status` is exactly `"fixed"` while
+their `verdict` text still reads `"queued"` — 13 matched (Stephen's
+relayed count was 11; reported the actual number found rather than
+forcing a match). Checked each one's `fix_note` individually before
+touching anything: all 13 (F9, F10, F11, F18, F21, F22, Q11, F24, F30,
+Q8, Q7, Q19, F37) have real, landed fixes with genuine revert evidence —
+the `verdict` field was simply never updated after the fix shipped, since
+it captures the finding's original triage framing. Appended a short,
+clearly-labeled correction to each `verdict` string noting it's stale and
+pointing to the `fix_note` — original text kept verbatim underneath it
+for history, nothing deleted or reworded.
+
+**Q26's revert-evidence gap, explained rather than backfilled.** Q26 is a
+root-cause synthesis (Q13's meta-finding, sharpened), not a standalone
+code change — it shipped no diff under its own ID, so it was never going
+to have its own red-green-red-on-revert narrative. Its actionable items
+(1/2/4 fixed, 3 partially) are the fixes recorded under Q6, Q7 and Q11's
+own entries; checked all three directly and each does carry real,
+executed revert evidence. Item 5 is an explicit standing recommendation,
+never built, so revert evidence doesn't apply to it by definition. Added
+a cross-reference note to Q26 itself so a reader auditing it in isolation
+knows where the evidence actually lives instead of concluding it's
+missing.
+
+**Stash audit.** Six stashes at the time Stephen's message was written;
+one (`gauntlet-scene-name-removal-revert-check`, on this audit's own
+branch) was a stale, fully-superseded leftover from an earlier red-on-
+revert dance whose final `drop` step never completed — confirmed via
+`grep` (zero occurrences of the removed feature in current committed
+files) and `git merge-base --is-ancestor` (its base commit is an ancestor
+of current HEAD) that dropping it loses nothing, and dropped it. The
+other five all belong to other branches/worktrees sharing this repo's
+stash stack and are correctly not mine to act on: a hand-off explicitly
+addressed to whoever owns it (`fix/f30-background-fallback-prompt-
+regate`), an unrelated in-progress fix (`fix/scheduler-retry-concurrency-
+2026-09-04`), a deliberate, permanent non-shipping exclusion for Breeze
+TTS2's NC license (`integration/release-2026-09-03`), an old snapshot
+already backed up elsewhere (`wip/vibe-terminal-persistence`), and an
+unrelated CI fix (`fix/ci-green`). Five remain, none of them this audit's.
+
+**Close-out document written** — `docs/audits/gauntlet-2026-09-03/
+CLOSEOUT.md` — for Stephen to read cold, covering what was examined and
+what wasn't, findings by severity, what shipped with what proof, what's
+still open and why, and the honest limits named above plus the ones
+already on record at the top of this file.
+
+**On stopping**: agreed, with the reasoning stated directly rather than
+silently complied with — see the close-out document's own closing
+section.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight
