@@ -432,6 +432,31 @@ def _mark_lookback_anchor(messages):
     return out, True
 
 
+def apply_openrouter_cache(system, model):
+    """Cache-breakpoint the system prefix for a Claude model served over
+    OpenRouter's OpenAI-compatible endpoint (``_call_openai`` / the scheduled
+    task, heartbeat, and local-fallback paths — anything NOT using the native
+    Anthropic SDK).
+
+    Same split as `_split_system` (stable prefix above ``VOLATILE_MARKER``,
+    breakpointed; the clock and anything after it, not) — OpenRouter honors
+    the identical ``cache_control`` block shape, just placed inside a
+    ``{"role": "system", "content": [...]}`` message instead of Anthropic's
+    top-level ``system`` kwarg. Confirmed against OpenRouter's prompt-caching
+    docs 2026-09-04: explicit breakpoints on system/user message content
+    blocks, no extra headers, tool schemas not cacheable this way (unlike the
+    native path, which gets a tools breakpoint too).
+
+    Returns (content, hit) — content is the OpenAI wire-format ``content``
+    value for the system message (a string if no breakpoint was placed, or
+    the block-array form if one was); hit is True iff a breakpoint landed.
+    Caller decides what to do when hit is False (still send the string).
+    """
+    if not enabled():
+        return system, False
+    return _split_system(system, model)
+
+
 def apply_anthropic_cache(kwargs):
     """Add ``cache_control`` breakpoints to an assembled Anthropic payload.
 

@@ -946,7 +946,21 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
     try:
         convo = []
         if system:
-            convo.append({"role": "system", "content": system})
+            _sys_content = system
+            # Prompt-cache breakpoint (2026-09-04): this path (OpenRouter and
+            # other OpenAI-compatible endpoints) never got the same treatment
+            # as the native Anthropic SDK path (_call_claude_agent) — every
+            # scheduled task, the heartbeat included, resent its full system
+            # prefix uncached on every call. Gated to providers that declare
+            # `prompt_caching` (OpenRouter) AND a Claude model underneath, so
+            # this is a no-op everywhere else (Groq, plain OpenAI, local).
+            if features.get('prompt_caching') and 'claude' in (model or '').lower():
+                try:
+                    from agent_friday.services import prompt_cache as _pc
+                    _sys_content, _ = _pc.apply_openrouter_cache(system, model)
+                except Exception:
+                    _sys_content = system
+            convo.append({"role": "system", "content": _sys_content})
         for m in messages:
             content = m.get("content", "")
             if isinstance(content, str):
@@ -988,6 +1002,34 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 # Server-side model fallback: one HTTP call covers N models.
                 payload["models"] = [model] + [m for m in fallback_models
                                                if m and m != model]
+            # Diagnostic (2026-09-04): a scheduled/background call's BILLED
+            # prompt_tokens (costs.db) has repeatedly run several times
+            # larger than the system+tools+messages sizes this function
+            # itself assembled — e.g. the hourly heartbeat: ~27k tokens
+            # reconstructed standalone from the exact same code path,
+            # ~98.5k actually billed by the same call. Every component this
+            # function controls (system split, tool schemas, message count)
+            # has been measured and doesn't explain the gap, which leaves the
+            # egress gate (PII scrub, still ahead of us in this function) as
+            # the one transformation between here and the wire that hasn't
+            # been instrumented. Logged at DEBUG, gated to background tasks
+            # only, so this is not noise on interactive chat: compare this
+            # line's numbers to the row cost_meter later writes for the same
+            # call to find where the real payload diverges from this one.
+            if (session_ctx or {}).get('is_background_task'):
+                try:
+                    _sys_val = payload.get('messages', [{}])[0].get('content', '')
+                    _sys_chars = (len(_sys_val) if isinstance(_sys_val, str)
+                                 else sum(len(b.get('text', '')) for b in _sys_val
+                                          if isinstance(b, dict)))
+                    _log.debug(
+                        "background call payload sizes (pre-gate): model=%s "
+                        "system=%d chars msgs=%d tools=%d schemas (%d chars)",
+                        model, _sys_chars, len(payload.get('messages', [])),
+                        len(_oai_tools or []),
+                        len(json.dumps(_oai_tools)) if _oai_tools else 0)
+                except Exception:
+                    pass
             # Egress gate via the shared fail-closed wrapper (R3). A verified
             # LOCAL provider (LM Studio/vLLM on loopback/LAN) bypasses the seal
             # — data stays on-device — exactly like the Ollama path.

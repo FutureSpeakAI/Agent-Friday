@@ -83,7 +83,7 @@ from agent_friday.services.wiki_engine import (
 def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
-                    workspace=None, on_route=None):
+                    workspace=None, on_route=None, tools=None):
     """Tool-using (agentic) generation via the user's CONFIGURED provider.
 
     The agentic analog of _generate_text(). Bare _call_claude_agent() requires
@@ -99,6 +99,16 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     the already-routed /api/chat dispatch).
 
     Returns (text, tool_trace) — uniform across all three primitives.
+
+    tools: optional override for the OpenAI-compatible leg only (_via_openai)
+        — a subset of CLAUDE_TOOLS for a caller that knows its own job is
+        narrow (a liveness-check heartbeat needs calendar/inbox reads, not
+        image generation, code execution, or computer control). None (the
+        default) keeps today's behavior: the full registry. The Claude-native
+        and Ollama legs (_via_claude / _via_ollama) are NOT narrowed here —
+        they're fallback-only for a scheduled task, so a rare full-registry
+        fallback call costs far less than paying the full registry's ~13k
+        tokens on EVERY call of the primary leg.
     """
     # Demo mode: no provider configured (no keys + no local Ollama) → return a
     # labelled placeholder instead of exhausting every primitive and raising
@@ -187,7 +197,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         return _call_openai(
             messages, system=system, model=use_model,
             max_tokens=max_tokens, temperature=temperature,
-            orb_label=orb_label, tools=CLAUDE_TOOLS,
+            orb_label=orb_label, tools=(tools or CLAUDE_TOOLS),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             provider=routed_provider_name if use_model else None,
         )
@@ -2392,7 +2402,7 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
 
 
 def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
-                 model=None):
+                 model=None, tools=None):
     """Run a Claude agent prompt to completion and store results.
 
     Heuristic log lines come from inspecting the tool_trace returned by
@@ -2400,6 +2410,15 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
     Timeout guard: if the task runs longer than TASK_TIMEOUT_SECONDS (default
     30 min, configurable via FRIDAY_TASK_TIMEOUT env var or settings), it is
     terminated gracefully.
+
+    tools: optional list of CLAUDE_TOOLS NAMES (not schemas) this task may
+        use — a scheduled task that knows its own job is narrow (see
+        scheduler.py's sch_heartbeat) can skip the full ~13k-token registry.
+        An unrecognized name is silently dropped rather than erroring: a
+        stale/renamed tool name in a schedule record should degrade to
+        "fewer tools" (still a working, if narrower, call) not fail the run.
+        None (default) or an empty/all-unmatched list keeps today's
+        behavior — the full registry, via _generate_agent's own default.
     """
     timeout = _load_settings().get('task_timeout_seconds', TASK_TIMEOUT_SECONDS)
     _task_set(task_id, status='running', started=_time.time())
@@ -2478,12 +2497,16 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         # Route through the provider-agnostic agent dispatcher so a background
         # task (distill-to-wiki, deep research) never hard-fails with
         # "ANTHROPIC_API_KEY is not set" on a local/OpenAI setup.
+        _tools_override = None
+        if tools:
+            _tools_override = [t for t in CLAUDE_TOOLS
+                               if t.get('name') in tools] or None
         reply, tool_trace = _generate_agent(
             messages, system=system, max_tokens=16384, model=subagent_model,
             session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id},
             orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
-            workspace='task', on_route=_log_route,
+            workspace='task', on_route=_log_route, tools=_tools_override,
         )
         # Tool lines are written by _task_log_tool AS EACH CALL HAPPENS now,
         # so replaying the trace here would print every tool twice. What the
@@ -2688,8 +2711,11 @@ def _report_task_completion(task_id, name, status, result_text):
 
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
-                model=None):
+                model=None, tools=None):
     """Spawn a background task.
+
+    tools: optional list of CLAUDE_TOOLS names to narrow this task's registry
+        to (see _task_worker). None keeps the default full registry.
 
     on_complete: optional dict {"spawn": "<next step name>", "prompt": "<optional
         full instruction>", "with_context": true} — when this task finishes
@@ -2757,7 +2783,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         pass
     th = threading.Thread(target=_task_worker,
                           args=(task_id, name, prompt, description),
-                          kwargs={'orb_icon': orb_icon, 'model': model},
+                          kwargs={'orb_icon': orb_icon, 'model': model,
+                                  'tools': tools},
                           daemon=True)
     th.start()
     return task_id
