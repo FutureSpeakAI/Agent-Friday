@@ -22,6 +22,13 @@
       "rule_id": "R5"
     },
     {
+      "explanation": "no local video backend exists in the tree (no ltx/wan/hunyuan/cogvideo reference anywhere under src/); video runs in the cloud on every machine today",
+      "model": null,
+      "role": "video",
+      "rule": "image-exclusive",
+      "rule_id": "R5"
+    },
+    {
       "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
       "model": null,
       "role": "orchestrator",
@@ -173,6 +180,7 @@
       "role": "tts",
       "status": "on-demand",
       "vram_mib": 0
-    }
+    },
+    "video": null
   }
 }

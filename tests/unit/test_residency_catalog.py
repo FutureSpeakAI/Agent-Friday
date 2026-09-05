@@ -189,3 +189,93 @@ def test_params_parsing():
     assert rc._parse_params_b("11.9B") == pytest.approx(11.9)
     assert rc._parse_params_b("595.78M") == pytest.approx(0.59578)
     assert rc._parse_params_b("") is None
+
+
+# ── Footprint — what a model costs, for every modality (headroom.md §5.1) ────
+
+def test_make_footprint_carries_every_field_of_the_spec_shape():
+    fp = rc.make_footprint(modality="image", device="gpu", basis="measured",
+                           vram_mib=10453, host_ram_mib=None,
+                           artifact_bytes=14535245332, load_s=24.01,
+                           unit="image", work_s_per_unit=48.1,
+                           requires=None, licence={"name": "Apache-2.0"},
+                           quality_note="turbo", measured_at="2026-09-04")
+    assert set(fp) == set(rc.FOOTPRINT_FIELDS)
+    assert fp["vram_mib"] == 10453 and fp["licence"]["name"] == "Apache-2.0"
+
+
+def test_make_footprint_rejects_an_unknown_modality_device_or_basis():
+    with pytest.raises(ValueError):
+        rc.make_footprint(modality="bogus", device="gpu", basis="declared")
+    with pytest.raises(ValueError):
+        rc.make_footprint(modality="image", device="quantum", basis="declared")
+    with pytest.raises(ValueError):
+        rc.make_footprint(modality="image", device="gpu", basis="sort-of")
+
+
+def test_make_footprint_refuses_measured_with_no_measured_at():
+    """HR6 — an idle reading is never written as a footprint. A caller that
+    claims basis="measured" must show its work: WHEN it ran."""
+    with pytest.raises(ValueError, match="HR6"):
+        rc.make_footprint(modality="image", device="gpu", basis="measured")
+
+
+def test_declared_basis_needs_no_measured_at():
+    fp = rc.make_footprint(modality="stt", device="gpu", basis="declared",
+                           requires={"vram_min_mib": 4096})
+    assert fp["basis"] == "declared" and fp["measured_at"] is None
+
+
+def test_footprint_migrates_a_legacy_text_row_without_retyping_seed_data():
+    """gemma4:12b's per-num_ctx SEED_MEASUREMENTS rows, read as a Footprint —
+    the largest measured context, per the same 'never extrapolate downward'
+    rule as vram_at()."""
+    fp = rc.footprint("gemma4:12b", P1)
+    assert fp["modality"] == "text" and fp["basis"] == "measured"
+    assert fp["vram_mib"] == 7814                       # the 131072 row
+    assert fp["unit"] == "token"
+    assert fp["work_s_per_unit"] is None                # no ms_per_token at 131072
+
+
+def test_footprint_returns_none_for_an_unmeasured_unrecorded_model():
+    assert rc.footprint("nope:1b", P1) is None
+
+
+def test_footprint_for_a_recorded_image_model_is_pulled_from_the_store():
+    fp = rc.make_footprint(modality="image", device="gpu", basis="measured",
+                           vram_mib=10453, measured_at="2026-09-04")
+    rc.record_footprint("z-image-turbo-fp8", rc.P1_FINGERPRINT, fp)
+    got = rc.footprint("z-image-turbo-fp8", P1)
+    assert got["vram_mib"] == 10453
+    assert got["basis"] == "measured"
+    assert set(got) == set(rc.FOOTPRINT_FIELDS)
+
+
+def test_recording_a_second_footprint_replaces_the_first_not_appends():
+    fp1 = rc.make_footprint(modality="image", device="gpu", basis="measured",
+                            vram_mib=9000, measured_at="2026-09-01")
+    fp2 = rc.make_footprint(modality="image", device="gpu", basis="measured",
+                            vram_mib=10453, measured_at="2026-09-04")
+    rc.record_footprint("z-image-turbo-fp8", rc.P1_FINGERPRINT, fp1)
+    rc.record_footprint("z-image-turbo-fp8", rc.P1_FINGERPRINT, fp2)
+    rows = [m for m in rc.measurements("z-image-turbo-fp8", rc.P1_FINGERPRINT)
+           if m.get("num_ctx") is None]
+    assert len(rows) == 1 and rows[0]["vram_mib"] == 10453
+
+
+def test_declared_footprint_is_the_fallback_below_anything_measured():
+    """A model-level fact (nemo_voice.MIN_VRAM_GB, VERIFIED) with nothing
+    measured on THIS machine still returns something, per §5.2's "declared
+    informs, never refuses" -- but it never shadows a real measurement."""
+    fp = rc.footprint("nvidia/nemotron-3.5-asr-streaming-0.6b", P1)
+    assert fp["basis"] == "declared"
+    assert fp["requires"]["vram_min_mib"] == 4096
+
+
+def test_a_measured_row_shadows_the_declared_fallback():
+    rc.record_footprint(
+        "nvidia/nemotron-3.5-asr-streaming-0.6b", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="stt", device="gpu", basis="measured",
+                          vram_mib=2600, measured_at="2026-09-04"))
+    fp = rc.footprint("nvidia/nemotron-3.5-asr-streaming-0.6b", P1)
+    assert fp["basis"] == "measured" and fp["vram_mib"] == 2600

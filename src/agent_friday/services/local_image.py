@@ -8,10 +8,23 @@ Arbiter's **exclusive image lease**, which performs the eviction and the
 reload, and hands the GPU back afterwards.
 
 Why a lease and not just "start ComfyUI": the measured VRAM ceiling makes it
-mandatory rather than advisory. Z-Image's weights are ~14.5 GB against a
-12282 MiB card, so the language seats must be out of VRAM before it loads.
-Without the lease the two simply fight, which is the failure the residency
-layer was built to stop.
+mandatory rather than advisory. Z-Image's weight FILES total ~14.5 GB
+(measured: 14,535,245,332 bytes, `artifact_bytes` on its Footprint) — but
+what actually holds the card during a render is less than that and MORE
+than either prior guess for it: **10,453 MiB, measured under the Arbiter's
+own `image_job` lease, 2026-09-04** (`residency_catalog.footprint(
+"z-image-turbo-fp8", profile)`; `friday measure z-image-turbo-fp8`
+reproduces it). That resolves the disagreement this file used to carry
+alongside `residency-policy.md` §5.1's separate "~8000" guess: neither
+number was the render's real VRAM delta, and 10,453 MiB leaves only ~700–900
+MiB free at the render's peak on a 12,282 MiB card, BELOW the 2,560 MiB
+Windows display-reserve floor even with every language seat evicted first
+— live evidence for why `Arbiter.grant()`'s R-DISPLAY-RESERVE check and the
+mid-lease monitor (`docs/design/headroom.md` §4.3, §7) both matter here, not
+just at cold start. SD 3.5 Medium measured 10,621 MiB the same way, artifact
+11,638,004,202 bytes. So the language seats must be out of VRAM before
+either loads. Without the lease the two simply fight, which is the failure
+the residency layer was built to stop.
 
 The workflow is the one proven on the reference instance 2026-08-13
 (`UNETLoader(fp8_e4m3fn) → CLIPLoader → VAELoader → CLIPTextEncode ×2 →
@@ -66,6 +79,14 @@ MODELS: dict = {
         "steps": 8, "cfg": 1.0,
         "sampler": "euler", "scheduler": "simple",
         "note": "turbo: 8 steps, fast",
+        # U7 in headroom.md was UNKNOWN — the spec found no licence recorded
+        # for this model anywhere in the tree. Read from the model's own
+        # repository, 2026-09-04: "License: apache-2.0" in Tongyi-MAI/
+        # Z-Image-Turbo's model card metadata. Apache-2.0 permits commercial
+        # and private use, modification and redistribution.
+        "licence": "Apache License 2.0 — commercial and private use, "
+                   "modification and redistribution permitted "
+                   "(https://huggingface.co/Tongyi-MAI/Z-Image-Turbo)",
     },
     SD35_MEDIUM_ID: {
         "label": "Stable Diffusion 3.5 Medium (local image)",

@@ -1,0 +1,203 @@
+{
+  "alternatives": [
+    {
+      "moved_stage": 1,
+      "plan": {
+        "alternatives": [],
+        "contract_ok": true,
+        "peak_mib": 10453,
+        "retained": [
+          "gemma4:e2b"
+        ],
+        "stages": [
+          {
+            "basis": "unknown",
+            "est_work_s": null,
+            "footprint_mib": 0,
+            "model_id": "faster-whisper-small-int8",
+            "refusal": null,
+            "role": "stt",
+            "where": "cpu"
+          },
+          {
+            "basis": "declared",
+            "est_work_s": null,
+            "footprint_mib": null,
+            "model_id": "gemma4:e4b",
+            "note": "moved to the cloud for this alternative",
+            "refusal": null,
+            "role": "interactive_brain",
+            "where": "cloud"
+          },
+          {
+            "basis": "measured",
+            "est_work_s": 49.6,
+            "exclusive_of": [],
+            "footprint_mib": 10453,
+            "model_id": "z-image-turbo-fp8",
+            "refusal": null,
+            "retained_mib": 0,
+            "role": "image",
+            "where": "leased"
+          },
+          {
+            "basis": "unknown",
+            "est_work_s": null,
+            "footprint_mib": 0,
+            "model_id": "piper-en_us-amy-medium",
+            "refusal": null,
+            "role": "tts",
+            "where": "cpu"
+          }
+        ],
+        "total_est_s": null,
+        "transitions": []
+      },
+      "role": "interactive_brain"
+    },
+    {
+      "moved_stage": 2,
+      "plan": {
+        "alternatives": [],
+        "contract_ok": true,
+        "peak_mib": 4892,
+        "retained": [
+          "gemma4:e2b"
+        ],
+        "stages": [
+          {
+            "basis": "unknown",
+            "est_work_s": null,
+            "footprint_mib": 0,
+            "model_id": "faster-whisper-small-int8",
+            "refusal": null,
+            "role": "stt",
+            "where": "cpu"
+          },
+          {
+            "basis": "measured",
+            "est_work_s": null,
+            "footprint_mib": 3081,
+            "model_id": "gemma4:e4b",
+            "refusal": null,
+            "role": "interactive_brain",
+            "where": "resident"
+          },
+          {
+            "basis": "declared",
+            "est_work_s": null,
+            "footprint_mib": null,
+            "model_id": "z-image-turbo-fp8",
+            "note": "moved to the cloud for this alternative",
+            "refusal": null,
+            "role": "image",
+            "where": "cloud"
+          },
+          {
+            "basis": "unknown",
+            "est_work_s": null,
+            "footprint_mib": 0,
+            "model_id": "piper-en_us-amy-medium",
+            "refusal": null,
+            "role": "tts",
+            "where": "cpu"
+          }
+        ],
+        "total_est_s": null,
+        "transitions": []
+      },
+      "role": "image"
+    },
+    {
+      "execution": "when_away",
+      "note": "the whole chain, parked until the machine is idle, then run under one lease -- same placement, no urgency.",
+      "stages": [
+        {
+          "basis": "unknown",
+          "est_work_s": null,
+          "footprint_mib": 0,
+          "model_id": "faster-whisper-small-int8",
+          "refusal": null,
+          "role": "stt",
+          "where": "cpu"
+        },
+        {
+          "basis": "measured",
+          "est_work_s": null,
+          "footprint_mib": 3081,
+          "model_id": "gemma4:e4b",
+          "refusal": null,
+          "role": "interactive_brain",
+          "where": "resident"
+        },
+        {
+          "basis": "measured",
+          "est_work_s": 49.6,
+          "exclusive_of": [],
+          "footprint_mib": 10453,
+          "model_id": "z-image-turbo-fp8",
+          "refusal": null,
+          "retained_mib": 0,
+          "role": "image",
+          "where": "leased"
+        },
+        {
+          "basis": "unknown",
+          "est_work_s": null,
+          "footprint_mib": 0,
+          "model_id": "piper-en_us-amy-medium",
+          "refusal": null,
+          "role": "tts",
+          "where": "cpu"
+        }
+      ]
+    }
+  ],
+  "contract_ok": true,
+  "peak_mib": 10453,
+  "retained": [
+    "gemma4:e2b"
+  ],
+  "stages": [
+    {
+      "basis": "unknown",
+      "est_work_s": null,
+      "footprint_mib": 0,
+      "model_id": "faster-whisper-small-int8",
+      "refusal": null,
+      "role": "stt",
+      "where": "cpu"
+    },
+    {
+      "basis": "measured",
+      "est_work_s": null,
+      "footprint_mib": 3081,
+      "model_id": "gemma4:e4b",
+      "refusal": null,
+      "role": "interactive_brain",
+      "where": "resident"
+    },
+    {
+      "basis": "measured",
+      "est_work_s": 49.6,
+      "exclusive_of": [],
+      "footprint_mib": 10453,
+      "model_id": "z-image-turbo-fp8",
+      "refusal": null,
+      "retained_mib": 0,
+      "role": "image",
+      "where": "leased"
+    },
+    {
+      "basis": "unknown",
+      "est_work_s": null,
+      "footprint_mib": 0,
+      "model_id": "piper-en_us-amy-medium",
+      "refusal": null,
+      "role": "tts",
+      "where": "cpu"
+    }
+  ],
+  "total_est_s": null,
+  "transitions": []
+}
