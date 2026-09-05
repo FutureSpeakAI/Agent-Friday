@@ -166,22 +166,41 @@ def _provider(name):
     return get_provider_registry().get_provider(name)
 
 
-def _has_key(prov) -> bool:
+def _key_state(prov) -> str:
+    """'ok' (a usable key exists, env var or decryptable store entry),
+    'unreadable' (a key is stored but does not decrypt), or 'missing' (no
+    key anywhere). F68: distinguishes "never configured" from "configured
+    but broken" so _check()'s detail message can say which one is true,
+    instead of both collapsing into the same generic "no API key"."""
     auth = (prov or {}).get("auth") or {}
     if auth.get("type") != "env_var":
-        return True
+        return "ok"
     try:
         from agent_friday.routing.provider_descriptors import provider_env_keys
         env_keys = provider_env_keys(prov)
     except Exception:
         env_keys = [auth.get("key", "")]
     if any(os.environ.get(k) for k in env_keys if k):
-        return True
+        return "ok"
     try:
         from agent_friday.services.credential_store import provider_key_status
-        return provider_key_status(prov.get("name", "")) == "connected"
+        status = provider_key_status(prov.get("name", ""))
     except Exception:
-        return False
+        return "missing"
+    if status == "connected":
+        return "ok"
+    if status == "present_but_unreadable":
+        return "unreadable"
+    return "missing"
+
+
+def _has_key(prov) -> bool:
+    """Boolean view of _key_state() for callers that only need "is there a
+    usable key" (the aggregate deep-probe loop further below in particular)
+    -- an unreadable key can't be probed for real inference either, so it's
+    correctly treated the same as absent there. Per-provider detail (below)
+    still distinguishes the two for display."""
+    return _key_state(prov) == "ok"
 
 
 def _check(name, deep=False) -> dict:
@@ -249,8 +268,22 @@ def _check(name, deep=False) -> dict:
         except Exception as e:
             return {"provider": name, "status": "down", "detail": str(e)[:120]}
 
-    if not _has_key(prov):
-        return {"provider": name, "status": "missing", "detail": "no API key",
+    _ks = _key_state(prov)
+    if _ks != "ok":
+        # F68: before provider_key_status() was fixed to actually attempt a
+        # decrypt, _has_key() read its old file-existence-only "connected"
+        # for an undecryptable key and this whole branch was skipped --
+        # such a provider fell through to the shallow-path "ok"/"key
+        # present" return further below, reporting a BROKEN key as
+        # healthy. Now that _key_state() can say "unreadable", give it its
+        # own accurate detail instead of collapsing back into the generic
+        # "no API key" a never-configured provider gets -- the two are not
+        # the same fact and Stephen's own situation (3 stored keys, all
+        # undecryptable) needed to be visibly distinct from "not set up".
+        detail = ("stored key present but could not be decrypted -- "
+                  "reconnect this provider in Settings") if _ks == "unreadable" \
+                 else "no API key"
+        return {"provider": name, "status": "missing", "detail": detail,
                 "config": "missing", "proved_inference": False}
 
     if deep:

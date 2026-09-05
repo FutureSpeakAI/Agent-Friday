@@ -562,6 +562,37 @@ def get_conversation_memory(persist_dir=None):
     return _instance
 
 
+def close_conversation_memory() -> None:
+    """Explicitly release the singleton's ChromaDB client, if one exists.
+
+    F65/F71 (test-harness disk hygiene): any pytest run that touches this
+    module reliably leaves ChromaDB's HNSW index file (data_level0.bin)
+    Windows-locked past pytest_sessionfinish's entire retry budget, on a
+    completely normal, non-crashed exit -- reproduced repeatedly, and
+    gc.collect() immediately before the retry does not fix it. chromadb's
+    own Client.close() docstring names this exact scenario as the reason
+    it exists ("particularly important for PersistentClient to avoid
+    SQLite file locking issues"), and decrements a refcount keyed by
+    persist_directory -- the singleton above means there is exactly one
+    PersistentClient per process, so one close() call here fully releases
+    it rather than merely dropping one of several shared references.
+
+    Resets the singleton after closing so a caller that asks for
+    conversation memory again (unusual mid-process, expected between test
+    modules that each construct their own isolated instance some other
+    way) gets a fresh client rather than a closed, unusable one.
+    """
+    global _instance
+    with _instance_lock:
+        inst = _instance
+        _instance = None
+    if inst is not None and inst._client is not None:
+        try:
+            inst._client.close()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":  # pragma: no cover - manual smoke test
     import json as _json
     mem = get_conversation_memory()

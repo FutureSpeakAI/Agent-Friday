@@ -178,16 +178,28 @@ def pytest_collection_modifyitems(config, items):
 def pytest_sessionfinish(session, exitstatus):
     """Best-effort: try to remove this run's temp home on a normal exit.
 
-    CORRECTION (gauntlet-2026-09-03 F65): this used to call the retry loop
-    below "a reliable cleanup" for anything but "a rare, hard-to-reproduce
-    leak." Not true for a run that touches `conversation_memory` -- see
-    `_sweep_stale_test_homes()`'s corrected docstring above for the
-    evidence. Most SQLite/file-handle locks genuinely do clear within this
-    window; ChromaDB's HNSW index file does not, reliably, and this
-    function has no way to force that release from here. The real backstop
-    for that case is the startup sweep above, on whatever pytest run
-    touches this directory next -- not this retry loop.
+    CORRECTION (gauntlet-2026-09-03 F65, root-caused; now actually closed
+    rather than just documented -- Stephen's ruling 2026-09-04 that a
+    residual which grew from 268MB to 3.3GB since F71 needed a real fix,
+    not a bigger bound): `_sweep_stale_test_homes()`'s corrected docstring
+    above still applies to a CRASHED run (this function never gets to run
+    at all) or any OTHER handle this repo doesn't yet know to close
+    explicitly -- but for the one root cause that WAS identified
+    (ChromaDB's HNSW index file staying Windows-locked past this retry
+    loop's entire budget on a completely normal exit), explicitly closing
+    the conversation-memory singleton's ChromaDB client BEFORE attempting
+    the rmtree below removes the actual cause instead of hoping the OS
+    releases it in time. chromadb's own Client.close() docstring names
+    this exact SQLite-file-locking-on-Windows scenario as the reason it
+    exists. Best-effort and import-guarded: a session that never touched
+    conversation_memory at all must not fail teardown importing it for
+    the first time here.
     """
+    try:
+        from agent_friday.conversation_memory import close_conversation_memory
+        close_conversation_memory()
+    except Exception:
+        pass
     for _delay in (0, 0.05, 0.1, 0.2, 0.4):
         if _delay:
             time.sleep(_delay)

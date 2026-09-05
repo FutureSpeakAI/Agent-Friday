@@ -69,14 +69,27 @@ class TestMcpEnvLeakToSubprocess:
         assert "ANTHROPIC_API_KEY" not in env, (
             "a sandboxed MCP server's subprocess environment still contains "
             "Friday's own live ANTHROPIC_API_KEY -- extension_security."
-            "ENV_BLOCKLIST exists specifically to prevent this and was never "
-            "wired into MCPServerProcess._spawn()"
+            "SANDBOXED_ENV_ALLOWLIST exists specifically to prevent this and "
+            "was never wired into MCPServerProcess._spawn()"
         )
         assert "FRIDAY_VAULT_KEY" not in env
-        assert env.get("SOME_UNRELATED_VAR") == "harmless", (
-            "the filter must be a denylist of named secrets, not a broad "
-            "allowlist -- ordinary env vars a subprocess needs (PATH, HOME, "
-            "an unrelated var) must still pass through"
+        # CORRECTION (F67, 2026-09-04): this assertion used to REQUIRE the
+        # opposite -- that an arbitrary, unrelated env var DID pass through
+        # ("the filter must be a denylist of named secrets, not a broad
+        # allowlist"). That was the defect, not a property to protect: a
+        # denylist has to name every secret that will ever exist, and 6 more
+        # real provider keys were found missing from it after this test was
+        # written. Stephen's ruling inverted the design -- a sandboxed
+        # subprocess environment is now BUILT FROM an allowlist of names
+        # subprocesses functionally need, so an arbitrary unrelated variable
+        # (which is exactly what an unnamed-and-therefore-never-blocklisted
+        # secret would also look like) must NOT pass through either.
+        assert "SOME_UNRELATED_VAR" not in env, (
+            "an arbitrary env var neither on SANDBOXED_ENV_ALLOWLIST nor a "
+            "known secret reached a sandboxed subprocess -- the allowlist "
+            "is supposed to restrict to named-safe variables only, not let "
+            "through anything that merely isn't a recognized secret name "
+            "(that was the exact shape of F32/F44/F67's repeated failure)"
         )
 
     def test_the_real_vault_passphrase_env_var_is_blocked(self, monkeypatch):
@@ -94,9 +107,11 @@ class TestMcpEnvLeakToSubprocess:
         env = _spawn_and_capture(monkeypatch, sp)
         assert "FRIDAY_VAULT_PASSPHRASE" not in env, (
             "the real vault-passphrase environment variable name reached a "
-            "sandboxed MCP server's subprocess environment -- ENV_BLOCKLIST "
-            "named two env vars that don't exist anywhere in the codebase "
-            "instead of the real one"
+            "sandboxed MCP server's subprocess environment -- under the "
+            "current allowlist design (F67) this can now only happen if "
+            "FRIDAY_VAULT_PASSPHRASE was mistakenly added to "
+            "SANDBOXED_ENV_ALLOWLIST, since nothing not explicitly named "
+            "there is ever copied over at all"
         )
 
     def test_default_trust_level_is_sandboxed_not_wide_open(self, monkeypatch):
@@ -142,3 +157,86 @@ class TestMcpEnvLeakToSubprocess:
         }})
         assert mgr.servers["trusted-one"].trust_level == "trusted"
         assert mgr.servers["sandboxed-one"].trust_level == "sandboxed"
+
+
+class TestF67AllowlistInversion:
+    """F67 (2026-09-04): Stephen's direct ruling on a defect that recurred
+    three times under a denylist design (F32 built it, F44 mis-fixed it,
+    an external review found 6 more real provider keys missing from it) --
+    invert to an allowlist, so a name nobody has thought to add yet cannot
+    leak by omission the way a name nobody thought to BLOCK could."""
+
+    def test_a_provider_on_no_list_at_all_does_not_arrive(self, monkeypatch):
+        """The exact proof Stephen asked for: plant a fake key for a
+        provider that appears on NEITHER the old ENV_BLOCKLIST (which no
+        longer exists) NOR any list anywhere in this codebase -- a
+        hypothetical 8th, 9th, 10th provider nobody has added yet -- spawn
+        a sandboxed connector, and confirm it doesn't arrive. Under the old
+        denylist design this would have passed straight through, exactly
+        as MISTRAL_API_KEY/DEEPSEEK_API_KEY/XAI_API_KEY/FIREWORKS_API_KEY/
+        PERPLEXITY_API_KEY/COHERE_API_KEY did before F67 found them."""
+        monkeypatch.setenv("BRAND_NEW_PROVIDER_NOBODY_HAS_HEARD_OF_API_KEY",
+                           "sk-future-REAL-SECRET")
+        sp = MCPServerProcess(name="community-pkg", command="npx",
+                              args=["some-mcp-server"], trust_level="sandboxed")
+        env = _spawn_and_capture(monkeypatch, sp)
+        assert "BRAND_NEW_PROVIDER_NOBODY_HAS_HEARD_OF_API_KEY" not in env, (
+            "a provider key that is on NO list anywhere -- named for no "
+            "other reason than that it doesn't exist yet -- reached a "
+            "sandboxed subprocess. The whole point of inverting to an "
+            "allowlist was that this class of variable structurally "
+            "cannot pass through, whether or not anyone remembered to "
+            "name it as dangerous"
+        )
+
+    def test_untrusted_level_gets_the_same_allowlist_as_sandboxed(self, monkeypatch):
+        monkeypatch.setenv("SOME_FUTURE_SECRET", "sk-REAL-SECRET")
+        sp = MCPServerProcess(name="stranger-danger", command="npx",
+                              args=["pkg"], trust_level="untrusted")
+        env = _spawn_and_capture(monkeypatch, sp)
+        assert "SOME_FUTURE_SECRET" not in env
+
+    def test_functionally_necessary_vars_still_reach_a_sandboxed_connector(self, monkeypatch):
+        """Non-regression check: the inversion must not silently break real
+        connectors. PATH is needed on every platform to resolve further
+        executables; SYSTEMROOT is required on Windows for crypto/socket
+        APIs to initialize at all (a connector that spawns without it can
+        fail network calls, not just look slightly different)."""
+        import sys as _sys
+        monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+        if _sys.platform == "win32":
+            monkeypatch.setenv("SYSTEMROOT", os.environ.get("SYSTEMROOT", r"C:\Windows"))
+        sp = MCPServerProcess(name="real-connector", command="npx",
+                              args=["some-real-mcp-server"], trust_level="sandboxed")
+        env = _spawn_and_capture(monkeypatch, sp)
+        assert "PATH" in env, (
+            "PATH itself was filtered out of a sandboxed connector's "
+            "environment -- the allowlist must not be so narrow it breaks "
+            "the ability to resolve any executable at all"
+        )
+        if _sys.platform == "win32":
+            assert "SYSTEMROOT" in env, (
+                "SYSTEMROOT was filtered out on Windows -- Node/npm-based "
+                "MCP servers (the common case) can fail crypto/socket "
+                "calls outright without it, not just behave oddly"
+            )
+
+    def test_allowlist_matching_is_case_insensitive(self, monkeypatch):
+        """Verified directly against a live Windows os.environ before
+        relying on it: os.environ.copy() (the real call site's input)
+        degrades to a plain, case-SENSITIVE dict even though Windows'
+        os.environ itself is case-insensitive -- a variable this process
+        sees as "SystemRoot" could be stored as "SYSTEMROOT" by the time a
+        caller hands sanitize_env_for_mcp() a plain copy. A naive exact-
+        case set lookup would silently drop it, breaking every sandboxed
+        Windows connector while looking, on paper, like nothing changed."""
+        from agent_friday.services import extension_security as extsec
+        raw_env = {"SystemRoot": r"C:\Windows", "path": "/usr/bin",
+                  "SOME_RANDOM_SECRET": "leak-me-not"}
+        result = extsec.sanitize_env_for_mcp(raw_env, trust_level="sandboxed")
+        assert result.get("SystemRoot") == r"C:\Windows" or result.get("SYSTEMROOT") == r"C:\Windows", (
+            f"a differently-cased allowlisted variable was dropped entirely "
+            f"instead of matched case-insensitively -- got {result!r}"
+        )
+        assert "path" in result or "PATH" in result
+        assert "SOME_RANDOM_SECRET" not in result and "some_random_secret" not in result
