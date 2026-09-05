@@ -242,6 +242,59 @@ def _humanise_refusal(r: dict, role_label) -> dict:
     }
 
 
+# ── Monitor verdicts, humanised (headroom.md §8.3, §12 Phase 4 item 3) ──────
+#
+# `_humanise_refusal` above turns a PLANNER refusal into something a person
+# can act on. This is the same job for a MACHINE_MONITOR verdict — a live
+# reading, not a placement decision — so THE MACHINE's three groups can
+# carry both kinds of row without the page inventing a third vocabulary.
+# Only `disk_system` and `thrash` are wired here (H-DISK-SYS, H-THRASH):
+# `vram_slack` and `ram_available` stay unrendered because their own verdict
+# is `basis: "unknown"` on every machine today (D1 is not decided) and a row
+# built from an unknown basis is exactly the phantom control HR1 exists to
+# refuse — "wire them once D1 lands, don't fake a threshold now" per this
+# phase's own instructions.
+def _humanise_monitor_verdict(resource: str, v: dict) -> dict | None:
+    status = (v or {}).get("status")
+    if status not in ("at_risk", "breached"):
+        return None
+    why = v.get("explanation") or ""
+    if resource == "disk_system":
+        return {
+            "rule_id": "H-DISK-SYS",
+            "title": "Free space on the system drive is critically low",
+            "why": why,
+            "action": "Free up space on the drive Windows is installed on "
+                      "(the pagefile and Friday's own data live there "
+                      "whatever the model store points at). Friday will "
+                      "refuse new loads and fetches until this clears.",
+            "severity": "problem",
+        }
+    if resource == "thrash":
+        if status == "breached":
+            return {
+                "rule_id": "H-THRASH",
+                "title": "Something is thrashing the graphics card, not "
+                         "just using it",
+                "why": why,
+                "action": "Close whatever else is drawing on the GPU (a "
+                          "game, a render, another AI tool) or wait for it "
+                          "to finish. Friday will not start a new local "
+                          "load until this clears.",
+                "severity": "problem",
+            }
+        return {
+            "rule_id": "H-THRASH",
+            "title": "A local model is answering slower than usual",
+            "why": why,
+            "action": "Nothing to do yet — this is early notice, not a "
+                      "refusal. If it gets worse the affected model will "
+                      "be marked degraded here.",
+            "severity": "info",
+        }
+    return None
+
+
 def _costs_rollup():
     """What has actually been served, per provider and per model.
 
@@ -385,6 +438,270 @@ _MODE_SCOPE_NOTE = (
     "locally on this machine (all-MiniLM-L6-v2, on CPU) and never leave it in "
     "any mode. Vault gating is a separate setting."
 )
+
+
+# ── LOCAL MODELS ON THIS MACHINE (headroom.md §8.2, §12 Phase 4 item 1) ─────
+#
+# Three axes, never a combined "compatible" (HR2). Every row's fits/
+# runs_well/worth_it comes straight from `residency_policy.verdicts()`,
+# which itself refuses to invent a basis (HR1) -- this function's only job
+# is deciding WHICH rows exist and whether each is installed; it never
+# grades one itself.
+
+_VERDICT_RANK = {"refused": 4, "unknown": 3, "degraded": 2,
+                 "ready-but": 1, "ready": 0}
+_VERDICT_WORD = {"refused": "Refused", "degraded": "Degraded",
+                 "ready-but": "Ready, with caveats", "unknown": "Not measured",
+                 "ready": "Ready"}
+_AXIS_LABEL = {"fits": "Fits", "runs_well": "Runs well", "worth_it": "Worth it"}
+
+
+def _verdict_summary(v: dict) -> dict:
+    """The one permitted one-word reading of three axes: the WORST of them,
+    with the axis named (§5.2, "Degraded -- RAM", never a bare 'compatible')."""
+    worst_axis, worst_rank = "fits", -1
+    for axis in ("fits", "runs_well", "worth_it"):
+        status = ((v or {}).get(axis) or {}).get("status")
+        rank = _VERDICT_RANK.get(status, 3)
+        if rank > worst_rank:
+            worst_axis, worst_rank = axis, rank
+    if worst_rank <= 0:
+        return {"word": "Ready", "axis": None}
+    status = (v.get(worst_axis) or {}).get("status")
+    return {"word": _VERDICT_WORD.get(status, "Not measured"),
+           "axis": _AXIS_LABEL[worst_axis]}
+
+
+def _embedder_installed() -> bool | None:
+    """Best-effort: has `sentence-transformers` already cached
+    all-MiniLM-L6-v2, or will first use still pay a 90 MB download
+    (`model_plan.EMBEDDER`)? `None` (unknown) rather than a guess when the
+    cache cannot be located -- this is an Installed hint, not one of the
+    three governed axes, so an honest unknown here costs nothing HR1 cares
+    about."""
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+        home = _os.environ.get("SENTENCE_TRANSFORMERS_HOME") \
+            or _os.environ.get("HF_HOME") \
+            or str(_Path.home() / ".cache" / "huggingface")
+        base = _Path(home)
+        if not base.is_dir():
+            return False
+        return any("minilm" in p.name.lower() for p in base.rglob("*")
+                  if p.is_dir())
+    except Exception:
+        return None
+
+
+def local_models_catalog(profile: dict, sizes: dict) -> dict:
+    """One row per model Friday knows how to run locally, whether or not it
+    is installed yet -- text from `model_plan.BRAIN_MODELS`, image from
+    `local_image.MODELS`, voice from the two engines, embed from the
+    catalog (§8.2). `sizes` is the caller's own `_ollama_sizes()` result, so
+    this does not re-probe the daemon.
+    """
+    from agent_friday.services import residency_policy as rp
+    from agent_friday.services import local_image as li
+    from agent_friday.services import model_plan as mp
+    from agent_friday.services import local_voice as lv
+    from agent_friday.services import nemo_voice as nv
+    from agent_friday.services import footprint_measure as fm
+
+    def row(model_id, modality, label, installed, *, download_gib=None,
+           licence=None):
+        v = rp.verdicts({"model_id": model_id}, profile)
+        return {
+            "model_id": model_id, "modality": modality,
+            "label": label or _pretty_model(model_id) or model_id,
+            "installed": installed,
+            "download_gib": download_gib,
+            "licence": licence,
+            "verdicts": v,
+            "summary": _verdict_summary(v),
+        }
+
+    text = [row(m["id"], "text", _pretty_model(m["id"]),
+               m["id"] in sizes, download_gib=m.get("gib"))
+           for m in mp.BRAIN_MODELS]
+
+    image = [row(mid, "image", spec.get("label") or spec.get("short"),
+                li.is_installed(mid), licence=spec.get("licence"))
+             for mid, spec in li.MODELS.items()]
+
+    voice = [
+        row(rp.DEFAULT_STT_MODEL, "stt", "Whisper (small, CPU speech-to-text)",
+            fm._whisper_installed(lv.DEFAULT_WHISPER_MODEL)),
+        row(rp.DEFAULT_TTS_MODEL, "tts", "Piper (CPU text-to-speech)",
+            fm._piper_installed(lv.DEFAULT_PIPER_VOICE)),
+        row(nv.NEMO_ASR_MODEL, "stt", "NeMo streaming ASR (GPU speech-to-text)",
+            nv.nemo_deps_installed()),
+    ]
+
+    embed = [
+        row("qwen3-embedding:0.6b", "embed", "Qwen3 Embedding 0.6B",
+            "qwen3-embedding:0.6b" in sizes),
+        row(mp.EMBEDDER["id"], "embed",
+            "all-MiniLM-L6-v2 (bundled sentence-transformers dependency)",
+            _embedder_installed()),
+    ]
+
+    return {
+        "text": text, "image": image, "voice": voice, "embed": embed,
+        # D8's resolution: one sentence, no rows -- a row for a model
+        # nothing can serve is the seat-that-serves-nothing defect.
+        "video_note": "Video runs in the cloud on every machine today.",
+    }
+
+
+# ── The onboarding starting set (headroom.md §9, §12 Phase 6) ───────────────
+#
+# One call chain -- hardware_profile.get() (the caller's `profile`) ->
+# model_plan.plan() for the brain -> plan_chain() for the interview's own
+# chain [stt, interactive_brain, tts] and, separately, [..., image] -- per
+# section 9's shape verbatim. Reuses `local_models_catalog()`'s row shape
+# (Phase 4) for brain/voice/image rather than inventing a second one, so the
+# wizard's Hardware Check renders through the SAME `LocalModelRow` component
+# Settings does (HR2: no second rendering path, no combined "compatible").
+#
+# D1 is not decided (`headroom_contract.py`'s own docstring). `contract`
+# below reports only what Phase 0 built honestly -- the display reserve --
+# never a fabricated working/away/yield level or a VRAM-slack/RAM-available
+# floor this document did not build.
+
+def build_starter_set(profile: dict) -> dict:
+    from agent_friday.services import model_plan as mp
+    from agent_friday.services import residency_policy as rp
+    from agent_friday.services import headroom_contract as hc
+    from agent_friday.services import local_image as li
+    from agent_friday.routing.ollama_manager import get_manager
+
+    sizes = _ollama_sizes()
+    lm = local_models_catalog(profile, sizes)
+
+    # What is already on the machine, and what of that can actually hold a
+    # conversation -- the same two lookups `cli.py`'s own planning call makes,
+    # so a starter set proposed at onboarding cannot disagree with `friday
+    # models` run right after it.
+    installed = None
+    try:
+        mgr = get_manager()
+        installed = ([m.get("name") for m in (mgr.list_models() or [])]
+                    if mgr.is_available() else None)
+    except Exception:
+        installed = None
+    conversational = None
+    try:
+        from agent_friday.services import local_seats
+        conversational = [n for n, _ in local_seats.installed()]
+    except Exception:
+        pass
+
+    mp_plan = mp.plan(profile, installed=installed, conversational=conversational)
+    brain_tier = next((t for t in mp_plan.get("tiers", [])
+                       if t.get("id") == "brain"), None)
+    brain_id = None
+    if brain_tier and brain_tier.get("models"):
+        brain_id = brain_tier["models"][0].get("id")
+    elif brain_tier and brain_tier.get("alternatives"):
+        # Already installed and picked -- `models` is empty because there is
+        # nothing left to download, but `alternatives` still names the pick.
+        default_alt = next((a for a in brain_tier["alternatives"]
+                            if a.get("default")), None)
+        brain_id = (default_alt or {}).get("id")
+    brain_row = (next((r for r in lm["text"] if r["model_id"] == brain_id),
+                      None) if brain_id else None)
+    # The FULL LocalModelRow-shaped row when there is one (label, installed,
+    # licence, summary -- everything `LocalModelRow` in index.html already
+    # knows how to draw), plus the two fields that are §9's own, not that
+    # component's: `download_gib` (the WHOLE plan's download, not per-row --
+    # `model_plan.plan()`'s tiers never populate a size on the brain row
+    # itself) and `why` (the planner's own human sentence for the pick, kept
+    # separate from `verdicts` because it explains the CHOICE among
+    # alternatives, not any one axis).
+    brain = dict(brain_row) if brain_row else {"model_id": brain_id,
+                                                "verdicts": None}
+    brain["download_gib"] = mp_plan.get("download_gib")
+    brain["why"] = (brain_tier or {}).get("reason")
+
+    stt_row = next((r for r in lm["voice"]
+                    if r["model_id"] == rp.DEFAULT_STT_MODEL), None)
+    tts_row = next((r for r in lm["voice"]
+                    if r["model_id"] == rp.DEFAULT_TTS_MODEL), None)
+    voice = {"stt": stt_row, "tts": tts_row, "where": "cpu"}
+
+    image_row = next((r for r in lm["image"] if r["model_id"] == li.MODEL_ID),
+                     None)
+    image_fits = ((image_row or {}).get("verdicts") or {}).get("fits") or {}
+    # Full row again (label/installed/licence/summary), same reasoning as
+    # `brain` above -- one shape, rendered by one component.
+    image = dict(image_row) if image_row else {"model_id": li.MODEL_ID,
+                                                "verdicts": None}
+    # D8-shaped: no row for a candidate nothing can serve, but a REFUSED or
+    # UNMEASURED local row still gets its one honest alternative named
+    # (§6.4), the same "never a refusal with no next step" rule the chain
+    # planner itself follows.
+    image["alternative"] = ("cloud" if image_fits.get("status")
+                            in (None, "refused", "unknown") else None)
+
+    try:
+        from agent_friday import core
+        cloud_ok = bool(getattr(core, "ANTHROPIC_API_KEY", None) or
+                        getattr(core, "GEMINI_API_KEY", None))
+    except Exception:
+        cloud_ok = False
+
+    # Nothing is resident yet at onboarding -- `resident={}` is the honest
+    # starting point for "what would running this chain cost from here",
+    # distinct from `/api/work/forecast`'s own use of the LIVE arbiter plan
+    # for a chain mid-session (`routes/work_plan.py`). `plan_chain` has no
+    # notion of "the default brain" the way it does for stt/tts/image
+    # (`_chain_default_model`) -- an `interactive_brain` stage with no
+    # `model_id` and nothing resident goes straight to cloud (or refuses),
+    # per its own rules for `ASSIGNED_ROLES`-shaped roles. Naming `brain_id`
+    # explicitly is what makes the interview's chain actually price the
+    # model `model_plan.plan()` just picked, rather than silently reporting
+    # "no local model available" for a machine that plainly has one.
+    brain_stage = {"role": "interactive_brain"}
+    if brain_id:
+        brain_stage["model_id"] = brain_id
+    voice_stages = [{"role": "stt"}, brain_stage, {"role": "tts"}]
+    image_stages = [{"role": "stt"}, brain_stage,
+                    {"role": "image", "units": 1}, {"role": "tts"}]
+    try:
+        chain_voice = rp.plan_chain(profile, [], voice_stages, resident={},
+                                    cloud_ok=cloud_ok)
+    except Exception as e:
+        chain_voice = {"error": str(e)}
+    try:
+        chain_with_image = rp.plan_chain(profile, [], image_stages,
+                                         resident={}, cloud_ok=cloud_ok)
+    except Exception as e:
+        chain_with_image = {"error": str(e)}
+
+    reserve = hc.resolve_display_reserve(profile)
+
+    return {
+        "brain": brain,
+        "voice": voice,
+        "image": image,
+        # D8: one sentence, no candidate row (§8.2, §14.2).
+        "video": "cloud",
+        "chain": {"voice_only": chain_voice, "with_image": chain_with_image},
+        # D1 not decided -- the honest subset: the display reserve alone,
+        # never a fabricated working/away/yield level (headroom_contract.py).
+        "contract": {
+            "display_reserve_mib": reserve.get("mib"),
+            "basis": reserve.get("basis"),
+            "sources": reserve.get("sources"),
+            "note": "the full Headroom Contract (working/away/yield levels, "
+                    "VRAM-slack and RAM-available floors) is not decided "
+                    "(D1); this is the one piece built without it -- the "
+                    "live display reserve.",
+        },
+        "floor_model": mp.FLOOR_MODEL,
+    }
+
 
 @intelligence_bp.route("/api/intelligence")
 def api_intelligence():
@@ -600,6 +917,74 @@ def api_intelligence():
             "reserve_mib": ram.get("os_reserve_mib"),
         }
 
+    # The headroom monitor's own reading (docs/design/headroom.md §4.3,
+    # §12 Phase 1) -- so THE MACHINE reads one source for utilisation/power/
+    # disk-system/thrash instead of a page-specific probe. `vram`/`ram`
+    # above are left exactly as they were (§8.3's correction is Phase 4's
+    # job, not this one's); this is purely additive.
+    try:
+        from agent_friday.services import machine_monitor as mm
+        _mon_sample = mm.last_sample() or mm.sample()
+        # _track_history=False: this route can be polled far faster than the
+        # loop's own 60s/5s cadence, and re-appending the SAME cached sample
+        # on every poll would pollute the thrash window with duplicates
+        # instead of the three distinct, cadence-spaced readings the
+        # signature is defined against. The loop's own tick() is the only
+        # writer of that shared history; this call only reads it.
+        _mon_verdict = mm.verdict(_mon_sample, _track_history=False)
+        machine["monitor"] = {"sample": _mon_sample, "verdict": _mon_verdict}
+
+        # §8.3's third bar: system disk, against the EXISTING DISK_FLOOR_MIB
+        # (R8, residency_policy.py:129) -- not a new number, and not
+        # D1-gated, so this is drawn unconditionally.
+        from agent_friday.services.residency_policy import DISK_FLOOR_MIB
+        machine["disk_system"] = {
+            "free_mib": _mon_sample.get("disk_system_free_mib"),
+            "total_mib": mm.disk_system_total_mib(),
+            "floor_mib": DISK_FLOOR_MIB,
+        }
+
+        # H-DISK-SYS / H-THRASH (§12 Phase 4 item 3): the monitor's own
+        # verdicts, humanised into the SAME problems/choices/notes groups a
+        # planner refusal renders into, so THE MACHINE does not grow a
+        # fourth vocabulary. vram_slack/ram_available are skipped -- their
+        # verdict is `basis: "unknown"` on every machine until D1 lands.
+        for _resource in ("disk_system", "thrash"):
+            _mh = _humanise_monitor_verdict(_resource, _mon_verdict.get(_resource))
+            if _mh is None:
+                continue
+            {"problem": problems, "choice": choices, "info": infos}[
+                _mh["severity"]].append(_mh)
+    except Exception:
+        pass
+
+    # ── Contract level (§8.3 item 4) ──────────────────────────────────────────
+    # D1 (the full working/away/yield Contract) is not decided -- this is
+    # NOT that. It is only the idle timer `work_queue` already tracks, shown
+    # next to a "yield" button that POSTs to /api/machine/level. That route
+    # is a stub today (no Phase 5 handler exists yet in this tree): it is
+    # honest about that in its own response rather than pretending to act.
+    try:
+        from agent_friday.services import work_queue as wq
+        machine["contract"] = {
+            "level": "working",  # the only level anything enforces today
+            "levels_enforced": False,
+            "idle_s": wq.idle_seconds(),
+        }
+    except Exception:
+        machine["contract"] = {"level": "working", "levels_enforced": False,
+                               "idle_s": None}
+
+    # ── LOCAL MODELS ON THIS MACHINE (§8.2, §12 Phase 4 item 1) ──────────────
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        local_models = local_models_catalog(hwp.get(), sizes)
+    except Exception as exc:
+        local_models = {"text": [], "image": [], "voice": [], "embed": [],
+                        "video_note": "Video runs in the cloud on every "
+                                      "machine today.",
+                        "error": "%s: %s" % (type(exc).__name__, exc)}
+
     # ── Providers, including whether they have ever actually served ──────────
     #
     # Attribution is by MODEL, not by matching provider-name strings. The cost
@@ -705,6 +1090,7 @@ def api_intelligence():
         "roles": roles,
         "models": models,
         "machine": machine,
+        "local_models": local_models,
         "providers": providers,
         "catalog_meta": cat.get("catalog_meta") or {},
         "now": time.time(),

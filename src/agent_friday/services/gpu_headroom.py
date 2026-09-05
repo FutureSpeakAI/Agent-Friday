@@ -37,23 +37,40 @@ architecture decision, not a docstring fix), only disclosed.
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 
 _log = logging.getLogger("friday.gpu_headroom")
 
-# What the desktop needs to stay drawn, over and above whatever it is using
-# right now. A conservative floor rather than a measurement, because the cost
-# of being wrong is asymmetric: too much reserve costs a slower seat, too
-# little costs the user their screen.
+# LAST-RESORT FALLBACK ONLY -- not a display-reserve constant of record.
+# `_resolve_default_reserve()` below reads the reconciled figure from
+# `headroom_contract.resolve_display_reserve()` -- the same one
+# `Arbiter.grant()`'s R-DISPLAY-RESERVE check now uses -- so `check()` and
+# `display_at_risk()` stop disagreeing with the gate that actually stands
+# between a lease and the display driver (`docs/design/headroom.md` §2.2,
+# HR3: one reserve, defined once). This is what those two functions fall
+# back to only when the profile or the contract module cannot be reached at
+# all (e.g. before `hardware_profile` has ever detected a machine) --
+# deliberately private and NOT named with "DISPLAY_RESERVE" so it reads as
+# the emergency fallback it is, not a second definition.
 #
 # 1024 MiB covers the Windows compositor plus a browser's GPU process, which
-# is what is actually running when Stephen is at the machine. Overridable, and
-# the override is recorded wherever a decision cites it.
-DEFAULT_DISPLAY_RESERVE_MIB = 1024
+# is what is actually running when Stephen is at the machine.
+_FALLBACK_RESERVE_MIB = 1024
 
 _CACHE: dict = {"ts": 0.0, "data": None}
 _CACHE_TTL_S = 2.0
+
+
+def _resolve_default_reserve() -> int:
+    """The contract's reconciled display reserve; `_FALLBACK_RESERVE_MIB`
+    only if it cannot be resolved. See the module-level comment above."""
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        from agent_friday.services.headroom_contract import (
+            resolve_display_reserve)
+        return int(resolve_display_reserve(hwp.get())["mib"])
+    except Exception:
+        return _FALLBACK_RESERVE_MIB
 
 
 def gpu_memory() -> list[dict] | None:
@@ -61,31 +78,31 @@ def gpu_memory() -> list[dict] | None:
 
     None is a real answer and callers must treat it as "cannot verify", not as
     "plenty free" — the whole point is to fail toward leaving the desktop alone.
+
+    Reads `machine_monitor.gpu_rows()` rather than calling `nvidia-smi`
+    itself (`docs/design/headroom.md` §4.3, §12 Phase 1: one nvidia-smi call
+    for the whole tree, not two disagreeing ones). `machine_monitor` extends
+    the same query string this function used to own with the four fields the
+    monitor's thrash signature needs; this function keeps its own short
+    cache on top so a caller that only wants the four original fields is not
+    coupled to the monitor's cache lifetime.
     """
     now = time.time()
     if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
         return _CACHE["data"]
     try:
-        out = subprocess.run(
-            ["nvidia-smi",
-             "--query-gpu=name,memory.total,memory.used,memory.free",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=15,
-        )
-        if out.returncode != 0:
-            return None
-        gpus = []
-        for line in out.stdout.strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 4:
-                continue
-            gpus.append({"name": parts[0], "total_mib": int(parts[1]),
-                         "used_mib": int(parts[2]), "free_mib": int(parts[3])})
-        _CACHE.update({"ts": now, "data": gpus or None})
-        return gpus or None
+        from agent_friday.services import machine_monitor as mm
+        rows = mm.gpu_rows()
     except Exception as e:
-        _log.debug("nvidia-smi unavailable: %s", e)
+        _log.debug("machine_monitor unavailable: %s", e)
         return None
+    if not rows:
+        return None
+    gpus = [{"name": r.get("name"), "total_mib": r.get("total_mib"),
+            "used_mib": r.get("used_mib"), "free_mib": r.get("free_mib")}
+           for r in rows]
+    _CACHE.update({"ts": now, "data": gpus or None})
+    return gpus or None
 
 
 def check(need_mib: int, *, reserve_mib: int | None = None) -> dict:
@@ -96,7 +113,7 @@ def check(need_mib: int, *, reserve_mib: int | None = None) -> dict:
       reason    str           — a sentence a person can read
       free_mib, usable_mib, reserve_mib, need_mib, gpu
     """
-    reserve = DEFAULT_DISPLAY_RESERVE_MIB if reserve_mib is None else reserve_mib
+    reserve = _resolve_default_reserve() if reserve_mib is None else reserve_mib
     gpus = gpu_memory()
     if not gpus:
         return {"ok": None, "reason": ("I could not read GPU memory "
@@ -137,7 +154,7 @@ def display_at_risk(threshold_mib: int | None = None) -> dict:
     "may I take more", this asks "is the machine already in the state that cost
     him a monitor". Worth surfacing even when Friday is about to take nothing.
     """
-    thr = DEFAULT_DISPLAY_RESERVE_MIB if threshold_mib is None else threshold_mib
+    thr = _resolve_default_reserve() if threshold_mib is None else threshold_mib
     gpus = gpu_memory()
     if not gpus:
         return {"at_risk": None, "reason": "GPU memory could not be read."}

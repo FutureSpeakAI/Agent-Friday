@@ -778,9 +778,29 @@ def api_health_full():
             installed = [m.get("name", "") for m in (mgr.list_models() if avail else [])]
         except Exception:
             installed = []
+        from agent_friday.services import model_plan
         out["hardware"] = {**hw, "suggested_models": mgr.recommend_models(hw),
                            "ollama_available": avail,
-                           "installed_models": installed}
+                           "installed_models": installed,
+                           # The setup wizard's floor-model pull button reads this
+                           # instead of a literal — see index.html's
+                           # WizardGemmaPull (H3: a value copied by hand into a
+                           # sixth site is a sixth default that can drift).
+                           "floor_model": model_plan.FLOOR_MODEL}
+        # starter_set (headroom.md §9, §12 Phase 6): the wizard's Hardware
+        # Check step reads this instead of `suggested_models` — a real
+        # verdict per modality from the planner (`model_plan.plan()` for the
+        # brain, `residency_policy.plan_chain()` for the interview's own
+        # chain), not a second recommendation surface. Guarded separately
+        # from the block above: a failure here (a residency module not
+        # importable on this platform, say) should not cost the wizard the
+        # plain hardware numbers it has always shown.
+        try:
+            from agent_friday.services import hardware_profile as hwp
+            from agent_friday.routes.intelligence import build_starter_set
+            out["hardware"]["starter_set"] = build_starter_set(hwp.get())
+        except Exception as e:
+            out["hardware"]["starter_set"] = {"error": str(e)}
     except Exception as e:
         out["hardware"] = {"error": str(e)}
 

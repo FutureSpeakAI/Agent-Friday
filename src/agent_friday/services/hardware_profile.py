@@ -852,12 +852,22 @@ def display_reserve_mib(displays: dict | None = None) -> int:
     return int(mib)
 
 
-def vram_headroom(gpu_index: int = 0) -> dict:
+def vram_headroom(gpu_index: int = 0, *, reserve_mib: int | None = None) -> dict:
     """Live free VRAM against the display reserve.
 
     The check that was missing: the plan did arithmetic against its own ceiling
     and nothing ever asked the card what was actually free before committing a
     load. 322 MiB free is not a number a plan should be allowed to reach.
+
+    `reserve_mib`: pass the reconciled figure from `headroom_contract.
+    resolve_display_reserve()` to close the hole this function used to open
+    on its own -- called with no override, this still falls back to
+    `display_reserve_mib()` UNCLAMPED (256 MiB on a single-monitor Windows
+    box), which is exactly the 256-vs-2,560 disagreement
+    `docs/design/headroom.md` §2.2 documents. `Arbiter.grant()`'s
+    R-DISPLAY-RESERVE check passes the reconciled figure; this default is
+    kept only for the one other caller (`liveness_audit`) that has no
+    profile in hand to reconcile against.
     """
     gpus = detect_gpus()
     gpu = next((g for g in gpus if g.get("index") == gpu_index), None)
@@ -866,7 +876,7 @@ def vram_headroom(gpu_index: int = 0) -> dict:
     total = int(gpu.get("vram_total_mib") or 0)
     used = int(gpu.get("vram_used_mib") or 0)
     free = max(0, total - used)
-    reserve = display_reserve_mib()
+    reserve = display_reserve_mib() if reserve_mib is None else int(reserve_mib)
     return {
         "ok": free >= reserve,
         "total_mib": total, "used_mib": used, "free_mib": free,

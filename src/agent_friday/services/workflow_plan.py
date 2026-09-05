@@ -112,7 +112,16 @@ def build(title: str, tasks: list, *, summary: str = "",
     """Turn a list of intended tasks into the object Stephen decides on.
 
     Each incoming task is a dict with at least `title` and `detail`, and
-    optionally `cls`, `seat_hint`, `tools`, `touches_vault`, `est_tokens`.
+    optionally `cls`, `seat_hint`, `tools`, `touches_vault`, `est_tokens`,
+    `role`.
+
+    `role` (headroom.md §12 Phase 3.3) names a `residency_policy.ROLES`
+    entry when this task IS one stage of a chain — carried through untouched
+    so a caller building a chain's tasks (via `residency_policy.plan_chain`)
+    can round-trip a stage's role through the same proposal/decide path
+    every other kind of work already uses, rather than a chain needing its
+    own parallel accept/decide mechanism. `None` for ordinary, non-chain
+    work, same as every other optional field here.
     """
     built = []
     for t in tasks:
@@ -125,6 +134,7 @@ def build(title: str, tasks: list, *, summary: str = "",
             "detail": t.get("detail", ""),
             "cls": cls,
             "seat_hint": t.get("seat_hint"),
+            "role": t.get("role"),
             "tools": list(t.get("tools") or []),
             "touches_vault": bool(t.get("touches_vault")),
             **est,

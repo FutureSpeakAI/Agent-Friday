@@ -7226,20 +7226,37 @@ const WIZARD_STEPS=[
   {id:'hardware',title:'Hardware Check',subtitle:'What this machine can run on-device'},
   {id:'done',title:'Ready to Launch',subtitle:'Your agent is configured'},
 ];
-// H5 — first-run bundled-Gemma pull. Shown in the hardware step: if Ollama is
-// running but the default local model (gemma3:4b) isn't pulled yet, offer a
-// one-click download so "works with zero keys" is actually true on first run.
-const BUNDLED_MODEL='gemma3:4b';
+// H5 — first-run bundled-model pull. Shown in the hardware step: if Ollama is
+// running but the floor model (model_plan.FLOOR_MODEL, served as
+// hw.floor_model by /api/health/full) isn't pulled yet, offer a one-click
+// download so "works with zero keys" is actually true on first run.
+//
+// The floor model comes from the backend rather than a literal here — defect
+// H3 was fixed at five Python sites on 2026-08-26 (model_plan.FLOOR_MODEL)
+// but this wizard kept its own hard-coded literal, the one row in the ladder
+// that cannot call tools. Do not reintroduce a literal model id here.
+//
+// exactTag mirrors model_setup._resolves: a bare family name (no ":") matches
+// any tag of the family, a specific tag must match exactly or with a
+// quantisation suffix ("-suffix"). The family-prefix match this replaced is
+// what let one family's small variant read as installed when only a larger
+// one was present.
+function exactTag(names,modelId){
+  if(!modelId)return false;
+  const tags=(names||[]).map(String);
+  if(modelId.indexOf(':')===-1)return tags.some(t=>t.split(':')[0]===modelId);
+  return tags.some(t=>t===modelId||t.startsWith(modelId+'-'));
+}
 function WizardGemmaPull({hw}){
   const[state,setState]=React.useState('idle'); // idle|pulling|done|error|nollama
   const[detail,setDetail]=React.useState('');
   const pollRef=React.useRef(null);
   React.useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current)},[]);
+  const BUNDLED_MODEL=hw&&hw.floor_model;
   const has=React.useMemo(()=>{
-    const names=(hw&&hw.installed_models)||[];
-    return names.some(n=>String(n).startsWith('gemma3:4b')||String(n).startsWith('gemma3'));
-  },[hw]);
-  if(!hw)return null;
+    return exactTag(hw&&hw.installed_models,BUNDLED_MODEL);
+  },[hw,BUNDLED_MODEL]);
+  if(!hw||!BUNDLED_MODEL)return null;
   if(!hw.ollama_available){
     return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(245,158,11,0.25)',background:'rgba(245,158,11,0.05)',marginBottom:14,fontSize:11,color:'rgba(255,210,140,0.9)',lineHeight:1.6}}>
       Install <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{color:'#00d4ff'}}>Ollama</a> to run Friday fully offline with no cloud key. Then reopen this wizard to pull the bundled model.
@@ -7256,14 +7273,14 @@ function WizardGemmaPull({hw}){
         pollRef.current=setInterval(()=>{
           fetch('/api/ollama/status').then(r=>r.json()).then(st=>{
             const models=(st.models||[]).map(m=>m.name||m);
-            if(models.some(n=>String(n).startsWith('gemma3'))){clearInterval(pollRef.current);setState('done');}
+            if(exactTag(models,BUNDLED_MODEL)){clearInterval(pollRef.current);setState('done');}
             else setDetail('Downloading… (~3 GB, this can take a few minutes)');
           }).catch(()=>{});
         },4000);
       }).catch(()=>{setState('error');setDetail('Could not reach the server');});
   };
   return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(0,212,255,0.2)',background:'rgba(0,212,255,0.04)',marginBottom:14}}>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.6}}>Pull <b style={{color:'#00d4ff'}}>{BUNDLED_MODEL}</b> (Google's open Gemma 3 4B, ~3 GB) so Friday chats fully on-device with no API key.</div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.6}}>Pull <b style={{color:'#00d4ff'}}>{BUNDLED_MODEL}</b> so Friday chats fully on-device with no API key.</div>
     {state==='pulling'
       ?<div style={{fontSize:10,color:'rgba(0,212,255,0.8)',fontFamily:'JetBrains Mono'}}>⏳ {detail}</div>
       :<button className="settings-btn" style={{fontSize:12}} onClick={startPull}>↓ Pull {BUNDLED_MODEL}</button>}

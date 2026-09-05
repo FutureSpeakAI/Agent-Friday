@@ -140,6 +140,70 @@ SEED_MEASUREMENTS: dict = {
              "pct_gpu": 100, "cold_load_s": 3.0,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
         ],
+        # Image footprints, headroom.md §12 Phase 2.3 -- [Stephen / GPU],
+        # measured 2026-09-04 under the Arbiter's own `image_job` lease
+        # (`friday measure <model_id>`, `footprint_measure.measure_image_model`).
+        # These rows are written as plain dicts rather than through
+        # `make_footprint()` because SEED_MEASUREMENTS (this dict) is defined
+        # before that function exists in the file; the shape matches it
+        # exactly (`FOOTPRINT_FIELDS` plus the `num_ctx: None` sentinel
+        # `record_footprint` uses), so `footprint()`'s "direct row" branch
+        # reads them identically either way.
+        #
+        # Phase 2's own commit measured these for real (see `local_image.py`'s
+        # module docstring) but only ever called `record_footprint()`, which
+        # writes to the per-machine runtime store
+        # (`runtime_dir()/residency/measurements.json`, NOT version
+        # controlled) -- never to this seed table. Per §5.1, "living in
+        # SEED_MEASUREMENTS for the reference instance" is exactly the
+        # committed half of that sentence, and it was the half left undone:
+        # on any checkout other than the one machine that ran the
+        # measurement, `footprint("z-image-turbo-fp8", P1)` returned `None`
+        # and every chain plan had to treat the image stage as `unknown`
+        # again. Phase 3 needs a real number to plan a chain honestly, so
+        # this closes that gap rather than re-deriving it. Two runs were
+        # recorded for Z-Image (10,120-10,453 MiB); the HIGHER figure is
+        # seeded here, the same "never extrapolate downward into optimism"
+        # rule `vram_at()` already applies to context measurements -- a
+        # footprint that under-reports its own VRAM is the error that fails
+        # at load time, not the safe direction. `local_image.py`'s own
+        # docstring already cites 10,453 as the headline number.
+        "z-image-turbo-fp8": [
+            {
+                "modality": "image", "device": "gpu", "vram_mib": 10453,
+                "host_ram_mib": None, "artifact_bytes": 14535245332,
+                "load_s": 24.52, "unit": "image", "work_s_per_unit": 49.6,
+                "requires": None,
+                "licence": {
+                    "name": "Apache License 2.0",
+                    "note": "Apache License 2.0 — commercial and "
+                            "private use, modification and redistribution "
+                            "permitted",
+                    "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+                },
+                "quality_note": "turbo: 8 steps, fast",
+                "basis": "measured", "measured_at": "2026-09-04",
+                "num_ctx": None,
+            },
+        ],
+        "sd3.5-medium-fp8": [
+            {
+                "modality": "image", "device": "gpu", "vram_mib": 10621,
+                "host_ram_mib": None, "artifact_bytes": 11638004202,
+                "load_s": 20.01, "unit": "image", "work_s_per_unit": 50.1,
+                "requires": None,
+                "licence": {
+                    "name": "Stability AI Community License",
+                    "note": "Stability AI Community License — free "
+                            "below $1M annual revenue; attribution required "
+                            "when redistributed",
+                    "url": None,
+                },
+                "quality_note": "30 steps, higher fidelity, slower",
+                "basis": "measured", "measured_at": "2026-09-04",
+                "num_ctx": None,
+            },
+        ],
     }
 }
 
@@ -310,6 +374,253 @@ def record_measurement(model_id: str, fingerprint: str,
         "measured_at") or time.strftime("%Y-%m-%d")))
     per_fp[model_id] = sorted(rows, key=lambda m: m.get("num_ctx") or 0)
     _save_store(data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Footprint — what a model costs, for EVERY modality (headroom.md §5.1)
+#
+#  A CatalogEntry's per-num_ctx `measured` rows only ever described text: VRAM
+#  at a stated context, tokens/s, cold-load seconds. Image, voice and video
+#  have no `num_ctx` at all, so the seat that plans them (`residency_policy`
+#  image/stt/tts) either fabricated one (`vram_mib: None`) or was never
+#  written. Footprint is the one shape that covers all six modalities, and it
+#  lives in the SAME store as the text rows -- `record_measurement` /
+#  `measurements()` above, keyed at `num_ctx: None` for anything that is not
+#  a language model -- rather than a second parallel store, because §5.1 asks
+#  for "one footprint per (model_id, profile_fingerprint)" through "the
+#  existing record_measurement", not a new persistence path.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FOOTPRINT_MODALITIES = ("text", "embed", "image", "video", "stt", "tts")
+FOOTPRINT_DEVICES = ("gpu", "cpu")
+FOOTPRINT_BASES = ("measured", "derived", "declared", "unknown")
+
+# The record's own field order, verbatim from headroom.md §5.1. `measurements()`
+# already returns dicts carrying extra bookkeeping (`num_ctx`, `source`); this
+# is what `footprint()` below trims a stored row down to before handing it out,
+# so a caller sees exactly the shape the spec defines and nothing else.
+FOOTPRINT_FIELDS = (
+    "modality", "device", "vram_mib", "host_ram_mib", "artifact_bytes",
+    "load_s", "unit", "work_s_per_unit", "requires", "licence",
+    "quality_note", "basis", "measured_at",
+)
+
+
+def make_footprint(*, modality: str, device: str, basis: str,
+                   vram_mib: int | None = None,
+                   host_ram_mib: int | None = None,
+                   artifact_bytes: int | None = None,
+                   load_s: float | None = None,
+                   unit: str | None = None,
+                   work_s_per_unit: float | None = None,
+                   requires: dict | None = None,
+                   licence: dict | None = None,
+                   quality_note: str | None = None,
+                   measured_at: str | None = None) -> dict:
+    """Build one Footprint record (§5.1), with the two guards a hand-built
+    dict would not get for free:
+
+    HR1 -- a verdict without a `basis` is not a verdict. `basis` is required
+    and must be one of the four the spec names; there is no silent default
+    that would let a caller forget it and have the record read as "unknown"
+    by accident, or worse, as something more confident than it is.
+
+    HR6 -- an idle reading is never written as a footprint. `measured_at` is
+    set only by a job that actually ran the model, so a `basis="measured"`
+    record with no `measured_at` is refused here rather than accepted and
+    trusted downstream.
+    """
+    if modality not in FOOTPRINT_MODALITIES:
+        raise ValueError("modality must be one of %s, got %r"
+                         % (FOOTPRINT_MODALITIES, modality))
+    if device not in FOOTPRINT_DEVICES:
+        raise ValueError("device must be one of %s, got %r"
+                         % (FOOTPRINT_DEVICES, device))
+    if basis not in FOOTPRINT_BASES:
+        raise ValueError("basis must be one of %s, got %r"
+                         % (FOOTPRINT_BASES, basis))
+    if basis == "measured" and not measured_at:
+        raise ValueError(
+            "a basis='measured' footprint must carry measured_at -- HR6, "
+            "an idle reading is never written as a footprint")
+    return {
+        "modality": modality, "device": device,
+        "vram_mib": vram_mib, "host_ram_mib": host_ram_mib,
+        "artifact_bytes": artifact_bytes, "load_s": load_s,
+        "unit": unit, "work_s_per_unit": work_s_per_unit,
+        "requires": requires, "licence": licence,
+        "quality_note": quality_note,
+        "basis": basis, "measured_at": measured_at,
+    }
+
+
+def record_footprint(model_id: str, fingerprint: str, fp: dict) -> None:
+    """Persist a Footprint through the existing measurement store.
+
+    `num_ctx: None` is the sentinel that keeps a Footprint from colliding
+    with a text model's per-context rows in the SAME `model_id` bucket (an
+    image or voice model never has one of its own, so the collision cannot
+    happen the other way): `measurements()` already merges "store beats seed
+    at the same num_ctx", and None is a valid, stable dict key there.
+    """
+    record_measurement(model_id, fingerprint, dict(fp, num_ctx=None))
+
+
+# ── thrash degradation (headroom.md §5.2, §7's thrash row) ─────────────────
+#
+# §5.2's own table names "the thrash history for this model on this profile"
+# as ONE of runs_well's inputs, alongside `host_ram_mib` and
+# `requires.ram_recommended_mib` -- but it is not one of the twelve
+# Footprint fields in §5.1 (`FOOTPRINT_FIELDS`), which is a fixed shape the
+# spec defines exactly. So this is a companion record, in the SAME store
+# (`record_measurement`'s own file, per this module's header: "the existing
+# record_measurement", not a new persistence path) but under its own
+# top-level key rather than inside a model's measurement list, where it
+# would either collide with a real `model_id` bucket or need retrofitting
+# into `FOOTPRINT_FIELDS` and start rendering on every row that reads a
+# Footprint, including callers that only want §5.1's own fields.
+#
+# Written by `residency_arbiter.Arbiter._on_thrash_breach` (§7: "mark the
+# model's footprint degraded with the sample attached"); read by
+# `residency_policy._runs_well_verdict` so the NEXT `verdicts()` call, not
+# just the process that saw the thrash, reflects it (§5.2's own line: "so
+# runs_well reflects it next time").
+
+_THRASH_KEY = "_thrash_degraded"
+
+
+def record_thrash_degraded(model_id: str, fingerprint: str, sample: dict,
+                           explanation: str) -> None:
+    """Mark `model_id` degraded on this profile from a sustained thrash
+    signature. `sample` is the `machine_monitor.sample()` dict that was
+    live when the signature fired -- kept verbatim ("with the sample
+    attached") so a later reader can see what was actually measured, not
+    just a sentence about it."""
+    data = _load_store()
+    bucket = data.setdefault(_THRASH_KEY, {}).setdefault(fingerprint, {})
+    bucket[model_id] = {
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "explanation": explanation,
+        "sample": sample,
+    }
+    _save_store(data)
+
+
+def thrash_degraded(model_id: str, fingerprint: str) -> dict | None:
+    """The last recorded thrash-degradation for `model_id` on this profile,
+    or `None` if it has never thrashed here (or was cleared)."""
+    try:
+        return (_load_store().get(_THRASH_KEY) or {}).get(
+            fingerprint, {}).get(model_id)
+    except Exception:
+        return None
+
+
+def clear_thrash_degraded(model_id: str, fingerprint: str) -> None:
+    """Clear a prior thrash mark -- a fresh measurement superseding it, or
+    test teardown. Best-effort; clearing something that was never marked is
+    a no-op, not an error."""
+    data = _load_store()
+    try:
+        del data[_THRASH_KEY][fingerprint][model_id]
+    except (KeyError, TypeError):
+        return
+    _save_store(data)
+
+
+def _footprint_from_text_row(row: dict) -> dict:
+    """Migrate one legacy per-num_ctx text measurement into a Footprint,
+    without retyping SEED_MEASUREMENTS -- §12 Phase 2 item 1: "migrated, not
+    retyped". `ms_per_token` is milliseconds; Footprint's `work_s_per_unit`
+    is SECONDS per unit (token), per §5.1's own field name.
+
+    Every SEED_MEASUREMENTS row already carries `measured_at` and was a real
+    daemon read (`residency_catalog.py`'s own module docstring: "VRAM read
+    from the daemon's own /api/ps ... None of these models had ever been
+    measured"), so basis is `measured` here even for a seed row -- source
+    ("seed" vs "measured") says WHERE it was recorded, not WHETHER it was.
+    """
+    ms = row.get("ms_per_token")
+    modality = "embed" if is_embedding(row.get("_model_id") or "") else "text"
+    return make_footprint(
+        modality=modality, device="gpu",
+        vram_mib=row.get("vram_mib"),
+        load_s=row.get("cold_load_s"),
+        unit="token",
+        work_s_per_unit=(ms / 1000.0) if ms else None,
+        basis="measured",
+        measured_at=row.get("measured_at"),
+    )
+
+
+# Facts about a model that are NOT tied to any one machine: a licence, an
+# upstream "requires N GB VRAM" claim, a modality with no local backend at
+# all. Looked up by `footprint()` as the last resort, below anything actually
+# measured or seeded for a specific profile fingerprint -- a declared fact is
+# always available (a licence does not change per GPU), while a measured one
+# only exists where someone ran it. All entries are `basis="declared"`; HR18
+# means none of them may ever produce a `refused` verdict, only `degraded` /
+# `ready-but` (residency_policy.verdicts()).
+DECLARED_FOOTPRINTS: dict = {
+    # nemo_voice.MIN_VRAM_GB=4.0, VERIFIED -- the Tier-2 GPU voice gate. No
+    # measurement job exists for it (headroom.md §12 Phase 2 item 3: "declared
+    # ... no measurement needed, it's explicitly declared per the spec").
+    "nvidia/nemotron-3.5-asr-streaming-0.6b": make_footprint(
+        modality="stt", device="gpu", basis="declared",
+        requires={"vram_min_mib": 4096},
+        licence={"name": "OpenMDW-1.1",
+                "note": "NVIDIA Open Model Dataset & Weight License",
+                "url": "https://developer.download.nvidia.com/licenses/"
+                       "nvidia-open-model-dataset-weight-license-1.1.pdf"},
+        quality_note="GPU streaming ASR; falls back to the CPU tier below "
+                     "4 GB free VRAM",
+    ),
+    # model_plan.EMBEDDER -- the CPU sentence-transformers embedder
+    # conversation_memory actually calls, distinct from the qwen3-embedding
+    # Ollama seat above (which already has a measured row).
+    "all-MiniLM-L6-v2": make_footprint(
+        modality="embed", device="cpu", basis="declared",
+        artifact_bytes=90 * 1024 * 1024,
+        requires={"ram_min_mib": 256},
+    ),
+}
+
+
+def footprint(model_id: str, profile: dict) -> dict | None:
+    """The Footprint for `model_id` on `profile`'s fingerprint, or `None` if
+    nothing has ever been recorded for it here.
+
+    `None` is a stronger statement than a footprint with `basis="unknown"`:
+    it means no row exists at all, so a caller (`verdicts()` in
+    `residency_policy`) that wants HR1's "unknown never renders as fit" can
+    treat either the same way -- absent or explicitly unknown both fail to
+    fit.
+    """
+    fp = profile_fingerprint(profile)
+    rows = measurements(model_id, fp)
+    if rows:
+        # Non-text rows were written directly in Footprint shape via
+        # `record_footprint` (num_ctx=None, a `modality` field present). Take
+        # the newest -- `measurements()` already resolved "store beats seed"
+        # per ctx, and there is only one ctx (None) for these.
+        direct = [r for r in rows if r.get("num_ctx") is None
+                 and "modality" in r]
+        if direct:
+            return {k: direct[-1].get(k) for k in FOOTPRINT_FIELDS}
+        # Text rows: migrate the legacy per-num_ctx shape. Use the LARGEST
+        # measured context, the same "never extrapolate downward into
+        # optimism" rule `vram_at()` applies just above -- under-reporting a
+        # footprint's VRAM is the error that fails at load time, not the
+        # safe direction.
+        text_rows = [r for r in rows if r.get("num_ctx") is not None]
+        if text_rows:
+            return _footprint_from_text_row(
+                dict(text_rows[-1], _model_id=model_id))
+    # Nothing measured on THIS machine for this model: a model-level declared
+    # fact (a licence, an upstream VRAM claim) still beats returning nothing,
+    # because it is the one axis `verdicts()` may report without a live
+    # measurement (HR18 -- declared informs, never refuses).
+    return DECLARED_FOOTPRINTS.get(model_id)
 
 
 def baseline_ms_per_token(model_id: str, fingerprint: str) -> float | None:
