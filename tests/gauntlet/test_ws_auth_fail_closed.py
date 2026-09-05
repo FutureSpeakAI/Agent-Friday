@@ -22,6 +22,17 @@ this is a real behavioral test of the auth decision itself, plus a
 source-position check that both `ws_voice_local` and `ws_live` actually
 call it at their gate (not just that the helper exists and is correct in
 isolation).
+
+CORRECTION (weak-probe audit, 2026-09-05): that source-position check
+(TestBothWebsocketsActuallyCallTheFixedGate) is a literal string match
+against the function's source text -- real today, but silently defeated
+by a rename or reformat tomorrow with the underlying protection
+unaffected either way. TestWebsocketsGenuinelyExecuteTheAuthGate adds
+the stronger proof: actually calling `ws_voice_local`/`ws_live` for real
+(a genuine Flask request context, a minimal fake websocket) and
+confirming `_ws_auth_ok` is genuinely invoked and genuinely halts
+execution on denial -- sensitive to whether the call happens, not to how
+it happens to be spelled.
 """
 from __future__ import annotations
 
@@ -130,3 +141,110 @@ class TestBothWebsocketsActuallyCallTheFixedGate:
         helper stays defined but unused."""
         src = inspect.getsource(vr)
         assert "if (FRIDAY_PASSWORD and not session.get(\"authenticated\")" not in src
+
+
+class _FakeWebSocket:
+    """Stand-in for Flask-Sock's connection object -- ws_voice_local/ws_live
+    only call .send() on the denial path being tested here; nothing further
+    downstream (VAD, whisper, the LLM turn) is ever reached if the auth gate
+    correctly returns early, so this needs no other methods."""
+
+    def __init__(self):
+        self.sent: list[str] = []
+
+    def send(self, msg):
+        self.sent.append(msg)
+
+
+def _real_handler(endpoint: str):
+    """@sock.route(...) returns None (confirmed directly: vr.ws_voice_local
+    and vr.ws_live are both None at module level after decoration) -- the
+    decorator registers a Flask-Sock-internal wrapper as the actual view
+    function and discards its own return value. That wrapper constructs a
+    REAL flask_sock.Server(request.environ, ...) from the live request
+    before calling the original function, which this test cannot supply
+    outside a genuine WebSocket upgrade -- so it isn't what gets called
+    here. functools.wraps(f) on that wrapper (flask_sock's own
+    implementation) leaves __wrapped__ pointing at the ORIGINAL
+    ws_voice_local/ws_live function -- the one with the actual auth-check
+    logic -- retrievable via Flask's own view_functions registry.
+    Confirmed directly before relying on it: app.view_functions[endpoint]
+    .__wrapped__ is a distinct function object from app.view_functions
+    [endpoint] itself, with the expected name."""
+    from agent_friday.core import app
+    return app.view_functions[endpoint].__wrapped__
+
+
+class TestWebsocketsGenuinelyExecuteTheAuthGate:
+    """CORRECTION (weak-probe audit, 2026-09-05): TestBothWebsocketsActually
+    CallTheFixedGate above proves the exact call-site TEXT is present --
+    real today, but a rename of _ws_auth_ok, a reformat of that line, or a
+    refactor to `if _ws_auth_ok(...) is False:` would all silently defeat
+    a literal string match while leaving the actual protection (or its
+    absence) completely unaffected either way. These two actually CALL
+    ws_voice_local/ws_live for real (a genuine Flask request context, a
+    minimal fake websocket) and prove _ws_auth_ok is genuinely invoked and
+    genuinely gates further execution -- immune to how the call happens to
+    be spelled, only sensitive to whether it happens."""
+
+    def test_ws_voice_local_actually_invokes_ws_auth_ok_and_stops_on_denial(
+        self, monkeypatch
+    ):
+        from agent_friday.core import app
+
+        calls = {"n": 0}
+        monkeypatch.setattr(vr, "FRIDAY_WS_TOKEN", "")
+        monkeypatch.setattr(vr, "_api_token_valid", lambda t: False)
+
+        def _fake_ws_auth_ok(ui_tok_ok):
+            calls["n"] += 1
+            return False
+
+        monkeypatch.setattr(vr, "_ws_auth_ok", _fake_ws_auth_ok)
+        fake_ws = _FakeWebSocket()
+        real_handler = _real_handler("ws_voice_local")
+
+        with app.test_request_context("/ws/voice-local?t=whatever"):
+            real_handler(fake_ws)
+
+        assert calls["n"] == 1, (
+            "ws_voice_local ran to completion without ever calling "
+            "_ws_auth_ok at all -- the auth gate is not wired in, "
+            "regardless of what the source text looks like"
+        )
+        assert any("unauthorized" in m for m in fake_ws.sent), (
+            "_ws_auth_ok denied the connection but ws_voice_local did not "
+            "send an unauthorized error -- it may have ignored the denial "
+            "and continued into the real voice pipeline anyway"
+        )
+
+    def test_ws_live_actually_invokes_ws_auth_ok_and_stops_on_denial(
+        self, monkeypatch
+    ):
+        from agent_friday.core import app
+
+        calls = {"n": 0}
+        monkeypatch.setattr(vr, "FRIDAY_WS_TOKEN", "")
+        monkeypatch.setattr(vr, "_api_token_valid", lambda t: False)
+
+        def _fake_ws_auth_ok(ui_tok_ok):
+            calls["n"] += 1
+            return False
+
+        monkeypatch.setattr(vr, "_ws_auth_ok", _fake_ws_auth_ok)
+        fake_ws = _FakeWebSocket()
+        real_handler = _real_handler("ws_live")
+
+        with app.test_request_context("/ws/live?t=whatever"):
+            real_handler(fake_ws)
+
+        assert calls["n"] == 1, (
+            "ws_live ran to completion without ever calling _ws_auth_ok at "
+            "all -- the auth gate is not wired in, regardless of what the "
+            "source text looks like"
+        )
+        assert any("unauthorized" in m for m in fake_ws.sent), (
+            "_ws_auth_ok denied the connection but ws_live did not send an "
+            "unauthorized error -- it may have ignored the denial and "
+            "continued into the real voice pipeline anyway"
+        )

@@ -1183,6 +1183,34 @@ def _ws_auth_ok(ui_tok_ok: bool) -> bool:
     return bool(session.get("authenticated") or _loopback_trusted() or ui_tok_ok)
 
 
+def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
+    """Record cost_meter usage from one Gemini Live streaming chunk, if it
+    carries usage_metadata. Returns whether a charge was recorded.
+
+    CORRECTION (weak-probe audit, 2026-09-05): extracted out of ws_live's
+    receive loop (Q6c) so this has its own testable identity. ws_live
+    itself is a closure nested inside a Flask-Sock route registration
+    function, deeply inside an async Gemini Live streaming session --
+    reaching this exact line from a test previously meant either mocking
+    that entire session or pinning the surrounding source text (variable
+    names, try/except structure) instead of exercising real behavior.
+    Never raises -- a metering failure must not break the live voice
+    bridge, exactly as the original inline try/except guaranteed.
+    """
+    _um = getattr(chunk, "usage_metadata", None)
+    if _um is None:
+        return False
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.meter("gemini", model_name, {
+            "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
+            "output_tokens": getattr(_um, "response_token_count", 0) or 0,
+        }, kind="voice")
+        return True
+    except Exception:
+        return False
+
+
 if sock is not None:
 
     @sock.route('/ws/voice-local')
@@ -2460,17 +2488,8 @@ if sock is not None:
                                         # metered as its own row every time it shows up
                                         # rather than only once at teardown, since a leg can
                                         # end (GoAway, error, disconnect) without a clean
-                                        # close. Never allowed to break the voice bridge.
-                                        _um = getattr(chunk, 'usage_metadata', None)
-                                        if _um is not None:
-                                            try:
-                                                from agent_friday.services import cost_meter as _cm
-                                                _cm.meter("gemini", model_name, {
-                                                    "input_tokens": getattr(_um, 'prompt_token_count', 0) or 0,
-                                                    "output_tokens": getattr(_um, 'response_token_count', 0) or 0,
-                                                }, kind="voice")
-                                            except Exception:
-                                                pass
+                                        # close. _meter_gemini_live_chunk() never raises.
+                                        _meter_gemini_live_chunk(chunk, model_name)
                                         # GoAway: Gemini is about to retire this session
                                         # (connection lifetime / context cap). Don't cut a
                                         # response mid-word: if Friday is speaking, drain
