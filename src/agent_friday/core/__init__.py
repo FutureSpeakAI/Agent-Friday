@@ -1689,18 +1689,23 @@ DEFAULT_SETTINGS = {
         "default_cloud_model": "claude-sonnet-5",
         "task_overrides": {},
         "ollama_url": "http://localhost:11434",
-        # Default on-device model (v5): gemma3:4b — Google's open Gemma 3 4B-IT,
-        # Friday's zero-cloud-key default brain, taken from model_plan's ladder
-        # so it cannot drift from what the installer actually installs. Picked
-        # for every local route when installed (see model_router._pick_local_model);
-        # if it isn't installed the picker degrades to any installed model.
+        # Default on-device model: model_plan.FLOOR_MODEL, taken from the
+        # ladder so it cannot drift from what the installer actually
+        # installs. Picked for every local route when installed (see
+        # model_router._pick_local_model); if it isn't installed the picker
+        # degrades to any installed model.
         #
-        # Users with more card can upgrade — but to qwen3:8b, gemma4:12b,
-        # qwen3:14b or qwen3:32b, which is what `friday models` will offer.
-        # This comment used to recommend gemma3:12b / gemma3:27b. Both were
-        # checked against the registry on 2026-08-26 and NEITHER can call
-        # tools, so that advice pointed users at a bigger version of the exact
-        # problem H3 was about.
+        # 2026-09-03: this is a Gemma 4 model (currently gemma4:e2b) — Qwen
+        # was removed from the ladder entirely, not just from this default,
+        # per the product decision above `model_plan._BRAINS`: nothing is
+        # shipped or suggested yet, and when the installer fetches a local
+        # model it fetches Gemma 4 only (Apache 2.0), a placeholder until
+        # FutureSpeak's own model replaces it. Users with more card can
+        # upgrade to gemma4:e4b, :12b, or :26b — whatever `friday models`
+        # offers for the hardware it detects. This comment used to recommend
+        # gemma3:12b / gemma3:27b; both were checked against the registry on
+        # 2026-08-26 and NEITHER can call tools, so that advice pointed users
+        # at a bigger version of the exact problem H3 was about.
         "local_model": _FLOOR_MODEL,
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
@@ -1724,6 +1729,19 @@ DEFAULT_SETTINGS = {
         #   "warn"   = refuse and ask the user to enable a local model.
         "vault_local_only": True,
         "vault_cloud_fallback": "redact",
+        # ── Unrestricted cloud mode ──
+        # Explicit instruction, 2026-09-03: "cloud only mode means no privacy
+        # safeguards ... when active, no feature or data is held back from
+        # the cloud." Distinct from `mode: cloud_only` above, which only ever
+        # meant provider ROUTING PREFERENCE — this flag reaches
+        # services/egress_gate.py (is_unrestricted_cloud()) and bypasses
+        # every gate in the codebase for cloud sends: tier classification,
+        # redaction, the PII scrub, and the never-send list. Default False;
+        # read fresh on every call, never cached. Whoever turns this on
+        # should know exactly what it does — see egress_gate.py's docstring
+        # at is_unrestricted_cloud() for the complete list of what it
+        # bypasses.
+        "unrestricted_cloud": False,
     },
     # ── Distribution profile (persona preset) ──
     # Mirror of the active distro (services/distributions.py). Applied as a
