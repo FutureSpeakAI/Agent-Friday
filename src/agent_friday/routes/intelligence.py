@@ -497,12 +497,13 @@ def _embedder_installed() -> bool | None:
 def local_models_catalog(profile: dict, sizes: dict) -> dict:
     """One row per model Friday knows how to run locally, whether or not it
     is installed yet -- text from `model_plan.BRAIN_MODELS`, image from
-    `local_image.MODELS`, voice from the two engines, embed from the
-    catalog (§8.2). `sizes` is the caller's own `_ollama_sizes()` result, so
-    this does not re-probe the daemon.
+    `local_image.MODELS`, video from `local_video.MODELS`, voice from the two
+    engines, embed from the catalog (§8.2). `sizes` is the caller's own
+    `_ollama_sizes()` result, so this does not re-probe the daemon.
     """
     from agent_friday.services import residency_policy as rp
     from agent_friday.services import local_image as li
+    from agent_friday.services import local_video as lvi
     from agent_friday.services import model_plan as mp
     from agent_friday.services import local_voice as lv
     from agent_friday.services import nemo_voice as nv
@@ -529,6 +530,17 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
                 li.is_installed(mid), licence=spec.get("licence"))
              for mid, spec in li.MODELS.items()]
 
+    # 2026-09-05: D8's "one sentence, no rows" resolution (video_note below)
+    # predates local_video.py -- at the time, nothing on this machine could
+    # actually serve a video job, so a row would have been the exact
+    # seat-that-serves-nothing defect the comment names. Local video generation
+    # now exists (3 real, earned-availability Wan/CogVideoX models, same
+    # is_installed discipline as image), so it earns the same row treatment
+    # image gets rather than staying lumped into one static sentence.
+    video = [row(mid, "video", spec.get("label") or spec.get("short"),
+                lvi.is_installed(mid), licence=spec.get("licence"))
+            for mid, spec in lvi.MODELS.items()]
+
     voice = [
         row(rp.DEFAULT_STT_MODEL, "stt", "Whisper (small, CPU speech-to-text)",
             fm._whisper_installed(lv.DEFAULT_WHISPER_MODEL)),
@@ -547,10 +559,7 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
     ]
 
     return {
-        "text": text, "image": image, "voice": voice, "embed": embed,
-        # D8's resolution: one sentence, no rows -- a row for a model
-        # nothing can serve is the seat-that-serves-nothing defect.
-        "video_note": "Video runs in the cloud on every machine today.",
+        "text": text, "image": image, "video": video, "voice": voice, "embed": embed,
     }
 
 
@@ -980,9 +989,7 @@ def api_intelligence():
         from agent_friday.services import hardware_profile as hwp
         local_models = local_models_catalog(hwp.get(), sizes)
     except Exception as exc:
-        local_models = {"text": [], "image": [], "voice": [], "embed": [],
-                        "video_note": "Video runs in the cloud on every "
-                                      "machine today.",
+        local_models = {"text": [], "image": [], "video": [], "voice": [], "embed": [],
                         "error": "%s: %s" % (type(exc).__name__, exc)}
 
     # ── Providers, including whether they have ever actually served ──────────

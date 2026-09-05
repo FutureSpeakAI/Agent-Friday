@@ -193,11 +193,19 @@ def test_no_surface_ever_spells_out_compatible():
         "HR2 forbids a single combined verdict:\n" + "\n".join(offenders))
 
 
-def test_video_section_has_no_rows_only_the_sentence():
-    """D8's resolution (already decided, not this session's to relitigate):
-    one sentence, no rows -- a declared row per candidate model is the
-    thing D8 actually decides, and this phase does not decide it."""
+def test_video_section_has_real_rows_now_that_local_video_exists():
+    """D8's original resolution (2026-09-04 or earlier) was one sentence, no
+    rows -- a declared row per candidate model was D8's call to make, and
+    nothing on this machine could serve a video job yet, so a row would have
+    been the seat-that-serves-nothing defect the decision was guarding
+    against. `services/local_video.py` (2026-09-04/05) shipped real,
+    earned-availability video models with the SAME is_installed discipline
+    as image -- the thing D8 was waiting on now exists, so a row is no
+    longer premature. See routes/intelligence.py's local_models_catalog()."""
+    from agent_friday.services import local_video as lvi
     catalog = local_models_catalog(fx.P1, {})
-    assert "video" not in catalog or not catalog.get("video")
-    assert catalog.get("video_note") == (
-        "Video runs in the cloud on every machine today.")
+    assert catalog.get("video"), "local_video.MODELS exists but produced no rows"
+    assert {r["model_id"] for r in catalog["video"]} == set(lvi.MODELS.keys())
+    for r in catalog["video"]:
+        assert r["modality"] == "video"
+        assert r["licence"] == lvi.MODELS[r["model_id"]].get("licence")
