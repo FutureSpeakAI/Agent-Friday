@@ -505,7 +505,8 @@ def _run_task(rec):
     # scheduled run reads as a single timer orb — no separate scheduler wrapper
     # orb, so no duplicate/double-icon orb.
     tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
-                      description=f"scheduled:{rec.get('id')}", orb_icon="⏰")
+                      description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
+                      tools=task.get("tools"))
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
@@ -909,30 +910,33 @@ _DEFAULT_AGENT_SCHEDULES = [
                 "summarize it in one or two lines. If nothing is new, reply "
                 "exactly: NO CHANGE."
             ),
+            # 2026-09-04: this task was running with the FULL 75-tool
+            # registry (~13.3k tokens every call, of image gen / code exec /
+            # computer control / etc. a liveness check never touches) — "the
+            # payload is the defect" per Stephen's own framing. Narrowed to
+            # what the prompt's calendar/inbox check actually needs. There is
+            # NO tool for "background tasks that finished in the last hour"
+            # (get_briefing is the daily summary, not this) — that clause in
+            # the prompt has never been checkable by the model; flagged to
+            # Stephen rather than silently rewritten here.
+            "tools": ["query_calendar", "find_calendar_events", "search_email"],
         },
         "enabled": True,
         # 'status': keep ONE self-updating "last ran …" entry in the panel; never
         # emit a per-run notification or bump the unread badge (anti-spam).
         "notify": "status",
     },
-    {
-        "id": "sch_job_intelligence",
-        "name": "Job intelligence",
-        "trigger": "daily",
-        "spec": {"hour": 7, "minute": 30},
-        "task": {
-            "kind": "agent_prompt", "workspace": "research",
-            "prompt": (
-                "Scan for new roles relevant to my career pipeline and maintain "
-                "my top-25 list. Use web search. Report only the deltas since "
-                "yesterday — new roles worth adding and roles that should drop "
-                "off — in a short bulleted summary. If there are no changes, "
-                "reply exactly: NO CHANGE."
-            ),
-        },
-        "enabled": True,
-        "notify": "on_change",
-    },
+    # sch_job_intelligence REMOVED 2026-09-04, on Stephen's direct instruction
+    # ("removed entirely"), not merely disabled. A single 07:44 run consumed
+    # 3.86M input tokens against claude-sonnet-5 — roughly $12 for one
+    # execution of a daily job nobody was watching. Deleted from the live
+    # store the same day (services/scheduler.py:_seed_default_agent_schedules
+    # only re-adds an id that is ABSENT from the store, so leaving this
+    # definition in place would have silently reseeded it on the next fresh
+    # install or wiped store); removed here too so it can never come back
+    # through that path. If career-pipeline scanning is wanted again, it
+    # needs a real token budget on the prompt, not a resurrection of this
+    # entry.
 ]
 
 
