@@ -677,10 +677,23 @@ def _pseudo_toolcall_check(draft: dict) -> bool:
 
     Reuses the Source Dossier's existing integrity check rather than inventing
     a second one with different rules.
+
+    find_pseudo_toolcalls() takes a REQUIRED tool_names argument (gauntlet-
+    2026-09-03 F57: this call site omitted it, which raised TypeError on
+    every invocation, silently caught below and returned as "cannot check,
+    assume it's fine" -- the check never actually ran, at all, for any
+    draft, since this function was written). Uses the same global registry
+    routes/chat.py's own dossier check uses for the identical concern (a
+    generated document narrating tool calls that didn't happen) -- this
+    module calls web_fetch/web_search directly rather than through the
+    tool-calling loop, so any tool name appearing in synthesized prose is
+    itself suspicious, not an expected/allowed pattern.
     """
     try:
         from agent_friday.services.tool_integrity import find_pseudo_toolcalls
+        from agent_friday.services.agent import CLAUDE_TOOLS
         text = " ".join(s.get("body", "") for s in draft.get("sections", []))
-        return not find_pseudo_toolcalls(text)
+        tool_names = [t["name"] for t in CLAUDE_TOOLS]
+        return not find_pseudo_toolcalls(text, tool_names)
     except Exception:
         return True     # cannot check → do not fabricate a failure

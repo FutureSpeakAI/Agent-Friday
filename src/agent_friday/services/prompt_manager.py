@@ -3,6 +3,22 @@ Agent Friday — Composable Prompt Manager
 Inspired by patterns in Goose (Apache-2.0). All code is original.
 
 Builds system prompts from pluggable keyed segments with priority and budget.
+Live via routes/platform.py's /api/prompts/segments + /api/prompts/preview, a
+debug/preview tool that lets a caller post arbitrary segments and see how
+PromptManager.build() would assemble/truncate them.
+
+CORRECTION (gauntlet-2026-09-03 F59): the real per-request system prompt
+(services/model_router.py's _get_friday_system_prompt(), called on every
+Claude request) does not use this module at all -- it never got wired in.
+This module's PromptManager/SEGMENT_KEYS are exercised only via the preview
+route above. A create_default_manager() convenience constructor used to sit
+here claiming to return "a PromptManager with standard Friday segments
+pre-registered" and that "segments get populated by the chat pipeline at
+request time" -- neither was true: it had zero callers anywhere, and even
+its own body never called .set() for any segment, so calling it would not
+have done what its docstring promised even once wired up. Removed rather
+than guessed at, since inventing which segments belong and in what order
+is a real design decision, not a docstring fix.
 """
 
 class PromptSegment:
@@ -76,10 +92,3 @@ SEGMENT_KEYS = {
     "tool_descriptions": 60,
     "active_tasks": 70,
 }
-
-
-def create_default_manager() -> PromptManager:
-    """Create a PromptManager with standard Friday segments pre-registered."""
-    pm = PromptManager(total_budget=12000)
-    # Segments get populated by the chat pipeline at request time
-    return pm

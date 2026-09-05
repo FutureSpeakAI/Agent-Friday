@@ -308,8 +308,29 @@ def get_provider_key(provider: str) -> str | None:
 
 
 def provider_key_status(provider: str) -> str:
-    """'connected' if a key is stored for this provider, else 'missing'."""
-    return "connected" if _provider_key_path(provider).exists() else "missing"
+    """'connected' if a key is stored AND decrypts; 'present_but_unreadable'
+    if a key file exists but cannot be decrypted (wrong/rotated machine key,
+    a vault passphrase change, disk corruption); 'missing' if no key file
+    exists at all.
+
+    CORRECTION (F68, external review commissioned by Stephen, ruled on
+    2026-09-04): this used to report 'connected' from _provider_key_path(...)
+    .exists() alone, never attempting the decrypt read_secret() itself does.
+    Stephen's own 3 provider keys were reported 'connected' for a real
+    stretch of time while actually undecryptable -- a status display that
+    lied, and the reason nobody noticed sooner. 'Present but unreadable' is
+    reachable and real, not hypothetical: a key written on one machine (or
+    before a DPAPI/keychain-backing key rotated) does not necessarily
+    decrypt on another, or after.
+    """
+    path = _provider_key_path(provider)
+    if not path.exists():
+        return "missing"
+    try:
+        read_secret(path)
+        return "connected"
+    except Exception:
+        return "present_but_unreadable"
 
 
 def delete_provider_key(provider: str) -> bool:
@@ -613,21 +634,49 @@ def bootstrap_provider_env() -> int:
     A genuine system environment variable still wins. Someone who sets
     ANTHROPIC_API_KEY in Windows has done a deliberate thing and knows what it
     means; only the value we ourselves loaded out of a .bat file gives way.
+
+    Kept as an int-returning wrapper around bootstrap_provider_env_detail()
+    (F68) so existing callers/tests keep their exact contract -- server.py's
+    boot log uses the detailed version directly instead.
+    """
+    return bootstrap_provider_env_detail()["loaded"]
+
+
+def bootstrap_provider_env_detail() -> dict:
+    """Same decryption pass as bootstrap_provider_env(), returning the full
+    picture instead of a bare success count: how many provider key files
+    exist on disk at all ('candidates'), how many of those actually
+    decrypted into the environment ('loaded'), and which provider names
+    exist but failed to decrypt ('unreadable').
+
+    CORRECTION (F68, external review commissioned by Stephen, ruled on
+    2026-09-04): bootstrap_provider_env()'s own 'loaded' count already only
+    counted real decrypt successes, but the boot log printed that ONE bare
+    number with no denominator -- if 3 of 5 stored keys failed to decrypt,
+    the log said "loaded 2 from encrypted store" with nothing indicating 3
+    more even exist, let alone that they're broken. A user watching boot
+    logs had no way to notice unless they already suspected something was
+    wrong and counted by hand.
     """
     loaded = 0
+    candidates = 0
+    unreadable: list[str] = []
     for provider in list_provider_keys():
         env_key = _env_key_for_provider(provider)
         if not env_key:
             continue
+        candidates += 1
         if os.environ.get(env_key) and not _came_from_a_launch_script(env_key):
             continue
         val = get_provider_key(provider)
         if val:
             os.environ[env_key] = val
             loaded += 1
+        else:
+            unreadable.append(provider)
     if loaded:
         audit_event("provider_key", "bootstrap_env", count=loaded)
-    return loaded
+    return {"loaded": loaded, "candidates": candidates, "unreadable": unreadable}
 
 
 def hot_reload_provider_key(provider: str, key: str) -> None:

@@ -877,10 +877,24 @@ def api_mcp_status():
     if _MCP_MANAGER is None:
         return jsonify({"status": "ok", "available": False, "servers": {}})
     try:
+        servers = _MCP_MANAGER.status()
+        # F9: a server extension security disabled reports a live handshake
+        # status of plain 'disabled' with no reason -- overlay the real cause
+        # (from gate_mcp_config's registry) so this endpoint agrees with
+        # /api/connectors instead of leaving the block illegible.
+        try:
+            from agent_friday.services.extension_security import get_blocked_reason
+            for name, info in servers.items():
+                reason = get_blocked_reason(name)
+                if reason and isinstance(info, dict):
+                    info["status"] = "blocked_by_policy"
+                    info["security_note"] = reason
+        except Exception:
+            pass
         return jsonify({
             "status": "ok",
             "available": True,
-            "servers": _MCP_MANAGER.status(),
+            "servers": servers,
             "registered_tools": sorted(_agent_svc._MCP_TOOL_MAP.keys()),
         })
     except Exception as e:

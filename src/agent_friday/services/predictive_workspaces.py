@@ -9,7 +9,9 @@ From that model we can answer "what is the user likely to want right now?" — a
 ranked list that drives two things:
   • the dock's subtle "Suggested" glow (frontend reads /api/workspace/predictions)
   • boot / hourly *pre-warming*, where we proactively touch the caches a predicted
-    workspace depends on (news cache, message cache, …) so it renders instantly.
+    workspace depends on (message cache, wiki index, trust graph) so it renders
+    instantly. Not every workspace has a warmable cache -- see the note above
+    _warm_workspace() for which ones (news, calendar) are documented no-ops.
 
 Pure stdlib + core. Sits low in the service DAG (core only) so anything above it
 can call predict_workspaces() / record_workspace_usage().
@@ -200,13 +202,33 @@ def predict_workspaces(dow=None, hour=None, top=6):
 
 # ── Pre-warming ───────────────────────────────────────────────
 # A workspace "warmer" is any zero-arg callable that touches the caches/files a
-# workspace renders from. We resolve them lazily from the global namespace (the
-# service DAG re-exports everything upward) so this module stays import-light and
-# never hard-depends on a function that may move. Missing warmers are no-ops.
-def _resolve_warmer(*names):
-    g = globals()
-    for n in names:
-        fn = g.get(n)
+# workspace renders from. Imported lazily (function-local, try/except) rather
+# than at module load so this module keeps its documented position low in the
+# service DAG -- notifications/calendar_engine/model_router/misc_engine all
+# sit above it, so a top-level import would risk a circular import. Missing
+# or renamed warmers are no-ops, not crashes.
+#
+# CORRECTION (gauntlet-2026-09-03 F58): this used to be a `globals()` lookup
+# against this module's OWN namespace, which nothing ever populated -- every
+# warm attempt silently returned False, forever, for every workspace. Fixed
+# below for messages/wiki/contacts/trust, which do have a real cache-touching
+# function. "news" and "calendar" are left as documented no-ops: neither has
+# a warmable cache. Calendar has none at all -- `_events_for_day()` (the
+# route's own render path) calls Google's API live on every read with no
+# caching layer to warm, so "warming" it would just be an extra, unused
+# Google Calendar API call every prewarm cycle. News already renders from an
+# on-disk cache directly (`_list_front_pages`/`_read_front_page`, already
+# fast); the only slow step is `_generate_front_page()`, which does real
+# (costed) generation work and runs on its own schedule -- calling it
+# opportunistically from an hourly best-effort prewarm loop risks duplicate
+# generation and unbudgeted spend for no render-speed benefit.
+def _resolve_warmer(*import_specs):
+    for module_path, fn_name in import_specs:
+        try:
+            mod = __import__(module_path, fromlist=[fn_name])
+            fn = getattr(mod, fn_name, None)
+        except Exception:
+            fn = None
         if callable(fn):
             return fn
     return None
@@ -218,28 +240,28 @@ def _warm_workspace(ws):
     ws = (ws or "").lower()
     try:
         if ws == "messages":
-            fn = _resolve_warmer("_trigger_message_cache", "_collect_messages")
+            fn = _resolve_warmer(
+                ("agent_friday.services.notifications", "_trigger_message_cache"),
+                ("agent_friday.services.calendar_engine", "_collect_messages"),
+            )
             if fn:
                 fn()
                 return True
         elif ws == "news":
-            fn = _resolve_warmer("_load_front_page", "_news_archive_today",
-                                  "_get_cached_news")
-            if fn:
-                fn()
-                return True
+            return False  # no warmable cache -- see module note above
         elif ws == "calendar":
-            fn = _resolve_warmer("_collect_calendar_events", "_get_calendar_events")
-            if fn:
-                fn()
-                return True
+            return False  # no cache exists to warm -- see module note above
         elif ws == "wiki":
-            fn = _resolve_warmer("_generate_wiki_indexes")
+            fn = _resolve_warmer(
+                ("agent_friday.services.model_router", "_generate_wiki_indexes"),
+            )
             if fn:
                 fn()
                 return True
         elif ws == "contacts" or ws == "trust":
-            fn = _resolve_warmer("_load_trust_graph")
+            fn = _resolve_warmer(
+                ("agent_friday.services.misc_engine", "_load_trust_graph"),
+            )
             if fn:
                 fn()
                 return True

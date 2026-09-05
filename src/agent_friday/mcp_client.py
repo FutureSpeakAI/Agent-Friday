@@ -64,6 +64,16 @@ _HTTP_PROTOCOL_VERSION = "2025-06-18"
 _DEFAULT_START_TIMEOUT = 30.0   # seconds to wait for initialize + tools/list
 _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
 
+# `for raw in proc.stdout:`/`for raw in proc.stderr:` has no per-line size
+# cap -- a malicious or buggy MCP server that never emits a newline (or
+# sends one enormous JSON-RPC line) gets read into a single, unboundedly
+# large Python string before anything else runs. `_stderr_tail`'s
+# deque(maxlen=40) only bounds how many COMPLETED lines are retained; it
+# does nothing for the one line currently being assembled. 16 MiB is
+# generously larger than any real JSON-RPC message this protocol sends
+# (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+_MAX_LINE_CHARS = 16 * 1024 * 1024
+
 
 class _Pending:
     """A single outstanding JSON-RPC request awaiting its response."""
@@ -87,6 +97,7 @@ class MCPServerProcess:
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         log: Callable[[str], None] | None = None,
+        trust_level: str = "sandboxed",
     ) -> None:
         self.name = name
         self.command = command
@@ -94,6 +105,10 @@ class MCPServerProcess:
         self.env = dict(env or {})
         self.cwd = cwd
         self._log = log or (lambda _m: None)
+        # Defaults to the filtered level (extension_security.get_trust_level
+        # does the same) -- a server config has to opt IN to "trusted" to
+        # ever see Friday's own inherited secrets, not opt out of leaking them.
+        self.trust_level = trust_level
 
         self.proc: subprocess.Popen | None = None
         self.tools: list[dict] = []           # raw MCP tool dicts (inputSchema form)
@@ -120,7 +135,20 @@ class MCPServerProcess:
         return resolved or self.command
 
     def _spawn(self) -> None:
-        full_env = os.environ.copy()
+        # The inherited parent environment holds Friday's OWN live decrypted
+        # secrets (credential_store.bootstrap_provider_env() writes provider
+        # API keys, the vault key, etc. into os.environ at boot -- see
+        # server.py -- well before any MCP server is spawned). This is the
+        # one enforcement point: nothing upstream of this call gates what a
+        # child process inherits. sanitize_env_for_mcp() builds the
+        # sandboxed/untrusted subprocess's environment FROM
+        # extension_security.SANDBOXED_ENV_ALLOWLIST rather than filtering a
+        # named denylist out of the full inherited environment (F67 --
+        # the denylist shape leaked 3 times in a row as new providers were
+        # added and never backfilled into it; an allowlist has no such list
+        # to keep in sync, since a secret was never going to be named PATH).
+        from agent_friday.services import extension_security as _extsec
+        full_env = _extsec.sanitize_env_for_mcp(os.environ.copy(), self.trust_level)
         # self.env holds connector credentials ENCRYPTED (see
         # services/connector_secrets) so they are ciphertext everywhere they
         # can be observed — on disk, in this object, and in the raw-config
@@ -274,7 +302,21 @@ class MCPServerProcess:
         if proc is None or proc.stdout is None:
             return
         try:
-            for raw in proc.stdout:
+            while True:
+                raw = proc.stdout.readline(_MAX_LINE_CHARS)
+                if not raw:
+                    break  # EOF
+                if not raw.endswith("\n") and len(raw) >= _MAX_LINE_CHARS:
+                    # A well-behaved server never sends this. Discard it and
+                    # keep reading until the next real newline so we resync
+                    # rather than let it (or a repeat) grow memory further.
+                    self._log(f"[mcp:{self.name}] dropped an oversized stdout "
+                              f"frame (>{_MAX_LINE_CHARS} bytes)")
+                    while True:
+                        nxt = proc.stdout.readline(_MAX_LINE_CHARS)
+                        if not nxt or nxt.endswith("\n"):
+                            break
+                    continue
                 line = raw.strip()
                 if not line:
                     continue
@@ -313,7 +355,18 @@ class MCPServerProcess:
         if proc is None or proc.stderr is None:
             return
         try:
-            for raw in proc.stderr:
+            while True:
+                raw = proc.stderr.readline(_MAX_LINE_CHARS)
+                if not raw:
+                    break  # EOF
+                if not raw.endswith("\n") and len(raw) >= _MAX_LINE_CHARS:
+                    self._stderr_tail.append(
+                        f"[dropped an oversized stderr frame (>{_MAX_LINE_CHARS} bytes)]")
+                    while True:
+                        nxt = proc.stderr.readline(_MAX_LINE_CHARS)
+                        if not nxt or nxt.endswith("\n"):
+                            break
+                    continue
                 line = raw.rstrip()
                 if line:
                     self._stderr_tail.append(line)
@@ -331,6 +384,21 @@ class MCPServerProcess:
             self._log(f"[mcp:{self.name}] process dead — restarting before call")
             if not self.start():
                 return f"[mcp:{self.name} unavailable] {self.error or 'server not running'}"
+        # extension_security's TRUST_LEVELS declares every trust level
+        # "audit": True and sandboxed/untrusted "unicode_sanitize": True --
+        # a real, named control surface (GET /api/security/mcp-audit and
+        # /trust-levels read as if it's active) that validate_tool_input/
+        # validate_tool_output/audit_tool_call existed to satisfy but were
+        # never called from either MCP transport's real call site (docs/
+        # audits/gauntlet-2026-09-03/findings.jsonl) -- the same shape as
+        # F32's env leak, on the tool-call path instead of the spawn path.
+        # Without this, a sandboxed/untrusted server's output reaches the
+        # agent's context with invisible/control Unicode intact (the exact
+        # steganographic injection vector sanitize_unicode names), and the
+        # audit log is structurally empty no matter how many calls happen.
+        from agent_friday.services import extension_security as _extsec
+        arguments = _extsec.validate_tool_input(tool_name, arguments or {}, self.trust_level)
+        _t0 = time.time()
         try:
             result = self._request(
                 "tools/call",
@@ -338,8 +406,16 @@ class MCPServerProcess:
                 timeout=timeout,
             )
         except Exception as e:  # noqa: BLE001
-            return f"[mcp:{self.name} error] {e}"
-        return _flatten_tool_result(result)
+            text = f"[mcp:{self.name} error] {e}"
+            _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                    trust_level=self.trust_level,
+                                    duration_ms=int((time.time() - _t0) * 1000))
+            return text
+        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+        _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                trust_level=self.trust_level,
+                                duration_ms=int((time.time() - _t0) * 1000))
+        return text
 
     def info(self) -> dict:
         return {
@@ -447,11 +523,13 @@ class MCPServerHTTP:
         url: str,
         headers: dict[str, str] | None = None,
         log: Callable[[str], None] | None = None,
+        trust_level: str = "sandboxed",
     ) -> None:
         self.name = name
         self.url = url
         self.headers = {str(k): str(v) for k, v in (headers or {}).items()}
         self._log = log or (lambda _m: None)
+        self.trust_level = trust_level
 
         self.tools: list[dict] = []
         self.status = "stopped"     # stopped|starting|ready|error|needs_auth|disabled
@@ -670,6 +748,13 @@ class MCPServerHTTP:
     ) -> str:
         if self.status != "ready" and not self.start():
             return f"[mcp:{self.name} unavailable] {self.error or 'server not ready'}"
+        # Same trust-level-aware sanitize/audit as the stdio transport (see
+        # MCPServerProcess.call_tool -- F32-shaped: TRUST_LEVELS declares
+        # audit/unicode_sanitize for every level, but neither transport's
+        # real call site ever consulted it).
+        from agent_friday.services import extension_security as _extsec
+        arguments = _extsec.validate_tool_input(tool_name, arguments or {}, self.trust_level)
+        _t0 = time.time()
         try:
             result = self._request(
                 "tools/call",
@@ -680,11 +765,23 @@ class MCPServerHTTP:
             # Token revoked/expired beyond refresh mid-session.
             self.status = "needs_auth"
             self.error = "authorization expired — reconnect this server"
-            return (f"[mcp:{self.name} unavailable] authorization expired — "
+            text = (f"[mcp:{self.name} unavailable] authorization expired — "
                     f"re-authorize the connector and try again")
+            _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                    trust_level=self.trust_level,
+                                    duration_ms=int((time.time() - _t0) * 1000))
+            return text
         except Exception as e:  # noqa: BLE001
-            return f"[mcp:{self.name} error] {e}"
-        return _flatten_tool_result(result)
+            text = f"[mcp:{self.name} error] {e}"
+            _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                    trust_level=self.trust_level,
+                                    duration_ms=int((time.time() - _t0) * 1000))
+            return text
+        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+        _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
+                                trust_level=self.trust_level,
+                                duration_ms=int((time.time() - _t0) * 1000))
+        return text
 
     def info(self) -> dict:
         return {
@@ -724,13 +821,16 @@ class MCPManager:
                     continue
                 if spec.get("url"):
                     # Remote server over Streamable HTTP.
+                    from agent_friday.services import extension_security as _extsec
                     sp: MCPServerProcess | MCPServerHTTP = MCPServerHTTP(
                         name=name,
                         url=str(spec["url"]),
                         headers=spec.get("headers"),
                         log=self._log,
+                        trust_level=_extsec.get_trust_level(spec),
                     )
                 else:
+                    from agent_friday.services import extension_security as _extsec
                     sp = MCPServerProcess(
                         name=name,
                         command=spec.get("command", ""),
@@ -738,6 +838,7 @@ class MCPManager:
                         env=spec.get("env", {}),
                         cwd=spec.get("cwd"),
                         log=self._log,
+                        trust_level=_extsec.get_trust_level(spec),
                     )
                 if spec.get("enabled") is False:
                     # Keep a stopped placeholder so status() still lists it.
@@ -770,6 +871,13 @@ class MCPManager:
     def restart(self, name: str, on_ready=None) -> bool:
         sp = self.servers.get(name)
         if sp is None:
+            return False
+        if sp.status == "disabled":
+            # start_all() (above) and authorize() both refuse a server
+            # extension_security.gate_mcp_config() blocked at boot; restart()
+            # did not, so the single most natural remediation an operator
+            # reaches for after seeing a blocked connector's status actually
+            # started it for real (docs/audits/gauntlet-2026-09-03/findings.jsonl).
             return False
         sp.stop()
         ok = sp.start()

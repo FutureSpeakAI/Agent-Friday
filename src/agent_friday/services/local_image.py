@@ -217,6 +217,24 @@ def interrupt_comfy(timeout: int = 10) -> bool:
         return False
 
 
+def is_reachable(timeout: int = 3) -> bool:
+    """Is the local ComfyUI server actually up and answering right now?
+
+    `is_installed()` only proves the weights are on disk; it says nothing
+    about whether the server process is running. provider_health.py needs
+    this for its own local-comfyui health check (docs/audits/
+    gauntlet-2026-09-03/findings.jsonl F2) — before this it treated
+    auth:{"type":"none"} as an unconditional "ok", the same shape as never
+    probing the provider at all.
+    """
+    try:
+        urllib.request.urlopen(
+            "http://127.0.0.1:%d/system_stats" % COMFY_PORT, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def comfy_root() -> Path:
     return runtime_dir() / "ComfyUI"
 

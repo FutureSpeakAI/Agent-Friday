@@ -25,9 +25,14 @@ A capability whose dependency is missing must be *absent*, not
   * ``missing_tools()`` is consulted by the tool registry, which DROPS the
     affected tools. A tool that cannot run is not offered to any model, so no
     model can announce it.
-  * ``report()`` logs the gap at startup and is served by
-    ``/api/health/capabilities``, so the gap is loud rather than discovered by
-    a user watching a file fail to appear on their desktop.
+  * ``report()`` logs the gap at startup (called from ``agent.py``'s tool
+    registration, ~line 4867); ``status()`` is what ``/api/health/capabilities``
+    actually serves (routes/core_routes.py). Two functions, not one -- corrected
+    here (gauntlet-2026-09-03 F63) after the claim-extraction sweep found this
+    paragraph crediting both behaviors to ``report()`` alone. Both are real and
+    both exist; only the attribution was wrong. Either way, the gap is loud
+    rather than discovered by a user watching a file fail to appear on their
+    desktop.
 
 WHAT BELONGS HERE
 -----------------

@@ -887,41 +887,50 @@ def _gate_messages(messages: list, provider: str,
         if not isinstance(msg, dict):
             gated.append(msg)
             continue
-        if "content" not in msg:
-            gated.append(msg)
-            continue
-        content = msg["content"]
-        if isinstance(content, str):
-            _g = _gate_text(content, provider, f"message[{i}].content", log_path)
-            if content and not _g:
-                # The Anthropic API rejects empty message content ("all messages
-                # must have non-empty content"), turning a withheld turn into a
-                # hard 400 for the whole call. Substitute a marker the model can
-                # act on — it still sees NONE of the withheld content.
-                _g = _MESSAGE_WITHHELD
-            gated.append({**msg, "content": _g})
-        elif isinstance(content, list):
-            new_parts = []
-            for j, part in enumerate(content):
-                if isinstance(part, dict) and part.get("type") == "text":
-                    new_parts.append({
-                        **part,
-                        "text": _gate_text(
-                            part.get("text", ""), provider,
-                            f"message[{i}].content[{j}].text", log_path,
-                        ),
-                    })
-                elif isinstance(part, dict) and part.get("type") == "tool_result":
-                    new_parts.append(_gate_tool_result(
-                        part, provider, f"message[{i}].content[{j}]", log_path))
-                elif isinstance(part, dict) and part.get("type") == "tool_use":
-                    new_parts.append(_gate_tool_use(
-                        part, provider, f"message[{i}].content[{j}]", log_path))
-                else:
-                    new_parts.append(part)
-            gated.append({**msg, "content": new_parts})
-        else:
-            gated.append(msg)
+        out = msg
+        if "content" in msg:
+            content = msg["content"]
+            if isinstance(content, str):
+                _g = _gate_text(content, provider, f"message[{i}].content", log_path)
+                if content and not _g:
+                    # The Anthropic API rejects empty message content ("all messages
+                    # must have non-empty content"), turning a withheld turn into a
+                    # hard 400 for the whole call. Substitute a marker the model can
+                    # act on — it still sees NONE of the withheld content.
+                    _g = _MESSAGE_WITHHELD
+                out = {**out, "content": _g}
+            elif isinstance(content, list):
+                new_parts = []
+                for j, part in enumerate(content):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        new_parts.append({
+                            **part,
+                            "text": _gate_text(
+                                part.get("text", ""), provider,
+                                f"message[{i}].content[{j}].text", log_path,
+                            ),
+                        })
+                    elif isinstance(part, dict) and part.get("type") == "tool_result":
+                        new_parts.append(_gate_tool_result(
+                            part, provider, f"message[{i}].content[{j}]", log_path))
+                    elif isinstance(part, dict) and part.get("type") == "tool_use":
+                        new_parts.append(_gate_tool_use(
+                            part, provider, f"message[{i}].content[{j}]", log_path))
+                    else:
+                        new_parts.append(part)
+                out = {**out, "content": new_parts}
+        # OpenAI-compatible wire shape's equivalent of a replayed tool_use
+        # block: an assistant message's tool_calls[].function.arguments.
+        # _oai_agentic_loop (services/agent.py) echoes these back into the
+        # conversation exactly the way the Anthropic loop echoes tool_use,
+        # so they need the same treatment _gate_tool_use gives that shape
+        # (docs/audits/gauntlet-2026-09-03/findings.jsonl F12 — confirmed
+        # unreachable by any current retry path, hardened anyway since it
+        # costs nothing and the same shape was a real leak once already).
+        if isinstance(msg.get("tool_calls"), list):
+            out = {**out, "tool_calls": _gate_tool_calls(
+                msg["tool_calls"], provider, f"message[{i}].tool_calls", log_path)}
+        gated.append(out)
     return gated
 
 
@@ -1208,6 +1217,54 @@ def _gate_tool_use(part: dict, provider: str, field: str,
         return part
     return {**part, "input": _gate_arg_values(
         inp, provider, f"{field}.tool_use.input", log_path)}
+
+
+def _gate_tool_calls(tool_calls: list, provider: str, field: str,
+                     log_path: Path | None = None) -> list:
+    """Gate the arguments of OpenAI-shape tool_calls replayed in history.
+
+    The OpenAI-compatible equivalent of _gate_tool_use, above, for the wire
+    shape _oai_agentic_loop (services/agent.py) uses for every OpenAI-
+    compatible provider — local Ollama AND cloud OpenAI/OpenRouter/Groq/etc.
+    `function.arguments` is a JSON-ENCODED STRING (not a dict, per the wire
+    format), carrying the same kind of real user data tool_use.input does:
+    what was written to the vault, a file path, a search query.
+
+    id/type/function.name are left alone — a provider pairs a tool call to
+    its result by id, so touching them would break replay. `arguments` must
+    come back as a valid JSON string even when gated, since a tool-call
+    replay that isn't parseable JSON breaks the next round of the loop; a
+    non-JSON arguments string (malformed input) falls back to opaque text
+    gating rather than raising, the same fallback _gate_tool_result already
+    uses for non-JSON tool output.
+    """
+    gated = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            gated.append(tc)
+            continue
+        fn = tc.get("function")
+        if not isinstance(fn, dict) or "arguments" not in fn:
+            gated.append(tc)
+            continue
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            parsed = _try_json(args)
+            if parsed is not None:
+                gated_args = json.dumps(_gate_arg_values(
+                    parsed, provider, f"{field}.function.arguments", log_path))
+            else:
+                g = _gate_text(args, provider,
+                               f"{field}.function.arguments", log_path)
+                gated_args = g if (not args or g) else _ARG_WITHHELD
+        elif isinstance(args, (dict, list)):
+            gated_args = _gate_arg_values(
+                args, provider, f"{field}.function.arguments", log_path)
+        else:
+            gated.append(tc)
+            continue
+        gated.append({**tc, "function": {**fn, "arguments": gated_args}})
+    return gated
 
 
 def _gate_tools(tools: list, provider: str,

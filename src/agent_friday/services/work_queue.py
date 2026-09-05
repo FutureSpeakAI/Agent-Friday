@@ -156,10 +156,15 @@ def enqueue(title: str, spec: str, cls: str = "background",
     """Park one piece of work. Never executes it.
 
     `touches_vault` rides along because it is the one thing that can overrule a
-    disposition: `routing/model_router._route_vault` forces a local route no
-    matter what mode is configured, so a vault-touching item marked `now_cloud`
-    would not do what the label says. Refused here rather than silently
-    rewritten — a disposition the user chose must either hold or be reported.
+    disposition: `routing/model_router._route_vault` forces a local route
+    whenever `vault_local_only` is enabled (the default), regardless of the
+    routing mode configured — so a vault-touching item marked `now_cloud`
+    would not do what the label says. (When `vault_local_only` is off,
+    `_route_vault` returns None instead of forcing anything, but this
+    function's own refusal below does not currently check that setting — it
+    refuses `now_cloud` + `touches_vault` unconditionally.) Refused here
+    rather than silently rewritten — a disposition the user chose must either
+    hold or be reported.
     """
     if cls not in CLASSES:
         raise ValueError("unknown class %r; expected one of %s"
@@ -170,9 +175,10 @@ def enqueue(title: str, spec: str, cls: str = "background",
     if touches_vault and disposition == "now_cloud":
         raise ValueError(
             "this work reads vault-tier material, which never leaves the "
-            "machine. The router would force it local anyway (model_router."
-            "_route_vault), so offering a cloud run would be a label that "
-            "does not match what happens.")
+            "machine while Vault Local-Only is on. The router would force "
+            "it local in that case (model_router._route_vault), so "
+            "offering a cloud run would be a label that does not match "
+            "what happens.")
     item = {
         "id": uuid.uuid4().hex[:12],
         "title": title,

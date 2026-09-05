@@ -107,6 +107,32 @@ DEFAULT_VIDEO_MODEL = "veo"
 
 log = _logging.getLogger("friday.creative_engine")
 
+# ── Cost metering for Veo (flat per-second, NOT token-based) ────────────────
+# docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a: this file's Gemini
+# image/video/Omni calls had ZERO cost_meter references. Veo bills a flat
+# USD-per-second rate (not tokens), so it does not fit cost_meter.PRICING's
+# per-1K-token shape — recorded via cost_meter.record(cost_usd=...) instead.
+# Rates below are Google's published per-second rate WITHOUT native audio and
+# WITHOUT the 4K surcharge (checked against public pricing aggregator pages
+# 2026-09-04, not ai.google.dev directly) -- best-effort, moderate confidence,
+# and understates cost whenever audio or 4K is actually used. Flagged.
+_VEO_PER_SECOND_USD = {
+    "veo-3.1-generate-preview":      0.20,
+    "veo-3.1-fast-generate-preview": 0.10,
+    "veo-3.1-lite-generate-preview": 0.03,
+}
+_VEO_DEFAULT_DURATION_S = 8   # Veo's own default clip length when unspecified.
+
+# Gemini Omni Flash (Interactions API, preview): the installed google-genai
+# SDK exposes no `usage`/`usage_metadata` on the Interaction response (types
+# module has no Interaction/InteractionUsage class as of this fix), so real
+# per-call token usage cannot be read. Estimated instead from this file's own
+# existing PRICING-comment math (cost_meter.py: "5,792 tok/s of 720p") over
+# the docstring's stated ~10s clip length -- an ESTIMATE, not a measurement,
+# flagged accordingly.
+_OMNI_ESTIMATED_CLIP_SECONDS = 10
+_OMNI_ESTIMATED_TOKENS_PER_SECOND = 5792
+
 
 def _configured_image_model() -> str | None:
     """The image model the user's creative seat actually names.
@@ -743,6 +769,18 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                 contents=full_prompt,
                 config=_image_config(types, aspect_ratio),
             )
+            # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl
+            # Q7a): this direct Gemini image call had ZERO cost_meter
+            # references. Never allowed to break image generation.
+            try:
+                from agent_friday.services import cost_meter as _cm
+                _um = getattr(response, "usage_metadata", None)
+                _cm.meter("gemini", api_model, {
+                    "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
+                    "output_tokens": getattr(_um, "candidates_token_count", 0) or 0,
+                }, kind="creative")
+            except Exception:
+                pass
             saved = _extract_and_save_images(response, prompt, single=True)
             files.extend(saved)
             _orb_update(orb, progress=0.3 + 0.6 * ((i + 1) / n),
@@ -991,6 +1029,21 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                     "message": "Veo finished but returned no video (it may have been "
                                "filtered). Try a different prompt."}
 
+        # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
+        # Veo had ZERO cost_meter references. Flat per-second rate, not
+        # token-based — see _VEO_PER_SECOND_USD's comment for the confidence
+        # caveat (no audio/4K surcharge accounted for). Never allowed to
+        # break video generation.
+        try:
+            from agent_friday.services import cost_meter as _cm
+            _secs = duration_seconds or _VEO_DEFAULT_DURATION_S
+            _rate = _VEO_PER_SECOND_USD.get(api_model)
+            if _rate is not None:
+                _cm.record("gemini", api_model, cost_usd=round(_rate * _secs, 6),
+                          kind="creative")
+        except Exception:
+            pass
+
         created = datetime.now().isoformat()
         for f in files:
             _write_metadata(f["filename"], {
@@ -1178,6 +1231,22 @@ def _generate_video_omni(prompt, *, api_model, requested_model, aspect_ratio,
                     "message": "Gemini Omni finished but returned no video "
                                "(it may have been filtered). Try a "
                                "different prompt."}
+
+        # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
+        # Omni had ZERO cost_meter references despite PRICING already having
+        # an entry for this exact model id. The Interactions API response
+        # exposes no usage/usage_metadata in the installed SDK, so this is an
+        # ESTIMATE from the clip-length assumption documented at
+        # _OMNI_ESTIMATED_CLIP_SECONDS, not a measurement — flagged. Never
+        # allowed to break video generation.
+        try:
+            from agent_friday.services import cost_meter as _cm
+            _est_tokens = _OMNI_ESTIMATED_CLIP_SECONDS * _OMNI_ESTIMATED_TOKENS_PER_SECOND
+            _cm.meter("gemini", api_model,
+                      {"input_tokens": 0, "output_tokens": _est_tokens},
+                      kind="creative")
+        except Exception:
+            pass
 
         _orb_update(orb, progress=0.92, label="Saving video…")
         fname = f"friday-video-{_timestamp()}-{uuid.uuid4().hex[:4]}.mp4"

@@ -162,6 +162,58 @@ def mark_boot_succeeded() -> None:
     _write(ATTEMPT_FILE, a)
 
 
+def wait_for_health(url: str, attempts: int = 6, initial_delay: float = 2.0,
+                    timeout: float = 5.0) -> bool:
+    """Poll `url` (a local self-health-check endpoint) with backoff; True the
+    moment a real 2xx response comes back, False if every attempt fails.
+
+    This is the "and then served a request" half of this module's own
+    headline claim (see the module docstring) -- extracted from server.py's
+    boot-confirmation thread so the retry/backoff behavior itself has a real
+    test, rather than only living inside a thread nested in the startup
+    function (gauntlet-2026-09-03 F55: before this existed, the caller
+    skipped this check entirely and promoted every boot to known-good after
+    a fixed sleep, regardless of whether anything was actually being served).
+    """
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    for attempt in range(max(1, attempts)):
+        try:
+            with _ureq.urlopen(url, timeout=timeout) as resp:
+                if 200 <= resp.status < 300:
+                    return True
+        except (_uerr.URLError, OSError, TimeoutError):
+            pass
+        if attempt < attempts - 1:
+            time.sleep(initial_delay * (attempt + 1))
+    return False
+
+
+def confirm_boot_health(health_url: str, attempts: int = 6,
+                        initial_delay: float = 2.0, timeout: float = 5.0) -> bool:
+    """The actual gate: only promote this boot to known-good if it answered
+    its own health check. Returns whether it did.
+
+    CORRECTION (F55, weak-probe audit, 2026-09-05): server.py's
+    _confirm_boot() used to inline this decision directly inside its own
+    closure -- wait_for_health() got a real test, but the GATING itself
+    (mark_boot_succeeded()/snapshot_known_good() only running when
+    wait_for_health() returns True) did not, because there was no
+    standalone thing to call. A probe against wait_for_health() alone
+    cannot fail if that gating is later removed from server.py while
+    wait_for_health() itself stays intact and correct -- exactly the shape
+    of regression this finding exists to prevent. Extracted so the gate
+    has its own callable, testable identity: server.py's _confirm_boot()
+    now calls this instead of inlining the decision.
+    """
+    if not wait_for_health(health_url, attempts=attempts,
+                           initial_delay=initial_delay, timeout=timeout):
+        return False
+    mark_boot_succeeded()
+    snapshot_known_good()
+    return True
+
+
 def failing_to_boot() -> bool:
     return int(_read_attempt().get("consecutive_failures", 0)) >= MAX_FAILED_BOOTS
 

@@ -71,10 +71,21 @@ def delete_schedule(sid):
 @scheduler_bp.route('/api/schedules/<sid>/run', methods=['POST'])
 @login_required
 def run_now(sid):
-    """Dispatch a schedule immediately so the user can test it."""
-    run_id = _sched.run_now(sid)
-    if not run_id:
+    """Dispatch a schedule immediately so the user can test it.
+
+    dispatch() now refuses a manual re-trigger while the same schedule is
+    already running (Q24 — it used to skip that guard specifically for
+    manual dispatches, letting "Run Now" double-fire a schedule), so a
+    missing run_id here has two distinct causes worth telling apart rather
+    than collapsing both into the same generic 404.
+    """
+    rec = _sched.get_schedule(sid)
+    if not rec:
         return jsonify({"status": "error", "message": "not found"}), 404
+    run_id = _sched.dispatch(rec, manual=True)
+    if not run_id:
+        return jsonify({"status": "error",
+                        "message": "already running"}), 409
     return jsonify({"status": "ok", "run_id": run_id})
 
 

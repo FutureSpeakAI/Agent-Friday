@@ -35,8 +35,19 @@ For the real answer at runtime:
 All layers degrade gracefully — if a dep is missing, that layer is skipped and
 the remaining layers still run.
 
-Default on uncertainty: PRIVATE (fail-closed). Callers may override via `default`
-but the egress gate always uses PRIVATE as the default.
+Default on uncertainty: the egress gate actually uses PUBLIC as the base
+default (egress_gate.py's own _classify_cloud() calls classify(text,
+default=Tier.PUBLIC, egress=True)) -- content with no signal from any
+layer is allowed through. The real fail-closed guarantee for uncertain
+content comes from Layer 3: text semantically close to a sensitive
+exemplar (similarity >= 0.50) is conservatively classified as PRIVATE
+before any keyword/regex match is required, catching contextual PII a
+plain default-to-PRIVATE would still need Layer 3 to see anyway.
+`default` is a plain parameter any caller may override to whatever they
+need (this module's own callers outside egress do pass Tier.PRIVATE for
+their own reasons); it does not by itself make PRIVATE this classifier's
+built-in default. See docs/audits/gauntlet-2026-09-03/findings.jsonl for
+where this line previously said the opposite.
 
 Import example:
     from agent_friday.services.sensitivity_classifier import classify, Tier, TIER_3_KEYWORDS

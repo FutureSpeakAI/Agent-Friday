@@ -178,7 +178,14 @@ def env_has(provider: str) -> bool:
         return True
     try:
         from agent_friday.services import credential_store as cs
-        return cs.provider_key_status(provider) not in ("missing", None)
+        # F68: provider_key_status() now returns 3 states -- "connected",
+        # "present_but_unreadable", "missing" -- where it used to be a
+        # plain connected/missing. `not in ("missing", None)` would have
+        # treated "present_but_unreadable" as available, which is exactly
+        # backwards for a function whose own docstring asks whether a key
+        # is "already available to this process": one that won't decrypt
+        # is not available for anything.
+        return cs.provider_key_status(provider) == "connected"
     except Exception:
         return False
 
