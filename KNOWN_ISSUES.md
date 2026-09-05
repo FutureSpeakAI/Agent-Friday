@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-08-29, for v5.6.6.**
+**As of 2026-09-05, for v5.12.0.**
 
 This file lists what is broken, what is unverified, and what we do not know. It is
 maintained because a defect you can read about is cheaper than one you discover, and
@@ -792,8 +792,12 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
     (3D scene picker), and `startup_workspace` — each is written and read back
     only inside its own settings-panel component (`index.html` ~31432-31475);
     nothing elsewhere in either HTML file or in `src/` references any of them.
-- **The model picker shows a hardcoded list of three models** while hundreds may be
-  available.
+- ~~**The model picker shows a hardcoded list of three models** while hundreds may be
+  available.~~ **Not current.** The picker is driven entirely by the backend catalog
+  (`GET /api/models`, `index.html:23778`'s own comment), matching
+  `docs/CONFIGURATION.md`'s documented behavior. Found stale reconciling this file
+  against the 2026-09-03 gauntlet audit's claim corpus; no record of when the
+  underlying claim stopped being true.
 - **Settings keys absent from `DEFAULT_SETTINGS` are silently discarded on save**, and
   the API returns success. Hit three times so far.
 - **The sampling progress bar never advances** during image generation.
@@ -811,8 +815,13 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   onboarding wizard, including vault passphrase collection), `SettingsTabCosts` (the
   cost/budget panel — the same one that was previously deleted for two months and
   cost real money before being restored), `ConversationBar` and `QuickSwitch` (core,
-  constantly-visible chat chrome). A build that ever regenerated `index.html` from
-  `app.html` would silently lose all of these with no crash.
+  constantly-visible chat chrome). The divergence itself is still real and still
+  growing — **but as of 2026-08-24, `src/agent_friday/ui/build_ui.py` refuses to
+  write output that drops any top-level component the existing `index.html`
+  defines** (a REGRESSION GUARD predating this entry), so a build regenerating
+  `index.html` from `app.html` today fails loudly and requires `--force` rather
+  than silently losing these components. The risk that guard removes is real
+  evidence the drift matters; it is not evidence the drift is safe to leave.
 - **Chain seat overrides are advisory**, not enforced against the capability router.
 
 ### Seat contention
@@ -951,46 +960,33 @@ not yet done.
 
 The egress gate itself is strong, and narrower than the README implies. It covers
 Anthropic, OpenAI-compatible providers including OpenRouter, and Gemini. It does **not**
-cover: web search queries (sent to Brave or DuckDuckGo), Firecrawl, ElevenLabs TTS text,
-images and audio sent to Gemini, Google Calendar event content, or a content hash sent to
+cover: web search queries (sent to Brave or DuckDuckGo), ElevenLabs TTS text, images and
+audio sent to Gemini, Google Calendar event content, or a content hash sent to
 `freetsa.org`. Those are real third parties receiving user text, and they are outside the
-guarantee as written.
+guarantee as written. **Firecrawl is a genuinely open question, not a confirmed gap**: the
+2026-09-03 gauntlet audit's round-2 re-verification found `web_fetch.py` routes Firecrawl
+fetches through `register_public_text`, but that marks *inbound* fetched text as
+gate-exempt for later classification — it is not obviously the same claim as "the outbound
+Firecrawl call itself is gated." Nobody has independently resolved which of those two
+things is actually true; treat Firecrawl's status here as unverified, not as either
+covered or uncovered.
 
-### The screen capture ignores "Local only", and that one IS undisclosed
+### ~~The screen capture ignores "Local only", and that one IS undisclosed~~ Fixed 2026-08-23
 
-The line above ("images and audio sent to Gemini") covers the *fact* of the send. It does
-not cover **when** it happens, and that is the part nobody has been told.
+`routes/chat.py`'s vision path used to fire on any attached image with no mode check, no
+vault gate, and no egress-gate call — so with routing set to **Local only**, attaching an
+image sent a full screenshot of the user's desktop to Google, contradicting that setting's
+own promise. The local alternative (`residency_arbiter._spawn` passing `--mmproj` so
+`gemma4:12b` describes an image on-device) existed by 2026-08-23 but `routes/chat.py`
+didn't prefer it yet.
 
-`routes/chat.py:296` fires the vision path on **any** attached image:
-
-```python
-screenshot_b64 = data.get('image') or data.get('screenshot') or None
-if screenshot_b64 and (include_vision or data.get('image') is not None):
-    ...  gclient.models.generate_content(model='gemini-2.5-flash', ...)
-```
-
-It runs at line 296. `model_routing` is not read until line 421. There is no mode check,
-no vault gate, and no egress-gate call on this path — the block's own comment says image
-bytes cannot be text-classified, which is true, and then concludes "there is nothing to
-gate here", which does not follow. The *decision to send at all* is gateable even when
-the bytes are not classifiable.
-
-So: with routing set to **Local only** — whose help text in `routes/intelligence.py` reads
-*"Never leaves the machine. If a local model cannot answer, I say so rather than using the
-cloud"* — attaching an image sends a **screenshot of the user's desktop** to Google.
-A screenshot is not a bounded payload. It contains whatever was on screen: the vault, a
-password manager, a terminal, another person's message.
-
-This is a user-facing control that states a guarantee the code does not keep. It is a
-worse failure than an undocumented egress, because the user has actively chosen the
-setting that promises it will not happen.
-
-**The local alternative now exists.** As of 2026-08-23 `residency_arbiter._spawn` passes
-`--mmproj` when the extracted projector is present, so `gemma4:12b` describes an image
-on-device — verified end to end, not by inspecting the command line: two images, two
-colours, correct answers both times ("Red background, circle shape." / "Blue background,
-circle shape."), `finish_reason: stop`. What is missing is the wiring in `routes/chat.py`
-to prefer that seat over Gemini when the mode says local.
+**Now fixed and verified in the current tree** (commit `4607bd9`; re-verified reading
+`routes/chat.py` directly on 2026-09-05): `_prefer_local` gates on `model_routing.mode` —
+`local_only`/`local_preferred` try `local_vision.describe()` first, and `local_only`
+specifically withholds the image (`screenshot_b64 = None`) rather than falling through to
+Gemini if local vision fails. This entry stayed in the "still broken" section for two
+weeks after the fix landed because nobody moved it — a live example of exactly the doc-rot
+this file exists to prevent, caught reconciling against the 2026-09-03 gauntlet audit.
 
 ---
 

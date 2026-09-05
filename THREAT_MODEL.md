@@ -305,6 +305,6 @@ confined to `~/.friday/vault/` with 600 permissions as a fallback.
 
 ---
 
-*Last updated: 2026-07-04. This document should be updated whenever the security
+*Last updated: 2026-09-05. This document should be updated whenever the security
 architecture changes. The egress gate guarantee is a functional invariant — any
 PR that weakens it requires explicit security review.*
