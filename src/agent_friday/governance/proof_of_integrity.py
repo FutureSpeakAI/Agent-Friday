@@ -281,7 +281,24 @@ class IntegrityEngine:
         else:
             checks["ed25519"] = None  # can't verify
 
-        valid = all(v is True for v in checks.values() if v is not None)
+        # `claws_hmac` and `ed25519` are the only two checks that can prove
+        # this manifest was actually produced by something holding a secret
+        # (a governance key or the attestation keypair) — `claws_hash` and
+        # `body_hash` are just re-derivable digests of public content, which
+        # anyone can recompute without ever having signed anything. The old
+        # rule, `all(v is True for v in checks.values() if v is not None)`,
+        # dropped both authentication checks from consideration whenever
+        # neither could be evaluated (no governance key configured, no
+        # Ed25519 keypair available) and reported `valid: True` on the
+        # strength of the two public hashes alone — an unsigned, hand-built
+        # manifest with correct hashes passed as genuine. `valid` now
+        # requires the hashes to match AND at least one authentication check
+        # to have both run and passed, with neither failing outright.
+        hashes_ok = checks["claws_hash"] is True and checks["body_hash"] is True
+        auth_checks = (checks["claws_hmac"], checks["ed25519"])
+        no_auth_failed = all(v is not False for v in auth_checks)
+        an_auth_check_passed = any(v is True for v in auth_checks)
+        valid = hashes_ok and no_auth_failed and an_auth_check_passed
         return {"valid": valid, "checks": checks}
 
     # ── Helpers ────────────────────────────────────────────────────
