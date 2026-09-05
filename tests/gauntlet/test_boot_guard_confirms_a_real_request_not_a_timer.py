@@ -10,6 +10,18 @@ anyway.
 boot_guard.wait_for_health() is the extracted, testable fix: a real
 HTTP self-check with retry/backoff, used by server.py's boot-confirmation
 thread instead of a bare sleep-then-promote.
+
+CORRECTION (weak-probe audit, 2026-09-05): TestBootGuardWaitForHealth
+below proves wait_for_health() itself works, but nothing here proved the
+WIRING -- that server.py's _confirm_boot() thread actually calls it and
+only promotes to known-good when it returns True. Revert JUST that
+wiring (put mark_boot_succeeded()/snapshot_known_good() back to running
+unconditionally, exactly the original F55 bug) and every test below
+would have kept passing, because none of them touch the gate itself.
+boot_guard.confirm_boot_health() is the fix: the decision ("only mark
+known-good if the health check passed") is now its own callable,
+testable function, and server.py calls IT instead of inlining the
+if/else. TestConfirmBootHealthGating proves the gate directly.
 """
 from __future__ import annotations
 
@@ -105,3 +117,62 @@ class TestBootGuardWaitForHealth:
         finally:
             thread.join(timeout=2)
             httpd.server_close()
+
+
+class TestConfirmBootHealthGating:
+    """The actual proof this finding needed: not that wait_for_health()
+    works in isolation, but that a failing health check genuinely
+    prevents mark_boot_succeeded()/snapshot_known_good() from running,
+    and a passing one genuinely triggers both. server.py's _confirm_boot()
+    thread calls confirm_boot_health() directly -- reverting that wiring
+    back to the original F55 bug (promote unconditionally) would fail
+    these tests, unlike TestBootGuardWaitForHealth above."""
+
+    def test_a_failed_health_check_does_not_mark_boot_succeeded(self, monkeypatch):
+        calls = {"succeeded": False, "snapshotted": False}
+        monkeypatch.setattr(boot_guard, "wait_for_health", lambda *a, **k: False)
+        monkeypatch.setattr(boot_guard, "mark_boot_succeeded",
+                            lambda: calls.__setitem__("succeeded", True))
+        monkeypatch.setattr(boot_guard, "snapshot_known_good",
+                            lambda *a, **k: calls.__setitem__("snapshotted", True))
+
+        result = boot_guard.confirm_boot_health("http://127.0.0.1:1/health")
+
+        assert result is False
+        assert calls["succeeded"] is False, (
+            "confirm_boot_health() called mark_boot_succeeded() even "
+            "though the health check failed -- this is F55's exact "
+            "original bug, now reachable again through the gate function "
+            "itself rather than through server.py's inlined wiring"
+        )
+        assert calls["snapshotted"] is False
+
+    def test_a_passed_health_check_marks_boot_succeeded_and_snapshots(self, monkeypatch):
+        calls = {"succeeded": False, "snapshotted": False}
+        monkeypatch.setattr(boot_guard, "wait_for_health", lambda *a, **k: True)
+        monkeypatch.setattr(boot_guard, "mark_boot_succeeded",
+                            lambda: calls.__setitem__("succeeded", True))
+        monkeypatch.setattr(boot_guard, "snapshot_known_good",
+                            lambda *a, **k: calls.__setitem__("snapshotted", True))
+
+        result = boot_guard.confirm_boot_health("http://127.0.0.1:1/health")
+
+        assert result is True
+        assert calls["succeeded"] is True
+        assert calls["snapshotted"] is True
+
+    def test_servers_confirm_boot_thread_calls_the_gate_not_wait_for_health_directly(self):
+        """Structural check on the wiring itself: server.py must call
+        confirm_boot_health (the gate), not wait_for_health (the raw
+        poll) -- calling the raw poll directly would silently reopen this
+        finding by letting a future edit skip the gate without anyone
+        needing to touch this test file at all."""
+        import pathlib
+        server_src = (pathlib.Path(__file__).resolve().parent.parent.parent
+                     / "src" / "agent_friday" / "server.py").read_text(encoding="utf-8")
+        assert "_bg.confirm_boot_health(" in server_src, (
+            "server.py no longer calls boot_guard.confirm_boot_health() -- "
+            "if it calls wait_for_health() directly instead, the promotion "
+            "decision has moved back out of the tested gate and into "
+            "un-tested inline wiring, silently reopening F55"
+        )

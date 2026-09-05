@@ -896,13 +896,22 @@ if __name__ == '__main__':
             # anyway, contradicting this module's own stated bar: "a state
             # that has actually completed a startup and then served a
             # request." Now makes a real, local, self-directed request to
-            # its own /api/health (boot_guard.wait_for_health, with retry/
-            # backoff) and only proceeds on a genuine 2xx -- loopback is
-            # always auth-trusted (core.check_auth), so this needs no
-            # credentials.
+            # its own /api/health (boot_guard.confirm_boot_health, with
+            # retry/backoff) and only proceeds on a genuine 2xx -- loopback
+            # is always auth-trusted (core.check_auth), so this needs no
+            # credentials. confirm_boot_health() (not just wait_for_health())
+            # so the GATE itself -- mark_boot_succeeded()/snapshot_known_good()
+            # only running on a real 2xx -- is what this thread calls, not an
+            # inlined if/else a probe against wait_for_health() alone cannot
+            # see (weak-probe audit, 2026-09-05).
             import time as _t
             _t.sleep(20)
-            _served = _bg.wait_for_health(f"http://127.0.0.1:{_port}/api/health")
+            try:
+                _served = _bg.confirm_boot_health(
+                    f"http://127.0.0.1:{_port}/api/health")
+            except Exception as _e:
+                print(f"  Boot guard: could not record a good boot ({_e})")
+                return
             if not _served:
                 print("  Boot guard: 20s+ elapsed and this process never "
                       "answered its own /api/health -- NOT marking this "
@@ -910,13 +919,8 @@ if __name__ == '__main__':
                       "reflect this if the process is also not serving "
                       "real traffic.")
                 return
-            try:
-                _bg.mark_boot_succeeded()
-                _bg.snapshot_known_good()
-                print("  Boot guard: this state has now booted, answered its "
-                      "own health check, and is the known-good fallback")
-            except Exception as _e:
-                print(f"  Boot guard: could not record a good boot ({_e})")
+            print("  Boot guard: this state has now booted, answered its "
+                  "own health check, and is the known-good fallback")
         import threading as _th
         _th.Thread(target=_confirm_boot, daemon=True).start()
     except Exception as _bg_err:

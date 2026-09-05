@@ -76,6 +76,17 @@ stronger than it is:
   when they first landed, and one of them (F11) turned up a real bug in
   its own probe in the process. Worth knowing before trusting the "22
   fixes, full proof" framing at face value.
+- **Extended 2026-09-05: F3, F6, F10, F13, F18, and Q16 had the same gap**
+  (a clear prose fix_note, but no inline red-on-revert wording), caught by
+  a second independent cold-verification pass rather than this audit's own
+  review of itself. All six now carry real, executed revert evidence in
+  their own findings.jsonl entries — F6/F10/F18/Q16 fixed and proven in
+  Round 18, F3/F13 backfilled in Round 19 (F13's revert genuinely
+  overwrote the real `index.html` for a moment, confirming the danger it
+  was about was never hypothetical — restored immediately, verified
+  byte-identical to a pre-test backup). The same pass also found this
+  audit's OWN verification command was never the one the project
+  actually documents — see Round 19's F64 reopening for the full account.
 
 ## Cold re-verification (2026-09-04) — corrections applied
 
@@ -2673,6 +2684,258 @@ All six temporarily-reverted files (`core/__init__.py`, `index.html`,
 status`/`git diff --stat` before moving on, and again as a final check
 after all four were done. Full `tests/gauntlet/` suite reran clean
 afterward — no residual state from any of the temporary reverts.
+
+### Round 19 — the second cold-verification response: F64 reopened, three weak probes closed (2026-09-05)
+
+**The finding that outranked everything else: this audit's own green claim
+was measured with a command nobody runs.** A second independent
+verification session, working from a fresh clone at pin `fa11abb`, ran
+the ACTUAL documented invocation — bare `pytest`, which `pytest.ini`'s
+`testpaths = tests` and `tests/README.md` both specify — for what was,
+after eighteen rounds of this audit's own verification work, apparently
+the first time. Result: 3 failures, not 0. Every "suite green" claim in
+this ledger up to this point had been measured with `pytest tests/unit/
+tests/api/` or `tests/gauntlet/` run separately — faster, and the shape
+this audit defaulted to from the start — but never the one command the
+project's own docs and config actually describe, which also folds in
+`tests/gauntlet/`. Confirmed directly, not taken on faith: reran bare
+`pytest` myself at current HEAD before touching anything, reproduced the
+same 3 failures. This "invalidates a claim rather than adding a finding,"
+in the second pass's own words, and was treated as the top priority
+ahead of every other item in the same report.
+
+**Two of the three, root-caused and fixed for real; the third, honestly
+still open.** All three are order-dependent (each passes alone) — the
+same defect *class* F64 already found and partially fixed once, meaning
+F64's original fix was necessary but had not been sufficient.
+
+- **This audit's own probe was one of the polluters.**
+  `tests/gauntlet/test_daily_budget_gate_reflects_creative_spend.py`
+  called `cost_meter.record()` against the real, shared
+  `cost_meter.DB_PATH` with no cleanup — every run permanently added
+  $0.25 to "today"'s recorded spend for the rest of that pytest process.
+  An isolation primitive already existed for exactly this
+  (`cost_meter.reset_for_tests()` plus a monkeypatched, disposable
+  `DB_PATH`, already used correctly by F66's own test file) — it simply
+  hadn't been applied here. Applied it: `setup_method`/`teardown_method`
+  reset, `DB_PATH` monkeypatched to a `tmp_path` file before recording
+  anything.
+- **A second, previously-unknown instance of F64's exact original bug
+  shape.** `tests/api/test_seat_change_and_badges.py`'s direct-settings-
+  edit test mutates the real, shared `settings.json`'s
+  `model_routing.mode` AND `model_routing.local_model`, then restores
+  only `mode` afterward — `local_model` stayed `"gemma4:latest"` (not a
+  real, tool-capable model id) for the rest of the session, breaking
+  `tests/unit/test_model_plan.py::test_the_indexer_falls_back_to_a_tool_
+  capable_model` whenever it ran later. Reproduced directly by narrowing
+  from the full suite down to `pytest tests/api/ tests/unit/`, then
+  grepping `tests/api/` for the exact leaked value. Fixed by capturing
+  and restoring BOTH mutated keys, not just the one this test's own
+  assertions needed — the identical shape of partial-restore bug F64
+  fixed once already, in a different file.
+- **`test_nemo_voice.py::test_nemo_models_ready_false_when_uncached` is
+  still red, honestly left open rather than guessed at.** Confirmed it
+  needs the FULL documented invocation to reproduce — neither `tests/
+  unit/` alone, nor `tests/api/ + tests/gauntlet/` plus this one test
+  file in isolation, trigger it. That rules out a simple two-file leak
+  like the other two and points at a genuine multi-file interaction
+  (some other `tests/unit/` file, combined with something `tests/api/`
+  or `tests/gauntlet/` sets up) that a few hours of directory-level
+  bisection did not isolate. Not fabricated a fix for; recorded honestly
+  in F64's own entry as the one still-open item.
+
+**Three weak probes, all closed by finding the actual gap rather than
+arguing with the characterization.**
+
+- **F55**: the existing proof tested `boot_guard.wait_for_health()` in
+  isolation but never asserted that `server.py`'s `_confirm_boot()`
+  actually gates promotion on it — reverting just the wiring (restoring
+  the original bug) would have left every existing test green. Extracted
+  the decision itself into a new, independently-callable
+  `boot_guard.confirm_boot_health()`; `_confirm_boot()` now calls it
+  instead of inlining the if/else. 3 new tests prove the gate directly;
+  red-on-revert confirmed the old tests genuinely could not have caught
+  this (3 of 7 failed, the 4 original tests stayed green throughout).
+- **F21**: the wiring check was a literal source-text match, vulnerable
+  to a rename or reformat leaving the real protection (or its absence)
+  completely unaffected. `ws_voice_local`/`ws_live` turned out to be
+  `None` at the module level after Flask-Sock's route decorator runs (it
+  discards its own return value) — confirmed directly before relying on
+  anything further. `functools.wraps` inside flask_sock's own decorator
+  leaves `__wrapped__` pointing at the real handler, retrievable via
+  Flask's `view_functions` registry — used that to actually invoke the
+  real functions with a minimal fake websocket and prove `_ws_auth_ok`
+  is genuinely called and genuinely halts execution on denial. One
+  reproduction attempt at a red-on-revert mutation let real pipeline code
+  run with an inadequate fake `ws` and caused a genuine test hang —
+  caught immediately, the file restored from git before the process was
+  even stopped, and the retry used a safer mutation (remove just the
+  error-send call, keep the early return) that cleanly demonstrated the
+  exact gap the old tests missed.
+- **Q6 part (c)'s `ws_live` metering probe**: same source-text-pin shape,
+  same fix pattern — extracted `_meter_gemini_live_chunk(chunk,
+  model_name)` out of the receive loop into its own testable function,
+  independently callable with a lightweight fake chunk object, no Gemini
+  session or websocket needed. 4 real behavioral tests plus one much
+  simpler structural check replace the old inline-block text pins.
+  Red-on-revert: 5 of 6 failed cleanly, restored, 6/6 green.
+
+**F3 and F13, backfilled with real red-on-revert** (they were already
+well-explained in prose, per the second pass's own distinction from
+F6/F10/F18/Q16, which had neither): F3's `core.prune_context_logs()` fix
+reverted via `git checkout <pre-fix commit>^ -- <files>`, confirmed all 3
+tests fail, restored. F13's proof — that `build_ui.py`'s regression guard
+(landed 9 days before this audit) actually protects `index.html` —
+required reverting the guard itself, not this audit's own commit;
+backed up the real `index.html` first, since the test genuinely writes
+to it when the guard is absent (that is exactly the danger F13 was
+about). It did: `git status` showed a real modification after running the
+test against the reverted `build_ui.py`. Restored both files immediately,
+verified byte-identical to the pre-test backup before doing anything
+else, then confirmed 2/2 green again.
+
+**The cost-metering estimate disclosure: verified, not built.** Checked
+whether the UI distinguishes the five estimate-based dollar figures
+(Firecrawl, Brave, Veo, Lyria, Gemini TTS — each already disclosed in its
+own backend comment as a best-effort rate checked against a public
+aggregator, not the vendor's own pricing page) from the exactly-metered
+ones (Anthropic/OpenAI/Gemini text tokens). It does not — the cost panel
+renders every dollar figure with the same 2-4-decimal, never-softened
+treatment, by explicit, deliberate design ("a softened number argues with
+its reader," from the panel's own restoration comment). That design
+principle is correct for the figures `cost_meter` tracks with real
+confidence; it currently extends, with no distinction, to five that carry
+real but lower confidence. Per this item's own framing ("state rather
+than fix") and the standing content-policy-is-Stephen's-to-direct
+precedent, this is reported rather than acted on — flagged, not fixed.
+
+**A fourth, previously-unknown order-dependence failure, found only by
+finally running the real command — and of a genuinely more serious
+shape than the other three.** Re-running the full bare `pytest` to
+confirm the daily-budget and seat-change fixes surfaced 4 new failures
+in `tests/unit/test_google_oauth_gate.py`, filed as **F76**: four of its
+tests call `_tool_open_url()` with `"http://localhost:3000/..."` —
+this application's own default port — and mock `approvals.gate_action`
+but never `_validate_url`, which makes a REAL `requests.head()` call by
+default. A fifth test does the same against a real `"https://
+reddit.com"`. These are not in-process shared-state pollution like the
+other three findings this round — they are live network requests from
+an automated test suite to whatever real process happens to be
+listening on this machine's own default port, or to a real third-party
+site. They had only ever passed because nothing was answering on port
+3000 often enough that nobody noticed; the moment something did (and
+returned a real 404 to `/api/google/auth`), the tests correctly, if
+confusingly, failed. Fixed by mocking `_validate_url` in all 5 affected
+tests. Checked the practical harm honestly rather than assuming the
+worst: `_url_head_ok()` only performs a read-only HEAD (or a 1-byte
+ranged GET on a 405), and `_open_url_in_browser` — which would have
+actually opened a real browser tab — was never reached, since the
+missing mock caused an earlier return. Low-harm in this instance, but
+that was luck, not design; a test suite must never depend on, or reach
+out to, a real external process's live state.
+
+**Confirmed already done, not re-done**: the F67/F68/temp-leak commit
+(`8daa31e`) had already landed by the time this report's "commit it"
+instruction arrived — the second pass's own report was generated before
+that commit, and the timing crossed in transit the same way an earlier
+Stephen check-in once crossed with Round 14's own commit. Verified
+directly (`git status`/`git log`) rather than assumed.
+
+### Round 20 — F75 ruled on directly; F56/F69/F70 checked against the same shape (2026-09-05)
+
+**F75: the minimum honest change, not the deferred design work.** Stephen's
+ruling was precise about the boundary: don't build real completion
+verification tonight (a genuine per-skill/per-task-type design question),
+but don't leave `_success_score()` returning a confirmed SUCCESS_SCORE
+for a merely-plausible reply either — "the absence of a bad signal is
+not the presence of a good one." Implemented exactly that: three named
+constants (`FAILURE_SCORE = 0.0`, `UNVERIFIED_SCORE = 0.5`,
+`SUCCESS_SCORE = 1.0`) replace the old binary 0.0/1.0. A confirmed
+failure (error, too-short reply, a deny-prefix match) is unchanged —
+that's real negative evidence. Everything else, which used to return
+`SUCCESS_SCORE`, now returns `UNVERIFIED_SCORE` — `SUCCESS_SCORE` stays
+fully wired through every consumer (`composite_score`'s `accuracy` input
+takes it as a plain float; `trajectory_stats()` now reports success/
+unverified/failure as three explicit counts instead of silently folding
+`UNVERIFIED_SCORE` into a truthy "success" sum) but nothing in this file
+can produce it today. The follow-up work — what real completion
+evidence should require per task shape, and whether a confirmable false
+claim should score `FAILURE_SCORE` rather than merely `UNVERIFIED_SCORE`
+— is written directly into `skill_capture.py` as a spec-shaped comment,
+not decided here. `tests/gauntlet/test_skill_capture_success_signal_
+reaches_score.py`'s old `TestSuccessScoreStillMeasuresReplyShapeOnly`
+(which pinned the bug as accepted behavior) is replaced by
+`TestSuccessScoreNowReturnsUnverifiedNotSuccess`, keeping the one test
+that matters most unchanged in spirit: a genuine success and a
+fabricated claim of the same action are still indistinguishable from
+each other — now both honestly `UNVERIFIED_SCORE`, not a false
+`SUCCESS_SCORE`. Red-on-revert: 4 of 5 tests failed cleanly against the
+pre-fix file (`AttributeError` for the new named constants).
+
+**F56, F69, F70 checked against the same shape, as asked — none of the
+three fit it, each for a different, specific reason found by reading the
+actual code rather than pattern-matching the finding's own prose.**
+
+- **F56**: the module docstring already carries an honest correction
+  (from an earlier round), and `is_tool_allowed()`/`check_tool_permission()`
+  are genuinely dead — re-confirmed with a fresh grep that nothing outside
+  `scoped_agents.py` calls either. F75's defect was a live, CONSUMED
+  signal (fed into a real score on every chat turn) being dishonestly
+  optimistic; a function nobody calls has no live decision to corrupt.
+  The open question (wire this module's own check into the real dispatch
+  path as defense in depth) is the genuinely large, undecided design
+  question — there's no smaller "stop lying" step available separately
+  from it, because nothing here is currently lying.
+- **F69**: reading `hardware_profile.py`'s actual rejection-handling code
+  (not just the finding's own summary of it) surfaced a fallback layer
+  the finding hadn't accounted for: before landing on the bare 1024 MiB
+  "cached-floor," the code already tries `_foreign_occupancy_mib()` — a
+  real, device-level `memory.used` reading with this process's own
+  resident allocation subtracted out — and uses it whenever it yields a
+  larger, more conservative reservation. `rejection["fallback"]` honestly
+  records which path actually ran. Nothing here claims a fallback value
+  is a trustworthy live reading when it isn't; the code already knows
+  it's degraded and says so. Added this discovery to F69's own entry —
+  it likely means the finding's original framing overstated the
+  practical exposure, though whether `_foreign_occupancy_mib()` actually
+  succeeds often enough to matter on real hardware remains unchecked.
+- **F70**: searched for a residency-readiness flag or function a caller
+  might consult, and found none — no boolean anywhere claims residency
+  IS ready when it might not be. `residency_arbiter.py`'s `ARBITER = None`
+  is a pre-existing, explicitly documented signal for "not governing this
+  process" that callers are told to treat as normal, not an error; a
+  request arriving during the unsynchronized boot window hits that SAME
+  documented fallback, not a distinct false-positive. The gap is a
+  missing synchronization primitive (no `join()`/wait on the residency
+  thread before `app.run()`), not an active wrong claim — the honest fix
+  here is the large one (a real readiness gate), with no smaller,
+  separable "stop lying" step, because nothing is lying.
+
+**Two watch items closed out.** F71's growth rate (≈1.3 GB/hour observed)
+now carries an explicit ceiling in its own entry: the one-hour retention
+window bounds the steady state at roughly 1.3–2.6 GB (accounting for a
+quiet period between sweeps), not unbounded growth — against 153 GB free,
+roughly 1–2% of headroom, stated once so it never needs re-deriving.
+F64's still-open `test_nemo_voice.py` flake needed no further action —
+confirmed, not re-investigated, per Stephen's explicit preference for an
+honestly-open flake over a premature close.
+
+**Q18 was not actually docstring-only** — checked directly rather than
+taking the characterization at face value, since it didn't match what
+was on disk. Its `fix_note` already contained full, substantive red-on-
+revert evidence (a real code fix across `pause_forecast.py`, `routes/
+work_plan.py`, and both HTML files, with a genuine stash-based revert
+showing a clean `TypeError` pre-fix and 4/4 green after restoring) — it
+had simply never used the literal label "RED-ON-REVERT:" the other
+entries use, which is almost certainly why an automated scan for that
+exact phrase missed it. Relabeled with the explicit prefix, substance
+unchanged, rather than silently agreeing with an incorrect
+characterization or adding a false "does not apply, docstring-only"
+statement to an entry that was never docstring-only.
+
+**Final verification**: full bare `pytest` reran clean of every failure
+this round addressed — down to the one, already-known, honestly-open
+`test_nemo_voice.py` flake.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
 Dispatched by Stephen's own urgent message reporting real, ongoing overnight

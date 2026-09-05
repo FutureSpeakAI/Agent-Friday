@@ -189,6 +189,31 @@ def wait_for_health(url: str, attempts: int = 6, initial_delay: float = 2.0,
     return False
 
 
+def confirm_boot_health(health_url: str, attempts: int = 6,
+                        initial_delay: float = 2.0, timeout: float = 5.0) -> bool:
+    """The actual gate: only promote this boot to known-good if it answered
+    its own health check. Returns whether it did.
+
+    CORRECTION (F55, weak-probe audit, 2026-09-05): server.py's
+    _confirm_boot() used to inline this decision directly inside its own
+    closure -- wait_for_health() got a real test, but the GATING itself
+    (mark_boot_succeeded()/snapshot_known_good() only running when
+    wait_for_health() returns True) did not, because there was no
+    standalone thing to call. A probe against wait_for_health() alone
+    cannot fail if that gating is later removed from server.py while
+    wait_for_health() itself stays intact and correct -- exactly the shape
+    of regression this finding exists to prevent. Extracted so the gate
+    has its own callable, testable identity: server.py's _confirm_boot()
+    now calls this instead of inlining the decision.
+    """
+    if not wait_for_health(health_url, attempts=attempts,
+                           initial_delay=initial_delay, timeout=timeout):
+        return False
+    mark_boot_succeeded()
+    snapshot_known_good()
+    return True
+
+
 def failing_to_boot() -> bool:
     return int(_read_attempt().get("consecutive_failures", 0)) >= MAX_FAILED_BOOTS
 

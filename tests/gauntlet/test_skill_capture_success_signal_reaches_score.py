@@ -19,12 +19,10 @@ functions -- re-verified here against current code before trusting them):
 
   (b) _success_score() itself is a reply-shape heuristic, not a task
       completion check: no error + a stripped reply >= 8 chars + no
-      _DENY_PREFIXES match => 1.0, regardless of what the reply actually
-      claims happened. The reviewer's own example, "Done. I sent the
-      email and booked your flight.", scores 1.0 with zero evidence
-      either action occurred (see
-      test_success_score_believes_unverified_claims below -- this half
-      is NOT fixed here, see F74's fix_note in the ledger for why).
+      _DENY_PREFIXES match => (used to be 1.0, "success"), regardless of
+      what the reply actually claims happened. The reviewer's own
+      example, "Done. I sent the email and booked your flight.", scored
+      1.0 with zero evidence either action occurred.
 
 Fix (src/agent_friday/skill_capture.py, capture()): route `score` into
 the single metrics key it can honestly speak to -- `accuracy` -- instead
@@ -39,15 +37,19 @@ user_satisfaction/completeness keys against three independently-derived
 signals -- skill_capture.py was simply not following the convention its
 own sibling caller uses correctly.
 
-What is deliberately NOT fixed here: _success_score()'s underlying
-weakness (claim b). Real task-verification would need to be aware of
-what a given skill is even supposed to accomplish (a skill needing zero
-tool calls to succeed is not equivalent to one that claims to have sent
-an email with no corresponding tool_trace entry) -- that is a genuine
-product decision about what "success" should mean per skill, not a
-mechanical patch, and guessing at it risks a worse, false-confidence
-signal instead of an honestly-absent one. Flagged for Stephen, not
-decided here.
+CORRECTION (F75, Stephen's direct ruling, 2026-09-05): claim (b) itself
+is now partially fixed too -- not with the real task-verification design
+work Stephen explicitly deferred (a genuine product decision about what
+"success" should mean per skill/task type, specified as follow-up work
+in skill_capture.py itself, not decided here), but with the "minimum
+honest change" he did rule on: _success_score() no longer returns
+SUCCESS_SCORE (1.0) for a merely-plausible reply. It returns
+UNVERIFIED_SCORE (0.5) instead -- a third state for "no confirmed
+failure, but also no confirmed success," since the absence of a bad
+signal was never the presence of a good one. SUCCESS_SCORE remains fully
+wired through every consumer but is not reachable by anything in this
+file today. See TestSuccessScoreNowReturnsUnverifiedNotSuccess below,
+which replaces the old TestSuccessScoreStillMeasuresReplyShapeOnly.
 """
 from __future__ import annotations
 
@@ -130,32 +132,64 @@ class TestCaptureSuccessSignalReachesScore:
 
         execs = isolated_engine.storage("demo_matched_skill").read_executions()
         assert len(execs) == 1
-        assert execs[0].metrics.get("accuracy") == 1.0, (
-            f"expected the success score to be recorded under the 'accuracy' "
-            f"key composite_score() actually reads, got metrics="
-            f"{execs[0].metrics!r}"
+        assert execs[0].metrics.get("accuracy") == skill_capture.UNVERIFIED_SCORE, (
+            f"expected the (now honestly-labeled) unverified score to be "
+            f"recorded under the 'accuracy' key composite_score() actually "
+            f"reads, got metrics={execs[0].metrics!r}"
         )
 
 
-class TestSuccessScoreStillMeasuresReplyShapeOnly:
-    """Documents, does not fix, the second (deeper) half of F74 -- claim
-    (b) from the external review. Kept as its own class so a future,
-    deliberate improvement to _success_score() has an obvious test to
-    update rather than silently breaking this one."""
+class TestSuccessScoreNowReturnsUnverifiedNotSuccess:
+    """F75 (Stephen's direct ruling, 2026-09-05): replaces the old
+    TestSuccessScoreStillMeasuresReplyShapeOnly, which pinned the BUG
+    (a plausible reply scoring a confirmed SUCCESS_SCORE with zero
+    evidence) as accepted, current behavior. That bug is fixed -- a
+    plausible reply now scores UNVERIFIED_SCORE, a distinct third value
+    that is neither a confirmed failure nor a confirmed success. What is
+    NOT fixed, deliberately, per the same ruling: real completion
+    verification (so SUCCESS_SCORE could ever actually be reached) is
+    real design work, not decided here -- see skill_capture.py's own
+    follow-up note. Kept as its own class so that future, deliberate work
+    has an obvious test to update rather than silently breaking this one."""
 
-    def test_success_score_believes_unverified_claims(self):
+    def test_a_plausible_reply_is_unverified_not_a_confirmed_success(self):
         reviewer_example = "Done. I sent the email and booked your flight."
-        assert skill_capture._success_score(reviewer_example, None) == 1.0, (
-            "if this is no longer 1.0, _success_score() has gained some "
-            "form of task verification -- F74's claim (b) may be resolved "
-            "and this test (and the finding's disposition) should be "
-            "updated to match, not just this assertion"
+        score = skill_capture._success_score(reviewer_example, None)
+        assert score == skill_capture.UNVERIFIED_SCORE, (
+            f"a plausible-looking reply with zero evidence either claimed "
+            f"action occurred scored {score!r}, not UNVERIFIED_SCORE -- "
+            f"this is F75's exact false-positive if it's SUCCESS_SCORE "
+            f"again, or a new, undocumented value if it's neither"
+        )
+        assert score != skill_capture.SUCCESS_SCORE, (
+            "SUCCESS_SCORE must not be reachable without real completion "
+            "evidence, which this heuristic still does not check"
         )
 
-    def test_success_score_cannot_tell_true_success_from_plausible_fiction(self):
+    def test_a_confirmed_failure_still_scores_failure_not_unverified(self):
+        """Non-regression: F75's fix must not soften genuine failure
+        detection into 'merely unverified' -- an error, a too-short
+        reply, and a deny-prefix match are real negative evidence and
+        must stay FAILURE_SCORE."""
+        assert skill_capture._success_score("Done, all set.", "boom") == \
+            skill_capture.FAILURE_SCORE
+        assert skill_capture._success_score("Sure.", None) == \
+            skill_capture.FAILURE_SCORE
+        assert skill_capture._success_score(
+            "[GOVERNANCE DENY] blocked", None) == skill_capture.FAILURE_SCORE
+
+    def test_genuine_success_and_plausible_fiction_are_still_indistinguishable(self):
+        """The deeper problem F75 explicitly did NOT fix tonight: a
+        genuine success and a fabricated claim of the same action still
+        score identically -- as UNVERIFIED_SCORE now, not a false
+        SUCCESS_SCORE, but still indistinguishable from each other. Real
+        completion verification (the follow-up work specified in
+        skill_capture.py) is what would tell these apart; guessing at it
+        here was explicitly ruled out."""
         genuine = "Done. I sent the email."
         fabricated = "Done. I sent the email."  # identical text, no real send
         assert (
             skill_capture._success_score(genuine, None)
             == skill_capture._success_score(fabricated, None)
-        ), "these must currently be indistinguishable -- that's the defect"
+            == skill_capture.UNVERIFIED_SCORE
+        )
