@@ -88,6 +88,28 @@ def get_peer(agent_id):
     return jsonify({"ok": True, "peer": peer})
 
 
+@federation_bp.route("/api/federation/peers/<agent_id>/pref", methods=["POST"])
+@login_required
+def update_peer_pref(agent_id):
+    """F40: the write side of the Federation panel's ask/allow/block control.
+
+    Previously this route did not exist at all -- the UI's setPref() posted
+    here, got a 404 swallowed by an empty catch(), and the dropdown's value
+    never reached the server. Persists to the same `fed_pref` column
+    get_peers()/get_peer() already read (and the UI already renders), and
+    enforcement (_handle_federation_message, federation_settings_sync) reads
+    it back from there.
+    """
+    data = request.get_json(silent=True) or {}
+    pref = data.get("fed_pref") or data.get("pref")
+    if pref not in ("ask", "allow", "block"):
+        return jsonify({"error": "fed_pref must be one of: ask, allow, block"}), 400
+    peer = fed.set_peer_pref(agent_id, pref)
+    if peer is None:
+        return jsonify({"error": "peer not found"}), 404
+    return jsonify({"ok": True, "peer": peer})
+
+
 # ── Federation: Encrypted Messaging ─────────────────────────────────────────
 
 @federation_bp.route("/api/federation/inbox", methods=["POST"])
@@ -128,12 +150,20 @@ def federation_settings_sync():
 
     Returns per-peer send results — the caller can poll until all peers ACK.
     """
-    from agent_friday.core import _load_settings
+    # F22: use _load_settings_raw(), never _load_settings(). The latter applies
+    # _apply_offline_routing_overlay() -- a transient, device-local, NEVER-
+    # PERSISTED view (see its docstring, core/__init__.py) that forces
+    # mode:local_only/fallback_to_cloud:False into model_routing while THIS
+    # device is WAN-offline. model_routing is a synced key (_SYNC_SAFE_KEYS /
+    # _DEEP_MERGED_BLOCKS), so sending _load_settings()'s result would
+    # broadcast this device's transient offline routing state to every peer
+    # as if it were a real, persisted preference.
+    from agent_friday.core import _load_settings_raw
     data = request.get_json(silent=True) or {}
     peer_id_filter = data.get("peer_id")
     key_subset = set(data.get("keys") or []) & _SYNC_SAFE_KEYS or _SYNC_SAFE_KEYS
 
-    settings = _load_settings()
+    settings = _load_settings_raw()
     delta = {k: v for k, v in settings.items() if k in key_subset}
     if not delta:
         return jsonify({"ok": True, "sent": 0, "results": []})
@@ -141,6 +171,8 @@ def federation_settings_sync():
     peers = fed.get_peers()
     if peer_id_filter:
         peers = [p for p in peers if p.get("agent_id") == peer_id_filter]
+    # F40: never push to a peer this device has blocked.
+    peers = [p for p in peers if p.get("fed_pref") != "block"]
 
     results = []
     for peer in peers:
@@ -475,6 +507,17 @@ def update_moderation_policy():
 
 def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str) -> dict:
     """Route an incoming decrypted federation message to the right handler."""
+    # F40: a known peer whose fed_pref is 'block' gets nothing processed --
+    # HANDSHAKE, HEARTBEAT, TRUST_ATTESTATION, LICENSE_QUERY, SETTINGS_SYNC,
+    # and the generic fallback below all short-circuit here. An unknown
+    # sender (no peer row yet -- e.g. a first HANDSHAKE) is unaffected:
+    # fed_pref only exists once a peer has actually been added.
+    peer = fed.get_peer(sender_pubkey)
+    if peer and peer.get("fed_pref") == "block":
+        _log.info("Federation message from blocked peer %s ignored (msg_type=%s)",
+                   (sender_pubkey or "")[:16], msg_type)
+        return {"ok": False, "blocked": True, "error": "sender is blocked"}
+
     if msg_type == "HANDSHAKE":
         manifest = payload.get("manifest")
         peer_card = payload.get("peer_card")
@@ -512,8 +555,15 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
         safe_delta = {k: v for k, v in delta.items() if k in _SYNC_SAFE_KEYS}
         if safe_delta:
             try:
-                from agent_friday.core import _load_settings, _save_settings
-                current = _load_settings()
+                # F22: same reasoning as the send side above -- merge onto the
+                # real persisted settings (_load_settings_raw()), never onto
+                # _load_settings()'s transient offline-routing overlay. Using
+                # the overlaid dict here would let a peer's push permanently
+                # persist whatever the RECEIVING device's own overlay happened
+                # to be showing at that instant, on top of clobbering it with
+                # the sender's overlay values already excluded by the fix above.
+                from agent_friday.core import _load_settings_raw, _save_settings
+                current = _load_settings_raw()
                 current.update(safe_delta)
                 _save_settings(current)
                 _log.info("Settings sync: applied %d key(s) from peer %s",

@@ -803,8 +803,16 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   worker thread starts, so a fast-failing step can retry past its budget; and an exhausted
   retry logs but never flips status, so a step that shipped nothing reports `completed`.
 - **`ui_parts/app.html` is a hand-maintained mirror of `index.html` that nothing builds
-  from.** `index.html` is the source of truth — it is a strict superset, containing 17
-  components the mirror lacks. The mirror is kept in sync by hand and will drift.
+  from.** `index.html` is the source of truth — it is a strict superset. The gap was
+  never actually 17 (re-measured 2026-09-04: 11 at the commit that first wrote this
+  entry, 14 today — the mirror is drifting wider, not staying at a fixed count, so
+  don't trust a specific number here without re-measuring). The highest-severity
+  components currently missing from the mirror: `ConsentFlow` (the entire first-run
+  onboarding wizard, including vault passphrase collection), `SettingsTabCosts` (the
+  cost/budget panel — the same one that was previously deleted for two months and
+  cost real money before being restored), `ConversationBar` and `QuickSwitch` (core,
+  constantly-visible chat chrome). A build that ever regenerated `index.html` from
+  `app.html` would silently lose all of these with no crash.
 - **Chain seat overrides are advisory**, not enforced against the capability router.
 
 ### Seat contention

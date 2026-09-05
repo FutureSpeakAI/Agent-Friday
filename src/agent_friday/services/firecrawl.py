@@ -46,6 +46,30 @@ API_VERSION = "v2"          # the documented base; v1 also answers, v2 is curren
 DEFAULT_TIMEOUT_S = 120
 SEARCH_TIMEOUT_S = 180
 
+# ── Cost metering (credit-based, not USD-per-call) ───────────────────────────
+# docs/audits/gauntlet-2026-09-03/findings.jsonl Q7c: Firecrawl calls had ZERO
+# cost_meter tracking despite this module's own docstring saying credits must
+# be treated as a budget. Firecrawl bills in CREDITS, and the $/credit rate
+# varies by plan tier (no single public conversion) -- rather than fabricate
+# an exact USD figure, this uses the WORST-CASE (most expensive, Hobby-tier)
+# published $/credit rate as a conservative best-effort USD estimate: a
+# budget alert erring toward overestimating spend is safer than one that
+# silently under-counts it. Checked against public pricing aggregator pages
+# 2026-09-04, not Firecrawl's own pricing page directly -- flagged.
+_FIRECRAWL_USD_PER_CREDIT = 0.0032
+_FIRECRAWL_SCRAPE_CREDITS = 1     # scrape/crawl/map: 1 credit per page
+_FIRECRAWL_SEARCH_CREDITS_PER_10_RESULTS = 2
+
+
+def _meter(op: str, credits_used: int) -> None:
+    """Record a Firecrawl call. Never raises; never blocks the caller."""
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.record("firecrawl", op, cost_usd=round(credits_used * _FIRECRAWL_USD_PER_CREDIT, 6),
+                  kind="tool")
+    except Exception:
+        pass
+
 # ── The rest of the surface, deliberately NOT built ───────────────────────────
 #
 # Relayed from Stephen's onboarding doc and NOT verified here, except where
@@ -174,6 +198,7 @@ def search(query: str, count: int = 10, *, with_content: bool = False,
     if not payload.get("success", True):
         return {"ok": False, "results": [],
                 "error": str(payload.get("error") or "Firecrawl reported failure")}
+    _meter("search", max(1, round(body["limit"] / 10 * _FIRECRAWL_SEARCH_CREDITS_PER_10_RESULTS)))
     out = []
     for it in _results_of(payload):
         if not isinstance(it, dict):
@@ -203,6 +228,7 @@ def scrape(url: str, *, timeout: int | None = None,
     if not payload.get("success", True):
         return {"ok": False,
                 "error": str(payload.get("error") or "Firecrawl reported failure")}
+    _meter("scrape", _FIRECRAWL_SCRAPE_CREDITS)
     data = payload.get("data") or {}
     meta = data.get("metadata") or {}
     md = data.get("markdown") or ""

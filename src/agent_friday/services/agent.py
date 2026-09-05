@@ -83,7 +83,8 @@ from agent_friday.services.wiki_engine import (
 def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
-                    workspace=None, on_route=None, tools=None):
+                    workspace=None, on_route=None, tools=None,
+                    system_builder=None):
     """Tool-using (agentic) generation via the user's CONFIGURED provider.
 
     The agentic analog of _generate_text(). Bare _call_claude_agent() requires
@@ -109,6 +110,21 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         they're fallback-only for a scheduled task, so a rare full-registry
         fallback call costs far less than paying the full registry's ~13k
         tokens on EVERY call of the primary leg.
+    system_builder: optional `callable(provider_name) -> str | None`. Callers
+    typically predict a SINGLE provider up front (`_predict_route_provider`)
+    to decide how much vault TIER content the system prompt may carry, then
+    hand a prompt baked for that one provider in here. But the fallback ladder
+    below can land the request on a DIFFERENT provider than predicted when the
+    first leg fails operationally (seat down, timeout) — and a prompt gated
+    for 'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
+    that content with no re-gating (docs/audits/gauntlet-2026-09-03/
+    findings.jsonl F30). When given, each leg calls `system_builder` with ITS
+    OWN provider name and uses the result instead of the static `system`
+    string, so the prompt is always gated for the provider actually about to
+    see it. A builder that raises is treated as "no system prompt" for that
+    leg (fail closed) rather than falling back to `system`, which may have
+    been gated for a different, less restrictive provider. Omit it (the
+    default) to keep the previous single-prompt behavior unchanged.
     """
     # Demo mode: no provider configured (no keys + no local Ollama) → return a
     # labelled placeholder instead of exhausting every primitive and raising
@@ -147,6 +163,10 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             "is_background_task": bool((session_ctx or {}).get(
                 "is_background_task")),
             "scheduled": bool((session_ctx or {}).get("scheduled")),
+            # Origin signal for classify_task()'s TaskType.VOICE branch
+            # (gauntlet Q20) — set by the voice pipeline's own call site
+            # (routes/voice.py), never inferred from message content.
+            "is_voice": bool((session_ctx or {}).get("is_voice")),
         }) or {}
         provider = route.get('provider', 'cloud')
         routed_model = route.get('model') or model
@@ -171,6 +191,17 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
 
+    # F30: re-gate the system prompt per LEG, not once for the predicted
+    # provider — see the `system_builder` docstring above. Without a builder,
+    # every leg gets the same static `system` (unchanged legacy behavior).
+    def _system_for(provider_name):
+        if system_builder is None:
+            return system
+        try:
+            return system_builder(provider_name)
+        except Exception:
+            return None
+
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
@@ -183,7 +214,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # runs a configured CLOUD model, never a foreign id.
         from agent_friday.services.model_router import _claude_safe_model
         return _call_claude_agent(
-            messages, system=system,
+            messages, system=_system_for('cloud'),
             model=_claude_safe_model(use_model or model, settings),
             max_tokens=max_tokens, temperature=temperature,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -195,7 +226,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # model rides its RESOLVED provider (openrouter/groq/…, GAP-3 fix);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(
-            messages, system=system, model=use_model,
+            messages, system=_system_for('openai'), model=use_model,
             max_tokens=max_tokens, temperature=temperature,
             orb_label=orb_label, tools=(tools or CLAUDE_TOOLS),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
@@ -211,23 +242,19 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # this, a vault-forced local route with the full registry (~59k
         # tokens observed) exceeds n_ctx and the turn dies with a 400 —
         # chat.py's dispatch trims, but this path did not (2026-08-19).
-        # NOTE: `system` is a closure variable here — assigning to it would
-        # make it function-local and raise UnboundLocalError on first read
-        # (that exact bug took down every local background task on
-        # 2026-08-19 evening). Build the augmented prompt in a NEW name.
-        _sys_out = system
+        _sys_out = _system_for('local')
         try:
             from agent_friday.services.tool_budget import fit_tools_to_seat
             # Budget the whole request, not tools in isolation (2026-08-19:
             # in-budget tools atop an ordinary prompt still overflowed the
             # seat and 400'd).
-            _prompt_cost = (len(system or "") + sum(
+            _prompt_cost = (len(_sys_out or "") + sum(
                 len(m.get("content")) for m in (messages or [])
                 if isinstance(m.get("content"), str))) // 4
             _fitted, _fit_note = fit_tools_to_seat(
                 use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost)
             if _fit_note:
-                _sys_out = (system or "") + "\n[SEAT] " + _fit_note
+                _sys_out = (_sys_out or "") + "\n[SEAT] " + _fit_note
         except Exception:
             _fitted = CLAUDE_TOOLS
         return _call_ollama(
@@ -2447,12 +2474,18 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         # `_log_route` — but routing is a pure function of settings +
         # `messages` and nothing here mutates either between this call and
         # that one, so predicting it a second time, only to decide how to
-        # gate the prompt, is safe and cannot land on a different answer.
-        _task_provider = _predict_route_provider(
-            keywords=prompt, workspace='task', has_tools=True)
-        system = _get_friday_system_prompt(
-            prompt, workspace='task', provider=_task_provider,
-            vault_control=_gated_vault_control()) + (
+        # gate the INITIAL attempt's prompt, is safe and cannot land on a
+        # different answer for that first leg.
+        #
+        # That guarantee stops at the first leg, though: if it fails
+        # operationally (seat down, timeout), _generate_agent's OWN fallback
+        # ladder can retry on a DIFFERENT provider than predicted here — and a
+        # prompt built once for 'local' (full TIER_2/3 content) must never
+        # ride unchanged onto a cloud retry (F30). `_sys_for` rebuilds the
+        # prompt, gated for whichever provider a given leg actually is, and is
+        # handed to `_generate_agent` as `system_builder` so every leg —
+        # first attempt AND fallback — gets a prompt gated for ITSELF.
+        _bg_suffix = (
             "\n\n== BACKGROUND TASK MODE ==\n"
             "You are operating as an autonomous background task. Take initiative, "
             "use available tools, and produce a concrete, useful result the user can read.\n\n"
@@ -2461,6 +2494,15 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             "side of the question has WEAKER evidence. Run a second round explicitly targeting "
             "that weaker side to avoid confirmation bias. State both sides in your output."
         )
+
+        def _sys_for(provider_name):
+            return _get_friday_system_prompt(
+                prompt, workspace='task', provider=provider_name,
+                vault_control=_gated_vault_control()) + _bg_suffix
+
+        _task_provider = _predict_route_provider(
+            keywords=prompt, workspace='task', has_tools=True)
+        system = _sys_for(_task_provider)
         # Which model actually serves this is decided by the router INSIDE
         # _generate_agent, so the old line here — a hardcoded 'Calling Claude…'
         # written before routing — was a guess printed as a fact. It said
@@ -2502,7 +2544,8 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             _tools_override = [t for t in CLAUDE_TOOLS
                                if t.get('name') in tools] or None
         reply, tool_trace = _generate_agent(
-            messages, system=system, max_tokens=16384, model=subagent_model,
+            messages, system=system, system_builder=_sys_for,
+            max_tokens=16384, model=subagent_model,
             session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id},
             orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
@@ -2550,7 +2593,8 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 _task_log(task_id, f'[steer] {steer_msg[:80]}')
                 steer_reply, steer_trace = _generate_agent(
                     [{"role": "user", "content": steer_msg}],
-                    system=system, max_tokens=16384, model=subagent_model,
+                    system=system, system_builder=_sys_for,
+                    max_tokens=16384, model=subagent_model,
                     session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id},
                     orb_label=f"steer: {steer_msg[:18]}", orb_category='monitoring', orb_icon='🎯',
@@ -2915,9 +2959,14 @@ def chain_run_status(name):
         rows = [dict(t) for t in TASKS.values() if t.get('chain') == slug]
     rows.sort(key=lambda t: t.get('created') or 0)
     # Only the latest run: walk back from the end until chain_step resets.
+    # Strictly less-than, not <=: _retry_chain_step() spawns a retry at the
+    # SAME chain_step as the failed attempt, and a same-step retry must not
+    # look like a fresh run restarting at step 0 (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl) -- only a step index that actually
+    # goes backward is a new run.
     latest = []
     for t in rows:
-        if latest and int(t.get('chain_step', 0)) <= int(latest[-1].get('chain_step', 0)):
+        if latest and int(t.get('chain_step', 0)) < int(latest[-1].get('chain_step', 0)):
             latest = []
         latest.append(t)
     def _norm(st):
@@ -2931,7 +2980,12 @@ def chain_run_status(name):
         return st
     out_steps = []
     for i, s in enumerate(steps):
-        row = next((t for t in latest if int(t.get('chain_step', -1)) == i), None)
+        # `latest` can hold more than one row per step index now that a
+        # same-step retry no longer resets the accumulator (see above) --
+        # `rows` is sorted ascending by creation time, so the LAST match is
+        # the most recent attempt (the retry's real outcome), not the first
+        # (the original failure it retried).
+        row = next((t for t in reversed(latest) if int(t.get('chain_step', -1)) == i), None)
         out_steps.append({
             'index': i, 'name': s.get('name'),
             'status': _norm((row or {}).get('status')),

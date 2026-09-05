@@ -1436,11 +1436,20 @@ DEFAULT_SETTINGS = {
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
     "cite_sources": False,                # Source Production Mode — inline citations on every factual claim
+    # The pause-forecast "don't warn me again" escape hatch (index.html's
+    # seat-pause confirmation dialog) POSTs this key correctly wrapped in
+    # {"settings": {...}}, so it survives the whitelist read/write cycle --
+    # but it had no DEFAULT_SETTINGS entry at all, so _load_settings_raw()'s
+    # whitelist silently dropped it on every save. The dialog appeared to
+    # remember the choice for the rest of that browser tab (optimistic
+    # client-side state) and then nagged again on the next reload/restart,
+    # same defect class as knowledge_graph above (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl).
+    "pause_warnings_off": False,
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
-    "camera_auto_describe": False,
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices
     "voice_language": "",                  # BCP-47 (e.g. "en-US"); blank = server default
     "voice_style_prompt": "",              # free-text styling instruction passed to Gemini
@@ -1611,8 +1620,15 @@ DEFAULT_SETTINGS = {
     "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
-    # floor, and adult content is hidden in the gallery. This filters what the
-    # minor sees, not what exists — a parent toggles it off in Settings.
+    # floor — this half is real and re-checked live on every generation call.
+    # Gallery-side hiding of adult-rated or already-existing content is COMING
+    # SOON — not yet implemented: no creation record carries an adult/rating
+    # field today, and the gallery list currently filters only by file type and
+    # filename, so anything generated before the toggle was on (or by another
+    # user of this install) is still visible there for now. Coming soon means
+    # exactly that — nothing here builds it. Until it ships, this setting
+    # filters what gets generated going forward, not what already exists — a
+    # parent toggles it off in Settings.
     "minor_mode": False,
     # ── Ask before opening a file or a link? ──
     # Off. Opening something on your own machine, because you just asked for
@@ -2065,7 +2081,12 @@ def _load_settings():
 #: Settings blocks merged FIELD BY FIELD rather than replaced wholesale.
 #: Everything else in a delta overwrites its key, which is correct for scalars
 #: and lists and catastrophic for a config block a caller only partly edited.
-_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing")
+#: "content" joined 2026-09-04: the Content workspace's global-controls Save
+#: button only ever sends {staging_base_url, conflict_window_hours} (the two
+#: fields it edits) — without deep-merge that wholesale-replaces the block,
+#: silently resetting `enabled` and `psi_daily_cap` to nothing every time
+#: (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
 
 
 def _save_settings(data):
@@ -2571,6 +2592,39 @@ def _context_log_files(date_from=None, date_to=None):
             continue
         files.append((d, f))
     return files
+
+
+def prune_context_logs():
+    """Delete per-day context-log files older than context_retention_days.
+
+    context_retention_days has claimed "0 = keep forever; 30/90/180/365 =
+    prune older" (see its DEFAULT_SETTINGS comment) since it was added, with
+    no code ever behind that claim -- the Retention Period setting in
+    Settings > Privacy > Context Logging persisted and read back, but
+    nothing ever deleted an old entry (gauntlet-2026-09-03 F3/Q1). Each day
+    is one whole <YYYY-MM-DD>.jsonl file (see _context_log_files above), so
+    pruning is file deletion, not row surgery.
+    """
+    try:
+        days = int((_load_settings() or {}).get("context_retention_days", 0) or 0)
+    except Exception:
+        days = 0
+    if days <= 0:
+        return {"changed": False, "summary": "retention disabled (keep forever)"}
+    if not CONTEXT_LOG_DIR.exists():
+        return {"changed": False, "summary": "no context-log directory yet"}
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    removed = []
+    for f in CONTEXT_LOG_DIR.glob("*.jsonl"):
+        if f.stem < cutoff:
+            try:
+                f.unlink()
+                removed.append(f.stem)
+            except OSError:
+                pass
+    summary = (f"pruned {len(removed)} context-log day(s) older than {days}d"
+               if removed else f"nothing older than {days}d retention")
+    return {"changed": bool(removed), "count": len(removed), "summary": summary}
 
 # ── Persistent Chat History ────────────────────────────────────
 CHAT_HISTORY_FILE = FRIDAY_DIR / "chat_history.json"

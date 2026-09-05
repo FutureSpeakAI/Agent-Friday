@@ -27,7 +27,6 @@ import json
 import logging
 import threading
 import time as _time
-import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -131,15 +130,31 @@ def _normalize_record(rec, *, source="user"):
     trigger = rec.get("trigger", "daily")
     spec = dict(rec.get("spec") or {})
     sid = rec.get("id") or f"sch_{uuid.uuid4().hex[:10]}"
+    task = dict(rec.get("task") or {})
+    # Builtin tasks (news, weekly digest, memory dreaming, KG reindex, etc.)
+    # shipped with zero retry tolerance: register_builtin_task() has no retry
+    # parameter and this used to fall back to {"max": 0, ...} for everyone, so
+    # any transient failure (a network blip, a momentarily-busy GPU) marked the
+    # job failed on its very first attempt and it silently waited until its
+    # next normal slot -- which can be a full day/week away (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl F25). Give builtin schedules a
+    # conservative non-zero default; an explicit retry config (already set by
+    # the caller, or a user's own edit) always wins over this fallback.
+    if "retry" in rec:
+        default_retry = dict(rec["retry"])
+    elif task.get("kind") == "builtin":
+        default_retry = {"max": 2, "backoff_seconds": 300}
+    else:
+        default_retry = {"max": 0, "backoff_seconds": 300}
     out = {
         "id": sid,
         "name": rec.get("name") or sid,
         "trigger": trigger,
         "spec": spec,
-        "task": dict(rec.get("task") or {}),
+        "task": task,
         "enabled": bool(rec.get("enabled", True)),
         "notify": rec.get("notify", "on_complete"),
-        "retry": dict(rec.get("retry") or {"max": 0, "backoff_seconds": 300}),
+        "retry": default_retry,
         "timeout_seconds": int(rec.get("timeout_seconds", 1800)),
         "source": rec.get("source", source),
         "created": rec.get("created", now),
@@ -544,7 +559,17 @@ def dispatch(rec, *, manual=False):
     """Run a due (or manually-triggered) schedule on its own daemon thread."""
     sid = rec.get("id")
     with _RUNNING_LOCK:
-        if sid in _RUNNING and not manual:
+        # `manual` used to exempt "Run Now" from this guard entirely, so a
+        # user re-clicking Run Now (or clicking it while a normal tick had
+        # already dispatched the same schedule) started a second concurrent
+        # `_body()` closure calling the same builtin function while the first
+        # was still running -- both threads then called _patch_record() on
+        # the same record with no ordering guarantee (docs/audits/
+        # gauntlet-2026-09-03/findings.jsonl Q24). A manual dispatch now
+        # respects the exact same in-flight guard as an automatic one: a
+        # re-trigger of an already-running schedule is refused, not
+        # double-fired.
+        if sid in _RUNNING:
             return None
         _RUNNING.add(sid)
 
@@ -554,7 +579,15 @@ def dispatch(rec, *, manual=False):
 
     # Mark-before-run so a long job can't double-fire on the next tick.
     # A 'once' trigger auto-disables at fire time — it never runs twice.
-    _mark = dict(last_run_ts=started, last_run_date=now.strftime("%Y-%m-%d"))
+    # `started_at` mirrors `started` under an explicit, dedicated name (rather
+    # than overloading last_run_ts's "start of the current in-flight run"
+    # vs. "start of the last completed run" dual meaning) so a consumer of
+    # list_schedules()/run_history() can compute elapsed time for a run in
+    # progress without knowing that overload (docs/audits/gauntlet-2026-09-03/
+    # findings.jsonl Q21 — visibility for "this has been running unusually
+    # long", the same blind spot that let F31 run undetected for 7+ hours).
+    _mark = dict(last_run_ts=started, last_run_date=now.strftime("%Y-%m-%d"),
+                started_at=started)
     if rec.get("trigger") == "once":
         _mark["enabled"] = False
     _patch_record(sid, **_mark)
@@ -612,7 +645,17 @@ def dispatch(rec, *, manual=False):
                 _notify_run(rec, "complete", summary)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
-            traceback.print_exc()
+            # print_exc() writes to stderr, which the packaged app has none
+            # of -- it launches via pythonw (core/__init__.py, Shortcuts.ps1/
+            # Heal.ps1), so under the real shipped runtime this traceback
+            # went nowhere: not to friday.log (logging-only), not to any
+            # console. The one-line failure summary still reaches the user
+            # via _notify_run/run history below; the traceback needed to
+            # diagnose WHERE a task broke did not. _log (this module's own
+            # logger, already used correctly elsewhere here) writes to
+            # friday.log regardless of console presence -- the same reason
+            # server.py's _fail_loud_and_exit routes through logging too.
+            _log.exception("builtin task [%s] failed: %s", sid, err)
             attempts = int(rec.get("retry_count", 0)) + 1
             maxr = int((rec.get("retry") or {}).get("max", 0))
             backoff = int((rec.get("retry") or {}).get("backoff_seconds", 300))
@@ -794,6 +837,19 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] memory_dreaming unavailable: {e}")
 
+    # knowledge-graph-reindex — nightly Tier A rebuild + Tier B delta at 03:30,
+    # after memory dreaming (03:00) so freshly consolidated facts make it into
+    # the graph. This was ported from notifications._register_default_daily_jobs
+    # (orphaned by the scheduler migration — nothing called that function, so
+    # this job never ran; see docs/audits/gauntlet-2026-09-03/findings.jsonl F1).
+    try:
+        from agent_friday.services.notifications import _run_knowledge_reindex_job
+        register_builtin_task("knowledge_graph_reindex", _run_knowledge_reindex_job,
+                              label="Knowledge graph reindex", default_trigger="daily",
+                              default_spec={"hour": 3, "minute": 30}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] knowledge_graph_reindex unavailable: {e}")
+
     # learning-epoch (v5) — weekly mine→promote cycle over task outcomes.
     try:
         from agent_friday.services.learning_loop import run_epoch as _learn_epoch
@@ -848,6 +904,19 @@ def _register_default_builtin_tasks():
                               default_spec={"hour": 6, "minute": 30})
     except Exception as e:
         print(f"  [scheduler] edition_daily unavailable: {e}")
+
+    # context-log retention sweep — the Retention Period setting in
+    # Settings > Privacy > Context Logging persisted and read back but had no
+    # code behind it; this is that code (gauntlet-2026-09-03 F3/Q1). A no-op
+    # when context_retention_days is 0 (keep forever, the default).
+    try:
+        from agent_friday.core import prune_context_logs
+        register_builtin_task("context_log_retention", prune_context_logs,
+                              label="Context log retention sweep",
+                              default_trigger="daily",
+                              default_spec={"hour": 4, "minute": 0}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] context_log_retention unavailable: {e}")
 
 
 def _afternoon_briefing_job():

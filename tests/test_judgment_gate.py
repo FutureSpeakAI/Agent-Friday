@@ -21,17 +21,21 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 from pathlib import Path
 
-os.environ.setdefault("FRIDAY_TESTING", "1")
-_TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_judgment_"))
-os.environ["USERPROFILE"] = str(_TEST_HOME)
-os.environ["HOMEDRIVE"] = _TEST_HOME.drive or "C:"
-os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
-os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Isolation (USERPROFILE/HOMEDRIVE/HOMEPATH/FRIDAY_PASSWORD/etc.) comes from
+# tests/conftest.py, which pytest always imports before any test module under
+# tests/ -- this file used to mint its OWN separate isolated home via
+# tempfile.mkdtemp(prefix="friday_judgment_") with no cleanup of any kind
+# (not even on a clean exit), leaking one directory (each containing its own
+# copy of the sentence-transformers HF cache, ~2.8GB) per test run since at
+# least 2026-08-17. Found 97 of them, 83.65GB total, while investigating an
+# unrelated disk-pressure report on 2026-09-04 -- a second, independent
+# instance of the exact leak class findings.jsonl F47 fixed in conftest.py,
+# in a file F47 never touched because it never used the shared fixture.
+# Removing the duplicate home entirely (rather than adding a second cleanup
+# path to maintain) means this file now shares the SAME already-proven,
+# crash-safe isolated home every other test under tests/ uses.
 
 _ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(_ROOT / "src"), str(_ROOT)):

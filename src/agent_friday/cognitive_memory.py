@@ -1,13 +1,31 @@
 """
-Versioned Cognitive Memory — tamper-evident, append-only memory ledger.
+Cognitive Memory — tamper-evident, append-only ledger over UNVERSIONED
+per-key files.
 
 Every memory write is SHA-256 hashed and recorded in an append-only
 memory_ledger.jsonl.  The ledger forms a hash chain: each entry includes
 the hash of the previous entry, so any retroactive edit breaks the chain.
+The ledger records that a write happened and its content's hash; it does
+NOT record the content itself, and write_memory() keeps no per-key
+history -- a second write to the same key overwrites the first's on-disk
+file unconditionally, with nothing else in this module or its callers
+keeping the earlier value anywhere. "Tamper-evident" describes the
+ledger's hash chain (a retroactive EDIT of a ledger entry is detectable);
+it says nothing about a memory FILE being recoverable once overwritten.
 
-Provides rollback-to-timestamp and quarantine-by-source for zero-trust
-memory hygiene.  Quarantined memories are not deleted — they are marked
-and excluded from retrieval until explicitly rehabilitated.
+CORRECTION (external review, commissioned by Stephen, verified 2026-09-04):
+this module's own docstring used to say "Versioned" and "rollback-to-
+timestamp" -- reproduced directly and confirmed neither is true.
+memory_rollback() cannot roll a key back to an earlier value because no
+earlier value is ever kept; see its own docstring for the full
+correction and the reproduction that proved it (write A, write B, roll
+back to before B: the result is neither A nor B, it's gone entirely).
+
+Provides memory_rollback() (a one-way purge of keys touched after a
+cutoff -- not a restore, see its docstring) and quarantine-by-source for
+zero-trust memory hygiene.  Quarantined memories are not deleted — they
+are marked and excluded from retrieval until explicitly rehabilitated;
+that part of the claim holds (see memory_quarantine()).
 """
 
 import hashlib
@@ -81,11 +99,42 @@ class CognitiveMemory:
         return self.memory_quarantine(source_id=None, specific_key=key, reason="deleted")
 
     def memory_rollback(self, timestamp: float) -> dict:
-        """Roll back all writes that occurred after ``timestamp``.
+        """Remove every key WRITTEN TO after ``timestamp`` -- this does NOT
+        restore whatever that key held before ``timestamp``.
+
+        CORRECTION (external review, commissioned by Stephen, verified
+        against a real CognitiveMemory instance 2026-09-04): the name and
+        the old docstring both promised point-in-time restoration
+        ("roll back... to timestamp"), which this cannot do and never
+        could, because write_memory() keeps no history -- every write
+        unconditionally overwrites the one on-disk file for that key, so
+        an EARLIER value is gone the instant a LATER write lands, with or
+        without this function ever being called. Reproduced directly:
+        write_memory('k', 'A'), record a cutoff, write_memory('k', 'B'),
+        then memory_rollback(cutoff) -- the result is not 'A', it is
+        nothing: 'k' no longer resolves via read_memory() at all. The
+        current on-disk file (which by then holds 'B', not 'A') is what
+        gets moved into `_rollback/<cutoff>/`, and nothing anywhere in
+        this codebase ever reads that directory back -- confirmed by a
+        repo-wide grep. So this is a one-way purge of whatever a key
+        currently holds if it was touched after the cutoff, not a
+        restore to what it held before. It is reachable today via a real,
+        @login_required route (POST /api/memory/rollback in routes/
+        insights.py), though no UI currently calls it.
 
         Affected memory files are moved to a ``_rollback/`` subdirectory
-        (never hard-deleted).  A rollback ledger entry is appended.
-        Returns a summary of rolled-back keys.
+        rather than hard-deleted, which preserves the LAST value a
+        rolled-back key held (for manual, out-of-band recovery by
+        someone willing to read that directory by hand) -- it does not
+        preserve or restore any value from before the cutoff. A rollback
+        ledger entry is appended. Returns a summary of the keys removed
+        this way.
+
+        Whether Friday should have a real point-in-time memory restore is
+        a genuine feature question, not decided here: it would require
+        write_memory() to keep a version history it does not have today,
+        touching every write to a security-adjacent, "zero-trust" memory
+        primitive -- out of scope for a docstring correction.
         """
         rollback_dir = self.memory_dir / "_rollback" / f"{int(timestamp)}"
         rollback_dir.mkdir(parents=True, exist_ok=True)

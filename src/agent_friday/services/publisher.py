@@ -3,7 +3,11 @@ Agent Friday — Content Publication Engine (docs/CONTENT_PIPELINE_SPEC.md §7)
 FutureSpeak.AI · Asimov's Mind
 
 The dispatch half of the pipeline: one scheduler builtin (`content_publisher`,
-1-minute interval — D2) whose `tick()` claims due targets from the content
+15-minute interval — deliberately loosened from the original D2 1-minute
+spec after it was found running 1,440 times a day unused, deleting the run
+history of every job that runs less often; see start()'s own comment.
+Corrected here to match, gauntlet-2026-09-03 F63) whose `tick()` claims due
+targets from the content
 store (mark-before-run, §7.2) and runs each through the §7.1 gate chain:
 
     1 GATE    moderation.scan (H1–H4)          blocked → FAILED, no retry

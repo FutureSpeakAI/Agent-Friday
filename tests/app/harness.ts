@@ -129,7 +129,7 @@ export async function applyKnownBreakShims(page: Page) {
     (window as any).DEFAULT_AGENT_SETTINGS = {
       temperature: 0.7, response_length: 'standard', include_sources: true,
       news_priorities: [], communication_style: 'professional',
-      camera_interval_sec: 3, camera_auto_describe: false,
+      camera_interval_sec: 3,
       tts_voice: 'Aoede', voice_language: '', voice_style_prompt: '',
       voice_temperature: null, voice_max_tokens: 0,
     };

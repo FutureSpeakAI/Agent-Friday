@@ -13191,7 +13191,7 @@ function StudioWS() {
       fontSize: 10,
       color: '#5a8a6a'
     }
-  }, "\u2014 age-appropriate filtering is on for everything Friday creates here.")), /*#__PURE__*/React.createElement("div", {
+  }, "\u2014 age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -28671,16 +28671,20 @@ function ContentAccountsTab({
     setPaused(!paused);
     flash(!paused ? '⏸ All publishing paused' : '▶ Publishing resumed');
   }).catch(() => flash('Pause endpoint unavailable'));
-  const saveGlobals = () => fetch('/api/settings', {
+  const saveGlobals = () => apiFetch('/api/settings', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      content_staging_base_url: staging,
-      content_conflict_window_hours: Number(confWin) || 2
+      settings: {
+        content: {
+          staging_base_url: staging,
+          conflict_window_hours: Number(confWin) || 2
+        }
+      }
     })
-  }).then(() => flash('Saved')).catch(() => flash('Save failed'));
+  }).then(r => r.json()).then(d => flash(d.status === 'ok' ? 'Saved' : 'Save failed')).catch(() => flash('Save failed'));
   const daysLeft = iso => {
     if (!iso) return null;
     const d = Math.ceil((new Date(iso) - Date.now()) / 86400000);
@@ -28983,7 +28987,7 @@ function ContentAccountsTab({
       color: '#a8a8b4',
       marginBottom: 4
     }
-  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), " control, used only when Instagram/TikTok insist on fetching media from a URL. Assets are staged at unguessable paths and deleted after publish confirms. Leave empty to hold such posts instead \u2014 Friday never exposes a port on her own."), /*#__PURE__*/React.createElement("div", {
+  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), " already host and control, used only when Instagram/TikTok insist on fetching media from a URL. Friday does not upload or stage anything herself \u2014 the asset must already be public at that URL before publishing. Leave empty to hold such posts instead."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -31421,22 +31425,7 @@ function SettingsTabGeneral({
     placeholder: "Describe Friday's personality..."
   }))), /*#__PURE__*/React.createElement(StSection, {
     title: "APPEARANCE"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Scene",
-    desc: "Holographic background scene."
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "input",
-    style: {
-      width: '100%'
-    },
-    value: s.scene_name || 'nebula',
-    onChange: e => save({
-      scene_name: e.target.value
-    })
-  }, ['nebula', 'matrix', 'void', 'aurora', 'cosmos', 'midnight', 'prism', 'circuit', 'ocean', 'ember'].map(n => /*#__PURE__*/React.createElement("option", {
-    key: n,
-    value: n
-  }, n.charAt(0).toUpperCase() + n.slice(1))))), /*#__PURE__*/React.createElement(StToggle, {
+  }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Show All Workspaces",
     value: s.show_all_workspaces !== false,
     onChange: () => save({
@@ -31643,7 +31632,7 @@ function WorkProposal({
         color: 'rgba(255,255,255,0.85)'
       }
     }, t.title, t.touches_vault && /*#__PURE__*/React.createElement("span", {
-      title: "reads vault-tier material, which never leaves this machine",
+      title: "reads vault-tier material, which stays on this machine when Vault Local-Only is on",
       style: {
         marginLeft: 6,
         fontSize: 10,
@@ -33951,7 +33940,7 @@ function SettingsTabPrivacy({
       marginBottom: 8,
       lineHeight: 1.6
     }
-  }, "Your vault is ", /*#__PURE__*/React.createElement("b", null, "not encrypted at rest"), ". Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain \u2014 never on disk, never sent anywhere)."), /*#__PURE__*/React.createElement("div", {
+  }, "Your vault is ", /*#__PURE__*/React.createElement("b", null, "not encrypted at rest"), ". Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain, with an encrypted on-disk backup only this account can read \u2014 never sent anywhere)."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -34087,7 +34076,7 @@ function SettingsTabPrivacy({
     onChange: () => save({
       off_record: !s.off_record
     }),
-    desc: "Disable logging for this session."
+    desc: "Disable logging until you turn this back on."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Retention Period"
   }, /*#__PURE__*/React.createElement("div", {
@@ -36225,7 +36214,15 @@ function SettingsTabCosts() {
       marginTop: 8,
       lineHeight: 1.5
     }, mono)
-  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), /*#__PURE__*/React.createElement("div", {
+  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ffb347',
+      marginTop: 6,
+      lineHeight: 1.5
+    }, mono),
+    title: "These providers' rates could not be verified against their own pricing page, so no dollar figure is shown for them rather than guessing one -- see the model breakdown below."
+  }, num(s.unpriced_calls), " call", s.unpriced_calls === 1 ? '' : 's', " this period ", s.unpriced_calls === 1 ? 'is' : 'are', " not priced (real spend, unverified rate) — not included in the total above."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'flex-end',
@@ -36989,7 +36986,6 @@ function App() {
     news_priorities: [...NEWS_TOPICS],
     communication_style: 'professional',
     camera_interval_sec: 3,
-    camera_auto_describe: false,
     tts_voice: 'Aoede',
     voice_language: '',
     voice_style_prompt: '',
@@ -37030,7 +37026,6 @@ function App() {
     camera: false,
     privacy: false,
     computer_control: false,
-    scheduler: false,
     costs: false,
     hooks: false,
     federation: false,
@@ -37596,148 +37591,13 @@ function App() {
     } catch (e) {}
     refreshGoogleAccounts();
   };
-  // ══ Self-Sufficient Friday: Scheduled Tasks / Cost & Usage / Active Hooks ══
-  // ── Scheduler (Part A) ──
-  const [schedules, setSchedules] = useState([]);
-  const [schedBuiltins, setSchedBuiltins] = useState([]);
-  const [schedHistory, setSchedHistory] = useState({}); // id -> [runs] (expanded)
-  const [schedMsg, setSchedMsg] = useState('');
-  const [schedForm, setSchedForm] = useState(null); // null=closed; else draft
-  const refreshSchedules = () => fetch('/api/schedules').then(r => r.json()).then(d => {
-    if (d && d.schedules) {
-      setSchedules(d.schedules);
-      setSchedBuiltins(d.builtin_tasks || []);
-    }
-  }).catch(() => {});
-  useEffect(() => {
-    if (settingsOpen && openSections.scheduler) {
-      refreshSchedules();
-      const id = setInterval(refreshSchedules, 5000);
-      return () => clearInterval(id);
-    }
-  }, [settingsOpen, openSections.scheduler]);
-  const toggleSchedule = s => {
-    fetch('/api/schedules/' + s.id, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        enabled: !s.enabled
-      })
-    }).then(() => refreshSchedules()).catch(() => {});
-  };
-  const runScheduleNow = s => {
-    setSchedMsg('Running ' + s.name + '…');
-    fetch('/api/schedules/' + s.id + '/run-now', {
-      method: 'POST'
-    }).then(r => r.json()).then(d => {
-      setSchedMsg(d.status === 'ok' ? s.name + ' started' : 'Run failed');
-      setTimeout(() => setSchedMsg(''), 4000);
-      setTimeout(refreshSchedules, 1500);
-    }).catch(() => {
-      setSchedMsg('Run failed');
-    });
-  };
-  const deleteSchedule = s => {
-    if (!window.confirm('Delete schedule "' + s.name + '"?')) return;
-    fetch('/api/schedules/' + s.id, {
-      method: 'DELETE'
-    }).then(() => refreshSchedules()).catch(() => {});
-  };
-  const loadHistory = s => {
-    if (schedHistory[s.id]) {
-      setSchedHistory(h => {
-        const n = {
-          ...h
-        };
-        delete n[s.id];
-        return n;
-      });
-      return;
-    }
-    fetch('/api/schedules/' + s.id + '/history?limit=10').then(r => r.json()).then(d => setSchedHistory(h => ({
-      ...h,
-      [s.id]: d.history || []
-    }))).catch(() => {});
-  };
-  const saveNewSchedule = () => {
-    const f = schedForm;
-    if (!f.name) {
-      setSchedMsg('Name required');
-      return;
-    }
-    const spec = f.trigger === 'interval' ? {
-      every_minutes: parseInt(f.every || 60, 10)
-    } : f.trigger === 'weekly' ? {
-      weekday: parseInt(f.weekday ?? 6, 10),
-      hour: parseInt(f.hour || 9, 10),
-      minute: parseInt(f.minute || 0, 10)
-    } : {
-      hour: parseInt(f.hour || 9, 10),
-      minute: parseInt(f.minute || 0, 10)
-    };
-    const task = f.kind === 'builtin' ? {
-      kind: 'builtin',
-      ref: f.ref || schedBuiltins[0] || ''
-    } : {
-      kind: 'agent_prompt',
-      prompt: f.prompt || '',
-      model: f.model || undefined,
-      workspace: f.workspace || undefined
-    };
-    if (f.kind === 'agent_prompt' && !f.prompt) {
-      setSchedMsg('Prompt required for an agent task');
-      return;
-    }
-    fetch('/api/schedules', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: f.name,
-        trigger: f.trigger,
-        spec,
-        task,
-        notify: f.notify || 'on_complete',
-        enabled: true
-      })
-    }).then(r => r.json()).then(d => {
-      if (d.status === 'ok') {
-        setSchedForm(null);
-        setSchedMsg('Task added');
-        setTimeout(() => setSchedMsg(''), 3000);
-        refreshSchedules();
-      } else {
-        setSchedMsg(d.message || 'Create failed');
-      }
-    }).catch(() => setSchedMsg('Create failed'));
-  };
-  const fmtTrigger = s => {
-    const sp = s.spec || {};
-    if (s.trigger === 'interval') return 'every ' + (sp.every_minutes || 60) + ' min';
-    const hm = String(sp.hour ?? 9).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
-    if (s.trigger === 'weekly') {
-      const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][sp.weekday ?? 6];
-      return wd + ' ' + hm;
-    }
-    return 'daily ' + hm;
-  };
-  const fmtTime = ts => {
-    if (!ts) return '—';
-    try {
-      return new Date(ts * 1000).toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (e) {
-      return '—';
-    }
-  };
-  const schedStatusColor = s => s.last_status === 'failed' ? '#ef4444' : s.running ? '#00d4ff' : s.enabled ? '#34d399' : 'rgba(255,255,255,0.3)';
+  // ══ Self-Sufficient Friday: Cost & Usage / Active Hooks ══
+  // (Scheduled Tasks used to live here as a second, fully dead "Scheduler"
+  // section: its state, 7 handlers, and 5s poll were never wired to any JSX
+  // in this file and were removed. The real, working scheduler UI is the
+  // Workflows tab's schedules panel, using differently-named handlers
+  // (runSched/toggleSched/deleteSched). Cost & Usage lives in
+  // SettingsTabCosts() above.)
 
   // ── Active Hooks (Part B) ──
   const [hooksList, setHooksList] = useState([]);
@@ -40500,7 +40360,6 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const [cameraSource, setCameraSource] = useState('screen'); // 'screen' | 'webcam' | 'both'
   const [cameraFacing, setCameraFacing] = useState('user'); // 'user' | 'environment'
   const [cameraIntervalSec, setCameraIntervalSec] = useState(3);
-  const [cameraAutoDescribe, setCameraAutoDescribe] = useState(false);
   const [cameraControlsOpen, setCameraControlsOpen] = useState(false);
   const [cameraSendIndicator, setCameraSendIndicator] = useState(false);
   const cameraFrameRef = useRef(null);
@@ -40616,11 +40475,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       }));
     } catch (_) {}
   }, [voiceOn]);
-  // Persist camera prefs through /api/settings (interval + auto-describe).
+  // Persist camera prefs through /api/settings (interval).
   useEffect(() => {
     if (typeof agentSettings.camera_interval_sec === 'number') setCameraIntervalSec(agentSettings.camera_interval_sec);
-    if (typeof agentSettings.camera_auto_describe === 'boolean') setCameraAutoDescribe(agentSettings.camera_auto_describe);
-  }, [agentSettings.camera_interval_sec, agentSettings.camera_auto_describe]);
+  }, [agentSettings.camera_interval_sec]);
   const toggleCamera = () => {
     if (cameraOn) {
       setCameraOn(false);
@@ -40756,7 +40614,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            kind: 'local_turn'
+            kind: 'local_turn',
+            message: m
           })
         });
         const f = await fr.json();
@@ -40829,6 +40688,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         model: d.model,
         seat: d.seat,
         fallback_chain: d.fallback_chain || [],
+        // local_only mode refused (no local seat available) rather than
+        // silently answering from the cloud — offer the user an explicit
+        // choice to switch instead of a dead-end error (findings.jsonl
+        // Q19; Stephen, 2026-09-04: "fail... then ask the user if it can
+        // go into cloud only mode").
+        offer_cloud_switch: !!d.offer_cloud_switch,
         time: new Date().toLocaleTimeString()
       }]);
       // Execute any structured actions Friday returned (navigate, open_path…).
@@ -41924,7 +41789,41 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       dest: 'clipboard',
       ico: '📋'
     }]
-  })), /*#__PURE__*/React.createElement("div", {
+  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      display: 'block'
+    },
+    // Local-only refused (no local seat available) rather than silently
+    // answering from the cloud — this is the explicit choice Stephen
+    // asked for: fail closed, say so, then let the user decide to switch
+    // (findings.jsonl Q19). Never applied automatically.
+    onClick: () => apiFetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        settings: {
+          model_routing: {
+            mode: 'cloud_only'
+          }
+        }
+      })
+    }).then(r => r.json()).then(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Switched to Cloud-Only mode — send your message again.',
+      time: new Date().toLocaleTimeString()
+    }])).catch(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Could not switch modes — try Settings → Intelligence directly.',
+      time: new Date().toLocaleTimeString()
+    }]))
+  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',

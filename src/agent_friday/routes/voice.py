@@ -32,8 +32,8 @@ import agent_friday.core as core
 from agent_friday.core import (
     ConnectionClosed,
     FRIDAY_DIR,
-    FRIDAY_PASSWORD,
     FRIDAY_WS_TOKEN,
+    _HTTP_AUTH_KEY,
     TEMP_AUDIO_DIR,
     _api_token_valid,
     _is_local_request,
@@ -837,7 +837,12 @@ def _local_brain_ready() -> bool:
     """
     try:
         from agent_friday.services import local_seats as _seats
-        return bool(_seats.resolve("reasoning"))
+        # "brain" is the ROLE token _ROLE_TO_CAPABILITY maps to the
+        # "reasoning" capability -- passing "reasoning" itself isn't a
+        # valid role, so _configured() returned None immediately and this
+        # never consulted the user's actual orchestrator model
+        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+        return bool(_seats.resolve("brain"))
     except Exception:
         return False
 
@@ -887,6 +892,18 @@ def _resolve_voice_engine(settings=None):
         cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
     except Exception:
         cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
+    # Local-only is an absolute override, the same guarantee routes/chat.py's
+    # vision path already enforces (fixed 2026-08-23, commit 4607bd9) — it
+    # must win regardless of `voice_engine` preference or whether the Gemini
+    # key is valid. Before this, a user with Local-Only Mode on but the
+    # Tier-1 voice deps not installed (`pip install -e .[voice-local-lite]`,
+    # an easy-to-skip separate step) got their microphone audio and Friday's
+    # spoken replies streamed to Gemini Live anyway — silently (see
+    # docs/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    _local_only = str(((settings.get('model_routing') or {})
+                       .get('mode')) or '').strip().lower() == 'local_only'
+    if _local_only:
+        cloud_ok = False
     tier = "cpu"
     eng = None
     try:
@@ -933,15 +950,23 @@ def _resolve_voice_engine(settings=None):
         if cloud_ok:
             return {**_pick("gemini"), "reason": "user selected cloud"}
         if local_ok:
-            return {**_pick("local"), "reason": "cloud unavailable, using local"}
-        return {**_pick("demo"), "reason": "no voice engine available"}
+            return {**_pick("local"), "reason": (
+                "local-only mode is on, cloud voice is disabled"
+                if _local_only else "cloud unavailable, using local")}
+        return {**_pick("demo"), "reason": (
+            "local-only mode is on and no local voice engine is ready"
+            if _local_only else "no voice engine available")}
 
     # Default + auto both prefer local (the ethos).
     if local_ok:
         return {**_pick("local"), "reason": "local default"}
     if cloud_ok:
         return {**_pick("gemini"), "reason": "local deps missing, using cloud"}
-    return {**_pick("demo"), "reason": "install .[voice-local-lite] or connect a cloud key"}
+    return {**_pick("demo"), "reason": (
+        "local-only mode is on and no local voice engine is ready — voice "
+        "will not use the cloud; install .[voice-local-lite]"
+        if _local_only else
+        "install .[voice-local-lite] or connect a cloud key")}
 
 
 @voice_bp.route('/api/voice/session-info')
@@ -1133,6 +1158,59 @@ def voice_setup_install_cancel():
     return jsonify(voice_installer.cancel())
 
 
+def _ws_auth_ok(ui_tok_ok: bool) -> bool:
+    """Mirror core.login_required()'s fail-closed semantics for a WebSocket
+    handshake (F21, docs/audits/gauntlet-2026-09-03/findings.jsonl).
+
+    Both `/ws/voice-local` and `/ws/live` used to gate on bare `FRIDAY_PASSWORD`
+    directly: `if FRIDAY_PASSWORD and not authenticated and not loopback and
+    not ui_tok: deny`. When no password was configured at all, that whole
+    condition short-circuited False and the block was skipped ENTIRELY —
+    not even checking loopback — so the socket accepted any connection
+    unconditionally, non-loopback included. `login_required()` never does
+    this for HTTP: `if not _HTTP_AUTH_KEY: return f(...) if loopback else 403`
+    — a non-loopback caller is denied even with no key configured. This
+    mirrors that exact structure, using `_HTTP_AUTH_KEY` (FRIDAY_REMOTE_KEY or
+    FRIDAY_PASSWORD) rather than bare FRIDAY_PASSWORD so a FRIDAY_REMOTE_KEY-
+    only configuration is covered too, not just the bare-FRIDAY_PASSWORD case
+    the finding named.
+    """
+    if not _HTTP_AUTH_KEY:
+        # No key configured anywhere: same as login_required's fail-closed
+        # branch — only loopback is trusted, not the ephemeral UI token, since
+        # login_required's own equivalent branch doesn't consult it either.
+        return _loopback_trusted()
+    return bool(session.get("authenticated") or _loopback_trusted() or ui_tok_ok)
+
+
+def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
+    """Record cost_meter usage from one Gemini Live streaming chunk, if it
+    carries usage_metadata. Returns whether a charge was recorded.
+
+    CORRECTION (weak-probe audit, 2026-09-05): extracted out of ws_live's
+    receive loop (Q6c) so this has its own testable identity. ws_live
+    itself is a closure nested inside a Flask-Sock route registration
+    function, deeply inside an async Gemini Live streaming session --
+    reaching this exact line from a test previously meant either mocking
+    that entire session or pinning the surrounding source text (variable
+    names, try/except structure) instead of exercising real behavior.
+    Never raises -- a metering failure must not break the live voice
+    bridge, exactly as the original inline try/except guaranteed.
+    """
+    _um = getattr(chunk, "usage_metadata", None)
+    if _um is None:
+        return False
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.meter("gemini", model_name, {
+            "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
+            "output_tokens": getattr(_um, "response_token_count", 0) or 0,
+        }, kind="voice")
+        return True
+    except Exception:
+        return False
+
+
 if sock is not None:
 
     @sock.route('/ws/voice-local')
@@ -1166,8 +1244,7 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
-        if (FRIDAY_PASSWORD and not session.get("authenticated")
-                and not _loopback_trusted() and not _ui_tok_ok):
+        if not _ws_auth_ok(_ui_tok_ok):
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
             except Exception:
@@ -1199,10 +1276,7 @@ if sock is not None:
         # Captured HERE, at connect time, and never re-read later: `session` and
         # `request` are request-context bound, and turns now run on their own
         # thread where neither is available.
-        _ws_authenticated = bool(
-            (not FRIDAY_PASSWORD) or session.get("authenticated")
-            or _loopback_trusted() or _ui_tok_ok
-        )
+        _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
 
         done = threading.Event()
 
@@ -1427,7 +1501,12 @@ if sock is not None:
                     _brain = None
                     try:
                         from agent_friday.services import local_seats as _seats
-                        _brain = _seats.resolve("reasoning")
+                        # Same fix as _local_brain_ready() above: "brain" is
+                        # the role token, not "reasoning" (the capability it
+                        # maps to) -- the wrong token silently fell through
+                        # to the smallest installed model instead of the
+                        # user's configured orchestrator model.
+                        _brain = _seats.resolve("brain")
                     except Exception:
                         pass
                     reply, _trace = _generate_agent(
@@ -1437,7 +1516,11 @@ if sock is not None:
                         max_tokens=_voice_reply_cap(settings),
                         temperature=settings.get("temperature"),
                         session_ctx={"authenticated": _ws_authenticated,
-                                     "provider": _prov},
+                                     "provider": _prov,
+                                     # Lets classify_task() reach TaskType.VOICE
+                                     # so a user's task_overrides.voice config
+                                     # actually takes effect (gauntlet Q20).
+                                     "is_voice": True},
                         workspace=settings.get("active_workspace") or "",
                     )
                 except Exception as e:
@@ -1616,11 +1699,35 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
-        if (FRIDAY_PASSWORD and not session.get("authenticated")
-                and not _loopback_trusted() and not _ui_tok_ok):
+        if not _ws_auth_ok(_ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
+            except Exception:
+                pass
+            return
+
+        # Local-only is an absolute override (the same guarantee F16 already
+        # enforces for _resolve_voice_engine and _synthesize_tts_wav) — it
+        # must win at the actual dispatch point too, not just in the
+        # advisory /api/voice/session-info recommendation. Before this, a
+        # stale tab that fetched session-info before local-only was turned
+        # on (or any client that connects to /ws/live directly, bypassing
+        # the recommendation) could stream mic audio and conversation text
+        # to Gemini regardless of the setting (docs/audits/
+        # gauntlet-2026-09-03/findings.jsonl).
+        try:
+            _ws_local_only = str(((_load_settings() or {}).get('model_routing') or {})
+                                 .get('mode') or '').strip().lower() == 'local_only'
+        except Exception:
+            _ws_local_only = False
+        if _ws_local_only:
+            _vlog('REFUSED — local-only mode is on, /ws/live is a cloud path')
+            try:
+                ws.send(json.dumps({
+                    "type": "error",
+                    "error": "local-only mode is on — voice will not use "
+                             "Gemini Live; use the local voice engine instead"}))
             except Exception:
                 pass
             return
@@ -2371,6 +2478,18 @@ if sock is not None:
                                             resume_handle[0] = _sru.new_handle
                                             _handle_model[0] = model_name
                                             _live_resume_store(_sru.new_handle, model_name, live_voice, gen=_conn_gen)
+                                        # Cost metering (docs/audits/gauntlet-2026-09-03/
+                                        # findings.jsonl Q6c): the Gemini Live session is a
+                                        # real, billed call that had ZERO cost_meter
+                                        # integration despite PRICING already carrying rates
+                                        # for this exact model. usage_metadata arrives
+                                        # per-chunk on the live stream (cumulative for the
+                                        # session so far, per the API's own semantics) —
+                                        # metered as its own row every time it shows up
+                                        # rather than only once at teardown, since a leg can
+                                        # end (GoAway, error, disconnect) without a clean
+                                        # close. _meter_gemini_live_chunk() never raises.
+                                        _meter_gemini_live_chunk(chunk, model_name)
                                         # GoAway: Gemini is about to retire this session
                                         # (connection lifetime / context cap). Don't cut a
                                         # response mid-word: if Friday is speaking, drain
@@ -2602,13 +2721,47 @@ if sock is not None:
                     leg = 0
                     _quick_deaths = 0   # consecutive legs that died <10s after connect
                     while not done.is_set():
+                        # Local-only is checked once at connect, above -- but
+                        # THIS loop exists specifically to keep one logical
+                        # call alive across many ~10-min Gemini legs, and a
+                        # renewal re-dials Gemini exactly like the first
+                        # connect did. Without rechecking here, turning
+                        # local-only on mid-call has no effect on a call
+                        # already in progress: audio keeps streaming to
+                        # Gemini for as long as the call runs, which the
+                        # renewal loop's own docstring says can be hours
+                        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+                        try:
+                            _renewal_local_only = str(
+                                ((_load_settings() or {}).get('model_routing') or {})
+                                .get('mode') or '').strip().lower() == 'local_only'
+                        except Exception:
+                            _renewal_local_only = False
+                        if _renewal_local_only:
+                            _vlog('local-only mode turned on mid-call — ending this Gemini Live call instead of renewing')
+                            _safe_send({"type": "status",
+                                       "text": "local-only mode is on — ending this call; "
+                                                "use the local voice engine instead"})
+                            done.set()
+                            break
                         # Zombie fence: if a NEWER /ws/live handler has taken
                         # over (browser reconnected while this handler's socket
                         # is half-open), stop renewing — fighting the new
                         # handler for the Gemini session corrupts the handle
-                        # cache and duplicates the conversation.
+                        # cache and duplicates the conversation. Every OTHER
+                        # way this loop ends a call the browser didn't ask to
+                        # end (local-only above, the giveup/GoAway paths
+                        # below) sends a status/error frame before done.set()
+                        # -- _safe_send() itself no-ops once done is set, so
+                        # this is the one exit that must send first. Without
+                        # it, opening voice mode in a second tab silently
+                        # killed the first tab's call with no signal at all
+                        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
                         if not _live_conn_current(_conn_gen):
                             _vlog('superseded by a newer voice connection — zombie handler exiting')
+                            _safe_send({"type": "status",
+                                       "text": "this call ended — voice was opened in another "
+                                                "window or tab"})
                             done.set()
                             break
                         _use_handle = (resume_handle[0]
