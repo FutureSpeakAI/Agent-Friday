@@ -269,7 +269,7 @@ Pull (download) a new Ollama model.
 
 **Request:**
 ```json
-{ "model": "qwen3:14b" }
+{ "model": "gemma4:12b" }
 ```
 
 ---
@@ -389,11 +389,13 @@ Returns epistemic calibration scores.
 ### `GET /api/health`
 System health check (uptime, version, active models, vault encryption state, and governance/ring info).
 
-**Response:**
+**Response** (illustrative — the real payload has grown since this example was
+written; `curl localhost:3000/api/health` on a running instance is the
+authoritative shape, not this snippet):
 ```json
 {
   "status": "ok",
-  "version": "5.2.0",
+  "version": "5.12.0",
   "mood": "...",
   "memory_entries": 128,
   "vault_count": 42,

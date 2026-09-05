@@ -72,11 +72,10 @@ consumer hardware:
 
 | Your card | You get | Download | What it is |
 |---|---|---|---|
-| 8 GB | `qwen3:4b` | 2.50 GB | Real work, but a small agent — see the caveat below |
-| 10 GB | `qwen3:8b` | 5.23 GB | A solid everyday model |
-| 12 GB | `gemma4:12b` | 7.56 GB | Measured at 49–54 tok/s, fully resident on a 12 GB card |
-| 16 GB | `qwen3:14b` | 9.28 GB | Handles multi-step work well |
-| 24 GB+ | `qwen3:32b` | 20.20 GB | The largest offered — closest to a cloud model for tool use |
+| 5 GB | `gemma4:e2b` | 7.2 GB | The smallest seat that keeps its tools — quick lookups, formatting, status checks |
+| 6 GB | `gemma4:e4b` | 9.6 GB | A solid everyday model |
+| 11 GB | `gemma4:12b` | 7.6 GB | Measured at 49–54 tok/s, fully resident on a 12 GB card — the model Friday is tuned against |
+| 20 GB+ | `gemma4:26b` | 19.0 GB | The largest offered — an MoE, closest to a cloud model for tool use |
 
 "Your card" is the whole card; 2.5 GB comes off it for the desktop, and each model's own
 KV cache, projector and CUDA context are counted inside its footprint. Run `friday models`
@@ -89,14 +88,14 @@ fluently, while quietly losing the thread of a multi-step job. It is why an 8 GB
 defaults to the Claude key rather than the local model, and why a bigger card is offered
 something genuinely better rather than the same model with more room around it.
 
-**One honest limit.** `gemma3:4b` has no native tool calling, and Friday does **not** gate
-the local path on that capability — it passes the tool registry to whatever model is
-seated, so a model that cannot call tools can still *narrate* a call it never made.
-`tool_integrity.find_pseudo_toolcalls` catches that after the fact rather than preventing
-it. So the planner refuses to select a tool-incapable model at all, at any tier: every
-model in the table above calls tools natively and uses them fully offline, with no key, and
-that flag is re-checked against the daemon after every install rather than trusted from a
-table. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §3.
+**One honest limit.** A model with no native tool calling can still *narrate* a call it
+never made — Friday does **not** gate the local path on that capability, she passes the
+tool registry to whatever model is seated. `tool_integrity.find_pseudo_toolcalls` catches
+that after the fact rather than preventing it. So the planner refuses to select a
+tool-incapable model at all, at any tier: every model in the table above calls tools
+natively and uses them fully offline, with no key, and that flag is re-checked against the
+daemon after every install rather than trusted from a table. See
+[KNOWN_ISSUES.md](KNOWN_ISSUES.md) §3.
 
 On first run, Friday walks you through setup with a short wizard — in the browser, or
 `friday setup` in a terminal; onboarding itself is silent, text and click-through, not
