@@ -12,6 +12,36 @@ and I've said so rather than picked the answer that sounds better.
 
 ---
 
+## Do this first: rotate the vault passphrase. It is not "in history awaiting
+## a push" — it is already on GitHub.
+
+An earlier version of this document treated the leaked passphrase (full
+detail at Q2, §3) as a local-history problem, contained by the fact that
+nothing had been pushed. That was wrong, and it was corrected by an
+independent check after this document first went out. The actual state,
+verified directly:
+
+Commit `58492fe` — the commit that introduced the real, working passphrase
+into `RELEASE_NOTES.md` in plain text — is an **ancestor of
+`origin/feat/update-check`**, a real branch on GitHub. `git log
+origin/feat/update-check -S"<the leaked value>"` finds it directly, reachable
+right now by anyone with read access to this repository. A later commit on
+that same branch (`c47ce33`, a 5.8.0 release-notes rewrite) removed the value
+from that branch's *current* file content, the same way my own fix removed it
+from this branch's HEAD — but removing it from a later commit's file content
+does not remove the earlier commit or its blob from history. Both are still
+there, on GitHub, and have been since `c47ce33` was pushed — six days, not
+zero.
+
+**This changes the priority, not the instruction.** Nothing about the
+passphrase has been acted on beyond removing it from this branch's current
+file — no history rewrite, no force push, no branch or tag deletion, all
+still yours to decide (Q2, §3). Rotating the passphrase is the first thing
+to do when you sit down, ahead of anything else in this document, including
+the release.
+
+---
+
 ## 1. Installed and verified on your machine
 
 Your Friday was stopped by exact PID (never a broad taskkill), backed up in
@@ -26,10 +56,18 @@ running app, not the filesystem.
   102 GB of it) without my checking its size first; that's most of why your
   free disk dropped from ~149 GB to ~48 GB. Nothing is wrong — this is the
   backup doing its job — but see §3 for the "can I delete part of it" question.
-- **Version**: the running process still reports `5.11.0` — the version bump
-  to `5.12.0` happened in this same session, after the last restart. It's on
-  disk and committed; it just hasn't been picked up by another restart yet.
-  Not urgent on its own.
+- **Version**: the running process still reports `5.11.0`. Checked precisely
+  rather than assumed: the process was last restarted at 12:46 (picking up
+  the video-model-picker fix below, which was already on disk and verified
+  live at that point); the version-bump commit and every commit after it
+  landed later, 13:22–13:30. Walked every one of those later commits —
+  `pyproject.toml`'s version bump is a display string nothing in the running
+  server reads for behavior; the `install.ps1` fix is Windows-installer code
+  the running Flask process never touches; the documentation commits are
+  static files the app doesn't read at runtime. **Nothing functional landed
+  after the 12:46 restart. The version mismatch is cosmetic only** — the
+  running process is behaviorally identical to what's on disk now, it just
+  displays an old number until the next restart.
 - **6 new local creative models** confirmed live in the picker (`GET
   /api/intelligence`) with licences: 3 image (already working before this
   session), 3 video (`wan2.2-ti2v-5b`, `wan2.2-14b-a14b-gguf`, `cogvideox-2b`,
@@ -65,6 +103,22 @@ running app, not the filesystem.
   - AtlasCloud has no live status endpoint I could find (it's a creative
     provider, not in the LLM provider registry `/api/providers/health`
     covers) — I could not independently confirm its state either way.
+- **A recurring disk leak, found and cleaned, root-caused.** 42 `friday_*`
+  temp directories (5.86 GB, including three `friday_judgment_*` at up to
+  2.76 GB each, created today) had accumulated in `%TEMP%`, on top of the
+  103.6 GB backup — free disk had fallen to ~48 GB, and a full disk crashed
+  this app yesterday, so this got immediate attention rather than a mention.
+  Root cause: this is the *same* leak class the gauntlet already found and
+  fixed once (`findings.jsonl` F49 — an isolated test home minted with no
+  cleanup) — but several of the worktrees kept in §3's Q6 (real, unmerged
+  work) branch from *before* that fix landed, so their copy of
+  `tests/test_judgment_gate.py` still has the bug. Running their test suites
+  to verify the claims in Q6 reproduced it. All 42 directories were safe to
+  delete (hours-old, no live process using them) and have been; disk is back
+  to ~54 GB free. The worktrees themselves are untouched — deleting old test
+  artifacts is not the same as deciding what to do with the branches — but
+  running tests inside any of them again will very likely reproduce this
+  until whichever of them get merged or discarded.
 
 ## 2. Ready, staged, one command away
 
@@ -72,6 +126,17 @@ Everything is committed to `integration/release-2026-09-03`, working tree
 clean, full bare `pytest` green except the one known flake (§4). Tagged
 `v5.12.0` locally. Nothing has been pushed — your git credentials are broken,
 and that's yours to fix, not mine to work around.
+
+**The installer artifact itself has been built** —
+`packaging\windows\dist\AgentFriday-Setup-5.12.0.zip` (22.1 MB, SHA-256
+`bd904892d5f23d30b55356b53fdd22851ec668a896ede503462979d4ab085c1e`), produced
+by `build-installer.ps1` running entirely locally (it fetches Python from
+python.org and builds a handful of pure-Python wheels — no git, no push,
+nothing that needed your credentials). The build's own payload-scan step
+checked for exactly the kind of leak described in Q2 (§3) and found none. This
+zip is the thing you'd actually attach to a GitHub release or send someone
+directly — the previous newest artifact on disk was `AgentFriday-Setup-5.6.1.zip`
+from 26 August, six releases stale.
 
 When they're fixed, the release is:
 ```
@@ -110,9 +175,14 @@ this isn't a mechanical fast-forward, it's a real merge with a real risk of
 semantic conflicts in exactly the area most worth getting right. I'd rather
 hand you the evidence than a guess.
 
-**Q2 — the vault passphrase in git history: still live, still yours.**
-Untouched, as instructed. No history rewrite, no force push. It stays
-exposed until you rotate it.
+**Q2 — the vault passphrase in git history: not local, not contained, already
+public.** Confirmed reachable from `origin/feat/update-check` on GitHub (see
+the top of this document) — this has been publicly fetchable for six days,
+not sitting in local history waiting for a push. Untouched, as instructed:
+no history rewrite, no force push, no branch/tag deletion. Those remain your
+call, and none of them un-expose a secret that's already been fetchable for
+nearly a week regardless — rotating the passphrase is the one action that
+actually changes anything, and it doesn't require touching git at all.
 
 **Q3 — the stale OS-keychain passphrase (separate from Q2): worth cleaning up?**
 This is a *different* passphrase problem — your keychain holds an old value
@@ -193,7 +263,10 @@ See §4 — real, needed, not safe to ship as-is.
 102 GB of the 103.6 GB backup is regenerable local-AI infrastructure
 (ComfyUI, llama.cpp builds, voice models), not irreplaceable data. Once
 you've used Friday for a bit and are confident this release is solid, that
-subfolder is safe to delete to get most of your disk space back.
+subfolder is safe to delete to get most of your disk space back. (Disk is at
+~54 GB free as of this document, after the temp-leak cleanup in §1 — not
+critical, but this and that cleanup are the two real levers if it gets
+tighter again.)
 
 ## 4. Genuinely still broken
 
