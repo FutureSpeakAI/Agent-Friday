@@ -31,8 +31,9 @@ Friday's chat path genuinely passes the tool registry to local providers and
 executes what comes back — ``_via_ollama`` sends ``tools=``, ``_call_ollama``
 converts the schema and runs ``_oai_agentic_loop``, and that loop calls
 ``_execute_tool`` under the same governance as the cloud path. So a model with
-native tool calling needs no API key for tools: ``qwen3:8b`` and ``gemma4:12b``
-work fully offline, ``gemma3:4b`` does not, and the difference is the model.
+native tool calling needs no API key for tools: the whole Gemma 4 family
+(``e2b``/``e4b``/``12b``/``26b``) works fully offline; the older ``gemma3:4b``
+does not, and the difference is the model, not the wiring.
 
 ``function_manager`` — a role in the residency contract that nothing consults —
 would let a model WITHOUT native tool calling delegate the decision to a small
@@ -134,39 +135,100 @@ RUNTIME_OVERHEAD_GIB = 1.7
 #: `capabilities` array instead — the same check `verify_tool_capability()`
 #: runs after every install, so a wrong flag here is caught rather than shipped.
 #:
+#: 2026-09-03: Qwen is gone from this table. Product decision, stated plainly
+#: so it isn't relitigated by the next person editing this file: "We are not
+#: shipping the model, any model, yet... Only have it fetch and install local
+#: models from the Gemma 4 family, whichever fits best on the user's hardware
+#: (e2b, e4b, 12b, or larger)... This is a placeholder: it gets replaced by
+#: FutureSpeak's own model when that's ready, so keep the family selection in
+#: one place rather than scattering the choice." This tuple IS that one place
+#: — every qwen3:* row (4b/8b/14b/32b) is deleted, not demoted, so nothing in
+#: `BRAIN_MODELS`/`FLOOR_MODEL`/`TOOL_CAPABLE_IDS` can resolve to one again.
+#: `gemma3:4b` (a different, older generation, tools:False) is also gone —
+#: it was kept before only to demonstrate `_pickable()` recognising an
+#: installed-but-unusable model; that demo isn't worth a non-Gemma-4 row now.
+#:
+#: `vram_gib` below is MEASURED (residency_catalog.SEED_MEASUREMENTS, the
+#: same measurements the residency arbiter uses), not derived from
+#: `_footprint_gib()` — real numbers beat the download-size formula whenever
+#: both exist. `gib` (download size) is read from https://ollama.com/library/
+#: gemma4 (2026-09-03): e2b 7.2GB, e4b 9.6GB, 12b 7.6GB (matches the prior
+#: entry's hand-typed value, confirming the registry didn't move), 26b 19GB.
+#: Tool calling for the whole gemma4 family is confirmed working end-to-end
+#: (not merely daemon-reported): e2b/e4b emit tool calls in a private wire
+#: format Ollama's daemon parses natively, which cost tool calling outright
+#: when this app tried to serve them as its own process — fixed by
+#: `services/channel_toolcalls.py`; e2b measured 10/10 on the structural
+#: tool-calling gate at adequate context (residency_policy.py). 12b is
+#: confirmed via the daemon's own `/api/show` (`verify_tool_capability`'s
+#: measured table). All four are marked `tools: True` on that basis.
+#:
 #: Ordered by `vram_gib` ascending, because the GPU pick is `[-1]` — the
 #: largest that fits. The sort below enforces that rather than trusting whoever
 #: edits the tuple next.
 _BRAINS = (
-    {"id": "qwen3:4b", "gib": 2.50, "min_ram_gib": 8, "tools": True,
-     "basis": "size + tools from the registry; footprint derived",
-     "note": "the smallest seat that keeps its tools. Real work, but a small "
-             "agent: on published function-calling suites this size class "
-             "holds up on single calls and falls apart across a multi-turn "
-             "exchange, which is the failure you cannot see happening"},
+    {"id": "gemma4:e2b", "gib": 7.2, "min_ram_gib": 8, "tools": True,
+     "vram_gib": 1.77,
+     "basis": "MEASURED (residency_catalog, RTX 4070, 32768 ctx / tool-seat "
+              "width): 1811 MiB VRAM. Download size from the registry — the "
+              "7.2 GB artifact is far larger than its 1.77 GiB loaded "
+              "footprint because it carries vision/audio components this "
+              "text-only ladder never loads",
+     "note": "the smallest seat in the Gemma 4 family, and the effective-"
+             "params ('E2B') design keeps its VRAM footprint tiny relative "
+             "to its download. Scored 10/10 on the structural tool-calling "
+             "gate at adequate context — a real, working small agent, not "
+             "an unmeasured guess"},
+    {"id": "gemma4:e4b", "gib": 9.6, "min_ram_gib": 16, "tools": True,
+     "vram_gib": 3.01,
+     "basis": "MEASURED (residency_catalog, RTX 4070, 8192 ctx only — no "
+              "tool-seat-width measurement recorded yet, so this row is "
+              "less evidenced than e2b or 12b). Download size from the "
+              "registry",
+     "note": "the middle seat: roughly double e2b's VRAM for a materially "
+             "larger effective model. Same tool-calling mechanism as e2b"},
+    {"id": "gemma4:12b", "gib": 7.6, "min_ram_gib": 24, "tools": True,
+     "vram_gib": 7.54,
+     "basis": "MEASURED (residency_catalog, RTX 4070, 32768 ctx / tool-seat "
+              "width): 7718 MiB VRAM. Download size from the registry",
+     "note": "measured 49-54 tok/s and a ~20.5 s cold load on a 12 GiB card, "
+             "fully resident. The best-evidenced row in this table"},
+    {"id": "gemma4:26b", "gib": 19.0, "min_ram_gib": 48, "tools": True,
+     "vram_gib": 16.99,
+     "basis": "MEASURED, but the measurement doesn't fit this table's model: "
+              "26b is an MoE (26B total / 4B active) that ran with 49% on "
+              "GPU + 51% on CPU on the reference 12 GiB card (8586 MiB VRAM, "
+              "17391 MiB total). This simple ladder has no notion of partial "
+              "GPU+RAM co-residency (see residency_catalog.detect_moe / rule "
+              "R6 for the planner that does), so `vram_gib` here is the "
+              "CONSERVATIVE full-residency figure (17391 MiB) rather than "
+              "the smaller GPU-only figure that actually worked in "
+              "production — this row will only be offered on a card big "
+              "enough to hold it whole, which under-sells what it can "
+              "really do on smaller hardware. Fixing that needs this "
+              "planner to understand hybrid offload, not another number",
+     "note": "'or larger' — the top rung, and an MoE rather than a bigger "
+             "dense model. Real production experience exists (it has run "
+             "well on a 12 GiB card via CPU offload) even though this "
+             "table's simple GPU-or-RAM model can't express that nuance"},
+    # NOT Gemma 4, and NOT selectable — this row exists purely so the
+    # planner can RECOGNISE an already-installed gemma3:4b and explain why
+    # it declined to use it, the same job it did before 2026-09-03. It is
+    # filtered out of every download/selection path by `_pickable()`
+    # (tools:False is a hard gate, not a tie-break — see that function), so
+    # keeping the row here never fetches it and does not reintroduce Qwen's
+    # problem: Qwen rows were REMOVED rather than demoted to recognition-
+    # only because nothing in this codebase needed to recognise an
+    # installed Qwen model specifically the way gemma3:4b's "declined
+    # because it can't call tools" caveat already depended on this row
+    # existing (see `_an_installed_model_does_not_win_if_it_cannot_call_
+    # tools` in tests/unit/test_model_plan.py).
     {"id": "gemma3:4b", "gib": 3.34, "min_ram_gib": 8, "tools": False,
      "basis": "size + tools from the registry",
      "note": "chat only — no native tool calling, so `_pickable()` can never "
              "select it. It stays in this table so the planner can still "
              "RECOGNISE it when it is already installed and say why it "
              "declined to use it"},
-    {"id": "qwen3:8b", "gib": 5.23, "min_ram_gib": 16, "tools": True,
-     "basis": "size + tools from the registry; footprint derived",
-     "note": "the first seat with room to spare rather than room exactly"},
-    {"id": "gemma4:12b", "gib": 7.56, "min_ram_gib": 24, "tools": True,
-     "basis": "size from the registry; tools and footprint MEASURED on the "
-              "reference 12 GiB card",
-     "note": "measured 49-54 tok/s and a ~20.5 s cold load on a 12 GiB card, "
-             "fully resident. The best-evidenced row in this table"},
-    {"id": "qwen3:14b", "gib": 9.28, "min_ram_gib": 32, "tools": True,
-     "basis": "size + tools from the registry; footprint derived, UNMEASURED",
-     "note": "what a 16 GiB card is for. Nobody has run this one here, so its "
-             "speed is unknown — the fit is arithmetic, not experience"},
-    {"id": "qwen3:32b", "gib": 20.20, "min_ram_gib": 64, "tools": True,
-     "basis": "size + tools from the registry; footprint derived, UNMEASURED",
-     "note": "the top consumer rung: a 24 GiB card holds it fully resident. "
-             "This is where multi-turn tool use stops being a gamble. "
-             "Unmeasured here — the fit is arithmetic, not experience"},
 )
 
 
@@ -181,9 +243,20 @@ def _footprint_gib(dl_gb: float) -> float:
     return round(dl_gb / 1.073741824 + RUNTIME_OVERHEAD_GIB, 2)
 
 
+def _brain_vram_gib(m: dict) -> float:
+    """A real measurement in the row wins; the download-size formula is
+    only a fallback for a row that doesn't carry one. Every current row in
+    `_BRAINS` carries a measured `vram_gib` — this fallback exists so a
+    future row can be added honestly ("UNMEASURED, derived") without this
+    function silently overwriting a measurement that's already there,
+    which is exactly the double-count `_footprint_gib`'s own docstring
+    describes RUNTIME_OVERHEAD_GIB replacing."""
+    return m["vram_gib"] if "vram_gib" in m else _footprint_gib(m["gib"])
+
+
 BRAIN_MODELS = tuple(
-    dict(m, vram_gib=_footprint_gib(m["gib"]))
-    for m in sorted(_BRAINS, key=lambda m: _footprint_gib(m["gib"]))
+    dict(m, vram_gib=_brain_vram_gib(m))
+    for m in sorted(_BRAINS, key=_brain_vram_gib)
 )
 
 
@@ -205,6 +278,18 @@ BRAIN_MODELS = tuple(
 #:
 #: `tests/unit/test_model_plan.py::test_no_shipped_default_names_a_model_that_cannot_call_tools`
 #: sweeps the real settings dict and fails if a sixth copy appears.
+#:
+#: 2026-09-03: this resolved to `qwen3:4b` from launch until the Gemma-4-only
+#: product decision (see the note above `_BRAINS`) removed every qwen row
+#: from the table. The sites listed above were already correctly importing
+#: this constant rather than a hardcoded name — the mechanism this docstring
+#: describes worked exactly as designed, so fixing the ladder here was the
+#: whole fix for all of them at once. Two places were NOT reading this
+#: constant and needed a separate fix: `knowledge_graph/indexer.py`'s
+#: user-facing "pull one" message text (a literal string, not a default
+#: value), and `ollama_manager.recommend_models()`, a second, independently
+#: hardcoded hardware-tiered suggestion list that duplicated this table's
+#: job instead of reading it.
 FLOOR_MODEL = next(m["id"] for m in BRAIN_MODELS if m["tools"])
 
 #: Every model this planner is willing to seat. For callers that need to

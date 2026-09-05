@@ -89,11 +89,11 @@ def test_gpu_gets_the_largest_model_that_fits_not_the_smallest():
     # nothing to reach for once it runs out of rungs. That is not a fit
     # calculation, it is a missing ladder.
     big = tiers(mp.plan(profile(64, 60, 24)))
-    assert big["brain"]["models"][0]["id"] == "qwen3:32b"
+    assert big["brain"]["models"][0]["id"] == "gemma4:26b"
 
     # And the rung below must be genuinely different, or the ladder is decorative.
     mid = tiers(mp.plan(profile(32, 60, 16)))
-    assert mid["brain"]["models"][0]["id"] == "qwen3:14b"
+    assert mid["brain"]["models"][0]["id"] == "gemma4:12b"
 
 
 @pytest.mark.parametrize("ram", [32, 64, 128])
@@ -106,12 +106,14 @@ def test_cpu_only_gets_the_smallest_useful_model_not_the_largest(ram):
     strength of a number nobody has.
     """
     t = tiers(mp.plan(profile(ram, 100, 0)))
-    # qwen3:4b is both the smallest download in the table (2.5 GiB) and the
-    # smallest seat that can call tools. Before it existed this assertion read
-    # gemma3:4b, which was the smallest — and the only model here that cannot
-    # call tools. Every GPU-less machine got it, including AMD cards, which
-    # read as no card at all because detect_gpus only shells nvidia-smi.
-    assert t["brain"]["models"][0]["id"] == "qwen3:4b"
+    # gemma4:e2b is the smallest seat that can call tools (2026-09-03: the
+    # only non-Gemma-4 row, gemma3:4b, is recognition-only and can never be
+    # picked — see `_pickable()`). Before a tool-capable floor existed this
+    # assertion read gemma3:4b, which was the smallest — and the only model
+    # here that cannot call tools. Every GPU-less machine got it, including
+    # AMD cards, which read as no card at all because detect_gpus only
+    # shells nvidia-smi.
+    assert t["brain"]["models"][0]["id"] == "gemma4:e2b"
     assert t["brain"]["models"][0]["tools"] is True
     assert "unmeasured" in t["brain"]["reason"]
 
@@ -202,11 +204,11 @@ def test_free_space_after_install_is_never_negative(args):
 # ── Already-installed models ─────────────────────────────────────────────────
 
 def test_does_not_propose_downloading_what_is_already_there():
-    # qwen3:4b, not gemma3:4b: the planner deliberately declines to settle for
-    # an installed model that cannot call tools (see the two tool_incapable
-    # tests below), so gemma3:4b no longer demonstrates this property — it
-    # demonstrates the opposite one.
-    installed = ["embeddinggemma:300m", "functiongemma:270m", "qwen3:4b"]
+    # gemma4:e2b, not gemma3:4b: the planner deliberately declines to settle
+    # for an installed model that cannot call tools (see the two
+    # tool_incapable tests below), so gemma3:4b no longer demonstrates this
+    # property — it demonstrates the opposite one.
+    installed = ["embeddinggemma:300m", "functiongemma:270m", "gemma4:e2b"]
     p = mp.plan(profile(16, 100, 0), installed=installed)
     assert p["download"] == []
     assert tiers(p)["vault"]["status"] == "ready"
@@ -246,10 +248,10 @@ def test_tool_incapable_branch_on_a_cpu_only_machine():
     # This test used to assert the opposite, and the comment explaining why is
     # worth keeping: on CPU the planner took the smallest model, which WAS
     # gemma3:4b, so the installed copy won and no caveat fired. That made "no
-    # GPU" mean "no tools" — silently. qwen3:4b is smaller AND tool-capable, so
-    # the caveat now fires on CPU exactly as it already did on GPU.
+    # GPU" mean "no tools" — silently. gemma4:e2b is smaller AND tool-capable,
+    # so the caveat now fires on CPU exactly as it already did on GPU.
     assert brain["status"] == "install"
-    assert brain["models"][0]["id"] == "qwen3:4b"
+    assert brain["models"][0]["id"] == "gemma4:e2b"
     assert brain["models"][0]["tools"] is True
     assert "cannot call tools" in brain["reason"]
     assert "gemma3:4b" in brain["reason"], "should name what it declined to use"
@@ -258,10 +260,11 @@ def test_tool_incapable_branch_on_a_cpu_only_machine():
 def test_an_eight_gib_card_lands_on_a_tool_capable_seat():
     """The RTX 4060 case, pinned, because it is the first non-author hardware.
 
-    8,188 MiB of card minus the 2.5 GiB display reserve and R3's 1 GiB leaves
-    4.5 GiB usable — which held gemma3:4b and nothing else, so the smallest
-    supported card was also the only one whose local seat could not call tools.
-    qwen3:4b fits in the same envelope, downloads 0.8 GiB LESS, and keeps them.
+    8,188 MiB of card minus the 2.5 GiB display reserve and R3's 1 GiB used to
+    leave 4.5 GiB usable — which held gemma3:4b and nothing else, so the
+    smallest supported card was also the only one whose local seat could not
+    call tools. gemma4:e4b fits in the corrected 5.5 GiB envelope and keeps
+    them; e2b would ALSO fit but "largest that fits" means e4b wins the pick.
     """
     p = mp.plan(profile(16, 200, 8188 / 1024), installed=[], conversational=[])
     brain = tiers(p)["brain"]
@@ -270,7 +273,7 @@ def test_an_eight_gib_card_lands_on_a_tool_capable_seat():
     # and it is already inside every `vram_gib` — taking it off both sides was
     # the double count.
     assert p["vram_usable_gib"] == 5.5
-    assert brain["models"][0]["id"] == "qwen3:4b"
+    assert brain["models"][0]["id"] == "gemma4:e4b"
     assert brain["models"][0]["tools"] is True
 
 
@@ -295,10 +298,33 @@ def test_the_reference_card_gets_the_model_measured_to_run_on_it():
     assert tiers(p)["brain"]["models"][0]["id"] == "gemma4:12b"
 
 
-def test_no_rung_is_hand_written_so_none_can_drift_from_its_download_size():
-    """`vram_gib` is derived, and that is the whole defence against the above."""
+def test_a_measured_vram_figure_is_never_silently_overwritten_by_the_formula():
+    """Replaces the old formula-EQUALITY check.
+
+    That check assumed `vram_gib` is always DERIVED from download size,
+    which the Gemma 4 family breaks on purpose: e2b/e4b/26b are measured
+    with a real loaded footprint that DIFFERS from what `_footprint_gib()`
+    would compute from their download size (e2b/e4b carry vision/audio
+    components this text-only ladder never loads; 26b's conservative
+    full-residency figure differs from a naive size-based guess too). A real
+    measurement beats the formula whenever both exist.
+
+    So the property worth defending is different now: `BRAIN_MODELS`
+    construction (`_brain_vram_gib`) must PRESERVE a row's hand-set
+    `vram_gib` rather than clobber it with the formula — that clobbering is
+    exactly the double-count `RUNTIME_OVERHEAD_GIB`'s own docstring
+    describes fixing once already. `gemma3:4b` has no measured `vram_gib`
+    in `_BRAINS`, so it's the one row this module IS allowed to derive.
+    """
+    raw_by_id = {m["id"]: m for m in mp._BRAINS}
     for m in mp.BRAIN_MODELS:
-        assert m["vram_gib"] == mp._footprint_gib(m["gib"]), m["id"]
+        raw = raw_by_id[m["id"]]
+        if "vram_gib" in raw:
+            assert m["vram_gib"] == raw["vram_gib"], (
+                f"{m['id']}'s measured vram_gib was overwritten by the "
+                f"formula: {raw['vram_gib']} -> {m['vram_gib']}")
+        else:
+            assert m["vram_gib"] == mp._footprint_gib(raw["gib"]), m["id"]
 
 
 def test_a_bigger_card_gets_a_bigger_model_all_the_way_up():
@@ -308,10 +334,18 @@ def test_a_bigger_card_gets_a_bigger_model_all_the_way_up():
     gemma4:12b — a 7.5 GB model on a 32 GiB card, with 22 GiB idle. Someone
     who bought the hardware could not tell it was being ignored, because the
     planner reported a confident, correct-looking fit every time.
+
+    Probe points are chosen to land inside each of the four Gemma 4 rungs'
+    usable-VRAM ranges (2026-09-03: e2b 1.77 / e4b 3.01 / 12b 7.54 / 26b
+    16.99 GiB) rather than an arbitrary sequence — the family has a real gap
+    between 12b and 26b (any card from ~10 to ~19.5 GiB usable lands on 12b,
+    which is correct: 26b genuinely doesn't fit there in this planner's
+    simple GPU-or-RAM model), so a probe sequence has to know where the
+    rungs actually are rather than assume even spacing.
     """
     picks = [tiers(mp.plan(profile(128, 300, v)))["brain"]["models"][0]["id"]
-             for v in (8, 12, 16, 24)]
-    assert len(set(picks)) == len(picks), f"ladder stalls: {picks}"
+             for v in (5, 8, 12, 22)]
+    assert picks == ["gemma4:e2b", "gemma4:e4b", "gemma4:12b", "gemma4:26b"], picks
 
     sizes = [next(m["vram_gib"] for m in mp.BRAIN_MODELS if m["id"] == p)
              for p in picks]
@@ -343,37 +377,41 @@ def test_the_plan_offers_the_other_rungs_rather_than_deciding_silently():
     brain = tiers(mp.plan(profile(64, 300, 24)))["brain"]
     alts = brain["alternatives"]
     ids = [a["id"] for a in alts]
-    assert "qwen3:32b" in ids and "qwen3:8b" in ids
-    assert [a["id"] for a in alts if a["default"]] == ["qwen3:32b"]
+    assert "gemma4:26b" in ids and "gemma4:e2b" in ids
+    assert [a["id"] for a in alts if a["default"]] == ["gemma4:26b"]
     # Every offer carries its provenance, so nothing reads as measured when it
     # is arithmetic.
     assert all(a["basis"] for a in alts)
 
 
-def test_unmeasured_rungs_say_so():
-    """Several of these fits are derived. The table must not imply otherwise.
+def test_measured_rungs_say_so():
+    """Every SELECTABLE row has a real measurement behind its `vram_gib`.
 
     THIS TEST IS DELIBERATE POLICY, NOT PEDANTRY — please do not delete it to
-    make the table look tidier. Only `gemma4:12b` has ever been loaded and
-    timed here; `qwen3:14b` and `qwen3:32b` fit by arithmetic alone, and a user
-    with a 24 GiB card is told exactly that before they spend 20 GB of
-    bandwidth on it. Saying "calculated, not measured" out loud is worth more
-    than a table that reads as uniformly authoritative, because the alternative
-    is that every row inherits the credibility of the one row that earned it.
+    make the table look tidier. 2026-09-03: unlike the old Qwen-era ladder
+    (where `qwen3:14b`/`qwen3:32b` fit by arithmetic alone and had to say so),
+    every current Gemma 4 rung — e2b, e4b, 12b, 26b — has a real measurement
+    in `residency_catalog.SEED_MEASUREMENTS`. Saying "measured, not
+    calculated" out loud is worth more than a table that reads as uniformly
+    authoritative, because the alternative is that every row inherits the
+    credibility of the one row that earned it.
 
-    If someone measures 14b or 32b, change the `basis` string to say so and
-    update this test. Do not quietly drop the distinction.
+    If an unmeasured rung is ever added (a bigger card size, say), its
+    `basis` must say "UNMEASURED" or "derived" and this test should assert
+    that for it explicitly. Do not quietly drop the distinction.
+    `gemma3:4b` is exempt: recognition-only, never selectable, never worth
+    measuring.
     """
-    by_id = {m["id"]: m for m in mp.BRAIN_MODELS}
-    assert "MEASURED" in by_id["gemma4:12b"]["basis"]
-    for mid in ("qwen3:14b", "qwen3:32b"):
-        assert "UNMEASURED" in by_id[mid]["basis"], mid
+    for m in mp.BRAIN_MODELS:
+        if not m["tools"]:
+            continue
+        assert "MEASURED" in m["basis"], m["id"]
 
 
 def test_tool_capability_is_verified_against_the_daemon_not_the_table():
     """`verify_tool_capability` asks the artifact, and separates "no" from "unknown"."""
     ok, why = mp.verify_tool_capability(
-        "qwen3:32b", show_fn=lambda m: {"capabilities": ["completion", "tools"]})
+        "gemma4:26b", show_fn=lambda m: {"capabilities": ["completion", "tools"]})
     assert ok is True and "can call tools" in why
 
     bad, why = mp.verify_tool_capability(
@@ -382,11 +420,11 @@ def test_tool_capability_is_verified_against_the_daemon_not_the_table():
 
     # No daemon is not a failed model. None, never False.
     unknown, why = mp.verify_tool_capability(
-        "qwen3:32b", show_fn=lambda m: (_ for _ in ()).throw(OSError("refused")))
+        "gemma4:26b", show_fn=lambda m: (_ for _ in ()).throw(OSError("refused")))
     assert unknown is None and "unverified" in why
 
     # A daemon too old to report capabilities is also unknown, not a refusal.
-    old, why = mp.verify_tool_capability("qwen3:32b", show_fn=lambda m: {})
+    old, why = mp.verify_tool_capability("gemma4:26b", show_fn=lambda m: {})
     assert old is None and "unverified" in why
 
 
@@ -445,7 +483,7 @@ def test_conversational_filter_does_not_hide_an_installed_brain():
     no longer downloads anything, so the same property is pinned on the brain,
     which does.
     """
-    p = mp.plan(profile(32, 200, 0), installed=["qwen3:4b"], conversational=[])
+    p = mp.plan(profile(32, 200, 0), installed=["gemma4:e2b"], conversational=[])
     assert tiers(p)["brain"]["status"] == "ready"
     assert p["download"] == []
 
@@ -703,6 +741,12 @@ def test_the_local_defaults_actually_come_from_the_planner():
     assert s["capability_routing"]["local"]["model"] == mp.FLOOR_MODEL
 
 
-def test_the_indexer_falls_back_to_a_tool_capable_model():
+def test_the_indexer_falls_back_to_a_tool_capable_model(monkeypatch):
+    """Isolated from whatever `model_routing.local_model` some other test in
+    the full suite may have left behind (settings.json is a session-wide
+    shared temp home — see tests/conftest.py) -- this asserts the FALLBACK
+    behaviour specifically, i.e. no override configured, not "whatever the
+    ambient settings currently say"."""
     from agent_friday.services.knowledge_graph import indexer
+    monkeypatch.setattr(indexer, "_load_settings", lambda: {"model_routing": {}})
     assert indexer._local_model() in mp.TOOL_CAPABLE_IDS
