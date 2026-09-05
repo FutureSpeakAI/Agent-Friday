@@ -276,14 +276,61 @@ _PROBE_PROMPT = "hi"
 _PROBE_MAX_TOKENS = 16
 
 
+def _capability_routing_model_for(name: str, cfg: dict) -> str | None:
+    """Any role in `capability_routing` configured to use this provider, by
+    NAME rather than by provider TYPE — generic across every provider, so a
+    probe for a provider added after this file is next read does not need a
+    new special case here.
+
+    Prefers the 'orchestrator' role, since that is what a health check is
+    really asking about — "is the model the user picked actually working" —
+    and falls back to any other role pointing at this provider rather than
+    reporting nothing when a role other than orchestrator is the one
+    configured. A role with no `model` set is skipped, not treated as a
+    match on an empty string.
+    """
+    routing = cfg.get("capability_routing") or {}
+    order = ["orchestrator"] + [r for r in routing if r != "orchestrator"]
+    for role in order:
+        entry = routing.get(role) or {}
+        if entry.get("provider") == name and entry.get("model"):
+            return entry["model"]
+    return None
+
+
 def resident_model_for(prov) -> str | None:
     """The model a probe should exercise: what this provider would actually use.
 
-    Ollama prefers the configured local model, else the smallest installed one
-    (cheapest to load if nothing is resident). Cloud providers use the first
-    declared model in their descriptor.
+    Ollama prefers the configured local model, else the smallest installed
+    one (cheapest to load if nothing is resident) — both are ollama-specific
+    concerns (an *installed* model, not merely a configured one) that no
+    other provider type shares, so that branch stays hand-written.
+
+    Anthropic and every other cloud provider read `capability_routing` for
+    whichever role names this provider — the two are no longer split apart:
+    Anthropic keeps ONE extra fallback (the legacy flat `orchestrator_model`
+    field, pre-dating `capability_routing`, with its own id-format guard —
+    see the 2026-08-14 note below) that nothing else has a reason to share.
+
+    2026-09-03: before `_capability_routing_model_for` existed, every
+    provider type that was not `ollama` or `anthropic` fell straight through
+    to `(prov.get("models") or [None])[0]` — the provider descriptor's own
+    STATIC model list. That list is empty by design for a discovery-based
+    aggregator (OpenRouter, HuggingFace, Groq: their whole point is looking
+    models up live, not hardcoding one), so `resident_model_for` silently
+    returned None for every one of them and the health probe reported
+    "down — no base_url or model" regardless of whether the provider,
+    the key, or the user's chosen model were fine. OpenRouter carried that
+    for three weeks (`capability_routing.orchestrator` pointed at it with a
+    real, working model the whole time) before anyone noticed, because
+    Anthropic silently absorbed the actual traffic — see
+    `docs/audits/orchestrator-fallback-cost-2026-09-03.md` for what that
+    fallback cost. A per-provider-type elif is exactly the shape that bug
+    keeps recurring in, so this reads the user's actual configuration
+    instead of adding a third (or fourth, or fifth) name to a list.
     """
     ptype = (prov or {}).get("type", "")
+    name = (prov or {}).get("name", "")
     try:
         from agent_friday.core import _load_settings
         cfg = (_load_settings() or {})
@@ -327,15 +374,20 @@ def resident_model_for(prov) -> str | None:
                               key=lambda m: m.get("size_gb") or 0)[0].get("name")
             return None
         return chosen or None
+    configured = _capability_routing_model_for(name, cfg)
+    if configured:
+        return configured
     if ptype == "anthropic":
         # 2026-08-14: orchestrator_model held the llama.cpp brain's alias,
         # and the probe sent it to Anthropic → 404 'model: qwen3.6-…' → the
         # anthropic provider shown DOWN while perfectly healthy. Same law as
-        # the dispatch ladder: never send a foreign id to Anthropic.
+        # the dispatch ladder: never send a foreign id to Anthropic. This is
+        # a fallback for settings.json written before `capability_routing`
+        # existed — the check above already wins when that system names
+        # this provider.
         orch = cfg.get("orchestrator_model")
         if orch and str(orch).startswith("claude"):
             return orch
-        return (prov.get("models") or [None])[0]
     return (prov.get("models") or [None])[0]
 
 
