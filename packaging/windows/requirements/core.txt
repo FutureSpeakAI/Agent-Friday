@@ -24,7 +24,7 @@ tzdata>=2024.1
 rich>=13.0
 colorama>=0.4
 cryptography>=44
-psutil>=5.9
+psutil>=7.2.2
 anthropic>=0.40
 google-genai>=1.0
 
