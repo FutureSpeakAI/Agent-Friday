@@ -122,7 +122,10 @@ def list_tasks():
                 'steps': list(p.get('steps') or []),
                 'linked_task_id': p.get('task_id'),
             })
-    return jsonify({"tasks": tasks})
+    # Sealed for a non-user principal like every other observer read: this
+    # route served prompt, result and log raw with no ledger row while it sat
+    # on the observer allowlist (2026-09-06 audit).
+    return jsonify(_serve_sealed({"tasks": tasks}, None, "list", events=len(tasks)))
 
 
 def _linked_task_log(linked_tid):
@@ -171,7 +174,7 @@ def _steps_as_log(steps):
 def get_task(task_id):
     task = _task_snapshot(task_id)
     if task:
-        return jsonify(task)
+        return jsonify(_serve_sealed(dict(task), task_id, "detail", events=1))
 
     # Fall back to PROCESSES when the id isn't a TASK (e.g. scheduler orbs,
     # vault-access orbs, and other process_register() entries).  Synthesise a
@@ -196,7 +199,7 @@ def get_task(task_id):
             linked = dict(linked)
             linked.setdefault("model", proc.get("model"))
             linked.setdefault("orb_id", proc.get("id") or task_id)
-            return jsonify(linked)
+            return jsonify(_serve_sealed(linked, linked_tid, "detail", events=1))
 
     now = _t.time()
     started = proc.get("started", now)
@@ -209,7 +212,7 @@ def get_task(task_id):
     # finished process's result silently never displayed).
     _status_map = {"completed": "complete", "error": "failed"}
     _raw_status = proc.get("status", "running")
-    return jsonify({
+    return jsonify(_serve_sealed({
         "task_id": task_id,
         "name": proc.get("label") or proc.get("name") or "Process",
         "status": _status_map.get(_raw_status, _raw_status),
@@ -226,7 +229,7 @@ def get_task(task_id):
         "category": proc.get("category"),
         "elapsed": int((ended or now) - started),
         "process": True,
-    })
+    }, task_id, "detail", events=1))
 
 
 @tasks_bp.route('/api/tasks/<task_id>', methods=['DELETE'])
@@ -280,6 +283,18 @@ def _serve_sealed(payload, task_id, route, *, events=0, reasoning=False):
                        redacted=int(redacted), withheld=int(withheld))
         except Exception:
             pass
+        # The operator contract (docs/reference/task-observation.md): a read
+        # that redacted or withheld anything is a `gate` decision on the task,
+        # so the record shows the observer saw less and why.
+        if task_id and (redacted or withheld):
+            try:
+                _tj.append(task_id, "decision", point="gate",
+                           chosen="withheld" if withheld else "redacted",
+                           reason=f"{route} served to principal {who}: "
+                                  f"{int(redacted)} field(s) redacted, {int(withheld)} withheld",
+                           alternatives=["serve raw"])
+            except Exception:
+                pass
         if isinstance(sealed, dict):
             sealed["sealed_for"] = who
             sealed["redacted_fields"] = redacted

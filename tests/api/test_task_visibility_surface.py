@@ -84,10 +84,16 @@ def test_observer_can_read_every_read_route(client):
     tid = _task()
     tok = _mint(client)
     for path in (f"/api/tasks", f"/api/tasks/{tid}", f"/api/tasks/{tid}/journal",
-                 f"/api/tasks/{tid}/digest", f"/api/tasks/{tid}/events", "/api/processes",
+                 f"/api/tasks/{tid}/digest", f"/api/tasks/{tid}/events",
                  "/api/activity", "/api/tasks/retention"):
         r = client.get(path, headers=_obs(tok))
         assert r.status_code == 200, (path, r.status_code, r.get_data(as_text=True)[:200])
+    # Routes that do not seal their free text are refused, not served raw
+    # (2026-09-06 audit: orb logs and worker outputs were on the allowlist).
+    for path in ("/api/processes", "/api/orchestrator/status", "/api/orchestrator/workers",
+                 "/api/orchestrator/results/w1"):
+        r = client.get(path, headers=_obs(tok))
+        assert r.status_code == 403, (path, r.status_code)
     # and from a remote address, with no FRIDAY_REMOTE_KEY configured at all
     r = client.get(f"/api/tasks/{tid}/digest", headers=_obs(tok),
                    environ_overrides={"REMOTE_ADDR": NON_LOOPBACK})

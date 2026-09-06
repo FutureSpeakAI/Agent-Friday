@@ -31,13 +31,16 @@ from typing import Optional
 HEADER = "X-Friday-Observer"
 
 # GET-only. Prefix match on the path; anything else is refused.
+#
+# Every route here must seal free text for the observer principal
+# (routes/tasks._serve_sealed) or serve none. /api/processes and the
+# orchestrator status/workers/results routes were on this list without
+# sealing orb logs and worker outputs (2026-09-06 boundary audit); they are
+# off it until they seal. The three documented reads (list, digest, tail)
+# and the journal all live under /api/tasks.
 READ_ONLY_PREFIXES = (
-    "/api/tasks",              # list, detail, journal, digest, events, retention (GET only)
-    "/api/processes",          # orb list (GET only; /cancel, /dismiss are POST and refused)
-    "/api/activity",           # the activity ledger
-    "/api/orchestrator/status",
-    "/api/orchestrator/workers",
-    "/api/orchestrator/results",
+    "/api/tasks",              # list, detail, journal, digest, events, retention (GET only; sealed)
+    "/api/activity",           # the activity ledger (whitelisted metadata, 200-char cap)
 )
 
 
