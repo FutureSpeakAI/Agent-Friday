@@ -1,14 +1,27 @@
 # Task visibility — the transparency rule pointed inward
 
-> **Status:** active
+> **Status:** partially-implemented
 > **Last verified:** 2026-09-06
-> **Implementation:** none — specification. Builds on `services/agent.py` (TASKS, `_task_set`, `_task_log`, the two agentic loops), `routes/tasks.py`, `services/activity_ledger.py`, `services/cost_meter.py`, `services/spend_guard.py`, `services/approvals.py`
+> **Implementation:** phase 1 built — `services/task_journal.py`, the journal-backed `_spawn_task` / `_task_set` / `_task_log` / `_restore_tasks_from_journal` in `services/agent.py`, `routes/tasks.py` (journal read, state-aware delete, retention), the boot hook in `server.py`, the `task_journal` settings block; phases 2–5 not built. Specification for everything else: Builds on `services/agent.py` (TASKS, `_task_set`, `_task_log`, the two agentic loops), `routes/tasks.py`, `services/activity_ledger.py`, `services/cost_meter.py`, `services/spend_guard.py`, `services/approvals.py`
 > **Supersedes / superseded by:** —
 > **Written:** 2026-09-06
 
 ## Implementation notes
 
-Nothing here is built. The maintainer's question, verbatim: *"Astra and Fable
+**Phase 1 is built** (durable journal, state snapshot, index, boot
+reconciliation, encryption at rest, user delete, retention setting). Phases
+2–5 (required emission at loop checkpoints, decisions, the query surface, the
+tray, orchestrator credentials) are not. The maintainer's rulings on the §7
+questions, each built as a reversible setting or route rather than a baked-in
+assumption: retention is a user setting defaulting to keep-forever with a
+visible delete; model-reasoning capture defaults on (`capture_reasoning`,
+consumed in phase 2); the user sees everything, an orchestrator's digest
+carries decisions/status/model/cost and gets reasoning only on explicit
+request through the sealed gate with a ledger row; interrupted tasks are
+marked and offered for re-run, never resumed; orchestrators get a scoped
+read-only credential (phase 5); journals are encrypted under the vault key.
+
+The maintainer's question, verbatim: *"Astra and Fable
 were unable to see any of the running tasks. It's like they were unable to
 check in on those agents. I also don't have full visibility on what they are
 doing, what they are reasoning, etc. How should we implement full visibility

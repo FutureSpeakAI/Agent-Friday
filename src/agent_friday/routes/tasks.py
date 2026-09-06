@@ -221,12 +221,68 @@ def get_task(task_id):
 
 @tasks_bp.route('/api/tasks/<task_id>', methods=['DELETE'])
 def delete_task(task_id):
+    """Two meanings, chosen by the task's state (docs/design/active/
+    task-visibility.md TV10/TV13): a RUNNING task is cancelled and its
+    journal is kept — a record must survive the thing it records; a finished
+    task is deleted, journal and all. This is the user-visible delete; nothing
+    deletes a journal automatically unless the user set a retention period."""
+    from agent_friday.services import task_journal as _tj
     with TASKS_LOCK:
-        if task_id in TASKS:
-            TASKS[task_id]['status'] = 'cancelled'
-            del TASKS[task_id]
-            return jsonify({"status": "cancelled"})
-    return jsonify({"error": "Task not found"}), 404
+        t = TASKS.get(task_id)
+        running = bool(t) and t.get('status') in ('queued', 'running')
+    if running:
+        from agent_friday.services.agent import _task_set
+        _task_set(task_id, status='cancelled', ended=_time.time(),
+                  result='[Cancelled] Stopped by the user; the record is kept.')
+        return jsonify({"status": "cancelled", "journal": "kept"})
+    with TASKS_LOCK:
+        existed_in_cache = TASKS.pop(task_id, None) is not None
+    existed_on_disk = _tj.delete(task_id)
+    if not (existed_in_cache or existed_on_disk):
+        return jsonify({"error": "Task not found"}), 404
+    return jsonify({"status": "deleted", "journal": "deleted"})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/journal')
+def task_journal_events(task_id):
+    """The task's append-only journal, oldest first. `since` is a seq cursor
+    (events with seq > since). Phase 1 of task visibility: the record exists
+    and can be read; the digest/tail surfaces come in later phases."""
+    from agent_friday.services import task_journal as _tj
+    try:
+        since = int(request.args.get('since', 0) or 0)
+    except ValueError:
+        since = 0
+    events = _tj.read(task_id, since=since)
+    state = _tj.read_state(task_id)
+    if not events and state is None:
+        return jsonify({"error": "Task not found"}), 404
+    return jsonify({"task_id": task_id, "events": events, "state": state,
+                    "last_seq": (events[-1]["seq"] if events else since)})
+
+
+@tasks_bp.route('/api/tasks/retention', methods=['GET', 'POST'])
+@login_required
+def task_retention():
+    """Read or set task_journal.retention_days. 0 keeps every journal
+    forever (the default); a positive number deletes journals of tasks that
+    finished more than that many days ago, and only those."""
+    from agent_friday.services import task_journal as _tj
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        try:
+            days = int(data.get('retention_days', 0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "retention_days must be an integer"}), 400
+        if days < 0:
+            return jsonify({"error": "retention_days must be 0 or more"}), 400
+        from agent_friday.core import _load_settings_raw, _save_settings
+        block = dict((_load_settings_raw().get('task_journal') or {}))
+        block['retention_days'] = days
+        _save_settings({'task_journal': block})
+        deleted = _tj.apply_retention() if days > 0 else []
+        return jsonify({"ok": True, "retention_days": days, "deleted": deleted})
+    return jsonify({"ok": True, **_tj.settings()})
 
 
 @tasks_bp.route('/api/agent/steer', methods=['POST'])

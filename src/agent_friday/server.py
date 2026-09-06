@@ -367,6 +367,18 @@ if not _TESTING:
         _content_publisher.start()
     except Exception as _cp_err:
         print(f"  Content publisher: skipped ({_cp_err})")
+    # Task journal (docs/design/active/task-visibility.md TV8): rebuild the
+    # task cache from disk and mark whatever the previous process left
+    # running as interrupted — BEFORE the scheduler can spawn new work, so a
+    # chain step whose task died is seen as such rather than re-queued blind.
+    try:
+        from agent_friday.services.agent import _restore_tasks_from_journal
+        _tj_summary = _restore_tasks_from_journal()
+        _n_int = len(_tj_summary.get("interrupted") or [])
+        print(f"  Task journal: {_tj_summary.get('loaded', 0)} task record(s) restored"
+              + (f", {_n_int} marked interrupted" if _n_int else ""))
+    except Exception as _tj_err:
+        print(f"  Task journal: restore skipped ({_tj_err})")
     start_scheduler()
 
     if _notif_engine:
