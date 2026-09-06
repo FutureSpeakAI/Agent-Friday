@@ -141,6 +141,37 @@ def _headers() -> dict:
             "Content-Type": "application/json"}
 
 
+def _gate_outbound(value: str, field: str) -> tuple[str, str]:
+    """Run one caller-supplied string through the egress gate before it
+    leaves for Firecrawl. Returns (value, refusal) -- refusal is "" when the
+    value may go unchanged; otherwise the value was withheld in whole or in
+    part and the caller must refuse rather than send a redaction placeholder
+    to a third party as if it were the real query/URL.
+
+    2026-09-06: this module was the eleventh ungated egress path from the
+    security-boundary.md §19 inventory (a36ae73 closed the other ten). The
+    query path happened to be covered because web_search.search() gates
+    before calling in, but scrape(url) from web_fetch.py was not, and a
+    gate that lives only in SOME callers is not a gate. Same shape as
+    web_search._gate_search_query: fail closed on any gate failure.
+    """
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as e:
+        return "", f"the privacy gate could not be reached ({e}) — not sent to Firecrawl"
+    try:
+        gated = _eg._gate_text(value, "firecrawl", field)
+    except _eg.NeverSendBlocked as nb:
+        return "", str(nb)
+    except Exception as e:
+        return "", f"the privacy gate failed ({e}) — not sent to Firecrawl"
+    if gated != value:
+        return "", ("this contained content that stays on this device, so it "
+                    "was not sent to Firecrawl — rephrase without the private "
+                    "part, or use a local model to work with it")
+    return gated, ""
+
+
 def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
     """POST and return (json, error_detail). Never raises."""
     import requests
@@ -188,6 +219,9 @@ def search(query: str, count: int = 10, *, with_content: bool = False,
     Returns {ok, results[], error}. results[i] = {title, url, snippet, markdown}
     where markdown is "" unless with_content was asked for.
     """
+    query, refusal = _gate_outbound(query, "firecrawl.search.query")
+    if refusal:
+        return {"ok": False, "results": [], "error": refusal, "withheld": True}
     body: dict[str, Any] = {"query": query, "limit": max(1, min(count, 20))}
     if with_content:
         body["scrapeOptions"] = {"formats": ["markdown"], "onlyMainContent": True}
@@ -219,6 +253,9 @@ def scrape(url: str, *, timeout: int | None = None,
            main_only: bool = True) -> dict:
     """Fetch one page as markdown. Returns {ok, markdown, title, final_url,
     status, error}."""
+    url, refusal = _gate_outbound(url, "firecrawl.scrape.url")
+    if refusal:
+        return {"ok": False, "error": refusal, "withheld": True}
     payload, err = _post(f"/{API_VERSION}/scrape",
                          {"url": url, "formats": ["markdown"],
                           "onlyMainContent": main_only},
