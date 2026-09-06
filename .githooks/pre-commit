@@ -73,4 +73,15 @@ if ! $PY "$HERE/../scripts/check_settings_readers.py"; then
     exit 1
 fi
 
+# ── Stale model-name check ────────────────────────────────────────────────
+# A model retired from model_plan.BRAIN_MODELS (Qwen, 2026-09-03) was found
+# independently in four separate places over the next three days, including
+# the public README after a same-session doc-reconciliation pass had already
+# run. Pure text scan, stdlib only, no app import.
+if ! $PY "$HERE/../scripts/check_stale_model_names.py"; then
+    echo "[pre-commit] stale-model-name check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 exec $PY "$SCANNER"
