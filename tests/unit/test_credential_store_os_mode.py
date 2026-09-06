@@ -49,10 +49,16 @@ def _isolated(tmp_path, monkeypatch):
     for var in ("FRIDAY_OS_MODE", "FRIDAY_PASSWORD", "FRIDAY_VAULT_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
 
-    # A real start.bat elsewhere on this machine (or a real OS keychain
-    # entry) must never leak a real passphrase into these tests.
+    # A real start.bat elsewhere on this machine, a real OS keychain entry,
+    # or a leftover DPAPI-protected passphrase file from an unrelated test
+    # (tests/api/test_data_rights_and_vault.py writes one and does not clean
+    # it up -- found by running this file alongside tests/api, where it
+    # otherwise defeats every fail-closed/plaintext assertion below by
+    # handing _vault_key() a real, working key from that leftover file) must
+    # never leak a real passphrase into these tests.
     from agent_friday.services import vault_passphrase as vp
     monkeypatch.setattr(vp, "_from_start_bat", lambda: "")
+    monkeypatch.setattr(vp, "_from_dpapi_file", lambda: "")
     monkeypatch.setitem(sys.modules, "keyring", None)
     vp.reset_cache()
 
