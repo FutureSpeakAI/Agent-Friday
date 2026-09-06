@@ -335,7 +335,7 @@ def auth_headers(prov: dict | None, api_key: str | None = None) -> dict:
 # This table exists because the Providers panel used to ask for a key by
 # naming the environment variable it would be stored under — "needs
 # ANTHROPIC_API_KEY". That sentence is complete only if you already have the
-# key. Stephen installed Friday on Janet's laptop on 2026-08-26 and had to
+# key. Stephen installed Friday on a second user's laptop on 2026-08-26 and had to
 # open a code editor to put a Gemini key in, because nothing anywhere in the
 # product connected "Friday needs a key" to "here is where keys come from".
 #

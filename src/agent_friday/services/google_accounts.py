@@ -1029,7 +1029,7 @@ def build_auth_flow(state: str | None = None):
     cfg, _src, _kind = goc.active_client(discover=_google_client_config)
     if not cfg:
         # NOT a file path. The message this replaced ("Place a Desktop OAuth
-        # client JSON at ~/.friday/credentials.json") is the wall Janet hit on
+        # client JSON at ~/.friday/credentials.json") is the wall the second user hit on
         # 2026-08-26, and it asked a person who wanted her mail summarised to
         # know what an OAuth client is and where ~/.friday lives on Windows.
         raise RuntimeError(

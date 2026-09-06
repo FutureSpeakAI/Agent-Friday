@@ -252,7 +252,7 @@ def _routing_block_for(provider_id: str, existing: dict,
     on their own machine.
 
     That stayed invisible while routes/chat.py silently rescued keyless
-    turns onto Ollama. Scoping that rescue out of cloud_only (Janet chose
+    turns onto Ollama. Scoping that rescue out of cloud_only (the second user chose
     cloud only on 2026-08-26 and was answered locally anyway) makes this
     gap load-bearing in the other direction: without this, someone who
     picked a local model and gave no cloud key would be told to add one.
@@ -1316,13 +1316,13 @@ def step_connectors(total: int, existing: dict) -> dict:
     created no account. The key it wrote is read by nothing. On the next run
     it drew a green dot beside a service that had never been connected.
 
-    Stephen, installing Friday on Janet's laptop 2026-08-26: "The connect
+    Stephen, installing Friday on a second user's laptop 2026-08-26: "The connect
     services portion of the installer, once the gui comes up, should be
     interactive. I could not click to connect my accounts and would like to."
     He could not -- and the step implied he had.
 
     Actually clicking to connect is gated on Friday shipping its own Google
-    OAuth client (docs/design/google-oauth-onboarding.md). Until that is
+    OAuth client (docs/design/active/google-oauth-onboarding.md). Until that is
     decided a new user has no OAuth client at all, and the most useful thing
     this step can do is be accurate about where the flow lives, rather than
     send them toward a screen that will ask them for a JSON file.

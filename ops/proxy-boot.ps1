@@ -12,7 +12,7 @@
   restart-on-failure setting is a backstop if the process itself is killed.
 
   Invoked by the scheduled task with absolute paths (SYSTEM's %USERPROFILE% is
-  NOT swebs, so nothing here may depend on a per-user profile dir).
+  NOT the interactive user, so nothing here may depend on a per-user profile dir).
 #>
 param(
 	[Parameter(Mandatory)][string]$Caddyfile,

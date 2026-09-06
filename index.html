@@ -36666,7 +36666,7 @@ function SettingsTabAbout() {
       textDecoration: 'none'
     }
   }, "GitHub"), /*#__PURE__*/React.createElement("a", {
-    href: "/THREAT_MODEL.md",
+    href: "https://github.com/FutureSpeakAI/Agent-Friday/blob/main/docs/security/threat-model.md",
     target: "_blank",
     className: "settings-btn",
     style: {
@@ -37482,9 +37482,9 @@ function SettingsWS() {
     // entry in this array and no branch in the render chain below, so nothing
     // could reach it. A complete feature, unreferenced.
     //
-    // Stephen, after installing Friday on Janet's laptop 2026-08-26: "It
+    // Stephen, after installing Friday on a second user's laptop 2026-08-26: "It
     // appears there is no way to add API keys in Friday's settings menu. I
-    // had to launch a Claude Code session on Janet's laptop to add a Gemini
+    // had to launch a Claude Code session on a second user's laptop to add a Gemini
     // API key." He was right — and the panel he needed was already written.
     // The author never missed it, because the author edits the file.
     id: 'providers',
@@ -37643,7 +37643,7 @@ function App() {
      indicator — bound to the same flag — span forever. Stephen, 2026-08-18:
      "the new chat just showed 'Friday is thinking' and she didn't respond."
      The guard is now scoped to the conversation that owns the running turn. */
-  /* Conversations (docs/design/conversations-and-concurrency.md §3.1).
+  /* Conversations (docs/design/implemented/conversations-and-concurrency.md §3.1).
      `chatMsgs` stays the ACTIVE conversation's transcript, so the panel below
      is unchanged — but WHICH conversation that is now moves, and each carries
      its own model binding. Switching loads that chat's own messages. */

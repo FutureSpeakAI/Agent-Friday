@@ -42,7 +42,7 @@ class TestGenuinelyDestructiveCommandsAreStillBlocked:
 
     @pytest.mark.parametrize("cmd,expected_token", [
         ("del somefile.txt", "del "),
-        ("Remove-Item C:\\Users\\swebs\\Desktop -Recurse", "remove-item"),
+        ("Remove-Item C:\\Users\\example\\Desktop -Recurse", "remove-item"),
         ("rm -rf /", "rm -"),
         ("rmdir /s /q C:\\temp", "rmdir"),
         ("format d:", "format "),

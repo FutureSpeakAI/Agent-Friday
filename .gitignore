@@ -1,22 +1,21 @@
-# ─── Secrets — startup scripts contain API keys + passwords ──────────────
-start.bat
-friday_startup.bat
-friday_startup.vbs
-launch_now.bat
-do_commit.bat
+# Agent Friday — ignore policy.
+#
+# This file answers one question: which classes of generated or private files
+# never belong in the public tree. Patterns are grouped by class. Rationale for
+# a class lives in SECURITY.md and docs/development/, not here.
+
+# ── Local launch scripts and environment files (carry API keys) ──────────
 *.bat
-!install.bat
+!scripts/install.bat
+!packaging/windows/*.cmd
 *.vbs
 .env
 *.env
 .env.*
 
-# ─── Python ──────────────────────────────────────────────────────────────
+# ── Python ───────────────────────────────────────────────────────────────
 __pycache__/
-**/__pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
@@ -24,104 +23,52 @@ __pycache__/
 venv/
 .venv/
 
-# ─── Friday runtime artifacts ────────────────────────────────────────────
-server_out.log
-server_err.log
-server.out.log
-server.err.log
-cloudflared.log
-commit_log.txt
-test_tts*.wav
-verify_tts.wav
-.setup_complete
-
-# Per-user generated config — stays out of source
-# (NOTE: API keys are stored encrypted per provider under ~/.friday/providers/keys/, not in settings.json)
-# Match only at project root — skill default configs under skills/*/config.yaml ship.
-/settings.json
-/config.yaml
-secrets.json
-credentials.json
-
-# Friday skill state (bandit, counters, rotator)
-.friday-state.json
-*.bandit.json
-*.daily.json
-*.state.json
-
-# ─── Editor / IDE backups ────────────────────────────────────────────────
-*.bak
-*.backup
-*.orig
-*.swp
-*.swo
-index.html.*.bak
-ui_parts/*.bak
-
-# ─── OS / IDE ────────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-*.sublime-*
-
-# ─── Asimov's Mind ephemeral state ───────────────────────────────────────
-.asimovs-mind/vault/bridge-token
-.asimovs-mind/vault/port
-asimovs-mind/
-
-# ─── Claude Code worktrees / artifacts ───────────────────────────────────
-.claude/
-.claude/worktrees/
-
-# ─── Node ────────────────────────────────────────────────────────────────
+# ── Node / Playwright tooling ────────────────────────────────────────────
 node_modules/
-npm-install.log
 npm-debug.log*
 yarn-debug.log*
-pw-install.log
-package-lock.json.bak
-
-# ─── Test artifacts ──────────────────────────────────────────────────────
+*-install.log
 test-results/
-test-results.log
 playwright-report/
-tests/screenshots/
-tests/audit_screenshots/
-tests/report.html
-tests/last_run.log
-tests/console_errors.log
 
-# ─── Build outputs the user wanted excluded ──────────────────────────────
-assets/palette/
-assets/splash/
-
-# ─── PyInstaller build artifacts (the .exe is shipped via GitHub Releases) ─
+# ── Build outputs ────────────────────────────────────────────────────────
 dist/
 build/
 build_pyi/
 *.manifest
-# NOTE: AgentFriday.spec IS tracked on purpose — it's the build recipe.
+*.log
+# AgentFriday.spec is tracked on purpose: it is the PyInstaller recipe.
 
-# ─── Private user data — never commit ─────────────────────────────────────
-# VOICE_DEMO.md — now tracked: rewritten as product spec sheet (70% features).
-# Loaded by server.py (_load_voice_demo) into Gemini Live system prompt.
-# NOTE: this rule is deliberately generic. Naming the specific files here
-# would publish their names to everyone who clones this public repo.
+# ── Per-user runtime state (lives under ~/.friday; never in-repo) ────────
+/settings.json
+/config.yaml
+secrets.json
+credentials.json
+.setup_complete
+.friday-state.json
+*.bandit.json
+*.daily.json
+*.state.json
 data/*.json
-voice_debug.log
-*voice_debug*.log
-# Runtime health/appointment caches if ever generated in-repo
 appointments.json
 insurance.json
-# Vault / federation secrets anywhere in the tree
-**/bridge-token
-**/node-identity.json
-*.key
-*.pem
-*.pfx
+wiki/
+vault/
+.friday/
+creations/
+self_improvement/
+chroma/
+chroma_db/
+chromadb/
+memory_db/
+**/chroma/
+*.chroma
+*.sqlite3
+test_tts*.wav
+verify_tts.wav
+*voice_debug*.log
 
-# ─── Credentials / connected-account tokens — NEVER commit ───────────────
+# ── Credentials, tokens, keys — any location ─────────────────────────────
 *.credentials*
 *credentials*.json
 google_token.json
@@ -129,65 +76,51 @@ google_accounts/
 **/google_accounts/
 token.json
 *oauth*token*.json
+**/bridge-token
+**/node-identity.json
+*.key
+*.pem
+*.pfx
+.asimovs-mind/vault/bridge-token
+.asimovs-mind/vault/port
+asimovs-mind/
 
-# ─── Local conversation memory / vector store (ChromaDB) ─────────────────
-chroma/
-chroma_db/
-**/chroma/
-*.chroma
-chromadb/
-*.sqlite3
-memory_db/
-
-# ─── Per-user wiki / vault / runtime content (lives under ~/.friday) ─────
-# If any of these ever materialize inside the repo tree, keep them out.
-wiki/
-vault/
-.friday/
-creations/
-self_improvement/
-
-# scratch
-_commitmsg.txt
-_scrub*.py
-
-# Internal scrub report — keep local, do not publish (contains the PII terms it documents)
-SCRUB_REPORT.md
-/openai
-
-# Stray copy of the agent's private auto-memory (lives under ~/.claude, not the
-# repo) + PyInstaller build log — NEVER commit to this public repo.
+# ── AI-agent workspaces, private memory, local-only working notes ────────
+.claude/
 /memory/
-pyinstaller_build.log
+.agents/
+skills-lock.json
+/AGENT_BEST_PRACTICES.md
+/SCRUB_REPORT.md
 
-# Internal working docs - local only, not for the public tree
-AGENT_BEST_PRACTICES.md
+# ── Generated art assets (built locally, not source) ─────────────────────
+assets/palette/
+assets/splash/
 
-# Playwright output — local test artifacts, never for the public tree
-test-results/
-playwright-report/
-
-# Scenario-tier runtime artifacts. These capture real conversations, including
-# tool results that contain personal data (inbox contents, email addresses).
-# Local diagnostics only — never committed; this repo is public.
+# ── Scenario-tier test artifacts (capture real conversations) ────────────
 tests/app/scenarios/transcript.json
 tests/app/scenarios/sent-messages.json
+tests/screenshots/
+tests/audit_screenshots/
+tests/report.html
+tests/last_run.log
+tests/console_errors.log
 
-# Root-level scratch files, by SHAPE rather than by name (2026-08-25).
-#
-# This repo is PUBLIC. On 2026-08-25 the root held _msgws_raw.txt,
-# _msgws_full.txt, _messages_ui_dump.txt, _triage_tail.txt, _triage_tail2.txt
-# and _orig_bytes.tmp -- ~90 KB of dumps from a live message-triage session --
-# none of them ignored, so a single `git add -A` would have published them.
-# Naming each one only ever catches the files someone already thought of, so
-# the rule is the shape: a leading underscore at the repo root means scratch.
-#
-# Scoped to the root with a leading slash on purpose, so package sources like
-# src/agent_friday/**/_internal.py are unaffected. Verified with `git ls-files`
-# that nothing tracked matches. packaging/windows/build-installer.ps1 carries
-# the same patterns so these never reach the installer payload either.
-/_*
-*.tmp
+# ── Editor / OS ──────────────────────────────────────────────────────────
 *.bak
+*.backup
 *.orig
 *.rej
+*.swp
+*.swo
+*.tmp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-*
+
+# ── Root-level scratch: a leading underscore at the repo root means scratch ─
+/_*
+/openai
+/Microsoft/

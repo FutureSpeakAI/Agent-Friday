@@ -124,7 +124,7 @@ def _gate_vision_prompt(text: str) -> str:
 
 
 
-# ── Conversations (docs/design/conversations-and-concurrency.md §3.1) ───────
+# ── Conversations (docs/design/implemented/conversations-and-concurrency.md §3.1) ───────
 #
 # Every turn belongs to a conversation. Until now there was ONE transcript: the
 # global CHAT_HISTORY list, which "+ New Chat" deleted outright. Two chats open
@@ -912,7 +912,7 @@ def chat():
         # with no setting able to switch it off, because this test never read
         # `mode`.
         #
-        # Measured on Janet's laptop 2026-08-26, the first install of Friday by
+        # Measured on a second user's laptop 2026-08-26, the first install of Friday by
         # someone who did not write her. She found the routing mode, set it to
         # cloud only, and was still answered on-device. The router had already
         # decided correctly one line above — both lines, same turn, in order:

@@ -12,7 +12,7 @@ no matter what was answered.
 
 Until 2026-08-26 that was invisible, because routes/chat.py had a keyless
 safety net that silently ran the turn on Ollama whenever no Anthropic key
-was present. Removing that rescue for cloud_only users (Janet's bug: she
+was present. Removing that rescue for cloud_only users (the second user's bug: she
 chose cloud only and was answered locally anyway) makes this gap load
 bearing in the other direction — someone who deliberately chose a local
 model, and gave no cloud key, would now be told to add one.

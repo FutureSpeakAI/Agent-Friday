@@ -49,7 +49,7 @@ class TestNameSearch:
         'resume.pdf', which did not exist. Name search finds the real file
         by any substring it actually contains ('cv'); Stage A is substring/
         fuzzy filename matching, not a synonym dictionary for 'resume'."""
-        real = roots["downloads"] / "Webster_Stephen_CV_cyanotype_magenta_v2.pdf"
+        real = roots["downloads"] / "Example_User_CV_cyanotype_magenta_v2.pdf"
         real.write_bytes(b"%PDF-1.4\n%%EOF")
 
         result = fs.search_files(query="cv", root="downloads")
@@ -61,7 +61,7 @@ class TestNameSearch:
         """The other half of the 09:18 failure: Stephen should not have had
         to know ANY part of the filename — 'the latest thing in Downloads'
         must work with no query at all."""
-        real = roots["downloads"] / "Webster_Stephen_CV_cyanotype_magenta_v2.pdf"
+        real = roots["downloads"] / "Example_User_CV_cyanotype_magenta_v2.pdf"
         real.write_bytes(b"%PDF-1.4\n%%EOF")
 
         result = fs.search_files(query="", root="downloads")

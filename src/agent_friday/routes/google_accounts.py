@@ -220,7 +220,7 @@ def google_oauth_byo():
     forgets them and falls back to the bundled client.
 
     There is deliberately no file anywhere in this. "Download this JSON and put
-    it in this directory" is what stopped Janet on 2026-08-26.
+    it in this directory" is what stopped the second user on 2026-08-26.
     """
     from agent_friday.services import google_oauth_client as goc
     if request.method == "GET":
