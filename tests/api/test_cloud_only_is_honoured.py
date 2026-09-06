@@ -1,6 +1,6 @@
 """Regression: "cloud only" must actually keep the turn off this machine.
 
-Janet's laptop, 2026-08-26 — the first time Friday was installed by someone
+a second user's laptop, 2026-08-26 — the first time Friday was installed by someone
 who did not write her. She set the routing mode to cloud only and every turn
 was still answered by a local model. It was not a save that failed; it was a
 save nothing read.
@@ -94,7 +94,7 @@ class TestCloudOnlyIsHonoured:
         assert resp.status_code == 200
         assert local.calls == 0, (
             "cloud_only was set and a local model answered anyway — this is "
-            "the exact defect Janet reported"
+            "the exact defect the second user reported"
         )
         assert resp.get_json().get("cloud_only_no_key") is True
 

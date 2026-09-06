@@ -1,7 +1,7 @@
 """The wizard must not report a connection it did not make.
 
 "CONNECT SERVICES (optional)" is step 9 of the installer's setup wizard.
-Stephen, after installing Friday on Janet's laptop 2026-08-26:
+Stephen, after installing Friday on a second user's laptop 2026-08-26:
 
     "The connect services portion of the installer, once the gui comes up,
      should be interactive. I could not click to connect my accounts and
@@ -26,7 +26,7 @@ the Edition, the capability manifest on /api/health, the tool receipts on
 every chat turn. The wizard was the gap.
 
 Genuinely clicking to connect is gated on Friday shipping an OAuth client
-(docs/design/google-oauth-onboarding.md). Until that is decided, the step
+(docs/design/active/google-oauth-onboarding.md). Until that is decided, the step
 tells the truth: what is connected, what is not, and where connecting
 actually happens.
 """
@@ -74,7 +74,7 @@ def test_the_step_says_where_connecting_actually_happens(always_yes, capsys):
     said = capsys.readouterr().out.lower()
     assert "settings" in said, "the step must name where the connect flow lives"
     # The old copy promised setup would "run on first use via the UI" — it did
-    # not, and that sentence is what sent Janet looking for a screen that
+    # not, and that sentence is what sent the second user looking for a screen that
     # would have asked her for a JSON file.
     assert "on first use" not in said
 

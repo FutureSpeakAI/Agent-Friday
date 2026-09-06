@@ -9,7 +9,7 @@ routing rather than cryptography:
   * "Failing at the cap must be graceful." When the shared client is full the
     callback must land in the bring-your-own walkthrough with an explanation,
     not a raw OAuth error string.
-  * Never "place this JSON file in this directory" — the wall Janet hit.
+  * Never "place this JSON file in this directory" — the wall the second user hit.
 
 The old callback was literally:
 
@@ -56,7 +56,7 @@ class TestConnectPrebrief:
         assert "verified" in low
 
     def test_with_no_client_at_all_the_error_names_an_action(self, client, monkeypatch):
-        """Janet's exact message, retired."""
+        """the second user's exact message, retired."""
         import agent_friday.services.google_oauth_client as goc
         import agent_friday.services.google_accounts as ga
         monkeypatch.setattr(goc, "BUNDLED_CLIENT_ID", "", raising=False)

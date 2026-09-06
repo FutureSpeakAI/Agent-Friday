@@ -48,7 +48,7 @@ for _var in ("FRIDAY_PASSWORD", "FRIDAY_VAULT_PASSPHRASE"):
 from agent_friday import setup_wizard as w                     # noqa: E402
 from agent_friday.privacy import vault_crypto as vc            # noqa: E402
 
-ORIGINAL = "the-users-original-passphrase"   # pragma: allowlist secret
+ORIGINAL = "rehearsal-fixture-not-a-real-passphrase"   # pragma: allowlist secret
 
 if not hasattr(w, "VAULT_DIR"):
     print("This script needs setup_wizard from v5.6.6 or later "

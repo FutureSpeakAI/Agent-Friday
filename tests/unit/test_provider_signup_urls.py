@@ -1,6 +1,6 @@
 """Every provider that asks for a key must say where to get one.
 
-Stephen, after setting Friday up on Janet's laptop 2026-08-26:
+Stephen, after setting Friday up on a second user's laptop 2026-08-26:
 
     "The UI must also include clickable buttons that open the sign up pages
      for various API/MCP services Friday can use."
@@ -44,7 +44,7 @@ def test_the_fixtures_actually_found_providers():
 def test_a_provider_that_wants_a_key_says_where_to_get_one(prov):
     url = prov.get("signup_url")
     assert url, (
-        "%s asks for %s and offers no way to obtain it — the exact wall Janet "
+        "%s asks for %s and offers no way to obtain it — the exact wall the second user "
         "hit" % (prov["name"], (prov.get("auth") or {}).get("key"))
     )
     assert url.startswith("https://"), "%s: signup_url must be https" % prov["name"]

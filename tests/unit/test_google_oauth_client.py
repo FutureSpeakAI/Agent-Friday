@@ -142,7 +142,7 @@ class TestErrorGuidance:
 
     def test_no_guidance_tells_anyone_to_place_a_file(self):
         """The whole reason this exists. 'Place a JSON file in this directory'
-        is the wall Janet hit on 2026-08-26."""
+        is the wall the second user hit on 2026-08-26."""
         for code in (goc.CAP_REACHED, goc.DECLINED_OR_CAPPED, goc.MISCONFIGURED,
                      goc.ADMIN_BLOCKED, goc.UNKNOWN):
             low = goc.explain_error(code).lower()

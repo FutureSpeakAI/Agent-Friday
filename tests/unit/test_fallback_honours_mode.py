@@ -1,7 +1,7 @@
 """Cloud only must survive the FALLBACK ladder, not just the routing decision.
 
 The chat route was fixed on 2026-08-26 (`0734377`): cloud_only no longer drops
-to a local model when there is no Anthropic key. That closed Janet's symptom
+to a local model when there is no Anthropic key. That closed the second user's symptom
 on /api/chat and nowhere else.
 
 Two other ladders do the same thing, and they carry everything that is not a
@@ -61,7 +61,7 @@ class TestCloudOnly:
     def test_the_local_fallback_leg_is_dropped(self):
         out = mr._mode_filtered_attempts(CLOUD_LADDER, {"mode": "cloud_only"})
         assert _names(out) == ["cloud", "openai"], (
-            "cloud_only kept a local leg — this is Janet's bug in the ladder "
+            "cloud_only kept a local leg — this is the second user's bug in the ladder "
             "the chat fix did not cover"
         )
 
@@ -162,7 +162,7 @@ MSG = [{"role": "user", "content": "write a haiku about espresso"}]
 
 
 def test_a_cloud_only_agentic_turn_never_reaches_ollama(agentic):
-    """Janet's symptom, on the path the chat fix did not cover."""
+    """the second user's symptom, on the path the chat fix did not cover."""
     agent_mod, local = agentic("cloud_only")
     try:
         agent_mod._generate_agent(MSG, system="be brief")

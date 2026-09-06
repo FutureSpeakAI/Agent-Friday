@@ -34,7 +34,7 @@ could impersonate Friday's consent screen, or burn the project's user cap.
 Both are recoverable by rotating the client, and both are the accepted cost of
 the installed-app model.
 
-This is documented in THREAT_MODEL.md ("Shipped Google OAuth client") and
+This is documented in docs/security/threat-model.md ("Shipped Google OAuth client") and
 allowlisted BY NAME in .githooks/security_scan.py, so that neither a security
 researcher nor the scanner has to guess whether it was an accident.
 
@@ -45,7 +45,7 @@ The constants below are EMPTY, and everything in this module treats empty as
 "there is no bundled client" — Friday falls through to BYO exactly as it did
 before. Only Stephen can mint the real values: they belong to his Google Cloud
 project and name him as the publisher on the consent screen. The steps are in
-docs/design/google-oauth-verification-checklist.md.
+docs/design/active/google-oauth-verification-checklist.md.
 
 Half a client is no client. An id with no secret cannot complete a flow, so
 offering it would march someone through the warning screen to reach an error.
@@ -54,7 +54,7 @@ from __future__ import annotations
 
 # ── The shipped client ───────────────────────────────────────────────────────
 # PASTE THE DESKTOP CLIENT HERE. Public on purpose — see the module docstring
-# and THREAT_MODEL.md. Empty means "no bundled client", which is the shipping
+# and docs/security/threat-model.md. Empty means "no bundled client", which is the shipping
 # state until the Cloud project exists.
 BUNDLED_CLIENT_ID = ""
 BUNDLED_CLIENT_SECRET = ""
@@ -140,7 +140,7 @@ def explain_error(code: str) -> str:
     """The classification as something a person can act on.
 
     Never names a file or a directory. That sentence — "place a Desktop OAuth
-    client JSON at ~/.friday/credentials.json" — is the wall Janet hit on
+    client JSON at ~/.friday/credentials.json" — is the wall the second user hit on
     2026-08-26 and the reason this whole module exists.
     """
     if code == CAP_REACHED:
@@ -217,7 +217,7 @@ def consent_prebrief(kind: str) -> str:
 
 # ── Bring your own: the guided flow ──────────────────────────────────────────
 # Ordered, clickable, and ending in a paste field. Explicitly NOT "download
-# this JSON and put it in a folder" — the thing that stopped Janet dead.
+# this JSON and put it in a folder" — the thing that stopped the second user dead.
 
 def byo_scopes() -> list:
     """The scopes to add, so nobody has to guess.

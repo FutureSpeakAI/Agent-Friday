@@ -1,12 +1,12 @@
 """Every "Settings -> X" we say to a USER must be a tab that exists.
 
-This is the generalisation of what Janet found on 2026-08-26.
+This is the generalisation of what the second user found on 2026-08-26.
 
 `SettingsTabProviders` was complete and working -- it lists every provider,
 takes a key and POSTs it to /api/providers/<name>/key -- and had no entry in
 the TABS array and no branch in the render chain, so nothing could reach it.
-Meanwhile README.md, docs/TUTORIAL.md ("Settings -> Providers -> Anthropic ->
-paste your key -> Save"), docs/INSTALLATION.md, the voice spec's error table,
+Meanwhile README.md, docs/getting-started/tutorial.md ("Settings -> Providers -> Anthropic ->
+paste your key -> Save"), docs/getting-started/installation.md, the voice spec's error table,
 routes/creations.py and two live buttons in the Studio prompt bar all sent
 people there. Clicking the button opened Settings on an empty pane.
 
@@ -20,7 +20,7 @@ user meets first:
     Stephen's complaint in message form.
   * "Settings -> Models" x4 -- including packaging/windows/install.ps1, which
     tells someone who has just declined a local model "To add a local model
-    later: open Friday, then Settings -> Models". The exact sentence Janet
+    later: open Friday, then Settings -> Models". The exact sentence the second user
     would have read, naming a screen that does not exist, at the moment she
     needed it.
   * "Settings -> AI Providers" in demo_mode.py, shown to a user with no key
