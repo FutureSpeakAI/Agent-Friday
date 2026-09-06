@@ -818,7 +818,16 @@ if __name__ == '__main__':
     try:
         from agent_friday.services.egress_gate import startup_self_test as _gate_self_test
         _gate_res = _gate_self_test()
-        if _gate_res.get("ok"):
+        if _gate_res.get("unrestricted_cloud"):
+            print()
+            print("  ╔══════════════════════════════════════════════════════════════╗")
+            print("  ║  NOTICE: UNRESTRICTED CLOUD MODE (recorded consent)          ║")
+            print("  ║  Every privacy safeguard is OFF for cloud sends by your      ║")
+            print("  ║  choice. The egress self-test did not run: nothing routes    ║")
+            print("  ║  through the gate in this mode. Settings → Privacy changes it.║")
+            print("  ╚══════════════════════════════════════════════════════════════╝")
+            print()
+        elif _gate_res.get("ok"):
             print("  Egress gate: self-test passed (sensitive probe withheld)")
         else:
             print()
