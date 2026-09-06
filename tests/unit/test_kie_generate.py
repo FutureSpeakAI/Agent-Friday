@@ -170,3 +170,88 @@ def test_sensitive_prompt_is_blocked_before_submission(monkeypatch):
     out = kg.generate("image", "something sensitive", model="nano-banana-pro")
     assert out["status"] == "blocked"
     assert not submitted  # nothing left the machine, nothing was charged
+
+
+# ── check_credentials() — the real, free, keyed round trip ──────────────────
+#
+# kie.ai has no /models endpoint and no chat-completions shape, so
+# services/provider_health used to fall back to a generic GET {base_url}/models
+# for it — and got a 404 every time, reporting a perfectly good key as down.
+# Found live 2026-09-06 (Stephen: "the API key is not working correctly").
+# check_credentials() is the fix: GET /chat/credit, kie.ai's one free,
+# authoritative, keyed endpoint.
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def test_check_credentials_reports_ok_with_balance(monkeypatch):
+    monkeypatch.setattr(kg, "_headers", lambda: {})
+    import requests
+    monkeypatch.setattr(requests, "get",
+                        lambda *a, **k: _Resp(200, {"code": 200, "data": 137}))
+    out = kg.check_credentials()
+    assert out["status"] == "ok"
+    assert out["proved_inference"] is True
+    assert out["credits"] == 137
+
+
+def test_check_credentials_401_is_a_real_verdict_not_unknown(monkeypatch):
+    """Documented kie.ai shape for an invalid key:
+    {"code":401,"msg":"You do not have access permissions"} — this must
+    report a definite `down`, not the generic key_verdict.UNKNOWN a provider
+    with no probe_spec gets."""
+    monkeypatch.setattr(kg, "_headers", lambda: {})
+    import requests
+    monkeypatch.setattr(
+        requests, "get",
+        lambda *a, **k: _Resp(401, {"code": 401,
+                                    "msg": "You do not have access permissions"}))
+    out = kg.check_credentials()
+    assert out["status"] == "down"
+    assert out["proved_inference"] is True
+    assert "401" in out["detail"]
+
+
+def test_check_credentials_unconfigured_is_missing_not_down(monkeypatch):
+    monkeypatch.setattr(kg, "is_configured", lambda: False)
+    out = kg.check_credentials()
+    assert out["status"] == "missing"
+
+
+def test_check_credentials_never_raises_on_transport_failure(monkeypatch):
+    import requests
+
+    def boom(*a, **k):
+        raise ConnectionError("no route to host")
+
+    monkeypatch.setattr(requests, "get", boom)
+    out = kg.check_credentials()
+    assert out["status"] == "down"
+
+
+# ── provider_health delegates to check_credentials for ptype "kie" ──────────
+
+def test_provider_health_deep_check_uses_check_credentials(monkeypatch):
+    from agent_friday.services import provider_health as ph
+
+    class _Registry:
+        def get_provider(self, name):
+            return {"name": "kie", "type": "kie",
+                    "auth": {"type": "env_var", "key": "KIE_API_KEY"}}
+
+    import agent_friday.services.provider_registry as pr
+    monkeypatch.setattr(pr, "get_provider_registry", lambda: _Registry())
+    monkeypatch.setenv("KIE_API_KEY", "sk-test-not-real")
+    monkeypatch.setattr(kg, "check_credentials",
+                        lambda name="kie": {"provider": "kie", "status": "ok",
+                                            "detail": "key verified — 9 credits",
+                                            "credits": 9})
+    result = ph._check("kie", deep=True)
+    assert result["status"] == "ok"
+    assert result["credits"] == 9

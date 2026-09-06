@@ -156,6 +156,42 @@ def test_provider_test_unknown_404(client):
     assert client.post("/api/providers/never-heard/test", json={}).status_code == 404
 
 
+def test_provider_test_kie_does_not_hit_generic_models_probe(client, monkeypatch):
+    """kie.ai has no /models endpoint. Before this fix, Test Connection fell
+    into the generic openai-compatible branch and 404'd on every kie.ai key,
+    reporting a perfectly good credential as broken (live 2026-09-06,
+    Stephen: "the API key is not working correctly"). It must delegate to
+    provider_health's dedicated kie check instead."""
+    from agent_friday.services import provider_health
+
+    monkeypatch.setattr(
+        provider_health, "check_provider",
+        lambda name, deep=True, use_cache=False: {
+            "provider": name, "status": "ok",
+            "detail": "key verified — 42 credits available", "credits": 42})
+    res = client.post("/api/providers/kie/test", json={})
+    body = res.get_json()
+    assert res.status_code == 200
+    assert body["status"] == "ok"
+    assert body["credits"] == 42
+
+
+def test_provider_test_higgsfield_does_not_hit_generic_models_probe(client, monkeypatch):
+    """higgsfield's base_url is an MCP endpoint, not a REST /models list —
+    same generic-fallback 404 bug as kie.ai, same fix: delegate."""
+    from agent_friday.services import provider_health
+
+    monkeypatch.setattr(
+        provider_health, "check_provider",
+        lambda name, deep=True, use_cache=False: {
+            "provider": name, "status": "ok", "detail": "connector reachable"})
+    res = client.post("/api/providers/higgsfield/test", json={})
+    body = res.get_json()
+    assert res.status_code == 200
+    assert body["status"] == "ok"
+    assert body["detail"] == "connector reachable"
+
+
 def test_provider_test_never_echoes_key(client, monkeypatch):
     import requests, json as _json
 

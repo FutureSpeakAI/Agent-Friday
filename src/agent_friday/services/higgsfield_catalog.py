@@ -109,7 +109,34 @@ def _explore(params: dict, timeout: float = 60.0) -> dict:
     try:
         return json.loads(text)
     except (TypeError, ValueError) as e:
-        raise ValueError(f"models_explore returned non-JSON: {e}") from e
+        # mcp_client.py's MCPManager.call() joins multiple MCP content blocks
+        # with "\n" (it does not assume a tool answers in exactly one block).
+        # Measured live 2026-09-06: models_explore answers image/video/audio
+        # requests with MORE than one block, so `text` is one or more complete
+        # JSON documents concatenated rather than a single one, and a bare
+        # json.loads raises exactly this "Extra data" at the second
+        # document's start — every refresh for those three types failed this
+        # way, which is why the catalog stayed empty despite the connector
+        # being reachable and authorized.
+        #
+        # Recover the FIRST complete document rather than fail the whole
+        # enumeration. A second document is logged, never merged: guessing
+        # its shape (another page? a duplicate? a warning?) risks silently
+        # dropping or duplicating models, which is worse than one call
+        # returning a partial-but-correct list — `_enumerate_type`'s own
+        # has_more/next_page_token loop is what is supposed to fetch the
+        # rest, not a guess made here.
+        try:
+            obj, end = json.JSONDecoder().raw_decode(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"models_explore returned non-JSON: {e}") from e
+        leftover = text[end:].strip()
+        if leftover:
+            _log.warning(
+                "models_explore(%s) answered with %d bytes after its first "
+                "JSON document (ignored, not merged): %r",
+                params.get("type"), len(leftover), leftover[:200])
+        return obj
 
 
 # ── Classification ───────────────────────────────────────────────────────────

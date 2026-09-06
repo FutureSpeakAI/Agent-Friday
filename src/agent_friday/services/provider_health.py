@@ -9,6 +9,9 @@ Point-in-time checks (the original surface — wizard/Settings polling):
   * google            — key present; deep: real 1-shot generation
   * comfyui           — local server reachability (no key concept)
   * higgsfield        — MCP connector reachable/authorized (no key concept)
+  * kie               — key present; deep: real GET /chat/credit (kie.ai has
+                        no /models endpoint and no chat-completions shape —
+                        this is its one free, keyed round trip)
 
 A shallow check (default) never touches the network — it only reports whether a
 key is configured / the local daemon is up — so it is offline- and test-safe. A
@@ -309,6 +312,24 @@ def _check(name, deep=False) -> dict:
                         "detail": f"HTTP {code}"}
         except Exception as e:
             return {"provider": name, "status": "error", "detail": str(e)[:120]}
+
+    if deep and ptype == "kie":
+        # kie.ai is neither ollama/anthropic (handled by inference_probe above,
+        # which returns None for this ptype) nor openai-compatible (the branch
+        # just above): it has no /models endpoint and no chat-completions
+        # shape to probe with a cheap generation — every generation is a
+        # billed async task, so "probe with a 1-token completion" does not
+        # exist here. Its one free, authoritative round trip is the account
+        # credit balance (GET /chat/credit): it requires a valid key, costs
+        # nothing, and creates no task. Measured live 2026-09-06: a kie.ai key
+        # that decrypts fine (config: ok) was being reported "down" by the
+        # generic /models fallback below, which 404s for kie.ai every time —
+        # this is that fix.
+        try:
+            from agent_friday.services import kie_generate as _kie
+            return _kie.check_credentials(name)
+        except Exception as e:
+            return {"provider": name, "status": "error", "detail": str(e)[:160]}
 
     # Shallow path. A present key proves CONFIGURATION only — never that
     # inference works (decision D1). `proved_inference: False` says so
