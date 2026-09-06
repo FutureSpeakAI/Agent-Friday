@@ -30,7 +30,14 @@ git config core.hooksPath .githooks
 
 `pip install -e ".[dev]"` installs the application in editable mode plus
 `pytest` and `ruff`. Optional capability groups (`voice-local-lite`, `local`,
-`google`, …) are listed in `pyproject.toml`; the test suite needs none of them.
+`google`, …) are listed in `pyproject.toml`. On Windows install
+`".[dev,windows]"`: three tray tests import `pystray`, and with `-x` a fresh
+`[dev]`-only environment collects zero tests. CI installs
+`[dev,google,federation]` plus `[windows]` on the Windows runner.
+
+Run `scripts/check_imports.py` and the server with `FRIDAY_HOME` pointed at a
+scratch directory unless you mean to touch your real `~/.friday`: importing
+the server seeds schedules and creates state files there.
 
 The last line enables the repository's git hooks. It is required: the hooks
 enforce invariants a reviewer cannot reliably catch by reading a diff (see

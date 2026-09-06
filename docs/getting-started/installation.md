@@ -31,7 +31,7 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 |---|---|---|---|
 | **Windows installer zip** (`AgentFriday-Setup-<version>.zip`) | **Yes — primary** | Windows 10/11 | Embedded CPython, source payload, wheelhouse. No Python, Git or terminal needed. Installs Ollama and sizes a local model to your GPU, or recommends a cloud key. Take the newest zip; every older one is superseded. |
 | **Source checkout** (`pip install -e .`) | **Yes** | Windows, macOS, Linux | The developer path and the only path on macOS/Linux. Feature differences by platform are in the README. |
-| **Wheel** (`python -m build`, `pip install agent_friday-*.whl`) | Yes, for the application and bundled seed skills | Windows, macOS, Linux | Not published to PyPI; build it yourself. CI verifies the wheel carries the seed skills' data files. |
+| **Wheel** (`python -m build`, `pip install agent_friday-*.whl`) | Yes, for the Python package, CLI and bundled seed skills — **not the web UI** | Windows, macOS, Linux | Not published to PyPI; build it yourself (`pip install build` first). The wheel does not carry `index.html`, `static/` or `assets/`, so the API boots but `/` and the UI's assets return 404 and `friday doctor` reports the installation check as failed. Use the source checkout or the Windows installer for the UI. CI verifies the wheel carries the seed skills' data files. |
 | **One-line installers** (`scripts/install.sh`, `install.ps1`, `install.bat`) | Yes, as a convenience over the source path | Linux/macOS/WSL2, Windows | They clone this repository and run `friday setup`. Read them before piping anything to a shell. |
 | **`AgentFriday.exe`** (PyInstaller) | **No** | — | The recipe (`AgentFriday.spec`) is kept for reference. The last published binary is from July 2026 and predates current privacy fixes; do not use it. Any `.exe` in a checkout's `dist/` is that same build. |
 
@@ -107,8 +107,9 @@ Get-ChildItem -Recurse . | Unblock-File
 
 ### Windows — SmartScreen ("Windows protected your PC")
 
-If you run a packaged executable (a PyInstaller build) and SmartScreen shows a
-blue dialog, click **More info → Run anyway**. SmartScreen flags any executable
+There is no supported packaged executable; the installer is a zip with a
+`.cmd` launcher and PowerShell scripts. If SmartScreen shows a blue dialog for
+the `.cmd`, click **More info → Run anyway**. SmartScreen flags any executable
 that hasn't yet built up download reputation; running from source with
 `python server.py` avoids the prompt entirely.
 
