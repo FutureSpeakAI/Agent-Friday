@@ -8,7 +8,7 @@
     Every downloaded artefact that we then EXECUTE (the Python distribution,
     the pip bootstrap, the Ollama installer) is pinned by SHA-256 in
     sources.json where a pin is available. A pin that cannot be checked is
-    reported as a warning in Stephen's report rather than silently skipped -
+    reported as a warning in the maintainer's report rather than silently skipped -
     "we did not verify this" is information he is entitled to.
 #>
 

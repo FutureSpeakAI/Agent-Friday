@@ -1,5 +1,7 @@
 # What the running machine actually does — 2026-08-15
 
+> **Historical record — 2026-08-15.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Live verification of the six components built today. Server restarted, real turns driven
 through real seats, output captured. Written to be checkable, including where it went wrong.
 
@@ -91,7 +93,7 @@ tools" — the honesty gate condemned four models on the same class of evidence.
 5. Cancelled — pending now: 0
 ```
 
-Everything Stephen asked for is in that transcript: the steps laid out, the three options, an
+Everything the maintainer asked for is in that transcript: the steps laid out, the three options, an
 unavailable one shown *with its reason*, "choose for me" saying what it chose and why, and a
 queue that explains its own stillness rather than looking broken.
 
@@ -380,7 +382,7 @@ exactly what happened to `heavy_hitter`, and to `preferred_model` before that. *
 
 # Round three — free (2026-08-15, later still)
 
-Stephen: *"do it. I want to be free."*
+the maintainer: *"do it. I want to be free."*
 
 ## 16. The answer: yes, Ollama can be uninstalled. One caveat, and it is small.
 

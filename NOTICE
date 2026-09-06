@@ -1,0 +1,23 @@
+Agent Friday
+Copyright (c) 2026 FutureSpeak.AI
+Licensed under the MIT License (see LICENSE).
+
+This distribution vendors the following third-party JavaScript under
+static/vendor/, each under its own license as noted in the file headers:
+
+  React 18.3.1 and ReactDOM 18.3.1
+    Copyright (c) Facebook, Inc. and its affiliates. MIT License.
+  three.js r128 (three.min.js and the post-processing passes and shaders)
+    Copyright 2010-2021 Three.js Authors. MIT License.
+  marked 9.1.6
+    Copyright (c) 2011-2023, Christopher Jeffrey. MIT License.
+  highlight.js 11.9.0 and the atom-one-dark theme
+    BSD-3-Clause License.
+
+Python dependencies are declared in pyproject.toml and installed from PyPI
+under their own licenses. Two optional extras carry copyleft licenses and
+are not bundled into any binary distribution: mutagen (GPL-2.0, the
+`provenance` extra) and pynput/pystray (LGPL-3.0, Windows-only tray and
+hotkey support). Local language models downloaded at install time (the
+Gemma family by default) are governed by their own model licenses, which the
+installer displays before download.

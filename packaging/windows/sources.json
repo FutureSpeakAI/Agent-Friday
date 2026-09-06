@@ -8,7 +8,7 @@
     "",
     "Where sha256 is empty, that is a deliberate, documented gap rather than an",
     "oversight - see the _why field next to it. The installer reports an unpinned",
-    "artefact as a warning in Stephen's install report; it does not pretend it",
+    "artefact as a warning in the maintainer's install report; it does not pretend it",
     "was verified."
   ],
 

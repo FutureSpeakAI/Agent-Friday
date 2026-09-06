@@ -1,45 +1,27 @@
 # Friday builds agents — the containment is the feature, and it is already half-built
 
-> **Re-check 2026-08-29.** Written 2026-08-23; the repo has since shipped
-> through **v5.7.0**. One fact in §3.2 changed and is corrected inline
-> where it appears. The position, the threat model and the FA1-FA12
-> requirements are **unchanged and still unimplemented** — this remains a
-> design document describing a system that does not exist.
->
-> Re-verified as **still true**: `python_script_adapter.py` still spawns with
-> `env={**os.environ, "FRIDAY_WORKER": "1"}`, so every provider key still
-> reaches model-authored code; and the vault is still plaintext at rest by
-> default (`privacy/vault_crypto.py`, module docstring). **FA2 stands, and is
-> still the largest security win in this document.**
->
-> **What changed:** v5.7.0 moved the vault passphrase out of `start.bat` into
-> the OS keychain and a DPAPI-wrapped file under `~/.friday/security`. Since
-> `core._bootstrap_env_from_launch_scripts` was what copied that line into
-> `os.environ`, `FRIDAY_PASSWORD` **is no longer automatically present in the
-> inherited environment** — it reaches a worker only if a human exported it.
-> The keys still flow; that one credential no longer does by default.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none
+> **Supersedes / superseded by:** guard rules FA1–FA13 are inherited by [`grow-button.md`](grow-button.md) and [`self-patching-installer.md`](self-patching-installer.md)
+> **Written:** 2026-08-23
 
-**Date:** 2026-08-23
-**Branch:** `higgsfield-integration` @ `fbb52fb`. Doc-only.
-**Status:** design/position. **No implementation code exists for this document and none is
-proposed for immediate build.** Written to be read cold by a fresh-context session: every
-fact needed is here or at a cited `file:line`.
-**Re-verified 2026-09-06 (doc-reconciliation pass): the status above is accurate** — checked
-against the current tree, not assumed. Nothing NOOA-shaped has been built; no `nooa` dependency,
-no process-boundary/Job-Object/broker-token code exists. FA2's cited defect is still present
-verbatim (`services/worker_adapters/python_script_adapter.py:113`, `env={**os.environ,
-"FRIDAY_WORKER": "1"}`), and the vault is still plaintext at rest by default (`agent.py:5007-5055`
-logs "Vault encryption is DISABLED" whenever no passphrase was ever set up; `vault_passphrase.py`
-only stores an existing passphrase durably, it never generates one). One internal slip, not a
-claim about code: the re-check block above says "FA1-FA12" but the requirements table in §7 runs
-through **FA13**. This note exists so the next reader knows the position was checked, not carried
-forward on faith.
-**Subject:** Stephen's proposal that Friday should be able to *build agents* using
+## Implementation notes
+
+- The position is a deliberate decision, not a backlog item: **do not adopt NOOA now**. What keeps this document active is the requirements table (FA1–FA13, §7), which the two later harness documents inherit, and the §6.1 first step (apply the existing `services/subagents.py` scope mechanism to the unattended paths).
+- Nothing NOOA-shaped has been built: no `nooa` dependency, no process-boundary/Job-Object/broker-token code.
+- FA2's cited defect is still present verbatim — `services/worker_adapters/python_script_adapter.py` spawns with `env={**os.environ, "FRIDAY_WORKER": "1"}`, so every provider key still reaches model-authored code. Since v5.7.0 the vault passphrase lives in the OS keychain / a DPAPI-wrapped file under `~/.friday/security`, so `FRIDAY_PASSWORD` is no longer automatically in the inherited environment; the API keys still are.
+- The vault is still plaintext at rest by default whenever no passphrase was ever set up (`vault_passphrase.py` stores an existing passphrase durably; it never generates one). FA2 remains the largest security win in this document.
+- The body cites `fbb52fb`; one fact in §3.2 changed after v5.7.0 and is corrected inline.
+
+---
+
+**Subject:** The maintainer's proposal that Friday should be able to *build agents* using
 [NVIDIA-NeMo/labs-OO-Agents](https://github.com/NVIDIA-NeMo/labs-OO-Agents) (NOOA),
 evaluated 2026-08-23 against the repository at `main` and the paper
 [arXiv:2607.20709](https://arxiv.org/abs/2607.20709). The question is not "is NOOA good" —
 it is what it would mean for Friday to author a program that later runs unattended on
-Stephen's machine, and what has to be true first.
+the maintainer's machine, and what has to be true first.
 **Method:** STORM — multi-perspective questioning first, simulated disagreement second,
 cited synthesis third (§5). The case *against* is argued at full strength and is not a
 formality.
@@ -50,10 +32,6 @@ seat ceiling), [`context-assembly.md`](context-assembly.md) (§1.2 the 32,768 ca
 deferred tool loading — **not amended here**), `docs/AUTONOMY_SPEC.md` and
 `THREAT_MODEL.md` (the egress gate as final barrier).
 
-**Branch note.** Three other sessions hold ~254 uncommitted files in this tree. This
-document touches only this file. **No code was read into and no code was written.** All
-source citations are reads.
-
 **Evidence registers:**
 
 - **VERIFIED** — the cited line, file, or command output was read during this document's
@@ -61,7 +39,7 @@ source citations are reads.
 - **MEASURED** — a number produced by a stated method, with the method stated.
 - **INFERRED** — a conclusion from verified facts, reasoning shown.
 - **UNKNOWN** — not determined; the check that would settle it is named.
-- **REPORTED** — asserted by Stephen or by an upstream author; not independently checked.
+- **REPORTED** — asserted by the maintainer or by an upstream author; not independently checked.
 
 ---
 
@@ -73,7 +51,7 @@ proposal, and the proposal is what surfaced it:
 
 > **Friday already runs model-authored work unattended, with *more* privilege than the
 > same work typed into chat, and with no sandbox, no capability scope, and no human gate.**
-> This is true today, at `fbb52fb`, with 18 enabled schedules on Stephen's machine
+> This is true today, at `fbb52fb`, with 18 enabled schedules on the maintainer's machine
 > (**VERIFIED**, §3.3). NOOA does not create this risk. It makes the existing risk
 > load-bearing and therefore impossible to keep ignoring.
 
@@ -110,7 +88,7 @@ Four findings govern everything below.
    pass-by-reference over live objects — is real and novel, and is also the part that
    demands the most of the model (§4.3).
 
-**Licence: confirmed, Apache 2.0, no obstacle** (§1.3). Two of Stephen's premises need
+**Licence: confirmed, Apache 2.0, no obstacle** (§1.3). Two of the maintainer's premises need
 correcting on the facts: NOOA is at **169 commits**, not 67 (§1.2), and the **959 MB
 installer figure does not exist anywhere in this repository** (§4.2). Neither correction
 changes the recommendation; both change the arithmetic.
@@ -121,7 +99,7 @@ changes the recommendation; both change the arithmetic.
 
 ### 1.1 The programming model — accurately described
 
-Stephen's summary is correct and I will not restate it at length. From the abstract
+The maintainer's summary is correct and I will not restate it at length. From the abstract
 (**VERIFIED**, arXiv:2607.20709):
 
 > "an agent is a Python object. Its methods are the actions the model can take, fields are
@@ -253,7 +231,7 @@ bodies.
 run came *third*, after two supervised productions had written corrections into
 `lessons.md`, and Friday's own judgment on that run ("she correctly chose DIRECT production
 over `create_workflow` for a 3-pager") was assessed by a human and explicitly ratified —
-"Valid judgment, keep it." Stephen has already run the supervised-then-unattended protocol
+"Valid judgment, keep it." The maintainer has already run the supervised-then-unattended protocol
 this document argues for in §3.8. He ran it on films. The proposal is to run it on
 programs, where the blast radius is different.
 
@@ -300,7 +278,7 @@ the entire tool registry — the tool description says so (`agent.py:2674-2680`,
 
 **What chains are genuinely better at**, and this is not a consolation prize:
 
-- **Legibility to a non-programmer.** A chain is a list of English instructions. Stephen can
+- **Legibility to a non-programmer.** A chain is a list of English instructions. The maintainer can
   read `teen-storybook.json` and know what it will attempt. He cannot read a 300-line
   generated Python class as quickly, and neither can a non-technical second user.
 - **Failure containment by construction.** A step is bounded by the agent loop's own
@@ -325,13 +303,13 @@ the entire tool registry — the tool description says so (`agent.py:2674-2680`,
 sharp: **chains for orchestration a human should read; classes for logic a machine should
 execute.** A chain step whose prompt is "run the agent I wrote" is a perfectly good
 composition, and it keeps the human-readable layer human-readable. Superseding chains would
-throw away the one property — legibility to Stephen — that the rest of this project's
+throw away the one property — legibility to the maintainer — that the rest of this project's
 design documents keep insisting on (`SEATS_AND_TRANSPARENCY_SPEC.md` B2, "no silent
 changes"; `tool-index.md` §7.0, "never silently drop tools; disclose").
 
 ### 2.3 Does code-as-action change the tool-index calculus?
 
-**Partly, in the direction Stephen hopes, and less than it first appears.**
+**Partly, in the direction the maintainer hopes, and less than it first appears.**
 
 The measured position (**MEASURED**, `tool-index.md` §1.2–1.3, method: static `ast`
 extraction, estimator `len(json.dumps(tool))//4` per `services/tool_budget.py:40-45`,
@@ -395,7 +373,7 @@ reach for — and §7 Q2 names the measurement that would trigger it.
 
 ### 3.1 Friday has no sandbox — what `FRIDAY_SANDBOX_MODE` actually is
 
-Stephen's brief says "Friday has sandbox capability already — find it and assess whether
+The maintainer's brief says "Friday has sandbox capability already — find it and assess whether
 it's sufficient." Found. **It is not a sandbox and it is not sufficient**, and the honest
 version of this section is that the name is doing damage.
 
@@ -512,14 +490,14 @@ with 24-hour expiry and a decision endpoint (`routes/goals.py:202-210`). It is w
 goals only. The scheduler's entire relationship to it is running `approvals.expire_stale`
 on an hourly sweep (`scheduler.py:838-846`).
 
-**Live state on Stephen's machine, 2026-08-23** (**VERIFIED**, `~/.friday/schedules.json`,
+**Live state on the maintainer's machine, 2026-08-23** (**VERIFIED**, `~/.friday/schedules.json`,
 20 records): 18 enabled. Two are `agent_prompt` — `sch_heartbeat`, hourly, and
 `sch_job_intelligence`, daily at 07:30. The heartbeat's prompt instructs *"observe-and-notify
 only — take no real-world actions"* (`scheduler.py:891-903`). **That is a sentence in a
 prompt, not a constraint in the dispatch path.** Nothing restricts its tools. It has ring 2,
 no confirmation, and no scope, once an hour, forever.
 
-Stephen's question — *"What does it mean for Friday to write code that runs later without a
+The maintainer's question — *"What does it mean for Friday to write code that runs later without a
 human in the loop?"* — has a prior: Friday already runs *prompts* later without a human in
 the loop, at higher privilege than chat. The answer to the question is that the missing
 work is the same either way.
@@ -561,7 +539,7 @@ on first agent authorship, with:
   boundary without a proxy.
 
 **Honest cost.** This is several days of Windows-specific work that has to be right, on a
-platform whose failure modes are ugly (a mis-set ACL locks Stephen out of his own
+platform whose failure modes are ugly (a mis-set ACL locks the maintainer out of his own
 directory; `CreateProcessWithLogonW` needs a password or a service account). **INFERRED:**
 it is more work than integrating NOOA. That asymmetry is the point — the framework is the
 easy part and the containment is the product.
@@ -665,7 +643,7 @@ Four rules about this object:
    already persists user-defined ones. This is not a new mechanism; it is a new caller for
    a built one.
 2. **Nothing is inherited.** The default for every field is the empty/most-restrictive
-   value. An agent authored during a session where Stephen happened to have Computer
+   value. An agent authored during a session where the maintainer happened to have Computer
    Control enabled does not get ring 3.
 3. **`source_sha256` binds manifest to source.** If the source changes, the manifest is
    void and the agent reverts to unapproved (§3.7). This is the rule that stops an approved
@@ -677,18 +655,18 @@ Four rules about this object:
 
 ### 3.7 Review — a file, in a place, with a diff
 
-Stephen's requirement, restated: *"An agent Friday wrote should land as a file Stephen can
+The maintainer's requirement, restated: *"An agent Friday wrote should land as a file the maintainer can
 read, in a place he can see, with a diff."*
 
 **Proposed:**
 
 - **Location:** `~/.friday/agents/<slug>/` containing `agent.py`, `agent.toml`, `README.md`
   (Friday's own plain-English account of what it does and why), and `scratch/`.
-  Not in `~/Projects/friday-desktop` — that tree has three active sessions and 254
-  uncommitted files, and an agent landing in it would be noise in someone's `git status`.
+  Not in the application repository — an agent landing in it would be noise in the
+  developer's `git status`.
 - **Version control:** `~/.friday/agents/` is **its own git repository**, initialised on
   first use. Friday commits every authored or edited agent on a branch named
-  `friday/<slug>/<timestamp>`, never on `main`. Promotion to `main` is Stephen's merge.
+  `friday/<slug>/<timestamp>`, never on `main`. Promotion to `main` is the maintainer's merge.
   This gives `git diff` for free, gives an audit trail that survives a rewrite, and means
   the review UI is a diff view over a real repo rather than a bespoke serialisation.
 - **The diff is mandatory and it is of the source, not of a summary.** `SEATS_AND_TRANSPARENCY_SPEC.md`
@@ -712,7 +690,7 @@ component that cannot verify its own success must say so:
 ### 3.8 Does it run once with a human present before it runs unattended?
 
 **Yes. Not once — a bounded number of supervised runs with an explicit promotion, and the
-promotion is Stephen's, not Friday's.** The reasoning, since Stephen asked for it either
+promotion is the maintainer's, not Friday's.** The reasoning, since the maintainer asked for it either
 way:
 
 **The case for going straight to unattended.** It is the honest counter-argument and it is
@@ -726,7 +704,7 @@ product perspective is right that this project's binding constraint is time.
 
 **The case for supervision, which wins.**
 
-1. **The precedent is Stephen's own and it is four days old.** "Ember and the Big Dark" was
+1. **The precedent is the maintainer's own and it is four days old.** "Ember and the Big Dark" was
    the *first fully autonomous run*, and it came after two supervised productions whose
    corrections were written into `lessons.md` — including one, the `setpts` fix, that only
    surfaced because a human was watching *during* production (**VERIFIED**, §2.1). That is
@@ -748,7 +726,7 @@ product perspective is right that this project's binding constraint is time.
    thing `lessons.md` does for films and nothing does for programs.
 
 **The proposed promotion rule, concretely:** three consecutive supervised runs with no
-broker denial, no unhandled exception, and a Stephen-visible result he did not have to
+broker denial, no unhandled exception, and a maintainer-visible result he did not have to
 correct. Then promotion is offered — offered, in the transcript, with the run history
 attached. Never automatic. And **promotion is per-agent, not per-feature**: approving the
 recruiter agent says nothing about the next one.
@@ -774,9 +752,9 @@ written to be checkable.
 | **FA6** | Every agent runs inside a Job Object with memory, CPU-time and wall-clock limits. Wall-clock alone is not a resource limit. |
 | **FA7** | The broker token is per-agent, per-run, short-lived, and is **not** a session cookie. Loopback auto-authentication (`core/__init__.py:475-495`) must not authenticate it. |
 | **FA8** | Vault tier 3 is never reachable unattended, by any agent, under any manifest. Tier 1–2 requires an explicit manifest declaration and is logged per access. |
-| **FA9** | An agent lands as source in a git-tracked directory, on a branch, with a diff shown in the transcript beside the reply that produced it. No agent runs from a source Stephen has not had the opportunity to read. |
+| **FA9** | An agent lands as source in a git-tracked directory, on a branch, with a diff shown in the transcript beside the reply that produced it. No agent runs from a source the maintainer has not had the opportunity to read. |
 | **FA10** | Source change voids approval. `source_sha256` mismatch demotes to `draft` unconditionally. Friday may propose re-approval; she may not grant it. |
-| **FA11** | Unattended promotion requires supervised runs and is granted by Stephen, per agent, never by default and never in bulk. |
+| **FA11** | Unattended promotion requires supervised runs and is granted by the maintainer, per agent, never by default and never in bulk. |
 | **FA12** | Version pins are exact. An upgrade of `nooa` or any transitive dependency is a change with a test run behind it, not `pip install -U`. (Carried from `switchyard-position.md` SW8.) |
 | **FA13** | Every unattended run writes an open record before its first action and closes it at the end. An unclosed record past its budget is a failure, not a pending success. |
 
@@ -836,7 +814,7 @@ figures that *do* exist:
 
 **INFERRED:** 959 MB is most likely a remembered measurement of the *installed* footprint —
 core + recommended (~800 MB) plus the embedded CPython and payload lands near 900 MB–1 GB —
-rather than a download size. Either way, the number Stephen is defending is the **installed
+rather than a download size. Either way, the number the maintainer is defending is the **installed
 site-packages footprint**, and that is the number NOOA would attack.
 
 **What NOOA adds, specifically.** Commit `c82615d`, 2026-08-21 — two days ago — is titled
@@ -1215,6 +1193,6 @@ doing?
   which FA9 and §3.7 apply to agent authorship.
 - `docs/AUTONOMY_SPEC.md` A3 — quoted second-hand via `services/goals.py:738-765`.
 
-**Reported, not verified.** Stephen's statement that a non-technical user is installing this
+**Reported, not verified.** The maintainer's statement that a non-technical user is installing this
 week (§5.2's premise; no reference to it exists in the repository), and the 959 MB installer
 figure (§4.2, searched for and not found).

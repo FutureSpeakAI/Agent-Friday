@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pytest:
     name: pytest (${{ matrix.os }}, py${{ matrix.python }})
@@ -15,72 +22,74 @@ jobs:
         os: [windows-latest, ubuntu-latest]
         python: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      # Install the package in editable mode so `import agent_friday` resolves
-      # via the src/ layout. The heavy optional ML stack (sentence-transformers,
-      # chromadb, headroom-ai) is deliberately excluded — the app degrades those
-      # to no-ops, keeping CI under ~2 minutes instead of ~15.
-      - name: Install core dependencies
-        run: >
-          pip install
-          flask flask-sock anthropic google-genai
-          google-api-python-client google-auth-oauthlib
-          cryptography pynacl rich colorama beautifulsoup4 feedparser
-          tzdata requests pyyaml pytest pdfplumber
+      # Core dependencies come from pyproject.toml, not a hand-copied list. The
+      # heavy optional ML stack (sentence-transformers, chromadb, headroom-ai)
+      # is deliberately excluded: the application degrades those to no-ops.
+      - name: Install agent-friday with the dev extra
+        run: pip install -e ".[dev,google,federation]"
 
-      # Install the package itself (src layout, no heavy extras).
-      - name: Install agent-friday (editable)
-        run: pip install -e . --no-deps
-
-      # GUI-automation and tray deps import display machinery; only meaningful
-      # (and only installable cleanly) on the Windows runner. pystray/pillow
-      # are here because friday_tray imports them at module scope and is a
-      # real shipped dependency (pyproject: sys_platform == 'win32'); without
-      # them tests/unit/test_tray_restart_debounce.py aborted COLLECTION on
-      # every leg, so the whole suite ran nowhere from 2026-08-13 onward.
+      # The tray and GUI-automation modules import display machinery at module
+      # scope and are shipped Windows dependencies; the suite collects them.
       - name: Install Windows-only dependencies
         if: runner.os == 'Windows'
-        run: pip install pyautogui pynput pystray pillow
+        run: pip install -e ".[windows]"
 
-      # A module-level use-before-definition - a dict mutated ABOVE its own
-      # definition - is invisible to the ruff F82 set below, because the name
-      # IS defined, just later in the file. That exact break took the server
-      # down on 2026-08-19 and produced no traceback anywhere, because the
-      # tray discarded the child's stderr. Only executing the import proves
-      # module-level statement order is sound. ~4s.
+      # Module-level statement order is invisible to the lint set below (the
+      # names exist, just later in the file); only executing the import proves it.
       - name: Import smoke test
         run: python scripts/check_imports.py
 
       - name: Run unit + API suites
         run: pytest tests/unit tests/api -q
 
-      # The privacy boundary was the one thing CI did not check. tests/security
-      # (~160 cases), the egress adversarial suite and the judgment-gate suite
-      # all existed and all ran only when somebody remembered to run them —
-      # which meant a change to egress_gate.py could merge with nothing
-      # automated saying whether the boundary still held. These are the tests
-      # that fail loudly if private material starts travelling; they belong in
-      # the gate, not in a habit.
       - name: Run security + egress boundary suites
         run: pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py -q
 
-  lint:
-    name: ruff (fatal rules)
+  guards:
+    name: repository guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
+      - run: pip install ruff
       # Fatal-only rule set: syntax errors (E9), invalid comparisons/format
       # strings (F63), forward-reference issues (F7), undefined names (F82).
-      # The star-import architecture defeats full F-checking; this subset is
-      # verified clean and stays that way.
-      - run: pip install ruff
-      - run: ruff check --select E9,F63,F7,F82 .
+      - name: ruff (fatal rules)
+        run: ruff check --select E9,F63,F7,F82 .
+      - name: Gated-prompt callers
+        run: python scripts/check_gated_prompt_callers.py
+      - name: Settings readers
+        run: python scripts/check_settings_readers.py
+      - name: Stale model names
+        run: python scripts/check_stale_model_names.py
+      - name: Markdown links
+        run: python scripts/check_doc_links.py
+      - name: Secret / PII scan of the whole tracked tree
+        run: python .githooks/security_scan.py --tree
+      - name: Whitespace and conflict markers
+        run: git diff --check HEAD~1 HEAD || git diff --check
+
+  package:
+    name: package build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - name: Build sdist and wheel
+        run: python -m build
+      # The wheel must carry the bundled seed skills' non-code files; a wheel
+      # without them installs a career pipeline that cannot work.
+      - name: Verify package data
+        run: python scripts/check_package_data.py dist/*.whl

@@ -1,31 +1,19 @@
 # Open source, weighed against the six — what to adopt, what to defer, what to keep
 
-> **Re-check 2026-08-29.** Written 2026-08-24 and verified against the tree
-> as it stood that day; the repo has since shipped through **v5.7.0**. The
-> adopt / defer / keep calls here are **judgement, not fact**, and are left
-> exactly as the author argued them.
->
-> No claim in this document was found to be falsified by the 5.6.5-5.7.0
-> work, which touched the installer, the vault passphrase, onboarding and the
-> knowledge graph rather than any of the six problems weighed here.
->
-> **Caveat on citations:** the `file:line` references were spot-checked, not
-> re-verified in full, and line numbers drift as files change. Treat a
-> citation as naming the right file and the right claim — not necessarily
-> the right line.
+> **Status:** historical
+> **Last verified:** 2026-09-06
+> **Implementation:** none — by decision
+> **Supersedes / superseded by:** follows the format of [`switchyard-position.md`](switchyard-position.md)
+> **Written:** 2026-08-24
 
-**Date:** 2026-08-24
-**Branch:** `higgsfield-integration` (the working tree's active branch). This document
-touches no code and no configuration; it is a position paper.
-**Status:** design/position. **Read-only pass.** `app.html`, `index.html` and the mail
-triage work belong to a concurrent Opus 5 session and were not modified.
-**Question asked:** "should we search the open source marketplace and find popular
-solutions for these?" — six named problems, scoped as *why is Friday hand-rolling
-infrastructure that mature open source already solves?*
-**Inherits:** [`workflow-run-forensics-2026-08-24.md`](../../history/audits/workflow-run-forensics-2026-08-24.md)
-(the incident that produced five of the six), [`switchyard-position.md`](switchyard-position.md)
-(the last adopt/defer decision, and the format this follows),
-[`residency-policy.md`](../implemented/residency-policy.md) (seats, Arbiter, R1-R10).
+## Implementation notes
+
+A position paper, not a build spec; it touches no code. Its adopt / defer / keep calls are judgement, left exactly as argued. "No implementation" is the decided outcome — the paper's own conclusion is that five of the six problems are already solved in-tree and need wiring, schemas and one source of truth for prices, not a library — so do not re-flag this as unfinished work.
+Re-checked 2026-08-29 against v5.7.0: no claim was falsified by the intervening installer, vault-passphrase, onboarding and knowledge-graph work. `file:line` citations were spot-checked, not re-verified; treat a citation as naming the right file and claim, not necessarily the right line.
+Question asked: "should we search the open source marketplace and find popular solutions for these?" — six named problems.
+Inherits: [`workflow-run-forensics-2026-08-24.md`](../../history/audits/workflow-run-forensics-2026-08-24.md) (the incident that produced five of the six), [`switchyard-position.md`](switchyard-position.md) (the previous adopt/defer decision), [`residency-policy.md`](../implemented/residency-policy.md) (seats, Arbiter, R1-R10).
+
+---
 
 **Evidence registers:**
 - **VERIFIED** — read in the working tree or in the installed venv during this pass
@@ -51,7 +39,7 @@ for one Python dict.** The two places where open source clearly beats what is he
 narrow and cheap — a glTF loader for a three.js copy that is *already vendored and already
 loaded*, and LiteLLM's model price/context-window map used **as data, not as a
 dependency**. On the router: adopting a mature router is not realistic and would not have
-prevented today's incident. Three of the four router failures Stephen listed live in the
+prevented today's incident. Three of the four router failures the maintainer listed live in the
 VRAM residency layer, which no general-purpose router models at all; the fourth — the
 unannounced context-overflow escalation — is the one LiteLLM would genuinely have caught,
 and that single behaviour can be borrowed in a day without adopting the router.
@@ -98,7 +86,7 @@ accepted creation type with a magic-byte check for `glTF` (`services/creative_st
 and `MODALITIES` includes `"3d"` (`services/model_catalog.py:59`). **VERIFIED.**
 
 `grep -oin '\.glb|model-viewer|gltf' index.html ui_parts/app.html` returns **nothing**.
-**VERIFIED.** Stephen's description is exact: the file is written, catalogued and
+**VERIFIED.** the maintainer's description is exact: the file is written, catalogued and
 validated, and no code path renders it.
 
 What *is* already there: `static/vendor/three-r128.min.js`, **603,445 bytes**, MIT,
@@ -225,7 +213,7 @@ not a write, it is an erasure"), deep-merges `capability_routing` per capability
 invalidates the cache before *and* after, and writes atomically: temp file, `fsync`,
 `Path.replace`. **VERIFIED.**
 
-That is the whole list Stephen named — atomic writes, encoding handling — minus schema
+That is the whole list the maintainer named — atomic writes, encoding handling — minus schema
 validation and migrations. There is no library to buy for the part that is done.
 
 ### 4.2 The part that is not done, and has already cost something
@@ -355,7 +343,7 @@ milliPositrons for the orchestrator, while the cost meter is denominated in USD 
 creative path is denominated in credits. **Three currencies, three stores, no conversion.**
 That is the actual defect.
 
-The second defect is worse and is what produced the number in Stephen's brief: `PRICING` in
+The second defect is worse and is what produced the number in the maintainer's brief: `PRICING` in
 `cost_meter.py` is a **hand-maintained table of roughly twenty models**, and it carries no
 context-window field. Nothing in the send path asks "will this fit?" before it asks "send
 it." The 1,435,556-token call at 11:27:21 was not a budget failure. It was a
@@ -423,7 +411,7 @@ integrity. **VERIFIED** from its own function list. There is no clean seam to sw
 
 ### 7.2 Take the four failures one at a time
 
-| Failure Stephen named | Where it lives | Would a mature router have prevented it? |
+| Failure the maintainer named | Where it lives | Would a mature router have prevented it? |
 |---|---|---|
 | Routed to an uninstalled 26B | `local_seats.installed()` counts a GGUF on disk as available (`:118`); `residency_policy:723` picks `gen[0]` — largest wins; `:1011` exempts MoE from the fit rule; `routing/model_router.py:852` admits any model with **no VRAM measurement** | **No.** No general router models GGUF-on-disk vs served-on-a-port vs fits-in-VRAM. This is Friday's own domain, and the bug is `installed != servable` |
 | Overwrote the cloud-model choice every boot | `seat_binding.propose()/apply()` never read `cloud_seats_from_settings`, which already exists and is already called by the arbiter at `residency_arbiter.py:951` | **No.** A missing argument in Friday's own seat binder |

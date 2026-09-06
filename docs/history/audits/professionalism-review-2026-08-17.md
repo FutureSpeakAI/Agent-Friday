@@ -1,5 +1,7 @@
 # Outside review: professionalism across the repo
 
+> **Historical record — 2026-08-17.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-17
 **Branch assessed:** `residency-policy` (122 commits ahead of `main`)
 **Reviewer:** a session that wrote none of this code and had no part in today's work
@@ -70,7 +72,7 @@ POST /api/workspace/demo/revert  => {'served_by': 'workspace_studio'}
 
 So: of the five routes in the new rollback net, `revert` and `reset` are unreachable. `history`, `undo` and `restore-as-of` are unique and do work. The two handlers that are shadowed also return a *different JSON shape* than the ones that actually answer, so anything written against the new module's documented contract will get the old response.
 
-**And the user-facing half is still missing.** The commit describes these routes as "the button's half." There is no button. The string `api/workspace` with `undo`, `revert`, `history` or `restore-as-of` appears nowhere in `ui_parts/` or `index.html`. Stephen's original request — "rolled back either by telling Friday to roll it back or through a UI element" — is satisfied on the spoken half only.
+**And the user-facing half is still missing.** The commit describes these routes as "the button's half." There is no button. The string `api/workspace` with `undo`, `revert`, `history` or `restore-as-of` appears nowhere in `ui_parts/` or `index.html`. the maintainer's original request — "rolled back either by telling Friday to roll it back or through a UI element" — is satisfied on the spoken half only.
 
 **Why this matters more than its size:** the day's lesson was "verify the fact, not the shape of the answer." This commit asserted a fact about the codebase (`revert_customization` has no route) that a single grep would have refuted, then built 111 lines on top of it. Worth checking whether the same session made other "X was never wired" claims.
 

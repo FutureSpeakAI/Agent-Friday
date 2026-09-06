@@ -291,7 +291,7 @@ function Get-InstalledShortcutPaths {
 function Register-Uninstaller {
     <#  Put Friday in Settings > Apps > Installed apps.
 
-        This is not cosmetic. Stephen's brief says a cautious person will not
+        This is not cosmetic. The maintainer's brief says a cautious person will not
         install something she cannot remove, and the place a cautious person
         looks is Add/Remove Programs. If she cannot find Friday there, the
         uninstaller might as well not exist. HKCU, so no admin needed.

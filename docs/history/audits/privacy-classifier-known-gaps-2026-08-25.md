@@ -1,10 +1,12 @@
 # Sensitivity classifier — known gaps after the 2026-08-25 contact-PII fix
 
+> **Historical record — 2026-08-25.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Status: **open, deliberately not fixed.** Recorded so they are decided on rather
 than rediscovered in three months as a surprise.
 
 Context: on 2026-08-25 vault contact details were found reaching Anthropic
-unredacted. Two files in Stephen's real `~/.friday/wiki` classified TIER_1 and
+unredacted. Two files in the maintainer's real `~/.friday/wiki` classified TIER_1 and
 `vault_access.gate_content` returned them verbatim. Fixed in `sensitivity_classifier.py`
 Layer 1a (`66fb53e`) and in the `model_router` context fallback. What follows is
 what that fix does **not** cover.

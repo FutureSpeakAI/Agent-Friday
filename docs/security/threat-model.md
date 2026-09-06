@@ -227,7 +227,7 @@ could be confidential.
 reads no mailbox and unlocks no account. Every actual grant still requires that
 person's interactive Google sign-in, on Google's own domain, and the resulting
 refresh token is encrypted on their machine and never transits any server
-Stephen operates.
+the project operates.
 
 **What someone can actually do with it.** Two things, both recoverable and
 neither confidential:
@@ -305,6 +305,8 @@ confined to `~/.friday/vault/` with 600 permissions as a fallback.
 
 ---
 
-*Last updated: 2026-09-05. This document should be updated whenever the security
-architecture changes. The egress gate guarantee is a functional invariant — any
-PR that weakens it requires explicit security review.*
+*Last verified against the code: 2026-09-06. Update this document whenever the
+security architecture changes. The egress gate guarantee is a functional
+invariant; any change that weakens it requires explicit security review. How to
+report a problem, and which versions receive fixes, is in the repository's
+[SECURITY.md](../../SECURITY.md).*

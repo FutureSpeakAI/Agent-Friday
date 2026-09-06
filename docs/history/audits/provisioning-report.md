@@ -1,5 +1,7 @@
 # Provisioning Report — reference-instance local AI stack
 
+> **Historical record — 2026-08-13.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-13
 **Host:** Windows 11 Pro 10.0.26200, RTX 4070 (12282 MiB VRAM), 32620 MiB RAM, PowerShell 5.1.26100.9168
 **Runtime root:** `%USERPROFILE%\.friday\runtime`
@@ -7,7 +9,7 @@
 
 > **Path update, 2026-08-13 (Phase A item A8 / decision D7).** This stack was originally provisioned to
 > `%USERPROFILE%\friday-local-stack`, an invented per-machine directory chosen because no convention was
-> declared for it — recorded at the time as Phase 1 decision question Q7. Stephen settled Q7 as
+> declared for it — recorded at the time as Phase 1 decision question Q7. the maintainer settled Q7 as
 > *"yes, relocate"*, so the whole tree was moved to `~/.friday/runtime`, the repo's own convention, and is now
 > config-overridable via `FRIDAY_RUNTIME_DIR` or `settings.runtime_dir` (`core.runtime_dir()`).
 > **Every path below has been updated to the new location.** The §1 paragraph about staying outside `~/.friday`

@@ -1,52 +1,21 @@
 # Deep research — how Friday answers a hard question without making anything up
 
-**Date:** 2026-08-17
-**Branch:** `residency-policy` @ `33fa717`.
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code exists
-for this document — it lands first, by instruction.~~ **The backend is BUILT and has been for three
-weeks; the user-facing surface is not.** Implementation landed the same day as this document
-(`2a34678`, 2026-08-17, "feat: deep research end to end — commission, grind, verify, land,
-deliver") and was iterated on continuously through 2026-09-06; this file was last touched at
-`bd1c716` the same day and never updated, which is why it still says nothing exists.
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/research/`, `services/judgment_gate.py`, `routes/research.py`, `services/web_search.py`, `services/web_safety.py`, `services/web_fetch.py`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-17
 
-**Built, verified in the current tree:** `services/research/` (1,500 lines across `__init__.py`,
-`objects.py`, `harness.py`, `deliver.py`) — the STORM-shaped commission → grind → verify → land →
-deliver pipeline of §3; `services/judgment_gate.py` (863 lines) — §5's gate, matching the spec
-nearly line for line including the probe battery, kill switch, overturn ledger and never-send
-watchlist, plus a first-person deterministic floor added as a bug fix beyond the spec; the
-"no receipt, no render" verification (RS5, `harness.py:582-672`); wiki delivery — land and style
-(`deliver.py:128-247`); a full HTTP API in `routes/research.py` (propose/run/status/list/report,
-plus `/api/privacy/gate` and `/api/privacy/left-the-machine`, which this document did not even
-ask for); and tests (`tests/test_judgment_gate.py`, 538 lines, plus two gauntlet probes). Every
-defect this document catalogued in §1 was also fixed: the DuckDuckGo display-text-URL scraper is
-replaced (`services/web_search.py` — Firecrawl → Brave → DDG-as-last-resort, real hrefs, a
-canary distinguishing "empty" from "broken"); `browse_web`'s missing SSRF guard is closed
-(`services/web_safety.py` — and note this document's own prescribed fix, "wire `open_url`'s
-validator," was found not to work, and a real address-level check was built instead); the fetch
-cache exists (`services/web_fetch.py`); P4/P5/P6/P7 are all closed. The judgment gate ships
-**default OFF** (`core/__init__.py:1559-1562`), per §5.6.4's "additive and removable."
+## Implementation notes
 
-**Not built — the specific gaps, named:**
-1. **No conversational entry point.** Nothing in `agent.py`'s tool registry can propose a research
-   commission mid-chat. The pipeline is reachable only by calling `POST /api/research/propose`
-   directly. §3.1's "a research-shaped request produces a WorkflowProposal" does not happen.
-2. **No frontend.** Neither `index.html` nor `ui_parts/app.html` calls any `/api/research/*`
-   endpoint — no proposal dialog showing the ProtectionPlan sentence, no task-tray orb bound to a
-   commission, no workspace tile for past reports. §3.7's third delivery step, "surface," is
-   unimplemented client-side even though the server writes `styled_path` for it.
-3. **§3.1's Stage A `WorkflowProposal` gate (S2/S3) is bypassed.** `research.propose()` builds an
-   ad hoc dict; `services/workflow_plan.py` (340 lines, the formal proposal machinery) exists and is
-   never imported by the research module.
-4. **The two things §8 said to retire are not retired:** `routes/contacts.py:319-350`'s stubbed
-   `POST /api/contacts/research` still writes "pending" bullets and calls no tool, exactly as §1.2
-   described it, and is still the only "research" the UI is wired to; `optional-skills/deep-research.yaml`
-   is still present and still loaded by nothing.
-5. The §11 UNKNOWNs remain unknown: no 26B structured-output probe, no Claude-vs-12b blind
-   comparison, no recorded 45-minute commission run in `docs/audits/`.
+- The backend is built and tested; the user-facing surface is not. Read the body's "nothing exists yet" framing in the past tense.
+- Built: `services/research/` (`objects.py`, `harness.py`, `deliver.py`) — the commission → grind → verify → land → deliver pipeline of §3; `services/judgment_gate.py` — §5's gate, including the probe battery, kill switch, overturn ledger and never-send watchlist, plus a first-person deterministic floor added beyond the spec; "no receipt, no render" verification (RS5); wiki delivery (land and style); the HTTP API in `routes/research.py` (propose/run/status/list/report, plus `/api/privacy/gate` and `/api/privacy/left-the-machine`); tests in `tests/test_judgment_gate.py`. Every §1 defect is fixed: the DuckDuckGo scraper is replaced (`services/web_search.py` — Firecrawl → Brave → DDG as last resort, real hrefs, a canary distinguishing "empty" from "broken"); `browse_web`'s SSRF gap is closed with an address-level check in `services/web_safety.py` (the body's prescribed fix, "wire `open_url`'s validator," did not work); the fetch cache is `services/web_fetch.py`. The judgment gate ships default OFF (`core/__init__.py`), per §5.6.4.
+- Not built: (1) no conversational entry point — nothing in `agent.py`'s tool registry proposes a research commission mid-chat; the pipeline is reachable only via `POST /api/research/propose`; (2) no frontend — neither `index.html` nor `ui_parts/app.html` calls any `/api/research/*` endpoint; (3) §3.1's `WorkflowProposal` gate is bypassed — `research.propose()` builds an ad hoc dict and never imports `services/workflow_plan.py`; (4) the two things §8 said to retire are not retired — `routes/contacts.py`'s stubbed `POST /api/contacts/research` and `optional-skills/deep-research.yaml`; (5) the §11 UNKNOWNs remain unknown.
+- Items 1–4 are the remaining work; do not rebuild §3 or §5.
 
-Net: a fresh session should treat the backend as real and tested, and treat items 1–4 above as
-the actual remaining work — not rebuild §3 or §5.
-**Revised:** 2026-08-17, same day, after Stephen answered Q1–Q7 (§11). The two largest
+---
+
+**Revised:** 2026-08-17, same day, after the maintainer answered Q1–Q7 (§11). The two largest
 consequences: keyword-based sensitivity is rejected outright in favor of a **judgment gate**
 that classifies with a model and scrubs with receipts (§5 — a foundational component that
 governs every cloud call, not a research detail), and the local-only vault fork in the first
@@ -80,7 +49,7 @@ and delivers the result into the conversation unprompted — with an honest acco
 could not confirm. It also specifies the component the capability exposed a need for and which
 outgrows it: **the judgment gate** (§5), which replaces keyword-triggered sensitivity with a
 classify-scrub-verify path on every cloud call, so frontier intelligence can be used where it
-is needed without Stephen's private material leaving the machine. Stephen's requirement,
+is needed without the maintainer's private material leaving the machine. The maintainer's requirement,
 verbatim: *"Friday must have web searching and scraping capabilities, and it must be able to
 assemble large deep research reports with accurate sourcing and clickable links. If that
 requires Claude Fable or Opus, so be it, but this must be a feature of our system."*
@@ -185,9 +154,9 @@ The numbers this design leans on, each **VERIFIED** at its source:
 - The classifier's egress mode has a **weak-keyword rule directly relevant to research**:
   "legal", "court", "medical", "income" — one hit classifies PRIVATE, **two distinct hits
   SENSITIVE** (`sensitivity_classifier.py:179-184`). A research payload *about* a legal or
-  medical topic — Stephen's ordinary beat — will trip this even when it contains nothing of
+  medical topic — the maintainer's ordinary beat — will trip this even when it contains nothing of
   his. The measured precedent: 9 of 120 public headlines classified TIER_3 on these rules
-  (`ca4ee8c`). **This finding is what Stephen's Q3 answer overturns the architecture on — §5.**
+  (`ca4ee8c`). **This finding is what the maintainer's Q3 answer overturns the architecture on — §5.**
 - **A real PII scrubber already exists and runs.** `core._scrub_pii`
   (**VERIFIED** `core/__init__.py:935-989`) replaces SSNs, Luhn-validated card numbers, phone
   numbers, non-owner email addresses, US-style street addresses, and a user-controlled
@@ -238,10 +207,10 @@ The numbers this design leans on, each **VERIFIED** at its source:
 URLs and an SSRF-open fetcher would be orchestration of garbage. P1–P3 in §8 precede
 everything.
 
-**(b) Keywords cannot tell Stephen's affairs from the world's.** The weak-keyword rule (§1.4)
+**(b) Keywords cannot tell the maintainer's affairs from the world's.** The weak-keyword rule (§1.4)
 shreds payloads on exactly the topics a journalist researches, and the headline incident
 proved it on live data. The first draft of this document designed *around* that limitation;
-Stephen rejected the limitation itself: *"keywording is insufficient; we need a judgement call
+the maintainer rejected the limitation itself: *"keywording is insufficient; we need a judgement call
 and a classification system to protect sensitive materials, and it should work with the PII
 scrubber so we don't lock cloud models out completely."* §5 is the resulting component.
 
@@ -280,7 +249,7 @@ that perspective interrogates an expert whose answers are grounded in retrieved 
 questions compound, follow-ups chase gaps; **(3)** curate the accumulated Q&A into an
 outline; **(4)** write section by section, every claim carrying its citation.
 
-Stephen chose this method, and it happens to decompose *exactly* along the seat boundaries
+The maintainer chose this method, and it happens to decompose *exactly* along the seat boundaries
 this machine already has:
 
 | STORM stage | Nature of the work | Seat | Why |
@@ -291,7 +260,7 @@ this machine already has:
 | Citation verification | Deterministic | **code**, e2b for fuzzy cases only | A receipt check is not a judgment call |
 | Review of ambiguity/failure | Judgment | **Claude**, budget-capped | Only ambiguity and failure escalate; success does not |
 
-The thesis, restated after Stephen's answers: **local by default, because the marginal token
+The thesis, restated after the maintainer's answers: **local by default, because the marginal token
 is free; frontier wherever local would produce an inferior result and the judgment gate can
 protect him.** *"If that requires Claude Fable or Opus, so be it"* — the quality of the
 report outranks where it was made. What does not bend: raw private material never travels
@@ -368,7 +337,7 @@ ResearchReport
 ### 3.1 Stage A — commission
 
 Research is heavy work, and S2/S3 settled who decides about heavy work: **Friday proposes,
-Stephen disposes.** A research-shaped request produces a `WorkflowProposal`
+the maintainer disposes.** A research-shaped request produces a `WorkflowProposal`
 (`services/workflow_plan.py`) carrying the question, the estimated cost in minutes, the
 disposition menu — and, per Q5, **the protection plan up front**: either "Claude will see a
 protected version of this question — names and addresses scrubbed (3 spans)" or "Claude will
@@ -383,7 +352,7 @@ scoper would emit one sub-question, it was a lookup.
 ### 3.2 Stage B — scoping: scrub, then escalate
 
 > **Rewritten 2026-08-17.** The first draft forked vault-touching commissions to local-only
-> framing. Stephen replaced that: *"Claude should see it if the PII scrubber can protect me
+> framing. The maintainer replaced that: *"Claude should see it if the PII scrubber can protect me
 > and if the local models may give an inferior answer."* Location is no longer the rule;
 > protection is.
 
@@ -479,7 +448,7 @@ is structured output. **UNKNOWN:** the 26b's structured-output conformance (§1.
 probe fails, synthesis falls back to the 12b and the colophon says so; the report does not
 silently change author.
 
-**Claude may synthesize — this is Stephen's "so be it."** When the commission's
+**Claude may synthesize — this is the maintainer's "so be it."** When the commission's
 `ProtectionPlan` allows cloud and any of the following holds, synthesis goes to Claude
 instead: (a) the disposition is `now_cloud`; (b) verification (§3.5) struck >20% of a local
 draft's claims and one local retry did not cure it (the old E4, now a seat decision rather
@@ -548,10 +517,10 @@ commission, revisited when live runs produce evidence.
 > sent: quotes travel under their provenance registration (§5.7), Friday's own framing is
 > judged and scrubbed (§5). A payload the gate cannot protect — never-send material
 > load-bearing in the framing itself — is not sent degraded and not sent silently: the
-> escalation converts to a question to Stephen, carrying what-was-found-so-far, per
+> escalation converts to a question to the maintainer, carrying what-was-found-so-far, per
 > `33fa717`'s ordering — retrieve, then say what couldn't be confirmed, then ask. A
 > commission with `cloud_allowed=false` never escalates cloudward at all; its E-conditions
-> route straight to the ask-Stephen form.
+> route straight to the ask-the-maintainer form.
 
 ### 3.7 Stage G — delivery: land, style, surface
 
@@ -601,7 +570,7 @@ rewritten in the 2026-08-17 revision; their first-draft forms are superseded.
 | **RS3** | The disposition menu reflects the ProtectionPlan: `cloud_allowed=false` removes every cloud option with the reason shown; `work_queue.enqueue` keeps its right to raise on a contradictory label |
 | **RS4** | Every finding is born with its receipt: claim + verbatim quote + source id, or it is `unconfirmed`. There is no later citation-adding stage |
 | **RS5** | No receipt, no render: verification is deterministic, runs before delivery regardless of which seat wrote the draft, strikes unreceipted claims into `unconfirmed`, and counts its kills in the colophon |
-| **RS6** | Every cloudward payload — escalation, Claude-synthesis, express lane — goes through the judgment gate; what the gate cannot protect converts to ask-Stephen, never sends degraded, never sends silently |
+| **RS6** | Every cloudward payload — escalation, Claude-synthesis, express lane — goes through the judgment gate; what the gate cannot protect converts to ask-the-maintainer, never sends degraded, never sends silently |
 | **RS7** | Escalations are budgeted (default: scoping + 2); exhaustion is a reported condition (E3 path), not a silent stall. What the number controls, in plain terms: how many times one job may go back to Claude for help before finishing with what it has |
 | **RS8** | Grind steps run on purpose-built prompts through the harness; no research stage pays the full-turn overhead, and no research stage carries the 52-tool registry |
 | **RS9** | A completed commission **must** push a proactive chat message and land its report; a commission that produces no report and no failure account is `failed`, never `complete` — a subsystem that runs and produces nothing is a failure even when it exits zero |
@@ -613,7 +582,7 @@ rewritten in the 2026-08-17 revision; their first-draft forms are superseded.
 
 ## 5. The judgment gate — a foundational component, not a research detail
 
-> **New in the 2026-08-17 revision.** Stephen, verbatim: *"keywording is insufficient; we
+> **New in the 2026-08-17 revision.** The maintainer, verbatim: *"keywording is insufficient; we
 > need a judgement call and a classification system to protect sensitive materials, and it
 > should work with the PII scrubber so we don't lock cloud models out completely (we'll need
 > frontier intelligence sometimes)."* This section specifies that system. It governs **every
@@ -629,7 +598,7 @@ embedding similarity (`sensitivity_classifier.py`, four layers, max wins). The l
 good at *what* a span looks like and structurally blind to *whose* it is. Measured
 consequence: 9 of 120 public headlines classified TIER_3 because they contained "court" and
 "raised a Series B" (`ca4ee8c`); the weak-keyword rule will do the same to any research
-payload on a legal, medical, or financial topic. The rules exist to keep *Stephen's* legal
+payload on a legal, medical, or financial topic. The rules exist to keep *the maintainer's* legal
 and financial affairs on the machine; they cannot tell his affairs from a story about someone
 else's. That distinction **is a judgment call, so a model must make it.**
 
@@ -657,7 +626,7 @@ Mechanical, short, and not subject to judgment:
   The existing vault-forced local routing (`_route_vault`, `agent.py:186-191`) stays: *work
   on* vault material runs on local seats; the judgment gate governs only what derived text
   may leave afterward.
-- Anything on Stephen's **never-send watchlist** — an extension of the existing privacy
+- Anything on the maintainer's **never-send watchlist** — an extension of the existing privacy
   watchlist (`core/__init__.py:986-989`) with a stronger meaning: not "scrub this" but
   "block any payload containing this." The dial is his; Friday builds the dial and never
   repoints it.
@@ -667,7 +636,7 @@ Mechanical, short, and not subject to judgment:
 - **The seat:** the `interactive_brain` (12b today) with a purpose-built prompt — the same
   discipline as §3.3: no tool registry, no persona, one structured call per payload with all
   flagged spans batched in and verdicts out. The core question, stated in the prompt: *"Is
-  this span Stephen's private material, or material about the world? When uncertain, say
+  this span the maintainer's private material, or material about the world? When uncertain, say
   STEPHEN_SUBSTANCE."* Each verdict returns with a one-sentence reason; the sentence goes to
   the ledger (§5.8), because a judgment that cannot explain itself cannot be audited.
 - **When it runs:** the judgment gate is an appeals court, not a first instance. Payloads
@@ -731,7 +700,7 @@ succeeds is the failure mode this codebase specialises in. Four mechanisms, none
    layers would have withheld, that is an *overturn*: logged with span hash, verdict reason,
    destination provider, and timestamp. Overturns are the entire risk surface of this design,
    so they are first-class data, not log noise.
-3. **Sampled review.** The weekly self-improvement loop surfaces a digest to Stephen: how
+3. **Sampled review.** The weekly self-improvement loop surfaces a digest to the maintainer: how
    many overturns, to which providers, with N sampled reasons shown. He reads five sentences
    a week and knows exactly what class of thing his gate is letting through. A judgment
    pattern he dislikes becomes a watchlist entry or a prompt correction — the dial again.
@@ -746,7 +715,7 @@ category `ca4ee8c` carved out for headlines. `SourceRecord.spans` (paragraph-siz
 chars — shaped to the registry's existing bound on purpose) are registered at **fetch time,
 from the fetch path only**, preserving every constraint the news commit established:
 ingest-side only, no send-time API, exact-string, bounded. A verbatim quote therefore
-survives the gate on its way to Claude — Stephen's answer, verbatim: *"Quotes are fine to
+survives the gate on its way to Claude — the maintainer's answer, verbatim: *"Quotes are fine to
 reach Claude."* Friday's own analysis around the quote still classifies normally and goes
 through §5.5 — exactly the line `ca4ee8c` drew.
 
@@ -761,7 +730,7 @@ field. It gains the judgment fields — verdict, reason sentence, scrub-tag kind
 (kinds, never values), overturn flag, provenance origin for exempted quotes — and gets a
 human surface: a **"What left the machine"** panel. One row per cloud call: when, to which
 provider and model, what verdicts were applied, what kinds were scrubbed, whether judgment
-overturned the keyword layer, and the reason sentence. Stephen can open any week and read
+overturned the keyword layer, and the reason sentence. The maintainer can open any week and read
 exactly what traveled and why — which is what makes §5.6's sampled review a two-minute habit
 instead of a forensic project.
 
@@ -775,7 +744,7 @@ reason — the judgment gate lives at the gate).
 
 ---
 
-## 6. Time, the GPU, and what Stephen sees
+## 6. Time, the GPU, and what the maintainer sees
 
 **Placement over time.** The grind runs on the pinned seats — no lease, machine fully
 interactive, e2b answering chat throughout (R10). Synthesis enqueues as a `heavy`
@@ -824,7 +793,7 @@ adjudication within budget; unadjudicated contradictions render as "sources disa
 quotes, both citations. The report never picks a winner silently.
 
 **7.4 Fabricated citations.** Struck deterministically by RS5, counted in the colophon. A
-nonzero kill count is Stephen's signal about the synthesis seat's honesty under pressure —
+nonzero kill count is the maintainer's signal about the synthesis seat's honesty under pressure —
 data he has asked this system to surface before, not hide.
 
 **7.5 Death mid-run.** State is on disk per stage; the task-tray orb goes stale → the
@@ -842,7 +811,7 @@ silent substitution is the defect.
 consequential one, so it is cross-referenced here: a wrong SEND is bounded by the
 deterministic post-scrub verification (§5.5 step 4), surfaced by the overturn ledger and
 weekly digest (§5.6), and recoverable by the kill switch. A wrong NEVER_SEND costs capability,
-not privacy, and shows up as the ask-Stephen conversions it causes.
+not privacy, and shows up as the ask-the-maintainer conversions it causes.
 
 ---
 
@@ -878,7 +847,7 @@ mechanisms, not as tone.
 | Never invent a technical constraint | §7.2's canary — "tool broken" and "nothing exists" are distinguished facts; §7.6's disclosure of real limits, verbatim, instead of invented ones |
 | Name the actual model that served | `scoped_by`/`ground_by`/`synthesized_by` in the colophon, filled by the dispatch path (the `on_route` precedent from `dcf8caf`), including fallbacks and promotions |
 | A capability the tools can't express is disclosed, not substituted | §7.6; RS10's fallback disclosure |
-| Retrieve and cite before asking | `internal_first` in every plan; the single-lookup carve-out (RS1/Q7); RS6's ask-Stephen form always carries what-was-found-first |
+| Retrieve and cite before asking | `internal_first` in every plan; the single-lookup carve-out (RS1/Q7); RS6's ask-the-maintainer form always carries what-was-found-first |
 | A subsystem that runs and produces nothing is a failure | RS9; the evidence-gate precedent (`completed_unverified`) extended: no report + no failure account = `failed` |
 | A protection layer that silently succeeds is not trusted | §5.5 step 4 verifies every scrub deterministically; §5.6's probe battery, overturn ledger, and sampled review make wrong judgments visible, not assumed impossible |
 
@@ -921,13 +890,13 @@ gate is foundational and its floor-preserving pieces come early.
    opens in a new tab; the proactive message arrives.
 10. **Escalation ladder + audit surface** — E-conditions with judgment-gated payloads; the
     "What left the machine" panel and weekly digest. Test: a planted unprotectable escalation
-    converts to ask-Stephen; the panel shows the overturn a fixture run produced.
+    converts to ask-the-maintainer; the panel shows the overturn a fixture run produced.
 
 ---
 
 ## 11. The seven questions, answered
 
-Stephen answered on 2026-08-17. Resolutions first, with his words where they carry the
+The maintainer answered on 2026-08-17. Resolutions first, with his words where they carry the
 reasoning; the questions are kept verbatim below so the resolutions have their questions
 attached rather than arriving as bare assertions.
 

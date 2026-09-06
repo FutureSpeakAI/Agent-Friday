@@ -1,23 +1,18 @@
 # Switchyard — which parts, in what position, and what they cost
 
-**Date:** 2026-08-17
-**Branch:** landed on `deep-research-gate` (the working tree's active branch at commit
-time); a position document touching no code — cherry-pick to `residency-policy` freely if
-that is its proper home.
-**Status:** design/position. **No implementation code exists for this document — it lands
-first, by instruction.** The question it answers is not "should we use it" but which parts,
-in what position, and at what price.
-**Re-verified 2026-09-06 (doc-reconciliation pass): still accurate — and accurate by this
-document's own decision, not as debt.** A case-insensitive search for `switchyard` across `src/`,
-`packaging/`, and every `.py`/`.html`/`.rs` returns zero hits: no dependency, no vendored crate, no
-shim. §0's conclusion is "adopt the ideas, not the dependency," so "no implementation" is the
-intended terminal state. Future audits should not re-flag this as unbuilt work.
-**Subject:** [NVIDIA-NeMo/Switchyard](https://github.com/NVIDIA-NeMo/Switchyard), evaluated
-at v0.2.0, commit `f735d9dd`, cloned and read in full on 2026-08-17 — crates, docs, CI, and
-changelog, not just the README.
-**Inherits:** [`residency-policy.md`](../implemented/residency-policy.md) (seats, Arbiter, R1–R10),
-[`symphony-of-intelligence.md`](../implemented/symphony-of-intelligence.md) (the scoping thesis, work
-queue), [`deep-research.md`](../active/deep-research.md) (the judgment gate, §5 there).
+> **Status:** historical
+> **Last verified:** 2026-09-06
+> **Implementation:** none — by decision
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-17
+
+## Implementation notes
+
+A position document touching no code. The decision is **adopt the ideas, not the dependency** (§0): a case-insensitive search for `switchyard` across `src/`, `packaging/` and every `.py`/`.html`/`.rs` returns zero hits — no dependency, no vendored crate, no shim — and that is the intended terminal state, re-verified 2026-09-06. Do not re-flag this as unbuilt work.
+Subject: [NVIDIA-NeMo/Switchyard](https://github.com/NVIDIA-NeMo/Switchyard) at v0.2.0, commit `f735d9dd`, cloned and read in full — crates, docs, CI and changelog.
+Inherits: [`residency-policy.md`](../implemented/residency-policy.md) (seats, Arbiter, R1–R10), [`symphony-of-intelligence.md`](../implemented/symphony-of-intelligence.md) (the scoping thesis, work queue), [`deep-research.md`](../active/deep-research.md) (the judgment gate, §5 there).
+
+---
 
 **Evidence registers:**
 - **VERIFIED** — the cited line, command output, or doc was read during the audit runs for
@@ -34,7 +29,7 @@ Switchyard is a well-built, honestly documented, pre-alpha Rust proxy whose two 
 ideas — judge-the-completed-turn escalation routing, and typed protocol translation through
 a neutral intermediate representation — are worth taking seriously. But the audit says the
 right relationship today is **adopt the ideas, not the dependency**: the escalation router,
-the one component whose pattern Stephen arrived at independently, is not reachable from
+the one component whose pattern the maintainer arrived at independently, is not reachable from
 Python at all; the translation engine, the project's best half, has zero Python bindings and
 covers the three cloud wire formats rather than the dialects that have actually burned
 Friday (gemma's channel format, Ollama's arguments-as-dict, Gemini's SDK); and the metrics
@@ -100,7 +95,7 @@ requests and responses as plain dicts.
 | `llm_classifier` (escalation) | 1 judge call/unlatched turn | see below | **no** |
 | `stage_router` | usually none | scores tool-result history (error severity, spinning, progress); tanh-squashed; optional LLM fallback | yes |
 
-**The escalation router, in detail, because it is the pattern Stephen arrived at
+**The escalation router, in detail, because it is the pattern the maintainer arrived at
 independently today** (**VERIFIED** `docs/routing_algorithms/escalation_router_routing.md`
 and `llm_class.rs`): every unlatched turn calls the **weak** target and buffers its reply;
 a judge model then rules on the *completed* turn — it rates work the weak model actually
@@ -181,7 +176,7 @@ money (known issue #1).
 - **Windows: wheels ship (x86_64 + arm64, MSVC), smoke-tested at release** — but every CI
   job runs Ubuntu. **The 495-test suite has never run on Windows** (**VERIFIED**
   `.github/workflows/ci.yml`, `publish.yml:174-198`). Wheels install and import; behavior
-  on Stephen's actual platform is unverified.
+  on the maintainer's actual platform is unverified.
 - Published for real: five crates on crates.io, `nemo-switchyard` on PyPI via trusted
   publishing. Active: last commit the day of this audit; 236 commits total.
 
@@ -308,7 +303,7 @@ fail-open-and-hold semantics (a judge failure never creates a latch — that is 
 fail-safe shape the judgment gate build needs, and it is subtler than it looks); and the
 ~180-line benchmarked trajectory-judge prompt, Apache-2.0, as a starting artifact for
 Friday's own judge seat. Where it lands in Friday: e2b-answers/12b-judges for reflex-tier
-work, 12b-answers with an e2b fast-judge for chat, and — the case that matches Stephen's
+work, 12b-answers with an e2b fast-judge for chat, and — the case that matches the maintainer's
 economics precisely — **cloud-weak/cloud-strong with a local judge**: pay Claude Sonnet
 prices by default, escalate to Opus on a local model's verdict, pay the judge in local
 seconds. Cost note the deep-research build already measured: judgment on the 12b runs
@@ -395,7 +390,7 @@ Friday's direction most (escalation) is unreachable from Python; the component t
 (translation) solves dialects Friday is not wounded by and misses every one she is; the
 component with the thinnest case (metrics) duplicates three existing planes whose repairs
 are one-liners; and the maturity warning is corroborated by a rewrite-scale changelog, three
-post-tag API breaks, and a test suite that has never run on Stephen's operating system.
+post-tag API breaks, and a test suite that has never run on the maintainer's operating system.
 
 ### Phase 0 — native adoptions, no dependency (now)
 
@@ -445,11 +440,11 @@ precisely why Friday's own parser exists).
 
 **Noted, not recommended:** the reverse position — Switchyard *in front of* Friday's
 llama-server seats would give external Anthropic-format tools (Claude Code among them)
-access to local models. Real, cheap, and out of scope unless Stephen wants it (Q2).
+access to local models. Real, cheap, and out of scope unless the maintainer wants it (Q2).
 
 ---
 
-## 7. Open questions for Stephen
+## 7. Open questions for the maintainer
 
 Each answerable in a sentence.
 

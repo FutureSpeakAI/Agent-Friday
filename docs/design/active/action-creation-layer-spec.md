@@ -1,9 +1,20 @@
 # Agent Friday — The Action & Creation Layer: Technical Specification
 
-**Spec stage:** Opus 4.8 — codebase-grounded design (every claim verified in-tree, 2026-07-08).
-**Build stage:** Fable 5 — one build session per phase, **after the July 9 demo freeze lifts**.
-**Status:** Draft for Stephen's review. **SPEC ONLY — no implementation in this session, no app code touched, nothing committed.** Sections marked ⚠️ need a decision before their phase starts. Open questions in §9.
-**Status, corrected 2026-09-06 (doc-reconciliation pass): PARTIALLY BUILT, two months on — roughly half the outcomes, none of the scaffold.** No commit references this spec by name; the overlapping work landed under the V6 "Phase A" track (`c08dbac`, `482bdc0`), which is why this header was never revisited. **Built:** the non-email half of Phase 4 — `services/calendar_write.py` (383 lines: `write_ready`, `find_events`, `annotate_events`, `create_event`, `update_event`; this spec listed calendar as read-only); receipts — `services/tool_receipts.py` and `services/completion_receipts.py` satisfy the cross-cutting "every action logged" requirement without the envelope wrapper; the durable approval queue this spec deferred to V6 P5 — `services/approvals.py` (495 lines) now exists, so §3's anticipated swap from inline `confirmed=true` to `approvals.require(...)` is a concrete outstanding item; agent-initiated Google OAuth is human-gated (`482bdc0`). **NOT built, named:** `services/action_envelope.py` — the Phase 1 keystone that §3 says every new tool MUST route through; zero references anywhere. Phase 1's headline deliverable, **voice creative tools** — the gap statement still holds: `voice_engine.py:186 _VOICE_LIVE_TOOLS` carries no `generate_image`/`generate_music`/`create_presentation` (though `_voice_shared_tool_specs()` at `:336` now pulls from `CLAUDE_TOOLS`, so the surface is no longer hardcoded at four). **Pillar 4, OfficeCLI — entirely unbuilt**; no `services/office_engine.py`, no `officecli` anywhere. **Gmail send** is refused *by policy*, not pending: `services/agent.py:1713` — "Friday never requests the gmail.send…"; treat Phase 4's email half as decided against, not as a gap.
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/calendar_write.py`, `services/tool_receipts.py`, `services/completion_receipts.py`, `services/approvals.py`
+> **Supersedes / superseded by:** detail under [`v6-wholeness-spec.md`](v6-wholeness-spec.md)
+> **Written:** 2026-07-08
+
+## Implementation notes
+
+- Roughly half the outcomes shipped, none of the scaffold, and the work landed under the V6 "Phase A" track rather than under this document's name.
+- Built: the calendar half of Phase 4 (`services/calendar_write.py` — `write_ready`, `find_events`, `annotate_events`, `create_event`, `update_event`; this spec listed calendar as read-only); receipts (`services/tool_receipts.py`, `services/completion_receipts.py`) satisfy the "every action logged" requirement without the envelope wrapper; the durable approval queue this spec deferred to V6 P5 (`services/approvals.py`) now exists, so §3's swap from inline `confirmed=true` to `approvals.require(...)` is a concrete outstanding item; agent-initiated Google OAuth is human-gated.
+- Not built: `services/action_envelope.py` (the Phase 1 keystone that §3 says every new tool must route through — zero references anywhere); Phase 1's voice creative tools (`_VOICE_LIVE_TOOLS` in `services/voice_engine.py` still carries no `generate_image`/`generate_music`/`create_presentation`, though `_voice_shared_tool_specs()` now pulls from `CLAUDE_TOOLS`, so the surface is no longer hardcoded at four); Pillar 4 (OfficeCLI) entirely — no `services/office_engine.py`, no `officecli` anywhere.
+- Gmail send is refused by policy, not pending: `services/agent.py` states "Friday never requests the gmail.send…". Treat Phase 4's email half as decided against, not as a gap.
+- Read the body's line numbers and "verified in-tree" claims as of 2026-07-08; the four-pillar framing and §3 contract still describe the intended design.
+
+---
 
 > **Relationship to `docs/V6_WHOLENESS_SPEC.md`.** This is the *actuator-and-creative-engine detail* under V6's umbrella — the concrete "she can act and create" layer that V6 §1.1 frames as durable-agency actuation plus (deferred-as-product but present-as-infrastructure) the creative engines. Where V6 defines the general machinery — the durable **Goal** entity (V6 P5), the general **approval queue** `services/approvals.py` (V6 P5), per-app **actuation permission tiers** and screen-trust (V6 P6), the **self-heal Doctor** (V6 P7) — this spec **reuses and references** it rather than duplicating. The one place the two overlap is the human-gate: this spec ships a *thin per-action consent gate* (a subset of V6 P5's approval queue) so the Google pillar can land before all of V6 P5; §3.3 states that overlap explicitly so P5 generalizes it rather than colliding with it.
 
@@ -117,7 +128,7 @@ Every voice-invoked action obeys `VOICE_TOOL_CHOREOGRAPHY` (`routes/voice.py` L3
 
 **Real gaps → design.**
 1. **Media reliability & legibility.** Media modes are `_EXPENSIVE_DAILY_MODES` and skipped when budget/keys are short, silently falling back to text. Design: make the *choice* legible (record why a mode was chosen/skipped in the daily record) and add a settings-surfaced "media budget" so a media day is a deliberate, visible affordance rather than a silent coin-flip. Ensure `image` at minimum is reachable within the default budget.
-2. **She doesn't actually talk about it.** The surfacing `chat_message` is a **hardcoded f-string template** (`creations.py` L577-580), so today the "I made something" line does not pass through the personality engine. Design: generate the surfacing comment with a **short LLM call through `_get_friday_system_prompt(workspace="creation")`** — an in-character, specific reaction to *this* creation ("I tried something jagged this morning — a 30-second Lyria clip that sounds like a subway at 6am. Curious what it does to you."). This is the "come alive" beat Stephen wants; it reuses the same persona funnel as every other Friday utterance.
+2. **She doesn't actually talk about it.** The surfacing `chat_message` is a **hardcoded f-string template** (`creations.py` L577-580), so today the "I made something" line does not pass through the personality engine. Design: generate the surfacing comment with a **short LLM call through `_get_friday_system_prompt(workspace="creation")`** — an in-character, specific reaction to *this* creation ("I tried something jagged this morning — a 30-second Lyria clip that sounds like a subway at 6am. Curious what it does to you."). This is the "come alive" beat the maintainer wants; it reuses the same persona funnel as every other Friday utterance.
 3. **Proactive consumer may be unwired.** Agent recon found the `/api/notifications/chat-injections` engine + route exist and are tested, but the poller in `index.html` targets `/api/notifications`, not `chat-injections`. Design: verify and, if missing, wire the proactive-chat consumer so `proactive_chat=True` injections actually surface in the chat panel with the "proactive" badge; the daily creation is the flagship producer.
 4. **A "talk about it together" follow-up.** After surfacing, if the user engages ("show me"), Friday opens the creation (reuse `open_url`/navigate) and discusses it — a light, optional second beat, not a new subsystem.
 
@@ -149,7 +160,7 @@ This pillar splits into **3a (repair auth + near-one-click re-auth)** and **3b (
 | `create_calendar_event` | **act** | **net-new** Calendar `events.insert` | outbound → gated |
 | `update_calendar_event` | **act** | **net-new** Calendar `events.patch` | outbound → gated |
 
-- **"Messages" disambiguation (required by the brief).** In this pillar, **"messages" = Gmail email**. **SMS/RCS is explicitly out of scope** and flagged as a *separate, much harder integration* (no first-party local API on Windows; requires a paid gateway like Twilio, or Android-bridge tooling, each with its own auth, cost, and egress surface). If Stephen wants SMS, it is its own future spec, not a scope creep here. (See Q6.)
+- **"Messages" disambiguation (required by the brief).** In this pillar, **"messages" = Gmail email**. **SMS/RCS is explicitly out of scope** and flagged as a *separate, much harder integration* (no first-party local API on Windows; requires a paid gateway like Twilio, or Android-bridge tooling, each with its own auth, cost, and egress surface). If the maintainer wants SMS, it is its own future spec, not a scope creep here. (See Q6.)
 - **Voice choreography for `act` tools.** `send_email` etc. follow **ASK → yes → ANNOUNCE ("Sending it now.") → ACT(confirmed=true) → CONFIRM ("Sent — it's in your Sent folder.")**. Friday reads back recipient + subject + one-line gist *before* asking for the yes, so consent is informed. Draft is prepared observe-tier; only the send crosses to act-tier.
 - **Egress.** The email *body text* passes the content egress gate before any LLM assist; the authorized `send` leaves on the user's own token. Both logged.
 
@@ -206,7 +217,7 @@ Extends V6 §6; nothing here weakens those.
 
 ---
 
-## 7. Phased Build Plan (one Fable session per phase)
+## 7. Phased Build Plan (one build session per phase)
 
 Each phase is independently shippable, has its own acceptance gate + tests, and honors §6. Dependency order below; **Phase 1 goes first** because it is lowest-risk (no new outbound), most demo-legible, and it builds the shared Action Envelope every later phase reuses.
 
@@ -281,7 +292,7 @@ Framework reuse: `pytest` (`tests/unit` no-Flask, `tests/api` Flask client, `tes
 
 ---
 
-## 9. Open Questions for Stephen
+## 9. Open Questions for the maintainer
 
 **Q1 — Voice creative scope (shapes P1).** Expose all six creative tools to voice, or just the demo-fast three (`generate_image`/`generate_music`/`create_presentation`) in P1 and add the slow LRO ones (`generate_video`/`compose_timeline`) later? *Recommend the three first* — video's up-to-600s Veo poll is awkward to narrate in a live call.
 

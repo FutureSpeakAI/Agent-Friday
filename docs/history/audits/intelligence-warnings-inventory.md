@@ -1,5 +1,7 @@
 # Intelligence settings — warning inventory, and TwiL-LM availability
 
+> **Historical record — 2026-08-23.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-23
 **Branch:** `higgsfield-integration`
 **Status:** findings only. Nothing in this repo was changed to produce it.
@@ -7,7 +9,7 @@
 Live readings taken read-only against the running server on loopback
 (`GET /api/intelligence`, `GET /api/residency/status`), against the Ollama daemon
 (`GET /api/tags`), and from `nvidia-smi`. Friday was not restarted and no model was
-loaded or evicted. Stephen's resident seat (`functiongemma:270m`) was untouched.
+loaded or evicted. the maintainer's resident seat (`functiongemma:270m`) was untouched.
 
 ---
 
@@ -71,7 +73,7 @@ store and the residency planner — a different seam.
 - No occurrence of `TwIL`, `TwiL`, `twil` or `webAI` anywhere in `src/`.
 
 So the planner and the installer do **not** offer TwiL to anyone. The exposure is
-confined to Stephen's own machine, which the licence permits. The constraint to hold
+confined to the maintainer's own machine, which the licence permits. The constraint to hold
 going forward: whatever makes TwiL deliberate must not touch `model_plan`, the
 installer manifest, or `packaging/`.
 

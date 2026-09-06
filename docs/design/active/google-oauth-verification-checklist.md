@@ -1,9 +1,17 @@
-# Google OAuth: what to publish, and what verification needs from Stephen
+# Google OAuth: what to publish, and what verification needs from the maintainer
 
-Status: **mechanism built, credential not minted.** Nothing has been submitted
-to Google, and nothing will be without Stephen doing it himself.
-Written 2026-08-26. Supersedes the options section of
-`docs/design/google-oauth-onboarding.md`, which posed the question this answers.
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/google_oauth_client.py`, `services/google_accounts.py`, `routes/google_accounts.py`
+> **Supersedes / superseded by:** supersedes the options section of [`google-oauth-onboarding.md`](google-oauth-onboarding.md)
+> **Written:** 2026-08-26
+
+## Implementation notes
+
+- The mechanism is built: bundled-client and bring-your-own paths both resolve in `services/google_oauth_client.py`, with BYO taking precedence.
+- The credential is not minted and nothing has been submitted to Google. §4's checklist is the maintainer's to complete by hand; it is not code work.
+
+---
 
 Decision taken: **ship a client AND keep bring-your-own, both first-class.**
 
@@ -27,7 +35,7 @@ Google's wording, from the OAuth 2.0 documentation:
 > an external user type and a publishing status of "Testing" is issued a
 > refresh token expiring in 7 days.
 
-**Testing mode is disqualifying twice over.** Stephen would have to add every
+**Testing mode is disqualifying twice over.** The maintainer would have to add every
 single user's email address to a list in his own Cloud Console before they
 could connect — the second user included — and every one of them would silently lose the
 connection a week later and have to reconnect. Either alone is far worse than
@@ -101,7 +109,7 @@ writing, before committing to the restricted tier. One email.
 
 ---
 
-## 4. The submission checklist — what only Stephen can supply
+## 4. The submission checklist — what only the maintainer can supply
 
 Everything below is his to produce. None of it can be automated and none of it
 should be submitted on his behalf.
@@ -124,7 +132,7 @@ and falls through to bring-your-own.
 
 ### 4b. Assets the review requires
 
-- [ ] **A homepage on a domain Stephen controls.** Must describe what Friday
+- [ ] **A homepage on a domain the maintainer controls.** Must describe what Friday
       is and be reachable publicly. `futurespeak.ai` presumably.
 - [ ] **A privacy policy**, hosted on **the same domain as the homepage**,
       linked from the consent screen. It must state specifically how Friday
@@ -170,7 +178,7 @@ rejects justifications that do not tie a scope to a feature. Drafts:
 | `documents.readonly` / `spreadsheets.readonly` | reading a named doc or sheet into context | no narrower read scope exists |
 | `contacts.readonly` | resolving "email the second user" to an address | no narrower scope exists |
 
-Stephen should rewrite these in his own voice before submitting — a reviewer
+The maintainer should rewrite these in his own voice before submitting — a reviewer
 reading obviously-generated text is a bad first impression.
 
 ---

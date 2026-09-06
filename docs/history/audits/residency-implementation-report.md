@@ -1,5 +1,7 @@
 # Residency and orchestration — implementation report
 
+> **Historical record — 2026-08-14.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-14
 **Branch:** `residency-policy`, off `phase-a-truth-flow` @ `53dd414`. **Unpushed, unmerged.**
 **Design:** [`docs/design/residency-policy.md`](../../design/implemented/residency-policy.md)
@@ -35,7 +37,7 @@ resolved or acted on:
 | # | Contradiction | Resolution |
 |---|---|---|
 | 1 | `gemma4:12b`/`:26b` matched the brief but were pulled hours before Phase 0 and had **zero measurements** anywhere | Measured this session (§3) |
-| 2 | `qwen3.6:35b` was gone from Ollama but live as the `reasoning` capability via a 16.8 GB llama.cpp GGUF | Decommissioned on Stephen's instruction (§2) |
+| 2 | `qwen3.6:35b` was gone from Ollama but live as the `reasoning` capability via a 16.8 GB llama.cpp GGUF | Decommissioned on the maintainer's instruction (§2) |
 | 3 | `capability_routing.local` and `model_routing.local_model` pointed at an uninstalled `gemma3:4b` | Repointed, and the fallthrough that made it dangerous was fixed (§6) |
 | 4 | Free disk was **2.8 GB** | 19.6 GB after the reclaim, then 36.3 GB with the Ollama 26b removed, then **20.0 GB** after fetching the 16.95 GB comparison GGUF — **VERIFIED** at the end of this report |
 
@@ -43,7 +45,7 @@ resolved or acted on:
 
 ## 2. Decommissioning qwen3.6:35b
 
-Authorized by Stephen. Executed and verified:
+Authorized by the maintainer. Executed and verified:
 
 | Step | Result |
 |---|---|
@@ -128,7 +130,7 @@ P2–P6 are derived from them.
 mission states the embedder is resident; a GPU-resident embedder needs 2029 MiB against the
 **233 MiB** left after the pinned pair — it exceeds R3 by 1796 MiB and costs more VRAM than the
 sidekick for a 639 MB artifact. It is therefore resident **on CPU**. Raised as a question before
-building and **confirmed by Stephen**. Everything else lands as specified.
+building and **confirmed by the maintainer**. Everything else lands as specified.
 
 Two derivations worth stating because they were produced by the rules rather than chosen:
 
@@ -379,7 +381,7 @@ the placement the layer exists to prevent, and it persists because the running p
 this branch and because `server.py` has no `Arbiter.boot()` hook. The policy engine, the
 catalog, the profile and the arbiter are all real and proven; **nothing yet owns the running
 system.** Wiring that is a deliberate next step rather than an oversight — it changes startup
-behaviour on Stephen's daily driver — but until it happens the measured benefits are available
+behaviour on the maintainer's daily driver — but until it happens the measured benefits are available
 only to code that asks for them (`_pick_local_model` does, after a restart; `num_ctx` does not,
 because setting it is the Arbiter's job).
 

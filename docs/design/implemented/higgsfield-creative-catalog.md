@@ -1,10 +1,14 @@
 # Higgsfield in the creative picker — why it is absent, what it actually has, and how to list it without inventing anything
 
-**Status:** **BUILT** — see §9. Measured 2026-08-24 against
-`@higgsfield/cli@1.1.23` and the Higgsfield MCP connector, account
-the maintainer's account (ultra plan).
-**Supersedes parts of** [`higgsfield-integration.md`](../historical/higgsfield-integration.md)
-§2.7, §4.1, §4.8 — see §6.
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/higgsfield_catalog.py`, `services/higgsfield_generate.py`, `services/creative_store.py`, `services/model_catalog.py` (`HOSTED_NATIVE_TYPES`)
+> **Supersedes / superseded by:** supersedes parts of [`higgsfield-integration.md`](../historical/higgsfield-integration.md) §2.7, §4.1, §4.8 — see §6
+> **Written:** 2026-08-24
+
+## Implementation notes
+
+Built — see §9. Measured 2026-08-24 against `@higgsfield/cli@1.1.23` and the Higgsfield MCP connector on the maintainer's account (ultra plan). The catalog is enumerated at runtime through the MCP connector (OAuth 2.1/PKCE), never hardcoded.
 
 ---
 
@@ -321,9 +325,7 @@ change, not after.
 | UI | **zero** for image/video | — |
 | Tests | catalog-shape + a `test_no_hardcoded_model_lists`-style guard | Low |
 
-**No file overlaps the mail-triage/message-center work or the residency-planner/task-registry
-work.** `ui_parts/app.html` is untouched by this design, which is the one file where a
-collision with the in-flight Opus 5 UI run was plausible.
+`ui_parts/app.html` is untouched by this design.
 
 ---
 
@@ -354,7 +356,7 @@ at the time of asking.**
 
 ## 7. Decisions taken, and what is still open
 
-Settled during the build (Stephen: *"I trust your judgement"*):
+Settled during the build (the maintainer: *"I trust your judgement"*):
 
 - **Q-C1 → option (b).** Dispatch routes through the MCP connector, not a second HTTP
   engine. One surface for listing and calling; they cannot drift apart.

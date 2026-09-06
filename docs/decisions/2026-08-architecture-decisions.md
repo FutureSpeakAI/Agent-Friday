@@ -1,10 +1,16 @@
 # Architecture decisions — August 2026
 
-**Status:** accepted by Stephen, 2026-08-13.
-**Purpose:** these are the durable answers to the ten decision questions raised in
-[`inference-discovery.md`](../history/audits/inference-discovery.md). Downstream work inherits them from this
-file rather than from chat history. Where a decision defers work to a later phase, that is
-stated explicitly — do not implement a deferred decision early.
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** Phase A landed as the truth-flow work (`routes/ollama_manager.py` `health_check` call site, egress gate on `services/worker_adapters/ollama_adapter.py`, catalog-driven context windows); Phase B/C in `services/hardware_profile.py`, `services/residency_policy.py`, `services/residency_arbiter.py`
+> **Supersedes / superseded by:** inherits [`inference-discovery.md`](../history/audits/inference-discovery.md); inherited by `docs/design/implemented/residency-policy.md`
+> **Written:** 2026-08-13
+
+## Implementation notes
+
+Accepted by the maintainer on 2026-08-13. These are the durable answers to the ten decision questions raised in [`inference-discovery.md`](../history/audits/inference-discovery.md); downstream work inherits them from this file rather than from chat history. Where a decision defers work to a later phase that is stated explicitly. The portability milestone recorded at the end remains deferred, not scheduled.
+
+---
 
 **Phase map used throughout:**
 

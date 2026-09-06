@@ -59,7 +59,7 @@
 
        Invoke-Step re-runs its own -Verify block after each remediation. A
        repair that does not verify does not count. And every heal - applied,
-       refused, or failed - is written to Stephen's report, because a
+       refused, or failed - is written to the maintainer's report, because a
        self-repairing installer that hides what it repaired makes the product
        worse while appearing to make it better.
 
@@ -238,7 +238,7 @@ function Get-DefaultHealConfig {
         request_timeout_s  = 60
         # Approximate published rates, USD per million tokens, baked in at
         # build time so the report can put a number on what healing cost her.
-        # This is an estimate for Stephen's benefit, not a bill.
+        # This is an estimate for the maintainer's benefit, not a bill.
         rate_input_per_mtok  = 3.00
         rate_output_per_mtok = 15.00
     }
@@ -565,7 +565,7 @@ function Assert-UserMessage {
         control characters and ANSI escapes, and reject anything containing a
         path, a URL that is not ollama.com or python.org, or a stack-trace
         shape. If the model wants to say something technical, it can say it in
-        `diagnosis`, which only Stephen reads. #>
+        `diagnosis`, which only the maintainer reads. #>
     param($Value)
     $s = [string]$Value
     if (-not $s) { return $null }

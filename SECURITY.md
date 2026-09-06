@@ -1,96 +1,116 @@
-# Security
+# Security Policy
 
-Agent Friday is a **local-first, privacy-by-default** personal AI desktop. It is
-designed so that secrets and personal data stay on the user's machine and never
-enter version control. This document explains how that is enforced and how to
-report a problem.
+This is the single security-policy entry point for Agent Friday. It covers how
+to report a problem, which versions receive fixes, how credentials are stored,
+and what the runtime enforces. The deeper design — trust boundaries, what is
+and is not defended against, and the exact guarantees of each mechanism — is in
+[docs/security/threat-model.md](docs/security/threat-model.md).
 
-> Quick links: detailed commit rules and the release checklist live in
-> [`.github/SECURITY_POLICY.md`](.github/SECURITY_POLICY.md).
+## Reporting a vulnerability
 
----
+- Open a **private** GitHub security advisory: *Security → Advisories →
+  Report a vulnerability* on this repository.
+- Or email **security@futurespeak.ai** with the subject `SECURITY: Agent Friday`.
 
-## How secrets are managed
+Include what you found, where (file, commit, or release), and the impact.
+**Do not open a public issue** for an active secret or an exploitable defect.
+We acknowledge reports within 48 hours and aim to ship a fix or mitigation
+within 7 days for critical issues.
 
-- **API keys & passwords** (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
-  `FRIDAY_PASSWORD`, etc.) are read from **environment variables** at runtime.
-  The setup wizard writes them into a **local, gitignored** startup script
-  (`start.bat` / `friday_startup.bat`) that never leaves the machine.
-- **Per-user configuration** lives under `~/.friday/` (and `*.local.yaml`
-  overrides next to each skill's `config.yaml`). These paths are outside the
-  repo and are gitignored.
-- **Private keys, vault tokens, and federation identities** live in the
-  encrypted vault under `~/.friday/`. The corresponding repo paths
-  (`.asimovs-mind/vault/bridge-token`, `port`, etc.) are gitignored.
-- **Filesystem paths** in source use `~`, `Path.home()`, `HOME`, or
-  `%USERPROFILE%` — never a hardcoded `C:\Users\<name>\…`, which would leak the
-  OS username.
+If you find an exposed credential, rotation comes first: a history rewrite
+never un-leaks a value, so we revoke and re-issue before anything else.
 
-No `.env` file is shipped or required. Keys are entered via the setup wizard
-(`friday setup`), which writes them into the local, gitignored startup script
-described above — real values never live in the repo.
+## Supported versions
 
-## Runtime security posture
+Agent Friday is a fast-moving personal project. Security fixes land on `main`
+and ship in the next tagged release; they are not back-ported.
 
-Beyond keeping secrets out of git, the running server defends itself at runtime:
+| Version | Supported |
+|---------|-----------|
+| The latest tagged release (currently the 5.13 line) | Yes |
+| Anything older | No — upgrade |
 
-- **Authentication hardening.** The session secret is a **persisted random value**
-  (`~/.friday/secret_key`, mode `0600`) generated on first run — not a shared
-  hardcoded default. Credential checks are **constant-time**
-  (`hmac.compare_digest`), and a **per-IP login throttle** caps attempts at 8 per
-  5 minutes. Session cookies are `SameSite=Lax` and `HttpOnly`. Posture toggles:
-  `FRIDAY_TRUST_LOOPBACK` (default on; set `0` to require login even on
-  localhost), `FRIDAY_WS_TOKEN` (optional token gating the `/ws/live` voice
-  WebSocket), and `FRIDAY_COOKIE_SECURE` (Secure cookie when served over HTTPS or
-  a tunnel).
-- **Tool-execution sandbox.** Every agent tool call passes a policy gate before
-  it runs, controlled by `FRIDAY_SANDBOX_MODE` (`off` / `confine` [default] /
-  `strict`) and `FRIDAY_SANDBOX_ROOT`. `confine` keeps `write_file` inside a root
-  (default `HOME`) and checks `run_command` against a destructive-command
-  blocklist; `strict` additionally allowlists permitted commands.
+Pin a tag for stability and watch the repository's releases for security notes.
 
-## What should NEVER be committed
+## How credentials are stored
 
-- API keys / tokens of any kind (`AIza…`, `sk-…`, `sk-ant-…`, `AQ.…`, `ghp_…`, `AKIA…`).
-- Passwords, bearer tokens, or other credentials.
-- Private keys (`-----BEGIN … PRIVATE KEY-----`) or vault `bridge-token` values.
-- Personal PII: personal emails (gmail/outlook/etc.), phone numbers, SSNs, home addresses.
-- Private or family data — especially anything naming a **minor**. Store it
-  under `~/.friday/`.
-- Startup scripts (`*.bat`, `*.vbs`) and `.env` files.
-- Vendored dependencies (`node_modules/`).
+There are three places a credential can live, and they are not equivalent.
 
-The project creator's business identity (FutureSpeak.AI) is intentionally in
-`CREDITS.md` / `LICENSE` and is fine.
+| Credential | Where it lives | Protection |
+|---|---|---|
+| Provider API keys entered in **Settings → Providers** | `~/.friday/providers/keys/<provider>.key` | Encrypted by `services/credential_store.py`: the vault key (Argon2id → AES-256-GCM) when a vault passphrase is set, otherwise Windows DPAPI, otherwise plaintext with a one-time warning and restricted file permissions. |
+| Provider API keys entered through the **`friday setup` wizard** (source checkout) | `~/.friday/settings.json`, `~/.friday/config.yaml`, and a `start.bat` launcher in the checkout | **Plaintext.** `start.bat` is gitignored and never shipped; the settings files live outside the repository. Treat these files as containing live secrets. Use Settings → Providers for the encrypted store. |
+| The vault passphrase | The OS keychain and a DPAPI-wrapped file under `~/.friday/security/` | Never written to any launch script. `services/vault_passphrase.py` is the single resolver. |
+| Connected-account (Google, MCP) tokens | `~/.friday/` | Encrypted through the same `credential_store` mechanism. |
+| Governance HMAC key and Ed25519 attestation key | OS keychain via `keyring`, with a `0600` file fallback under `~/.friday/vault/` | The fallback is logged as a warning. |
 
-## Pre-commit hook (required)
+Precedence at startup: a real environment variable wins; a key from the
+encrypted store beats a key sourced from a launch script; `FRIDAY_PASSWORD` /
+`FRIDAY_VAULT_PASSPHRASE` in the environment beats the keychain copy.
 
-A scanner blocks commits containing secrets or PII. **Enable it once after
-cloning:**
+On macOS and Linux there is no DPAPI, so provider keys fall back to plaintext
+unless a vault passphrase is set. That is stated in the platform-support section
+of the README rather than hidden here.
+
+## What the runtime enforces
+
+Every item below is implemented in the current tree; each names its module so
+the claim can be checked.
+
+- **Egress gate, fail-closed.** Every cloud call passes through
+  `services/model_router._seal_or_block()` → `services/egress_gate.seal_outbound()`.
+  Content the sensitivity classifier cannot confirm as public is redacted or
+  withheld; a gate failure blocks the send rather than allowing it. Which
+  classifier layers are active depends on how you installed Friday — the boot
+  log prints the real count, and the threat model explains why the frozen
+  `.exe` runs two layers of pattern matching.
+- **Vault tiers.** `privacy/vault_access.py` classifies vault content as
+  TIER_1 (public), TIER_2 (private — cloud receives a placeholder) or TIER_3
+  (sensitive — cloud receives nothing). Unrestricted cloud access exists only
+  as an explicit, recorded user decision (`privacy/cloud_consent.py`); it is
+  never inherited from a routing preference.
+- **File grants.** Content-pinned, expiring, user-only grants that let a
+  specific document cross the gate; no model can create one.
+  [docs/user-guide/file-grants.md](docs/user-guide/file-grants.md).
+- **Authentication.** A persisted random session secret (`~/.friday/secret_key`,
+  mode `0600`); constant-time credential comparison (`hmac.compare_digest`); a
+  per-IP login throttle persisted in SQLite; `HttpOnly` + `SameSite=Lax`
+  cookies, `Secure` when `FRIDAY_COOKIE_SECURE=1`. Loopback requests are
+  trusted by default (`FRIDAY_TRUST_LOOPBACK=0` requires login locally too).
+  The voice WebSocket accepts `FRIDAY_WS_TOKEN` or an ephemeral session token.
+- **Tool sandbox.** Every tool call passes `_governance_check()` (privilege
+  rings 0–3) and the `FRIDAY_SANDBOX_MODE` policy (`off` / `confine` [default]
+  / `strict`): path-affecting tools are confined to `FRIDAY_SANDBOX_ROOT`, and
+  `run_command` is checked against a destructive-command blocklist with
+  word-boundary matching.
+- **Spend controls.** An alert-only budget (default) and an opt-in hard stop
+  that refuses further cloud calls when reached (`services/spend_guard.py`).
+- **Worker isolation.** Subprocesses spawned for delegated work receive an
+  explicit environment allowlist, never the server's environment.
+
+## Repository hygiene
+
+This repository is public. Nothing in it may contain API keys or tokens,
+passwords or passphrases, private keys, personal identifiers (personal email
+addresses, phone numbers, government IDs, home addresses), family or medical
+data, or local filesystem paths that reveal a username.
+
+A pre-commit scanner enforces this. Enable it once after cloning:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-It scans staged changes for the patterns above and blocks the commit with a
-clear message if any are found. False positives can be allowlisted per-line with
-`# pragma: allowlist secret`. See
-[`.github/SECURITY_POLICY.md`](.github/SECURITY_POLICY.md) for full details and
-the pre-release checklist.
+It scans staged additions and blocks the commit with a clear message. A
+false positive is allowlisted per line with `# pragma: allowlist secret`; a
+deliberately public credential (the bundled Google OAuth client, see the
+threat model) is named in the scanner's own allowlist with its reasoning.
+GitHub secret scanning with push protection is enabled on the repository as a
+second layer.
 
-## Reporting a vulnerability or an exposed secret
+## Deliberately public values
 
-If you discover a security issue — including a secret or PII that was committed:
-
-- **Email:** security@futurespeak.ai with the subject `SECURITY: Agent Friday`.
-- Or open a **private** GitHub Security Advisory (Security ▸ Advisories ▸
-  *Report a vulnerability*). **Do not** open a public issue for an active secret.
-
-Please include what you found, where (file / commit), and the impact. If a live
-credential is exposed, we will rotate it immediately; a history rewrite does not
-un-leak a credential, so rotation always comes first.
-
-## Supported versions
-
-This is an actively developed personal project; security fixes target the latest
-`main`. Pin a tag for stability and watch the repo for security-related releases.
+The Google OAuth client ID and secret in
+`src/agent_friday/services/google_oauth_client.py` are public by design:
+Friday is a native application and cannot keep a client secret (RFC 8252).
+The threat model explains what that value does and does not grant.

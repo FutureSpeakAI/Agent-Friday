@@ -1,8 +1,15 @@
 # `vault_cloud_fallback`: measured, and deliberately left alone
 
-**Date:** 2026-08-29
-**Status:** a product decision for Stephen. **No default was changed.**
-**Answers:** `Q-V4` in `docs/design/vault-first-onboarding.md`.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/knowledge_graph/indexer.py` (the degraded-index reporting described in the last section)
+> **Supersedes / superseded by:** answers `Q-V4` of the vault-first onboarding spec
+> **Written:** 2026-08-29
+
+## Implementation notes
+
+- A product decision for the maintainer. No default was changed, deliberately: the measurement showed the shipped `redact` default already produces the on-screen behaviour, so changing it would be a product change rather than a copy fix. The recommendation to move to `warn` stands and is still undecided (`core/__init__.py` still ships `redact`).
+- The one code change this audit did make — the knowledge-graph indexer counting failed extractions and reporting `degraded` on a cloud-only machine — is landed.
 
 ---
 
@@ -12,7 +19,7 @@ The vault-first onboarding spec asked whether `vault_cloud_fallback` should
 default to `warn` instead of `redact` on installs with no local model, because
 `redact` is the setting that transmits.
 
-Stephen's instruction on this was explicit: *"Whatever the screen says has to be
+The maintainer's instruction on this was explicit: *"Whatever the screen says has to be
 what the code does. If you change a default to make the copy true, that is a
 product change — flag it, do not slip it in."*
 
@@ -57,7 +64,7 @@ That is why nothing changed. Changing a default to make copy true, when the copy
 is already true, is a product change with no user-visible benefit — and this
 release already carries a relocation, a delete path and a rewritten onboarding.
 
-## The argument for changing it anyway, which is Stephen's to weigh
+## The argument for changing it anyway, which is the maintainer's to weigh
 
 `redact` and `warn` produce the same outcome for the user but not the same
 safety margin:

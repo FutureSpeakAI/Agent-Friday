@@ -1,5 +1,7 @@
 # Phase A — Truth Flow
 
+> **Historical record — 2026-08-13.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-13
 **Branch:** `phase-a-truth-flow`, off `fix/toolcall-integrity-v5` at `656b70b`. **Unpushed, unmerged.**
 **Decisions inherited from:** [`decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md) (D1–D10).
@@ -44,7 +46,7 @@
 | A7 — brain migration to llama-server | **VERIFIED WORKING** | measured, see §A7 |
 | A8 — relocate the runtime root | **VERIFIED WORKING** | `tests/unit/test_runtime_dir.py` + 5 re-run smoke tests |
 
-**Nothing was STOPPED.** One item (A7) was paused mid-flight for a resource decision only Stephen could make; he chose to reclaim the redundant Ollama copy, and A7 completed. That pause is recorded in §A7 rather than hidden.
+**Nothing was STOPPED.** One item (A7) was paused mid-flight for a resource decision only the maintainer could make; he chose to reclaim the redundant Ollama copy, and A7 completed. That pause is recorded in §A7 rather than hidden.
 
 **Default suite: green, offline, exit 0** — re-run after every item. **VERIFIED**: 5369 tests collected; final run `pytest -q` exit 0.
 
@@ -197,9 +199,9 @@ Both literals, while `server.py:_resolve_bind_port` scans forward when 3000 is b
 | 3001 | `http://localhost:3001/api/google/auth/callback` |
 | 8080 | `http://localhost:8080/api/google/auth/callback` |
 
-**What deliberately did not change, and is now test-pinned.** The **host** stays loopback. Google rejects any plain-HTTP non-loopback `redirect_uri` outright, and Stephen reaches Friday through a hosts-file alias (`http://agent.friday/`) — a request-derived host is what broke consent before (`calendar_engine.py` docstring, 2026-08-13). Only the port is dynamic; Google accepts any port on a loopback redirect for installed apps. The reverse-proxy settings override keeps priority over both.
+**What deliberately did not change, and is now test-pinned.** The **host** stays loopback. Google rejects any plain-HTTP non-loopback `redirect_uri` outright, and the maintainer reaches Friday through a hosts-file alias (`http://agent.friday/`) — a request-derived host is what broke consent before (`calendar_engine.py` docstring, 2026-08-13). Only the port is dynamic; Google accepts any port on a loopback redirect for installed apps. The reverse-proxy settings override keeps priority over both.
 
-**How the flow was verified — and what was not.** Beyond the helpers, a test asserts the value that reaches the **consent URL** — the string Google actually compares against — carries the bound port, by parsing `redirect_uri` out of the authorization URL built by the real `Flow`. A **full consent round-trip against Google was NOT performed**: it needs interactive approval and would touch Stephen's real accounts. **UNKNOWN** until he runs one; the check that would settle it is a single connect from Settings → Connectors with the server on a non-3000 port.
+**How the flow was verified — and what was not.** Beyond the helpers, a test asserts the value that reaches the **consent URL** — the string Google actually compares against — carries the bound port, by parsing `redirect_uri` out of the authorization URL built by the real `Flow`. A **full consent round-trip against Google was NOT performed**: it needs interactive approval and would touch the maintainer's real accounts. **UNKNOWN** until he runs one; the check that would settle it is a single connect from Settings → Connectors with the server on a non-3000 port.
 
 ---
 
@@ -216,7 +218,7 @@ Name            AllocatedBaseSize CurrentUsage
 C:\pagefile.sys             32619         2332
 ```
 
-The pagefile balloons to ~32 GB under a 29 GB resident model. Running llama-server at ~8.6 GB free risked exhausting the system drive on Stephen's live machine — a decision that was his to make, not mine. He chose to reclaim the now-redundant Ollama copy of the brain, which A7 migrates *off* Ollama anyway.
+The pagefile balloons to ~32 GB under a 29 GB resident model. Running llama-server at ~8.6 GB free risked exhausting the system drive on the maintainer's live machine — a decision that was his to make, not mine. He chose to reclaim the now-redundant Ollama copy of the brain, which A7 migrates *off* Ollama anyway.
 
 ```
 deleted 'qwen3.6:35b'
@@ -306,7 +308,7 @@ llama-server.exe -m <runtime>\models\gguf\Qwen3.6-35B-A3B-UD-IQ4_NL.gguf `
 
 `--jinja` matters: without it the chat template is not applied and tool calling degrades. `--alias` was added because llama-server otherwise reports the full GGUF path as the model id.
 
-**Open question, deliberately not solved:** nothing starts llama-server across reboots. Per the work order I did **not** invent a service wrapper — `start-brain.ps1` is the recorded command, not a supervisor. **Consequence Stephen should know:** until it is running, the `reasoning` capability is unreachable and the router's fallback ladder degrades to another provider. Chat keeps working; it just is not using the local brain.
+**Open question, deliberately not solved:** nothing starts llama-server across reboots. Per the work order I did **not** invent a service wrapper — `start-brain.ps1` is the recorded command, not a supervisor. **Consequence the maintainer should know:** until it is running, the `reasoning` capability is unreachable and the router's fallback ladder degrades to another provider. Chat keeps working; it just is not using the local brain.
 
 ---
 

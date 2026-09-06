@@ -1,5 +1,7 @@
 # Making the residency layer govern the running machine — 2026-08-15
 
+> **Historical record — 2026-08-15.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Branch:** `residency-policy`, unpushed.
 **Predecessors:** [`residency-state-delta.md`](residency-state-delta.md),
 [`residency-implementation-report.md`](residency-implementation-report.md),
@@ -21,7 +23,7 @@
 
 ## 2. The gate was condemning working models
 
-Stephen gated four models at once. **VERIFIED** from the stored records:
+the maintainer gated four models at once. **VERIFIED** from the stored records:
 
 ```
 gemma4:12b  structural 1/10   — 9 of 10 cases logged "timed out"
@@ -90,7 +92,7 @@ seating partly a matter of which run you took.
 | `gemma4:26b` | 10/10 (12:17) | **1/12 (11:02)** | no |
 
 **The 26b's honesty red is not trustworthy and is flagged as such.** That record is from
-Stephen's original broken run at 11:02, before any harness fix; it predates the `inconclusive`
+the maintainer's original broken run at 11:02, before any harness fix; it predates the `inconclusive`
 marking, so it reads as a red rather than as "never measured". **UNKNOWN** what the 26b actually
 scores on honesty — the re-run was interrupted twice and never completed. The check that would
 settle it is a single serial run.
@@ -159,13 +161,13 @@ the module written to end it.
 | Plan drives `capability_routing` | **VERIFIED**, with `embedding` excluded |
 | Z-Image in the creative slot | **VERIFIED** — `local=True` in `/api/models` |
 | Branch unpushed | **VERIFIED** |
-| Stephen's end state fully live | **NO — see §9.** Only the 12b is seatable. |
+| the maintainer's end state fully live | **NO — see §9.** Only the 12b is seatable. |
 
 ---
 
 ## 8. Open decision questions
 
-Still unanswered, and still Stephen's: **Q1** pinned pair on llama-server · **Q2**
+Still unanswered, and still the maintainer's: **Q1** pinned pair on llama-server · **Q2**
 `--n-cpu-moe 20` vs bending R3 · **Q3** `local_inference_slots` · **Q4** the 10 GB R8 floor ·
 **Q6** the embedding model · **Q7** the 8 GB Windows OS reserve.
 
@@ -186,7 +188,7 @@ from the broken harness.
 
 ## 9. The honest bottom line
 
-Stephen asked for 26b heavy, 12b orchestrator, e2b and e4b for small tasks, embedder resident,
+the maintainer asked for 26b heavy, 12b orchestrator, e2b and e4b for small tasks, embedder resident,
 image on Z-Image — **as the running config**.
 
 What is live: **the 12b orchestrator seat and the Z-Image creative seat.** The embedder is

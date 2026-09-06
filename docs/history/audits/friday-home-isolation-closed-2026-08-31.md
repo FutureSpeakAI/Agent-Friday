@@ -1,5 +1,7 @@
 # `FRIDAY_HOME` isolation gap — closed, and how it was proven
 
+> **Historical record — 2026-08-31.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Closes the gap reported in [#13](https://github.com/FutureSpeakAI/Agent-Friday/pull/13)
 (`docs/audits/friday-home-isolation-gap-2026-08-31.md`, on that PR's branch).
 This file records what was actually changed and what the proof was, because the

@@ -1,19 +1,21 @@
 # The Grow Button — Friday extending herself, with someone at the gate
 
-**Date:** 2026-08-29
-**Branch:** the 5.6.4 backport branch. **Doc-only. No implementation code exists for this
-document and none is proposed for immediate build. The build waits on Stephen's explicit go.**
-**Re-verified 2026-09-06 (doc-reconciliation pass): still accurate, with one narrow exception.**
-No grow button, no `/api/grow`, no open-ended build-test-vision-iterate connector loop exists
-anywhere in `src/`, `index.html` or `packaging/` — a repo-wide search returns exactly one hit, and
-it is a comment. That comment marks the one thing this document *did* cause: its §18.2 guard
-rules **F2/F3 are wired**. `routes/code.py:690-717` now calls `boot_guard.safe_mode()` and
-`check_self_edit()` per target file with whole-plan refusal, on the *existing* code-apply path
-(the comment there: "`boot_guard.check_self_edit` and `check_scope` shipped 2026-08-17 and were
-dead code until now"). That is a guard on the path the grow loop would use, not the grow loop.
-The existing `services/connectors.py` / `routes/connectors.py` are the pre-existing static
-connector layer, not this document's proposal.
-**Subject:** Stephen's proposal, 2026-08-29, that Friday should have a button that "builds
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** `routes/code.py` and `services/boot_guard.py` (guard rules F2/F3 only)
+> **Supersedes / superseded by:** consumer 3 of [`self-patching-installer.md`](self-patching-installer.md)
+> **Written:** 2026-08-29
+
+## Implementation notes
+
+- No grow button, no `/api/grow`, no open-ended build-test-vision-iterate connector loop exists anywhere in `src/`, `index.html` or `packaging/`. The build waits on the maintainer's explicit go.
+- The one thing this document did cause: §18.2 guard rules F2/F3 are wired. `routes/code.py` calls `boot_guard.safe_mode()` and `check_self_edit()` per target file with whole-plan refusal on the existing code-apply path. That is a guard on the path the grow loop would use, not the grow loop.
+- `services/connectors.py` / `routes/connectors.py` are the pre-existing static connector layer, not this document's proposal.
+- File:line citations were read against the working tree at `f60ee0d`.
+
+---
+
+**Subject:** The maintainer's proposal, 2026-08-29, that Friday should have a button that "builds
 connections between a Friday and anything at all" — standard buttons for popular services,
 plus an open path where she figures out an arbitrary integration herself, in a loop that
 builds, tests, uses vision, and iterates until it works, ending in a user go/no-go with
@@ -21,10 +23,10 @@ rollback or modify as first-class options. His own summary: *"I'm describing mor
 a connector button, I guess. I'm describing a grow button."*
 **Method:** STORM — multi-perspective questioning first, simulated disagreement at full
 strength second, cited synthesis third (§10). Ground truth (§2) was read from the codebase
-before any design was written, because Stephen asked a direct empirical question and it is
+before any design was written, because the maintainer asked a direct empirical question and it is
 answerable by reading rather than reasoning.
 
-> **Status note, added 2026-08-29 after Stephen's reframe.** This document now describes the
+> **Status note, added 2026-08-29 after the maintainer's reframe.** This document now describes the
 > **third consumer** of a shared coding-harness substrate, not a standalone feature. The
 > substrate — process spawning, worktree isolation, the build/verify/vision/iterate loop, state
 > across iterations, the token ceiling, the human gate, the rollback path — is specced in
@@ -72,7 +74,7 @@ answerable by reading rather than reasoning.
 
 ## 0. The position, up front
 
-**Stephen's empirical question — "does she have that level of control over her own systems
+**The maintainer's empirical question — "does she have that level of control over her own systems
 like that?" — has a three-part answer, and none of the three parts is the answer he was
 probably expecting.**
 
@@ -122,7 +124,7 @@ cannot produce a diff:
   **B2**, an edit to `src/agent_friday/**` or `index.html`. **B2 is refused on any install
   without a git working tree** — which today means refused on every payload install.
 
-**The one thing this document most wants Stephen to take away**, because it changes what has
+**The one thing this document most wants the maintainer to take away**, because it changes what has
 to be built: `friday-builds-agents.md` solved the containment problem for code Friday writes
 that runs *later, elsewhere, isolated*. The grow button's output is code that runs **inside
 the Flask process, with the vault key, the connector tokens and the provider keys**, because
@@ -133,7 +135,7 @@ could have been red, and (c) whether the join is reversible. In that order.
 
 ---
 
-## 1. What Stephen asked for, itemised
+## 1. What the maintainer asked for, itemised
 
 Restated as a checklist so nothing gets quietly dropped. Each row names the section that
 answers it.
@@ -149,7 +151,7 @@ answers it.
 | R7 | "handed the option to roll back or modify" | §8 (rollback), §9.4 (modify) |
 | R8 | harnesses: "Claude Code, Codex, Pi, and others" | §5.5 (the harness is a driver, not a dependency) |
 
-Stephen's three standing constraints, which he asked be confronted rather than gestured at,
+The maintainer's three standing constraints, which he asked be confronted rather than gestured at,
 are §6 (vacuous tests), §7 (visual verification) and §5 (loop engineering). Blast radius on
 its own terms is §7.5 and §8. §14 flags the four places his framing has a problem I think he
 has not seen yet.
@@ -163,7 +165,7 @@ marked otherwise.
 
 ### 2.1 The five capabilities, measured against the question
 
-Stephen's question decomposes into five: can she spawn a coding harness, write to her own
+The maintainer's question decomposes into five: can she spawn a coding harness, write to her own
 source, run her own tests, restart herself, and look at her own UI?
 
 | | capability | today | where |
@@ -265,7 +267,7 @@ Credentials are handled by `services/connector_secrets.py`: `looks_secret()` dec
 name-based (never value-based, deliberately) whether an env var is a credential;
 `encrypt_value` is idempotent and `decrypt_value` passes unmarked values through, which makes
 the forward migration re-entrant. The envelope is `friday-enc:v1:<method>:<base64>`. Note
-this module carefully — it is the concrete answer to Stephen's half-applied-migration
+this module carefully — it is the concrete answer to the maintainer's half-applied-migration
 question in §8.3.
 
 MCP servers get static vetting from `services/extension_security.py`: an `ENV_BLOCKLIST`
@@ -280,7 +282,7 @@ novel risk.
 
 ### 2.5 The anti-vacuous-test apparatus is already in this repo
 
-This matters enormously for §6, because it means the hardest constraint Stephen named is the
+This matters enormously for §6, because it means the hardest constraint the maintainer named is the
 one with the most existing material.
 
 `tests/app/liveness.ts` is a library of assertions written specifically against the
@@ -486,7 +488,7 @@ so an update cannot conflict with it — only outdate it (§2.6 consequence 3, a
 runs the full §5 loop with the §7.5 untouchable set.
 
 **Ratio, stated as a prediction to be checked:** **INFERRED** that Lane A plus B1 covers
-roughly 80–90% of what Stephen means by "connections between a Friday and anything at all",
+roughly 80–90% of what the maintainer means by "connections between a Friday and anything at all",
 and B2 covers the remainder plus the genuinely different thing — Friday improving Friday.
 Building A and B1 first is not a compromise; it is most of the feature at a fraction of the
 risk. **UNKNOWN**, and worth measuring after a month: what fraction of real grow requests
@@ -567,7 +569,7 @@ Two properties of that ordering are load-bearing and easy to lose:
 
 ### 5.3 What bounds the loop
 
-Stephen is right that iteration count is the wrong dimension, and the repo has the receipt:
+The maintainer is right that iteration count is the wrong dimension, and the repo has the receipt:
 the caching audit found `max_iters=999` with **no spend bound at all**, and the fix landed as
 a hard ceiling in `_seal_or_block` rather than a smaller iteration count
 (`caching-audit-2026-08-26.md` row 3, **DONE**). The existing chokepoint is exactly right and
@@ -624,7 +626,7 @@ The surrender card says four things:
    tripped, and the novelty signature if it repeated.
 4. **The three options**: *leave it* (the directory stays, nothing is applied), *give me more
    room* (a fresh budget, resuming from the worktree — one extension, then it must be
-   re-requested), or *do it yourself* (the worktree with its branch, ready for Stephen; for
+   re-requested), or *do it yourself* (the worktree with its branch, ready for the maintainer; for
    a new user, this option reads "send this to the maintainer" and does exactly that).
 
 **The thing surrender must never do is present a partial success as a success.** A growth that
@@ -633,14 +635,14 @@ when that rule is soft.
 
 ### 5.5 The harness is a driver, not a dependency (R8)
 
-Stephen named Claude Code, Codex, Pi, "and others". The right shape is one interface with
+The maintainer named Claude Code, Codex, Pi, "and others". The right shape is one interface with
 several drivers, chosen by availability, and **the loop's contract is with the criteria and
 the applier, never with a particular CLI**:
 
 | driver | mechanism | available where |
 |---|---|---|
 | `inline` | `_generate_text` + whole-file writes — what `/api/code/plan` already does | **everywhere**, including a fresh install, including local-only |
-| `claude-code` | `interactive_sessions.spawn` driving the `claude` CLI in the worktree | Stephen's machine only, today |
+| `claude-code` | `interactive_sessions.spawn` driving the `claude` CLI in the worktree | the maintainer's machine only, today |
 | `codex` / `pi` / other | same `interactive_sessions` relay, different command | wherever installed |
 
 **The `inline` driver is the floor and it must be built first**, because it is the only one
@@ -686,7 +688,7 @@ Four mechanisms, in increasing order of how much they buy.
   gate the loop — it gates the approval).
 
   **If the request cannot be reduced to checkable criteria, the honest answer is to say so and
-  not build it unattended.** §14.1 argues this is the correct reading of Stephen's "until it
+  not build it unattended.** §14.1 argues this is the correct reading of the maintainer's "until it
   all works as intended", and that leaving it implicit is the largest hole in the framing.
 
 ### 6.2 The red-first gate — a test must be proven capable of failing
@@ -741,7 +743,7 @@ must be executed by at least one criterion-bearing test. Lines added but never e
 reported at the gate as *"this change includes N lines that nothing tested."* Not
 automatically fatal — some lines are error handling — but never invisible.
 
-**This is the specific answer to Stephen's "how does a change that quietly does nothing get
+**This is the specific answer to the maintainer's "how does a change that quietly does nothing get
 caught".** Red-first catches the vacuous test; the no-op detector catches the vacuous change;
 together they close the loop, because the two failure modes are each other's escape hatch.
 
@@ -781,7 +783,7 @@ exactly the judgement that should not be delegated to the thing trying to go gre
 
 ## 7. Visual verification
 
-Stephen named vision himself, and the repo already has an argued implementation (§2.5). The
+The maintainer named vision himself, and the repo already has an argued implementation (§2.5). The
 work here is scoping its authority, because the tempting mistake is to let a 12b local judge
 become the loop's convergence signal.
 
@@ -866,7 +868,7 @@ specifics** from a 12b judge. Neither is a hard-veto category, which is why the 
 options:
 
 - **A**: the loop shells out to `npx playwright test` with a generated spec. Reuses everything,
-  needs Node — **Stephen's machine only.**
+  needs Node — **the maintainer's machine only.**
 - **B**: a small in-process screenshot driver (CDP against the app's own webview, or a headless
   Chromium if present) that reuses `vision.ts`'s rubric ported to Python. Works on both
   machines, duplicates the judging logic in a second language, which is a real maintenance cost
@@ -907,7 +909,7 @@ The security engineer's immediate objection is right and is answered here rather
 *"the allowlist is a file; the loop could edit the file."* It cannot, because **the loop has no
 write access to the live tree at all.** The only writer is `apply_growth`, which reads the
 allowlist from the running process's own source, and which refuses a diff touching its own
-path. A growth that wants to change the allowlist is a pull request Stephen merges by hand,
+path. A growth that wants to change the allowlist is a pull request the maintainer merges by hand,
 and there is no automated path to it. Additionally, `apply_growth` verifies the sha256 of every
 untouchable file before and after the copy; a mismatch aborts and restores.
 
@@ -940,7 +942,7 @@ Three separate exposures, three separate answers.
    `friday-builds-agents.md` §3.1 established that `_tool_read_file` is unconfined and the whole
    filesystem is readable in-process. **The loop's harness is a separate process, so ACLs on
    the growth scratch directory are available here in a way they are not in-process** — but on
-   a dev machine running as Stephen, a harness with his credentials can read `~/.friday`
+   a dev machine running as the maintainer, a harness with his credentials can read `~/.friday`
    regardless of what we prefer. **Stated rather than papered over: on the dev machine, Lane B2
    trusts the harness. The containment is real on the installed machine and advisory on the dev
    machine.** Anyone who wants that fixed is asking for `friday-builds-agents.md` §3.4.1's
@@ -950,7 +952,7 @@ Three separate exposures, three separate answers.
 
 ## 8. Rollback that is actually a rollback
 
-Stephen asked three precise questions: what a rollback actually restores including data and
+The maintainer asked three precise questions: what a rollback actually restores including data and
 migrations; whether a rolled-back change can leave encrypted-secret migrations half-applied;
 and how someone who cannot read code decides. The first two are here; the third is §9.
 
@@ -991,7 +993,7 @@ index) falls into §8.3.
 
 ### 8.3 The half-applied migration — the specific answer
 
-Stephen's question: *"can a rolled-back change leave encrypted-secret migrations half-applied?"*
+The maintainer's question: *"can a rolled-back change leave encrypted-secret migrations half-applied?"*
 
 **Today, for the migration that actually exists: no, and the reason is worth knowing.**
 `connector_secrets` is deliberately re-entrant in the forward direction (**VERIFIED**,
@@ -1013,9 +1015,9 @@ been reverted.
 1. **A growth that changes an at-rest *format* is FORWARD-ONLY.** It is not offered a one-click
    rollback. The gate card must say so **before** approval, in the plainest available words:
    *"This changes how your saved passwords are stored. It cannot be undone with a button. If it
-   goes wrong you will need Stephen."* A forward-only growth needs a higher bar to approve, not
+   goes wrong you will need the maintainer."* A forward-only growth needs a higher bar to approve, not
    a scarier confirmation dialog — see §9.3.
-2. **Any growth touching secrets at rest is escalated to Stephen regardless of whose machine it
+2. **Any growth touching secrets at rest is escalated to the maintainer regardless of whose machine it
    is on.** A new user is never asked to approve a change to how her secrets are stored. This is a
    category, not a judgement call.
 3. **Rollback verifies rather than assumes.** After restoring, `apply_growth` re-runs the
@@ -1054,13 +1056,13 @@ categories she should never be asked about** (§9.3).
 - to approve anything touching the untouchable set (§7.5) — those never reach a gate;
 - to approve anything that changes secrets at rest (§8.3 rule 2);
 - to approve when the vision judge was unreachable (§7.2) or when any criterion is unmet;
-- to approve a dependency addition (§7.5) — that is a Stephen decision on both machines;
+- to approve a dependency addition (§7.5) — that is a the maintainer decision on both machines;
 - to make an irreversible decision quickly. Nothing on this card has a timer.
 
 `services/approvals.py` already has the shape for this: a policy table keyed by action class
 with per-class gating, `dissent_gate.check_dissent()` attached to every card, and a `blocked`
 status that `decide()` refuses to move. **Growth cards are approval cards.** The categories
-above map to `blocked` or to a Stephen-only class, not to a scary red button.
+above map to `blocked` or to a maintainer-only class, not to a scary red button.
 
 ### 9.2 What she is actually shown — five things, in this order
 
@@ -1089,7 +1091,7 @@ above map to `blocked` or to a Stephen-only class, not to a scary red button.
    > *"Undo removes this. Three saved filters stay behind and do nothing."*
    > *"This cannot be undone with a button."* ← and if this line appears on a card shown to
    > a new user, something upstream has already gone wrong; §8.3 rule 2 should have routed it to
-   > Stephen.
+   > the maintainer.
 
 5. **What Friday is unsure about.** Not optional, inherited from `friday-builds-agents.md` §3.7:
    *the rule is not "Friday writes correct code"; the rule is "Friday declares what she has not
@@ -1114,7 +1116,7 @@ not a bigger warning. Three tiers:
 | **refused** | nobody; it does not reach a gate | the untouchable set, an unmet criterion with no override, an unreachable vision judge |
 
 Escalation must be a *good* experience for her or it becomes the thing she routes around: one
-tap, "send this to Stephen", and Friday explains what is waiting and why. The `approvals.py`
+tap, "send this to the maintainer", and Friday explains what is waiting and why. The `approvals.py`
 `expiry_paused` field exists precisely for the case where an approval waits on a person over a
 channel, and this is that case.
 
@@ -1325,7 +1327,7 @@ Written to be checkable. **GB** for grow button; **FA** rules from
 | **GB11** | The harness subprocess receives an explicitly constructed environment. No provider key, no `FRIDAY_PASSWORD`, no `FRIDAY_SECRET_KEY`. (**FA2**.) |
 | **GB12** | The loop never holds a connector credential. Authenticated verification goes through the parent, which returns pass/fail and a redacted shape. |
 | **GB13** | A growth declares the stores it writes; declared stores are snapshotted before apply; a write to an undeclared store, or any new file under `~/.friday`, is a hard finding at the gate. |
-| **GB14** | A growth that changes an at-rest format is forward-only, is labelled so before approval, and is escalated to Stephen on any machine. |
+| **GB14** | A growth that changes an at-rest format is forward-only, is labelled so before approval, and is escalated to the maintainer on any machine. |
 | **GB15** | B2 requires a git working tree, and is refused without one. |
 | **GB16** | A B2 apply is confirmed only after the process restarts and answers a health check. The revert path lives outside the process being reverted. |
 | **GB17** | Rollback restores code and the declared snapshot, then re-verifies, then reports what it could not restore. A rollback that reports success without re-verifying is prohibited. |
@@ -1333,7 +1335,7 @@ Written to be checkable. **GB** for grow button; **FA** rules from
 | **GB19** | The gate card shows, always: what was asked, the enforced reach, an artifact from a live run, the computed undo semantics, the declared uncertainty, and every network destination the diff adds. |
 | **GB20** | Keep is reversible with one button for the watch window; criteria are re-run on a schedule during it; a red criterion notifies and offers revert; "failed" and "could not check" are distinct states and only the first alarms. |
 | **GB21** | At most 5 growths in the watch window and 3 applied per day. |
-| **GB22** | Escalation is never a dead end: a growth routed to Stephen must still leave the user a working, lesser option where one exists. |
+| **GB22** | Escalation is never a dead end: a growth routed to the maintainer must still leave the user a working, lesser option where one exists. |
 | **GB23** | `apply_growth` records every applied growth in a manifest the installer reads. A growth found on disk with no manifest entry is quarantined, not loaded. |
 | **GB24** | The prebuilt catalogue ships in the release, hash-pinned. It is never fetched at runtime. |
 | **GB25** | No dependency is added without a separate approval naming package, exact version, and reason. (**FA12** / SW8.) |
@@ -1355,7 +1357,7 @@ unconfined `read_file` and §3.2 row 6's unauthenticated compute route, in `KNOW
 
 **Phase 1 — Lane A.** The connector overlay, the detect/fill conversation, the live-round-trip
 verification with a real artifact (which is worth building for the six existing connectors
-regardless), and the shipped catalogue. **This is the phase that delivers most of what Stephen
+regardless), and the shipped catalogue. **This is the phase that delivers most of what the maintainer
 asked for**, on both machines, with no novel risk.
 
 **Phase 2 — the loop skeleton, on Lane A only.** Growth directory, journal, budget bound at
@@ -1425,7 +1427,7 @@ Presented as open. None is resolved silently.
 
 ## 14. Where I think the framing has a problem
 
-Offered because Stephen asked for it directly.
+Offered because the maintainer asked for it directly.
 
 ### 14.1 "Until it all works as intended" has no referent, and it is the load-bearing phrase
 
@@ -1444,7 +1446,7 @@ confident green.
 
 ### 14.2 The open lane's real gate is not the user's approval
 
-The brief pairs "anything at all" with "the user gets a go/no-go". For Stephen that pairing
+The brief pairs "anything at all" with "the user gets a go/no-go". For the maintainer that pairing
 works. For a new user it does not, and no amount of card design fixes it: a gate only constrains
 when the gatekeeper can evaluate what is behind it.
 

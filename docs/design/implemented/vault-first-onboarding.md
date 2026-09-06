@@ -1,33 +1,17 @@
 # Vault-first onboarding — what Friday collects, and how she asks
 
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~spec. No implementation.~~ **BUILT**
-— shipped commit `0f64fc7`, 2026-08-29 ("feat(onboarding): the vault comes first, the key leaves
-the condemned building, and a person can be forgotten"), the same day this doc was written.
-Verified against the current tree: `setup_wizard.py:1571-1606` runs the exact 5-screen order
-§7.2 specifies — collects → vault password (screen 2, moved up from sixth-of-ten) → routing →
-cloud-ack (shown only when cloud is chosen) → third-party — with the comment at line 1642 noting
-the old position directly: *"The vault used to be asked here, sixth of ten... It is screen 2 now,
-above."* The false "your private information never leaves your device" / "nothing leaves your
-machine" copy this doc objected to is gone from every active screen; `services/onboarding_copy.py`
-(new since this doc — the single source that ends "three onboarding surfaces disagreeing") holds
-the corrected copy, `SCREEN_ORDER` matching this doc's §7.2 table. `_write_start_bat` no longer
-writes the passphrase at all (docstring: *"THE VAULT PASSPHRASE IS NOT WRITTEN HERE AND MUST
-NEVER BE AGAIN"* — see [`vault-passphrase-location.md`](vault-passphrase-location.md), corrected
-same pass, for where it went instead). `services/forget_person.py` also shipped, meeting this
-doc's Q-V5 precondition. One stale comment, harmless: `setup_wizard.py:1422-1423` still says the
-passphrase "lives only in start.bat," which stopped being true the same commit that added the
-comment's neighbor — the code beneath it does not act on the stale claim.
-Open questions `Q-V1`–`Q-V9` **remain genuinely open** — none were resolved by the build above,
-and this reconciliation pass did not attempt to resolve them; they still await Stephen.
-**Date:** 2026-08-29
-**Branch at time of writing:** the 5.6.4 backport branch, HEAD `c60172a`
-**Prompted by:** Stephen, 2026-08-29 — "setting up the vault should be prioritized during the installation process. Users need to be aware that Friday will collect a lot of info about them… The setup definitely needs to explain the whole point of our architecture is to allow this to occur but to protect it from exposure to the cloud."
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `setup_wizard.py`, `services/onboarding_copy.py`, `services/forget_person.py`, `services/vault_passphrase.py`
+> **Supersedes / superseded by:** companion: [`vault-passphrase-location.md`](vault-passphrase-location.md)
+> **Written:** 2026-08-29
 
-**Method.** STORM: ground truth first, then a multi-perspective interrogation of
-the design, then synthesis. Every factual claim below carries a `file:line`. Four
-claims were checked by *running the code* rather than reading it; §11 says which
-and shows the output. Where the code contradicted the brief, the code won, and
-§9 says so plainly.
+## Implementation notes
+
+Shipped in `0f64fc7` (2026-08-29), the day this document was written. `setup_wizard.py` runs the exact 5-screen order §7.2 specifies (collects → vault password → routing → cloud-ack, shown only when cloud is chosen → third-party); `services/onboarding_copy.py` is the single source of onboarding copy, with `SCREEN_ORDER` matching §7.2, and the false "never leaves your device" / "nothing leaves your machine" copy is gone from every active screen. `_write_start_bat` no longer writes the passphrase; `services/forget_person.py` meets the Q-V5 precondition. One harmless stale comment remains near `setup_wizard.py:1422` ("lives only in start.bat").
+Open questions Q-V1–Q-V9 remain genuinely open; the build did not resolve them.
+Prompted by the maintainer, 2026-08-29: "setting up the vault should be prioritized during the installation process. Users need to be aware that Friday will collect a lot of info about them… The setup definitely needs to explain the whole point of our architecture is to allow this to occur but to protect it from exposure to the cloud."
+Method: ground truth first, then multi-perspective interrogation, then synthesis; every factual claim carries a `file:line`, four were checked by running the code (§11). Where the code contradicted the brief, the code won (§9). The body describes the wizard as it stood before the build; read its "today" claims in the past tense.
 
 ---
 
@@ -39,7 +23,7 @@ long.
 1. **The vault step is last, not first.** In the terminal wizard it is step 6 of
    10 (`setup_wizard.py:706`). In the app wizard it is an optional password box
    in the bottom third of the final screen, below the summary and above the
-   Launch button (`index.html:30721`). Stephen's instinct is right and the fix is
+   Launch button (`index.html:30721`). The maintainer's instinct is right and the fix is
    cheap.
 
 2. **The onboarding copy that exists today is not true.** The terminal wizard
@@ -143,7 +127,7 @@ false; see §2.4 for the hardware floor.
 
 ### 1.5 `_existing_user()`
 
-Stephen asked which steps consult it. **None do.** It is defined at
+The maintainer asked which steps consult it. **None do.** It is defined at
 `setup_wizard.py:368` and called exactly once, at `:1044`, as a whole-wizard
 gate in `main()`: if it returns true and `--force` was not passed, the wizard
 prints "Existing installation detected" and exits.
@@ -183,7 +167,7 @@ accessed by another user or process", then offers, defaulted to yes, to
 prints the passphrase to the terminal, and writes it next to the API keys in the
 same readable file. Anyone who can read `~/.friday/vault` can read `start.bat`.
 
-Stephen's own machine has `friday_startup.bat` carrying `FRIDAY_PASSWORD=` in the
+The maintainer's own machine has `friday_startup.bat` carrying `FRIDAY_PASSWORD=` in the
 clear at line 12. The value is not reproduced here.
 
 > **Q-V2.** Should `_write_start_bat` be deleted outright, given the installer
@@ -320,13 +304,13 @@ Nothing in §7 reuses any of these.
 | "A passphrase encrypts this data … so it cannot be read even if your disk is accessed by another user or process." | `setup_wizard.py:709-713` | **True of the ciphertext, defeated by the next prompt**, which writes the passphrase to `start.bat` in the clear (`:720`, `:993`). |
 | "A passphrase encrypts private data (finance, health, notes) at rest… Stored in your OS keychain — never on disk." | `index.html:30726` | **True on this path.** Also the only path that is. |
 | "I run right here on your computer — no cloud required… everything works locally without them." | `services/onboarding.py:34`, `:50` | **False on a machine below the hardware floor.** Currently harmless because nothing calls it. |
-| "Friday's full feature set is still available in cloud-only mode." | Stephen's brief, and not yet in any UI | **False.** §4. |
+| "Friday's full feature set is still available in cloud-only mode." | the maintainer's brief, and not yet in any UI | **False.** §4. |
 
 ---
 
 ## 4. Question 2, answered — cloud-only is not feature-complete
 
-Stephen asked me to check this before writing it. It does not hold. Here is the
+The maintainer asked me to check this before writing it. It does not hold. Here is the
 list, and §11 has the transcript.
 
 **1. Vault-backed questions are refused, not degraded.** With the factory
@@ -371,7 +355,7 @@ this onboarding and §7 leads with it.
 > `redact` sends to the cloud and relies on the gate. Today the factory default
 > is the one that transmits. Changing it makes cloud-only *more* visibly limited
 > and *less* quietly risky, which I think is the right trade — but it is a
-> product decision, not a bug fix, and it is Stephen's.
+> product decision, not a bug fix, and it is the maintainer's.
 
 ---
 
@@ -381,7 +365,7 @@ Friday accumulates records about people who are not her user. This is the part o
 the pitch most likely to matter to a thoughtful person and it deserves the real
 answer, which has three parts.
 
-**Who actually gets recorded, and by what.** Stephen's framing puts this on the
+**Who actually gets recorded, and by what.** the maintainer's framing puts this on the
 trust graph. The code puts it somewhere else.
 
 - The **people graph** — the thing that scores humans on reliability, emotional
@@ -464,7 +448,7 @@ ask. Answers are grounded in §1–§5.
 > *"I don't know what a vault is. Why are you asking me for a password before I've
 > even seen the thing?"*
 
-Correct, and it is the strongest argument against a literal reading of Stephen's
+Correct, and it is the strongest argument against a literal reading of the maintainer's
 "vault first." A passphrase is meaningless before the user knows what is being
 protected. The fix is not to move the vault later; it is to put **one screen
 before it** that says what Friday will write down. Then the passphrase is an
@@ -858,7 +842,7 @@ it, and then continues regardless.
 
 ### 8.4 How we tell whether it worked
 
-Stephen's second-user testing is the evidence base and it has already earned its
+The maintainer's second-user testing is the evidence base and it has already earned its
 keep. The install on a second user's laptop on 2026-08-26 surfaced defects the author's
 machine could not: `cloud_only` discarding the chosen seat at dispatch, a
 Local-Only switch that displayed the inverse of its own state, connector tokens
@@ -866,13 +850,13 @@ sitting in plaintext, and a Connect Services step that drew a green dot beside a
 service that had never been connected. Every one of those was invisible on a
 machine whose settings had been hand-edited into a working state — and §11 shows
 the same pattern recurring during this audit, where a routing probe found a local
-model on Stephen's machine and had to be re-run with the local seat forced empty
+model on the maintainer's machine and had to be re-run with the local seat forced empty
 before the real default behaviour appeared.
 
 So the measurement is not analytics. It is three things:
 
 1. **The answer to §8.3, stored locally in `onboarding.json`, never transmitted.**
-   Stephen can read it off a test machine. Across a handful of installs it is a
+   the maintainer can read it off a test machine. Across a handful of installs it is a
    real signal about whether screen 3b landed.
 2. **A scripted second-user session**, run on hardware that is *not* the reference
    card and by someone who is not the author, with three questions asked
@@ -1008,7 +992,7 @@ The shipped default transmits.
 *The first run of this probe did not show that.* Pointed at a dead Ollama port it
 still returned `provider=local, model=qwen3.5:9b`, because `_local_candidates()`
 asks Friday's own seat store before the daemon (`routing/model_router.py:409`) and
-Stephen's machine has seats loaded. The author's hardware hid the default
+The maintainer's machine has seats loaded. The author's hardware hid the default
 behaviour, exactly as it hid the four defects a second user's laptop found. Worth
 recording as method: a privacy default cannot be verified on the machine that
 would never hit it.

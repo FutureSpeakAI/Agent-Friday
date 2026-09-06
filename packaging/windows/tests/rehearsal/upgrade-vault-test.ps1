@@ -177,7 +177,7 @@ vdir.mkdir(parents=True, exist_ok=True)
 salt  = os.urandom(32)
 (vdir / ".vault_config.json").write_text(json.dumps({"salt_hex": salt.hex()}), encoding="utf-8")
 key   = vc.derive_key(os.environ["PASS"], salt, vc.FAST_PROFILE)
-blob  = vc.encrypt(b"Stephen's private note. If this decrypts, the vault survived.", key)
+blob  = vc.encrypt(b"the maintainer's private note. If this decrypts, the vault survived.", key)
 (vdir / "note.enc").write_bytes(blob)
 
 print(json.dumps({

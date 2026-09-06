@@ -16,7 +16,7 @@
     "clock, checked before every call.",
     "",
     "The rate table is used only to put an approximate number in the install",
-    "report so Stephen can see what healing cost. It is an estimate baked in",
+    "report so the maintainer can see what healing cost. It is an estimate baked in",
     "at build time, not a bill, and it will drift as published prices change.",
     "The report says so."
   ],

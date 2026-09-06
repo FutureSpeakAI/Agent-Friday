@@ -1,5 +1,7 @@
 # Caching audit — what gets cheaper, what gets faster, and what a cap has to do instead
 
+> **Historical record — 2026-08-26.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-26
 **Commissioned:** after a crash-fallback re-sent a blown-context turn to Anthropic and billed
 roughly 1.43M input tokens on one task. *"What we need to do is cache, cache, and cache some
@@ -254,7 +256,7 @@ a window on its own.
 session rediscovers, from scratch and at full price: that `index.html` is the UI source of
 truth and `app.html` is a strict subset; that `python` on PATH is the wrong interpreter and
 `./venv/Scripts/python.exe` is right; that `_seal_or_block` is the one cloud chokepoint; that
-`_get_friday_system_prompt` callers are pre-commit-checked. All of that lives in Stephen's
+`_get_friday_system_prompt` callers are pre-commit-checked. All of that lives in the maintainer's
 *personal* memory, which no other checkout and no fresh agent can see. A repo-level index is
 a cache of navigation knowledge, and it is the one cache here that costs an hour to build and
 pays on every session forever.
@@ -328,7 +330,7 @@ worst 21.2 s.**
 
 ---
 
-## 9. Open questions for Stephen
+## 9. Open questions for the maintainer
 
 1. **The per-task ceiling is 4,000,000 input tokens.** That would have refused the largest
    real burst in 14 days (10.6M, $33.38, ~1 hour). Deliberate — that burst should have asked

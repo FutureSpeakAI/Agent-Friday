@@ -1,27 +1,17 @@
 # Residency policy and GPU arbitration — design
 
-**Date:** 2026-08-14
-**Branch:** `residency-policy`, off `phase-a-truth-flow` @ `53dd414`.
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
-exists yet — this document lands first, by instruction.~~ **BUILT.** That line was true for
-about a day. Implementation started the same date as this document (`c8a4387`, 2026-08-14,
-"ResidencyPolicy — pure placement engine, six golden plans, properties") and is now one of the
-most extensively built subsystems in the tree: `services/hardware_profile.py` (885 lines),
-`services/residency_policy.py` (2,304 lines, `plan()` + `plan_chain()`, all eleven rules
-**R1–R11** present exactly as specified below, plus **HR1/HR2/HR8/HR10/HR16/HR18** added later
-by [`headroom.md`](headroom.md)'s extension of this design), `services/residency_arbiter.py`
-(1,993 lines, the live `Arbiter` class plus `OllamaBackend`/`LlamaServerBackend`/`ComfyUIBackend`
-adapters), and `services/residency_catalog.py` (1,020 lines) — 6,200+ lines total. Verified live,
-2026-09-06: `GET /api/residency/status` on the running app returns real seats (`image`, `stt`,
-`tts`, each with a backend/device/model_id/status), a real GPU budget snapshot
-(`available_mib`/`baseline_mib`/`total_mib` for the actual card), and real refusals citing rule
-IDs from the table below (e.g. `"rule_id": "R6"`, `"rule_id": "R5"`) — this is the design running
-in production, not a description of one. The rest of this document describes what was actually
-built; treat every rule/class/function named below as VERIFIED present unless a note says
-otherwise. See `headroom.md` for the layer built on top of this one (also corrected, same pass).
-**Inherits:** [`decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md) (D1–D10, notably **D4** — a
-first-class hardware profile consulted by dispatch — and **D8** — routed image generation once a
-residency scheduler exists), [`residency-state-delta.md`](../../history/audits/residency-state-delta.md) (Phase 0).
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/hardware_profile.py`, `services/residency_policy.py`, `services/residency_arbiter.py`, `services/residency_catalog.py`
+> **Supersedes / superseded by:** extended by [`headroom.md`](headroom.md); inherits [`decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md) (D1–D10, notably D4 and D8) and [`residency-state-delta.md`](../../history/audits/residency-state-delta.md) (Phase 0)
+> **Written:** 2026-08-14
+
+## Implementation notes
+
+Implementation started the same day as this document (`c8a4387`) and is now one of the largest subsystems in the tree: the detected HardwareProfile, the pure `plan()` / `plan_chain()` policy with all eleven rules R1–R11 exactly as specified below (plus HR1/HR2/HR8/HR10/HR16/HR18 added by the headroom extension), the live `Arbiter` with `OllamaBackend` / `LlamaServerBackend` / `ComfyUIBackend` adapters, and the catalog. `GET /api/residency/status` returns real seats, a real GPU budget snapshot, and refusals citing rule IDs from the table below.
+Treat every rule, class and function named below as present unless a note says otherwise. §0 describes the problem as it stood on 2026-08-14, before this build; read its "do not exist" claims in the past tense.
+
+---
 
 **Evidence registers:**
 - **VERIFIED** — the author ran the command or read the cited line and saw the output.
@@ -566,7 +556,7 @@ convenience — R9 says a pinned seat must not be delegated to a scheduler that 
 seat that had to be delegated anyway must say so rather than claim a pin it does not have.
 
 The llama-server column is why the `llama-cpp-brain` descriptor **mechanism** was preserved when
-the qwen3.6 brain was decommissioned this session: `routing/provider_descriptors.py` already
+the qwen3.6 brain was decommissioned during this audit: `routing/provider_descriptors.py` already
 classifies a loopback `base_url` as `local` and routes it through the openai-compatible adapter
 (**VERIFIED**, and proven end-to-end in `phase-a-report.md` §A7). The Arbiter spawns the process;
 the existing descriptor mechanism dispatches to it. No new dispatch path is required.
@@ -612,7 +602,7 @@ alternative — the same contract as the override refusal in §2.4, so callers h
 
 ## 8. Decision questions
 
-**Q1, Q2 and Q3 were answered by Stephen on 2026-08-14 and are recorded as resolved below.
+**Q1, Q2 and Q3 were answered by the maintainer on 2026-08-14 and are recorded as resolved below.
 Q4 and Q5 remain open.** The questions are kept as written so the resolutions have their
 reasoning attached rather than arriving as bare assertions.
 
@@ -629,7 +619,7 @@ pinned seats on llama-server means the Arbiter owns process lifecycle — spawn,
 health, termination, and restart-on-crash — for one process per pinned seat, each on its own
 loopback port, each registered through the existing `~/.friday/providers/*.json` descriptor
 mechanism. That mechanism was deliberately preserved when the qwen3.6 brain was decommissioned
-this session, and this is what it was preserved for. **UNKNOWN:** whether llama-server can load
+during this audit, and this is what it was preserved for. **UNKNOWN:** whether llama-server can load
 Ollama's own GGUF blobs directly from its content-addressed store, which would avoid
 re-downloading weights that are already on disk for the 12b and e2b. Settled by pointing
 `llama-server -m` at a blob path; if it cannot, pinned seats need their own GGUF artifacts and

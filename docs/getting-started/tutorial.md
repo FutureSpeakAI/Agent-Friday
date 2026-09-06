@@ -249,7 +249,7 @@ it you will conclude it's broken, and it isn't.
 
 If you think it's stuck: press **Ctrl+C** in PowerShell to stop her, then run
 `friday` again. If it happens twice, the error is in the PowerShell window —
-scroll up, and that text is exactly what Stephen needs to see.
+scroll up, and that text is exactly what the maintainer needs to see.
 
 ---
 
@@ -352,7 +352,7 @@ Almost everything that goes wrong at this stage is one of five things:
 | `friday is not recognized` | Missing `(venv)` — run `.\venv\Scripts\Activate.ps1` |
 | `running scripts is disabled` | Run the `Set-ExecutionPolicy` line in Step 2 |
 | `FileNotFoundError: 'ollama'` | Ollama isn't installed — see the pre-flight list |
-| Something else | Copy the whole PowerShell window and send it to Stephen |
+| Something else | Copy the whole PowerShell window and send it to the maintainer |
 
 There's also [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md), which lists what's broken
 and what's untested. It's blunt and it's meant to be — you shouldn't have to

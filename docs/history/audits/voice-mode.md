@@ -1,6 +1,8 @@
 # Voice mode — diagnosis and fix (2026-08-21)
 
-**Investigator:** Claude (Cowork session)
+> **Historical record — 2026-08-21.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
+**Investigator:** an engineering session
 **Evidence captured:** 2026-08-21 10:11–10:35 local
 **Machine:** the reference workstation · server PID 30624, started 08:58:18, uptime healthy throughout
 **Tree:** `friday-desktop` @ `higgsfield-integration`
@@ -21,7 +23,7 @@ faster-whisper → the agent brain → Piper), and that cascade **hangs indefini
 machine tonight: it transcribes you, emits `status: thinking`, and then never speaks, never
 errors, and never times out.
 
-From Stephen's chair that is exactly "voice mode isn't working": you talk, the orb reacts,
+From the maintainer's chair that is exactly "voice mode isn't working": you talk, the orb reacts,
 and nothing ever comes back.
 
 The Gemini Live path was healthy the entire time and had been all along. Two settings
@@ -41,7 +43,7 @@ Picked up without a restart (settings are re-read per session).
 
 ## 1. Establishing the symptom (before any theorising)
 
-Stephen reported only "voice mode isn't working," so I drove the audio path directly rather
+the maintainer reported only "voice mode isn't working," so I drove the audio path directly rather
 than reading code. Harness: `ws_live_probe.py` — a WebSocket client that speaks the same
 contract as the browser (`{type:'audio', data:<b64 PCM16@16k>}`), fed with **real speech**
 synthesised through Windows SAPI at 16 kHz/16-bit/mono (6.58 s, 210,560 bytes):
@@ -130,7 +132,7 @@ if local_ok:
     return {**_pick("local"), "reason": "local default"}
 ```
 
-`"auto"` and `"local"` are the same branch. Stephen's setting was **`auto`** — a value that
+`"auto"` and `"local"` are the same branch. the maintainer's setting was **`auto`** — a value that
 reads as "pick whichever works" and behaves as "always local, regardless." There is no
 signal anywhere that the choice was collapsed.
 
@@ -183,7 +185,7 @@ tools it cannot read is a model that will loop.
 
 ### 2.4 The sensitivity force-route, caught in the act on a voice path
 
-Stephen flagged this as a maybe. It is not a maybe. From the live UI, immediately after a
+the maintainer flagged this as a maybe. It is not a maybe. From the live UI, immediately after a
 voice session ended:
 
 > **Task complete: Voice session: distill to wiki**
@@ -301,7 +303,7 @@ Stated plainly:
 
 1. **I never spoke into the microphone myself.** §4.3 is a loudspeaker played into the room
    mic. It exercises every link, but a human voice at conversational distance is not tested.
-   If Stephen's mic gain, positioning or noise floor is the issue, this would not have caught it.
+   If the maintainer's mic gain, positioning or noise floor is the issue, this would not have caught it.
 2. **I did not put a meter on the app's own `friday-pcm-player` AudioWorklet during §4.3.**
    That her reply came *out of the speakers* in that specific run is inferred from §4.2
    (which measured the identical decode-and-render path with a real signal) plus the reply
@@ -322,7 +324,7 @@ Stated plainly:
 
 ---
 
-## 5. Open items — for Stephen to sequence, not for me to land
+## 5. Open items — for the maintainer to sequence, not for me to land
 
 Ordered by how much they cost when they next fire.
 
@@ -337,7 +339,7 @@ Ordered by how much they cost when they next fire.
    cost something visible.*
 
 3. **`local_ok` should mean "can complete a turn," not "deps are installed."** As written it
-   certifies ASR+TTS and stays silent about the brain. That is what routed Stephen into a dead
+   certifies ASR+TTS and stays silent about the brain. That is what routed the maintainer into a dead
    pipeline. `/api/voice/setup/status` inherits the same optimism and reports `"ready": true`.
 
 4. **The `gemma4:e2b` / `gemma4:12b` aliases resolve to nothing in Ollama.** Seat bindings flap

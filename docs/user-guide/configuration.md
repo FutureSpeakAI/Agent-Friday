@@ -6,7 +6,7 @@ All configuration lives in `~/.friday/settings.json`. Settings can be updated vi
 
 ## API Keys
 
-API keys are stored encrypted in Friday's credential store (one encrypted file per provider under `~/.friday/providers/keys/`), never as plaintext in `settings.json`. The recommended way to add keys is through the **setup wizard** (first-run) or **Settings → Providers** in the UI.
+Keys entered in **Settings → Providers** are stored encrypted in Friday's credential store (one file per provider under `~/.friday/providers/keys/`). Keys entered through the `friday setup` wizard are written in plaintext to `~/.friday/settings.json`, `~/.friday/config.yaml` and a `start.bat` launcher; prefer the Settings path for keys. Where each credential lives, and how it is protected, is stated in [SECURITY.md](../../SECURITY.md).
 
 You can also supply keys as environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the stored credentials.
 

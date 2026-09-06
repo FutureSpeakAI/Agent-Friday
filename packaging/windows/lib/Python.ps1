@@ -219,7 +219,7 @@ function Install-Pip {
         # No pin available (get-pip.py is a moving target upstream). Say so
         # loudly in the log rather than implying it was checked.
         #
-        # -Informational: this belongs in Stephen's report and nowhere near
+        # -Informational: this belongs in the maintainer's report and nowhere near
         # her screen. Before the split, this single note made a completely
         # clean install end by telling her "a couple of optional parts did not
         # install" - nothing had failed at all.

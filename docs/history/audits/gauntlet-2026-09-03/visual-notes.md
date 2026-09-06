@@ -1,6 +1,8 @@
 # Visual / workspace notes — capture only, no verdicts
 
-Set up 2026-09-04 per Stephen's explicit instruction: the gauntlet's bar
+> **Historical record — 2026-09-04.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
+Set up 2026-09-04 per the maintainer's explicit instruction: the gauntlet's bar
 stays binary and evidence-backed ("does the product do what it claims") —
 no visual/aesthetic critic joins this loop, and this file is not judged
 against that bar. When a finder or critic incidentally notices something

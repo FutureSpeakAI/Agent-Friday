@@ -1,8 +1,17 @@
 # Sovereign hostname on agent naming — design note
 
-**Status:** design only (not built). **Belongs in:** the v6 "Wholeness"
-**self-healing-install** phase (P7) — fold this into `docs/V6_WHOLENESS_SPEC.md`
-rather than shipping standalone.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none (the one-off `agent.friday` reference proxy lives in `ops/`)
+> **Supersedes / superseded by:** folds into the self-healing-install phase (P7) of [`v6-wholeness-spec.md`](v6-wholeness-spec.md)
+> **Written:** 2026-08-13
+
+## Implementation notes
+
+- Not built as a product feature. The Windows reference implementation in `ops/` (loopback-only Caddyfile, CA install, boot Scheduled Task, hosts self-heal) is a one-off demo proxy, not the naming-step provisioning this note proposes.
+- Intended to ship inside V6 P7 rather than standalone.
+
+---
 
 ## The idea
 

@@ -1,11 +1,13 @@
 # Why voice can search the news but can't read it back — 2026-08-24
 
+> **Historical record — 2026-08-24.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Investigation only. Nothing changed in this pass; the proposal at the end is
-for Stephen to rule on.
+for the maintainer to rule on.
 
 ## Short version
 
-Stephen is right, and the codebase already agrees with him — it just doesn't
+the maintainer is right, and the codebase already agrees with him — it just doesn't
 apply its own principle on this path.
 
 The gate is judging **news article text** and finding it private, because news
@@ -31,7 +33,7 @@ Classifier output on realistic news text:
 | tech release notes | 1 | passes |
 
 Public-health reporting from the CDC classifying Tier 3 is the sharpest
-illustration: the medical keyword rules exist to keep *Stephen's* health
+illustration: the medical keyword rules exist to keep *the maintainer's* health
 affairs on the machine, and a CDC press release is not that.
 
 Reproduced end-to-end: a two-item `search_news` JSON result of 636 characters
@@ -67,7 +69,7 @@ describes this precise failure mode: *"9 of 120 public news headlines classify
 TIER_3 … Those are the legal and financial keyword rules doing their job on the
 wrong material."*
 
-Its contract is already what Stephen described, and stricter:
+Its contract is already what the maintainer described, and stricter:
 
 - provenance is established **at ingest**, by the code that fetched the bytes;
 - **exact match only** — interpolating user content produces a different string
@@ -89,7 +91,7 @@ pages, behind an SSRF guard applied to every redirect hop.
 The safety argument lives or dies here, so the middle column is the one to
 scrutinise.
 
-**Public-origin — retrieved from the open web, never Stephen's:**
+**Public-origin — retrieved from the open web, never the maintainer's:**
 `search_news`, `search_web`, `browse_web`.
 
 These fetch through guarded paths and carry **no user credentials**, so they
@@ -150,7 +152,7 @@ claims can be forged by any code path that assembles a payload.
 It also can't express `get_briefing`, where the same tool returns public and
 private material together.
 
-So: Stephen's instinct is right, and the mechanism he's reaching for is already
+So: the maintainer's instinct is right, and the mechanism he's reaching for is already
 built. The work is making the tool-result path participate in it — not
 inventing a parallel one, and not adding a whitelist.
 
@@ -170,7 +172,7 @@ than solving up front.
 
 # IMPLEMENTED — 2026-08-24
 
-Both pieces landed. Stephen's "news is not private" plus the CDC-flu-at-Tier-3
+Both pieces landed. the maintainer's "news is not private" plus the CDC-flu-at-Tier-3
 finding was taken as authorization.
 
 ## Credential precondition — re-verified before relying on it
@@ -181,7 +183,7 @@ rather than assumed. None of the three can reach an authenticated page:
 | path | headers sent | verdict |
 |---|---|---|
 | RSS (`_rss_results`) | `User-Agent` only | no credentials |
-| Brave (`_brave_results`) | `Accept`, `X-Subscription-Token` | Friday's own service key, not Stephen's identity |
+| Brave (`_brave_results`) | `Accept`, `X-Subscription-Token` | Friday's own service key, not the maintainer's identity |
 | article body fetch | `User-Agent` only | no credentials |
 | `web_fetch` (browse_web) | none | zero credential references; SSRF-guarded every hop |
 
@@ -242,7 +244,7 @@ classifier and asserts the vault text *does* leak, proving those tests can
 detect a broken gate rather than asking anyone to take it on trust.
 
 Regression: 423 passed. The only failures are the two classifier-tuning tests
-left pending for Stephen, plus a pre-existing NeMo/GPU test unrelated to this
+left pending for the maintainer, plus a pre-existing NeMo/GPU test unrelated to this
 work (confirmed failing with these changes stashed).
 
 ## One adjacent gap found, pinned but NOT closed here

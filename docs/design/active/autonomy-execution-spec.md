@@ -1,10 +1,17 @@
 # Agent Friday — Full Autonomy: Execution Spec (V6-A)
 
-*Authored 2026-07-22 by Fable 5 using the STORM interrogation methodology. This is the
-build-ready instruction set for making Friday a fully autonomous agent — the
-answer to "how do we compete with OpenClaw and Hermes" — executed by Sonnet 5
-builder agents at max effort, one phase per agent session, with Fable verifying
-and committing between phases.*
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/persona_eval.py`, `services/dissent_gate.py`, `services/goals.py`, `services/approvals.py`, `routes/goals.py`, `services/channels/`
+> **Supersedes / superseded by:** cuts [`v6-wholeness-spec.md`](v6-wholeness-spec.md) down to the autonomy-critical path
+> **Written:** 2026-07-22
+
+## Implementation notes
+
+- A1 (persona contract and golden evals), A2 (dissent-lite) and A3 (durable goals with verification, human gates and signed receipts) shipped as the "Phase A" track: `services/persona_eval.py`, `services/dissent_gate.py` + `services/interest_model.py`, `services/goals.py` + `services/approvals.py` + `routes/goals.py`.
+- A4 (channels, presence and triggers) has a backend: `services/channels/` carries a channel manager with Telegram and Discord bridges, plus `services/channel_toolcalls.py`. The event-trigger, remote-approval and kill-switch surfaces in §6 have not been verified against it.
+- A5 (actuation) is not built: no `screen_trust`, no grounding module, no per-app permission tiers. A6 reuses the pre-existing `services/health_check.py` rather than a new Doctor. A7 and A8 were not verified in this pass.
+- The §8 instruction set was written as build orders for per-phase sessions; read it as the intended plan, not a record of what was run.
 
 ---
 
@@ -16,12 +23,12 @@ self-heal). This document does four things V6 does not:
 
 1. **Cuts V6 down to the autonomy-critical path** and re-orders it for that
    goal (proof-of-mind phases P2/P3 deferred; P8/P9 excluded — blocked on
-   values decisions Q1/Q2/Q5 that only Stephen can make).
+   values decisions Q1/Q2/Q5 that only the maintainer can make).
 2. **Adds the missing pillar: Phase A4 — Channels, Presence & Triggers.**
    OpenClaw's genuine edge is reach (always-on, message-from-anywhere,
    event-driven). V6 never covered it. Specified in full below.
 3. **Records the provisional decisions** on V6's open questions so the build
-   can proceed (§4). Every decision is the V6-recommended default; Stephen can
+   can proceed (§4). Every decision is the V6-recommended default; the maintainer can
    override any of them before its phase builds.
 4. **Resolves everything into a Final Instruction Set (§8)** — self-contained
    per-phase build orders for agents that have not seen this conversation.
@@ -45,11 +52,8 @@ reach on top of it.
   V6 recommendation; MCPControl remains not-consumed.
 - `extension_security` now **blocks plaintext-http remote MCP URLs**
   (loopback exempt) — A4's webhook/channel surfaces must meet the same bar.
-- Working-tree caution: `ui_parts/app.html`, `index.html`, and several
-  routes/services files carry **uncommitted changes from concurrent sessions**.
-  This build is **backend/API-first**; all workspace-panel (WS) UI work is
-  collected into a final UI pass (A8) that runs only after the foreign changes
-  land. No build agent may revert or restructure uncommitted foreign edits.
+- This build is **backend/API-first**; all workspace-panel (WS) UI work is
+  collected into a final UI pass (A8).
 
 ## 3. Scope
 
@@ -72,12 +76,12 @@ receipt fragments they will later consume. P8 (export) blocks on Q5; P9
 (multi-user) blocks on Q1/Q2 — both are values decisions, not engineering
 defaults, and autonomy must not silently decide them.
 
-## 4. Decision record (provisional — Stephen may override before the affected phase builds)
+## 4. Decision record (provisional — the maintainer may override before the affected phase builds)
 
 | Q | Decision adopted | Affects |
 |---|---|---|
 | Q3 autonomy ceiling | **Gated by default:** any outward/irreversible act, any spend, any external message. Internal research/drafting auto-proceeds *with a receipt*. Encoded as `services/approvals.py` policy table, editable in settings | A3, A4, A5 |
-| Q4 persona cadence | Fixture/CI by default; live refresh opt-in. Golden set curated by Stephen (Friday may propose) | A1 |
+| Q4 persona cadence | Fixture/CI by default; live refresh opt-in. Golden set curated by the maintainer (Friday may propose) | A1 |
 | Q6 dissent strength | **Soft** (name conflict, proceed) by default; **hard** (block for confirmation) only for outward/irreversible/high-cost — i.e. exactly the A3 gate set | A2 |
 | Q7 self-heal order | Keep at end (Doctor checks the *finished* autonomy subsystems) | A6 |
 | Q10 browser lane | **CDP bridge**: loopback-only, token-gated, launched on demand against the user's Chrome debug port; extension is the later productized path | A5 |
@@ -91,7 +95,7 @@ requirements that bind §6–§8. Focused on the NEW surface — presence, chann
 triggers — and on cross-phase autonomy risk; the V6 STORM findings for
 P1/P4/P5/P6/P7 still stand and are not repeated.)*
 
-**S1 — Stephen (the builder).** "If Friday is reachable from my phone, the
+**S1 — The maintainer (the builder).** "If Friday is reachable from my phone, the
 value is that the *whole loop* is reachable: she pings me, I approve, she
 proceeds, I get the receipt — all from Telegram, without opening the desktop.
 And when a phase is built by a cheaper model, I want proof it didn't bend her."
@@ -112,7 +116,7 @@ a stolen channel still can't push an outward act through without the desktop
 approval queue for anything above its tier; channel setup is one screen, not a
 BotFather tutorial dump.
 
-**S3 — A second person in the house.** "If I pick up Stephen's phone or text
+**S3 — A second person in the house.** "If I pick up the maintainer's phone or text
 his bot, does Friday think I'm him?" → **Requirements:** channel identity ≠
 person identity: the channel is bound to the *owner principal* only; messages
 from any other sender id are dropped pre-parse. No multi-user semantics are
@@ -129,7 +133,7 @@ path ("watch this folder; when a CSV lands, summarize and message me") must
 work offline-local; the trigger engine must show *why* it fired (matched rule,
 matched content hash) — falsifiable, like the galaxy.
 
-**S5 — Friday herself.** "Always-on means I act while Stephen sleeps. My
+**S5 — Friday herself.** "Always-on means I act while the maintainer sleeps. My
 judgment at 3 a.m. must be *more* conservative, not less — and when I wake to
 a hundred queued events I need to triage, not stampede. If my channel goes
 down I should degrade to the desktop queue, never drop an approval on the
@@ -283,7 +287,7 @@ promotion within a seeded test run; disabling stops the nightly job; nothing
 runs while off. **Tests:** `tests/unit/test_learning_reenable.py`, receipt
 presence, off-by-default regression.
 
-## 8. FINAL INSTRUCTION SET (for the Sonnet 5 max-effort builders)
+## 8. FINAL INSTRUCTION SET (for the per-phase build sessions)
 
 **Standing orders for every phase agent (read first, apply always):**
 
@@ -300,19 +304,15 @@ presence, off-by-default regression.
    - Pre-commit secret scanner: token-ish literals need
      `# pragma: allowlist secret`. Repo is public: no PII, no real paths,
      no real keys — secrets at rest go through `services/credential_store`.
-   - Do NOT touch files with uncommitted foreign changes (`ui_parts/app.html`,
-     `index.html`, `routes/tasks.py`, `routes/voice.py`,
-     `services/model_router.py`, `services/news_engine.py`,
-     `core/__init__.py`) except purely-additive, conflict-free insertions
-     that your phase strictly requires — prefer new modules + blueprint
-     registration. All WS/UI panels are deferred to A8.
+   - Prefer new modules + blueprint registration over edits to the large
+     shared files. All WS/UI panels are deferred to A8.
    - New cloud calls go through `egress_gate.seal_outbound`; new at-rest
      stores inherit sensitivity tiers; new routes = new Blueprint modules in
      `ROUTE_MODULES`; follow existing code style (docstrings explaining
      *why*, defensive lazy imports across services).
 3. Every phase A2–A5 ends by running the A1 persona eval in fixture mode —
    it must be green (V6 §5 persona-regression rule).
-4. Do not commit — the orchestrator (Fable) reviews, runs the full suite,
+4. Do not commit — the orchestrating session reviews, runs the full suite,
    and commits each phase scoped.
 5. Your final report: what was built (files + line counts), what you ran and
    its results verbatim, deviations from spec with reasons, anything left.

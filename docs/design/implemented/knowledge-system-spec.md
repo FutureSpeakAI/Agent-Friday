@@ -1,12 +1,19 @@
 # Agent Friday — Knowledge System Overhaul: Technical Specification
 
-**Spec stage:** Opus 4.8 (STORM method — multi-perspective interrogation → synthesis)
-**Build stage:** Fable 5 (one build session per phase)
-**Date:** 2026-07-06
-**Status:** Draft for Stephen's review. Sections marked ⚠️ need a decision before Phase 2+.
-**Deliverable of this overhaul:** GraphRAG-indexed, wiki-linked knowledge graph for Agent Friday, plus a 3D "explore your second brain" view rendered inside the holographic desktop.
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/knowledge_graph.py`, `services/knowledge_graph/`, `services/wiki_engine.py`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-07-06
 
-> **⚠️ Read the Architecture Decision (§2) first.** This spec's single most important finding is that the "knowledge backend" the task brief places *in asimovs-mind* actually already lives *in friday-desktop*. The recommendation is to build the overhaul in **friday-desktop**. Every file path below assumes that unless noted. If Stephen overrides this, §2 explains what changes.
+## Implementation notes
+
+The two-tier knowledge graph and the 3D Galaxy workspace were built in friday-desktop per the §2 decision (Option A). Sections marked ⚠️ were decisions required before Phase 2+; read the body as the phased plan that was executed. Method: multi-perspective interrogation followed by synthesis.
+Deliverable: a GraphRAG-indexed, wiki-linked knowledge graph plus a 3D "explore your second brain" view rendered inside the holographic desktop.
+
+---
+
+> **⚠️ Read the Architecture Decision (§2) first.** This spec's single most important finding is that the "knowledge backend" the task brief places *in asimovs-mind* actually already lives *in friday-desktop*. The recommendation is to build the overhaul in **friday-desktop**. Every file path below assumes that unless noted. If the maintainer overrides this, §2 explains what changes.
 
 ---
 
@@ -21,13 +28,13 @@ This overhaul adds that connective tissue as a **two-tier knowledge graph**:
 
 The **3D explorer** is a new holographic workspace (`KnowledgeGraphWS`) rendering the graph as a galaxy — communities as nebulae, entities as stars, relationships as light filaments, your wiki pages as the brightest stars. Click a star → open its wiki page; search → light up a constellation; when Friday learns something, a new star ignites. Ported to **vanilla Three.js r128** (friday-desktop has no JS bundler; the workbench's react-three-fiber cannot be reused directly — see §7).
 
-Delivered in **5 phases, each sized for one Fable build session** (§9).
+Delivered in **5 phases, each sized for one build session** (§9).
 
 ---
 
 ## 2. ⚠️ Architecture Decision: Which Repo Owns the Knowledge Backend?
 
-The task brief says: *"the 3D exploration view renders in friday-desktop, with the graph/knowledge backend here in asimovs-mind."* Investigation shows this framing does not match the codebases, and following it literally would create real problems. This is the #1 decision for Stephen.
+The task brief says: *"the 3D exploration view renders in friday-desktop, with the graph/knowledge backend here in asimovs-mind."* Investigation shows this framing does not match the codebases, and following it literally would create real problems. This is the #1 decision for the maintainer.
 
 ### 2.1 What the two repos actually are
 
@@ -58,11 +65,11 @@ Costs: (1) asimovs-mind has 3 providers and no egress gate → to honor constrai
 
 **Option C — Hybrid.** Build in friday-desktop (Option A), then expose the finished graph read-API over asimovs-mind's holographic HTTP bridge as a thin MCP proxy, *if and when* other MCP agents need to query Friday's brain. Defer this until there's a concrete consumer. Recommended as a *future* add-on to A, not now.
 
-**Recommendation: Option A**, with C as a later option. The rest of this spec is written for A. **If Stephen picks B**, see §12-Q1 for the deltas (a Node port of Tiers A/B, an egress-gate proxy contract, and a wiki-sync protocol).
+**Recommendation: Option A**, with C as a later option. The rest of this spec is written for A. **If the maintainer picks B**, see §12-Q1 for the deltas (a Node port of Tiers A/B, an egress-gate proxy contract, and a wiki-sync protocol).
 
 ### 2.4 Where does *this spec file* live vs. where the build happens
 
-This file is written to `asimovs-mind/docs/KNOWLEDGE_SYSTEM_SPEC.md` (the literal deliverable path / pipeline cwd). **The build target is friday-desktop.** Recommend the Fable build session be launched against `friday-desktop (sibling checkout)` with this spec as input; optionally copy this file to `friday-desktop/docs/KNOWLEDGE_SYSTEM_SPEC.md` to match that repo's spec convention. (This session did **not** write into friday-desktop to avoid colliding with the parallel voice worktree.)
+This spec was originally delivered into the `asimovs-mind` repository. **The build target is friday-desktop**, and that is where it was built and where this document now lives.
 
 ---
 
@@ -120,7 +127,7 @@ Four retrieval paths, auto-routed by query type: (1) **structural** (no LLM — 
 **P6 — Product/UX: "This is Agent Friday's *head*."**
 The 3D view is the emotional hook — flying through the agent's mind. Reuse the holographic language (cyan/magenta/green mood palette, glass, bloom already vendored). Communities = glowing nebulae; entities = stars; relationships = filaments; *your* wiki pages = brightest stars; a newly learned fact = a star igniting live. Click a star → the wiki page opens in `WikiWS`. → **Requirement: the view is a first-class workspace, visually native, wired to wiki navigation and live learning events.**
 
-**P7 — Build Sequencer: "One Fable session per phase."**
+**P7 — Build Sequencer: "One build session per phase."**
 Each phase must be independently shippable, testable, and small enough for one focused build. Tier A (no LLM, no UI risk) ships before Tier B (LLM cost/egress risk) ships before the 3D view (perf risk) ships before integration. → **Requirement: the phasing in §9, with Phase 2 pre-split into 2a/2b in case the indexer+retrieval is too large for one session.**
 
 ---
@@ -274,7 +281,7 @@ Techniques required to hit these: instanced nodes (one draw call), merged edge g
 
 ---
 
-## 9. Phased Build Plan (one Fable session per phase)
+## 9. Phased Build Plan (one build session per phase)
 
 Each phase: independently shippable, own tests, own acceptance gate. Build order minimizes risk (no-LLM → LLM → perf → integration).
 
@@ -343,7 +350,7 @@ Reused unchanged: `services/model_router.py`, `services/egress_gate.py`, `privac
 
 ---
 
-## 12. Open Questions for Stephen
+## 12. Open Questions for the maintainer
 
 **Q1 — ⚠️ Repo boundary (blocks Phase 0 scope).** Approve **Option A (build in friday-desktop)**? If you want **Option B (backend in asimovs-mind)** as the brief literally states, the deltas are: port Tiers A/B to Node in friday-core; define an egress-gate **proxy** contract so friday-core's LLM calls are gated by friday-desktop (or duplicate the gate — not recommended); and a wiki-sync protocol between the two stores. My strong recommendation is A now, with C (expose over the MCP bridge) later if another agent needs the graph.
 

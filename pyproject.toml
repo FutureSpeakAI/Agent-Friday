@@ -86,6 +86,8 @@ pii = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]
 keyring = ["keyring>=24.0"]
 windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0", "pystray>=0.19"]  # computer control + global kill-switch + tray icon
 pdf = ["pdfplumber>=0.11"]  # retained alias; pdfplumber is now a core dependency
+# Development and CI: the test runner and the fatal-rule linter.
+dev = ["pytest>=8.0", "ruff>=0.5"]
 all = [
     "pyttsx3>=2.90",
     "pillow>=10.0",
@@ -137,4 +139,4 @@ where = ["src"]
 # is only for the non-code files (config.yaml, SKILL.md) that packages.find
 # does not pick up on its own. See agent_friday/seed/__init__.py.
 [tool.setuptools.package-data]
-agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md"]
+agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md"]

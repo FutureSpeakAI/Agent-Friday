@@ -1,7 +1,15 @@
 # Google OAuth onboarding — the wall every new user hits
 
-Status: **decision required from Stephen**. Nothing here is built.
-Written 2026-08-26, after Friday's first install on a second person's machine.
+> **Status:** superseded
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/google_oauth_client.py`, `services/google_accounts.py`
+> **Supersedes / superseded by:** superseded by [`google-oauth-verification-checklist.md`](google-oauth-verification-checklist.md)
+> **Written:** 2026-08-26
+
+## Implementation notes
+
+- The question this document poses was answered the same day: ship a bundled OAuth client and keep bring-your-own, both first-class. `services/google_oauth_client.py` resolves which client a connect would use (`byo` | `bundled` | `none`) and carries the guided BYO flow.
+- The analysis of the wall (§1–§4) still holds and is why the checklist exists; read §5's open questions as answered by the superseding document.
 
 ---
 
@@ -16,7 +24,7 @@ account. She got this:
 
 `routes/google.py:60`, and again at `services/google_accounts.py:1015`.
 
-Stephen: *"New users must never experience this."* He is right, and it is
+The maintainer: *"New users must never experience this."* He is right, and it is
 worth being exact about how far the wall goes. That message asks her to:
 
 1. know what an OAuth client is,
@@ -116,7 +124,7 @@ Google's two pages disagree, and the disagreement is worth real money.
 * **Restricted scope verification** says assessment applies to apps handling
   restricted data *"from or through a third-party server"*. Friday has no
   server. Tokens are encrypted on the user's machine; mail never transits
-  anything Stephen operates.
+  anything the maintainer operates.
 * **Security Assessment** says flatly: *"Applications requesting access to
   restricted scopes must undergo an annual security assessment."* No
   exemption is listed.
@@ -212,9 +220,9 @@ installs. It is not a destination.
 
 ---
 
-## 5. Questions only Stephen can answer
+## 5. Questions only the maintainer can answer
 
-* **Q-G1.** Is Friday a product for strangers, or a tool for Stephen and
+* **Q-G1.** Is Friday a product for strangers, or a tool for the maintainer and
   people he knows? A is fine for the second and fatal for the first. Every
   other answer follows from this one.
 * **Q-G2.** Who is the verifying legal entity — FutureSpeak.AI? Verification

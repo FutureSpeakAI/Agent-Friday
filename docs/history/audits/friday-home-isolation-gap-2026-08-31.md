@@ -1,5 +1,7 @@
 # `FRIDAY_HOME` does not isolate Friday from `~/.friday`
 
+> **Historical record — 2026-08-31.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Found by:** the Friday-Models fine-tuning mission (separate repo, `FutureSpeakAI/Friday-Models`),
 auditing this codebase at the pinned tag `v5.7.0` before running Agent Friday against
 mission-owned test data. Recorded here because the gap is a product-level safety guarantee that

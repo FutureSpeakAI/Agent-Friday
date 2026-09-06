@@ -1,13 +1,22 @@
 # Agent Friday Voice System — Out-of-the-Box Spec
 
-**Document:** `docs/VOICE_SYSTEM_SPEC.md`
-**Status:** Forward-looking product + technical spec (drives the next implementation run)
-**Codebase:** the `friday-desktop` repository root
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `routes/voice.py`, `services/voice_installer.py`, `services/voice_engine.py`, `services/local_voice.py`, `services/nemo_voice.py`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-07-06
+
+## Implementation notes
+
+- Spot-checked 2026-09-06, not fully reconciled. Gap 1 is closed: `POST /api/voice/setup/install` (with `/status` and `/cancel`) exists in `routes/voice.py`, backed by `services/voice_installer.py`. Gap 3 is partly closed: `LIVE_MODEL` defaults to `gemini-2.5-flash-native-audio-latest` and the provider registry lists it first, but `validate_live_model` still uses the `_LIVE_MODEL_MARKERS` substring heuristic.
+- Gaps 2 (in-UI Tier-2 GPU install) and 4 (client error handler dropping `detail`) were not verified in this pass; treat §§5–10's acceptance criteria as unconfirmed until checked.
+- The companion documents named below have moved; the OVERHAUL post-mortem and the Tier-2 NeMo reference are cited here by section and are not restated.
+
+---
+
 **Companion docs (read, do not duplicate):**
 - `docs/VOICE_SYSTEM_OVERHAUL_SPEC.md` — post-mortem / current-state reference. This spec references it by section (e.g. "OVERHAUL §7.9") rather than restating it.
 - `docs/TIER2_NEMO_VOICE.md` — Tier-2 NeMo install/health/test reference.
-
-**Audience:** FutureSpeak.AI engineering.
 
 **One-line thesis:** *Every new user gets working voice on first run, or a one-click in-UI path to it — no terminal, no silent failures, no dead greyed buttons.*
 

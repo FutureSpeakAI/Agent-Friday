@@ -1,42 +1,20 @@
 # The symphony of intelligence — how Friday should divide work across her models
 
-**Date:** 2026-08-15
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
-written for this document.~~ **BUILT — the same evening.** That line was true for about 23
-minutes. Part 5's "six components, one commit each" was executed on 2026-08-15 between 18:21 and
-18:38: §5.1 context sized from the whole prompt (`24b9a35` — `services/context_budget.py`,
-`residency_policy.CONTEXT_LADDER`/`MIN_CONVERSATION_ROOM`), §5.3/S4 the sidekick survives every
-lease (`246123a` — landed as rule **R10**, `residency_policy.py:249`), §5.4 the work queue
-(`43b271f` — `services/work_queue.py`, 376 lines, `CLASSES` in the exact §2.4 order, `drain()`
-under one lease at `:286`), §5.2 `WorkflowProposal` (`f1ce1a3` — `services/workflow_plan.py`,
-340 lines, plus `routes/work_plan.py`, nine `/api/work/*` endpoints the doc never asked for),
-§5.5 the workflow panel (`3c95c38` — 638 UI lines, blocked options rendered disabled with their
-reason), §5.6 the tool-chain probe (`3446c10` — `tests/probes/toolchain_probe.py`, 15/15). The
-§6 Ollama-independence work the doc only *recommends* also shipped that night (`1b50813` Friday's
-own model store; `d313f68` `channel_toolcalls.py`, 207 lines). This file's last edit (`75c6d2a`,
-20:15) came after all of it, and the header was never revised. Downstream docs
-(`headroom.md`, `deep-research.md`) citing this as the source of S1–S4, the work queue and the
-§2.4 lease model are citing a shipped design.
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/context_budget.py`, `services/work_queue.py`, `services/workflow_plan.py`, `routes/work_plan.py`, `services/channel_toolcalls.py`, `services/residency_policy.py` (`CONTEXT_LADDER`, `MIN_CONVERSATION_ROOM`, rule R10)
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-15
 
-**Not built, named:** (1) the away-drain does not run on a timer — `scheduler.away_drain_enabled()`
-is opt-in and the comment at `scheduler.py:1124-1137` says `when_away` work "simply waits forever
-if nobody opens the panel"; deliberate, after Stephen lost a monitor to VRAM pressure on 08-17, but
-it means `when_away` is not autonomous. (2) §5.1's Part 3 recommendation of 131072 landed as
-**65536**, with reasoning at `residency_policy.py:290-304`. (3) The §0.5 structured-output probe
-against `gemma4:26b` was never run. (4) §6.4 item 3, embeddings off the daemon — only a written
-plan; no embedding seat runs on `llama-server`. (5) `workflow_plan.recommend()` adds a
-"cloud unavailable" branch the doc's four-branch heuristic does not list.
+## Implementation notes
 
-**Two naming traps for a cold reader:** "S1–S4" are Stephen's four answers, not rule IDs — the
-codebase uses R-rules and S4 is R10; grep for `\bS[1-4]\b` finds nothing. And
-`services/orchestrator.py` (400 lines, `e26a33d`, 2026-06-28) is the *unrelated* earlier
-"Dual-Role Orchestration Engine," six weeks older than this document — do not cite it as symphony
-work. Five body claims below are now stale for the same reason as the header (L253 "a queue Friday
-does not have yet", L264 "nothing accumulates work into them yet", L288-294 recs 3–5 as future
-work, L432 §5.6 "still UNKNOWN" — contradicted by this doc's own §0.6/§2.6 — and L503 the
-channel-format blocker, closed by `d313f68`); they are left as written for the reasoning and
-should be read in the past tense.
-**Method:** STORM — multi-perspective questioning first, cited synthesis second.
+Part 5's six components shipped the same evening (`24b9a35`, `246123a`, `43b271f`, `f1ce1a3`, `3c95c38`, `3446c10`), plus the §6 Ollama-independence work (`1b50813`, `d313f68`). The work queue's `CLASSES` follow the §2.4 order and `drain()` runs under one lease; S4 landed as rule R10; `WorkflowProposal` gained nine `/api/work/*` endpoints; the tool-chain probe lives at `tests/probes/toolchain_probe.py`.
+Not built, named: the away-drain is opt-in (`scheduler.away_drain_enabled()`) and `when_away` work waits until someone opens the panel — deliberate, after VRAM pressure cost a monitor on 08-17; §5.1's 131072 landed as 65536 (reasoning at `residency_policy.py:290-304`); the §0.5 structured-output probe against `gemma4:26b` was never run; §6.4 item 3 (embeddings off the daemon) is a written plan only; `workflow_plan.recommend()` adds a "cloud unavailable" branch the four-branch heuristic does not list.
+Two naming traps: "S1–S4" are the maintainer's four answers, not rule IDs (the codebase uses R-rules; S4 is R10). `services/orchestrator.py` is the unrelated, earlier "Dual-Role Orchestration Engine" — not symphony work.
+Body lines saying a queue does not exist yet, that nothing accumulates work, that recs 3–5 are future work, that §5.6 is UNKNOWN, or that the channel format blocks — are stale for the same reason as the old header; read them in the past tense.
+
+---
+
 **Registers:** **VERIFIED** (file:line or captured output), **INFERRED**, **UNKNOWN**.
 
 ---
@@ -180,7 +158,7 @@ Frontier tokens cost money; local tokens cost time and electricity. Where is the
 favourable, and where is it absurd?
 
 ### The failure analyst
-What breaks? How does it present? Would Stephen be able to tell a local model got it wrong, or
+What breaks? How does it present? Would the maintainer be able to tell a local model got it wrong, or
 would it look like a confident answer?
 
 ---
@@ -210,7 +188,7 @@ the first time, and anything where being wrong is expensive to discover later.
 
 ### 2.2 The core division: frontier scopes, local executes
 
-This is Stephen's instinct and it is the right one, for a reason that is now measurable — §0.5.
+This is the maintainer's instinct and it is the right one, for a reason that is now measurable — §0.5.
 A frontier model is best at the part of the work where the *shape* is unclear, and worst
 value-for-money at the part where the shape is already known. Local models are the reverse.
 
@@ -331,7 +309,7 @@ them yet.
 
 ## Part 4 — The four questions, answered
 
-Answered by Stephen, 2026-08-15, verbatim where it matters.
+Answered by the maintainer, 2026-08-15, verbatim where it matters.
 
 **S1 — context.** *"Do expand the context window, yes."* Sized from the **whole** prompt — system
 prompt plus tools plus real conversation room — not from the tool list alone, which was the
@@ -347,7 +325,7 @@ silent decision in either direction.
 judgement only *raises the question*; it never settles it. What Friday owes him is a clear
 picture to decide from: *"perhaps Friday should present a custom workflow UI with a
 representation of the tasks it will execute, and a series of config options for the workflow, so
-the user can choose or select 'choose for me' as an option as well."* Friday proposes; Stephen
+the user can choose or select 'choose for me' as an option as well."* Friday proposes; the maintainer
 disposes — including the option to hand the decision back.
 
 **S4 — does the sidekick survive a lease?** *"keep e2b awake so Friday is always alive."* Yes.
@@ -388,7 +366,7 @@ num_ctx  = largest ladder rung that is >= want AND fits the VRAM budget
 
 ### 5.2 Heavy work proposes; it never decides
 
-A `WorkflowProposal` is the object Friday puts in front of Stephen:
+A `WorkflowProposal` is the object Friday puts in front of the maintainer:
 
 ```
 proposal = {
@@ -466,14 +444,14 @@ what the last drain cost.
 Load-bearing and still **UNKNOWN**. A scripted task requiring 3–5 dependent read-only tool calls,
 run N times per local model, scored on whether the chain completed and the answer was right.
 
-Per Stephen's standing rule: **a model that scores badly is a prompting-and-template problem to
+Per the maintainer's standing rule: **a model that scores badly is a prompting-and-template problem to
 fix, not a model to exclude.** The number tells us where to work, never who to bar.
 
 ---
 
 ## Part 6 — "Would this free us from Ollama?" (2026-08-15)
 
-Stephen's question, answered against what the machine now does rather than what the change was
+The maintainer's question, answered against what the machine now does rather than what the change was
 meant to do.
 
 **Short answer: it frees the inference path, and only the inference path — and less completely

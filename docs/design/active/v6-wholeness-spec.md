@@ -1,10 +1,20 @@
 # Agent Friday — V6 "Wholeness": Technical Specification
 
-**Spec stage:** Opus 4.8 (STORM method — multi-perspective interrogation → synthesis)
-**Build stage:** Fable 5 (one build session per phase, after the July 9 demo freeze lifts)
-**Date:** 2026-07-06
-**Status:** Draft for Stephen's review. **SPEC ONLY — no implementation in this session.** Sections marked ⚠️ need a decision before their phase starts. Open questions in §7.
-**Status, corrected 2026-09-06 (doc-reconciliation pass): PARTIALLY BUILT — 3 of 9 phases shipped, under different names.** They landed as the "Phase A" track on branch `phase-a-truth-flow`, renamed A1/A2/A3, which is almost certainly why this header was never updated and an earlier audit missed it. **Shipped:** **P1** persona contract & golden-transcript evals → `services/persona_eval.py` (676 lines, `946eba6` "Phase A1 — persona contract & golden-transcript evals", the commit title matching §P1's heading nearly verbatim); **P4** structural dissent → `services/dissent_gate.py` (577 lines) + `services/interest_model.py` (`ea73800` "Phase A2 — dissent-**lite**" — scoped to the gate path, so substantially rather than completely built); **P5** outward loops (brain) → `services/goals.py` (1,255 lines) + `services/approvals.py` (495) + `routes/goals.py` (`c08dbac` "Phase A3 — durable goals with verification, human gates & signed receipts"). That last one retires this document's lead executive-summary claim, "She doesn't hold goals." **Not built:** **P2** legible growth (no timeline view; `soul.py`/`soul_history/` are the pre-existing raw material), **P3** reasoning traversal & living galaxy (Tier-A `should_read` injection unchanged), **P6** outward loops (hands) — `pyautogui` still lives only in the pre-existing Ring-3 spots, no grounding module, no per-app tiers, the "coarse all-or-nothing OS-control grant" this spec complains about is still what's there, **P8** whole-self export/restore (skills-only export unchanged), **P9** relationships, plural — memory, soul and graph stores remain flat-global under `~/.friday/`. **P7** self-healing is pre-existing/partial: `services/health_check.py` (361 lines) came from os-mode PR-6 not a V6 phase, and `Heal.ps1` is installer-side; the spec's complaint that repair is "scattered across a CLI and several endpoints" still describes the tree. Caveat carried forward from the verification: the P2/P3/P8/P9 "not built" calls rest on searches for this spec's own vocabulary; given that P1/P4/P5 shipped renamed, a rename could hide one of those four, though no `services/` filename suggests it.
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/persona_eval.py`, `services/dissent_gate.py`, `services/interest_model.py`, `services/goals.py`, `services/approvals.py`, `routes/goals.py`
+> **Supersedes / superseded by:** cut down by [`autonomy-execution-spec.md`](autonomy-execution-spec.md); detailed by [`action-creation-layer-spec.md`](action-creation-layer-spec.md) and [`friday-crew-spec.md`](friday-crew-spec.md)
+> **Written:** 2026-07-06
+
+## Implementation notes
+
+- Three of nine phases shipped, under different names, as the "Phase A" track: **P1** persona contract and golden-transcript evals → `services/persona_eval.py`; **P4** structural dissent → `services/dissent_gate.py` + `services/interest_model.py` (scoped to the gate path — "dissent-lite" — so substantially rather than completely built); **P5** outward loops (brain) → `services/goals.py` + `services/approvals.py` + `routes/goals.py`. P5 retires the executive summary's lead claim, "She doesn't hold goals."
+- Not built: **P2** legible growth (no timeline view; `soul.py`/`soul_history/` are the pre-existing raw material), **P3** reasoning traversal and living galaxy, **P6** outward loops (hands) — `pyautogui` still lives only in the pre-existing Ring-3 spots, no grounding module, no per-app tiers, the coarse all-or-nothing OS-control grant is still what is there — **P8** whole-self export/restore, **P9** relationships, plural (memory, soul and graph stores remain flat-global under `~/.friday/`).
+- **P7** self-healing is pre-existing/partial: `services/health_check.py` came from an earlier track, `Heal.ps1` is installer-side, and the complaint that repair is "scattered across a CLI and several endpoints" still describes the tree.
+- The P2/P3/P8/P9 "not built" calls rest on searches for this spec's own vocabulary; given that P1/P4/P5 shipped renamed, a rename could hide one of them, though no `services/` filename suggests it.
+
+---
+
 **Deliverable of this overhaul:** Make Agent Friday *whole* — a product-grade core (voice, memory, knowledge, agency, self-healing) that holds goals over weeks, heals her own install, reasons through her own knowledge and shows it, can articulate how she's been shaped, stays herself across every model, can be carried whole to a new machine, holds distinct relationships with more than one person, and has a standing right to say "I don't think you want me to do that" before she complies.
 
 > **Read §1.1 (Scope by subtraction) first.** The single most important framing decision in this spec is what V6 is *not*. Everything creator-economy / federation / Positron-economy is explicitly staged as future story so the core can be finished. This is a scoping principle, not a phase.
@@ -17,9 +27,9 @@ Agent Friday v5.3.0 already has an unusually deep substrate — but the pieces d
 
 What's missing is the *connective tissue between her and her life*:
 
-- **She doesn't hold goals.** The scheduler fires jobs; the orchestrator runs workers; but nothing represents "the thing Stephen wants done over the next month," tracks it, verifies it, notices when it's wrong, or gates it behind his approval.
+- **She doesn't hold goals.** The scheduler fires jobs; the orchestrator runs workers; but nothing represents "the thing the maintainer wants done over the next month," tracks it, verifies it, notices when it's wrong, or gates it behind his approval.
 - **And she has no reliable hands.** She *can* pixel-drive the screen today (Ring-3 pyautogui, a Ctrl+Shift+Q kill hotkey, a signed `decision-bom.jsonl`), but she can't *ground* a click precisely, can't drive Chrome through a proper lane, has only a coarse all-or-nothing OS-control grant, and has no defense against a screen that tries to tell her what to do. A goal that can decide but not reliably *act* is half a loop.
-- **She can't heal her own install unattended.** The diagnostics exist but are scattered across a CLI and several endpoints, and the real repairs (install Ollama, pull a model, install torch, rebuild the UI, clear a stale key) still require a terminal and Stephen.
+- **She can't heal her own install unattended.** The diagnostics exist but are scattered across a CLI and several endpoints, and the real repairs (install Ollama, pull a model, install torch, rebuild the UI, clear a stale key) still require a terminal and the maintainer.
 - **She reasons past her own knowledge graph, not through it.** Tier A injects a `should_read` list as context, but she doesn't traverse the graph during reasoning, and the galaxy — which already ignites new facts — never lights the path she actually took.
 - **Her growth is real but illegible.** `soul_history/` versions exist and the learning loop promotes/retires skills, but there's no view that says *how I've changed and what shaped me*.
 - **She is only accidentally herself across providers.** One system prompt is injected identically into all 16 providers, and there is **zero** cross-provider persona testing. "Friday is Friday" is hope, not contract.
@@ -27,7 +37,7 @@ What's missing is the *connective tissue between her and her life*:
 - **She knows one person.** Every store is flat-global under `~/.friday/` with no `user_id` anywhere. There is no way for Libby to have her own relationship, her own memory, her own boundaries.
 - **She has no structural right to disagree.** cLaws Law 2 says obey (except Law 1); the epistemic engine *scores* pushback but there is no channel that says "this conflicts with what I understand you actually want" *before* complying.
 
-V6 closes these eight gaps in **nine phases** — the outward-loops gap spans two, the goal-holding *brain* (P5) and its actuation *hands* (P6) — each sized for one Fable build session (§4), dependency-ordered so a persona safety-net lands first and the largest privacy-critical change (multi-user) lands last on a stable base.
+V6 closes these eight gaps in **nine phases** — the outward-loops gap spans two, the goal-holding *brain* (P5) and its actuation *hands* (P6) — each sized for one build session (§4), dependency-ordered so a persona safety-net lands first and the largest privacy-critical change (multi-user) lands last on a stable base.
 
 ### 1.1 Scope by subtraction — what V6 *is* and *is not*
 
@@ -57,7 +67,7 @@ Every V6 phase builds on real code. This table is the contract for "reuse, don't
 | **Trust graphs** | People graph (reliability/emotional_safety/alignment/competence) + source trust; Ed25519 federated attestations | `people_graph.py` (`~/.friday/people_graph.json`), `source_trust_graph.py`, `source_trust_federation.py`, `services/federation.py` (`federation.db`) | People graph has no owning-principal concept; no per-person memory (P9) |
 | **Agency infra** | Scheduler (daily/weekly/interval/once, retries, **code-free `agent_prompt` jobs**); task-chains; dual-role orchestrator; budgets; audit log; **self-critique gate** | `services/scheduler.py` (`schedules.json`), `services/agent.py` (`_spawn_task`, `~/.friday/workflows/*.json`), `services/orchestrator.py` + `worker_adapters/`, `services/budget_enforcer.py` (`budgets.db`, mψ), `services/work_log.py` (`work_log.db`, **has `goal_ancestry_json`**), `services/qa_gates.py` | No persistent **Goal** entity; no verification/receipt/human-gate loop over weeks (P5) |
 | **Knowledge** | Two-tier graph (structural + GraphRAG); live 3D galaxy with **SSE ignite events**; structural reasoning-time context | `services/knowledge_graph/*` (`structural_query.query`, `integration.knowledge_context_block`/`ingest_fact`, `retrieval.route_query`), `routes/knowledge_graph.py` (`/events` SSE: `node_ignited`/`reindexed`/`progress`), `KnowledgeGraphWS` in `ui_parts/app.html` (`window.__kgFps`/`__kgPick`) | Reasoning injects context but doesn't *traverse*; galaxy never lights the *path taken* (P3) |
-| **Install / self-heal** | 6+ step wizard; voice-first onboarding; `friday status`/`health`; provider health w/ circuit breaker; capability unlock-hints; demo mode; **in-UI voice installer w/ streamed progress**; offline auto-local; env self-bootstrap | `setup_wizard.py`, `routes/onboarding.py`, `services/onboarding.py`, `cli.py` (`cmd_status`/`cmd_health`), `services/provider_health.py`, `services/demo_mode.py`, `services/voice_installer.py`, `routing/ollama_manager.detect_hardware`, `core._bootstrap_env_from_launch_scripts` | Checks are scattered; real repairs still need a terminal + Stephen (P6) |
+| **Install / self-heal** | 6+ step wizard; voice-first onboarding; `friday status`/`health`; provider health w/ circuit breaker; capability unlock-hints; demo mode; **in-UI voice installer w/ streamed progress**; offline auto-local; env self-bootstrap | `setup_wizard.py`, `routes/onboarding.py`, `services/onboarding.py`, `cli.py` (`cmd_status`/`cmd_health`), `services/provider_health.py`, `services/demo_mode.py`, `services/voice_installer.py`, `routing/ollama_manager.detect_hardware`, `core._bootstrap_env_from_launch_scripts` | Checks are scattered; real repairs still need a terminal + the maintainer (P6) |
 | **Portability** | Skill export only (`SKILL.md` zip) | `skill_registry.py` | No whole-self export/restore; vault intentionally non-portable (P8) |
 | **Multi-user** | **None.** Single login; flat-global stores | `FRIDAY_DIR = ~/.friday` hardcoded; `google_accounts.py` is multi-*account* for one user, not multi-*user* | Everything (P9) |
 
@@ -67,9 +77,9 @@ Every V6 phase builds on real code. This table is the contract for "reuse, don't
 
 Six perspectives interrogated the whole before it was phased. Each surfaced a requirement that shaped §4.
 
-**P1 — Stephen (the builder, loop-engineering discipline).** "I want her to hold a goal for a month and *show me her work* — state, verification, human gates, receipts. I don't want to babysit her, and I don't want her to silently drift when I swap Opus for a cheaper model." → **Requirements:** a persistent Goal with an explicit state machine; verification that *she* runs and *I* can inspect; signed receipts; and a persona contract that survives model swaps (P1 must precede the behavior-changing phases).
+**P1 — The maintainer (the builder, loop-engineering discipline).** "I want her to hold a goal for a month and *show me her work* — state, verification, human gates, receipts. I don't want to babysit her, and I don't want her to silently drift when I swap Opus for a cheaper model." → **Requirements:** a persistent Goal with an explicit state machine; verification that *she* runs and *I* can inspect; signed receipts; and a persona contract that survives model swaps (P1 must precede the behavior-changing phases).
 
-**P2 — A brand-new user (never met Stephen).** "I downloaded this. It says demo mode. I don't have Ollama, I don't know what a torch wheel is, and the terminal scares me. If I have to leave this window to fix anything, I'm gone." → **Requirements:** one first-run diagnostic surface; every fixable problem fixable *in the window* with one click and a progress bar; every unfixable problem (no Python, no permissions) stated as a plain next step, never a dead end. Self-heal is a *retention* feature, not a nicety.
+**P2 — A brand-new user (never met the maintainer).** "I downloaded this. It says demo mode. I don't have Ollama, I don't know what a torch wheel is, and the terminal scares me. If I have to leave this window to fix anything, I'm gone." → **Requirements:** one first-run diagnostic surface; every fixable problem fixable *in the window* with one click and a progress bar; every unfixable problem (no Python, no permissions) stated as a plain next step, never a dead end. Self-heal is a *retention* feature, not a nicety.
 
 **P3 — A second user in the house (family member; Libby is a minor).** "Friday knows Dad. Does she know *me*? Can she keep my stuff mine? And Dad shouldn't be able to make her do things to my data, but he *is* my dad and I'm a kid — so what's the rule?" → **Requirements:** one soul, distinct relationships; per-person memory that is **fail-closed isolated** across people; minor-appropriate boundaries as a *first-class design input* (content floor, no owner-vault access, owner-approval for outward actions, isolated memory) with an explicit, decided oversight policy — not an afterthought.
 
@@ -83,7 +93,7 @@ Six perspectives interrogated the whole before it was phased. Each surfaced a re
 
 ---
 
-## 4. Phased Build Plan (one Fable session per phase)
+## 4. Phased Build Plan (one build session per phase)
 
 Each phase is independently shippable, has its own tests and acceptance gate, and honors the §6 invariants. Dependency order is P1 → P9; the only float is P7 (self-heal — see its note).
 
@@ -121,7 +131,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 ### Phase 2 — Legible Growth: "How I've Changed" (item 4)
 
-**Goal.** Make Friday's growth *legible and attributable* — diffs of a soul over time, learning-loop changes, and user-model shifts, each tied to the shaping event (Stephen's Reverse-RLHF instinct, made product).
+**Goal.** Make Friday's growth *legible and attributable* — diffs of a soul over time, learning-loop changes, and user-model shifts, each tied to the shaping event (the maintainer's Reverse-RLHF instinct, made product).
 
 **Builds on.** `soul_history/` (already versioned), `learning.db` (skill status transitions already tracked), `user_model.db` (traits w/ evidence counters), `epistemic_history.jsonl`, `~/.friday/self_improvement/`.
 
@@ -188,7 +198,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 ### Phase 5 — Outward Loops: Durable Goals with Verification & Human Gates (item 1)
 
-**Goal.** Friday holds goals over weeks and does recurring autonomous work on Stephen's real life/projects — with state, self-verification, human gates, and receipts. She acts, verifies her own work, notices when she's wrong, and repairs.
+**Goal.** Friday holds goals over weeks and does recurring autonomous work on the maintainer's real life/projects — with state, self-verification, human gates, and receipts. She acts, verifies her own work, notices when she's wrong, and repairs.
 
 **Builds on.** `scheduler.py` (code-free `agent_prompt` jobs, retries, notify modes), `agent.py` task-chains (`~/.friday/workflows/*.json`), `orchestrator.py` + `worker_adapters/` + `budget_enforcer.py` (mψ caps), `work_log.py` (**already has `goal_ancestry_json`**), `qa_gates.py` (self-critique, threshold 0.7, improve/flag), `job_tracker.json` (proof the pattern works for one domain — generalize it). Reuses P3 traversal-receipts and P4 dissent ("I don't think you want me to keep doing this").
 
@@ -213,7 +223,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 ### Phase 6 — Desktop & Browser Actuation: the hands of the outward loop (item 1, actuator layer)
 
-**Goal.** Give Friday reliable, safe **hands** — precise desktop actuation and a proper browser lane — so a durable goal (P5) can actually *do* things on Stephen's machine and bridge into Chrome/other apps, fully gated and logged. Today she can pixel-drive the screen but can't ground a click, can't drive Chrome precisely, has only a coarse OS-control switch, and has no defense against a hostile screen. This phase closes that.
+**Goal.** Give Friday reliable, safe **hands** — precise desktop actuation and a proper browser lane — so a durable goal (P5) can actually *do* things on the maintainer's machine and bridge into Chrome/other apps, fully gated and logged. Today she can pixel-drive the screen but can't ground a click, can't drive Chrome precisely, has only a coarse OS-control switch, and has no defense against a hostile screen. This phase closes that.
 
 **Builds on (already in-tree — harvest, don't rebuild).** Friday already has the screenshot→decide→act loop:
 - Ring-3 pixel actuator — `services/agent.py` `_tool_screenshot`/`click`/`move_mouse`/`type_text`/`press_key`/`scroll` (pyautogui, `FAILSAFE`, 20 actions/sec cap, screenshot downscaled to 1366 px with coord-mapback).
@@ -227,9 +237,9 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 **Scope (new).**
 - **Grounding layer** `services/actuation/grounding.py` — OCR click-map (default: map clickable text/elements → coordinates) + optional Set-of-Mark overlay with a bundled YOLOv8 button detector. The decision model picks a *labeled element*, not a raw pixel — closing SOC's accuracy gap on Friday's existing actuator. Runs through the existing vision router.
-- **Per-app permission tiers** `services/actuation/permissions.py` — replace the single global Ring-3 on/off with **per-app grants** at three tiers: **observe** (screenshot/read), **click** (pointer only), **full input** (keyboard+pointer). Each granted by Stephen per app, **default deny**, revocable, shown in the UI — a grant, never a standing capability.
+- **Per-app permission tiers** `services/actuation/permissions.py` — replace the single global Ring-3 on/off with **per-app grants** at three tiers: **observe** (screenshot/read), **click** (pointer only), **full input** (keyboard+pointer). Each granted by the maintainer per app, **default deny**, revocable, shown in the UI — a grant, never a standing capability.
 - **Two actuation tiers.** (1) **OS-pixel** — the universal fallback: existing actuator + grounding + harvested window-handle targeting. (2) **Browser precise lane** — a **CDP bridge or a Friday Chrome extension** (Q10) giving DOM-level Chrome control instead of pixel-driving the browser. A named **cross-platform actuator seam** so Mac/Linux backends slot in later (MCPControl's Windows-only-ness must not leak into the abstraction).
-- **Prompt-injection hardening** `services/actuation/screen_trust.py` — treat all on-screen text/pixels as **untrusted input to an actuator**. The decision prompt separates *goal* (trusted: from Stephen / the P5 goal) from *observation* (untrusted: from the screen); on-screen instructions ("click here", "run this") must never steer the plan; a classifier flags screen content that reads like an injection and **pauses for a human gate**. Kill switch (existing) always available; irreversible actions gate on the P5 approval queue.
+- **Prompt-injection hardening** `services/actuation/screen_trust.py` — treat all on-screen text/pixels as **untrusted input to an actuator**. The decision prompt separates *goal* (trusted: from the maintainer / the P5 goal) from *observation* (untrusted: from the screen); on-screen instructions ("click here", "run this") must never steer the plan; a classifier flags screen content that reads like an injection and **pauses for a human gate**. Kill switch (existing) always available; irreversible actions gate on the P5 approval queue.
 - **Receipts** — every actuation action appends to the signed `decision-bom.jsonl` **with pre/post screenshots and the grounded target** (the receipts half of the loops recommendation), surfaced in the P2 growth and P5 goal views.
 - **Local-model honesty** — document plainly: reliable grounding today needs a capable VLM (Claude/Gemini vision). Ollama has no vision in Friday today; LLaVA/Qwen-VL ground poorly. OCR/YOLO *narrows* but does not *close* the sovereignty gap — a local-only actuation path is best-effort, clearly labeled, and not the default (Q12).
 
@@ -246,7 +256,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 ### Phase 7 — Self-Healing Install & In-UI Repair (item 2)
 
-**Goal.** A new user never needs Stephen. Friday diagnoses and heals her own install the way she tends her own memory — one first-run doctor, every fixable problem fixable in the window.
+**Goal.** A new user never needs the maintainer. Friday diagnoses and heals her own install the way she tends her own memory — one first-run doctor, every fixable problem fixable in the window.
 
 **Builds on.** `cli.py` (`cmd_status`/`cmd_health` checks), `services/provider_health.py` (circuit breaker), `services/capability_router.py` (unlock-hints), `services/demo_mode.py`, `routing/ollama_manager.detect_hardware`, and especially `services/voice_installer.py` — whose background-job / streamed-progress / cancel pattern **generalizes into a repair-action framework**.
 
@@ -294,7 +304,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 **Builds on.** `people_graph.py` (the person becomes an owning principal), `sensitivity_classifier`/`egress_gate` (the model for a fail-closed boundary gate), auth (`FRIDAY_TRUST_LOOPBACK`, `X-Friday-Token`), and any existing **minor mode** from the creator-economy layer (reuse if present). Extends P8 (per-person export).
 
 **Scope (new).**
-- **Principal model** — `services/principals.py`: an **owner** (Stephen, full trust, loopback) and **guests** (e.g., Libby, minor). **Shared across principals:** `SOUL.md`, cLaws, skills, the knowledge-graph *core*. **Per-principal:** conversation memory, cognitive memory, `user_model`, the relationship (their `people_graph` node), and private knowledge overlays. Storage: person-scoped namespace (metadata-partition in shared stores *or* per-person collections/dirs — Q8).
+- **Principal model** — `services/principals.py`: an **owner** (the maintainer, full trust, loopback) and **guests** (e.g., Libby, minor). **Shared across principals:** `SOUL.md`, cLaws, skills, the knowledge-graph *core*. **Per-principal:** conversation memory, cognitive memory, `user_model`, the relationship (their `people_graph` node), and private knowledge overlays. Storage: person-scoped namespace (metadata-partition in shared stores *or* per-person collections/dirs — Q8).
 - **Active-person resolution** — explicit person switch (v1) + owner-vs-guest via auth; optional voice speaker-ID later (Q1). Every request carries an active-principal context.
 - **Person-boundary gate** — `services/person_gate.py`, mirroring the egress gate: **fail-closed**, ensures principal A's private memory/facts never surface in principal B's context. This is the multi-user analogue of `seal_outbound`, and it is non-optional.
 - **Minor mode (Libby), first-class:** content floor (already `asimov-standard`, extended), **no access to owner vault TIER_2/TIER_3**, **no autonomous outward actions without owner approval** (routes through P5 approval queue), isolated memory, age-appropriate persona/voice, and an **explicit, decided oversight policy** (Q2) balancing parental oversight against the child's privacy — surfaced transparently and age-appropriately.
@@ -339,7 +349,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 
 ---
 
-## 7. Open Questions for Stephen
+## 7. Open Questions for the maintainer
 
 **Q1 — ⚠️ Active-person identity (blocks P9 scope).** On a shared desktop, how does Friday know *who* she's talking to? Recommend **explicit person-switch + owner=loopback** for v1, with voice speaker-ID as a later add. Approve, or do you want speaker-ID / OS-user binding from day one?
 
@@ -377,7 +387,7 @@ P3 Traversal ─┘ (proof of mind)       └ reuses qa_gates +  └ human-gates
 | P4 | #7 Structural dissent | Pre-compliance "this conflicts with what you want" channel (Law-2 boundary) | P1 |
 | P5 | #1 Outward loops (brain) | Durable Goal entity: state + self-verify + repair + human gates + signed receipts | qa_gates, P4 |
 | P6 | #1 Outward loops (hands) | Desktop + browser actuation: grounding, per-app permission tiers, injection hardening, receipts | P5 |
-| P7 | #2 Self-healing install | One Doctor + in-UI repair-action framework; no terminal, no Stephen | — (float) |
+| P7 | #2 Self-healing install | One Doctor + in-UI repair-action framework; no terminal, no the maintainer | — (float) |
 | P8 | #5b Portable sovereignty | Owner-only encrypted whole-self export/restore | full state (P6) |
 | P9 | #6 Relationships, plural | One soul, per-person isolated memory, minor boundaries first-class | P8 |
 
