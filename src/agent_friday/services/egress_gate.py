@@ -196,11 +196,36 @@ def is_unrestricted_cloud() -> bool:
     Default False. Read failures fail CLOSED (safeguards stay on) — the
     inverse of every other fail-open risk in this module, because this flag
     is the one thing capable of turning EVERY other protection off at once.
+
+    2026-09-06 correction: `model_routing.mode == "cloud_only"` now ALSO
+    satisfies this, reversing the explicit separation this module drew three
+    days ago (see the comment above, and the superseded test this decision
+    updates: tests/unit/test_unrestricted_cloud_mode.py's
+    `test_unrestricted_mode_is_a_distinct_flag_from_routing_mode`). That
+    separation's own reasoning — "cloud_only is the factory default;
+    conflating them would silently disable every safeguard for the app's own
+    default" — was a real concern, not a mistake, and it is worth recording
+    that this reverses it deliberately rather than by accident.
+    Stephen, verbatim, twice this session: "I want them going to the cloud
+    if ungated. Ungated means cloud has full access" — stated first about a
+    cloud model (GPT-6 Astra) being blocked despite cloud-only being
+    selected, then again, reproduced live, about a resume's TIER_2 sections
+    (phone, email, two experience paragraphs) coming back as
+    "[EGRESS-GATE: TIER_2 content withheld ... can be read on a local
+    seat]" while cloud-only was active and no local seat existed at all.
+    Selecting cloud-only IS the acceptance the flag existed to require a
+    second opinion on; asking for it twice was the bug, not a missing
+    confirmation step. This can never affect local_only/smart/local_preferred
+    — they are different values of this same setting, so widening the
+    condition here only ever widens it for the mode Stephen has to have
+    picked on purpose.
     """
     try:
         from agent_friday.core import _load_settings
         cfg = (_load_settings() or {}).get("model_routing") or {}
-        return bool(cfg.get(_UNRESTRICTED_KEY, False))
+        if bool(cfg.get(_UNRESTRICTED_KEY, False)):
+            return True
+        return str(cfg.get("mode", "")) == "cloud_only"
     except Exception:
         return False
 
@@ -451,6 +476,55 @@ class NeverSendBlocked(RuntimeError):
     """
 
 
+#: Cheap, cached "does a local model actually exist right now" check —
+#: 2026-09-06: the placeholder below used to say "can be read on a local
+#: seat" unconditionally, including on a machine with none installed
+#: (Stephen had just deleted functiongemma:270m and embeddinggemma:300m).
+#: A privacy block that names a remedy which does not exist is
+#: indistinguishable from an outage, which is exactly the complaint: "when a
+#: required local seat is absent, the failure should say so plainly rather
+#: than presenting as a privacy block." Short TTL because this can change
+#: mid-session (a download finishing, Ollama starting) without a restart.
+_LOCAL_AVAIL_CACHE: dict = {"ts": 0.0, "val": None}
+_LOCAL_AVAIL_TTL_S = 30.0
+
+
+def _local_model_available() -> bool:
+    now = time.time()
+    hit = _LOCAL_AVAIL_CACHE["val"]
+    if hit is not None and (now - _LOCAL_AVAIL_CACHE["ts"]) < _LOCAL_AVAIL_TTL_S:
+        return hit
+    val = False
+    try:
+        from agent_friday.routing.ollama_manager import get_manager
+        mgr = get_manager()
+        if mgr.is_available() and mgr.list_models():
+            val = True
+    except Exception:
+        pass
+    if not val:
+        try:
+            import json as _json
+            import os as _os
+            from pathlib import Path as _Path
+            home = _os.environ.get("USERPROFILE") or _os.path.expanduser("~")
+            rows = (_json.loads(
+                _Path(home, ".friday", "runtime", "models", "models.json")
+                .read_text(encoding="utf-8")) or {}).get("models") or {}
+            for rec in rows.values():
+                if not isinstance(rec, dict) or rec.get("can_generate") is False:
+                    continue
+                path = rec.get("path")
+                if not path or _Path(path).exists():
+                    val = True
+                    break
+        except Exception:
+            pass
+    _LOCAL_AVAIL_CACHE["ts"] = now
+    _LOCAL_AVAIL_CACHE["val"] = val
+    return val
+
+
 def _redact_placeholder(tier: int) -> str:
     name = Tier.NAMES.get(tier, f"TIER_{tier}")
     # WO-1 (2026-08-25): the placeholder used to state only WHAT happened
@@ -460,11 +534,23 @@ def _redact_placeholder(tier: int) -> str:
     # invented answer instead of reporting the withholding. The behavioral
     # instruction is now IN the placeholder itself, so it survives even when
     # nothing else in the prompt tells the model how to react.
+    if _local_model_available():
+        return (
+            f"[EGRESS-GATE: {name} content withheld — did not leave your device. "
+            f"Do not retry the call, invent the content, or describe what it "
+            f"might have said. Tell the user this specific item was withheld by "
+            f"the privacy gate and can be read on a local seat.]"
+        )
+    # 2026-09-06: naming a remedy that does not exist reads as the gate lying,
+    # not as an outage — say plainly that there is currently no local model to
+    # fall back to, rather than pointing at a seat this machine does not have.
     return (
         f"[EGRESS-GATE: {name} content withheld — did not leave your device. "
         f"Do not retry the call, invent the content, or describe what it "
         f"might have said. Tell the user this specific item was withheld by "
-        f"the privacy gate and can be read on a local seat.]"
+        f"the privacy gate, and that no local model is currently installed to "
+        f"read it instead — this is a missing-model gap, not a working "
+        f"fallback the user is failing to use.]"
     )
 
 
