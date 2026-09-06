@@ -71,7 +71,7 @@ _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
 # deque(maxlen=40) only bounds how many COMPLETED lines are retained; it
 # does nothing for the one line currently being assembled. 16 MiB is
 # generously larger than any real JSON-RPC message this protocol sends
-# (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+# (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
 _MAX_LINE_CHARS = 16 * 1024 * 1024
 
 
@@ -877,7 +877,7 @@ class MCPManager:
             # extension_security.gate_mcp_config() blocked at boot; restart()
             # did not, so the single most natural remediation an operator
             # reaches for after seeing a blocked connector's status actually
-            # started it for real (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+            # started it for real (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
             return False
         sp.stop()
         ok = sp.start()

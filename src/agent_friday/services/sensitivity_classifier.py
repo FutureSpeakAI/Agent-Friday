@@ -46,7 +46,7 @@ plain default-to-PRIVATE would still need Layer 3 to see anyway.
 `default` is a plain parameter any caller may override to whatever they
 need (this module's own callers outside egress do pass Tier.PRIVATE for
 their own reasons); it does not by itself make PRIVATE this classifier's
-built-in default. See docs/audits/gauntlet-2026-09-03/findings.jsonl for
+built-in default. See docs/history/audits/gauntlet-2026-09-03/findings.jsonl for
 where this line previously said the opposite.
 
 Import example:

@@ -3,7 +3,7 @@
 P1 is the measured reference instance. P2-P6 are declared hardware; their model
 VRAM figures are P1's measurements carried across, which is sound for weights
 and INFERRED for KV. Every plan for P2-P6 is derived from the rules in
-docs/design/residency-policy.md, not chosen.
+docs/design/implemented/residency-policy.md, not chosen.
 
 Model facts (params, quantization, capabilities) are real, read from the daemon
 on 2026-08-14. Measurements are the medians of 5 warm runs recorded in

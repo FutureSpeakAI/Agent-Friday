@@ -687,7 +687,7 @@ def code_apply():
     # ── gates that already existed and had no caller ────────────────────────
     #
     # `boot_guard.check_self_edit` and `check_scope` shipped 2026-08-17 and were
-    # dead code until now (docs/design/grow-button.md §18.2, F2/F3). This was the
+    # dead code until now (docs/design/active/grow-button.md §18.2, F2/F3). This was the
     # write path they were written for: `code_apply` resolved each path through
     # `_safe_project_path` — which only proves the write stays inside ~/Projects —
     # and then wrote the file. Staying inside the sandbox is not the same question

@@ -8,7 +8,7 @@ update from the other model while the other other model does something in the
 background too."
 
 This is the store that makes a conversation a real object, per
-docs/design/conversations-and-concurrency.md §3.1. Two rules from that spec are
+docs/design/implemented/conversations-and-concurrency.md §3.1. Two rules from that spec are
 load-bearing and easy to get wrong:
 
   * **Transcripts are isolated; memory is shared.** A turn in conversation A is

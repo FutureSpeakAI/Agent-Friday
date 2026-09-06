@@ -1,7 +1,7 @@
 """
 machine_monitor — see the machine while Friday works.
 
-`docs/design/headroom.md` §4.3, §12 Phase 1. A sampler, not a decider — the
+`docs/design/implemented/headroom.md` §4.3, §12 Phase 1. A sampler, not a decider — the
 same rule `gpu_headroom` states about itself: **it only ever reports.** It
 never evicts, kills, or throttles anything (HR7). Two functions:
 

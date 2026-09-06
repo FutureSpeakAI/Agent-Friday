@@ -482,7 +482,7 @@ def _exec_text_stage(stage, prompt, context):
     # to be gated for it once — but _generate_text's own fallback ladder can
     # land on a DIFFERENT provider than predicted when the first leg fails
     # operationally, reusing a prompt gated for the wrong destination
-    # (docs/audits/gauntlet-2026-09-03/findings.jsonl F30). `_sys_for` rebuilds
+    # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F30). `_sys_for` rebuilds
     # the prompt for an EXPLICIT provider and is passed as `system_builder` so
     # every ladder leg — first attempt and every fallback — is gated for the
     # provider it actually calls.

@@ -1,5 +1,5 @@
 """
-X / Twitter platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.4).
+X / Twitter platform adapter (docs/design/implemented/content-pipeline-spec.md §4.4).
 
 API v2, OAuth 2.0 Authorization Code + PKCE (scopes ``tweet.read tweet.write
 users.read offline.access``), loopback redirect

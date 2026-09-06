@@ -54,7 +54,7 @@ def test_core_and_v5_endpoints_registered():
 # regression: routes/jobs.py failed to import on ~70 consecutive starts while
 # 'jobs' stayed in ROUTE_MODULES (so the manifest test passed) and no checked
 # path was a pipeline route (so the endpoint test passed). The server logged one
-# WARNING and reported itself healthy. See docs/audits/server-death-forensics.md.
+# WARNING and reported itself healthy. See docs/history/audits/server-death-forensics.md.
 #
 # These assert the thing that actually matters: every route module that exists
 # must actually register. Cheapest durable guard we have.

@@ -4,7 +4,7 @@ Agent Friday — HardwareProfile
 The machine, described well enough to place models on it. Detected, cached,
 serialized, and refreshed when the hardware actually changes.
 
-Why this exists (decision D4, docs/audits/decisions-2026-08.md): Friday had no
+Why this exists (decision D4, docs/decisions/2026-08-architecture-decisions.md): Friday had no
 hardware-profile concept anywhere. Detection existed in three unrelated places
 and fed only Ollama *install advice* and a binary voice CPU/GPU gate -- nothing
 detected ever influenced chat, image, or embedding model selection. This module
@@ -864,7 +864,7 @@ def vram_headroom(gpu_index: int = 0, *, reserve_mib: int | None = None) -> dict
     on its own -- called with no override, this still falls back to
     `display_reserve_mib()` UNCLAMPED (256 MiB on a single-monitor Windows
     box), which is exactly the 256-vs-2,560 disagreement
-    `docs/design/headroom.md` §2.2 documents. `Arbiter.grant()`'s
+    `docs/design/implemented/headroom.md` §2.2 documents. `Arbiter.grant()`'s
     R-DISPLAY-RESERVE check passes the reconciled figure; this default is
     kept only for the one other caller (`liveness_audit`) that has no
     profile in hand to reconcile against.

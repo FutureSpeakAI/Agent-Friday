@@ -677,7 +677,7 @@ def _read_vibe_state() -> dict:
 
 # ── Paths ─────────────────────────────────────────────────────
 # Two different questions, two different answers — conflating them is what
-# made FRIDAY_HOME decorative (docs/audits/friday-home-isolation-gap-2026-08-31.md).
+# made FRIDAY_HOME decorative (docs/history/audits/friday-home-isolation-gap-2026-08-31.md).
 #
 #   HOME       — the human's own home directory. Desktop, ~/Projects, the
 #                sandbox root that bounds which files Friday may read, the
@@ -1989,7 +1989,7 @@ DEFAULT_SETTINGS = {
         "embedding":      {"provider": "local",         "model": "all-MiniLM-L6-v2"},
         "local":          {"provider": "ollama-local",  "model": _FLOOR_MODEL},
     },
-    # ── Content pipeline (docs/CONTENT_PIPELINE_SPEC.md) ──
+    # ── Content pipeline (docs/design/implemented/content-pipeline-spec.md) ──
     "content": {
         "enabled": True,                 # master switch for the publish pipeline
         "conflict_window_hours": 2,      # same-platform proximity warning (§6.8)
@@ -2258,7 +2258,7 @@ def _load_settings():
 #: button only ever sends {staging_base_url, conflict_window_hours} (the two
 #: fields it edits) — without deep-merge that wholesale-replaces the block,
 #: silently resetting `enabled` and `psi_daily_cap` to nothing every time
-#: (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+#: (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
 
 

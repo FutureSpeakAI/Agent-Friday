@@ -226,7 +226,7 @@ def propose(plan: dict, settings: dict) -> dict:
     # with its own candidate, and `apply()` writes that over his choice. So
     # the choice survived exactly until the next boot, every time.
     #
-    # Measured 2026-08-24 (docs/audits/workflow-run-forensics-2026-08-24.md
+    # Measured 2026-08-24 (docs/history/audits/workflow-run-forensics-2026-08-24.md
     # §2.2). Stephen assigned Opus 5 in Settings -> Intelligence; the plan's
     # own `heavy = gen[0]` picked the largest GGUF on disk; and friday.log
     # recorded the overwrite twice:

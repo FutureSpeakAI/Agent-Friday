@@ -3,7 +3,7 @@
 Exists because a whole API surface (routes/jobs.py, the career pipeline) went
 missing for seven weeks and ~70 restarts while the server reported itself
 healthy. The only trace was a WARNING in a log nobody opens. See
-docs/audits/server-death-forensics.md.
+docs/history/audits/server-death-forensics.md.
 
 Standing principle: degradation must cost something visible. This is the
 machine-readable half of that - the UI and any monitoring can poll one endpoint

@@ -1,5 +1,5 @@
 """
-TikTok platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.12).
+TikTok platform adapter (docs/design/implemented/content-pipeline-spec.md §4.12).
 
 Content Posting API (``open.tiktokapis.com``), OAuth2 + PKCE. The sharp
 constraint: **unaudited apps can only create SELF_ONLY (private/draft) posts**

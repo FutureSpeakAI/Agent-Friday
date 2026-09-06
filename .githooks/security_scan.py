@@ -50,7 +50,7 @@ DELIBERATE_PUBLIC_CREDENTIALS = {
         "readable from any install. It identifies the APPLICATION, not a "
         "user, and grants access to nothing on its own: every real grant "
         "still needs that person's interactive Google sign-in. "
-        "See THREAT_MODEL.md, 'Shipped Google OAuth client'."
+        "See docs/security/threat-model.md, 'Shipped Google OAuth client'."
     ),
     "BUNDLED_CLIENT_SECRET": (
         "The other half of the same installed-app client. Called a 'secret' by "

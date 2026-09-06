@@ -1,4 +1,4 @@
-"""Conversation CRUD — docs/design/conversations-and-concurrency.md §3.1.
+"""Conversation CRUD — docs/design/implemented/conversations-and-concurrency.md §3.1.
 
 Everything here is scoped to one conversation. That is the whole point: the
 endpoint this replaces, `/api/chat/clear`, was global, so "+ New Chat" deleted

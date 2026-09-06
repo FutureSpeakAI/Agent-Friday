@@ -76,10 +76,10 @@ BANNED_BRAIN_TOKENS = [
 #: older CHANGELOG entries) are deliberately not included.
 CHECKED_FILES = [
     "README.md",
-    "docs/INSTALLATION.md",
-    "docs/CONFIGURATION.md",
-    "docs/API.md",
-    "docs/TUTORIAL.md",
+    "docs/getting-started/installation.md",
+    "docs/user-guide/configuration.md",
+    "docs/reference/api.md",
+    "docs/getting-started/tutorial.md",
     "KNOWN_ISSUES.md",
 ]
 

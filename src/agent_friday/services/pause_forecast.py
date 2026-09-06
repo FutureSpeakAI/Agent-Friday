@@ -212,7 +212,7 @@ def _content_heavy_ask(model_id: str | None, *, vault: bool = False,
     """The load-time signal said no pause, but the request itself smells like
     depth. Ask anyway.
 
-    See Q18 in docs/audits/gauntlet-2026-09-03/findings.jsonl:
+    See Q18 in docs/history/audits/gauntlet-2026-09-03/findings.jsonl:
     `services.workflow_plan.looks_heavy()` was purpose-built for exactly this
     -- its own docstring says "Only ever decides whether to ASK" -- and had
     never been wired to anything. A warm seat and a heavy job are independent

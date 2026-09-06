@@ -16,7 +16,7 @@ that has to keep them.
 
 PROVENANCE
 ----------
-The text is verbatim from ``docs/design/vault-first-onboarding.md`` §7.3, which
+The text is verbatim from ``docs/design/implemented/vault-first-onboarding.md`` §7.3, which
 checked every sentence against the code. Two sentences were changed, both
 because the code changed underneath them. Each is marked FACT-FIX below with
 what it used to say and why it could not stay.

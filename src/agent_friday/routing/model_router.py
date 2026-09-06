@@ -203,7 +203,7 @@ class ModelRouter:
         content) — set True by a caller that knows this turn came from the
         voice pipeline (see routes/voice.py's ws-local handler). It is
         checked first because the documented `task_overrides.voice` config
-        key (docs/CONFIGURATION.md) needs *some* caller to ever reach
+        key (docs/user-guide/configuration.md) needs *some* caller to ever reach
         TaskType.VOICE at all; before this, nothing in the codebase ever
         produced it, and the three TaskType.VOICE branches in _route_basic
         were unreachable dead code (gauntlet Q20).
@@ -290,7 +290,7 @@ class ModelRouter:
     def _chosen_seat(self, ctx=None):
         """The model bound to this turn's seat, or None.
 
-        Precedence, per docs/design/conversations-and-concurrency.md §3.2:
+        Precedence, per docs/design/implemented/conversations-and-concurrency.md §3.2:
 
             vault-forced local  >  per-turn route_mode  >  CONVERSATION seat
                                 >  global capability_routing.reasoning

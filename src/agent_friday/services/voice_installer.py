@@ -1,5 +1,5 @@
 """
-In-UI installer for the local voice tiers (spec: docs/VOICE_SYSTEM_SPEC.md §5).
+In-UI installer for the local voice tiers (spec: docs/design/active/voice-system-spec.md §5).
 
 Runs pip / model downloads as a SINGLE background job with streamed progress,
 so the Voice Setup Wizard can offer "Install" buttons instead of pointing users

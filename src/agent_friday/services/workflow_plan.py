@@ -50,7 +50,7 @@ _LOCK = threading.RLock()
 ASK_ABOVE_S = 60.0
 
 # Rough per-class throughput for estimating, from the measured speed ladder
-# (docs/design/symphony-of-intelligence.md §0.4). tok/s, medians of 5 warm runs.
+# (docs/design/implemented/symphony-of-intelligence.md §0.4). tok/s, medians of 5 warm runs.
 SEAT_TOK_S = {
     "gemma4:e2b": 166.13, "gemma4:e4b": 99.93,
     "gemma4:12b": 49.36, "gemma4:26b": 22.44,

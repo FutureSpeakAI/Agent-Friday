@@ -171,7 +171,7 @@ def _discover_and_register_blueprints(flask_app):
                      len(_registered), len(_failed))
     # Record the outcome instead of only logging it. A WARNING alone hid a
     # missing capability for seven weeks and ~70 restarts
-    # (docs/audits/server-death-forensics.md). Degradation must cost
+    # (docs/history/audits/server-death-forensics.md). Degradation must cost
     # something visible, so the result becomes enforceable, servable and
     # testable rather than a line in a file nobody opens.
     global BLUEPRINT_REPORT
@@ -360,7 +360,7 @@ if not _TESTING:
     # starts the 60s tick thread (replaces _register_default_daily_jobs +
     # _daily_scheduler_loop).
     #
-    # Content pipeline publisher (docs/CONTENT_PIPELINE_SPEC.md §6.2): register
+    # Content pipeline publisher (docs/design/implemented/content-pipeline-spec.md §6.2): register
     # the content_publisher/content_analytics builtin tasks BEFORE the scheduler
     # seeds schedules.json so they materialize on first run. Tolerant while the
     # publisher module lands — a missing/broken module never blocks boot.
@@ -409,7 +409,7 @@ if not _TESTING:
     if os.environ.get("FRIDAY_NO_ARBITER") != "1":
         threading.Thread(target=_residency_boot, daemon=True).start()
 
-    # Machine monitor (docs/design/headroom.md §4.3): read-only telemetry --
+    # Machine monitor (docs/design/implemented/headroom.md §4.3): read-only telemetry --
     # GPU utilisation/power/clocks, RAM available, free space on the SYSTEM
     # volume, foreign VRAM occupancy. Samples at boot, then 60s at rest / 5s
     # under a held lease. Boots independently of the Arbiter (it still wants

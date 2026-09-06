@@ -9,7 +9,7 @@ Two of Friday's registries are plain in-memory dicts:
 
 A restart erases both. On 2026-08-24 three restarts inside twenty minutes
 destroyed the entire record of a six-task workflow run while it was being
-investigated (docs/audits/workflow-run-forensics-2026-08-24.md). The ledger
+investigated (docs/history/audits/workflow-run-forensics-2026-08-24.md). The ledger
 survived because it is append-only on disk; everything about WHAT each agent
 actually did did not.
 

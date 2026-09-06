@@ -1,7 +1,7 @@
 """Gauntlet finding Q7 part (c): Firecrawl/Brave paid API calls
 (web_search.py, web_fetch.py -> firecrawl.py) were completely unmetered
 despite firecrawl.py's own docstring stating credits must be treated as a
-budget (docs/audits/gauntlet-2026-09-03/findings.jsonl, Q7).
+budget (docs/history/audits/gauntlet-2026-09-03/findings.jsonl, Q7).
 
 Both `firecrawl.search()`/`firecrawl.scrape()` and `web_search._brave()`
 are plain module-level functions, so these are real behavioral tests:

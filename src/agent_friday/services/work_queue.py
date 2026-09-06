@@ -36,7 +36,7 @@ from pathlib import Path
 from agent_friday.core import FRIDAY_DIR
 
 # Priority order, highest first. Straight from the latency classes in
-# docs/design/symphony-of-intelligence.md §2.4: an interactive turn has someone
+# docs/design/implemented/symphony-of-intelligence.md §2.4: an interactive turn has someone
 # waiting on it, a background job does not.
 CLASSES = ("reflex", "interactive", "heavy", "image", "background")
 CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}

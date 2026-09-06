@@ -52,11 +52,9 @@ from PyInstaller.utils.hooks import collect_submodules
 
 datas = [
     ('index.html', '.'),
-    ('SELF.md', '.'),
-    ('VOICE_DEMO.md', '.'),   # private-repo only; filtered out below when absent
-    ('friday_live.html', '.'),
-    ('friday_live_sw.js', '.'),
-    ('friday_live_manifest.json', '.'),
+    ('src/agent_friday/SELF.md', '.'),
+    ('src/agent_friday/VOICE_DEMO.md', '.'),
+    # Friday Live PWA files live under static/live/ and are bundled with static/ below.
     ('requirements.txt', '.'),
     ('static', 'static'),
     ('assets', 'assets'),

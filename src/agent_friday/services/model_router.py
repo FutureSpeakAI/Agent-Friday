@@ -440,7 +440,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
     # contract for every one of this function's many callers (briefings,
     # digests, KG summarization, calendar/message drafting, wiki bootstrap...
-    # docs/audits/gauntlet-2026-09-03/findings.jsonl).
+    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
@@ -2319,7 +2319,7 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # Both exist because of the same transcript. She refused an image by
     # inventing "hard-coded safety filters in my underlying model" — machinery
     # that does not exist anywhere in the local stack (audited: see
-    # docs/audits/z-image-content-filtering-2026-08-16.md) — and in the same
+    # docs/history/audits/z-image-content-filtering-2026-08-16.md) — and in the same
     # session described capabilities she does not have. A model with nothing
     # legible to consult improvises, and improvisation about yourself is
     # indistinguishable from lying about yourself.

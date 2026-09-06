@@ -155,7 +155,7 @@ def test_scanner_actually_detects_the_thing_it_looks_for():
 
     # ...and does not fire on innocuous prose, or it would be disabled by
     # whoever next has to read its output.
-    assert scan_text("We deliberately ship no telemetry. See THREAT_MODEL.md.") == []
+    assert scan_text("We deliberately ship no telemetry. See docs/security/threat-model.md.") == []
 
 
 def test_no_telemetry_keys_or_endpoints_in_tracked_files():

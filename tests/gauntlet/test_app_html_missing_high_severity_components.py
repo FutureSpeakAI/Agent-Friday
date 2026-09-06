@@ -1,5 +1,5 @@
 """Gauntlet finding F13 — resolved under Stephen's 2026-09-04 delegation
-(docs/audits/gauntlet-2026-09-03/progress.md; findings.jsonl F13).
+(docs/history/audits/gauntlet-2026-09-03/progress.md; findings.jsonl F13).
 
 ui_parts/app.html is a hand-maintained mirror of index.html that nothing
 builds from automatically. It is missing several components index.html has

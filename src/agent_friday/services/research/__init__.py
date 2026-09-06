@@ -1,7 +1,7 @@
 """
 Deep research — the public entry point.
 
-docs/design/deep-research.md. Friday takes a hard question, decomposes it from
+docs/design/active/deep-research.md. Friday takes a hard question, decomposes it from
 several perspectives, grinds the searching and reading on local seats,
 synthesizes a cited report, verifies every citation deterministically before it
 renders, and delivers the result into the conversation unprompted — with an

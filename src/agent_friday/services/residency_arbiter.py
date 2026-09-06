@@ -624,7 +624,7 @@ class LlamaServerBackend:
     # today. The daemon was blamed for it the first time.
     #
     # MEASURED ON THIS CARD, 2026-08-19, and the answer was not the expected
-    # one. The roles contract (docs/contracts/roles-and-model-identity.md
+    # one. The roles contract (docs/reference/roles-and-model-identity.md
     # 6a) sets TOOL_SEAT_NUM_CTX to 65,536 on the reasoning that over-
     # reserving is nearly free because the KV curve is flat -- about 32 MiB --
     # while under-reserving truncates silently. On gemma4:12b on this RTX 4070
@@ -648,7 +648,7 @@ class LlamaServerBackend:
     # card before it is applied to it.
     #
     # Superseded reasoning, kept because the shape of the trade is right:
-    # (docs/contracts/roles-and-model-identity.md §6a, branch
+    # (docs/reference/roles-and-model-identity.md §6a, branch
     # model-suite-determination) showed 32,768 to be the WRONG side of this
     # trade: a real turn does not fit in it, and the overflow is silent --
     # the oldest spans fall out the front and the model answers from a

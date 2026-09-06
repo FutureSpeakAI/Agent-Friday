@@ -63,7 +63,7 @@ def knowledge_context_block(message: str, max_items: int = 3) -> list[str]:
     # typed into settings) compared unlowered against this set never
     # matches, silently defeating this whole filter for that section --
     # confirmed hermetically by an independent verification pass tonight
-    # (docs/audits/gauntlet-2026-09-03/findings.jsonl F37). wiki_engine.py's
+    # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F37). wiki_engine.py's
     # own _wiki_path_is_sensitive() already lower()s its side of this exact
     # comparison; mirrored here.
     safe_candidates = [c for c in (result.get("candidates") or [])
@@ -173,7 +173,7 @@ def run_nightly_reindex() -> dict:
     clicking "Reindex now" in the Knowledge Graph panel while the nightly
     schedule (or its own earlier Run Now) was mid-run got two fully
     concurrent, uncoordinated rebuilds of the same on-disk KG store
-    (docs/audits/gauntlet-2026-09-03/findings.jsonl Q24). Tier A now blocks
+    (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q24). Tier A now blocks
     on the same lock the manual route blocks on (serializes rather than
     racing); Tier B checks the same running flag the manual route checks and
     skips this pass rather than starting a second concurrent index when one

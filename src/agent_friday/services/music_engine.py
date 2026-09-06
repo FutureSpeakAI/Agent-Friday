@@ -71,7 +71,7 @@ DEFAULT_MUSIC_MODEL = "lyria-clip"
 CLIP_MAX_SECONDS = 30
 
 # ── Cost metering (flat per-generation, NOT token-based) ────────────────────
-# docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a: Lyria calls had ZERO
+# docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a: Lyria calls had ZERO
 # cost_meter references. Google prices Lyria per generation, not per token, so
 # this does not fit cost_meter.PRICING's per-1K-token shape — recorded via
 # cost_meter.record(cost_usd=...) instead. Rates checked against public
@@ -449,7 +449,7 @@ def _generate_music_cloud(client, types, api_model, full_prompt, *, mode, lyrics
         _orb_update(orb, progress=min(0.9, 0.2 + 0.7 * (waited / 90)),
                    label=f"Composing… {waited}s elapsed")
 
-    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
+    # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
     # this was the single Lyria call site and it had ZERO cost_meter
     # references. Recorded once the operation completes (attempted, not
     # necessarily successful — Google's own billing is per generation

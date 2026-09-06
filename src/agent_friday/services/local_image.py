@@ -20,7 +20,7 @@ number was the render's real VRAM delta, and 10,453 MiB leaves only ~700–900
 MiB free at the render's peak on a 12,282 MiB card, BELOW the 2,560 MiB
 Windows display-reserve floor even with every language seat evicted first
 — live evidence for why `Arbiter.grant()`'s R-DISPLAY-RESERVE check and the
-mid-lease monitor (`docs/design/headroom.md` §4.3, §7) both matter here, not
+mid-lease monitor (`docs/design/implemented/headroom.md` §4.3, §7) both matter here, not
 just at cold start. SD 3.5 Medium measured 10,621 MiB the same way, artifact
 11,638,004,202 bytes. So the language seats must be out of VRAM before
 either loads. Without the lease the two simply fight, which is the failure

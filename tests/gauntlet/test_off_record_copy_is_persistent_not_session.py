@@ -6,7 +6,7 @@ Reality: off_record is a plain persisted boolean (core/__init__.py) read at
 every consumer site (routes/chat.py, services/voice_engine.py,
 routes/context.py) -- correctly enforced, but nothing anywhere resets it.
 No session-boundary, app-restart, or "New Chat" hook turns it back off.
-docs/VOICE_SYSTEM_OVERHAUL_SPEC.md:376,1130 confirms the actual design
+docs/design/historical/voice-system-overhaul-spec.md:376,1130 confirms the actual design
 intent is a plain persistent suppression switch, not session-scoped. The
 UI copy's "for this session" claim was the thing that was wrong, not the
 underlying mechanism -- so the fix here is text-only.

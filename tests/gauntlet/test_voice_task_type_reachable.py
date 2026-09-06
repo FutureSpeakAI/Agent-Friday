@@ -1,5 +1,5 @@
 """Gauntlet finding Q20: task_overrides.voice (a documented, user-facing
-config key -- docs/CONFIGURATION.md:50) was permanently inert dead code.
+config key -- docs/user-guide/configuration.md:50) was permanently inert dead code.
 
 routing/model_router.py's _route_basic() has three branches gated on
 TaskType.VOICE (the cloud_only seat-skip, the task_overrides lookup skip,
@@ -80,7 +80,7 @@ class TestVoiceTaskTypeReachable:
         assert result["reason"] == "Voice stays on cloud/Gemini pipeline"
 
     def test_task_overrides_voice_now_takes_effect(self):
-        # The actual documented config key (docs/CONFIGURATION.md:50): a user
+        # The actual documented config key (docs/user-guide/configuration.md:50): a user
         # who sets task_overrides.voice must now see it actually chosen for a
         # voice-originated turn -- this was the exact dead-code path.
         r = _router(task_overrides={

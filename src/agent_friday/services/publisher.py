@@ -1,5 +1,5 @@
 """
-Agent Friday — Content Publication Engine (docs/CONTENT_PIPELINE_SPEC.md §7)
+Agent Friday — Content Publication Engine (docs/design/implemented/content-pipeline-spec.md §7)
 FutureSpeak.AI · Asimov's Mind
 
 The dispatch half of the pipeline: one scheduler builtin (`content_publisher`,

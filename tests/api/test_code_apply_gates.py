@@ -1,7 +1,7 @@
 """`/api/code/apply` must consult the gates that already existed to stop it.
 
 `services/boot_guard.py` has shipped two refusal functions since 2026-08-17 and
-**neither had a single caller anywhere in `src/`** (`docs/design/grow-button.md`
+**neither had a single caller anywhere in `src/`** (`docs/design/active/grow-button.md`
 §18.2, findings F2 and F3):
 
   * `check_self_edit(path)` refuses a write to any `BOOT_CRITICAL` file, on the

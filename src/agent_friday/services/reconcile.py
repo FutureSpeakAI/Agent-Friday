@@ -1,6 +1,6 @@
 """What survives a restart, and what has to be admitted.
 
-docs/design/conversations-and-concurrency.md §2.5/§3.4 and build steps 7-8.
+docs/design/implemented/conversations-and-concurrency.md §2.5/§3.4 and build steps 7-8.
 
 Stephen's Q6 was "do background tasks survive a restart?" The honest answer
 tonight was: at STORAGE yes, at EXECUTION no. Commissions were written to disk

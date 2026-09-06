@@ -4,7 +4,7 @@
 *"my underlying model has hard-coded safety filters that I can't override"* and
 *"the system blocks it at the generation level regardless of how it's framed."*
 
-Both were false. `docs/audits/z-image-content-filtering-2026-08-16.md` records
+Both were false. `docs/history/audits/z-image-content-filtering-2026-08-16.md` records
 the audit: there is no filter in the Z-Image weights, none in ComfyUI, and no
 filter node in the graph. The only gate anywhere in that path is Friday's own
 `creative_engine.check_content_safety`, and it did not fire on the prompt she

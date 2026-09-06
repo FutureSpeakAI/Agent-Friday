@@ -1,5 +1,5 @@
 """
-Instagram platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.5).
+Instagram platform adapter (docs/design/implemented/content-pipeline-spec.md §4.5).
 
 Instagram API with Instagram Login (business/creator accounts on
 ``graph.instagram.com`` — no Facebook Page required, the preferred §4.5

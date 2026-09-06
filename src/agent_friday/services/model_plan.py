@@ -405,7 +405,7 @@ FREE_DISK_FLOOR_GIB = 10.0  # rule R8
 #: call would leave the two (still-correct) numbers looking coincidental
 #: rather than reconciled. Named here so a future reader sees this and the
 #: other four display-reserve sites together rather than re-discovering the
-#: same six numbers (`docs/design/headroom.md` §2.2).
+#: same six numbers (`docs/design/implemented/headroom.md` §2.2).
 DISPLAY_RESERVE_GIB = 2.5   # rule R3
 
 #: What a local image model needs on the card, on top of the display reserve.

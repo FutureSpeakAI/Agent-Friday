@@ -1,5 +1,5 @@
 """
-Reddit platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.9).
+Reddit platform adapter (docs/design/implemented/content-pipeline-spec.md §4.9).
 
 Reddit Data API, OAuth2 code flow with a script-app credential pair
 (client id in config, client secret via the provider-key convention),

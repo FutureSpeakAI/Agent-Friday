@@ -12,7 +12,7 @@ installer's own recommended default for machines without a discrete
 NVIDIA card -- that step never runs, so prewarm() never executes and the
 embedder is never fetched during install.
 
-docs/INSTALLATION.md:136-138 already correctly documents the true
+docs/getting-started/installation.md:136-138 already correctly documents the true
 behavior: "The embedding model is lazy and announced ... arrives on first
 use." This probe pins model_plan.py's plan() output to match that already-
 correct description instead of contradicting it.
@@ -72,13 +72,13 @@ class TestModelPlanEmbedderIsLazyDownload:
         assert "lazy" in reason.lower() or "first use" in reason.lower() or \
             "first-use" in reason.lower(), (
                 "plan()'s Memory-tier text should describe the embedder as "
-                "a lazy/first-use download, matching docs/INSTALLATION.md's "
+                "a lazy/first-use download, matching docs/getting-started/installation.md's "
                 "already-correct description"
             )
 
     def test_installation_md_still_documents_the_lazy_behavior(self):
         """Grounding check: confirms the corrected plan() text is now
-        consistent with docs/INSTALLATION.md's independently-correct claim,
+        consistent with docs/getting-started/installation.md's independently-correct claim,
         not just differently worded."""
         install_doc = (_REPO_ROOT / "docs" / "INSTALLATION.md").read_text(
             encoding="utf-8")

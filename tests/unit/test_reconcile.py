@@ -1,6 +1,6 @@
 """Work that stopped has to say it stopped.
 
-docs/design/conversations-and-concurrency.md §2.5 / build step 8.
+docs/design/implemented/conversations-and-concurrency.md §2.5 / build step 8.
 
 Stephen's Q6: do background tasks survive a restart? Tonight the answer was
 "at storage, yes; at execution, no" — a commission sat frozen at `grinding`

@@ -1,4 +1,4 @@
-"""Friday Federation publisher adapter (docs/CONTENT_PIPELINE_SPEC.md §4.13, §13).
+"""Friday Federation publisher adapter (docs/design/implemented/content-pipeline-spec.md §4.13, §13).
 
 No third-party transport — this adapter publishes onto Friday's own rails:
 

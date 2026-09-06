@@ -1,6 +1,6 @@
 """headroom_contract — the reconciled display reserve.
 
-WHY THIS EXISTS. `docs/design/headroom.md` §2.2 found six reserve constants
+WHY THIS EXISTS. `docs/design/implemented/headroom.md` §2.2 found six reserve constants
 for five concepts, and the one that actually gates a lease --
 `Arbiter.grant()`'s R-DISPLAY-RESERVE check -- resolved to 256 MiB on a
 single-monitor Windows box (`hardware_profile.display_reserve_mib()`,
@@ -256,7 +256,7 @@ _ALLOWED = {
         "of truth, not a duplicate (MIN_DISPLAY_RESERVE_MIB)",
     "src/agent_friday/services/model_plan.py":
         "DISPLAY_RESERVE_GIB -- the installer's pre-app rung pick, D1-"
-        "independent per docs/design/headroom.md §2.2; already equals the "
+        "independent per docs/design/implemented/headroom.md §2.2; already equals the "
         "reconciled figure (2.5 GiB == 2,560 MiB) and is cross-referenced "
         "at its definition",
 }

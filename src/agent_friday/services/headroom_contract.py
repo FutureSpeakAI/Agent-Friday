@@ -1,7 +1,7 @@
 """
 headroom_contract — the one honest display-reserve figure.
 
-WHAT THIS FILE IS. `docs/design/headroom.md` §4.2 specifies a full three-level
+WHAT THIS FILE IS. `docs/design/implemented/headroom.md` §4.2 specifies a full three-level
 Headroom Contract: `working` / `away` / `yield`, each with a VRAM-slack floor
 and a RAM-available floor, on top of the display reserve. That full contract
 is **D1** (spec §13) — the default posture, and the exact slack/RAM numbers,

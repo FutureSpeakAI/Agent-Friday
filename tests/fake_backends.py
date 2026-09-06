@@ -1,6 +1,6 @@
 """Offline transport doubles — the seam the INVERTED test default patches.
 
-Decision D9 (docs/audits/decisions-2026-08.md): real provider bodies run by
+Decision D9 (docs/decisions/2026-08-architecture-decisions.md): real provider bodies run by
 default; only tests that spend money or need live network opt out.
 
 The old default stubbed `_call_claude` / `_call_ollama` / `_call_openai`

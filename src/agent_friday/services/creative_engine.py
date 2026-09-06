@@ -108,7 +108,7 @@ DEFAULT_VIDEO_MODEL = "veo"
 log = _logging.getLogger("friday.creative_engine")
 
 # ── Cost metering for Veo (flat per-second, NOT token-based) ────────────────
-# docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a: this file's Gemini
+# docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a: this file's Gemini
 # image/video/Omni calls had ZERO cost_meter references. Veo bills a flat
 # USD-per-second rate (not tokens), so it does not fit cost_meter.PRICING's
 # per-1K-token shape — recorded via cost_meter.record(cost_usd=...) instead.
@@ -791,7 +791,7 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                 contents=full_prompt,
                 config=_image_config(types, aspect_ratio),
             )
-            # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl
+            # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl
             # Q7a): this direct Gemini image call had ZERO cost_meter
             # references. Never allowed to break image generation.
             try:
@@ -1054,7 +1054,7 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                     "message": "Veo finished but returned no video (it may have been "
                                "filtered). Try a different prompt."}
 
-        # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
+        # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
         # Veo had ZERO cost_meter references. Flat per-second rate, not
         # token-based — see _VEO_PER_SECOND_USD's comment for the confidence
         # caveat (no audio/4K surcharge accounted for). Never allowed to
@@ -1257,7 +1257,7 @@ def _generate_video_omni(prompt, *, api_model, requested_model, aspect_ratio,
                                "(it may have been filtered). Try a "
                                "different prompt."}
 
-        # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
+        # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
         # Omni had ZERO cost_meter references despite PRICING already having
         # an entry for this exact model id. The Interactions API response
         # exposes no usage/usage_metadata in the installed SDK, so this is an

@@ -99,7 +99,7 @@ def status():
 def machine():
     """One reading of the machine, and the honest verdict on it.
 
-    `docs/design/headroom.md` §4.3. Read-only: costs one `nvidia-smi` call
+    `docs/design/implemented/headroom.md` §4.3. Read-only: costs one `nvidia-smi` call
     and (on Windows) one PowerShell counter probe, both cached briefly by
     `machine_monitor`, so polling this route is cheap. `verdict.vram_slack`
     and `verdict.ram_available` read `basis: "unknown"` on every machine
