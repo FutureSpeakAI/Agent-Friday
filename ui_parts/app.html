@@ -3583,6 +3583,15 @@ function WorkflowsWS(){
   const[sdraft,setSdraft]=useState({name:'',trigger:'daily',hour:9,minute:0,weekday:6,every:60,at:'',prompt:''});
   const loadChains=()=>{fetch('/api/workflows/chains').then(r=>r.json()).then(d=>{setChains(d.chains||[]);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})};
   const loadSchedules=()=>{fetch('/api/schedules').then(r=>r.json()).then(d=>{setSchedules(d.schedules||[])}).catch(()=>{})};
+  // 2026-09-06: this panel only reflects a chain's OWN run status (fetched
+  // on demand via "Status") — it has no idea whether anything ELSE is
+  // running. Stephen saw generate_video executing while all 5 saved
+  // workflows showed idle/pending, which was technically correct (none had
+  // been run) but read as "Friday is doing nothing" next to visible proof
+  // she is. Polls the same task registry the Task Tray uses for anything
+  // active that isn't one of this panel's own chain runs.
+  const[otherActivity,setOtherActivity]=useState([]);
+  useEffect(()=>{let alive=true;const tick=()=>{fetch('/api/tasks').then(r=>r.json()).then(d=>{if(!alive)return;setOtherActivity((d.tasks||d||[]).filter(t=>t.status==='running'&&!t.chain))}).catch(()=>{})};tick();const t=setInterval(tick,5000);return()=>{alive=false;clearInterval(t)}},[]);
   useEffect(()=>{loadChains();loadSchedules()},[]);
   useEffect(()=>{if(!watching)return;let alive=true;const tick=()=>{fetch('/api/workflows/chains/'+watching+'/status').then(r=>r.json()).then(d=>{if(alive&&d.run){setRunStatus(d.run)}}).catch(()=>{})};tick();const t=setInterval(tick,4000);return()=>{alive=false;clearInterval(t)}},[watching]);
   const runChain=(slug)=>{setBusy(slug);apiFetch('/api/workflows/chains/'+slug+'/run',{method:'POST'}).then(r=>r.json()).then(()=>{setBusy('');setWatching(slug)}).catch(()=>setBusy(''))};
@@ -3636,6 +3645,10 @@ function WorkflowsWS(){
           <button className="btn" onClick={()=>setDraft(Object.assign({},draft,{steps:draft.steps.concat([{name:'',prompt:''}])}))}>+ Step</button>
           <button className="btn" style={{borderColor:'#2ecc71',color:'#2ecc71'}} onClick={saveChain}>Save workflow</button>
         </div>
+      </div>)}
+      {otherActivity.length>0&&(<div className="card" style={{padding:'10px 12px',marginBottom:10,border:'1px solid rgba(255,180,0,.3)',background:'rgba(255,180,0,.06)'}}>
+        <div style={{fontSize:12,color:'#e0a030',fontWeight:600}}>Friday is also working on this right now — not part of any saved workflow:</div>
+        {otherActivity.map(t=>(<div key={t.task_id} style={{fontSize:12,color:'#ccc',marginTop:2}}>● {t.name||t.description||t.task_id}</div>))}
       </div>)}
       {chains.map(c=>(<div key={c.slug} className="card" style={{padding:'10px 12px',display:'flex',alignItems:'center',gap:10}}>
         <div style={{flex:1,minWidth:0}}>

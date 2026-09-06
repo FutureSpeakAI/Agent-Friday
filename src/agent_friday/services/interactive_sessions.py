@@ -95,7 +95,7 @@ import time
 import uuid
 from pathlib import Path
 
-from agent_friday.core import FRIDAY_DIR, HOME, _POPEN_FLAGS, _RUN_COMMAND_BLOCKLIST, _safe_under_home
+from agent_friday.core import FRIDAY_DIR, HOME, _POPEN_FLAGS, blocked_command_token, _safe_under_home
 
 MAX_CONCURRENT_SESSIONS = 3
 SESSION_BUFFER_CAP = 65536  # 64 KiB retained per session; oldest bytes drop first
@@ -276,10 +276,9 @@ def spawn(command: str, cwd: str | None = None) -> dict:
     if not command:
         return {"error": "command is required."}
 
-    low = command.lower()
-    for bad in _RUN_COMMAND_BLOCKLIST:
-        if bad in low:
-            return {"error": f"Blocked by cLaws safety: command matches blocklist token {bad!r}."}
+    bad = blocked_command_token(command)
+    if bad is not None:
+        return {"error": f"Blocked by cLaws safety: command matches blocklist token {bad!r}."}
 
     if os.environ.get("FRIDAY_SESSION_DEPTH"):
         return {"error": "Recursion guard: this Friday process is itself running "

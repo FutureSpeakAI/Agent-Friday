@@ -46,7 +46,7 @@ from agent_friday.core import (
     WIKI_DIR,
     _HAS_BEHAVIORAL_MONITOR,
     _POPEN_FLAGS,
-    _RUN_COMMAND_BLOCKLIST,
+    blocked_command_token,
     _load_settings,
     _log_context,
     _pii_redact,
@@ -714,6 +714,24 @@ def _tool_search_files(inp):
     return json.dumps(result, default=str)
 
 
+def _maybe_auto_open(path) -> None:
+    """Open `path` for the user iff `auto_open_created_files` is on.
+
+    Stephen, 2026-09-06: "always open files you create for me upon
+    completing them." One shared call site for every file-creating tool
+    (write_file here; services/creations._notify_creation for creative
+    generations) so the preference has one place to read, not one per tool.
+    Best-effort and silent — a failed auto-open must not turn a successful
+    creation into an error, it just means the user opens it by hand.
+    """
+    try:
+        if not _load_settings().get('auto_open_created_files'):
+            return
+        _perform_open(str(path))
+    except Exception as e:
+        print(f"  [auto-open] skipped for {path}: {e}")
+
+
 def _tool_write_file(inp):
     inp = inp or {}
     raw = (inp.get('path') or '').strip()
@@ -732,6 +750,12 @@ def _tool_write_file(inp):
         else:
             p.write_text(content, encoding='utf-8')
         _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode})
+        if mode == 'write':
+            # Not on append: a document being appended to (a log, a journal)
+            # popping open on every single line written would be the exact
+            # "multiple viewers in a row" case the setting's own default-off
+            # exists for.
+            _maybe_auto_open(p)
         return f"{'Appended' if mode == 'append' else 'Wrote'} {len(content)} chars to {p}"
     except Exception as e:
         return f"Write error: {e}"
@@ -1468,10 +1492,9 @@ def _tool_run_command(inp):
     cmd = ((inp or {}).get('command') or '').strip()
     if not cmd:
         return "Empty command."
-    low = cmd.lower()
-    for bad in _RUN_COMMAND_BLOCKLIST:
-        if bad in low:
-            return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
+    bad = blocked_command_token(cmd)
+    if bad is not None:
+        return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
