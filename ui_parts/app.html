@@ -3721,6 +3721,10 @@ function SitesWS(){
 // ═══ TASK RECORDS (retention is the user's setting; 0 keeps everything) ═══
 function TaskRecordsCard(){
   const[ret,setRet]=useState(null);const[saving,setSaving]=useState(false);
+  const[obs,setObs]=useState(null); // {token, header} shown once after minting
+  const mintObserver=()=>{if(!confirm('Mint a read-only observer credential? It lets an orchestrator (Fable, Astra) READ task records: list, journal, digest, events. It cannot steer, stop, delete or change settings. Minting replaces any earlier credential. The token is shown once.'))return;
+    fetch('/api/tasks/observer-token',{method:'POST'}).then(r=>r.json()).then(d=>{if(d&&d.token)setObs(d)}).catch(()=>{})};
+  const revokeObserver=()=>{fetch('/api/tasks/observer-token',{method:'DELETE'}).then(()=>setObs({revoked:true})).catch(()=>{})};
   const load=()=>fetch('/api/tasks/retention').then(r=>r.ok?r.json():null).then(d=>{if(d)setRet(d)}).catch(()=>{});
   useEffect(()=>{load()},[]);
   const save=days=>{setSaving(true);fetch('/api/tasks/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}).then(r=>r.json()).then(()=>{setSaving(false);load()}).catch(()=>setSaving(false))};
@@ -3736,6 +3740,14 @@ function TaskRecordsCard(){
       <span style={{fontSize:11,color:'#ccc'}}>days {ret&&ret.retention_days===0?'(forever)':''}</span>
       {ret&&<span style={{fontSize:10,color:'#888',marginLeft:8}}>reasoning capture: {ret.capture_reasoning?'on':'off'} · encrypted at rest: {ret.encrypt_at_rest?'on':'off'}</span>}
     </div>
+    <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8,flexWrap:'wrap'}}>
+      <span style={{fontSize:11,color:'#ccc'}}>Observer credential</span>
+      <button className="task-card-btn" onClick={mintObserver} title="Read-only. Steer, stop, delete and settings stay with you.">Mint read-only token</button>
+      <button className="task-card-btn cancel" onClick={revokeObserver}>Revoke</button>
+      <span style={{fontSize:10,color:'#888'}}>for Fable / Astra to read task records; see docs/reference/task-observation.md</span>
+    </div>
+    {obs&&obs.token&&<div style={{marginTop:6,fontSize:10,color:'#f59e0b',wordBreak:'break-all'}}>Shown once — copy it now. Header <code>{obs.header}</code>: <code>{obs.token}</code></div>}
+    {obs&&obs.revoked&&<div style={{marginTop:6,fontSize:10,color:'#888'}}>Observer credential revoked.</div>}
   </div>);
 }
 function SystemWS(){

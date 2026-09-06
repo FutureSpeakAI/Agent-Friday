@@ -17301,6 +17301,22 @@ function SitesWS() {
 function TaskRecordsCard() {
   const [ret, setRet] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [obs, setObs] = useState(null); // {token, header} shown once after minting
+  const mintObserver = () => {
+    if (!confirm('Mint a read-only observer credential? It lets an orchestrator (Fable, Astra) READ task records: list, journal, digest, events. It cannot steer, stop, delete or change settings. Minting replaces any earlier credential. The token is shown once.')) return;
+    fetch('/api/tasks/observer-token', {
+      method: 'POST'
+    }).then(r => r.json()).then(d => {
+      if (d && d.token) setObs(d);
+    }).catch(() => {});
+  };
+  const revokeObserver = () => {
+    fetch('/api/tasks/observer-token', {
+      method: 'DELETE'
+    }).then(() => setObs({
+      revoked: true
+    })).catch(() => {});
+  };
   const load = () => fetch('/api/tasks/retention').then(r => r.ok ? r.json() : null).then(d => {
     if (d) setRet(d);
   }).catch(() => {});
@@ -17379,7 +17395,45 @@ function TaskRecordsCard() {
       color: '#888',
       marginLeft: 8
     }
-  }, "reasoning capture: ", ret.capture_reasoning ? 'on' : 'off', " \xB7 encrypted at rest: ", ret.encrypt_at_rest ? 'on' : 'off')));
+  }, "reasoning capture: ", ret.capture_reasoning ? 'on' : 'off', " \xB7 encrypted at rest: ", ret.encrypt_at_rest ? 'on' : 'off')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: '#ccc'
+    }
+  }, "Observer credential"), /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn",
+    onClick: mintObserver,
+    title: "Read-only. Steer, stop, delete and settings stay with you."
+  }, "Mint read-only token"), /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn cancel",
+    onClick: revokeObserver
+  }, "Revoke"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: '#888'
+    }
+  }, "for Fable / Astra to read task records; see docs/reference/task-observation.md")), obs && obs.token && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      color: '#f59e0b',
+      wordBreak: 'break-all'
+    }
+  }, "Shown once \u2014 copy it now. Header ", /*#__PURE__*/React.createElement("code", null, obs.header), ": ", /*#__PURE__*/React.createElement("code", null, obs.token)), obs && obs.revoked && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      color: '#888'
+    }
+  }, "Observer credential revoked."));
 }
 function SystemWS() {
   const [sys, setSys] = useState(null);
