@@ -10,6 +10,44 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+Hardening pass of 2026-09-06, after the 5.13.0 tag. Verified defects only,
+each with a regression test.
+
+### Security
+
+- **Eleven outbound paths carried user or model text past the egress gate**
+  while the threat model promised the gate ran before every cloud call: the
+  HTTP worker adapter (prompt to any caller-chosen URL), kie.ai (fail-open on
+  a gate error), Veo and Omni video prompts, Lyria music prompt/lyrics,
+  calendar `annotate_events`, Google Tasks title/notes, publisher alt text
+  and link cards, Higgsfield when the gate attribute was absent, both
+  outbound federation routes, and the `/api/chat/send` vision path (which
+  also ignored Local only and wrote no ledger row). All gated, fail-closed.
+- **Recorded unrestricted-cloud consent made the boot self-test read the gate
+  as broken**, after which the router refused every cloud send. An
+  unrestricted install lost cloud entirely on its next restart. The self-test
+  now recognises the recorded consent and the boot banner says so.
+
+### Release engineering
+
+- **The installer build refuses a payload that is not the committed tree.**
+  The 5.12.0 and 5.13.0 zips were built from a working tree and carried
+  ~290 files that existed only on the build machine.
+
+### Fixed
+
+- Task-record states INTERRUPTED, STOPPED and STALLED were rendered in black
+  on the dark panel.
+- KNOWN_ISSUES entries verified against the tree: the image-sampling
+  progress bar and the cancel-before-lease race were already fixed in
+  `4dccabb` (2026-08-16) and are removed; Telegram/Discord sealing is
+  verified and now guarded by a test; the ffmpeg build question is answered
+  (GPLv3) under Licensing.
+
+---
+
 ## [5.13.0] — 2026-09-06
 
 Merges `main` and the release-integration branch for the first time since

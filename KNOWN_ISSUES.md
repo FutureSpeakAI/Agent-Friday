@@ -45,11 +45,17 @@ an issue.
   native tool calling (the default Gemma 4 ladder) uses tools fully offline.
   The `function_manager` seat that would let a smaller specialist handle tool
   selection for models that lack it is declared but wired to nothing.
-- **The sampling progress bar never advances** during image generation.
-- **Cancel can lose a race**: cancelling between an orb registering and the
-  arbiter granting a lease reports "nothing to interrupt" and the job completes.
-- **Chain retry has a race and a false-complete**: a fast-failing step can retry
-  past its budget, and an exhausted retry logs but never flips the status.
+- **Chain retry has a budget race**: `_retry_chain_step` spawns the retry and
+  only then records the retry count, so a step that fails before that write
+  reads a count of zero and can retry past its budget. (The false-complete
+  half of this entry is fixed: an exhausted retry now flips the status.)
+- **The worker's quality evaluator has never run.** It imports
+  `_vault_local_only` from `agent_friday.core`, a name that lives in
+  `services/model_router.py`, so the import fails and the evaluator fails
+  closed on every task. The task journal records this as a `decision` at
+  point `evaluate` with the ImportError as the reason. Repairing it
+  re-enables one cloud call per background task, so it awaits the
+  maintainer's decision rather than a silent fix.
 - **Chain seat overrides are advisory**, not enforced against the capability
   router.
 - **`print()` output from the chat path may not reach the log** when the server
@@ -92,10 +98,6 @@ Listed separately from "broken". These are not claims that things work.
 - **The KV-cache slope the seat planner rests on is inferred** from two anchors
   on two backends; a direct measurement on one model was an order of magnitude
   away.
-- **Whether every Telegram/Discord send routes through the sealing manager**,
-  or whether the bridge modules are also called directly.
-- **Which ffmpeg build `imageio-ffmpeg` ships** (LGPL or GPL), which matters
-  for any binary release.
 - **A stack-overflow crash of the server on 2026-09-04 has no confirmed cause.**
   The crash dump caught the news archiver mid-shutdown with a worker inside a
   feed parse; the leading hypothesis is a malformed feed reaching native XML
@@ -109,9 +111,10 @@ in this codebase. Four things do leave on a default install with no keys:
 
 1. A TCP connect to `dns.google:443` every 30 seconds (fallbacks `8.8.8.8`,
    `1.1.1.1`) as a connectivity probe. No payload; it reveals your IP and uptime.
-2. HTTP GETs to roughly 39 news feeds every 5 minutes by default.
+2. HTTP GETs to about 40 news feeds every 5 minutes by default.
 3. `fonts.googleapis.com` on every launch, from `index.html`.
-4. Three MediaPipe bundles from `cdn.jsdelivr.net`, without SRI hashes.
+4. Three MediaPipe bundles from `cdn.jsdelivr.net`. The script tags carry
+   SRI hashes; the wasm and model assets MediaPipe fetches at runtime cannot.
 
 Items 3 and 4 contradict the local-first posture; self-hosting them is not yet
 done. Every one of these can be disabled: see
@@ -134,8 +137,9 @@ credential storage.
   passphrase is set.
 - Apple Silicon is refused by the residency planner: no MLX or Metal backend.
 - AMD GPUs are not detected on any platform; `nvidia-smi` is the only probe.
-- 16 GB of system RAM is the floor. At 8 GB the budget rule resolves to zero
-  and every model seat is refused.
+- 16 GB of system RAM is the floor. At 8 GB the budget rule leaves about
+  1.2 GB for a resident model, which no rung on the ladder fits, so every
+  model seat is refused.
 
 ## 7. Security posture
 
@@ -149,16 +153,45 @@ credential storage.
   optional extra and no Secret Service provider is in the planned image. The
   supported path today is `FRIDAY_VAULT_PASSPHRASE` in the environment.
 - **`web_safety.py`, the SSRF guard, has no tests of its own.**
-- **Dependencies are declared with `>=` floors.** A `uv.lock` is committed for
-  reproducible local installs; CI installs from `pyproject.toml` without it.
+- **Dependencies are declared with `>=` floors.** A `uv.lock` is committed
+  but nothing consumes it: CI, the Windows installer and the documented
+  install paths all resolve fresh from `pyproject.toml` or the installer's
+  requirement files, and the lock is behind the current `pyproject.toml`.
+  Its only live use is Dependabot alerting.
+- **The 5.12.0 and 5.13.0 installer zips include files that are not part of
+  the repository** (workspace files from the build machine, copied from the
+  working tree rather than from a clean checkout). They are inert on a user's
+  machine but should not be there. The build now refuses any payload that is
+  not the committed tree; replacing the published assets is a maintainer
+  action.
 
 ## 8. Licensing
 
-- `mutagen` (GPL-2.0) is reachable through the `provenance` extra and is not
-  in the PyInstaller exclude list. `pynput` and `pystray` (LGPL-3.0) are
-  Windows dependencies. Neither is a problem for a source release; both need
-  attention before any binary distribution.
-- Model licenses are not surfaced in the product beyond the installer's
-  download step. Gemma models carry use restrictions; Stable Diffusion 3.5
-  carries a revenue-conditioned license with an attribution requirement.
-- Third-party attribution for the vendored JavaScript is in [NOTICE](NOTICE).
+Facts as of 2026-09-06, from package metadata and the shipped 5.13.0 zip.
+None of these is a problem for a source checkout; all of them need a
+decision before the Windows installer is called a clean binary distribution.
+
+- The installer's default tiers `pip install` several copyleft packages on
+  the user's machine: `piper-tts` (GPL-3.0-or-later since 1.3; the `>=1.2`
+  floor crossed over from MIT), `mutagen` (GPL-2.0-or-later; default via the
+  recommended tier, not only the `provenance` extra), and `imageio-ffmpeg`,
+  whose bundled `ffmpeg` binary is a **GPLv3** build (`--enable-gpl
+  --enable-version3`, libx264/libx265). `pynput` and `pystray` (LGPL-3.0) are
+  in the core tier.
+- Two wheels are physically inside the zip's wheelhouse with GPLv3+ metadata
+  and no or contradictory license text: `mouseinfo` and `pymsgbox`
+  (pyautogui dependencies).
+- `NOTICE` is not in the shipped payload, and its text says mutagen, pynput
+  and pystray "are not bundled into any binary distribution" and that the
+  installer displays model licenses before download. The installer installs
+  all three by default and has no license display step; the only license
+  surfacing in the product is the image-model picker.
+- Model terms: Gemma 4 is published under Apache-2.0 on Ollama and Hugging
+  Face; the Gemma Terms of Use (with a required Notice file) still apply to
+  `embeddinggemma`, which remains on the installer's heal allowlist. Stable
+  Diffusion 3.5 carries a revenue-conditioned community license with an
+  attribution requirement (the picker shows it). The Piper voice
+  `en_US-lessac-medium` is offered under the Blizzard 2013 dataset license,
+  which is not an open-source license.
+- Third-party attribution for the vendored JavaScript is in [NOTICE](NOTICE),
+  which needs to travel with the artifact.
