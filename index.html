@@ -40777,6 +40777,28 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     window._fridayMoodSignals.chatLoad = chatLoad || qdLoading;
   }, [chatLoad, qdLoading]);
 
+  // 2026-09-06: the chat "Task complete" bubble below cut task results at a
+  // flat .substring(0, 400) with no ellipsis and no marker — a summary that
+  // stopped mid-word ("...bl") and looked finished. The backend never
+  // truncates (_task_set/_task_snapshot store and return the full text;
+  // confirmed by reading them directly), so nothing was ever lost from the
+  // record — this was display-only. Raised the cap (4000, matching the
+  // "generous but bounded" figure already used elsewhere for a task result,
+  // e.g. the quality evaluator's own 4,000-char budget) and, when a result
+  // genuinely is longer than that, cuts at a word boundary and SAYS SO,
+  // pointing at the Task Tray's "View Results" modal, which already renders
+  // the complete, unqueried text (viewBgTaskResult below) — no new surface
+  // needed, just naming the one that exists.
+  const CHAT_RESULT_CAP = 4000;
+  const fmtTaskResultForChat = r => {
+    if (!r || r.length <= CHAT_RESULT_CAP) return r || '';
+    let cut = r.lastIndexOf(' ', CHAT_RESULT_CAP);
+    if (cut < CHAT_RESULT_CAP * 0.8) cut = CHAT_RESULT_CAP; // no good boundary nearby
+    const remaining = r.length - cut;
+    return r.slice(0, cut) +
+      `\n\n*(cut off here — ${remaining} more character${remaining === 1 ? '' : 's'}. ` +
+      `Open this task in the Task Tray to read the rest.)*`;
+  };
   // ─── Background Task Runner (poll /api/tasks) ───
   const [bgTasks, setBgTasks] = useState([]);
   const [taskResultModal, setTaskResultModal] = useState(null);
@@ -40805,7 +40827,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             newlyDone.forEach(t => {
               setChatMsgs(p => [...p, {
                 role: 'friday',
-                text: `✅ Task complete: **${t.name}**${t.result ? '\n\n' + t.result.substring(0, 400) : ''}`,
+                text: `✅ Task complete: **${t.name}**${t.result ? '\n\n' + fmtTaskResultForChat(t.result) : ''}`,
                 time: new Date().toLocaleTimeString()
               }]);
             });
