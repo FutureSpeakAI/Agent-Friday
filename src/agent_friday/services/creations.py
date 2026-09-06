@@ -703,7 +703,14 @@ def _notify_creation(filename, orb_pid=None):
             threading.Timer(3.0, process_remove, args=(orb_pid,)).start()
         except Exception:
             pass
-    if not _notif_engine or not filename:
+    if not filename:
+        return
+    try:
+        from agent_friday.services.agent import _maybe_auto_open
+        _maybe_auto_open(CREATIONS_DIR / filename)
+    except Exception as _e:
+        print(f"  [NOTIFY] auto-open skipped: {_e}")
+    if not _notif_engine:
         return
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
     icon, label = _CREATION_KIND_LABELS.get(ext, ('✨', 'Creation'))

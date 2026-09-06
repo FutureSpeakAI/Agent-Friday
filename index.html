@@ -16673,6 +16673,32 @@ function WorkflowsWS() {
       setSchedules(d.schedules || []);
     }).catch(() => {});
   };
+  // 2026-09-06: this panel only ever reflects a saved chain's OWN run
+  // status (fetched on demand via the "Status" button) — it has no idea
+  // whether anything else is running. Stephen saw generate_video executing
+  // on his desktop while all 5 saved workflows showed idle/pending, which
+  // is technically correct (none of them had been run) but reads as "Friday
+  // is doing nothing" right next to visible proof she is. This polls the
+  // same task registry the Task Tray uses and surfaces anything active that
+  // ISN'T one of this panel's own chain runs, so the panel stops implying a
+  // silence that isn't there.
+  const [otherActivity, setOtherActivity] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => {
+      fetch('/api/tasks').then(r => r.json()).then(d => {
+        if (!alive) return;
+        const running = (d.tasks || d || []).filter(t => t.status === 'running' && !t.chain);
+        setOtherActivity(running);
+      }).catch(() => {});
+    };
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
   useEffect(() => {
     loadChains();
     loadSchedules();
@@ -16969,7 +16995,28 @@ function WorkflowsWS() {
       color: '#2ecc71'
     },
     onClick: saveChain
-  }, "Save workflow"))), chains.map(c => /*#__PURE__*/React.createElement("div", {
+  }, "Save workflow"))), otherActivity.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: '10px 12px',
+      marginBottom: 10,
+      border: '1px solid rgba(255,180,0,.3)',
+      background: 'rgba(255,180,0,.06)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#e0a030',
+      fontWeight: 600
+    }
+  }, "Friday is also working on this right now — not part of any saved workflow:"), otherActivity.map(t => /*#__PURE__*/React.createElement("div", {
+    key: t.task_id,
+    style: {
+      fontSize: 12,
+      color: '#ccc',
+      marginTop: 2
+    }
+  }, "● ", t.name || t.description || t.task_id))), chains.map(c => /*#__PURE__*/React.createElement("div", {
     key: c.slug,
     className: "card",
     style: {

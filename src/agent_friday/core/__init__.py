@@ -615,7 +615,7 @@ VIBE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 # to cure for llama-server seats: persist what is running to disk so a
 # restart can find it again, rather than only ever knowing what THIS process
 # started. code_engine.adopt_or_reap_vibe_terminals() reads this back at boot.
-VIBE_STATE_FILE = Path(os.path.expanduser("~")) / ".friday" / "vibe-code" / "terminals.json"
+VIBE_STATE_FILE = friday_home() / "vibe-code" / "terminals.json"
 VIBE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # Bumped when the MEANING of the file changes, not its contents. Version 1 is
@@ -1269,7 +1269,7 @@ def _log_context(event_type, data):
         # Logging must never break the request.
         print(f"  [CTX-LOG] {event_type} failed: {e}")
 
-# Block list for run_command (case-insensitive substring match).
+# Block list for run_command.
 _RUN_COMMAND_BLOCKLIST = (
     "remove-item", "rmdir", "rd ", "del ", " del\t", "format ",
     "shutdown", "restart-computer", "stop-computer",
@@ -1283,6 +1283,66 @@ _RUN_COMMAND_BLOCKLIST = (
     "wmic.*delete", "get-childitem.*remove",
     "rm -", "rmdir -",
 )
+
+# 2026-09-06: this was matched with a bare `token in command.lower()` at all
+# three call sites below-and-elsewhere, which is a SUBSTRING test, not a
+# command-token test. "del " is a substring of "model " (m-o-D-E-L- ), so
+# `run_command("... ollama list model ...")` — a read-only request to list
+# installed models — was refused as "matches destructive blocklist token
+# 'del '". Every short token here (del, rd, rm, iex, ...) is one or two
+# letters from colliding with an ordinary word the same way. A regex with a
+# left AND right word-boundary fixes it without touching the list itself:
+# `del ` still matches after whitespace, a shell separator (;|&), or the
+# start of the string, and stops matching mid-word on either side — a bare
+# word token like "rmdir" no longer matches inside "rmdir-like" either. The
+# two entries that already contain `.*` ("wmic.*delete",
+# "get-childitem.*remove") were ALWAYS meant as regex fragments — a literal
+# `in` check could never match them (no real command contains the two
+# characters ".*"), so they were dead weight; compiled as regex here, they
+# actually fire for the first time.
+_RUN_COMMAND_BLOCKLIST_PATTERNS = None
+
+
+def _compiled_run_command_blocklist():
+    global _RUN_COMMAND_BLOCKLIST_PATTERNS
+    if _RUN_COMMAND_BLOCKLIST_PATTERNS is None:
+        compiled = []
+        for token in _RUN_COMMAND_BLOCKLIST:
+            if ".*" in token:
+                compiled.append((token, re.compile(token)))
+            else:
+                # lstrip only: a token's TRAILING space/character is load-
+                # bearing ("del " must not also match "delete"), only its
+                # (now-redundant) leading whitespace hack is normalized away.
+                stripped = token.lstrip()
+                pattern = r"(?<![\w-])" + re.escape(stripped)
+                # A token ending in a word character ("rmdir", "shutdown",
+                # ...) also needs a RIGHT boundary, or it still matches
+                # mid-word ("rmdir-like"). One already ending in a non-word
+                # character ("del ", "rm -") is self-bounded there — its
+                # trailing space/dash IS the boundary, and requiring a
+                # second one would wrongly refuse "rm -rf" (the character
+                # right after "rm -" is a word char by design).
+                if re.match(r"\w", stripped[-1]):
+                    pattern += r"(?![\w-])"
+                compiled.append((token, re.compile(pattern)))
+        _RUN_COMMAND_BLOCKLIST_PATTERNS = compiled
+    return _RUN_COMMAND_BLOCKLIST_PATTERNS
+
+
+def blocked_command_token(command: str):
+    """The first blocklist token `command` genuinely matches as a command
+    fragment (word/token-aware — never a bare substring), or None.
+
+    The ONE place this check happens; every run_command call site imports
+    this instead of re-running its own `token in low` loop, so a future
+    blocklist edit or matching fix needs one change, not three.
+    """
+    low = (command or "").lower()
+    for token, pattern in _compiled_run_command_blocklist():
+        if pattern.search(low):
+            return token
+    return None
 
 
 def _safe_under_home(path_str):
@@ -1351,9 +1411,9 @@ def _sandbox_policy(name, args):
     if name == "run_command":
         cmd = str(args.get("command") or "").strip()
         low = cmd.lower()
-        for bad in _RUN_COMMAND_BLOCKLIST:
-            if bad in low:
-                return False, f"command matches destructive blocklist token {bad!r}"
+        bad = blocked_command_token(cmd)
+        if bad is not None:
+            return False, f"command matches destructive blocklist token {bad!r}"
         if FRIDAY_SANDBOX_MODE == "strict":
             lead = re.split(r"[\s|;&]+", low.lstrip("&; "), maxsplit=1)[0]
             lead = lead.replace("\\", "/").split("/")[-1]   # basename of an exe path
@@ -1527,6 +1587,13 @@ DEFAULT_SETTINGS = {
     # same defect class as knowledge_graph above (docs/audits/
     # gauntlet-2026-09-03/findings.jsonl).
     "pause_warnings_off": False,
+    # Stephen, 2026-09-06: "always open files you create for me upon
+    # completing them." Default False — auto-launching an app the instant a
+    # file lands is a real product decision (multiple generations in a row
+    # would pop multiple viewers), not something to turn on for everyone by
+    # default. Read by services/agent.py::_maybe_auto_open and
+    # services/creations.py::_notify_creation.
+    "auto_open_created_files": False,
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
