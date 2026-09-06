@@ -44,6 +44,7 @@ document it is.
 | [Repository guards](development/repository-guards.md) | The pre-commit hook and the static checks that protect specific invariants. |
 | [UI build](development/ui-build.md) | Which UI file is authoritative and how the build refuses to lose components. |
 | [Release process](development/release-process.md) | Versioning, tagging, building the Windows installer, what ships and what does not. |
+| [Failure classes](development/failure-classes.md) | The failure classes this codebase has produced, stated as rules a contributor can apply. |
 | [Windows installer](../packaging/windows/README.md) | The maintainer's guide to the installer's design rules and layout. |
 | [Local HTTPS proxy](../ops/README.md) | Optional: fronting the local server with `https://agent.friday` on one machine. |
 
