@@ -116,6 +116,39 @@ def test_pause_all_blocks_dispatch():
     assert adapter.publish_calls == 0
 
 
+def test_content_disabled_blocks_dispatch(monkeypatch):
+    """settings.content.enabled is the pipeline's master switch (DEFAULT_
+    SETTINGS says so). Until 2026-09-06 nothing branched on it: the UI wrote
+    it, a route read it into a dict, and tick() published anyway."""
+    from agent_friday import core
+    adapter = _mock_adapter()
+    _armed_post()
+    monkeypatch.setattr(core, "_load_settings",
+                        lambda *a, **k: {"content": {"enabled": False}})
+    res = pub.tick(now=NOW)
+    assert res["ok"] and res.get("disabled") is True, res
+    assert adapter.publish_calls == 0
+    # Flip it back on: the same due target publishes on the next pass.
+    monkeypatch.setattr(core, "_load_settings",
+                        lambda *a, **k: {"content": {"enabled": True}})
+    res = pub.tick(now=NOW)
+    assert res["ok"] and not res.get("disabled")
+    assert adapter.publish_calls == 1
+
+
+def test_content_enabled_unreadable_fails_closed(monkeypatch):
+    from agent_friday import core
+    adapter = _mock_adapter()
+    _armed_post()
+
+    def boom(*a, **k):
+        raise OSError("settings unreadable")
+    monkeypatch.setattr(core, "_load_settings", boom)
+    res = pub.tick(now=NOW)
+    assert res.get("disabled") is True
+    assert adapter.publish_calls == 0
+
+
 # ── gate chain (§7.1) ─────────────────────────────────────────────────────────
 
 def test_egress_divergence_holds_and_adapter_never_called(monkeypatch, notes):

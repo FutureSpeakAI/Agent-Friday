@@ -55,6 +55,16 @@ regex/bracket-matching extraction can miss a dynamically-constructed key
 proves consumption, not correct behaviour -- see check 3 above. This closes
 the *dead-key* class; it does not replace reading the diff.
 
+A concrete miss, so the limit is not abstract (2026-09-06): `content.enabled`
+was declared in DEFAULT_SETTINGS as "master switch for the publish
+pipeline", written by the UI, and READ by routes/content_pipeline.py into a
+dict that only ever used its sibling `conflict_window_hours`. The publisher
+tick never branched on it. Check 3 passed because `"content"` appears as a
+literal in that very read. A read-and-echo and an enforcement look
+identical to this script; only a behavioural test (tests/unit/
+test_content_publisher.py::test_content_disabled_blocks_dispatch) tells
+them apart.
+
 Runs in under a second, no imports of the app itself required.
 Exit 0 = every written key has a home. Exit 1 = at least one does not.
 """
