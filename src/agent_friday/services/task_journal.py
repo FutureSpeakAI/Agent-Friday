@@ -429,6 +429,7 @@ def reset_for_tests() -> None:
         _SEQ.clear()
         _UNRECORDED_NOTIFIED.clear()
         _DELETED.clear()
+        _STOP_REQUESTED.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -714,3 +715,57 @@ def seal_for_principal(obj, principal: str, provider: str = "observer") -> tuple
         return node
 
     return _walk(obj), counts["redacted"], counts["withheld"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Phase 4 — interruption that keeps the record (TV10)
+# ═══════════════════════════════════════════════════════════════════════════
+# "Stop after this step" is a flag the loops check at every checkpoint. Unlike
+# a hard cancel it ends the task with a complete record: the current step
+# finishes, the next one never starts, and the halt names the step.
+
+_STOP_REQUESTED: set = set()
+STALLED_AFTER_S = 30.0   # a running task whose heartbeat is older than this renders as stalled
+
+
+def request_stop(task_id: str) -> None:
+    with _LOCK:
+        _STOP_REQUESTED.add(str(task_id))
+    st = read_state(task_id)
+    if st is not None:
+        st["stop_requested"] = time.time()
+        write_state(task_id, st)
+
+
+def stop_requested(task_id: Optional[str]) -> bool:
+    return bool(task_id) and str(task_id) in _STOP_REQUESTED
+
+
+def consume_stop(task_id: Optional[str]) -> bool:
+    """True once if a stop was requested for this task; clears it."""
+    if not task_id:
+        return False
+    with _LOCK:
+        if str(task_id) in _STOP_REQUESTED:
+            _STOP_REQUESTED.discard(str(task_id))
+            return True
+    return False
+
+
+def liveness(task_id: str, status: Optional[str] = None, now: Optional[float] = None) -> Dict[str, Any]:
+    """last_seen / stalled / cost / now for a task row, from the record."""
+    now = now or time.time()
+    st = read_state(task_id) or {}
+    seen = st.get("last_seen") or st.get("state_written")
+    running = (status or st.get("status")) in ("running", "queued")
+    stalled = bool(running and seen and (now - float(seen)) > STALLED_AFTER_S)
+    cost = 0.0
+    now_line = None
+    for ev in read(task_id):
+        k = ev.get("kind")
+        if k == "model_call":
+            cost += float(ev.get("cost_usd") or 0)
+        elif k == "checkpoint":
+            now_line = ev.get("summary") or now_line
+    return {"last_seen": seen, "stalled": stalled, "cost_usd": round(cost, 6), "now": now_line,
+            "stop_requested": bool(st.get("stop_requested")) or stop_requested(task_id)}

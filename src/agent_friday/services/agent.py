@@ -2710,6 +2710,15 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
             workspace='task', on_route=_log_route, tools=_tools_override,
         )
+        # Stop-after-step (TV10): the loop returned at a checkpoint because the
+        # user asked it to. That is a cancellation with a complete record, not
+        # a result to grade or a chain link to advance.
+        if _tj.consume_stop(task_id):
+            _task_log(task_id, 'Stopped after the current step at your request.')
+            _task_set(task_id, status='cancelled', ended=_time.time(),
+                      result=(reply or '[Stopped at your request.]'))
+            _report_task_completion(task_id, name, 'cancelled', reply or '[Stopped at your request.]')
+            return
         # Tool lines are written by _task_log_tool AS EACH CALL HAPPENS now,
         # so replaying the trace here would print every tool twice. What the
         # trace still adds is the SHAPE of the run, once, at the end.
@@ -6799,6 +6808,15 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             # iteration it was in. tests/unit/test_task_journal_emission.py
             # counts these against real iterations.
             _tj_loop = _journal()
+            # Stop-after-step (TV10): checked here, at the checkpoint, so the
+            # step that was running completed and the next never starts. The
+            # record ends with a halt that names the step; nothing is torn.
+            if _tj_loop.stop_requested(_tj_loop.resolve_task_id(session_ctx)) and iter_count > 1:
+                _tj_loop.append(_tj_loop.resolve_task_id(session_ctx), "halt", cause="cancelled",
+                                detail=f"stopped after step {iter_count - 1} at the user's request",
+                                resume_hint="Re-run the task to continue from its prompt.")
+                _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Stopped')
+                return (f"[Stopped after step {iter_count - 1} at the user's request.]", tool_trace)
             _tj_loop.checkpoint(iter_count, "model_call",
                                 f"Reasoning (step {iter_count}) on {model or ANTHROPIC_MODEL_DEFAULT}",
                                 session_ctx=session_ctx)
@@ -7102,6 +7120,14 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     _round = 0
     for _ in range(loops):
         _round += 1
+        # Stop-after-step (TV10), same contract as the Anthropic loop.
+        if _tj_loop.stop_requested(_tj_loop.resolve_task_id(session_ctx)) and _round > 1:
+            _tj_loop.append(_tj_loop.resolve_task_id(session_ctx), "halt", cause="cancelled",
+                            detail=f"stopped after step {_round - 1} at the user's request",
+                            resume_hint="Re-run the task to continue from its prompt.")
+            _orb(status='completed', progress=1.0, label='Stopped')
+            _led_done()
+            return f"[Stopped after step {_round - 1} at the user's request.]", tool_trace
         # Task journal (TV3): checkpoint before the call, same contract as the
         # Anthropic loop; the coverage test counts these against rounds.
         _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
