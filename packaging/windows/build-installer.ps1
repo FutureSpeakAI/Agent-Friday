@@ -202,6 +202,64 @@ Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -ErrorAction SilentlyC
         Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
     }
 
+# -----------------------------------------------------------------------
+#  TRACKED-TREE GUARD. The copy loop above snapshots a WORKING TREE, and the
+#  exclusion lists only catch what someone already thought of. The published
+#  5.12.0 and 5.13.0 artifacts (audited 2026-09-06) each carried ~290 files
+#  that exist only on the developer's machine: a second git repository
+#  checked out inside the repo root (with its own .git/), seven gitignored
+#  token files, a Claude memory file, PowerShell caches, and local-only
+#  handoff documents. Every one of them was gitignored or locally excluded,
+#  so a clean clone would never have had them -- but nothing enforced the
+#  "build from a clean worktree at the tag" sentence in the release docs.
+#
+#  This does. Every file in the payload must be tracked by git at the commit
+#  being built, and no tracked file may carry uncommitted changes. A build
+#  that would ship anything else stops here, names the strays, and tells you
+#  to build from a fresh clone or `git worktree add <dir> v<version>`.
+# -----------------------------------------------------------------------
+Say-Step 'Verifying the payload is the committed tree'
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if (-not $gitCmd) {
+    Say-Problem -What 'git is not on PATH, so the build cannot prove the payload matches a commit.' `
+                -WhatToDo 'Install Git for Windows (or build from a machine that has it) and run the build again from a fresh clone at the release tag.'
+    Write-Log 'BUILD ABORTED - git unavailable; tracked-tree guard cannot run' 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.trackedtree' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+$headSha = (& git -C $RepoRoot rev-parse --short HEAD 2>$null)
+$trackedRaw = & git -C $RepoRoot -c core.quotepath=off ls-files -z
+$tracked = @{}
+foreach ($t in ($trackedRaw -split "`0")) {
+    if ($t) { $tracked[$t.Replace('/', '\').ToLowerInvariant()] = $true }
+}
+$stray = @()
+$payloadFiles = @(Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -ErrorAction SilentlyContinue)
+foreach ($pf in $payloadFiles) {
+    $rel = $pf.FullName.Substring($Payload.Length).TrimStart('\')
+    if (-not $tracked.ContainsKey($rel.ToLowerInvariant())) { $stray += $rel }
+}
+$dirty = @(& git -C $RepoRoot status --porcelain --untracked-files=no 2>$null | Where-Object { $_ })
+if ($stray.Count -gt 0 -or $dirty.Count -gt 0) {
+    $shown = ($stray | Select-Object -First 15) -join ', '
+    if ($stray.Count -gt 15) { $shown += ", ... and $($stray.Count - 15) more" }
+    $why = @()
+    if ($stray.Count -gt 0) { $why += "$($stray.Count) file(s) in the payload are not tracked by git at $headSha ($shown)" }
+    if ($dirty.Count -gt 0) { $why += "$($dirty.Count) tracked file(s) have uncommitted changes" }
+    Say-Problem -What ("The payload is not the committed tree: " + ($why -join '; ') + ". Untracked and modified files " +
+                       "are exactly how a developer's private material reaches a public artifact, so the build has stopped.") `
+                -WhatToDo ('Build from a fresh clone or a clean worktree at the release tag ' +
+                           '(git worktree add <dir> v<version>; cd <dir>\packaging\windows; .\build-installer.ps1). ' +
+                           'If a file genuinely belongs in the release, commit it first.')
+    foreach ($s in $stray) { Write-Log "Untracked file in payload: $s" 'FAIL' }
+    foreach ($d in $dirty) { Write-Log "Modified tracked file: $d" 'FAIL' }
+    Write-Log "BUILD ABORTED - payload is not the committed tree ($($stray.Count) untracked, $($dirty.Count) modified)" 'FAIL'
+    Complete-Install -Failed -FailedStep 'build.trackedtree' -ReportPath (Join-Path $OutputDir 'BUILD-REPORT.md')
+    exit 1
+}
+Say-Ok "All $($payloadFiles.Count) payload file(s) are tracked at $headSha with no uncommitted changes."
+Write-Log "Tracked-tree guard passed: $($payloadFiles.Count) files, HEAD $headSha" 'OK'
+
 if ($skippedSensitive.Count -gt 0) {
     Say-Note ("Kept out of the artifact on purpose: " + ($skippedSensitive -join ', '))
     Write-Log "Sensitive files excluded: $($skippedSensitive -join ', ')" 'OK'
