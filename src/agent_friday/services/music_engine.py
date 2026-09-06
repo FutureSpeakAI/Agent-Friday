@@ -360,6 +360,20 @@ def generate_music(prompt: str, *,
                            mode, lyrics, duration_seconds, language, why,
                            project_id, license)
 
+    # Lyria is cloud. Gate every string that leaves — the composed prompt
+    # (which carries Series-Bible/scene-DNA context), the lyrics and the
+    # negative prompt — the same way generate_image gates its prompt. Found
+    # ungated in the 2026-09-06 boundary audit.
+    from agent_friday.services import egress_gate as _eg
+    full_prompt = _eg.gate_text(full_prompt, "gemini", "music.prompt")
+    if not full_prompt:
+        return {"status": "blocked",
+                "reason": "the music prompt was withheld by the egress gate"}
+    if lyrics:
+        lyrics = _eg.gate_text(lyrics, "gemini", "music.lyrics")
+    if negative_prompt:
+        negative_prompt = _eg.gate_text(negative_prompt, "gemini", "music.negative_prompt")
+
     orb = _orb_start(f"Composing music — {(model or DEFAULT_MUSIC_MODEL)}…",
                      icon="🎵", name="Generating music")
     try:

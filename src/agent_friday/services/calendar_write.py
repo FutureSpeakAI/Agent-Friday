@@ -215,6 +215,24 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
     else:
         targets = [dict(e, kind="single") for e in found["events"]]
 
+    # Classification, same as create_event/update_event: these strings are
+    # model-authored and land in Google Calendar. This function skipped the
+    # gate its siblings use (2026-09-06 boundary audit).
+    if location:
+        location, err = _gate_calendar_field(location, "location")
+        if err:
+            return {"error": "location refused: %s" % err}
+    if phone:
+        phone, err = _gate_calendar_field(phone, "phone")
+        if err:
+            return {"error": "phone refused: %s" % err}
+    if note:
+        note, err = _gate_calendar_field(note, "description")
+        if err:
+            return {"error": "note refused: %s" % err}
+    if not (location or phone or note):
+        return {"error": "nothing left to add after the privacy gate"}
+
     additions = []
     if phone:
         additions.append("Phone: %s" % phone)

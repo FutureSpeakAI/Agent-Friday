@@ -829,8 +829,37 @@ def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
         return {"error": f"Tasks delete failed: {e}"}
 
 
+def _gate_task_text(body: dict) -> tuple[dict, str]:
+    """Classify the free-text fields of a Tasks write before they reach Google.
+
+    title and notes are model-authored (tool args) and were the one Google
+    write path with no gate (2026-09-06 boundary audit; calendar writes have
+    had one since security-boundary.md §19). Returns (gated_body, error);
+    on error the caller refuses rather than sending unclassified text."""
+    out = dict(body)
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as e:
+        return out, f"the privacy gate could not be reached ({e})"
+    for field in ("title", "notes"):
+        val = out.get(field)
+        if not val:
+            continue
+        try:
+            gated = _eg._gate_text(str(val), "google", f"tasks.{field}")
+        except Exception as e:
+            return out, f"the privacy gate refused the {field} ({e})"
+        if field == "title" and not gated:
+            return out, "the title was withheld by the privacy gate"
+        out[field] = gated
+    return out, ""
+
+
 def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict) -> dict:
     """Shared account-resolution + audit wrapper for complete/update/create."""
+    body, gate_err = _gate_task_text(body)
+    if gate_err:
+        return {"error": gate_err}
     if not account_id:
         return {"error": "account_id is required for a task write — call "
                          "list_tasks first to find it. Never guessed."}

@@ -53,6 +53,25 @@ class HttpApiAdapter(BaseAdapter):
         payload_tpl = ctx.get("payload_template") or {}
         payload = {**payload_tpl, "prompt": task.prompt}
 
+        # Egress gate. The endpoint is whatever the caller put in
+        # task.context, reachable from POST /api/orchestrator/delegate and
+        # /spawn, so this adapter can POST the delegate prompt to any host on
+        # the internet. It was the one worker path that skipped the gate the
+        # Ollama adapter enforces (2026-09-06 boundary audit). The gate decides
+        # from the destination: an on-device endpoint passes unchanged, anything
+        # else is sealed like a model call, and a gate failure stops the job.
+        try:
+            from agent_friday.services.egress_gate import gate_worker_payload
+            payload = gate_worker_payload(payload, base_url=str(endpoint),
+                                          provider="http_api")
+        except Exception as exc:
+            with _JOBS_LOCK:
+                _JOBS[aid].update({
+                    "status": WorkerStatus.FAILED,
+                    "error": f"egress gate blocked this task: {exc}",
+                })
+            return
+
         body = json.dumps(payload).encode()
         headers = {"Content-Type": "application/json", **extra_headers}
 
