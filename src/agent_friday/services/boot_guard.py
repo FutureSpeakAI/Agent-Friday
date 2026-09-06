@@ -266,8 +266,8 @@ def _self_editable_paths() -> list:
     ui = pkg.parent.parent / "index.html"     # repo root in a source checkout
     if ui.exists():
         paths.append(ui)
-    paths.append(HOME / ".friday" / "workspace_studio")
-    paths.append(HOME / ".friday" / "settings.json")
+    paths.append(friday_home() / "workspace_studio")
+    paths.append(friday_home() / "settings.json")
     return paths
 
 
