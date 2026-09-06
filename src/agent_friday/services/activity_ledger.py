@@ -34,6 +34,10 @@ _ALLOWED_FIELDS = {
     },
     "tool_call": {"tool", "ok", "duration_ms", "orb_id", "task_id"},
     "subagent_spawn": {"task_id", "description", "model"},
+    # A task journal served to a principal other than the local user
+    # (task-visibility.md TV11): what left, to whom, and whether the gate
+    # withheld anything. Never the content itself.
+    "journal_read": {"task_id", "principal", "route", "events", "reasoning", "redacted", "withheld"},
 }
 
 # Free-text fields still get a hard length cap so a caller can't smuggle a
