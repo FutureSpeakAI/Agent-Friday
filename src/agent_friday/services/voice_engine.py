@@ -707,10 +707,46 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
         scrubbed = core._scrub_pii(text)[0]
         text = core._PII_TAG_RE.sub("[redacted]", scrubbed)
 
+    # Local-only is an absolute override, the same guarantee routes/chat.py's
+    # vision path already enforces (fixed 2026-08-23, commit 4607bd9) and
+    # routes/voice.py's engine selection now enforces too — it must win
+    # regardless of key presence or network status. Before this, "read this
+    # aloud" and the News audio briefing sent spoken text to Gemini TTS even
+    # with Local-Only Mode on, because this function only ever checked PII
+    # content and connectivity, never model_routing.mode (see
+    # docs/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
     try:
-        _prefer_local = allow_local and ((not core.GEMINI_API_KEY) or _network_is_offline())
+        _local_only = str(((_load_settings() or {}).get('model_routing') or {})
+                          .get('mode') or '').strip().lower() == 'local_only'
     except Exception:
-        _prefer_local = allow_local and not core.GEMINI_API_KEY
+        _local_only = False
+    if _local_only:
+        _buf = _synthesize_tts_wav_local(text)
+        if _buf is not None:
+            return _buf
+        raise RuntimeError(
+            "local-only mode is on and no local voice engine is ready — "
+            "refusing to send spoken text to Gemini TTS")
+
+    # local_preferred means "local first, cloud when it helps" — the same
+    # idiom routes/chat.py:369 (vision) and routes/core_routes.py:1085
+    # (file-upload analyze) already use (`mode in ('local_only',
+    # 'local_preferred')`). Before this, TTS ignored local_preferred
+    # entirely and went straight to Gemini whenever a key was present,
+    # contradicting the mode's own definition (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl). Unlike local_only above, a
+    # local_preferred TTS failure still falls through to Gemini below —
+    # "preferred," not absolute.
+    try:
+        _local_preferred = str(((_load_settings() or {}).get('model_routing') or {})
+                               .get('mode') or '').strip().lower() == 'local_preferred'
+    except Exception:
+        _local_preferred = False
+    try:
+        _prefer_local = allow_local and (_local_preferred or (not core.GEMINI_API_KEY)
+                                         or _network_is_offline())
+    except Exception:
+        _prefer_local = allow_local and (_local_preferred or not core.GEMINI_API_KEY)
     if _prefer_local:
         _buf = _synthesize_tts_wav_local(text)
         if _buf is not None:
@@ -787,6 +823,21 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
             speech_config=types.SpeechConfig(**speech_kwargs),
         )
     )
+
+    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q6c): this
+    # is a real, billed Gemini call that had ZERO cost_meter integration
+    # despite cost_meter.PRICING already carrying entries for the Live voice
+    # models — the TTS model id itself was also missing there until this fix.
+    # Never allowed to break speech: any failure here is swallowed.
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _um = getattr(response, "usage_metadata", None)
+        _cm.meter("gemini", "gemini-2.5-flash-preview-tts", {
+            "input_tokens": getattr(_um, "prompt_token_count", 0) or 0,
+            "output_tokens": getattr(_um, "candidates_token_count", 0) or 0,
+        }, kind="voice")
+    except Exception:
+        pass
 
     audio_data = response.candidates[0].content.parts[0].inline_data.data
     buf = io.BytesIO()

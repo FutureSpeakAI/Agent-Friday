@@ -450,6 +450,17 @@ def api_models_search():
     from agent_friday.routing.provider_descriptors import classification_of
     results = []
     for prov in reg.get_enabled_providers():
+        # Per-machine creative overlay (FLUX.1 dev, or anything else too
+        # licence-restricted for provider_registry.py's shipped defaults) —
+        # a no-op when no overlay file exists. Same merge build_catalog()
+        # applies; without it here, a locally-registered model would show up
+        # in Settings but never in the Model Browser search it also uses.
+        try:
+            from agent_friday.services.local_creative_overrides import (
+                merge_local_creative_overlay)
+            prov = merge_local_creative_overlay(prov)
+        except Exception:
+            pass
         name = prov.get("name", "")
         if want_provider and name != want_provider:
             continue
@@ -476,6 +487,8 @@ def api_models_search():
             mm = meta.get(mid) or {}
             rows[mid] = {"id": mid, "label": mm.get("label") or mid,
                          "modalities": mm.get("modalities") or ["text"],
+                         "note": mm.get("note"), "licence": mm.get("licence"),
+                         "licence_note": mm.get("licence_note"),
                          "source": "static"}
         if (prov.get("discovery") or {}).get("mode") == "api":
             try:
@@ -516,6 +529,11 @@ def api_models_search():
                 "modalities": m.get("modalities") or ["text"],
                 "local": is_local,
                 "available": available, "source": m.get("source", "static"),
+                # Declared trade-off/licence text (see model_catalog.py's
+                # _model_entries_for — same fields, same reason: a model's
+                # real cost or restriction belongs where it's picked).
+                "note": m.get("note"), "licence": m.get("licence"),
+                "licence_note": m.get("licence_note"),
             })
     # Default: available first, then provider, then id — stable and useful.
     # Price sorts put unpriced entries LAST (unknown ≠ free, pricing.py's rule).
@@ -760,9 +778,29 @@ def api_health_full():
             installed = [m.get("name", "") for m in (mgr.list_models() if avail else [])]
         except Exception:
             installed = []
+        from agent_friday.services import model_plan
         out["hardware"] = {**hw, "suggested_models": mgr.recommend_models(hw),
                            "ollama_available": avail,
-                           "installed_models": installed}
+                           "installed_models": installed,
+                           # The setup wizard's floor-model pull button reads this
+                           # instead of a literal — see index.html's
+                           # WizardGemmaPull (H3: a value copied by hand into a
+                           # sixth site is a sixth default that can drift).
+                           "floor_model": model_plan.FLOOR_MODEL}
+        # starter_set (headroom.md §9, §12 Phase 6): the wizard's Hardware
+        # Check step reads this instead of `suggested_models` — a real
+        # verdict per modality from the planner (`model_plan.plan()` for the
+        # brain, `residency_policy.plan_chain()` for the interview's own
+        # chain), not a second recommendation surface. Guarded separately
+        # from the block above: a failure here (a residency module not
+        # importable on this platform, say) should not cost the wizard the
+        # plain hardware numbers it has always shown.
+        try:
+            from agent_friday.services import hardware_profile as hwp
+            from agent_friday.routes.intelligence import build_starter_set
+            out["hardware"]["starter_set"] = build_starter_set(hwp.get())
+        except Exception as e:
+            out["hardware"]["starter_set"] = {"error": str(e)}
     except Exception as e:
         out["hardware"] = {"error": str(e)}
 

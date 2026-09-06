@@ -293,6 +293,29 @@ class TestSignManifestLifecycle:
         m = tmp_engine.sign_manifest()
         assert m.claws_hmac == "no_governance_key_fn"
 
+    def test_unsigned_manifest_is_not_reported_valid(self, tmp_engine):
+        """The fail-open bug this guards against: `claws_hash` and
+        `body_hash` are digests of PUBLIC content — anyone can recompute
+        both without ever holding a key. A manifest with matching hashes but
+        NO real authentication proof (no governance key configured here, and
+        stripped of its Ed25519 signature below) must not report
+        `valid: True` just because nothing failed outright."""
+        m = tmp_engine.sign_manifest()
+        d = m.to_dict()
+        d["ed25519_sig"] = ""
+        d["ed25519_pubkey"] = ""
+        result = tmp_engine.verify_manifest(d)
+        assert result["checks"]["claws_hmac"] is None
+        assert result["checks"]["ed25519"] is None
+        assert result["checks"]["claws_hash"] is True
+        assert result["checks"]["body_hash"] is True
+        assert result["valid"] is False, (
+            "matching hashes are not proof of authenticity — both are "
+            "public and recomputable without a key; valid must require at "
+            "least one real signature/HMAC check to have actually run and "
+            "passed, not merely the absence of a failed one"
+        )
+
     def test_custom_tool_manifest_propagated(self, tmp_engine):
         tools = [{"name": "fake_tool", "ring": 0}]
         m = tmp_engine.sign_manifest(tool_manifest=tools)

@@ -321,6 +321,34 @@ def set_vault_passphrase():
                              "Set for this session (install 'keyring' to persist).")})
 
 
+@insights_bp.route('/api/vault/reencrypt-stale-keys', methods=['POST'])
+@login_required
+def reencrypt_stale_provider_keys():
+    """Maintenance path for a vault passphrase that changed under a running
+    process (see credential_store.reencrypt_stale_provider_keys — most often
+    a rehearsal run overwriting the shared OS keychain entry, 2026-08-30).
+
+    Re-encrypts every stored provider key THIS process can still decrypt
+    under whatever a fresh process derives right now, so it survives this
+    process's own next restart. Cannot rescue a key whose encrypting
+    passphrase is already gone from every running process -- that is
+    unrecoverable by the same design that keeps a key from ever being
+    extractable through this API in the first place. Must be called on the
+    process that is suspected to still hold a working cache; calling it
+    after a restart has already happened finds nothing left to recover.
+
+    No key value is ever in the request or the response -- only names and
+    outcomes.
+    """
+    from agent_friday.services import credential_store as cs
+    data = request.get_json(silent=True) or {}
+    names = data.get("names")
+    if names is not None and not isinstance(names, list):
+        return jsonify({"error": "'names', if given, must be a list"}), 400
+    result = cs.reencrypt_stale_provider_keys(names=names)
+    return jsonify({"status": "ok", **result})
+
+
 # ── GDPR/CCPA data rights (H6) — export / erase, mirroring the friday CLI ──────
 _EXPORT_SKIP_DIRS = {"audio-cache", "vibe-code-logs", "__pycache__"}
 

@@ -351,7 +351,8 @@ def _claude_safe_model(candidate, settings):
 
 
 def _generate_text(messages, system=None, model=None, max_tokens=16384,
-                   temperature=None, orb_label=None, workspace=None):
+                   temperature=None, orb_label=None, workspace=None,
+                   system_builder=None):
     """Single-shot text generation via the user's CONFIGURED provider.
 
     Briefings, the front page, and editorials are not chat, but they should run
@@ -364,6 +365,22 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     dispatches to the SAME _call_* primitives the chat path uses (minus the tool
     loop). It tries the routed provider first, then falls back through every
     other provider, so generation never hard-fails while any provider is up.
+
+    system_builder: optional `callable(provider_name) -> str | None`. Many
+    callers predict a SINGLE provider up front (`_predict_route_provider`) to
+    decide how much vault TIER content the system prompt may carry, then hand
+    a prompt baked for that one provider in here. But this function's OWN
+    fallback ladder (below) can land the request on a DIFFERENT provider than
+    predicted when the first leg fails operationally — and a prompt gated for
+    'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
+    that content with no re-gating (docs/audits/gauntlet-2026-09-03/
+    findings.jsonl F30). When `system_builder` is given, each leg calls it
+    with ITS OWN provider name and uses the result instead of the static
+    `system` string, so the prompt is always gated for the provider actually
+    about to see it. A builder that raises is treated as "no system prompt"
+    for that leg (fail closed) rather than falling back to `system`, which
+    may have been gated for a different, less restrictive provider. Omit it
+    (the default) to keep the previous single-prompt behavior unchanged.
 
     Returns the response text.
     """
@@ -404,6 +421,34 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     except Exception as _re:
         print(f"  [GEN] routing failed, defaulting to cloud: {_re}")
 
+    # Honor the router's verdicts BEFORE any provider sees the request --
+    # the exact two lines _generate_agent already has (services/agent.py)
+    # and this sibling never did. refuse=True means vault access was
+    # required and the configured fallback is deny/warn -- no model call is
+    # permitted at all. Without this, a vault-forced local route whose local
+    # leg failed fell through to the unconditional cloud/openai fallback
+    # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
+    # contract for every one of this function's many callers (briefings,
+    # digests, KG summarization, calendar/message drafting, wiki bootstrap...
+    # docs/audits/gauntlet-2026-09-03/findings.jsonl).
+    if route.get('refuse'):
+        return (route.get('warning')
+                or "This request needs vault access, which requires a local "
+                   "model. Install or start Ollama (or adjust "
+                   "model_routing.vault_cloud_fallback), then retry.")
+    vault_access = bool(route.get('vault_access'))
+
+    # F30: re-gate the system prompt per LEG, not once for the predicted
+    # provider — see the `system_builder` docstring above. Without a builder,
+    # every leg gets the same static `system` (unchanged legacy behavior).
+    def _system_for(provider_name):
+        if system_builder is None:
+            return system
+        try:
+            return system_builder(provider_name)
+        except Exception:
+            return None
+
     # Provider primitives. The routed provider is tried first with the
     # router-chosen model; fallbacks use each provider's OWN configured default
     # (model=None) so a cloud model id never leaks into a local/OpenAI call.
@@ -411,20 +456,20 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
         # Mirror the chat path exactly: same shared client, same primitive.
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
-        return _call_claude(messages, system=system,
+        return _call_claude(messages, system=_system_for('cloud'),
                             model=_claude_safe_model(use_model or model, settings),
                             max_tokens=max_tokens, temperature=temperature)
 
     def _via_openai(use_model):
         # The routed model rides its RESOLVED provider (openrouter/groq/…);
         # the fallback attempt (use_model=None) keeps the legacy single-slot.
-        return _call_openai(messages, system=system, model=use_model,
+        return _call_openai(messages, system=_system_for('openai'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
                             orb_label=orb_label,
                             provider=routed_provider_name if use_model else None)[0]
 
     def _via_ollama(use_model):
-        return _call_ollama(messages, system=system, model=use_model,
+        return _call_ollama(messages, system=_system_for('local'), model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
                             orb_label=orb_label)[0]
 
@@ -434,9 +479,14 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # hard-fail with "ANTHROPIC_API_KEY is not set" while chat works on a
     # different provider, regardless of how the router classifies the task.
     if provider == 'local':
-        attempts = [('local', _via_ollama, routed_model),
-                    ('cloud', _via_claude, None),
-                    ('openai', _via_openai, None)]
+        attempts = [('local', _via_ollama, routed_model)]
+        # A vault-forced local route must NEVER retry on a cloud provider:
+        # the messages were assembled for a local model and may carry
+        # TIER_2/TIER_3 content -- the same guard _generate_agent already
+        # has. Anything else keeps the resilience chain.
+        if not vault_access:
+            attempts += [('cloud', _via_claude, None),
+                         ('openai', _via_openai, None)]
     elif provider == 'openai':
         attempts = [('openai', _via_openai, routed_model),
                     ('cloud', _via_claude, None),
@@ -451,7 +501,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # still tried as a last resort (a desktop agent should limp, not refuse),
     # but healthy providers get the request first.
     # The mode the user chose outranks the resilience ladder.
-    attempts = _mode_filtered_attempts(attempts, routing_cfg)
+    attempts = _mode_filtered_attempts(attempts, routing_cfg, vault_access=vault_access)
     attempts = _health_order(attempts, routed_provider_name)
 
     errors = []
@@ -1096,7 +1146,21 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
     try:
         convo = []
         if system:
-            convo.append({"role": "system", "content": system})
+            _sys_content = system
+            # Prompt-cache breakpoint (2026-09-04): this path (OpenRouter and
+            # other OpenAI-compatible endpoints) never got the same treatment
+            # as the native Anthropic SDK path (_call_claude_agent) — every
+            # scheduled task, the heartbeat included, resent its full system
+            # prefix uncached on every call. Gated to providers that declare
+            # `prompt_caching` (OpenRouter) AND a Claude model underneath, so
+            # this is a no-op everywhere else (Groq, plain OpenAI, local).
+            if features.get('prompt_caching') and 'claude' in (model or '').lower():
+                try:
+                    from agent_friday.services import prompt_cache as _pc
+                    _sys_content, _ = _pc.apply_openrouter_cache(system, model)
+                except Exception:
+                    _sys_content = system
+            convo.append({"role": "system", "content": _sys_content})
         for m in messages:
             content = m.get("content", "")
             if isinstance(content, str):
@@ -1191,6 +1255,34 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 # Server-side model fallback: one HTTP call covers N models.
                 payload["models"] = [model] + [m for m in fallback_models
                                                if m and m != model]
+            # Diagnostic (2026-09-04): a scheduled/background call's BILLED
+            # prompt_tokens (costs.db) has repeatedly run several times
+            # larger than the system+tools+messages sizes this function
+            # itself assembled — e.g. the hourly heartbeat: ~27k tokens
+            # reconstructed standalone from the exact same code path,
+            # ~98.5k actually billed by the same call. Every component this
+            # function controls (system split, tool schemas, message count)
+            # has been measured and doesn't explain the gap, which leaves the
+            # egress gate (PII scrub, still ahead of us in this function) as
+            # the one transformation between here and the wire that hasn't
+            # been instrumented. Logged at DEBUG, gated to background tasks
+            # only, so this is not noise on interactive chat: compare this
+            # line's numbers to the row cost_meter later writes for the same
+            # call to find where the real payload diverges from this one.
+            if (session_ctx or {}).get('is_background_task'):
+                try:
+                    _sys_val = payload.get('messages', [{}])[0].get('content', '')
+                    _sys_chars = (len(_sys_val) if isinstance(_sys_val, str)
+                                 else sum(len(b.get('text', '')) for b in _sys_val
+                                          if isinstance(b, dict)))
+                    _log.debug(
+                        "background call payload sizes (pre-gate): model=%s "
+                        "system=%d chars msgs=%d tools=%d schemas (%d chars)",
+                        model, _sys_chars, len(payload.get('messages', [])),
+                        len(_oai_tools or []),
+                        len(json.dumps(_oai_tools)) if _oai_tools else 0)
+                except Exception:
+                    pass
             # Egress gate via the shared fail-closed wrapper (R3). A verified
             # LOCAL provider (LM Studio/vLLM on loopback/LAN) bypasses the seal
             # — data stays on-device — exactly like the Ollama path.
@@ -2989,6 +3081,26 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     try:
         from agent_friday.services.clock import clock_context_block
         add(clock_context_block(), _T1)
+    except Exception:
+        pass
+
+    # security-boundary.md §20: the retrieval ledger. One row per named,
+    # tier-tagged section, written HERE — before gating decides what
+    # survives — so the record exists regardless of gating posture. This is
+    # the fix for §1.4: vault access-log rows stop entirely when prompt
+    # gating is off (today's posture), so an ungated cloud prompt produced
+    # NO record anywhere of what vault material it carried. Never allowed
+    # to break assembly: a ledger failure is swallowed, not raised.
+    try:
+        from agent_friday.services import retrieval_ledger as _rl
+        from agent_friday.services.egress_gate import is_local_provider as _is_local
+        _rl.record_assembly(
+            sections,
+            turn_id=_rl.new_turn_id(),
+            destination_class=("local" if _is_local(provider) else provider),
+            gated=vault_control is not None,
+            policy_source=_vault_policy().source,
+        )
     except Exception:
         pass
 

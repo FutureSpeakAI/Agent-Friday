@@ -138,6 +138,41 @@ def filter_entities(entities):
             if _norm((e or {}).get("title", "")) not in gone]
 
 
+def redact_forgotten_names(text: str, replacement: str = "[removed]") -> str:
+    """Strip tombstoned names out of free-text written during (re)indexing.
+
+    The title check above (``filter_entities``) stops a forgotten person's
+    own titled node from resurfacing. It does nothing about her showing up
+    inside SOMEONE ELSE'S entity description -- "Bob's colleague Jane
+    recommended the vendor" writes "Jane" straight into Bob's node, and
+    ``forget()``'s one-time prose-scrub of ``community_reports`` never sees
+    it because it only runs once, at the moment of forgetting, not on every
+    future indexer write. Call this wherever a new description is merged in.
+
+    Whole-word, case-insensitive: matches ``forgotten_names()``'s already-
+    normalised (lowercased, whitespace-collapsed) set. Word boundaries around
+    the full name keep "Ann" from also eating "Anna" -- it cannot catch a
+    genuine same-name collision (a different person who happens to share the
+    name), which is why this is deliberately a substitution, not silent
+    deletion: the receipt stays honest about what "forgotten" can promise.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    gone = forgotten_names()
+    if not gone:
+        return text
+    out = text
+    for name in sorted(gone, key=len, reverse=True):
+        if not name:
+            continue
+        words = [re.escape(w) for w in name.split(" ") if w]
+        if not words:
+            continue
+        pattern = r"\b" + r"\s+".join(words) + r"\b"
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    return out
+
+
 # -- finding ------------------------------------------------------------------
 
 def _people_graph_entry(name: str):

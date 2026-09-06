@@ -103,6 +103,80 @@ _ARTIFACT_BYTES = {
 }
 
 
+# ── Chains -- headroom.md §6.3, Phase 3 ──────────────────────────────────────
+#
+# The sequence Stephen described: "speak, transcribe, reason, render, speak
+# back" -- one stt stage, the resident brain, one image render, one tts
+# stage. `resident` is what plan_chain treats as ALREADY loaded (the D6
+# resident pair, e4b + e2b, §6.3's own "honest resident pair" -- NOT what
+# `plan()` picks from the full catalog() lineup above, which prefers the
+# biggest installed model for interactive_brain/heavy_hitter and is a
+# different question: "what would the ideal lineup be" versus "what is
+# actually running right now that a chain has to work from").
+CHAIN_STAGES = [{"role": "stt"}, {"role": "interactive_brain"},
+                {"role": "image", "units": 1}, {"role": "tts"}]
+
+_RESIDENT_GPU = {
+    "interactive_brain": {"model_id": "gemma4:e4b", "device": "gpu:0",
+                          "vram_mib": 3081},
+    "sidekick": {"model_id": "gemma4:e2b", "device": "gpu:0",
+                "vram_mib": 1811},
+}
+_RESIDENT_CPU = {
+    "interactive_brain": {"model_id": "gemma4:e2b", "device": "cpu",
+                          "vram_mib": 0},
+    "sidekick": {"model_id": "gemma4:e2b", "device": "cpu", "vram_mib": 0},
+}
+
+CHAIN_RESIDENT = {
+    "P1": _RESIDENT_GPU, "P2": _RESIDENT_GPU, "P3": _RESIDENT_GPU,
+    "P4": _RESIDENT_GPU, "P5": _RESIDENT_CPU, "P6": {},
+}
+
+# The two real image footprints Phase 2 measured under the Arbiter's own
+# `image_job` lease, 2026-09-04 -- committed into `SEED_MEASUREMENTS` at
+# `P1_FINGERPRINT` (`residency_catalog.py`) for the reference instance.
+# P2-P6 are DECLARED hardware: the same weights cost the same VRAM on any
+# machine (only the reserve/baseline around them differs, which
+# `plan_chain`'s own budget arithmetic already accounts for per profile) --
+# the identical "carry the P1 measurement across" rule `catalog()` above
+# already applies to every text model's `measured` row, extended here to the
+# two image footprints so a chain fixture on P2-P6 is not forced to treat a
+# real, measured number as `unknown` merely because the measurement ran on a
+# different card.
+IMAGE_FOOTPRINTS = {
+    "z-image-turbo-fp8": dict(
+        modality="image", device="gpu", vram_mib=10453,
+        artifact_bytes=14535245332, load_s=24.52, unit="image",
+        work_s_per_unit=49.6, basis="measured", measured_at="2026-09-04",
+        licence={"name": "Apache License 2.0",
+                "note": "Apache License 2.0 — commercial and private use, "
+                        "modification and redistribution permitted",
+                "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo"},
+        quality_note="turbo: 8 steps, fast"),
+    "sd3.5-medium-fp8": dict(
+        modality="image", device="gpu", vram_mib=10621,
+        artifact_bytes=11638004202, load_s=20.01, unit="image",
+        work_s_per_unit=50.1, basis="measured", measured_at="2026-09-04",
+        licence={"name": "Stability AI Community License",
+                "note": "Stability AI Community License — free below $1M "
+                        "annual revenue; attribution required when "
+                        "redistributed", "url": None},
+        quality_note="30 steps, higher fidelity, slower"),
+}
+
+
+def seed_image_footprints() -> None:
+    """Record the two real image footprints for EVERY fixture profile's own
+    fingerprint. Call this after isolating `rc.store_path` (a test's own
+    `tmp_path` fixture) -- it writes through `record_footprint`, so without
+    isolation it would touch whatever store is live."""
+    for profile in ALL_PROFILES.values():
+        fp_key = rc.profile_fingerprint(profile)
+        for model_id, kwargs in IMAGE_FOOTPRINTS.items():
+            rc.record_footprint(model_id, fp_key, rc.make_footprint(**kwargs))
+
+
 def catalog(profile: dict) -> list:
     """CatalogEntries for the installed set, measured rows carried from P1."""
     seed = rc.SEED_MEASUREMENTS[rc.P1_FINGERPRINT]

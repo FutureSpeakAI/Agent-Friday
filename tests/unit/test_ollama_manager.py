@@ -48,8 +48,16 @@ def mgr():
 class TestRecommendModels:
     """recommend_models is entirely pure: it maps hardware specs to model tiers.
 
+    2026-09-03: rewritten for the Gemma-4-only ladder (e2b/e4b/12b/26b) —
+    Qwen is gone from `model_plan.BRAIN_MODELS`, and this function now
+    DERIVES its thresholds and names from that table live rather than
+    hardcoding its own copy (that duplication was exactly the "scattered
+    choice" that let this file and the KG indexer's default drift apart).
+    Thresholds below are computed the same way the function computes them:
+    ceil(vram_gib + DISPLAY_RESERVE_GIB) for VRAM, min_ram_gib for RAM.
+
     Invariants:
-      * The 'tiny' fallback (qwen3:4b) is ALWAYS present regardless of specs.
+      * The 'tiny' fallback (gemma4:e2b) is ALWAYS present regardless of specs.
       * High VRAM / RAM unlocks progressively larger tiers.
       * The hardware dict is passed directly so we never touch real hardware.
     """
@@ -82,17 +90,17 @@ class TestRecommendModels:
         assert "medium" not in tiers
         assert "large" not in tiers
 
-    # Small tier (vram>=6 OR ram>=16) ────────────────────────────────────────-
+    # Small tier (gemma4:e4b, vram>=6 OR ram>=16) ────────────────────────────-
 
-    def test_small_unlocked_by_vram_10(self, mgr):
-        """10, not 6. qwen3:8b needs a 9.07 GiB card by model_plan's arithmetic
-        — its own 6.57 GiB footprint plus the 2.5 GiB display reserve. The old
-        threshold offered it to a 6 GB card that cannot hold it."""
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=10, ram_gb=0))
+    def test_small_unlocked_by_vram_6(self, mgr):
+        """gemma4:e4b needs a 5.51 GiB card by model_plan's arithmetic — its
+        own 3.01 GiB measured footprint plus the 2.5 GiB display reserve,
+        rounded up to 6."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=6, ram_gb=0))
         assert any(r["tier"] == "small" for r in recs)
 
     def test_small_not_offered_to_a_card_that_cannot_hold_it(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=6, ram_gb=0))
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=5, ram_gb=0))
         assert not any(r["tier"] == "small" for r in recs)
 
     def test_small_unlocked_by_ram_16(self, mgr):
@@ -103,20 +111,20 @@ class TestRecommendModels:
         recs = mgr.recommend_models(hardware=self._hw(vram_gb=5, ram_gb=15))
         assert not any(r["tier"] == "small" for r in recs)
 
-    # Medium tier (vram>=8 OR ram>=32) ───────────────────────────────────────-
+    # Medium tier (gemma4:12b, vram>=11 OR ram>=24) ──────────────────────────-
 
-    def test_medium_unlocked_by_vram_13(self, mgr):
-        """13, not 8. qwen3:14b needs a 12.84 GiB card. Recommending it at 8
-        was the most overclaiming row in this table."""
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=13, ram_gb=0))
+    def test_medium_unlocked_by_vram_11(self, mgr):
+        """gemma4:12b needs a 10.04 GiB card (7.54 GiB measured footprint +
+        2.5 GiB display reserve), rounded up to 11."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=11, ram_gb=0))
         assert any(r["tier"] == "medium" for r in recs)
 
-    def test_medium_not_offered_to_an_eight_gig_card(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=8, ram_gb=0))
+    def test_medium_not_offered_to_a_ten_gig_card(self, mgr):
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=10, ram_gb=0))
         assert not any(r["tier"] == "medium" for r in recs)
 
     def test_every_vram_suggestion_actually_fits_that_card(self, mgr):
-        """The invariant behind both fixes, checked against the one ladder.
+        """The invariant behind the fix, checked against the one ladder.
 
         A suggestion the card cannot hold is worse than no suggestion: the user
         downloads gigabytes and gets a model that spills to the processor, with
@@ -124,7 +132,7 @@ class TestRecommendModels:
         """
         from agent_friday.services import model_plan as mp
         footprint = {m["id"]: m["vram_gib"] for m in mp.BRAIN_MODELS}
-        for vram in (0, 4, 6, 8, 10, 12, 13, 16, 24, 32, 48):
+        for vram in (0, 4, 6, 8, 11, 16, 20, 24, 32, 48):
             for r in mgr.recommend_models(hardware=self._hw(vram_gb=vram, ram_gb=0)):
                 need = footprint.get(r["name"])
                 # The `tiny` row is the unconditional floor, the same role
@@ -137,26 +145,30 @@ class TestRecommendModels:
                     f"{r['name']} suggested for a {vram} GiB card but needs "
                     f"{need + mp.DISPLAY_RESERVE_GIB:.2f} GiB")
 
-    def test_medium_unlocked_by_ram_32(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=32))
+    def test_medium_unlocked_by_ram_24(self, mgr):
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=24))
         assert any(r["tier"] == "medium" for r in recs)
 
     def test_medium_not_unlocked_below_threshold(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=7, ram_gb=31))
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=10, ram_gb=23))
         assert not any(r["tier"] == "medium" for r in recs)
 
-    # Large tier (vram>=24 OR ram>=64) ───────────────────────────────────────-
+    # Large tier (gemma4:26b, vram>=20 OR ram>=48) ───────────────────────────-
 
-    def test_large_unlocked_by_vram_24(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=24, ram_gb=0))
+    def test_large_unlocked_by_vram_20(self, mgr):
+        """gemma4:26b's simple-ladder figure is CONSERVATIVE (full residency,
+        16.99 GiB — the model's real measured behaviour partially offloads to
+        RAM, which this planner doesn't model), so its threshold is a 20 GiB
+        card, not a 24 GiB one."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=20, ram_gb=0))
         assert any(r["tier"] == "large" for r in recs)
 
-    def test_large_unlocked_by_ram_64(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=64))
+    def test_large_unlocked_by_ram_48(self, mgr):
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=48))
         assert any(r["tier"] == "large" for r in recs)
 
     def test_large_not_unlocked_below_threshold(self, mgr):
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=23, ram_gb=63))
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=19, ram_gb=47))
         assert not any(r["tier"] == "large" for r in recs)
 
     # Full unlock ────────────────────────────────────────────────────────────-
@@ -180,23 +192,31 @@ class TestRecommendModels:
         recs = mgr.recommend_models(hardware=self._hw(0, 0))
         assert isinstance(recs, list)
 
+    def test_no_qwen_anywhere_in_a_recommendation(self, mgr):
+        """2026-09-03 product decision: Qwen is not shipped, ever, at any
+        hardware tier — only Gemma 4 (a placeholder family, Apache 2.0, no
+        licensing entanglement, until FutureSpeak's own model replaces it)."""
+        for vram, ram in ((0, 0), (6, 0), (11, 0), (20, 0), (48, 128)):
+            for r in mgr.recommend_models(hardware=self._hw(vram, ram)):
+                assert "qwen" not in r["name"].lower()
+
     def test_specific_model_names_present_on_large(self, mgr):
         recs = mgr.recommend_models(hardware=self._hw(vram_gb=24, ram_gb=64))
         names = self._names(recs)
-        assert "qwen3:32b" in names
-        assert "qwen3:14b" in names
-        assert "qwen3:8b" in names
-        assert "qwen3:4b" in names
+        assert "gemma4:26b" in names
+        assert "gemma4:12b" in names
+        assert "gemma4:e4b" in names
+        assert "gemma4:e2b" in names
 
-    def test_exact_threshold_vram_24_unlocks_large(self, mgr):
-        """Boundary: exactly 24 GB VRAM must unlock the large tier."""
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=24, ram_gb=0))
-        assert any(r["name"] == "qwen3:32b" for r in recs)
+    def test_exact_threshold_vram_20_unlocks_large(self, mgr):
+        """Boundary: exactly 20 GiB VRAM must unlock the large tier."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=20, ram_gb=0))
+        assert any(r["name"] == "gemma4:26b" for r in recs)
 
-    def test_exact_threshold_ram_64_unlocks_large(self, mgr):
-        """Boundary: exactly 64 GB RAM must unlock the large tier."""
-        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=64))
-        assert any(r["name"] == "qwen3:32b" for r in recs)
+    def test_exact_threshold_ram_48_unlocks_large(self, mgr):
+        """Boundary: exactly 48 GB RAM must unlock the large tier."""
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=48))
+        assert any(r["name"] == "gemma4:26b" for r in recs)
 
     def test_zero_hardware_returns_only_tiny(self, mgr):
         recs = mgr.recommend_models(hardware=self._hw(0, 0))
@@ -207,8 +227,41 @@ class TestRecommendModels:
         """Passing hardware= must bypass detect_hardware entirely."""
         # If detect_hardware ran it might read real system data.  Ensure the
         # returned tiers match what the supplied dict implies.
-        recs = mgr.recommend_models(hardware={"vram_gb": 8, "ram_gb": 32})
+        recs = mgr.recommend_models(hardware={"vram_gb": 11, "ram_gb": 24})
         assert any(r["tier"] == "medium" for r in recs)
+
+    # ── HR15 (headroom.md) — this is a THIN READER now, not a second ladder ──
+
+    def test_every_suggested_name_is_a_tool_capable_brain_model(self, mgr):
+        """Every name this function can ever return must come from
+        `model_plan.BRAIN_MODELS` and be tool-capable — the exact property
+        that was missing when this table was its own hand-typed qwen3-only
+        list: `_pickable()`'s tool gate is the SAME gate `plan()` applies
+        before a model is ever chosen, and a suggestion that fails it would
+        recommend something Friday refuses to seat."""
+        from agent_friday.services import model_plan as mp
+        capable_ids = {m["id"] for m in mp.BRAIN_MODELS if m["tools"]}
+        for vram in (0, 4, 8, 12, 16, 24, 32, 48):
+            for ram in (0, 8, 16, 32, 64, 128):
+                for r in mgr.recommend_models(hardware=self._hw(vram, ram)):
+                    assert r["name"] in capable_ids, (
+                        f"{r['name']!r} is not a tool-capable row in "
+                        f"BRAIN_MODELS")
+
+    def test_reads_brain_models_live_not_a_copy(self, mgr, monkeypatch):
+        """The actual HR15 property: change the planner's own ladder and this
+        function's output changes with it, unprompted — proof there is no
+        second, independently-typed table to fall out of sync again."""
+        from agent_friday.services import model_plan as mp
+        fake = tuple(dict(m) for m in mp.BRAIN_MODELS) + (
+            {"id": "made-up:1b", "gib": 0.5, "min_ram_gib": 1, "tools": True,
+             "vram_gib": 0.5, "basis": "test", "note": "a row that only "
+             "exists inside this test"},)
+        monkeypatch.setattr(mp, "BRAIN_MODELS", fake)
+        recs = mgr.recommend_models(hardware=self._hw(vram_gb=0, ram_gb=1))
+        assert any(r["name"] == "made-up:1b" for r in recs), (
+            "recommend_models did not pick up a new BRAIN_MODELS row — it "
+            "is reading a copy, not the live table")
 
 
 # ── invalidate_cache ──────────────────────────────────────────────────────────

@@ -82,7 +82,7 @@ ROUTE_MODULES = [
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
-    'learning', 'liveness', 'messages',
+    'learning', 'liveness', 'memory_proposals', 'messages',
     'news', 'notifications', 'orchestrator', 'ownership',
     'persona', 'platform', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'startup_report', 'tasks', 'todos',
     'work_plan',
@@ -318,10 +318,20 @@ if not _TESTING:
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
-        from agent_friday.services.credential_store import bootstrap_provider_env
-        _loaded_keys = bootstrap_provider_env()
-        if _loaded_keys:
-            print(f"  Provider keys: loaded {_loaded_keys} from encrypted store")
+        from agent_friday.services.credential_store import bootstrap_provider_env_detail
+        _pk_detail = bootstrap_provider_env_detail()
+        # CORRECTION (F68, 2026-09-04): this used to print only the bare
+        # success count, gated on it being nonzero -- so a run where every
+        # stored key failed to decrypt (Stephen's own real situation, 3 for
+        # 3) printed NOTHING at all, the least visible way this could fail.
+        # Gate on candidates existing at all, not on the count that succeeded.
+        if _pk_detail["candidates"]:
+            _msg = (f"  Provider keys: {_pk_detail['loaded']}/"
+                    f"{_pk_detail['candidates']} decrypted from encrypted store")
+            if _pk_detail["unreadable"]:
+                _msg += (f" -- UNREADABLE: {', '.join(_pk_detail['unreadable'])} "
+                         f"(reconnect via Settings)")
+            print(_msg)
     except Exception as _pk_err:
         print(f"  Provider keys: skipped ({_pk_err})")
 
@@ -398,6 +408,19 @@ if not _TESTING:
     # FRIDAY_NO_ARBITER=1.
     if os.environ.get("FRIDAY_NO_ARBITER") != "1":
         threading.Thread(target=_residency_boot, daemon=True).start()
+
+    # Machine monitor (docs/design/headroom.md §4.3): read-only telemetry --
+    # GPU utilisation/power/clocks, RAM available, free space on the SYSTEM
+    # volume, foreign VRAM occupancy. Samples at boot, then 60s at rest / 5s
+    # under a held lease. Boots independently of the Arbiter (it still wants
+    # a machine reading under FRIDAY_NO_ARBITER=1) and is itself inert under
+    # FRIDAY_TESTING=1 (start_loop()'s own guard, matching every other
+    # background loop here).
+    try:
+        from agent_friday.services import machine_monitor as _mm
+        _mm.start_loop()
+    except Exception as _mm_err:
+        print(f"  Machine monitor: unavailable ({_mm_err})")
 
 
 def _resolve_bind_port():
@@ -854,23 +877,63 @@ if __name__ == '__main__':
             print("  Boot guard: SAFE MODE — self-modification disabled, "
                   "nothing will be auto-restored")
         elif _bg.failing_to_boot():
+            # Read the count BEFORE restoring: restore_known_good() clears it so
+            # the next start is a clean chance, and reading after printed 0.
+            _fails = _bg.status().get("consecutive_failed_boots")
             _res = _bg.restore_known_good()
-            print("  Boot guard: %d failed starts — restored last "
-                  "proven-bootable state (%s)"
-                  % (_bg.status().get("consecutive_failed_boots"),
-                     ", ".join(_res.get("restored") or []) or "nothing to restore"))
+            if _res.get("skipped"):
+                print("  Boot guard: %s failed starts — NOT rolling back again. %s"
+                      % (_fails, _res["skipped"]))
+            elif _res.get("ok"):
+                print("  Boot guard: %s failed starts — rolled back to the last "
+                      "proven-bootable state (%s)"
+                      % (_fails,
+                         ", ".join(_res.get("restored") or []) or "nothing to restore"))
+                # Said out loud because it is the difference between a mechanism
+                # and a claim: this process imported its modules before the
+                # rollback ran, so a source rollback lands on the next start.
+                print("  Boot guard: %s" % _res.get("takes_effect", ""))
+                print("  Boot guard: the state that was replaced is kept at %s"
+                      % _res.get("kept_for_inspection"))
+            else:
+                print("  Boot guard: %s failed starts — could NOT roll back: %s"
+                      % (_fails, _res.get("error")))
         _bg.mark_boot_started()
 
         def _confirm_boot():
+            # gauntlet-2026-09-03 F55: this used to be a bare 20-second sleep,
+            # then mark_boot_succeeded() unconditionally -- a fixed timer
+            # racing app.run(), not a check that anything was ever served.
+            # A slow-starting or silently-broken process (every route 500s,
+            # startup work still running past 20s) got marked known-good
+            # anyway, contradicting this module's own stated bar: "a state
+            # that has actually completed a startup and then served a
+            # request." Now makes a real, local, self-directed request to
+            # its own /api/health (boot_guard.confirm_boot_health, with
+            # retry/backoff) and only proceeds on a genuine 2xx -- loopback
+            # is always auth-trusted (core.check_auth), so this needs no
+            # credentials. confirm_boot_health() (not just wait_for_health())
+            # so the GATE itself -- mark_boot_succeeded()/snapshot_known_good()
+            # only running on a real 2xx -- is what this thread calls, not an
+            # inlined if/else a probe against wait_for_health() alone cannot
+            # see (weak-probe audit, 2026-09-05).
             import time as _t
             _t.sleep(20)
             try:
-                _bg.mark_boot_succeeded()
-                _bg.snapshot_known_good()
-                print("  Boot guard: this state has now booted and is the "
-                      "known-good fallback")
+                _served = _bg.confirm_boot_health(
+                    f"http://127.0.0.1:{_port}/api/health")
             except Exception as _e:
                 print(f"  Boot guard: could not record a good boot ({_e})")
+                return
+            if not _served:
+                print("  Boot guard: 20s+ elapsed and this process never "
+                      "answered its own /api/health -- NOT marking this "
+                      "boot known-good. A future failed-start count will "
+                      "reflect this if the process is also not serving "
+                      "real traffic.")
+                return
+            print("  Boot guard: this state has now booted, answered its "
+                  "own health check, and is the known-good fallback")
         import threading as _th
         _th.Thread(target=_confirm_boot, daemon=True).start()
     except Exception as _bg_err:

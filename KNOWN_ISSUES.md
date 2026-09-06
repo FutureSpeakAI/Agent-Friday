@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-08-29, for v5.6.6.**
+**As of 2026-09-05, for v5.12.0.**
 
 This file lists what is broken, what is unverified, and what we do not know. It is
 maintained because a defect you can read about is cheaper than one you discover, and
@@ -723,13 +723,100 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   present. Not chased to a cause. The consequence is the one §1 opens with: a diagnostic
   you believe is being recorded and is not. Prefer the structured logger or the response
   payload over `print()` for anything you intend to rely on later.
-- **The `egress_mode` setting is read by nothing.** Settings → Privacy → EGRESS GATE
-  (Audit/Enforce) is a dead control. The direction is safe — the gate always enforces —
-  but a privacy toggle that does nothing is a credibility problem regardless.
-- **Two safety gates have no callers**: `boot_guard.check_self_edit()` and
-  `check_scope()`.
-- **The model picker shows a hardcoded list of three models** while hundreds may be
-  available.
+- ~~**The `egress_mode` setting is read by nothing.**~~ **Fixed 2026-09-03.** The
+  EGRESS GATE / Cloud Mode control is removed from both `index.html` and
+  `ui_parts/app.html` (docs/design/security-boundary.md #18.2 already specified
+  the disposition: implement audit-only for real, or remove — the control had no
+  constituency). The same pass fixed `ui_parts/app.html`'s Local-Only Mode toggle,
+  which wrote a top-level `vault_local_only` the server has never read (only the
+  nested `model_routing.vault_local_only`), and added
+  `scripts/check_settings_readers.py` (wired into the pytest suite as
+  `tests/unit/test_settings_readers_check.py`) so a settings control writing a key
+  nothing reads fails a test instead of shipping silently.
+- ~~**Two safety gates have no callers**: `boot_guard.check_self_edit()` and
+  `check_scope()`.~~ **Fixed 2026-09-03** (`fix/boot-guard-rollback`, merged into
+  v5.11.0). The self-edit tool these gates were written for is `code_apply`
+  (`routes/code.py`); both are now called from there, refusing whole-plan (409)
+  rather than half-applying around a skipped file. The same change widened
+  `_self_editable_paths()` / `BOOT_CRITICAL` coverage from two files
+  (`workspace_studio`, `settings.json` — neither capable of breaking a boot) to
+  the real package root and `index.html`, and made snapshot/restore
+  staged-and-swapped with a completion marker, so a crash mid-snapshot can no
+  longer leave a corrupt restore point.
+- **`settings.json`'s `knowledge_graph` block was silently discarded on every
+  read.** Fixed 2026-09-03 — same defect class as `egress_mode` above, found while
+  fixing the conversation-memory indexer bug below: `knowledge_graph` was never
+  declared in `core.DEFAULT_SETTINGS`, so `_load_settings_raw()`'s whitelist
+  (`core/__init__.py:2002`) dropped it from every read while `_save_settings()`
+  happily persisted it to disk. Settings → Knowledge's toggles (which sources to
+  index, `indexing_mode`, `power_indexer`, `nightly_reindex`) all showed "Saved"
+  and reverted to factory defaults on the next load. One line added to
+  `DEFAULT_SETTINGS`; `services/knowledge_graph/__init__.py:kg_settings()` already
+  did the right thing once it could see what was saved.
+- **The conversation source has never indexed a single turn into the knowledge
+  graph.** Fixed 2026-09-03. `services/knowledge_graph/indexer.py`'s
+  `_conversation_chunks()` called `cm.recent_turns(limit=...)` —
+  `ConversationMemory` has never had that method, only `recent(n=..., roles=...)`
+  — and read a `content` field that `recent()`'s rows have never carried (they
+  carry `text`). A bare `except Exception: return []` turned the resulting
+  `AttributeError` into an empty list indistinguishable from "no conversations
+  yet," on every indexing pass, since the feature shipped. Fixed by calling the
+  real method with its real field name; the bare except in both this function and
+  the structurally identical `_cognitive_chunks()` now prints what failed instead
+  of swallowing it.
+- **`_rss_results()`'s 20-second feed timeout was decorative — the pool
+  shutdown underneath it had none.** Found 2026-09-04 investigating the
+  server crash below. `_parse_feed()` handed the bare URL to
+  `feedparser.parse()`, which has no timeout of its own, so a feed server
+  that accepted the connection and then never finished sending blocked that
+  worker forever. `_rss_results()`'s `as_completed(futures, timeout=20)`
+  looked like a real ceiling on the whole fetch, but the `with
+  ThreadPoolExecutor(...) as pool:` block's own `__exit__` called
+  `pool.shutdown(wait=True)` unconditionally on the way out — an unbounded
+  join that ran regardless of whether the 20s timeout upstream had already
+  given up. Same species of bug as the settings toggles above: a control
+  that visibly bounds something and doesn't. Fixed:
+  `services/news_engine.py`'s `_parse_feed()` now fetches via
+  `urllib.request.urlopen(..., timeout=_RSS_FETCH_TIMEOUT_S)` (8s default,
+  overridable per call) instead of handing the URL straight to feedparser;
+  `_rss_results()` manages the pool explicitly and shuts it down with
+  `wait=False, cancel_futures=True` so a wedged worker is abandoned rather
+  than blocking the caller. Proven red→green→red against a real local
+  socket that accepts a connection and never answers
+  (`tests/unit/test_news_engine_feed_timeout.py`) — the fix genuinely
+  bounds the call; the old code genuinely didn't.
+- **The tray watchdog notices a dead server and tells no one.**
+  `friday_tray.py`'s `_watchdog()` polls every 5 seconds and correctly
+  detected the crash below within its normal cadence — and did exactly one
+  thing about it: relabelled its own right-click menu. The server was down
+  26 minutes before anyone knew; an unrelated hourly port check outside the
+  app is what actually caught it, not anything in Friday. Fixed
+  2026-09-04: the watchdog now calls `self.icon.notify(...)` (a native OS
+  toast via `pystray`) specifically on the running→dead transition — a
+  deliberate Quit/Restart already sets `self.running = False` synchronously
+  before the watchdog's next poll, so this does not fire for those, only
+  for an unexpected death. Deliberately does **not** auto-restart: a crash
+  loop can mask a repeating fault, and whether Friday resurrects herself is
+  a product decision, not the watchdog's to make unasked. Notifying is not
+  that decision; it's just telling him. Tested in
+  `tests/unit/test_tray_crash_notification.py`, red→green→red against the
+  pre-fix code.
+- **Five settings controls persist a value and read it back only to redraw
+  themselves — nothing else in the app consumes them.** Found 2026-09-03 while
+  calibrating the settings-readers checker above; not fixed, since each needs a
+  product decision about what it should actually do:
+  - `stream_responses` ("Stream tokens as they arrive") — no code decides
+    whether a response streams based on this key.
+  - `auto_open_chat`, `compact_mode` (Settings → Interface toggles), `scene_name`
+    (3D scene picker), and `startup_workspace` — each is written and read back
+    only inside its own settings-panel component (`index.html` ~31432-31475);
+    nothing elsewhere in either HTML file or in `src/` references any of them.
+- ~~**The model picker shows a hardcoded list of three models** while hundreds may be
+  available.~~ **Not current.** The picker is driven entirely by the backend catalog
+  (`GET /api/models`, `index.html:23778`'s own comment), matching
+  `docs/CONFIGURATION.md`'s documented behavior. Found stale reconciling this file
+  against the 2026-09-03 gauntlet audit's claim corpus; no record of when the
+  underlying claim stopped being true.
 - **Settings keys absent from `DEFAULT_SETTINGS` are silently discarded on save**, and
   the API returns success. Hit three times so far.
 - **The sampling progress bar never advances** during image generation.
@@ -739,8 +826,21 @@ does so in 358 ms on CPU, so the model side is not the obstacle.
   worker thread starts, so a fast-failing step can retry past its budget; and an exhausted
   retry logs but never flips status, so a step that shipped nothing reports `completed`.
 - **`ui_parts/app.html` is a hand-maintained mirror of `index.html` that nothing builds
-  from.** `index.html` is the source of truth — it is a strict superset, containing 17
-  components the mirror lacks. The mirror is kept in sync by hand and will drift.
+  from.** `index.html` is the source of truth — it is a strict superset. The gap was
+  never actually 17 (re-measured 2026-09-04: 11 at the commit that first wrote this
+  entry, 14 today — the mirror is drifting wider, not staying at a fixed count, so
+  don't trust a specific number here without re-measuring). The highest-severity
+  components currently missing from the mirror: `ConsentFlow` (the entire first-run
+  onboarding wizard, including vault passphrase collection), `SettingsTabCosts` (the
+  cost/budget panel — the same one that was previously deleted for two months and
+  cost real money before being restored), `ConversationBar` and `QuickSwitch` (core,
+  constantly-visible chat chrome). The divergence itself is still real and still
+  growing — **but as of 2026-08-24, `src/agent_friday/ui/build_ui.py` refuses to
+  write output that drops any top-level component the existing `index.html`
+  defines** (a REGRESSION GUARD predating this entry), so a build regenerating
+  `index.html` from `app.html` today fails loudly and requires `--force` rather
+  than silently losing these components. The risk that guard removes is real
+  evidence the drift matters; it is not evidence the drift is safe to leave.
 - **Chain seat overrides are advisory**, not enforced against the capability router.
 
 ### Seat contention
@@ -809,6 +909,49 @@ Listed separately from "broken" on purpose. These are not claims that things wor
   explains the failures after it landed. Deaths before it had a different cause that this
   investigation does not reach, and stderr was discarded in both cases, so the two failure
   modes are indistinguishable in the surviving evidence.
+- **What actually recursed at 08:13:36 on 2026-09-04.** `server.py` died with
+  `Windows fatal exception: stack overflow` — a genuine Windows SEH trap
+  (`faulthandler.enable()`, `hang_watchdog.py`), not a hang. The crashed
+  thread's own frame is unrecoverable (`Thread 0x00000000 <no Python
+  frame>`), so no line can be named with certainty. Two things are
+  established, not guessed: first, the hypothesis that this was
+  `knowledge_graph.indexing_mode=local` retrying against the machine's
+  missing local Gemma model is **ruled out**, not merely unconfirmed —
+  `_resolve_model`/`_available_local_model` is a straight-line lookup (list
+  installed models, check a set, return) with one fail-fast check and no
+  retry or self-call anywhere in the path, and nothing was scheduled to run
+  Tier B at that hour. Second, the crash dump caught
+  `news_engine._news_archiver_loop` mid-`ThreadPoolExecutor.shutdown` →
+  `join` (`news_engine.py:543`, before the same-day fix above), with a
+  sibling worker mid-`feedparser.parse()` → raw socket read
+  (`news_engine.py:515`) at the exact moment of the trap, and `friday.log`
+  /`orbs.jsonl`/`tasks.jsonl` all go silent at 08:01–08:03 and stay silent
+  until the crash — a background thread, not anything task-tracked. Leading
+  hypothesis, not a conclusion: a malformed or hostile feed hit deep/nested
+  XML parsing below the Python frame layer (expat or a C accelerator
+  underneath feedparser), which is exactly the shape that produces a raw
+  SEH overflow with **no Python frame** — ordinary Python-level recursion
+  hits `sys.getrecursionlimit()` first and raises a catchable
+  `RecursionError`, which this was not. A hang alone (the bug fixed above)
+  does not overflow a stack; it only explains why a worker could still be
+  alive, blocking, at that moment. Which feed was not chased — that needs
+  testing the archiver's feed list individually and is Stephen's call
+  whether to spend the time, not something to go hunting for alone. If it
+  recurs, this write-up plus a fresh `server_stderr.log` tail is what makes
+  the second one diagnosable in minutes instead of hours.
+- **The purpose-built hang watchdog did not catch its own crash.**
+  `hang_watchdog.py` installs two mechanisms: `faulthandler.enable()` (a
+  fatal-signal trap) and `faulthandler.dump_traceback_later()` re-armed on
+  every heartbeat (a timeout backstop for a thread that's merely stuck, not
+  crashed — see its own header, "FRIDAY HANG WATCHDOG (faulthandler
+  backstop)"). The 2026-09-04 crash was caught by the first mechanism only;
+  the backstop's own distinct header never appeared in the log, meaning the
+  hang-detection path built specifically for a stuck-thread scenario like
+  the news-archiver wedge above was blind to it — the fatal trap fired
+  first, or the backstop's own timeout window hadn't elapsed yet. Not
+  chased further. Worth carrying forward: the tool built to catch exactly
+  this class of failure didn't see it, and the next silent failure may be
+  caught by nothing at all.
 
 ---
 
@@ -836,46 +979,33 @@ not yet done.
 
 The egress gate itself is strong, and narrower than the README implies. It covers
 Anthropic, OpenAI-compatible providers including OpenRouter, and Gemini. It does **not**
-cover: web search queries (sent to Brave or DuckDuckGo), Firecrawl, ElevenLabs TTS text,
-images and audio sent to Gemini, Google Calendar event content, or a content hash sent to
+cover: web search queries (sent to Brave or DuckDuckGo), ElevenLabs TTS text, images and
+audio sent to Gemini, Google Calendar event content, or a content hash sent to
 `freetsa.org`. Those are real third parties receiving user text, and they are outside the
-guarantee as written.
+guarantee as written. **Firecrawl is a genuinely open question, not a confirmed gap**: the
+2026-09-03 gauntlet audit's round-2 re-verification found `web_fetch.py` routes Firecrawl
+fetches through `register_public_text`, but that marks *inbound* fetched text as
+gate-exempt for later classification — it is not obviously the same claim as "the outbound
+Firecrawl call itself is gated." Nobody has independently resolved which of those two
+things is actually true; treat Firecrawl's status here as unverified, not as either
+covered or uncovered.
 
-### The screen capture ignores "Local only", and that one IS undisclosed
+### ~~The screen capture ignores "Local only", and that one IS undisclosed~~ Fixed 2026-08-23
 
-The line above ("images and audio sent to Gemini") covers the *fact* of the send. It does
-not cover **when** it happens, and that is the part nobody has been told.
+`routes/chat.py`'s vision path used to fire on any attached image with no mode check, no
+vault gate, and no egress-gate call — so with routing set to **Local only**, attaching an
+image sent a full screenshot of the user's desktop to Google, contradicting that setting's
+own promise. The local alternative (`residency_arbiter._spawn` passing `--mmproj` so
+`gemma4:12b` describes an image on-device) existed by 2026-08-23 but `routes/chat.py`
+didn't prefer it yet.
 
-`routes/chat.py:296` fires the vision path on **any** attached image:
-
-```python
-screenshot_b64 = data.get('image') or data.get('screenshot') or None
-if screenshot_b64 and (include_vision or data.get('image') is not None):
-    ...  gclient.models.generate_content(model='gemini-2.5-flash', ...)
-```
-
-It runs at line 296. `model_routing` is not read until line 421. There is no mode check,
-no vault gate, and no egress-gate call on this path — the block's own comment says image
-bytes cannot be text-classified, which is true, and then concludes "there is nothing to
-gate here", which does not follow. The *decision to send at all* is gateable even when
-the bytes are not classifiable.
-
-So: with routing set to **Local only** — whose help text in `routes/intelligence.py` reads
-*"Never leaves the machine. If a local model cannot answer, I say so rather than using the
-cloud"* — attaching an image sends a **screenshot of the user's desktop** to Google.
-A screenshot is not a bounded payload. It contains whatever was on screen: the vault, a
-password manager, a terminal, another person's message.
-
-This is a user-facing control that states a guarantee the code does not keep. It is a
-worse failure than an undocumented egress, because the user has actively chosen the
-setting that promises it will not happen.
-
-**The local alternative now exists.** As of 2026-08-23 `residency_arbiter._spawn` passes
-`--mmproj` when the extracted projector is present, so `gemma4:12b` describes an image
-on-device — verified end to end, not by inspecting the command line: two images, two
-colours, correct answers both times ("Red background, circle shape." / "Blue background,
-circle shape."), `finish_reason: stop`. What is missing is the wiring in `routes/chat.py`
-to prefer that seat over Gemini when the mode says local.
+**Now fixed and verified in the current tree** (commit `4607bd9`; re-verified reading
+`routes/chat.py` directly on 2026-09-05): `_prefer_local` gates on `model_routing.mode` —
+`local_only`/`local_preferred` try `local_vision.describe()` first, and `local_only`
+specifically withholds the image (`screenshot_b64 = None`) rather than falling through to
+Gemini if local vision fails. This entry stayed in the "still broken" section for two
+weeks after the fix landed because nobody moved it — a live example of exactly the doc-rot
+this file exists to prevent, caught reconciling against the 2026-09-03 gauntlet audit.
 
 ---
 

@@ -357,6 +357,7 @@ SIGNUP_URLS = {
     "xai":         "https://console.x.ai",
     "perplexity":  "https://www.perplexity.ai/settings/api",
     "cohere":      "https://dashboard.cohere.com/api-keys",
+    "kie":         "https://kie.ai/api-key",
 }
 
 
@@ -410,7 +411,7 @@ BUILTIN_EXTRA_PROVIDERS = [
                        "X-Title": "Agent Friday"},
         features={"fallback_models_param": True, "usage_accounting": True,
                   "keyless_discovery": True, "aggregator": True,
-                  "streaming": True,
+                  "streaming": True, "prompt_caching": True,
                   "model_suffixes": [":free", ":beta", ":nitro", ":floor",
                                       ":thinking"]},
         # The Auto Router arrives in the live catalog as a bare id among ~400

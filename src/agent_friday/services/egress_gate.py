@@ -174,6 +174,37 @@ def _is_cloud(provider: str) -> bool:
     return not is_local_provider(provider)
 
 
+# ── Unrestricted cloud mode ─────────────────────────────────────────────────
+# Stephen's explicit instruction, 2026-09-03: "cloud only mode means no
+# privacy safeguards, Friday operates completely with cloud models and no
+# local inference. this mode must be in the app. when active, no feature or
+# data is held back from the cloud."
+#
+# This is a real, separate flag — NOT the pre-existing `model_routing.mode:
+# "cloud_only"`, which has always meant provider ROUTING PREFERENCE only
+# (which provider gets first dibs) and has never touched the gate; the two
+# are easy to conflate by name, so this one is spelled out differently.
+# `model_routing.unrestricted_cloud` defaults to False and is read fresh
+# every call, never cached — a setting this consequential must never be
+# stale across a toggle.
+_UNRESTRICTED_KEY = "unrestricted_cloud"
+
+
+def is_unrestricted_cloud() -> bool:
+    """True when Stephen has explicitly turned off every privacy safeguard.
+
+    Default False. Read failures fail CLOSED (safeguards stay on) — the
+    inverse of every other fail-open risk in this module, because this flag
+    is the one thing capable of turning EVERY other protection off at once.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        cfg = (_load_settings() or {}).get("model_routing") or {}
+        return bool(cfg.get(_UNRESTRICTED_KEY, False))
+    except Exception:
+        return False
+
+
 def _classify_cloud(text: str) -> int:
     """Classify content for cloud egress.
 
@@ -702,6 +733,21 @@ def _gate_text_span(text: str, provider: str, field: str,
     if not text or not isinstance(text, str):
         return text
 
+    if is_unrestricted_cloud():
+        # Stephen's explicit instruction, 2026-09-03: "cloud only mode means
+        # no privacy safeguards ... when active, no feature or data is held
+        # back from the cloud." Off by default (see is_unrestricted_cloud).
+        # Deliberately ahead of the never-send floor below — "no data is
+        # held back" was stated in exactly those terms, not "except the
+        # watchlist". This is the ONLY bypass of that floor anywhere in the
+        # codebase; every other caller of the never-send check is untouched.
+        # Still logged, same as every other verdict — a permissive posture
+        # is not a silent one (B3: nothing goes quiet).
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             "unrestricted cloud mode — gating bypassed (never-send list "
+             "included), tier classification skipped", log_path)
+        return text
+
     # ── §5.3 the never-list: the floor, and it moves for nothing ──
     # Found by the probe battery on 2026-08-17, before this layer ever shipped:
     # the never-send check originally lived inside the judgment appeal, so with
@@ -842,41 +888,50 @@ def _gate_messages(messages: list, provider: str,
         if not isinstance(msg, dict):
             gated.append(msg)
             continue
-        if "content" not in msg:
-            gated.append(msg)
-            continue
-        content = msg["content"]
-        if isinstance(content, str):
-            _g = _gate_text(content, provider, f"message[{i}].content", log_path)
-            if content and not _g:
-                # The Anthropic API rejects empty message content ("all messages
-                # must have non-empty content"), turning a withheld turn into a
-                # hard 400 for the whole call. Substitute a marker the model can
-                # act on — it still sees NONE of the withheld content.
-                _g = _MESSAGE_WITHHELD
-            gated.append({**msg, "content": _g})
-        elif isinstance(content, list):
-            new_parts = []
-            for j, part in enumerate(content):
-                if isinstance(part, dict) and part.get("type") == "text":
-                    new_parts.append({
-                        **part,
-                        "text": _gate_text(
-                            part.get("text", ""), provider,
-                            f"message[{i}].content[{j}].text", log_path,
-                        ),
-                    })
-                elif isinstance(part, dict) and part.get("type") == "tool_result":
-                    new_parts.append(_gate_tool_result(
-                        part, provider, f"message[{i}].content[{j}]", log_path))
-                elif isinstance(part, dict) and part.get("type") == "tool_use":
-                    new_parts.append(_gate_tool_use(
-                        part, provider, f"message[{i}].content[{j}]", log_path))
-                else:
-                    new_parts.append(part)
-            gated.append({**msg, "content": new_parts})
-        else:
-            gated.append(msg)
+        out = msg
+        if "content" in msg:
+            content = msg["content"]
+            if isinstance(content, str):
+                _g = _gate_text(content, provider, f"message[{i}].content", log_path)
+                if content and not _g:
+                    # The Anthropic API rejects empty message content ("all messages
+                    # must have non-empty content"), turning a withheld turn into a
+                    # hard 400 for the whole call. Substitute a marker the model can
+                    # act on — it still sees NONE of the withheld content.
+                    _g = _MESSAGE_WITHHELD
+                out = {**out, "content": _g}
+            elif isinstance(content, list):
+                new_parts = []
+                for j, part in enumerate(content):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        new_parts.append({
+                            **part,
+                            "text": _gate_text(
+                                part.get("text", ""), provider,
+                                f"message[{i}].content[{j}].text", log_path,
+                            ),
+                        })
+                    elif isinstance(part, dict) and part.get("type") == "tool_result":
+                        new_parts.append(_gate_tool_result(
+                            part, provider, f"message[{i}].content[{j}]", log_path))
+                    elif isinstance(part, dict) and part.get("type") == "tool_use":
+                        new_parts.append(_gate_tool_use(
+                            part, provider, f"message[{i}].content[{j}]", log_path))
+                    else:
+                        new_parts.append(part)
+                out = {**out, "content": new_parts}
+        # OpenAI-compatible wire shape's equivalent of a replayed tool_use
+        # block: an assistant message's tool_calls[].function.arguments.
+        # _oai_agentic_loop (services/agent.py) echoes these back into the
+        # conversation exactly the way the Anthropic loop echoes tool_use,
+        # so they need the same treatment _gate_tool_use gives that shape
+        # (docs/audits/gauntlet-2026-09-03/findings.jsonl F12 — confirmed
+        # unreachable by any current retry path, hardened anyway since it
+        # costs nothing and the same shape was a real leak once already).
+        if isinstance(msg.get("tool_calls"), list):
+            out = {**out, "tool_calls": _gate_tool_calls(
+                msg["tool_calls"], provider, f"message[{i}].tool_calls", log_path)}
+        gated.append(out)
     return gated
 
 
@@ -1036,6 +1091,10 @@ def _gate_tool_prose(text: str, provider: str, field: str,
     """
     if not text or not isinstance(text, str):
         return text
+    if is_unrestricted_cloud():
+        _log(provider, field, Tier.SENSITIVE, "allow",
+             "unrestricted cloud mode — tool-prose gating bypassed", log_path)
+        return text
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
@@ -1159,6 +1218,54 @@ def _gate_tool_use(part: dict, provider: str, field: str,
         return part
     return {**part, "input": _gate_arg_values(
         inp, provider, f"{field}.tool_use.input", log_path)}
+
+
+def _gate_tool_calls(tool_calls: list, provider: str, field: str,
+                     log_path: Path | None = None) -> list:
+    """Gate the arguments of OpenAI-shape tool_calls replayed in history.
+
+    The OpenAI-compatible equivalent of _gate_tool_use, above, for the wire
+    shape _oai_agentic_loop (services/agent.py) uses for every OpenAI-
+    compatible provider — local Ollama AND cloud OpenAI/OpenRouter/Groq/etc.
+    `function.arguments` is a JSON-ENCODED STRING (not a dict, per the wire
+    format), carrying the same kind of real user data tool_use.input does:
+    what was written to the vault, a file path, a search query.
+
+    id/type/function.name are left alone — a provider pairs a tool call to
+    its result by id, so touching them would break replay. `arguments` must
+    come back as a valid JSON string even when gated, since a tool-call
+    replay that isn't parseable JSON breaks the next round of the loop; a
+    non-JSON arguments string (malformed input) falls back to opaque text
+    gating rather than raising, the same fallback _gate_tool_result already
+    uses for non-JSON tool output.
+    """
+    gated = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            gated.append(tc)
+            continue
+        fn = tc.get("function")
+        if not isinstance(fn, dict) or "arguments" not in fn:
+            gated.append(tc)
+            continue
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            parsed = _try_json(args)
+            if parsed is not None:
+                gated_args = json.dumps(_gate_arg_values(
+                    parsed, provider, f"{field}.function.arguments", log_path))
+            else:
+                g = _gate_text(args, provider,
+                               f"{field}.function.arguments", log_path)
+                gated_args = g if (not args or g) else _ARG_WITHHELD
+        elif isinstance(args, (dict, list)):
+            gated_args = _gate_arg_values(
+                args, provider, f"{field}.function.arguments", log_path)
+        else:
+            gated.append(tc)
+            continue
+        gated.append({**tc, "function": {**fn, "arguments": gated_args}})
+    return gated
 
 
 def _gate_tools(tools: list, provider: str,
@@ -1325,9 +1432,12 @@ def _scrub_all(obj, lookup: dict):
         return [_scrub_all(x, lookup) for x in obj]
     if isinstance(obj, dict):
         # Only content-bearing keys. Scrubbing ids/roles/model names would
-        # corrupt the request shape for no privacy gain.
+        # corrupt the request shape for no privacy gain. "context" added for
+        # compute_client.py's federation task context (security-boundary.md
+        # §19 row 4) — a structured dict, not flat prose, but its string
+        # leaves are exactly the same identifier-scrub target.
         return {k: (_scrub_all(v, lookup)
-                    if k in ("content", "text", "system", "prompt") else v)
+                    if k in ("content", "text", "system", "prompt", "context") else v)
                 for k, v in obj.items()}
     return obj
 
@@ -1363,12 +1473,24 @@ def seal_outbound(
     if not _is_cloud(provider):
         return payload  # stays on-device, no gating needed
 
+    if is_unrestricted_cloud():
+        # Fast path for the same instruction as _gate_text_span's — skips the
+        # PII scrub too (a masking step, not a block, but still "holding
+        # something back" by the letter of "no data is held back"). Callers
+        # that reach fields via _gate_text/_gate_tool_prose directly, rather
+        # than through here, get the same bypass at those functions — this
+        # is strictly a shortcut, not the only enforcement point.
+        _log(provider, "*", Tier.SENSITIVE, "allow",
+             "unrestricted cloud mode — seal_outbound bypassed entirely "
+             "(no scrub, no gating)", None)
+        return payload
+
     sealed = dict(payload)
 
     # ── §5.5 step 1: deterministic identifier scrub, unconditional ──
     _lk = pii_lookup if isinstance(pii_lookup, dict) else {}
     try:
-        for key in ("system", "messages", "prompt"):
+        for key in ("system", "messages", "prompt", "context"):
             if key in sealed:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
@@ -1411,6 +1533,22 @@ def seal_outbound(
     # Tool definitions
     if "tools" in sealed and isinstance(sealed["tools"], list):
         sealed["tools"] = _gate_tools(sealed["tools"], provider, log_path)
+
+    # A bare top-level `prompt` string (the Ollama-native /api/generate shape,
+    # and compute_client.py's federation job payload). Scrubbed above like
+    # system/messages, but until now never TIER-gated — the key sets differed
+    # (security-boundary.md §1.3/§9.3): a span with no PII shape to scrub
+    # (no SSN, no phone number — just sensitive prose) sailed through
+    # untouched whenever `prompt` was the payload's only content.
+    if "prompt" in sealed and isinstance(sealed["prompt"], str):
+        sealed["prompt"] = _gate_text(sealed["prompt"], provider, "prompt", log_path)
+
+    # Federation task context (compute_client.py — the only caller today):
+    # an arbitrary structured dict of task data, gated the same way a JSON
+    # tool result is — every string value classified, structure preserved.
+    if "context" in sealed and isinstance(sealed["context"], (dict, list)):
+        sealed["context"] = _gate_json_value(
+            sealed["context"], provider, "context", log_path)
 
     return sealed
 

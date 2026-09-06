@@ -32,6 +32,14 @@ from agent_friday.core import FRIDAY_DIR, _load_settings
 
 DB_PATH = FRIDAY_DIR / "costs.db"
 
+# Google Workspace APIs (Calendar, Gmail, Drive — services/calendar_engine.py,
+# calendar_write.py, google_accounts.py, routes/calendar.py) are deliberately
+# NOT metered here. At realistic single-user personal-account volume these sit
+# under Google's free/quota-based tier — the real risk is quota throttling or
+# an error, not a bill — so there is nothing to record. Stated explicitly so
+# a future reader can tell "verified free, intentionally unmetered" apart
+# from "someone forgot" (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+#
 # ── Per-direction pricing (USD per 1K tokens) ────────────────────────────────
 # Real pricing is input ≠ output. Unknown models fall back to the blended
 # provider_registry rate (used for both directions) or 0 for local/on-device.
@@ -70,7 +78,92 @@ PRICING = {
     # is the product. Both the friendly id and the wire id are metered.
     "gemini-omni-flash":          {"in": 0.0015, "out": 0.0175},
     "gemini-omni-flash-preview":  {"in": 0.0015, "out": 0.0175},
+    # Gemini TTS (voice_engine.py _synthesize_tts_wav_gemini) — the exact model
+    # id that function calls. ai.google.dev/gemini-api/docs/pricing, checked
+    # 2026-09-04: $0.50/1M input (text) tokens, $10/1M output (audio) tokens.
+    # Was completely unmetered before this fix despite the entries above for
+    # the Live models already existing (docs/audits/gauntlet-2026-09-03/
+    # findings.jsonl Q6c) — the TTS model id itself was also missing here.
+    "gemini-2.5-flash-preview-tts": {"in": 0.0005, "out": 0.010},
+    # Gemini native image models ("Nano Banana" family — creative_engine.py).
+    # Google bills image OUTPUT as a fixed token count per image (not a flat
+    # per-image charge at the API level, though it nets out to one); INPUT
+    # here is the text prompt, priced at each model's ordinary text rate.
+    # gemini-2.5-flash-image (Nano Banana): 1290 output tokens/image @ $30/1M
+    # -> $0.039/image standard tier.
+    # gemini-3-pro-image (Nano Banana Pro): $120/1M output at 1K/2K
+    # resolution ($0.134/image); 4K resolution costs more per Google's own
+    # tiering, which this flat per-token rate does not capture.
+    # gemini-3.1-flash-image (Nano Banana 2): $0.50/1M input (text/image),
+    # $60/1M output (1K/2K resolution).
+    # gemini-3.1-flash-lite-image (Nano Banana 2 Lite): $0.25/1M input,
+    # $30/1M output.
+    # VERIFIED directly against ai.google.dev/gemini-api/docs/pricing,
+    # 2026-09-04 (2026-09-04 gauntlet-audit correction: the two 3.1 rows were
+    # previously CONSERVATIVE PLACEHOLDERS interpolated from the 2.5/3-pro
+    # rows rather than looked up -- both were wrong, each understating the
+    # real output rate by exactly 2x. Findings.jsonl F50 logs the lapse:
+    # shipping an interpolated guess in a field a cost panel treats as fact,
+    # right after recording the "don't fabricate rates" decision elsewhere
+    # in the same pass.)
+    "gemini-2.5-flash-image":      {"in": 0.0003, "out": 0.030},
+    "gemini-3-pro-image":           {"in": 0.002, "out": 0.120},
+    "gemini-3.1-flash-image":      {"in": 0.0005, "out": 0.060},
+    "gemini-3.1-flash-lite-image": {"in": 0.00025, "out": 0.030},
+
+    # ── ElevenLabs TTS (services/elevenlabs_tools.py _tool_speak_text) ──────
+    # ElevenLabs bills per CHARACTER, not per token. Reusing this table's
+    # "in"-per-1K slot as "USD per 1K CHARACTERS" lets the existing cost_for()
+    # arithmetic work unchanged: the call site passes len(text) as
+    # input_tokens and 0 as output_tokens. "out" is always 0 here — it is
+    # never read for these rows, kept only for the table's shape.
+    # VERIFIED directly against elevenlabs.io/pricing/api, 2026-09-04:
+    # "v2 Multilingual & v3" models bill at $0.10/1K chars; "Flash/Turbo"
+    # models bill at $0.05/1K chars.
+    "eleven_multilingual_v2":    {"in": 0.10, "out": 0.0},   # $0.10 / 1K chars
+    "eleven_multilingual_v3":    {"in": 0.10, "out": 0.0},
+    "eleven_turbo_v2_5":         {"in": 0.05, "out": 0.0},   # flash/turbo tier
+    "eleven_flash_v2_5":         {"in": 0.05, "out": 0.0},
+
+    # ── Opt-in provider catalogs (routing/provider_descriptors.py
+    #    BUILTIN_EXTRA_PROVIDERS) that previously metered as exactly $0 for
+    #    every call (docs/audits/gauntlet-2026-09-03/findings.jsonl Q11b) --
+    #    the _call_openai -> cost_meter.meter() code path already worked,
+    #    this table was just empty for these five.
+    #
+    # Mistral declares its model ids explicitly in BUILTIN_EXTRA_PROVIDERS
+    # (models=(...)), so this key is GUARANTEED to match what a real call
+    # actually sends as `model`. VERIFIED directly against mistral.ai/pricing,
+    # 2026-09-04: "$0.5/M tokens in and $1.5/M tokens out."
+    "mistral-large-latest":  {"in": 0.0005, "out": 0.0015},
 }
+
+# ── Deliberately NOT priced (2026-09-04) ─────────────────────────────────────
+# mistral-small-latest, deepseek-chat, deepseek-reasoner, and the well-known
+# Groq/xAI/Cohere model ids all had rows here as of an earlier draft of this
+# fix -- every one of them sourced from public pricing-aggregator pages
+# (cloudzero.com, aipricing.guru, etc.), not the provider's own page, despite
+# a real attempt to fetch each provider's own pricing page directly (Mistral's
+# own page shows Mistral Large's rate but not Mistral Small's; DeepSeek's own
+# docs page did not render a pricing table for this fetch and its listed
+# current model ids -- deepseek-v4-flash/-pro -- don't even match
+# deepseek-chat/deepseek-reasoner, suggesting those ids may be stale; Groq/
+# xAI/Cohere's own pages were not confirmed either). Per this session's own
+# "don't fabricate rates" decision -- violated once already for the Gemini
+# 3.1 image rows above (findings.jsonl F50) -- these are recorded as UNPRICED
+# rather than guessed at a second time. record()/price_for() below return
+# None for a model in this set: the call is still logged (tokens, provider,
+# model, timestamp), with cost_usd stored as NULL, not 0.0 -- an honest gap a
+# UI can render as "not priced," not a number that looks like a fact.
+# Revisit once a real per-model rate can be confirmed directly from each
+# provider's own current pricing page. See findings.jsonl F50.
+UNPRICED_MODELS = frozenset({
+    "mistral-small-latest",
+    "deepseek-chat", "deepseek-reasoner",
+    "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768",  # Groq
+    "grok-4", "grok-4-fast",  # xAI
+    "command-r-plus", "command-r", "command-a",  # Cohere
+})
 
 
 #: Fast mode runs the SAME model at up to 2.5x output tokens/sec and bills at
@@ -93,6 +186,12 @@ def price_for(model, speed=None):
     """
     if not model:
         return {"in": 0.0, "out": 0.0}
+    if model in UNPRICED_MODELS:
+        # Deliberately unpriced (see UNPRICED_MODELS above, findings.jsonl
+        # F50) -- None is the "genuinely unknown, do not compute a number"
+        # signal cost_for()/record() propagate through to a NULL cost_usd
+        # row, distinct from a confirmed $0.0 (a real local model).
+        return None
     if speed == "fast" and model in FAST_PRICING:
         return FAST_PRICING[model]
     if model in PRICING:
@@ -128,7 +227,11 @@ CACHE_WRITE_MULT = 1.25
 
 def cost_for(model, input_tokens, output_tokens,
              cache_read_tokens=0, cache_write_tokens=0, speed=None):
+    """USD for this call, or None when the model is deliberately unpriced
+    (UNPRICED_MODELS) -- propagated through, not coerced to 0.0."""
     p = price_for(model, speed=speed)
+    if p is None:
+        return None
     return round((input_tokens / 1000.0) * p["in"]
                  + (cache_read_tokens / 1000.0) * p["in"] * CACHE_READ_MULT
                  + (cache_write_tokens / 1000.0) * p["in"] * CACHE_WRITE_MULT
@@ -306,9 +409,16 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
         else:
             cost = cost_for(model, input_tokens, output_tokens,
                             cache_read_tokens, cache_write_tokens, speed=speed)
-            if cost == 0.0 and provider:
+            if (cost == 0.0 or cost is None) and provider:
                 # Enrichment tier: the pricing service knows discovery-cache and
                 # descriptor prices for models the static PRICING table doesn't.
+                # Tried even when cost_for() already said "unknown" (None) --
+                # this is a genuinely separate, more current data source (live
+                # discovery), not a second guess at the same guess. If it
+                # ALSO comes back None, `cost` stays None and is stored as
+                # SQL NULL below -- an honest "we don't know", never silently
+                # coerced back to a $0.0 that would look like a verified free
+                # call (findings.jsonl F50).
                 try:
                     from agent_friday.services import pricing as _pricing
                     live = _pricing.cost_usd(provider, model,
@@ -409,6 +519,14 @@ def summary(rng="today", frm=None, to=None):
             "COALESCE(SUM(cache_write_tokens),0) "
             "FROM cost_calls WHERE ts>=? AND ts<=?", (start, end))
         n, itok, otok, total, crtok, cwtok = cur.fetchone()
+        # Calls with cost_usd IS NULL: a model this build could not verify a
+        # real rate for (cost_meter.UNPRICED_MODELS), logged honestly rather
+        # than guessed at (findings.jsonl F50). Surfaced so the cost panel
+        # can show "N calls not priced" instead of folding them silently
+        # into total_usd as if they cost nothing.
+        unpriced = conn.execute(
+            "SELECT COUNT(*) FROM cost_calls WHERE ts>=? AND ts<=? "
+            "AND cost_usd IS NULL", (start, end)).fetchone()[0]
 
         def _group(col):
             rows = conn.execute(
@@ -421,6 +539,7 @@ def summary(rng="today", frm=None, to=None):
         out = {
             "range": rng, "from": start, "to": end,
             "total_usd": round(total, 4), "total_calls": n,
+            "unpriced_calls": unpriced,
             "input_tokens": itok, "output_tokens": otok,
             # The prompt-cache receipt. `cache_hit_rate` is the share of all
             # input tokens that were served from cache at 0.1x — the one number
@@ -450,7 +569,15 @@ def timeseries(rng="month", bucket="day"):
     for ts, cost in rows:
         key = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
         b = buckets.setdefault(key, {"date": key, "usd": 0.0, "calls": 0})
-        b["usd"] += cost
+        # cost is NULL for a call whose model this build could not verify a
+        # real rate for (UNPRICED_MODELS, findings.jsonl F50/F64) -- summary()
+        # already excludes NULL from its SQL-level SUM via COALESCE; this
+        # loop sums in Python, so it must skip None explicitly or `+=` raises
+        # TypeError the first time an unpriced call lands in the range
+        # (found via a real crash: F64's investigation of an order-dependent
+        # test failure traced to exactly this -- not hypothetical).
+        if cost is not None:
+            b["usd"] += cost
         b["calls"] += 1
     return [{"date": k, "usd": round(v["usd"], 4), "calls": v["calls"]}
             for k, v in sorted(buckets.items())]

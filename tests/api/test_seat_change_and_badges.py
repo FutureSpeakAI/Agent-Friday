@@ -53,6 +53,21 @@ class TestB2DirectFileEdit:
         # Direct file edit — no API, no UI. The 10:16:59 mechanism.
         raw = json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8"))
         routing = raw.setdefault("model_routing", {})
+        # CORRECTION (second cold-verification pass, 2026-09-05): this used
+        # to restore only routing["mode"] afterward, never routing
+        # ["local_model"] -- so "gemma4:latest" (not a real, tool-capable
+        # model id) leaked into the SHARED settings.json for the rest of
+        # any pytest session that ran this file, breaking
+        # tests/unit/test_model_plan.py::test_the_indexer_falls_back_to_a_
+        # tool_capable_model the moment it ran later in the same session
+        # (reproduced directly: `pytest tests/api/ tests/unit/` fails that
+        # test; `pytest tests/unit/` alone does not). Same bug CLASS F64
+        # already fixed once for a different field (model_routing.mode in
+        # test_vault_gate_is_honest.py) -- capture and restore BOTH
+        # mutated keys this time, not just the one this test happens to
+        # assert on.
+        _orig_mode = routing.get("mode")
+        _orig_local_model = routing.get("local_model")
         routing["mode"] = "local_only"
         routing["local_model"] = "gemma4:latest"
         core.SETTINGS_FILE.write_text(json.dumps(raw), encoding="utf-8")
@@ -71,8 +86,17 @@ class TestB2DirectFileEdit:
         assert sys_lines, "seat change must be persisted as a system line"
         assert "local_only" in sys_lines[-1]["text"]
 
-        # Restore for other tests.
-        routing["mode"] = "cloud_only"
+        # Restore for other tests -- BOTH keys this test mutated, to
+        # whatever they held before (not a hardcoded guess at the right
+        # default), not just the one this test's own assertions needed.
+        if _orig_mode is None:
+            routing.pop("mode", None)
+        else:
+            routing["mode"] = _orig_mode
+        if _orig_local_model is None:
+            routing.pop("local_model", None)
+        else:
+            routing["local_model"] = _orig_local_model
         core.SETTINGS_FILE.write_text(json.dumps(raw), encoding="utf-8")
         _force_settings_reread()
 

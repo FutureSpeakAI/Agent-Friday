@@ -7,6 +7,7 @@ Files produced are detected by scanning the CWD for new files after execution.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,41 @@ if TYPE_CHECKING:
 
 _JOBS: Dict[str, dict] = {}
 _JOBS_LOCK = threading.RLock()
+
+# gauntlet-2026-09-03 F71: _run() below created a fresh tempdir per worker
+# job and never removed it -- no cleanup on success, failure, timeout, or
+# exception, ever. Found via directory-count investigation of a temp-home
+# leak this audit had (three times, F47/F51/F65) mis-attributed entirely
+# to test infrastructure: this ONE unconditional leak in production code
+# accounted for 1,533 of ~1,569 leaked friday_*-prefixed directories in
+# %TEMP%, versus 4 for the test-isolation pattern all three prior fixes
+# targeted. Small in total bytes (under 1MB observed) but unconditional
+# and unbounded in count, in code that also runs outside any test.
+#
+# Not deleted immediately after each run: a completed job's `artifacts`
+# are file PATHS inside this directory, surfaced to callers (orchestrator.
+# WorkerResult.artifacts) for them to read after the job returns -- an
+# immediate rmtree would delete the very files a caller was just handed
+# paths to. Swept instead, at the start of every new job, bounded to
+# workdirs whose OWN age exceeds the retention window -- the same
+# collection-time-sweep shape already established and reviewed in
+# tests/conftest.py's _sweep_stale_test_homes(), applied here to
+# production code rather than test isolation.
+_WORKDIR_RETENTION_S = 3600  # 1 hour -- ample time for a caller to read artifacts
+
+
+def _sweep_stale_workdirs(retention_s: float = _WORKDIR_RETENTION_S) -> None:
+    try:
+        base = Path(tempfile.gettempdir())
+        now = time.time()
+        for entry in base.glob("friday_worker_*"):
+            try:
+                if now - entry.stat().st_mtime > retention_s:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
 
 
 class PythonScriptAdapter(BaseAdapter):
@@ -46,6 +82,16 @@ class PythonScriptAdapter(BaseAdapter):
         return aid
 
     def _run(self, aid: str, task: "WorkerTask"):
+        # Fire-and-forget: this is housekeeping, not part of the job. Calling
+        # it inline added real latency to this method's own critical path
+        # (a %TEMP% glob+stat, worse whenever many stale entries have built
+        # up) and that latency was enough to expose a pre-existing race in
+        # tests/api/test_compute_federation_auth.py's marker-file check
+        # (file created by write_text() observed via exists() before its
+        # content was necessarily flushed) -- found by this fix regressing
+        # that test, not by inspection. The actual worker subprocess below
+        # must never wait on cleanup of a PRIOR job's leftovers.
+        threading.Thread(target=_sweep_stale_workdirs, daemon=True).start()
         prompt = task.prompt
         workdir = tempfile.mkdtemp(prefix="friday_worker_")
         script_path = Path(workdir) / "worker_script.py"

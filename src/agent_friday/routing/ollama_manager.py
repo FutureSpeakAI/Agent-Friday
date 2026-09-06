@@ -259,39 +259,124 @@ class OllamaManager:
         self._hardware_cache = hw
         return hw
 
+    #: Presentation strings for `recommend_models()`. Deliberately NOT part of
+    #: `model_plan.BRAIN_MODELS` — that table is the family/hardware decision
+    #: (single source of truth, per the 2026-09-03 "keep the family selection
+    #: in one place" instruction); this is just how each rung's TASK is
+    #: described in a picker UI (short, written for an end user — BRAIN_MODELS'
+    #: own `note` is written for an audit trail, not a picker). `tier` is NOT
+    #: duplicated here — it is computed by rank in `recommend_models()` itself,
+    #: so a ladder change (a row added, removed, or renamed) can't desync a
+    #: hand-typed tier from where that row actually lands. A model id missing
+    #: from this dict falls back to its own `note` rather than a blank task.
+    _REC_LABELS = {
+        "gemma4:e2b": "quick lookups, formatting, status checks",
+        "gemma4:e4b": "chat, simple tasks, fast response",
+        "gemma4:12b": "general purpose, code, analysis",
+        "gemma4:26b": "code, research, complex reasoning",
+    }
+
     def recommend_models(self, hardware=None):
+        """A thin reader over `model_plan.BRAIN_MODELS` — headroom.md HR15.
+
+        THIS USED TO BE A SECOND LADDER. Until 2026-09-04 the four rows below
+        (name, VRAM/RAM threshold, task blurb) were hand-typed here, separate
+        from `model_plan.BRAIN_MODELS` — the "one place the arithmetic lives"
+        the comment removed by this edit used to say, while still retyping
+        every name and threshold as a literal. The VRAM thresholds had
+        already been corrected once (2026-08-26, CHANGELOG) to match
+        BRAIN_MODELS' own footprints by hand; the names were not, so the
+        moment BRAIN_MODELS gained a row this table did not know about (it
+        never has: `gemma4:12b` sits between qwen3:8b and qwen3:14b in
+        BRAIN_MODELS by footprint and was never offered here at all), this
+        function silently disagreed with the planner about what the machine
+        can actually run — the exact "two ladders" defect headroom.md §2.9
+        found in `install.ps1`'s own hand-maintained `$brainLadder`, here a
+        second time.
+
+        Now: every tool-capable row in `BRAIN_MODELS` (`_pickable`'s own
+        filter — a model that cannot call tools is never suggested as
+        someone's local model) is offered once its own footprint fits, by
+        the SAME arithmetic `plan()` uses for the fit check — VRAM gate is
+        the model's `vram_gib` (footprint under load) plus
+        `DISPLAY_RESERVE_GIB`, rounded up to a whole GiB, so a suggestion is
+        never a card the model cannot actually load into (over-claiming here
+        is the direction that costs someone a stalled download); RAM gate is
+        the model's own `min_ram_gib`, unmultiplied — this endpoint has never
+        had `ram_avail` to work with, only the machine's raw total, so it
+        stays the coarser of the two checks `plan()` itself makes.
+
+        `tier` is a UI label, not a planner concept — model_plan has no
+        notion of "tiny/small/medium/large". It is assigned by rank among
+        the tool-capable rows: the smallest is always `tiny` (the
+        unconditional floor — offered regardless of spec, same role
+        `model_plan.FLOOR_MODEL` plays as "the smallest thing that works at
+        all"), the largest is always `large`, and whatever sits between is
+        split evenly across `small`/`medium` in ascending order. Added a row
+        in `BRAIN_MODELS` moves the split; nothing here needs to be told.
+        """
+        from agent_friday.services import model_plan as mp
+        import math
+
         hw = hardware or self.detect_hardware()
-        vram = hw.get("vram_gb", 0)
-        ram = hw.get("ram_gb", 0)
-        # THE VRAM THRESHOLDS COME FROM services/model_plan.BRAIN_MODELS, which
-        # is the one place the arithmetic lives. They are the card size each
-        # model needs — its own footprint (weights + measured runtime overhead)
-        # plus the 2.5 GiB display reserve — rounded UP to a whole GiB, because
-        # rounding down here is how a suggestion becomes an overclaim:
+        vram = hw.get("vram_gb", 0) or 0
+        ram = hw.get("ram_gb", 0) or 0
+        # THE MODELS AND THEIR VRAM/RAM COSTS COME FROM
+        # services/model_plan.BRAIN_MODELS — the one place that arithmetic and
+        # that family choice live (2026-09-03: Qwen removed everywhere, Gemma
+        # 4 only — e2b/e4b/12b/26b — per product decision; this function used
+        # to hardcode its own qwen3:* names independently of that table, which
+        # is exactly the "scattered choice" that made the KG indexer's default
+        # drift out of sync with everyone else's).
         #
-        #     qwen3:8b    9.07 GiB card  ->  10
-        #     qwen3:14b  12.84 GiB card  ->  13
-        #     qwen3:32b  23.01 GiB card  ->  24
+        # Card size needed is the model's own footprint (weights + measured
+        # runtime overhead) plus the display reserve, rounded UP to a whole
+        # GiB — rounding down here is how a suggestion becomes an overclaim.
+        # This ladder previously read 6/8/24 for its three gated tiers, which
+        # was simply wrong: `vram >= 8` offered a 14B-class model to an 8 GB
+        # card that couldn't hold it. Neither accounted for the display
+        # reserve or the KV cache, which is the same "largest that fits"
+        # mistake the residency planner made when it seated a 26B model on a
+        # 12 GiB card.
         #
-        # They used to read 6, 8 and 24, and the first two were simply wrong:
-        # `vram >= 8` offered qwen3:14b to an 8 GB card that cannot hold it,
-        # and `vram >= 6` offered qwen3:8b to a 6 GB card that cannot either.
-        # Neither accounted for the display reserve or the KV cache, which is
-        # the same "largest that fits" mistake the residency planner made when
-        # it seated a 26B model on a 12 GiB card.
-        #
-        # The RAM thresholds are deliberately left as they were. They are a
+        # The RAM thresholds use each model's own `min_ram_gib` directly — a
         # judgement about running on the PROCESSOR, where throughput is
-        # unmeasured for every model here, and they are not what this fix is
-        # about.
+        # unmeasured for every model in the ladder.
+        #
+        # `tier` is computed by RANK, not read from `_REC_LABELS` — a static
+        # id->tier mapping desyncs the moment a row is added or removed (an
+        # unmapped id fell back to "unknown" rather than a real tier). Sorted
+        # explicitly rather than trusting BRAIN_MODELS' own ascending order to
+        # hold, since the split below is a rank position, not a value.
+        capable = sorted((m for m in mp.BRAIN_MODELS if m.get("tools")),
+                         key=lambda m: m["vram_gib"])
+        n = len(capable)
+        mid = capable[1:-1] if n > 2 else []
+        split = math.ceil(len(mid) / 2)
+        tiers = {}
+        for i, m in enumerate(capable):
+            if i == 0:
+                tiers[m["id"]] = "tiny"
+            elif i == n - 1 and n > 1:
+                tiers[m["id"]] = "large"
+            else:
+                pos = i - 1  # index within `mid`
+                tiers[m["id"]] = "small" if pos < split else "medium"
+
+        # Largest-first: a "suggestion" list reads better biggest-to-smallest,
+        # with the unconditional tiny floor last rather than first.
         recs = []
-        if vram >= 24 or ram >= 64:
-            recs.append({"name": "qwen3:32b", "task": "code, research, complex reasoning", "tier": "large"})
-        if vram >= 13 or ram >= 32:
-            recs.append({"name": "qwen3:14b", "task": "general purpose, code, analysis", "tier": "medium"})
-        if vram >= 10 or ram >= 16:
-            recs.append({"name": "qwen3:8b", "task": "chat, simple tasks, fast response", "tier": "small"})
-        recs.append({"name": "qwen3:4b", "task": "quick lookups, formatting, status checks", "tier": "tiny"})
+        for m in reversed(capable):
+            card_needed = math.ceil(m["vram_gib"] + mp.DISPLAY_RESERVE_GIB)
+            fits = vram >= card_needed or ram >= m["min_ram_gib"]
+            if fits or tiers[m["id"]] == "tiny":   # smallest always offered
+                # `task` prefers the UI-facing blurb in `_REC_LABELS` (short,
+                # written for a picker, not an audit trail); a model added to
+                # BRAIN_MODELS without a matching entry there falls back to
+                # its own `note` rather than a blank task — see _REC_LABELS'
+                # own docstring above.
+                task = self._REC_LABELS.get(m["id"]) or m.get("note", "")
+                recs.append({"name": m["id"], "task": task, "tier": tiers[m["id"]]})
         return recs
 
     def probe_generate(self, model, *, disable_thinking=False,

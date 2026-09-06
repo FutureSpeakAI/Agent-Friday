@@ -90,6 +90,38 @@ chat_bp = Blueprint('chat', __name__)
 import logging as _logging
 _LOG = _logging.getLogger("friday.chat")
 
+# security-boundary.md §19 row 11: the vision prompt sent alongside a
+# screenshot/camera frame to Gemini. Both call sites used to duplicate this
+# literal inline; a single shared constant means they cannot drift apart.
+# It is a fixed, self-authored string with no user data by construction —
+# registered trusted below so gating it is a no-op today — but the two call
+# sites now actually call the gate, so a future edit that interpolates user
+# text into this prompt is protected instead of silently shipping ungated.
+VISION_SCREEN_PROMPT = (
+    "Briefly describe what is visible on this screen. Focus on text, UI "
+    "elements, and data shown. Be concise (2-3 sentences)."
+)
+try:
+    from agent_friday.services.egress_gate import register_trusted_text as _rvsp
+    _rvsp(VISION_SCREEN_PROMPT)
+except Exception:
+    pass
+
+
+def _gate_vision_prompt(text: str) -> str:
+    """Gate the vision-screen prompt before it reaches Gemini. FAIL-CLOSED."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        return VISION_SCREEN_PROMPT
+    try:
+        gated = _eg._gate_text(text, "google-gemini", "vision.prompt")
+        return gated if gated else VISION_SCREEN_PROMPT
+    except _eg.NeverSendBlocked:
+        return VISION_SCREEN_PROMPT
+    except Exception:
+        return VISION_SCREEN_PROMPT
+
 
 
 # ── Conversations (docs/design/conversations-and-concurrency.md §3.1) ───────
@@ -460,7 +492,7 @@ def chat():
                     vision_resp = gclient.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=[
-                            "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                            _gate_vision_prompt(VISION_SCREEN_PROMPT),
                             types.Part.from_bytes(data=img_bytes, mime_type=_mime),
                         ],
                     )
@@ -706,14 +738,30 @@ def chat():
             except Exception:
                 pass
 
-        # ── Refuse: a vault request that cannot be served locally (deny/warn). ──
-        # Never send vault data to the cloud — return the warning instead.
+        # ── Refuse: the router declined to make any model call at all. ──
+        # Two distinct reasons share this one flag: a vault request that
+        # cannot be served locally (deny/warn) — never send vault data to
+        # the cloud, return the warning instead — and, separately,
+        # local_only mode with no local seat available (findings.jsonl
+        # Q19). Only the first is actually vault-related; `vault_blocked`
+        # stays scoped to that so callers checking it aren't misled by an
+        # unrelated local_only refusal. The local_only case additionally
+        # carries `offer_cloud_switch` — Stephen, 2026-09-04: "the system
+        # should fail to function and produce an error, then it should ask
+        # the user if it can go into cloud only mode" — a real, present
+        # choice for the frontend to render as an action, not just prose
+        # the user has to act on by finding Settings themselves. This is a
+        # standing transparency principle now, not a rule scoped to this
+        # one case: the user always knows what is happening to their data
+        # and which model is serving them.
         if _route_info.get('refuse'):
             _warn = _route_info.get('warning') or (
                 "This request needs vault access which requires a local model. "
                 "Please install Ollama or switch to local routing mode."
             )
-            _vault_orb("Vault Access — Blocked")
+            _offer_cloud_switch = bool(_route_info.get('offer_cloud_switch'))
+            _vault_orb("Vault Access — Blocked" if _vault_access
+                      else "Local-Only Mode — No Local Seat")
             user_msg = {
                 'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace,
@@ -721,12 +769,14 @@ def chat():
             friday_msg = {
                 'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
                 'role': 'friday', 'text': _warn, 'pinned': False, 'sources': [],
+                'offer_cloud_switch': _offer_cloud_switch,
             }
             _persist_turn(_conv_id_from(data), user_msg, friday_msg)
             _save_chat_history(CHAT_HISTORY)
             return jsonify({
                 "response": _warn, "user_msg": user_msg, "friday_msg": friday_msg,
-                "sources": [], "tool_trace": [], "vault_blocked": True,
+                "sources": [], "tool_trace": [], "vault_blocked": _vault_access,
+                "offer_cloud_switch": _offer_cloud_switch,
             })
 
         if _vault_access and _routed_local:
@@ -1561,7 +1611,7 @@ def chat_send():
                 vision_resp = gclient.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
-                        "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                        _gate_vision_prompt(VISION_SCREEN_PROMPT),
                         types.Part.from_bytes(data=img_bytes, mime_type=mime),
                     ],
                 )
@@ -1569,35 +1619,56 @@ def chat_send():
             except Exception as ve:
                 vision_description = f"[Vision unavailable: {ve}]"
 
-        # Build context-enriched system prompt. This endpoint always goes to
-        # Anthropic (cloud), so vault TIER_2/TIER_3 content is gated out here.
+        # Build context-enriched system prompt, gated for whichever provider
+        # actually ends up serving this turn.
+        #
+        # This used to hardcode provider='cloud' unconditionally, on the
+        # (once-true) assumption that this endpoint always goes to Anthropic.
+        # But _generate_agent below runs the SAME router /api/chat uses,
+        # which can correctly route a vault-tier message to a local seat --
+        # and a prompt pre-stripped as if bound for the cloud doesn't
+        # magically regain the TIER_2/3 content it's entitled to just
+        # because a local seat answered instead. Net effect before this fix
+        # was never a leak (content was already stripped, not exposed) but a
+        # local seat that IS entitled to see full vault content got a
+        # degraded, silently-redacted answer with no indication why --
+        # exactly the seam /api/chat's own _prep_for(provider) (chat.py:748)
+        # was written to close. Mirrors that pattern here (findings.jsonl F18).
         settings = _load_settings()
-        system_prompt, sources = _build_context_prompt(
-            message, workspace, workspace_context, vision_description,
-            provider='cloud',
-            vault_control=(_get_vault_control() if _vault_local_only() else None),
-            vault_fallback=_vault_cloud_fallback(),
-        )
-
-        # Prepend user-configured agent personality + response prefs + cLaws
-        personality = _load_agent_personality()
-        system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
-        # Ask-first action policy (enforced by the gate in _execute_tool).
-        system_prompt = system_prompt + "\n\n" + ACTION_PERMISSION_POLICY
-
-        # Cross-session memory: recall relevant past exchanges + carry forward
-        # the last session summary + adapt tone from the accumulated arc. This
-        # endpoint is cloud-bound, so the appended text is gated/scrubbed by the
-        # _generate_agent path like the rest of the prompt.
         _session_id = _current_session_id()
-        try:
-            _mem_block = (_build_memory_context_block(message, _session_id)
-                          + _build_session_continuity_block()
-                          + _build_emotional_tone_block())
-            if _mem_block:
-                system_prompt = system_prompt + "\n" + _mem_block
-        except Exception as _mb_err:
-            print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
+        _send_sources = []
+
+        def _sys_for(provider_name):
+            prompt, sources = _build_context_prompt(
+                message, workspace, workspace_context, vision_description,
+                provider=provider_name,
+                vault_control=(_get_vault_control() if _vault_local_only() else None),
+                vault_fallback=_vault_cloud_fallback(),
+            )
+            _send_sources[:] = sources or []
+            # Prepend user-configured agent personality + response prefs + cLaws
+            personality = _load_agent_personality()
+            prompt = _settings_system_prefix(settings, personality) + (prompt or '')
+            # Ask-first action policy (enforced by the gate in _execute_tool).
+            prompt = prompt + "\n\n" + ACTION_PERMISSION_POLICY
+            # Cross-session memory: recall relevant past exchanges + carry
+            # forward the last session summary + adapt tone from the
+            # accumulated arc. Rebuilt per provider along with everything
+            # else above, so a local seat's memory recall isn't scrubbed as
+            # if it were headed to the cloud either.
+            try:
+                _mem_block = (_build_memory_context_block(message, _session_id)
+                              + _build_session_continuity_block()
+                              + _build_emotional_tone_block())
+                if _mem_block:
+                    prompt = prompt + "\n" + _mem_block
+            except Exception as _mb_err:
+                print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
+            return prompt
+
+        _send_provider = _predict_route_provider(
+            keywords=message, workspace=workspace, has_tools=True)
+        system_prompt = _sys_for(_send_provider)
 
         # Anthropic-format message history
         messages = []
@@ -1627,7 +1698,7 @@ def chat_send():
             _attr2 = None
         reply, tool_trace = _generate_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
-            session_ctx=_sess_ctx, workspace=workspace,
+            session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
         )
 
         # ── FR-2/A7 on this endpoint too: pseudo-tool-call leaks and
@@ -1638,13 +1709,14 @@ def chat_send():
             return _generate_agent(
                 messages + [{"role": "user", "content": corrective_note}],
                 system=system_prompt, temperature=settings.get('temperature'),
-                session_ctx=_sess_ctx, workspace=workspace,
+                session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
             )
 
         reply, tool_trace, _send_integrity = validate_toolcall_integrity(
             reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
             redispatch=_send_redispatch,
         )
+        sources = _send_sources
 
         # ── B2: seat-change visibility on this endpoint too. ──
         try:

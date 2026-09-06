@@ -384,6 +384,18 @@ def _model_entries_for(provider: dict, registry) -> list:
             "hint": hint,
             "cost_per_1k": costs.get(mid),
             "curated": mid in curated_ids,
+            # Descriptor-declared presentation the UI never had a way to show
+            # (regression noticed 2026-09-04 building the video/image model
+            # expansion: sd3.5-medium-fp8's model_meta has carried a `licence`
+            # since it shipped, and it was DROPPED here — the picker had no
+            # way to say "commercial use needs $1M+ revenue" because the field
+            # never left this function). `note` may be overwritten below by a
+            # DISCOVERY-sourced one only when the descriptor didn't set one
+            # (see the `disc.get(extra) is not None and entry.get(extra) is
+            # None` guard a few lines down) — declared metadata wins.
+            "note": m.get("note"),
+            "licence": m.get("licence"),
+            "licence_note": m.get("licence_note"),
         }
         if disc:
             # Discovery metadata (spec §6.3) — additive fields; the UI contract
@@ -594,11 +606,17 @@ def _friday_store_entries(exclude: set | None = None) -> list:
         except Exception:
             live = False
         m = _humanize(mid)
+        # A registry entry may carry its own display name (set at `register`
+        # time via `label=`) — e.g. a fine-tune given a human-chosen name that
+        # humanizing model_id would mangle (hyphens -> spaces, only the first
+        # letter cased). That name renders verbatim; everything else keeps the
+        # inferred label.
+        display_label = rec.get("label") or m["label"]
         gb = float(rec.get("size_bytes") or 0) / 1e9
         out.append({
             "id": mid,
-            "label": m["label"],
-            "short": m["short"],
+            "label": display_label,
+            "short": rec.get("label") or m["short"],
             "provider": "arbiter-local",
             "provider_label": "Local (Friday's own seats)",
             "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
@@ -662,6 +680,18 @@ def build_catalog() -> dict:
 
     _local_ids = {f["id"] for f in flat}
     for provider in registry.get_enabled_providers():
+        # Per-machine creative overlay (FLUX.1 dev and anything else too
+        # licence-restricted to ship in provider_registry.py's shipped
+        # defaults) — a no-op copy when no overlay file exists, so a fresh
+        # install's local-comfyui descriptor passes through unchanged. See
+        # services/local_creative_overrides.py for why this can't live in
+        # provider_registry.py itself.
+        try:
+            from agent_friday.services.local_creative_overrides import (
+                merge_local_creative_overlay)
+            provider = merge_local_creative_overlay(provider)
+        except Exception:
+            pass
         for e in _model_entries_for(provider, registry):
             key = (e["id"], e["provider"])
             if key in seen:

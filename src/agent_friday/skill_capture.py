@@ -30,16 +30,58 @@ _MAX_TRAJ_KEEP = 5000
 # Reply prefixes that mean the turn did NOT succeed.
 _DENY_PREFIXES = ("[GOVERNANCE DENY]", "[SANDBOX DENY]", "Tool error", "[Friday offline]")
 
+# F75 (2026-09-05, Stephen's direct ruling): _success_score() has never had
+# real evidence of task completion for ANY reply -- it only ever detects
+# CONFIRMED failure signals (an error, an obviously-truncated reply, a
+# refusal prefix). Labeling everything else 1.0 ("success") was not a weak
+# signal, it was a false one: "Done. I sent the email and booked your
+# flight." scored identically whether either action happened, because
+# nothing here ever checked. The honest minimum fix: a third state for "no
+# confirmed failure, but also no confirmed success" -- the absence of a bad
+# signal is not the presence of a good one. UNVERIFIED_SCORE is reachable
+# and is now what a plausible-looking reply actually gets; SUCCESS_SCORE
+# stays fully wired through every consumer (composite_score, trajectory_
+# stats) but nothing in this file can currently produce it. Real completion
+# verification -- checking tool_trace against what the reply claims,
+# criteria specific to what a skill/task type actually promises -- is a
+# real design question, specified as follow-up work below, not decided
+# here.
+FAILURE_SCORE = 0.0
+UNVERIFIED_SCORE = 0.5
+SUCCESS_SCORE = 1.0
+
+# Follow-up (not built tonight, per Stephen's ruling): what "verified"
+# should actually require, by task shape, so SUCCESS_SCORE has a real path
+# to being produced instead of sitting permanently unreachable:
+#   * Action claims ("I sent/booked/created/deleted X") -- require a
+#     matching tool_trace entry whose own reported outcome is success, not
+#     just that A tool was called. A reply claiming an email was sent with
+#     an empty tool_trace, or a trace showing the send tool errored, is
+#     grounds for FAILURE_SCORE, not UNVERIFIED_SCORE -- that is a
+#     confirmable false claim, a stronger signal than "no evidence either
+#     way".
+#   * Informational answers (no action claimed) -- no tool_trace is
+#     required or expected; SUCCESS_SCORE here would need a real
+#     correctness/completeness check against the question asked, which has
+#     no generic implementation (it is necessarily task/skill-specific).
+#   * Any task with an explicit, checkable side effect (a file written, a
+#     calendar event created) could verify directly by reading the side
+#     effect back, mirroring store_key()'s own "read it back, don't just
+#     trust the write" pattern elsewhere in this codebase.
+# This needs a real design decision (what counts as sufficient evidence
+# per skill/task type, and whether a confirmable false claim should be
+# FAILURE_SCORE rather than UNVERIFIED_SCORE) before any of it is built.
+
 
 def _success_score(reply, error):
     if error:
-        return 0.0
+        return FAILURE_SCORE
     r = (reply or "").strip()
     if len(r) < 8:
-        return 0.0
+        return FAILURE_SCORE
     if r.startswith(_DENY_PREFIXES):
-        return 0.0
-    return 1.0
+        return FAILURE_SCORE
+    return UNVERIFIED_SCORE
 
 
 def _append_jsonl(rec):
@@ -113,7 +155,25 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
                         skill_name=sk.name,
                         inputs={"message": (message or "")[:500], "tools": tools},
                         outputs={"reply_len": rec["reply_len"]},
-                        metrics={"quality": score, "success": score},
+                        # CORRECTION (external review, commissioned by Stephen,
+                        # verified 2026-09-04): this used to send
+                        # {"quality": score, "success": score} -- keys
+                        # composite_score() never reads (it reads accuracy,
+                        # user_satisfaction, completeness, latency, cost), so
+                        # score=1.0 and score=0.0 produced the IDENTICAL
+                        # composite score. Reproduced directly: both landed
+                        # on 0.25 with default weights. `accuracy` is the one
+                        # dimension _success_score()'s semantics (no error,
+                        # non-trivial reply, no refusal prefix) can honestly
+                        # speak to -- it is deliberately NOT also copied into
+                        # user_satisfaction/completeness, which would fabricate
+                        # confidence this heuristic has no information about.
+                        # _success_score() itself remains a reply-shape check,
+                        # not real task verification (a separate, open
+                        # question -- see F75) -- this fix only ensures the
+                        # existing signal, weak as it is, is no longer
+                        # silently discarded before scoring.
+                        metrics={"accuracy": score},
                         duration_ms=float(duration_ms or 0.0),
                         error=error,
                     )
@@ -148,7 +208,19 @@ def run_nightly():
 
 
 def trajectory_stats(limit=1000):
-    """Lightweight stats over recent trajectories (for dashboards/tests)."""
+    """Lightweight stats over recent trajectories (for dashboards/tests).
+
+    F75 correction: "success" here means CONFIRMED success (score ==
+    SUCCESS_SCORE) -- reachable by nothing today, since _success_score()
+    has no real completion-evidence check yet (see its own docstring/
+    follow-up note). Previously this summed every truthy score, which
+    silently folded "unverified" (the old 1.0-for-everything-plausible
+    default) into "success" -- exactly the false-positive F75 was about.
+    Reports the 3-way breakdown explicitly instead. Records written before
+    this fix landed still carry the old binary 0.0/1.0 scores, so historic
+    "success" counts here still reflect the old, less honest meaning for
+    anything captured before 2026-09-05 -- not retroactively reprocessed.
+    """
     recs = []
     try:
         if TRAJ_FILE.exists():
@@ -161,9 +233,13 @@ def trajectory_stats(limit=1000):
     except Exception:
         pass
     n = len(recs)
-    succ = sum(1 for r in recs if r.get("success"))
+    succ = sum(1 for r in recs if r.get("success") == SUCCESS_SCORE)
+    unverified = sum(1 for r in recs if r.get("success") == UNVERIFIED_SCORE)
+    fail = sum(1 for r in recs if r.get("success") == FAILURE_SCORE)
     return {
         "count": n,
         "success": succ,
+        "unverified": unverified,
+        "failure": fail,
         "success_rate": round(succ / n, 3) if n else 0.0,
     }

@@ -3,10 +3,221 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.10.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.12.0**
+>
+> Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
+> tagged without a changelog entry.
 
 ---
 
+## [5.12.0] — 2026-09-05
+
+A two-day autonomous security/correctness audit ("the gauntlet") ran against
+this codebase, extracting 243 specific, checkable claims from our own
+documentation and UI copy and checking each one against actual behavior
+rather than trusting what the code says about itself. 112 findings came out
+of it; 82 are fixed here, with a red-green-red-on-revert proof for each one
+that could have one. Full detail: `docs/audits/gauntlet-2026-09-03/`
+(`CLOSEOUT.md` for the narrative, `findings.jsonl` for every finding). This
+entry leads with what the audit found wrong, including the parts that don't
+reflect well on us, because a release note that only lists improvements
+after a run like this would be its own kind of dishonesty.
+
+### Security — found and fixed
+
+- **A credential-sandboxing gap was found and incompletely fixed twice before
+  it was fixed for real.** Every stdio MCP connector inherited Friday's
+  entire decrypted-secrets environment (F32). The first fix — a
+  hand-maintained denylist of secret names a connector may not see — left a
+  live gap the same night (F44: it named two environment variables that
+  don't exist anywhere in this codebase, while the real one stayed
+  unlisted). A live dynamic boot then found six more currently-registered
+  provider credentials missing from that same list (F67). Fixed the third
+  time by inverting the mechanism: an explicit allowlist of what a sandboxed
+  connector *may* see, instead of a denylist of what it may not — the only
+  version of this fix a fourth provider can't silently reopen.
+- **The child-safety content-policy floor was bypassable for over two
+  months** (introduced complete in the module's first commit, 2026-06-26;
+  found 2026-09-04) — every test green throughout. `evaluate_content()` ran
+  two checks: a text scan that only fired when a title or description was
+  present, and a category-rule loop that explicitly skipped its own
+  always-on safety pack on the assumption the text scan already covered it.
+  Content pre-tagged by an upstream classifier as CSAM, a real-person
+  deepfake, doxxing, or violence incitement passed with `blocked: False` as
+  long as no title or description string was also supplied. Found by reading
+  the module's own docstring against its code, not by running the existing
+  suite one more time. Fixed (F54).
+- **"Local-only" did not mean local-only for the single most common
+  interaction** — ordinary interactive chat with tool use — in three related
+  findings (F34, F10, Q19), and the same shape of gap was independently
+  found and fixed in the voice pipeline (F16, F20, F33) and knowledge-graph
+  indexing (F34, F37 — the latter's first fix was itself proven wrong by a
+  cold re-verification pass: a case-mismatch made it a no-op for a section
+  literally named "Private"). Fixed per Stephen's direct ruling: when Friday
+  can't honor a local-only promise, she now fails with an error and offers
+  cloud-only mode, rather than silently switching.
+- **A provider's connection status could say "connected" while the stored
+  key was actually undecryptable** — reproduced against Stephen's own real
+  situation, three keys in exactly this state. `provider_key_status()` used
+  to check only whether the key *file* existed, never whether it could
+  actually be decrypted. Fixed: a genuine three-state status (connected /
+  present-but-unreadable / missing) (F68).
+- **A federation trust-control panel had no backend enforcement at all** —
+  it was a UI that did nothing in either direction (F40). Built for real.
+- The audit's own tooling caused two real incidents while looking for this
+  exact class of bug: a live, real API call to Google's Gemini using
+  Stephen's real key from an isolated test server that hadn't cleared it
+  from its environment (F77), and multiple tests making real, unmocked
+  network requests — to this application's own default port and to a real
+  third-party site — because a URL-validation helper reaches the network by
+  default (F76). Both disclosed and fixed rather than left in a transcript.
+
+### Fixed — correctness and cost
+
+- **A live incident during the audit itself**: the knowledge-graph indexer
+  called `claude-sonnet-5` roughly every 8–14 seconds for hours, unbounded,
+  because a health-provider fallback chain had no ceiling on extraction
+  calls (F31). Capped.
+- **`sch_job_intelligence` removed entirely.** A single run consumed 3.86M
+  input tokens against `claude-sonnet-5` — roughly $12 for one execution of
+  a daily job nobody was watching.
+- **The hourly heartbeat's cost cut**: prompt caching, previously wired only
+  into the native Anthropic path, now covers the OpenRouter path every
+  scheduled task actually uses; its tool registry trimmed from the full
+  75-tool set to the handful its own job needs.
+- **The cost dashboard's timeseries chart could 500 permanently** for any
+  date range containing an unpriced-model call — a real production defect
+  that a prior fix (recording an honest `NULL` instead of a fabricated cost
+  for a model with no verified rate) made newly reachable, because the
+  summing code never checked for `None` (F64, F66). Direct argument for why
+  F50 mattered: the fabricated numbers it replaced had been silently masking
+  this bug the whole time.
+- **Local model ladder rebuilt**: Qwen removed everywhere in favor of the
+  Gemma 4 family (e2b/e4b/12b/26b) as a placeholder until FutureSpeak's own
+  model ships. Caught mid-rebuild: the Windows installer's own hand-typed
+  model list had drifted from this table for five releases with no check
+  against it at all (a generator + a drift test now keep them in sync), and
+  a health-probe helper's tier labels were hand-typed the same way (both
+  fixed alongside).
+- **3 local video models and 3 local image models added**, hardware-verified
+  with measured timings and licences; a gap found verifying this release
+  meant the new video models were never wired into the model picker despite
+  being merged — fixed live.
+- **A fallback ladder reused a system prompt gated for the wrong provider**
+  at 4 call sites: a prompt built for a local seat (full vault content) could
+  ride unchanged onto a cloud retry when the local leg failed operationally
+  (F30).
+- Temp-directory leaks: three separate, independently-discovered leak
+  sources (test fixtures and, more seriously, a **production** worker-adapter
+  path that created a fresh temp directory on every task invocation and
+  never removed it) accounted for 1,569 leaked directories on one real
+  machine before being closed (F47, F49, F51, F65, F71).
+- Vault stale-key recovery: a maintenance path that re-encrypts provider
+  keys the current process can still decrypt under whatever a fresh process
+  derives now, for the case where a rehearsal or test run overwrites the
+  shared OS keychain entry mid-session.
+- A test was found leaking Stephen's real vault passphrase into its own
+  assertion-failure output — in plain text, three times — because it never
+  isolated the one code path (`start.bat` parsing) its fixture didn't cover.
+  Fixed; the test is now fully hermetic.
+- A real bug in `proof_of_integrity.py`: an unsigned manifest, hand-built
+  from two publicly-recomputable hashes, reported `valid: True` whenever
+  neither of the two actual authentication checks (HMAC / Ed25519) could run
+  — found reviewing outstanding work for this release, not by the audit.
+- Dozens of smaller fixes: dead settings controls removed or wired for real
+  (five separate instances), a scheduler concurrency race in manual "Run
+  Now," a scoring bug that let a skill-optimization gate promote a candidate
+  on total absence of signal rather than a genuine improvement (F73),
+  another that scored every chat turn identically regardless of success or
+  failure (F74), and a background-task error handler that silently
+  discarded failures instead of logging them (F41).
+
+### Documentation — corrected against actual behavior
+
+`THREAT_MODEL.md`, `README.md`, and several module docstrings described
+mechanisms, consumers, or guarantees that had drifted from what the code
+actually does — each corrected to state the current, verified fact rather
+than what was true when originally written (F2, F27, F38, F42, F43, F60,
+F61, F62, F63, F72, Q20, Q27). Where a description couldn't be made honest by
+a code fix, it was corrected to say so plainly instead.
+
+### Known, and said so
+
+- A skill-optimization "success" scorer is a reply-shape heuristic that
+  cannot distinguish a genuinely completed action from a confident,
+  fabricated claim of one — the minimum honest fix (a third "unverified"
+  state, replacing a false default of "success") shipped; the real fix
+  (genuine per-task-type completion verification) is specified as follow-up
+  work and deliberately not built yet (F75).
+- One test (`test_nemo_voice.py`) still fails intermittently under the full
+  suite and passes every narrower subset tried — left open rather than
+  force-closed with a guess.
+- A handful of findings are recorded as open design questions for a human
+  to settle, not defects with an obvious fix: what "success" should mean for
+  autonomous skill learning, what a knowledge-graph eviction policy should
+  look like, what a scheduler manual-run's concurrency semantics should be.
+
+## [5.11.0] — 2026-09-03
+
+Merges four branches built and verified separately: security-boundary
+enforcement, the retirement of a self-approving consent tool, boot-guard
+rollback hardening, and the knowledge-graph conversation fix. Full unit and
+API suites green on the merged code, not just on each branch alone.
+
+### Fixed
+
+- **The knowledge graph's conversation source has never indexed a single
+  turn.** It called a method (`recent_turns`) that never existed and read a
+  field (`content`) the real method never returns; a bare `except Exception:
+  return []` made the resulting crash indistinguishable from "no
+  conversations yet." Conversations now actually reach the knowledge graph.
+- **`knowledge_graph` settings were silently discarded.** The key was never
+  declared in the settings whitelist, so every change made in Settings →
+  Knowledge saved to disk but was dropped on every read.
+- **Two dead Privacy controls, removed or fixed.** The "EGRESS GATE / Cloud
+  Mode" toggle wrote a setting nothing read; removed. "Local-Only Mode" in
+  `ui_parts/app.html` wrote a key the server never read; fixed to match
+  `index.html`, which already had it right.
+- **A settings control that writes a key nothing reads can no longer ship
+  silently.** `scripts/check_settings_readers.py`, wired into both pytest
+  and the pre-commit hook, catches the class of bug above before it lands
+  again.
+- **Ten of eleven places where private context could reach a cloud AI
+  provider ungated are closed**, including the Gemini Live voice system
+  instruction (previously protected only by a vault-assembly gate you have
+  deliberately left off), live microphone audio (no record of it existed
+  anywhere), and a real bypass found while fixing this: the channel "send
+  test message" button could push unfiltered text out Telegram/Discord
+  directly. See `docs/design/security-boundary.md` for the eleventh
+  (deferred — needs a font/asset self-hosting decision) and the full list.
+- **A tool that let Friday's own AI grant itself permission to send data to
+  the cloud is removed.** `enterprise_consent_grant` and the
+  policy-rewriting half of `enterprise_cloud_gate` are gone from the
+  friday-core MCP layer; a first-boot migration revokes any standing
+  permission a model may have already minted under it.
+- **Federation endpoint hardening.** `/api/federation/compute/request` and
+  two siblings now carry the same auth marker as the rest of the file, for
+  consistency — though the app's existing blanket auth check already
+  covered them; see the session report for what this does and doesn't
+  close. The underlying risk (a "run a Python script" capability gated
+  only by a caller-stated trust score) is not fixed here and needs a real
+  design decision.
+- **Boot-guard's self-edit rollback could not actually have protected a
+  boot.** It covered two files; a bad self-edit to anything in
+  `src/agent_friday` or `index.html` — everything that actually runs —
+  was invisible to it. Coverage now includes the real package root and
+  `index.html`; snapshots are staged-and-swapped with a completion marker
+  so a crash mid-snapshot can't leave a corrupt restore point; and
+  `check_self_edit`/`check_scope`, previously unwired, now actually gate
+  `code_apply`.
+
+### New
+
+- **The retrieval ledger.** Every prompt assembly — filtered or not, local
+  or cloud — now writes a permanent local record of which sections went
+  in, how sensitive each was rated, and how large, without ever recording
+  content. Closes the gap where an ungated cloud prompt left no trace of
+  what it carried.
 ## [5.10.0] - 2026-09-01
 
 A working session's worth of fixes to things that were reachable in the code but

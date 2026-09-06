@@ -260,4 +260,45 @@ class TestMinimumCacheablePrefix:
         It costs every prefix between the two: marked, cacheable, and skipped.
         """
         assert pc._min_cacheable("claude-fable-5") == 512
+
+
+class TestOpenRouterCache:
+    """The OpenAI-compatible transport (OpenRouter, via `_call_openai`) got
+    NO cache breakpoints at all until 2026-09-04 — `apply_anthropic_cache`
+    only ever ran on the native Anthropic SDK path (`_call_claude_agent`).
+    Every scheduled task routed through OpenRouter, the hourly heartbeat
+    included, resent its full ~14k-token system prefix uncached, every call,
+    forever. `apply_openrouter_cache` is the same stable/volatile split,
+    reshaped for a `{"role": "system", "content": [...]}` message instead of
+    Anthropic's top-level `system` kwarg — OpenRouter accepts the identical
+    `cache_control` block shape on system-message content parts.
+    """
+
+    def test_splits_at_the_clock_same_as_the_anthropic_path(self):
+        content, hit = pc.apply_openrouter_cache(_sys(), "anthropic/claude-sonnet-5")
+        assert hit is True
+        assert isinstance(content, list) and len(content) == 2
+        assert content[0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in content[1]
+        assert content[1]["text"].startswith(pc.VOLATILE_MARKER)
+        # Lossless reassembly — caching must not change what the model reads.
+        assert content[0]["text"] + content[1]["text"] == _sys()
+
+    def test_cached_prefix_identical_across_turns_a_minute_apart(self):
+        a, _ = pc.apply_openrouter_cache(_sys("10:00"), "anthropic/claude-sonnet-5")
+        b, _ = pc.apply_openrouter_cache(_sys("10:01"), "anthropic/claude-sonnet-5")
+        assert a[0]["text"] == b[0]["text"]
+        assert a[1]["text"] != b[1]["text"]
+
+    def test_short_prefix_left_as_a_plain_string(self):
+        short = "== AUTHORITATIVE CLOCK ==\nnow\n"
+        content, hit = pc.apply_openrouter_cache(short, "anthropic/claude-sonnet-5")
+        assert hit is False
+        assert content == short
+
+    def test_disabled_setting_short_circuits_to_the_plain_string(self, monkeypatch):
+        monkeypatch.setattr(pc, "enabled", lambda: False)
+        content, hit = pc.apply_openrouter_cache(_sys(), "anthropic/claude-sonnet-5")
+        assert hit is False
+        assert content == _sys()
         assert pc._min_cacheable("claude-opus-5") == 512

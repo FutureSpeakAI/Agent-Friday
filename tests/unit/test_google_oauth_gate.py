@@ -8,6 +8,26 @@ happens when the open_url tool is asked to open the Google authorize URL.
 Directly visiting /api/google/auth in a browser, or running
 scripts/friday_google_connect.py, is already an explicit human action and
 is out of scope for this gate.
+
+CORRECTION (second cold-verification pass, 2026-09-05, real live-system
+contact -- treated as urgent): TestOpenUrlToolGatesGoogleOauth's four tests
+called agent_mod._tool_open_url() with a real "http://localhost:3000/..."
+URL and mocked approvals.gate_action, but never mocked _validate_url --
+which, by default (check_reachable=True), makes a REAL requests.head() call
+to whatever the URL says. localhost:3000 is this application's own default
+port. Confirmed directly: these tests started failing the moment something
+was actually listening there and answered with a real HTTP 404 (per
+_url_head_ok()'s own documented contract, a 404 is treated as a "definite
+dead-link signal" and _tool_open_url() returns its refusal message BEFORE
+ever reaching the gate_action code under test) -- meaning these tests had
+been silently, unintentionally making live network requests to whatever
+real process happens to be running on this machine's own default port the
+whole time, and had only ever passed because nothing was listening there
+often enough that nobody noticed. A test suite must never depend on, or
+reach out to, the state of a real external process. Fixed by mocking
+_validate_url directly, matching this file's own established mock-the-
+collaborator style -- these tests are about the approval gate, not about
+URL reachability (which has its own separate, real tests elsewhere).
 """
 from __future__ import annotations
 
@@ -33,6 +53,7 @@ class TestIsGoogleOauthUrl:
 class TestOpenUrlToolGatesGoogleOauth:
     def test_pending_approval_does_not_open_browser(self, monkeypatch):
         opened = []
+        monkeypatch.setattr(agent_mod, "_validate_url", lambda url: (True, "ok"))
         monkeypatch.setattr(agent_mod, "_open_url_in_browser",
                              lambda url: opened.append(url) or f"Opened: {url}")
         monkeypatch.setattr(
@@ -45,6 +66,7 @@ class TestOpenUrlToolGatesGoogleOauth:
 
     def test_auto_approved_opens_immediately(self, monkeypatch):
         opened = []
+        monkeypatch.setattr(agent_mod, "_validate_url", lambda url: (True, "ok"))
         monkeypatch.setattr(agent_mod, "_open_url_in_browser",
                              lambda url: opened.append(url) or f"Opened: {url}")
         monkeypatch.setattr(
@@ -56,6 +78,7 @@ class TestOpenUrlToolGatesGoogleOauth:
 
     def test_denied_does_not_open_browser(self, monkeypatch):
         opened = []
+        monkeypatch.setattr(agent_mod, "_validate_url", lambda url: (True, "ok"))
         monkeypatch.setattr(agent_mod, "_open_url_in_browser",
                              lambda url: opened.append(url) or "Opened")
         monkeypatch.setattr(
@@ -72,6 +95,7 @@ class TestOpenUrlToolGatesGoogleOauth:
             captured.update(kw)
             return {"status": "pending", "approval": {}}
 
+        monkeypatch.setattr(agent_mod, "_validate_url", lambda url: (True, "ok"))
         monkeypatch.setattr(agent_mod, "_open_url_in_browser", lambda url: "n/a")
         monkeypatch.setattr(approvals, "gate_action", fake_gate_action)
         agent_mod._tool_open_url({"url": "http://localhost:3000/api/google/auth"})
@@ -80,6 +104,11 @@ class TestOpenUrlToolGatesGoogleOauth:
         assert "gmail.send" in captured["action_description"]
 
     def test_ordinary_url_bypasses_the_gate_entirely(self, monkeypatch):
+        # Also never mocked _validate_url -- a REAL network request to the
+        # real reddit.com on every run of this "unit" test (see this file's
+        # module docstring correction). reddit.com being reachable is not
+        # this test's concern; the gate-bypass logic is.
+        monkeypatch.setattr(agent_mod, "_validate_url", lambda url: (True, "ok"))
         gate_calls = []
         monkeypatch.setattr(approvals, "gate_action",
                              lambda **kw: gate_calls.append(kw) or {"status": "denied"})

@@ -217,3 +217,89 @@ def test_a_measured_number_beats_a_recorded_one(arb):
     f = pf.before_local_turn("gemma4:26b")
     assert f["seconds"] == 41.0
     assert "measured on this machine" in f["basis"]
+
+
+# ── before_chain — headroom.md §8.1's five lines, as data ──────────────────
+
+def _chain_plan(**over):
+    base = {
+        "stages": [
+            {"role": "stt", "model_id": "faster-whisper-small-int8",
+             "where": "cpu", "footprint_mib": 0, "basis": "unknown"},
+            {"role": "interactive_brain", "model_id": "gemma4:e4b",
+             "where": "resident", "footprint_mib": 3081, "basis": "measured"},
+            {"role": "image", "model_id": "z-image-turbo-fp8",
+             "where": "leased", "footprint_mib": 10453, "basis": "measured",
+             "retained_mib": 1811, "exclusive_of": ["gemma4:e4b"]},
+            {"role": "tts", "model_id": "piper-en_us-amy-medium",
+             "where": "cpu", "footprint_mib": 0, "basis": "unknown"},
+        ],
+        "transitions": [
+            {"before_stage": 2, "evict": ["gemma4:e4b"], "load": [],
+             "est_s": 24.52, "basis": "measured"},
+            {"before_stage": 3, "evict": [], "load": ["gemma4:e4b"],
+             "est_s": 27.5, "basis": "measured"},
+        ],
+        "retained": ["gemma4:e2b"], "peak_mib": 12264,
+        "total_est_s": 101.62, "contract_ok": True, "alternatives": [],
+    }
+    base.update(over)
+    return base
+
+
+def test_before_chain_no_pause_when_nothing_is_leased():
+    plan = _chain_plan(stages=[
+        {"role": "stt", "where": "cpu"},
+        {"role": "interactive_brain", "where": "resident"},
+        {"role": "image", "where": "cloud"},
+        {"role": "tts", "where": "cpu"},
+    ])
+    f = pf.before_chain(plan)
+    assert f["will_pause"] is False
+
+
+def test_before_chain_names_what_stands_down_and_what_stays_awake():
+    f = pf.before_chain(_chain_plan())
+    assert "gemma4:e4b" in f["stands_down"]
+    assert "gemma4:e2b" in f["stands_down"]
+    assert f["affects"] == ["gemma4:e4b"]
+    assert f["stays_awake"] == ["gemma4:e2b"]
+
+
+def test_before_chain_where_lists_every_stage():
+    f = pf.before_chain(_chain_plan())
+    roles = [w["role"] for w in f["where"]]
+    assert roles == ["stt", "interactive_brain", "image", "tts"]
+
+
+def test_before_chain_reports_the_total_when_known():
+    f = pf.before_chain(_chain_plan())
+    assert f["seconds"] == 101.62
+    assert f["confidence"] == pf.CERTAIN
+
+
+def test_before_chain_confidence_drops_when_the_total_is_unknown():
+    f = pf.before_chain(_chain_plan(total_est_s=None))
+    assert f["seconds"] is None
+    assert f["confidence"] == pf.POSSIBLE
+    assert "not fully measured" in f["how_long"]
+
+
+def test_before_chain_names_the_contract_state_in_the_feel_line():
+    ok = pf.before_chain(_chain_plan(contract_ok=True))
+    assert "keep their memory" in ok["feel"]
+    bad = pf.before_chain(_chain_plan(contract_ok=False))
+    assert "cloud instead" in bad["feel"]
+    unknown = pf.before_chain(_chain_plan(contract_ok=None))
+    assert "not fully known" in unknown["feel"]
+
+
+def test_before_chain_offers_the_three_way():
+    f = pf.before_chain(_chain_plan())
+    ids = {o["id"] for o in f["options"]}
+    assert ids == {"now_local", "now_cloud", "when_away"}
+
+
+def test_before_chain_reaches_the_forecast_dispatch():
+    f = pf.forecast("chain", plan=_chain_plan())
+    assert f["will_pause"] is True

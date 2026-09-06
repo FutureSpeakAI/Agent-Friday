@@ -70,6 +70,18 @@ _MUSIC_MODEL_MAP = {
 DEFAULT_MUSIC_MODEL = "lyria-clip"
 CLIP_MAX_SECONDS = 30
 
+# ── Cost metering (flat per-generation, NOT token-based) ────────────────────
+# docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a: Lyria calls had ZERO
+# cost_meter references. Google prices Lyria per generation, not per token, so
+# this does not fit cost_meter.PRICING's per-1K-token shape — recorded via
+# cost_meter.record(cost_usd=...) instead. Rates checked against public
+# pricing aggregator pages 2026-09-04 (not ai.google.dev directly) --
+# best-effort, moderate confidence, flagged.
+_LYRIA_USD_PER_GENERATION = {
+    "lyria-3-clip-preview": 0.04,   # <=30s clip
+    "lyria-3-pro-preview":  0.08,   # full song
+}
+
 #: Fallback length for a Higgsfield music model that requires `duration` when
 #: the caller names none. `sonilo_music` declares duration REQUIRED (unlike
 #: every video model, where it is optional), so omitting it is a submit error
@@ -436,6 +448,21 @@ def _generate_music_cloud(client, types, api_model, full_prompt, *, mode, lyrics
         operation = client.operations.get(operation)
         _orb_update(orb, progress=min(0.9, 0.2 + 0.7 * (waited / 90)),
                    label=f"Composing… {waited}s elapsed")
+
+    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
+    # this was the single Lyria call site and it had ZERO cost_meter
+    # references. Recorded once the operation completes (attempted, not
+    # necessarily successful — Google's own billing is per generation
+    # attempt) rather than only after audio is extracted, since a failed
+    # extraction downstream does not mean Google didn't charge for the run.
+    # Never allowed to break music generation.
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _rate = _LYRIA_USD_PER_GENERATION.get(api_model)
+        if _rate is not None:
+            _cm.record("gemini", api_model, cost_usd=_rate, kind="creative")
+    except Exception:
+        pass
 
     _orb_update(orb, progress=0.92, label="Downloading audio…")
     return _extract_and_save_audio(operation, client, full_prompt)

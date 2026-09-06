@@ -590,3 +590,188 @@ def test_two_different_models_are_still_charged_separately():
     if side.get("model_id") == "gemma4:e2b":
         assert side.get("shares_model_with") is None
         assert side["vram_mib"] > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  verdicts() — three axes, never "compatible" (headroom.md §5.2, §12 Phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import itertools
+
+from agent_friday.services import residency_catalog as rc
+
+
+@pytest.fixture
+def isolated_catalog_store(monkeypatch, tmp_path):
+    """verdicts() reads `residency_catalog.footprint()`, which reads the
+    measurement store — never touch the real one from a policy test."""
+    monkeypatch.setattr(rc, "store_path", lambda: tmp_path / "m.json")
+    rc.reset_cache()
+
+
+def test_no_footprint_is_unknown_on_all_three_axes(isolated_catalog_store):
+    v = rp.verdicts({"model_id": "nope:1b"}, fx.P1)
+    assert v["fits"] == v["runs_well"] == v["worth_it"]
+    for axis in ("fits", "runs_well", "worth_it"):
+        assert v[axis]["status"] == "unknown"
+        assert v[axis]["basis"] == "unknown"
+
+
+def test_a_footprint_whose_own_basis_is_unknown_is_unknown_on_all_axes(
+        isolated_catalog_store):
+    """A row can exist and still carry no basis Friday can act on — HR1
+    covers that shape too, not only a missing row."""
+    rc.record_footprint(
+        "mystery:7b", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="text", device="gpu", basis="unknown"))
+    v = rp.verdicts({"model_id": "mystery:7b"}, fx.P1)
+    for axis in ("fits", "runs_well", "worth_it"):
+        assert v[axis]["status"] == "unknown"
+
+
+def test_measured_text_model_that_fits_reads_ready(isolated_catalog_store):
+    v = rp.verdicts({"model_id": "gemma4:e2b"}, fx.P1)
+    assert v["fits"]["status"] == "ready"
+    assert v["fits"]["basis"] == "measured"
+
+
+def test_a_measured_shortfall_refuses(isolated_catalog_store):
+    """HR18's other half: a MEASURED number is allowed to refuse."""
+    rc.record_footprint(
+        "too-big:70b", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="text", device="gpu", basis="measured",
+                          vram_mib=999_999, measured_at="2026-09-04"))
+    v = rp.verdicts({"model_id": "too-big:70b"}, fx.P1)
+    assert v["fits"]["status"] == "refused"
+    assert v["fits"]["rule_id"] == "R3"
+
+
+def test_a_declared_shortfall_never_refuses(isolated_catalog_store):
+    """HR18 — a declared number never refuses. A vendor's optimistic-or-not
+    'requires' claim that this machine cannot confirm becomes ready-but,
+    not a refusal that reads exactly like a measured one."""
+    rc.record_footprint(
+        "huge-declared:1t", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="text", device="gpu", basis="declared",
+                          requires={"vram_min_mib": 999_999}))
+    v = rp.verdicts({"model_id": "huge-declared:1t"}, fx.P1)
+    assert v["fits"]["status"] != "refused"
+    assert v["fits"]["status"] == "ready-but"
+    assert v["fits"]["basis"] == "declared"
+
+
+def test_licence_or_quality_demotes_worth_it_to_ready_but(
+        isolated_catalog_store):
+    rc.record_footprint(
+        "licensed:1b", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="image", device="gpu", basis="measured",
+                          vram_mib=1000, measured_at="2026-09-04",
+                          licence={"name": "Restrictive-1.0"}))
+    v = rp.verdicts({"model_id": "licensed:1b"}, fx.P1)
+    assert v["worth_it"]["status"] == "ready-but"
+
+
+def test_no_licence_or_quality_reads_ready_not_a_withheld_verdict(
+        isolated_catalog_store):
+    rc.record_footprint(
+        "plain:1b", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="image", device="gpu", basis="measured",
+                          vram_mib=1000, measured_at="2026-09-04"))
+    v = rp.verdicts({"model_id": "plain:1b"}, fx.P1)
+    assert v["worth_it"]["status"] == "ready"
+
+
+def test_a_ram_shortfall_degrades_runs_well_never_refuses_it(
+        isolated_catalog_store):
+    """§5.2's table: runs_well has no `refused` value at all."""
+    rc.record_footprint(
+        "ram-hog:1b", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="stt", device="cpu", basis="declared",
+                          requires={"ram_recommended_mib": 999_999}))
+    v = rp.verdicts({"model_id": "ram-hog:1b"}, fx.P1)
+    assert v["runs_well"]["status"] == "degraded"
+    assert v["runs_well"]["status"] != "refused"
+
+
+def test_the_real_measured_z_image_footprint_is_a_verdict_not_a_guess(
+        isolated_catalog_store):
+    """The headline number from §12 Phase 2 item 4: measured 2026-09-04
+    under the Arbiter's own image_job lease. On P1's honest budget (12,282 -
+    1,024 R3 slack - 2,560 display reserve = 8,698 MiB, §6.3) even a fully
+    exclusive lease does not clear a ~10.1 GB real footprint — a genuine,
+    MEASURED refusal, not a guessed one."""
+    rc.record_footprint(
+        "z-image-turbo-fp8", rc.P1_FINGERPRINT,
+        rc.make_footprint(modality="image", device="gpu", basis="measured",
+                          vram_mib=10453, artifact_bytes=14535245332,
+                          load_s=24.01, unit="image", work_s_per_unit=48.1,
+                          licence={"name": "Apache-2.0"},
+                          quality_note="turbo: 8 steps, fast",
+                          measured_at="2026-09-04"))
+    v = rp.verdicts({"model_id": "z-image-turbo-fp8"}, fx.P1)
+    assert v["fits"]["basis"] == "measured"
+    assert v["fits"]["status"] == "refused"
+    assert v["worth_it"]["status"] == "ready-but"
+
+
+# ── HR1 / HR18 property test — the load-bearing one for this phase ──────────
+
+_MODALITIES = ("text", "embed", "image", "video", "stt", "tts")
+_DEVICES = ("gpu", "cpu")
+_VRAM = (None, 100, 5_000, 999_999)
+_BASES = ("measured", "declared", "unknown")
+
+
+def _fixture_entries():
+    """A generated sweep: every combination of modality x device x vram x
+    basis this module's own vocabulary allows, plus the two "nothing
+    recorded at all" shapes (no footprint; a footprint literal with no
+    basis field)."""
+    n = 0
+    for modality, device, vram, basis in itertools.product(
+            _MODALITIES, _DEVICES, _VRAM, _BASES):
+        model_id = "sweep-%s-%s-%s-%s" % (modality, device, vram, basis)
+        kwargs = dict(modality=modality, device=device, basis=basis,
+                     vram_mib=vram)
+        if basis == "measured":
+            kwargs["measured_at"] = "2026-09-04"
+        yield model_id, rc.make_footprint(**kwargs)
+        n += 1
+    assert n > 20, "the sweep collapsed to almost nothing — check the guard"
+
+
+def test_verdicts_never_reads_ready_on_an_unknown_basis(
+        isolated_catalog_store):
+    """HR1, pinned directly: across every fixture entry this module's own
+    Footprint vocabulary can construct, no axis whose basis is "unknown"
+    (footprint literally basis=unknown, OR no footprint recorded at all)
+    may ever read `status: "ready"`."""
+    for model_id, fp in _fixture_entries():
+        rc.record_footprint(model_id, rc.P1_FINGERPRINT, fp)
+        v = rp.verdicts({"model_id": model_id}, fx.P1)
+        for axis in ("fits", "runs_well", "worth_it"):
+            if v[axis]["basis"] == "unknown":
+                assert v[axis]["status"] != "ready", (
+                    "%s on %s read ready with basis unknown: %r"
+                    % (axis, model_id, v[axis]))
+
+    # And the "nothing recorded at all" shape, which is not in the sweep
+    # above because it has no footprint to construct.
+    v = rp.verdicts({"model_id": "truly-never-seen:1b"}, fx.P1)
+    for axis in ("fits", "runs_well", "worth_it"):
+        assert v[axis]["basis"] == "unknown"
+        assert v[axis]["status"] != "ready"
+
+
+def test_verdicts_never_refuses_on_a_declared_basis(isolated_catalog_store):
+    """HR18, pinned directly across the same sweep: `fits` — the only axis
+    with a `refused` value at all — never returns `refused` for a
+    basis="declared" footprint, regardless of how large the declared VRAM
+    figure is relative to the machine."""
+    for model_id, fp in _fixture_entries():
+        if fp["basis"] != "declared":
+            continue
+        rc.record_footprint(model_id, rc.P1_FINGERPRINT, fp)
+        v = rp.verdicts({"model_id": model_id}, fx.P1)
+        assert v["fits"]["status"] != "refused", (
+            "%s refused on a declared basis: %r" % (model_id, v["fits"]))
