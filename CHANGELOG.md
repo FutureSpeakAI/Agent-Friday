@@ -3,10 +3,106 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.12.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.13.0**
 >
 > Entries for 5.7.0 and 5.8.1 are not recorded here — those releases were
 > tagged without a changelog entry.
+
+---
+
+## [5.13.0] — 2026-09-06
+
+Merges `main` and the release-integration branch for the first time since
+5.10.0 — main carried the OS-mode subsystem, the `paths.py` consolidation
+that made `FRIDAY_HOME` a real isolation boundary, fail-closed credential/
+vault-passphrase storage, the OpenRouter Auto Router, and streaming chat;
+integration carried the full gauntlet audit and the Gemma 4 rebuild. Two
+real merge defects were found and fixed by running the full suite rather
+than trusting a clean auto-merge: `boot_guard.py`'s live self-edit path
+referenced a name (`HOME`) that only existed on one side of the merge, and
+`core.py`'s new vibe-terminal state file bypassed the FRIDAY_HOME isolation
+main had just built, for the same reason `retrieval_ledger.py` did in the
+5.12.0 merge — new code written before a refactor lands has nothing to use
+until someone notices.
+
+### Security — a policy reversed twice in one day, and what actually shipped
+
+`is_unrestricted_cloud()` — the one flag capable of turning off every
+privacy safeguard in the codebase for cloud sends — was changed same-day to
+treat `model_routing.mode == "cloud_only"` alone as sufficient, reasoning
+that selecting cloud-only is itself the acceptance. That reasoning did not
+survive the fact that `cloud_only` is this app's **factory default**: the
+change meant every fresh install inherited "no safeguards" the moment
+someone picked cloud-only as their provider, which is what most people do,
+since it needs no local model and no setup. Caught by the test suite going
+from 7 failures to 123 the moment the change landed, all in egress-gate
+tests that had assumed cloud-only-with-nothing-else-set was still gated —
+correctly, as it turned out.
+
+Fixed for real this time, on Stephen's explicit ruling: unrestricted cloud
+access is now earned by an **explicit, recorded decision**
+(`model_routing.cloud_consent`), never inherited from any value of `mode`.
+Two shapes, gated on whether the machine's own hardware can honor the
+alternative first:
+
+- **Capable hardware** (verified against the same verdict machinery the
+  model picker already uses — reasoning, voice, image, and video each
+  independently, plus the arbiter's own chain-planning for the combined
+  workload) — a genuine choice between private-local and unrestricted-cloud.
+- **Insufficient hardware** — no private option is offered at all, since
+  that would be a promise the hardware breaks. The screen states plainly
+  what can't run locally and asks for explicit consent to unrestricted
+  cloud instead. Silence is not consent; there is no default button.
+
+The write path is not reachable from the generic `POST /api/settings` a
+model's own tools can already call — the same shape of bug
+`enterprise_consent_grant` was removed for. `core._save_settings()` strips
+`cloud_consent` from any incoming delta unless the call carries a private
+keyword only one code path (`privacy/cloud_consent.record_consent()`) ever
+passes, and that path re-derives the capability assessment itself rather
+than trusting the caller's claim about its own hardware.
+
+**Runner-agnostic, verified rather than assumed.** The capability check's
+first draft scored "reasoning" only against the curated four-rung Gemma 4
+ladder, which would have called a machine incapable the moment it wasn't
+running one of those four exact model tags — regardless of whether a real
+model was resident some other way. Ollama is one runner among several
+(Friday's own runtime store for a fetched GGUF, ComfyUI for image and
+video); found before shipping by checking what `local_seats.installed()`
+already does correctly (Friday's own store UNION the Ollama daemon, built
+after an earlier incident where trusting the daemon alone moved a real
+reasoning seat off its runtime) and using that as the first check, falling
+back to the curated ladder only when nothing is actually resident.
+
+An install that already set the old standalone `unrestricted_cloud` flag
+explicitly is treated as having already made this choice. Everyone else —
+including any account that never touched that flag, regardless of what
+`mode` says — is unanswered, gated, and sees the real prompt on next launch.
+
+### Documentation — the Qwen sweep
+
+A retired brain-ladder model (Qwen, removed 2026-09-03) was found named as
+current in the public README, independently of the same-session
+documentation-reconciliation pass that had already run and missed it —
+the third surviving reference found since the removal decision, after the
+setup wizard's hardcoded default and the installer's own five-rung ladder.
+Swept the repository for every remaining mention: the substantial majority
+(89 files matched) turned out to be legitimate — `qwen3-embedding:0.6b`
+and `qwen-image-q3ks` are real, current, separate parts of the product
+(embeddings and local image generation respectively) never part of the
+brain-ladder decision, and most of the rest are historical incident
+documentation this codebase deliberately keeps. Two genuine instances of
+drift found and fixed: `KNOWN_ISSUES.md`'s tool-calling example still named
+`qwen3:8b`, and `Test-Installer.ps1`'s test fixture used a retired tag as
+arbitrary test data for no reason.
+
+**The structural fix, not just the instance:** `scripts/
+check_stale_model_names.py`, wired into pytest and the pre-commit hook the
+same way `check_settings_readers.py` guards the analogous settings
+problem — a curated set of user-facing docs is checked against a
+maintained list of retired brain-ladder model names, so the next retired
+family needs one line added to the checker instead of a fourth independent
+doc-reconciliation pass finding it by hand.
 
 ---
 

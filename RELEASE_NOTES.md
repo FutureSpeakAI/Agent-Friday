@@ -1,113 +1,80 @@
-# Agent Friday v5.12.0
+# Agent Friday v5.13.0
 
-*2026-09-05 · FutureSpeak.AI*
+*2026-09-06 · FutureSpeak.AI*
 
-This release exists because we spent two days looking for places where what
-we told you and what the code actually does had come apart, and then fixed
-82 of the 112 things we found. This document is written the way we'd want
-one written about us: it says what was wrong before it says what's new,
-including the parts that don't make us look good.
-
-Full technical detail lives in [CHANGELOG.md](CHANGELOG.md); the complete,
-unedited ledger — every finding, every verdict, every fix, including the ones
-still open — is in
-[`docs/audits/gauntlet-2026-09-03/`](docs/audits/gauntlet-2026-09-03/).
+This release merges two branches that had drifted apart since 5.10.0, closes
+a privacy control that was reversed twice in one day before it shipped
+correctly, and fixes the last surviving public reference to a model this
+product no longer uses. Full technical detail lives in
+[CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## The three findings we'd rather not have had to report
+## The thing we'd rather not have had to report
 
-**A credential-sandboxing gap took three attempts to actually close.** Every
-sandboxed connector Friday spawns inherited her entire decrypted-secrets
-environment — API keys, the vault passphrase, all of it. The first fix was a
-list of secret names to block. That list was wrong the same night (it named
-two environment variables that don't exist in this codebase, while leaving
-the real one exposed). A live test then found six more currently-used
-provider credentials the list had simply never been told about. We stopped
-trying to enumerate what to hide and inverted the mechanism: a connector now
-gets an explicit list of what it's *allowed* to see, built from what it
-actually needs, and nothing else. A name nobody thought to add can no longer
-leak by omission.
+**A privacy control was wrong for a few hours, in production, before it
+shipped.** Earlier the same day, `is_unrestricted_cloud()` — the one flag
+capable of turning off every safeguard this codebase has for cloud sends —
+was changed to treat selecting "cloud only" as a provider preference as
+itself sufficient consent to send everything unrestricted. That reasoning
+sounded right in isolation: if you've picked cloud-only, why ask twice? It
+falls apart against one fact: **cloud-only is this app's factory default.**
+The change meant a stranger who never opened Settings inherited "no privacy
+safeguards" the instant they picked cloud-only as their provider — which is
+what most people do, since it needs no local model and no setup.
 
-**A child-safety check had been silently bypassable for over two months.**
-Content already tagged by an upstream classifier as CSAM, a real-person
-deepfake, doxxing, or violence incitement would pass our content-policy gate
-with `blocked: False`, as long as it arrived with no title or description
-text attached — one of two independent checks skipped itself in exactly that
-condition, on the assumption the other one already had it covered. It didn't.
-This existed from the module's first commit in June and every test stayed
-green the entire time, because nothing had ever exercised that specific
-combination. We found it by reading the docstring against the code, not by
-running the suite one more time. Fixed, and we're not proud it took reading
-the fine print to catch.
+We didn't catch this by inspection. We caught it because the full test
+suite went from 7 failures to 123 the moment the change landed, all in
+tests that had assumed cloud-only-with-nothing-else-configured was still a
+protected state. It was — until that afternoon.
 
-**"Local-only" did not mean local-only for ordinary conversation.** The
-single most common thing people do with Friday — chat, with tool use, mode
-set to "never leaves this machine" — could still route to the cloud under
-specific conditions, in the tool-use path, the voice pipeline, and the
-knowledge-graph indexer, independently, three separate times. Fixed
-everywhere it was found, and the product's own behavior changed as a result:
-when Friday genuinely can't honor a local-only promise now, she says so and
-offers cloud as an explicit choice, rather than quietly switching for you.
+## What actually shipped instead
 
-We also found, disclosed, and fixed two incidents the audit's *own* tooling
-caused while looking for exactly this class of bug: one test made a real,
-live API call to Google using a real key from an improperly-isolated test
-process, and a separate batch of tests made real network requests — to this
-application's own local port and to a real third-party website — because a
-helper function reaches the network by default. Both are closed. We're
-naming them because a security review that never implicates itself isn't one
-you should fully trust.
+**Unrestricted cloud access is now earned, never inherited.** A new,
+explicit `cloud_consent` record is the only thing the egress gate reads for
+this decision — not `mode`, not any value you can set through the general
+settings API. Two screens, depending on your own hardware:
 
-## What's actually new
+- **If your machine can genuinely run local models well enough** —
+  reasoning, voice, image, and video, including the resource planner's own
+  check that it can juggle between them — you get a real, durable choice
+  between private-local and unrestricted-cloud.
+- **If it can't** — no local option is offered at all, because that would
+  be a promise the hardware breaks. The screen says plainly what won't run
+  locally and asks you to explicitly accept unrestricted cloud instead.
+  Nothing defaults to it; silence changes nothing.
 
-- **A real choice on cloud privacy.** Settings now has an explicit
-  "unrestricted cloud" toggle — off by default — for when you'd rather trade
-  every privacy safeguard for full cloud capability, deliberately, rather
-  than have Friday negotiate it for you.
-- **6 new local creative models** — 3 image, 3 video — added and
-  hardware-verified with measured generation times and their actual
-  licenses shown in the picker.
-- **The local brain is Gemma 4 now, not Qwen.** Qwen is removed from the
-  local model ladder entirely, replaced by the Gemma 4 family (e2b through
-  26b) as a placeholder until FutureSpeak's own model ships. If you have an
-  older Qwen model installed via Ollama, Friday will not offer to use it
-  again — pull a Gemma 4 rung instead (`friday models --install` picks the
-  right one for your hardware automatically).
-- **The hourly heartbeat got cheaper**, twice over: a job that was spending
-  roughly $12 on a single unwatched run was removed entirely, and the
-  heartbeat itself now uses prompt caching on the path that actually serves
-  it (previously wired to a path it never used) and a tool registry sized to
-  what a liveness check actually needs instead of the full 75-tool set.
-- **A stale vault key no longer strands your provider keys.** If a
-  rehearsal or test run overwrites the shared OS keychain entry mid-session,
-  a new maintenance path re-encrypts whatever the current process can still
-  decrypt under a fresh key, so it survives the next restart too.
+The capability check looks at what your machine can *actually* serve, not
+which specific runtime is installed — Ollama, a GGUF fetched directly into
+Friday's own runtime store, and ComfyUI (for image and video) are all
+checked the same way, because a check that only recognized one of them
+would call a real, working setup "incapable" for no reason.
 
-## What's still broken, and said so plainly
+The setting itself is written by exactly one code path, which is not
+reachable from the general settings API a model's own tools can already
+call — the same class of fix as removing `enterprise_consent_grant` a few
+days ago, applied here before this one ever shipped for real.
 
-- One test (`test_nemo_voice.py`) fails intermittently under the full suite
-  and passes every narrower subset we've tried. Left open rather than
-  force-closed with a guess.
-- A skill-optimization "success" scorer can't yet tell a genuinely completed
-  action from a confidently fabricated claim of one. The honest minimum fix
-  shipped (it no longer defaults to "success" when it has no evidence); the
-  real fix — actually verifying completion — is specified as follow-up work,
-  not built yet.
-- A vault-classification fix (correcting false "access denied" errors on
-  ordinary tool arguments containing words like "contact" or "family") is
-  real and needed, but its own test suite currently has 2 failing tests. Not
-  shipped in this release; tracked for the next one.
-- A handful of findings are recorded as open product-design questions, not
-  bugs with an obvious answer: what "success" should mean for autonomous
-  skill learning, what a knowledge-graph eviction policy should look like,
-  what a scheduler manual-run's concurrency semantics should be. See the
-  ledger for the full list — we'd rather hand you a question than a guess.
+## Also in this release
 
-## One thing this release does not fix
+- **`main` and the release-integration branch are merged** for the first
+  time since 5.10.0 — the OS-mode subsystem, `FRIDAY_HOME` isolation, and
+  fail-closed credential storage now sit alongside the gauntlet audit's 82
+  fixes and the Gemma 4 model rebuild, in one tree, with the full suite
+  green.
+- **The public README no longer names Qwen.** It was found still describing
+  the retired model family — the third independent place this same fact
+  had to be fixed since the 2026-09-03 removal decision, after the setup
+  wizard and the installer's own ladder. A standing check
+  (`scripts/check_stale_model_names.py`, wired into pytest and the
+  pre-commit hook) now catches the next one automatically instead of
+  needing a fourth documentation pass to find it by hand.
 
-The repository's git history still contains a real vault passphrase from
-earlier in this project's life. That is a publication decision, not a code
-fix, and it is explicitly not acted on here — no history rewrite, no force
-push — until the passphrase itself has been rotated. Rewriting history around
-a still-live secret protects nothing and breaks every existing clone.
+## What this release does not fix
+
+The repository's git history contains a real vault passphrase from earlier
+in this project's life, and it has been reachable from a published branch
+on GitHub since 2026-08-30 — not merely sitting in local history. That is a
+publication and rotation decision, not a code fix, and it remains
+explicitly not acted on here: no history rewrite, no force push, no branch
+or tag deletion. Those stay yours to decide.
