@@ -268,3 +268,49 @@ class TestKnowledgeGraphRoutingIsIndependentOfTheFlag:
             monkeypatch.setattr(eg, "is_unrestricted_cloud", lambda: flag)
             model, pinned = kgi._resolve_model(3, "local")
             assert pinned is True, f"local mode must stay local (flag={flag})"
+
+
+class TestStartupSelfTestUnderConsent:
+    """Found live 2026-09-06. Consent for unrestricted cloud was recorded at
+    07:40; the server restarted at 15:45; every task and chat turn then
+    failed with "Egress gate is non-functional (startup self-test failed)".
+    The self-test sealed its probe, the bypass returned it untouched, the
+    test called that a leak, and model_router refused every cloud send. An
+    unrestricted-cloud install therefore lost cloud on its next restart.
+    """
+
+    _CONSENT = {"model_routing": {
+        "mode": "cloud_only", "vault_local_only": False,
+        "cloud_consent": {"answered": True, "choice": "cloud_unrestricted",
+                          "at": "2026-09-06T07:40:00+00:00",
+                          "capability_snapshot": None}}}
+
+    def test_recorded_consent_does_not_read_as_a_broken_gate(self, monkeypatch):
+        from agent_friday import core as _core
+        monkeypatch.setattr(_core, "_load_settings", lambda: dict(self._CONSENT))
+        monkeypatch.setattr(eg, "_SELF_TEST_RESULT", None)
+        res = eg.startup_self_test()
+        assert res["ok"] is True and res.get("unrestricted_cloud") is True
+        assert eg.gate_operational() is True
+        # and the router therefore sends (bypass, not block)
+        from agent_friday.services import model_router as mr
+        payload = {"messages": [{"role": "user", "content": "My SSN is 123-45-6789"}]}  # pragma: allowlist secret
+        assert mr._seal_or_block(payload, "anthropic") == payload
+
+    def test_without_consent_a_surviving_probe_is_still_a_failure(self, monkeypatch):
+        """The guard the self-test exists for is unchanged: gated mode plus a
+        gate that lets the probe through must still disable cloud routing."""
+        from agent_friday import core as _core
+        monkeypatch.setattr(_core, "_load_settings", lambda: {"model_routing": {"mode": "cloud_only"}})
+        monkeypatch.setattr(eg, "_SELF_TEST_RESULT", None)
+        monkeypatch.setattr(eg, "seal_outbound", lambda payload, provider, **kw: payload)
+        res = eg.startup_self_test()
+        assert res["ok"] is False and "survived" in res["error"]
+        assert eg.gate_operational() is False
+
+    def test_without_consent_the_real_gate_still_withholds_the_probe(self, monkeypatch):
+        from agent_friday import core as _core
+        monkeypatch.setattr(_core, "_load_settings", lambda: {"model_routing": {"mode": "cloud_only"}})
+        monkeypatch.setattr(eg, "_SELF_TEST_RESULT", None)
+        res = eg.startup_self_test()
+        assert res["ok"] is True and not res.get("unrestricted_cloud")

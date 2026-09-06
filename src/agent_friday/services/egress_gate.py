@@ -1635,6 +1635,21 @@ def startup_self_test() -> dict:
     gate_operational()) so the failure mode is caught at boot, not at first leak.
     """
     global _SELF_TEST_RESULT
+    if is_unrestricted_cloud():
+        # The recorded consent says every safeguard is off, and seal_outbound
+        # honours that by returning payloads untouched. A probe that survives
+        # under that ruling is the ruling working, not the gate failing. Before
+        # this branch existed the probe "leaked", the self-test reported the
+        # gate broken, and model_router then refused EVERY cloud send — an
+        # unrestricted-cloud install lost cloud entirely on its next restart
+        # (found live 2026-09-06: consent recorded 07:40, restart 15:45, every
+        # task and chat turn failed with "startup self-test failed"). The
+        # deterministic gate is not exercised here because nothing routes
+        # through it in this mode; the posture is logged at boot, loudly, by
+        # the caller. The judgment battery is skipped for the same reason.
+        _SELF_TEST_RESULT = {"ok": True, "unrestricted_cloud": True,
+                             "note": "gate bypassed by recorded cloud consent; probe not run"}
+        return _SELF_TEST_RESULT
     probe = "My SSN is 123-45-6789 and my bank account number is 987654321."  # pragma: allowlist secret
     try:
         sealed = seal_outbound(
