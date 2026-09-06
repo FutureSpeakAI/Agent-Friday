@@ -237,3 +237,43 @@ def test_tray_reads_the_journal_and_exposes_steer_stop_rerun_delete(rel):
     assert "STALLED" in text and "INTERRUPTED" in text, f"{rel}: liveness states not rendered"
     assert "function TaskRecordsCard(" in text and "/api/tasks/retention" in text, f"{rel}: no retention control"
     assert re.search(r"TaskRecordsCard", text.split("function SystemWS(")[1][:20000]), f"{rel}: retention card not in the System workspace"
+
+
+# ── phase 5: steer names its hand; the observer contract is documented ──────
+
+def test_steer_source_is_recorded_as_agent_slug_or_user(client):
+    from agent_friday.routes.tasks import _steer_source
+    assert _steer_source(None) == "user"
+    assert _steer_source("user") == "user"
+    assert _steer_source("Fable") == "agent:fable"
+    assert _steer_source("agent:Astra Prime!") == "agent:astra-prime"
+    assert _steer_source("<script>" * 20).startswith("agent:") and len(_steer_source("x" * 99)) <= len("agent:") + 32
+    tid = _seed("steer-0002")
+    r = client.post("/api/agent/steer", json={"task_id": tid, "message": "narrow to Q3", "source": "Fable"})
+    assert r.status_code == 200 and r.get_json()["source"] == "agent:fable"
+    ev = [e for e in tj.read(tid) if e["kind"] == "steer"][-1]
+    assert ev["source"] == "agent:fable" and ev["message"] == "narrow to Q3"
+
+
+def test_observer_contract_is_documented_and_reachable_from_the_index():
+    doc = ROOT / "docs" / "reference" / "task-observation.md"
+    text = doc.read_text(encoding="utf-8")
+    from agent_friday.services import observer_access as obs
+    assert obs.HEADER in text, "the header name the code enforces is not in the operator doc"
+    for pre in obs.READ_ONLY_PREFIXES:
+        assert pre.split("/")[2] in text, f"allowlisted prefix {pre} is not documented"
+    for route in ("/api/tasks/<id>/digest", "/api/tasks/<id>/events", "/api/tasks/observer-token",
+                  "stop-after-step", "rerun", "reasoning=1", "gaps"):
+        assert route in text, f"{route} missing from the operator doc"
+    assert "reference/task-observation.md" in (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    assert "task-observation.md" in (ROOT / "docs" / "reference" / "api.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("rel", HTML_FILES)
+def test_observer_token_can_be_minted_and_revoked_from_the_system_workspace(rel):
+    text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+    card = text.split("function TaskRecordsCard(")[1].split("\nfunction ")[0]
+    assert "/api/tasks/observer-token" in card
+    assert "method: 'POST'" in card.replace('method:"POST"', "method: 'POST'").replace("method:'POST'", "method: 'POST'")
+    assert "'DELETE'" in card or '"DELETE"' in card
+    assert "Shown once" in card, f"{rel}: the one-time nature of the token is not shown"
