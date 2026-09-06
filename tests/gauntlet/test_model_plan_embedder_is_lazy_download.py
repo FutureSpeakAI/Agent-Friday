@@ -80,6 +80,6 @@ class TestModelPlanEmbedderIsLazyDownload:
         """Grounding check: confirms the corrected plan() text is now
         consistent with docs/getting-started/installation.md's independently-correct claim,
         not just differently worded."""
-        install_doc = (_REPO_ROOT / "docs" / "INSTALLATION.md").read_text(
+        install_doc = (_REPO_ROOT / "docs" / "getting-started" / "installation.md").read_text(
             encoding="utf-8")
         assert "The embedding model is lazy and announced" in install_doc
