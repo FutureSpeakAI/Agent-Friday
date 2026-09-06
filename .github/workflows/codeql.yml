@@ -13,7 +13,9 @@ permissions:
 
 jobs:
   analyze:
-    name: analyze (python, javascript)
+    # One name per matrix leg, so a ruleset can require "analyze (python)"
+    # and "analyze (javascript)" by name.
+    name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -27,4 +29,5 @@ jobs:
       - uses: github/codeql-action/init@5ba2889ada762081db2c4f32a729827dce632c7b # v3
         with:
           languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
       - uses: github/codeql-action/analyze@5ba2889ada762081db2c4f32a729827dce632c7b # v3

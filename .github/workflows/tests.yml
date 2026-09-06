@@ -57,6 +57,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The whitespace/conflict-marker step diffs HEAD~1..HEAD. With the
+          # default depth of 1 HEAD~1 does not exist and the fallback diffs a
+          # clean tree, so the step always passed.
+          fetch-depth: 2
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"

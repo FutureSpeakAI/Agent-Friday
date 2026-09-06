@@ -1,0 +1,7 @@
+name: Agent Friday CodeQL config
+# Third-party minified bundles are not this project's code; scanning them
+# buries the real JavaScript alerts (inline scripts in index.html and
+# ui_parts/) under vendor noise.
+paths-ignore:
+  - static/vendor
+  - node_modules
