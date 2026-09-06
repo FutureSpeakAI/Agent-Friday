@@ -51,6 +51,17 @@ def get_budget():
     return jsonify({"status": "ok", "budget": _cm.get_budget()})
 
 
+@costs_bp.route('/api/costs/hard-stop', methods=['GET'])
+def hard_stop_status():
+    """Is the stopping cap on, has it tripped, and what did it halt."""
+    try:
+        from agent_friday.services import spend_guard as _sg
+        return jsonify({"status": "ok", **_sg.status()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @costs_bp.route('/api/costs/budget', methods=['POST'])
 @login_required
 def set_budget():

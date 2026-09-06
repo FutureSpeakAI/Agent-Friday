@@ -177,6 +177,16 @@ def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
     import requests
     if not configured():
         return None, "no Firecrawl API key configured"
+    # Hard spending cap (services/spend_guard): Firecrawl credits are metered
+    # as USD estimates into cost_meter, so they count against the cap too.
+    try:
+        from agent_friday.services import spend_guard as _sg
+        _sg.check("firecrawl", what=f"a Firecrawl {path.rsplit('/', 1)[-1]} call")
+    except ImportError:
+        pass
+    except Exception as e:
+        if type(e).__name__ == "SpendCapReached":
+            return None, str(e)
     try:
         r = requests.post(f"{BASE}{path}", headers=_headers(), json=body,
                           timeout=timeout)

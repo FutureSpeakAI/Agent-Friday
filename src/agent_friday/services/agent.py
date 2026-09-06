@@ -2743,6 +2743,17 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             _task_log(task_id, f'Chain advance error: {ce}')
     except Exception as e:
         traceback.print_exc()
+        # The hard spending cap (services/spend_guard) halts a task at its
+        # next cloud call. Say so in the task's own result, not as a generic
+        # error: the steps that ran are in the task log, files written stay
+        # written, and the task can be re-run once the cap is lifted.
+        if type(e).__name__ == 'SpendCapReached':
+            _task_set(task_id, status='failed',
+                      result=f'[Halted by hard spending cap] {e}', ended=_time.time())
+            _task_log(task_id, f'HALTED by hard spending cap: {e}')
+            _report_task_completion(task_id, name, 'failed',
+                                    f'[Halted by hard spending cap] {e}')
+            return
         _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
         _task_log(task_id, f'Error: {e}')
         # A FAILED task must report too. Silence on failure is the worse half

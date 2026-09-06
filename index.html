@@ -36934,13 +36934,24 @@ function SettingsTabCosts() {
     daily: 0,
     monthly: 0,
     daily_enabled: false,
-    monthly_enabled: false
+    monthly_enabled: false,
+    hard_stop_daily: 0,
+    hard_stop_monthly: 0,
+    hard_stop_daily_enabled: false,
+    hard_stop_monthly_enabled: false
   });
+  // The stopping cap's live state (services/spend_guard): tripped or not,
+  // and what it halted. Read, never written, from here.
+  const [hardStop, setHardStop] = useState(null);
+  const refreshHardStop = () => apiFetch('/api/costs/hard-stop').then(r => r.json()).then(d => {
+    if (d && d.status === 'ok') setHardStop(d);
+  }).catch(() => {});
   const [costRange, setCostRange] = useState('month');
   const [costErr, setCostErr] = useState('');
   const [loaded, setLoaded] = useState(false);
 
   const refreshCosts = () => {
+    refreshHardStop();
     apiFetch('/api/costs/summary?range=' + costRange).then(r => r.json()).then(d => {
       if (d && d.status === 'ok') {
         setCostSummary(d.summary || null);
@@ -36977,6 +36988,7 @@ function SettingsTabCosts() {
       body: JSON.stringify(patch)
     }).then(r => r.json()).then(d => {
       if (d && d.budget) setCostBudget(d.budget);
+      refreshHardStop();
     }).catch(() => {});
   };
 
@@ -37313,7 +37325,124 @@ function SettingsTabCosts() {
       marginTop: 12,
       lineHeight: 1.5
     }, mono)
-  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")));
+  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "HARD STOP"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "The cap that actually stops. When an enabled period's spend reaches its limit, Friday refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: '1px solid #ff0080',
+      background: 'rgba(255,0,128,0.08)',
+      borderRadius: 6,
+      padding: '8px 10px',
+      marginBottom: 12,
+      fontSize: 11,
+      color: '#ffb3d9'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      color: '#ff0080',
+      marginBottom: 4
+    }
+  }, "🛑 Hard cap reached — cloud work is stopped"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: 'toggle-pill ' + (costBudget.hard_stop_daily_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      hard_stop_daily_enabled: !costBudget.hard_stop_daily_enabled
+    })
+  }, "Daily stop"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "0.5",
+    value: costBudget.hard_stop_daily,
+    onChange: e => saveBudget({
+      hard_stop_daily: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: 'toggle-pill ' + (costBudget.hard_stop_monthly_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      hard_stop_monthly_enabled: !costBudget.hard_stop_monthly_enabled
+    })
+  }, "Monthly stop"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    value: costBudget.hard_stop_monthly,
+    onChange: e => saveBudget({
+      hard_stop_monthly: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), hardStop && Array.isArray(hardStop.recent_halts) && hardStop.recent_halts.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 4
+    }, mono)
+  }, "Stopped by the cap (most recent first)"), hardStop.recent_halts.slice(0, 8).map((h, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ccc',
+      padding: '2px 0',
+      borderBottom: '1px solid rgba(255,255,255,0.04)'
+    }, mono)
+  }, new Date((h.ts || 0) * 1000).toLocaleString(), " \xB7 ", h.what, " \xB7 ", usd(h.spend), " of ", usd(h.limit), " ", h.period))), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")));
 }
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens

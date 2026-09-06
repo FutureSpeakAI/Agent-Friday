@@ -1689,13 +1689,24 @@ DEFAULT_SETTINGS = {
     },
     # ── Cost metering / budget alerts (Part D) ──
     # Per-call spend is recorded to ~/.friday/costs.db. These thresholds (USD)
-    # drive budget-alert notifications: crossing 80% warns, 100% alerts. v1 is
-    # alert-only — Friday is never silently blocked from working.
+    # drive budget-alert notifications: crossing 80% warns, 100% alerts. The
+    # alert cap never blocks — Friday is never silently stopped by it.
+    #
+    # hard_stop_* (2026-09-06, Stephen's ruling: "we do want a stopping cap
+    # available to the user") is the SECOND cap: when its enabled period's
+    # spend reaches the limit, services/spend_guard refuses every further
+    # cloud call (local models keep working), loudly — ledger row +
+    # notification naming what stopped and how to resume. Off by default;
+    # the user chooses, neither cap is imposed.
     "cost_budget": {
         "daily": 5.0,
         "monthly": 50.0,
         "daily_enabled": False,
         "monthly_enabled": False,
+        "hard_stop_daily": 0.0,
+        "hard_stop_monthly": 0.0,
+        "hard_stop_daily_enabled": False,
+        "hard_stop_monthly_enabled": False,
     },
     # ── Auto-compaction (Part C) ──
     # When the assembled transcript exceeds trigger_ratio × the model's context
