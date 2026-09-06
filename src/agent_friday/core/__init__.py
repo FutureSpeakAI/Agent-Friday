@@ -1871,6 +1871,19 @@ DEFAULT_SETTINGS = {
         # 2026-08-26 and NEITHER can call tools, so that advice pointed users
         # at a bigger version of the exact problem H3 was about.
         "local_model": _FLOOR_MODEL,
+        # ── Explicit cloud-consent record (2026-09-06) ──
+        # {"answered": bool, "choice": "local_private"|"cloud_unrestricted"|None,
+        #  "at": iso-str|None, "capability_snapshot": dict|None}. The ONLY thing
+        # `privacy.cloud_consent.is_unrestricted_cloud()` reads to decide whether
+        # every safeguard is off. See `privacy/cloud_consent.py` for why this
+        # exists (a passively-inherited factory default is not a decision) and
+        # for why this key is stripped from every generic settings write —
+        # `core._save_settings()` only accepts it from its one blessed internal
+        # caller, `privacy.cloud_consent.record_consent()`. Writing this key any
+        # other way (including by hand in this file) does nothing: the read side
+        # requires the shape this module writes, not merely a truthy value.
+        "cloud_consent": {"answered": False, "choice": None, "at": None,
+                          "capability_snapshot": None},
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
         "cost_tracking": True,
@@ -1893,18 +1906,19 @@ DEFAULT_SETTINGS = {
         #   "warn"   = refuse and ask the user to enable a local model.
         "vault_local_only": True,
         "vault_cloud_fallback": "redact",
-        # ── Unrestricted cloud mode ──
-        # Explicit instruction, 2026-09-03: "cloud only mode means no privacy
-        # safeguards ... when active, no feature or data is held back from
-        # the cloud." Distinct from `mode: cloud_only` above, which only ever
-        # meant provider ROUTING PREFERENCE — this flag reaches
-        # services/egress_gate.py (is_unrestricted_cloud()) and bypasses
-        # every gate in the codebase for cloud sends: tier classification,
-        # redaction, the PII scrub, and the never-send list. Default False;
-        # read fresh on every call, never cached. Whoever turns this on
-        # should know exactly what it does — see egress_gate.py's docstring
-        # at is_unrestricted_cloud() for the complete list of what it
-        # bypasses.
+        # ── Unrestricted cloud mode (superseded 2026-09-06 by cloud_consent) ──
+        # Historical flag from 2026-09-03: bypasses every gate in the codebase
+        # for cloud sends (tier classification, redaction, the PII scrub, the
+        # never-send list) when True. `is_unrestricted_cloud()` no longer reads
+        # this live — it reads `cloud_consent` above instead, because this flag
+        # is reachable through the generic settings-save path (the same shape
+        # of bug `enterprise_consent_grant` was removed for: something other
+        # than a genuine, informed human choice could flip it). Kept only as a
+        # ONE-TIME migration input: an install that had already set this to
+        # True explicitly is treated as having already made the choice
+        # `cloud_consent` now records, so nobody who deliberately opted in
+        # under the old design gets silently re-gated. See
+        # privacy/cloud_consent.py.
         "unrestricted_cloud": False,
     },
     # ── Distribution profile (persona preset) ──
@@ -2237,7 +2251,26 @@ def _load_settings():
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
 
 
-def _save_settings(data):
+def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
+    """`_internal_cloud_consent_write` exists for exactly one caller:
+    `privacy.cloud_consent.record_consent()`. Every other path into this
+    function — the generic `/api/settings` POST included — has
+    `model_routing.cloud_consent` silently stripped from its delta below,
+    the same way `enterprise_consent_grant` was removed from the tool
+    registry rather than merely discouraged: a settings key that decides
+    whether every privacy safeguard is on must not be reachable through the
+    write path a model's own tools (or a naive script) can already reach.
+    Stripping happens even if this function is called recursively or the
+    flag is guessed at, because the keyword is not part of any request body
+    this process parses — it can only be set by Python code in this repo.
+    """
+    if not _internal_cloud_consent_write:
+        mr = (data or {}).get("model_routing")
+        if isinstance(mr, dict) and "cloud_consent" in mr:
+            data = dict(data)
+            mr = dict(mr)
+            mr.pop("cloud_consent", None)
+            data["model_routing"] = mr
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     # Invalidate BEFORE and AFTER the write.
     #

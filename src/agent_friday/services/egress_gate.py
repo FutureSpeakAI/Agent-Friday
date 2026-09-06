@@ -175,57 +175,48 @@ def _is_cloud(provider: str) -> bool:
 
 
 # ── Unrestricted cloud mode ─────────────────────────────────────────────────
-# Stephen's explicit instruction, 2026-09-03: "cloud only mode means no
-# privacy safeguards, Friday operates completely with cloud models and no
-# local inference. this mode must be in the app. when active, no feature or
-# data is held back from the cloud."
-#
-# This is a real, separate flag — NOT the pre-existing `model_routing.mode:
-# "cloud_only"`, which has always meant provider ROUTING PREFERENCE only
-# (which provider gets first dibs) and has never touched the gate; the two
-# are easy to conflate by name, so this one is spelled out differently.
-# `model_routing.unrestricted_cloud` defaults to False and is read fresh
-# every call, never cached — a setting this consequential must never be
-# stale across a toggle.
-_UNRESTRICTED_KEY = "unrestricted_cloud"
+# Stephen's original instruction, 2026-09-03: "cloud only mode means no
+# privacy safeguards ... when active, no feature or data is held back from
+# the cloud." That instruction is still honored, but no longer through a
+# standalone settings flag read live here — see `is_unrestricted_cloud()`'s
+# own docstring below and `privacy/cloud_consent.py` for why the decision
+# moved to a recorded, hardware-checked, spoof-resistant choice instead.
+# `model_routing.unrestricted_cloud` still exists in DEFAULT_SETTINGS, but
+# only as a one-time migration input read by `cloud_consent.resolve()`; it
+# is dead in this file now.
 
 
 def is_unrestricted_cloud() -> bool:
-    """True when Stephen has explicitly turned off every privacy safeguard.
+    """True when every privacy safeguard is off. Default False.
 
-    Default False. Read failures fail CLOSED (safeguards stay on) — the
-    inverse of every other fail-open risk in this module, because this flag
-    is the one thing capable of turning EVERY other protection off at once.
+    2026-09-06, superseded same day: for a few hours this read
+    `model_routing.mode == "cloud_only"` as sufficient on its own, on the
+    reasoning that selecting cloud-only IS the acceptance the separate
+    `unrestricted_cloud` flag existed to double-check. That reasoning did
+    not survive contact with the fact that `cloud_only` is this app's
+    FACTORY DEFAULT — a value nobody chose is not a choice, and the change
+    meant every fresh install inherited "no safeguards" the moment someone
+    picked cloud-only as their provider, which is what most people do,
+    since it needs no local model and no setup. `tests/unit/
+    test_unrestricted_cloud_mode.py`'s reasoning three days before that
+    ("conflating them would silently disable every safeguard for the app's
+    own default") was correct, and this restores it in a form that also
+    fixes the real complaint underneath both changes: unrestricted access
+    is now earned by an explicit, recorded decision
+    (`model_routing.cloud_consent`), never inherited from any value of
+    `mode`. See `privacy/cloud_consent.py` for the full design — the two
+    screens a user actually sees, why the decision is gated on whether
+    their own hardware can honour the local alternative first, and why the
+    write path is not reachable from the same generic settings save a
+    model's own tools can already call.
 
-    2026-09-06 correction: `model_routing.mode == "cloud_only"` now ALSO
-    satisfies this, reversing the explicit separation this module drew three
-    days ago (see the comment above, and the superseded test this decision
-    updates: tests/unit/test_unrestricted_cloud_mode.py's
-    `test_unrestricted_mode_is_a_distinct_flag_from_routing_mode`). That
-    separation's own reasoning — "cloud_only is the factory default;
-    conflating them would silently disable every safeguard for the app's own
-    default" — was a real concern, not a mistake, and it is worth recording
-    that this reverses it deliberately rather than by accident.
-    Stephen, verbatim, twice this session: "I want them going to the cloud
-    if ungated. Ungated means cloud has full access" — stated first about a
-    cloud model (GPT-6 Astra) being blocked despite cloud-only being
-    selected, then again, reproduced live, about a resume's TIER_2 sections
-    (phone, email, two experience paragraphs) coming back as
-    "[EGRESS-GATE: TIER_2 content withheld ... can be read on a local
-    seat]" while cloud-only was active and no local seat existed at all.
-    Selecting cloud-only IS the acceptance the flag existed to require a
-    second opinion on; asking for it twice was the bug, not a missing
-    confirmation step. This can never affect local_only/smart/local_preferred
-    — they are different values of this same setting, so widening the
-    condition here only ever widens it for the mode Stephen has to have
-    picked on purpose.
+    Read failures fail CLOSED (safeguards stay on) — the inverse of every
+    other fail-open risk in this module, because this is the one flag
+    capable of turning EVERY other protection off at once.
     """
     try:
-        from agent_friday.core import _load_settings
-        cfg = (_load_settings() or {}).get("model_routing") or {}
-        if bool(cfg.get(_UNRESTRICTED_KEY, False)):
-            return True
-        return str(cfg.get("mode", "")) == "cloud_only"
+        from agent_friday.privacy import cloud_consent
+        return cloud_consent.is_unrestricted_cloud()
     except Exception:
         return False
 

@@ -30214,6 +30214,129 @@ function ConsentFlow({ onDone }) {
               disabled: s.name === 'routing' && !mode
             }, s.name === 'third_party' ? 'I understand' : 'Continue'))));
 }
+
+// ── Explicit cloud-consent gate (2026-09-06) ────────────────────────────────
+//
+// A separate decision from ConsentFlow above (which covers vault disclosure
+// and a plain routing-mode preference): whether unrestricted cloud access —
+// every privacy safeguard off — is something this install has actually
+// consented to, or merely inherited from `cloud_only` being the factory
+// default. Checked on EVERY load, not just first run, because an existing
+// install can carry an unanswered `cloud_consent` too. The server decides
+// which of the two screens below to show, from its own hardware capability
+// check (`GET /api/privacy/cloud-consent`) — this component never guesses.
+function CloudConsentGate({ onDone }) {
+  const [status, setStatus] = React.useState(null);
+  const [choice, setChoice] = React.useState('');
+  const [err, setErr] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch('/api/privacy/cloud-consent').then(r => r.json()).then(setStatus)
+      // A failed fetch must not strand the user behind a blank gate with no
+      // way forward — but must also not silently grant unrestricted access.
+      // Falling through to onDone() leaves cloud_consent unanswered, so the
+      // gate simply asks again next load; is_unrestricted_cloud() stays
+      // gated in the meantime.
+      .catch(() => onDone());
+  }, []);
+
+  if (!status || !status.needs_prompt) return null;
+
+  const cap = status.capability || {};
+  const capable = !!cap.capable;
+  const roleLabel = { text: 'Reasoning (chat)', voice: 'Voice',
+    image: 'Image generation', video: 'Video generation' };
+
+  const submit = (picked) => {
+    setSaving(true);
+    setErr('');
+    fetch('/api/privacy/cloud-consent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice: picked })
+    }).then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        setSaving(false);
+        if (!ok) { setErr(d.message || 'Could not record that choice.'); return; }
+        onDone();
+      })
+      .catch(() => {
+        setSaving(false);
+        setErr('Could not reach Friday to record that choice. Try again.');
+      });
+  };
+
+  const box = { maxWidth: 660, margin: '0 auto' };
+  const para = { fontSize: 15, lineHeight: 1.75, color: '#cfd6dd', marginBottom: 18 };
+
+  return React.createElement('div', {
+    style: {
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(6,10,16,0.98)', overflowY: 'auto', padding: '48px 24px'
+    }
+  }, React.createElement('div', { style: box },
+    React.createElement('h1', {
+      style: { fontSize: 26, fontWeight: 600, marginBottom: 22, color: '#fff' }
+    }, capable ? 'Private, or unrestricted?'
+              : 'This machine needs the cloud for part of the work'),
+
+    !capable && React.createElement(React.Fragment, null,
+      React.createElement('p', { style: para },
+        'Unrestricted cloud access — every privacy safeguard off — is a ' +
+        'decision you make, not a default you land in. On this machine, ' +
+        'part of the work Friday does cannot run privately, locally:'),
+      React.createElement('ul', { style: { marginBottom: 18, paddingLeft: 20 } },
+        Object.entries(cap.roles || {}).filter(([, r]) => !r.ok).map(([role, r]) =>
+          React.createElement('li', { key: role, style: { ...para, marginBottom: 8 } },
+            React.createElement('b', null, roleLabel[role] || role), ': ',
+            r.why))),
+      !cap.chain_ok && cap.chain_why && React.createElement('p', { style: para },
+        cap.chain_why),
+      React.createElement('p', { style: para },
+        'Continuing sends full, unredacted context to your configured ' +
+        'cloud provider for that work — no safeguard held back. You can ' +
+        'revisit this in Settings if your hardware or provider changes.'),
+      err && React.createElement('div', {
+        style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
+      }, err),
+      React.createElement('button', {
+        className: 'btn', disabled: saving,
+        onClick: () => submit('cloud_unrestricted')
+      }, saving ? 'Recording…' : 'I understand — use the cloud, unrestricted')),
+
+    capable && React.createElement(React.Fragment, null,
+      React.createElement('p', { style: para },
+        'This machine can run reasoning, voice, image, and video ' +
+        'generation locally — private, never leaving this device. Or you ' +
+        'can choose unrestricted cloud access instead, with no safeguard ' +
+        'held back. Either is a real choice; whichever you pick is what ' +
+        'you get.'),
+      err && React.createElement('div', {
+        style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
+      }, err),
+      [
+        { mode: 'local_private', label: 'Private (local)',
+          detail: 'Reasoning, voice, image, and video stay on this device.' },
+        { mode: 'cloud_unrestricted', label: 'Unrestricted (cloud)',
+          detail: 'Full context reaches your configured cloud provider — ' +
+                  'no safeguard held back.' },
+      ].map(c => React.createElement('div', {
+        key: c.mode, onClick: () => setChoice(c.mode),
+        style: {
+          padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
+          border: '1px solid ' + (choice === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
+          background: choice === c.mode ? 'rgba(0,212,255,0.08)' : 'transparent'
+        }
+      },
+        React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label),
+        React.createElement('div', {
+          style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
+        }, c.detail))),
+      React.createElement('button', {
+        className: 'btn', disabled: saving || !choice, style: { marginTop: 8 },
+        onClick: () => submit(choice)
+      }, saving ? 'Recording…' : 'Confirm'))));
+}
 const WIZARD_STEPS = [{
   id: 'welcome',
   title: 'Welcome to Agent Friday',
@@ -37505,6 +37628,19 @@ function App() {
     }
     fetch('/api/setup/status').then(r => r.json()).then(d => setSetupDone(d.initialized)).catch(() => setSetupDone(true));
   }, []);
+  // Explicit cloud-consent gate (2026-09-06): independent of setup/
+  // ConsentFlow above, which is about vault disclosure and provider-routing
+  // preference, not this specific decision. Checked on every load — not
+  // just for a fresh install — because an existing install can carry an
+  // unanswered `cloud_consent` too (the factory default was never a choice
+  // for anyone who upgraded into this gate). null = not checked yet, so the
+  // gate never flashes open before the real answer arrives.
+  const [needsCloudConsent, setNeedsCloudConsent] = useState(null);
+  useEffect(() => {
+    fetch('/api/privacy/cloud-consent').then(r => r.json())
+      .then(d => setNeedsCloudConsent(!!d.needs_prompt))
+      .catch(() => setNeedsCloudConsent(false));
+  }, []);
   const completeWizard = async () => {
     try {
       await fetch('/api/setup/complete', {
@@ -41504,6 +41640,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     onNext: () => setWizStep(s => Math.min(s + 1, WIZARD_STEPS.length - 1)),
     onBack: () => setWizStep(s => Math.max(s - 1, 0)),
     onComplete: completeWizard
+  }), setupDone && needsCloudConsent && /*#__PURE__*/React.createElement(CloudConsentGate, {
+    onDone: () => setNeedsCloudConsent(false)
   }), /*#__PURE__*/React.createElement("div", {
     className: `top-bar ${topBarHidden ? 'hidden' : ''}`
   }, /*#__PURE__*/React.createElement("div", {

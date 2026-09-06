@@ -105,43 +105,77 @@ class TestUnrestrictedModeBypassesEverything:
         assert out == text
 
 
-class TestCloudOnlyModeAloneNowMeansUnrestricted:
-    """SUPERSEDES `test_unrestricted_mode_is_a_distinct_flag_from_routing_mode`
-    (this test's old name, same day, a few hours earlier). That version
-    asserted mode=="cloud_only" must NOT trip unrestricted mode, reasoning
-    that cloud_only is the factory default and conflating the two would
-    silently disable every safeguard for it -- a real concern, not a
-    mistake.
+class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
+    """SUPERSEDES `test_cloud_only_mode_alone_is_now_unrestricted` and its
+    sibling below (this class's old name, same day, a few hours earlier).
+    That version asserted mode=="cloud_only" alone was sufficient to trip
+    unrestricted mode, reasoning that selecting cloud-only IS the
+    acceptance a separate flag existed to double-check.
 
-    Reversed 2026-09-06, reproduced live against Stephen's running app twice
-    the same day: (1) GPT-6 Astra refused despite cloud-only being selected,
-    and (2) a resume's TIER_2 sections (phone, email, two experience
-    paragraphs) came back as "[EGRESS-GATE: TIER_2 content withheld ... can
-    be read on a local seat]" while cloud-only was active and no local seat
-    existed at all -- reproduced with `eg.gate_text()` directly, real
-    settings, real classifier. Stephen's own words, stated twice: "I want
-    them going to the cloud if ungated. Ungated means cloud has full
-    access." Selecting cloud-only IS the acceptance this flag existed to
-    double-check; asking for it twice was the bug.
+    Reversed again, same day, on Stephen's explicit ruling: that reasoning
+    does not survive contact with the fact that `cloud_only` is this app's
+    FACTORY DEFAULT (`core.DEFAULT_SETTINGS["model_routing"]["mode"]`) --
+    nobody "selects" a value they never touched. The intervening version
+    meant every fresh install inherited "no safeguards" the moment someone
+    picked cloud-only as their provider, which is what most people do,
+    since it needs no local model and no setup. Restored to the ORIGINAL
+    class's conclusion (`mode` alone never trips this), but through a
+    different, permanent mechanism this time: `model_routing.cloud_consent`,
+    an explicit, recorded, hardware-checked choice
+    (`privacy/cloud_consent.py`) rather than a live read of `mode`. This is
+    why the fix is durable against a THIRD reversal the way a live
+    `mode`-read never was: `mode` can still change to `cloud_only` freely
+    without touching this at all, because this no longer reads `mode`.
 
-    This can never regress local_only/smart/local_preferred -- see the class
-    below -- because they are different values of the exact same setting
-    this reads.
+    The live reproduction this whole investigation started from -- a
+    resume's TIER_2 sections coming back gated while cloud-only was active
+    and no local seat existed -- is still fixed, just through the correct
+    door: Stephen's account, once it explicitly records
+    `cloud_consent={"answered": True, "choice": "cloud_unrestricted"}`, is
+    unrestricted. An install that has never answered is not, no matter what
+    `mode` says.
     """
 
-    def test_cloud_only_mode_alone_is_now_unrestricted(self, monkeypatch):
+    def test_cloud_only_mode_alone_is_still_gated(self, monkeypatch):
         from agent_friday import core as _core
         monkeypatch.setattr(
             _core, "_load_settings",
             lambda: {"model_routing": {"mode": "cloud_only"}})
-        assert eg.is_unrestricted_cloud() is True
+        assert eg.is_unrestricted_cloud() is False
 
-    def test_reproduces_the_live_resume_redaction_bug_fixed(self, monkeypatch):
-        """The exact live reproduction: a resume's contact/experience
-        sections, classified TIER_2, must pass through unchanged once
-        cloud-only mode alone is read as unrestricted -- no explicit
-        `unrestricted_cloud` flag set, matching Stephen's real settings.json
-        at the time (`{"mode": "cloud_only", "vault_local_only": False}`)."""
+    def test_cloud_only_plus_recorded_consent_is_unrestricted(self, monkeypatch):
+        """The exact live reproduction, fixed through the recorded-consent
+        door: a resume's contact/experience sections, classified TIER_2,
+        pass through unchanged once cloud-only mode is paired with an
+        explicit, answered `cloud_consent` -- matching what Stephen's
+        account looks like once he has actually answered the prompt, not
+        what an untouched factory default looks like."""
+        from agent_friday import core as _core
+        monkeypatch.setattr(
+            _core, "_load_settings",
+            lambda: {"model_routing": {
+                "mode": "cloud_only", "vault_local_only": False,
+                "cloud_consent": {"answered": True,
+                                  "choice": "cloud_unrestricted",
+                                  "at": "2026-09-06T00:00:00+00:00",
+                                  "capability_snapshot": None}}})
+        resume = (
+            "== RESUME ==\nJohn Smith\nPhone: 555-123-4567\n"  # pragma: allowlist secret
+            "Email: john.smith@example.com\n\n"
+            "== EXPERIENCE ==\nSenior Engineer at Acme Corp, 2019-2024. Led "
+            "a team of five building distributed systems for the payments "
+            "platform, cutting latency by 40 percent and mentoring three "
+            "junior engineers along the way.\n\n"
+            "== EDUCATION ==\nBS Computer Science, State University, 2015.\n"
+        )
+        out = eg.gate_text(resume, "openrouter", "tool_result.content")
+        assert out == resume
+        assert "EGRESS-GATE" not in out
+
+    def test_cloud_only_alone_still_redacts_the_same_resume(self, monkeypatch):
+        """The other half of the reproduction: WITHOUT recorded consent,
+        cloud-only alone must still gate -- this is the exact bug the
+        intervening version introduced, now closed from the other side."""
         from agent_friday import core as _core
         monkeypatch.setattr(
             _core, "_load_settings",
@@ -157,8 +191,8 @@ class TestCloudOnlyModeAloneNowMeansUnrestricted:
             "== EDUCATION ==\nBS Computer Science, State University, 2015.\n"
         )
         out = eg.gate_text(resume, "openrouter", "tool_result.content")
-        assert out == resume
-        assert "EGRESS-GATE" not in out
+        assert out != resume
+        assert "EGRESS-GATE" in out
 
 
 class TestLocalOnlyAndSmartModesAreUnaffected:
