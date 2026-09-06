@@ -488,7 +488,18 @@ def _notify_pending(record: Dict[str, Any]) -> None:
             title=f"Approval needed: {record.get('title')}",
             body=(record.get("description") or record.get("action_description") or "")[:300],
             priority="medium", source="approvals", kind="approval_pending",
-            actions=[{"label": "Review", "workspace": "system", "tab": "approvals"}],
+            # `target` is the shape the notification tray's click handler
+            # actually navigates on (index.html: `n.target.workspace`); the
+            # legacy `actions[0].workspace` fallback there drops `tab`. Both
+            # are sent so older queued clients still land somewhere. The
+            # tab named here MUST exist -- until 2026-09-06 it did not, and a
+            # pending card's only "Review" affordance pointed at nothing, so
+            # every gated action waited in silence until it expired into
+            # denied (tests/unit/test_approvals_review_surface.py pins the
+            # UI handler to this exact target).
+            target={"workspace": "system", "tab": "approvals"},
+            actions=[{"type": "navigate", "label": "Review",
+                      "workspace": "system", "tab": "approvals"}],
             dedupe_key=f"approval:{record.get('approval_id')}",
         )
     except Exception as e:

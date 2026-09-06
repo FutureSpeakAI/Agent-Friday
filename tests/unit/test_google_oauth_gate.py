@@ -62,7 +62,10 @@ class TestOpenUrlToolGatesGoogleOauth:
         result = agent_mod._tool_open_url({"url": "http://localhost:3000/api/google/auth"})
         assert opened == []
         assert "approval request" in result
-        assert "Settings" in result
+        # The message must name the surface that actually exists: the
+        # Approvals card in the System workspace (2026-09-06). It used to say
+        # "Settings > Approvals", which never existed.
+        assert "Approvals card" in result and "System workspace" in result
 
     def test_auto_approved_opens_immediately(self, monkeypatch):
         opened = []

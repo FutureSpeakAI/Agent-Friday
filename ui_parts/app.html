@@ -3753,8 +3753,24 @@ function SystemWS(){
       if((seen&&!active)||(!seen&&tries>=6)||tries>150){clearInterval(poll);await refreshSelfImp();setSiBusy(false)}
     },2000);
   };
-  // Deep-link: notifications target {workspace:'system',tab:'self-improvement'} → scroll the card into view.
-  useNavTarget('system',t=>{if(t.tab==='self-improvement'&&siRef.current)setTimeout(()=>siRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120)});
+  // ── Approvals (V6 P5 / A3): the human-gate queue. Until 2026-09-06 a pending
+  // card had NO surface anywhere: the notification's "Review" pointed at
+  // {workspace:'system',tab:'approvals'} and nothing handled that tab, so every
+  // gated action (Google connect, gated goal steps) waited until it expired. ──
+  const [approvals,setApprovals]=useState([]);
+  const [apBusy,setApBusy]=useState('');
+  const apRef=useRef(null);
+  const refreshApprovals=()=>fetch('/api/approvals?status=pending').then(r=>r.json()).then(d=>setApprovals(Array.isArray(d?.approvals)?d.approvals:[])).catch(()=>{});
+  const decideApproval=async(id,decision)=>{
+    if(apBusy)return;setApBusy(id);
+    try{await fetch('/api/approvals/'+encodeURIComponent(id)+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})})}catch(e){}
+    setApBusy('');refreshApprovals();
+  };
+  // Deep-link: notifications target {workspace:'system',tab:'self-improvement'|'approvals'} → scroll the card into view.
+  useNavTarget('system',t=>{
+    if(t.tab==='self-improvement'&&siRef.current)setTimeout(()=>siRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120);
+    if(t.tab==='approvals'){refreshApprovals();if(apRef.current)setTimeout(()=>apRef.current.scrollIntoView({behavior:'smooth',block:'start'}),120);}
+  });
 
   useEffect(()=>{
     let done=false;
@@ -3765,6 +3781,9 @@ function SystemWS(){
     refreshCtxStats();
     fetch('/api/context/compression-stats').then(r=>r.json()).then(d=>setCompStats(d.compression||null)).catch(()=>{});
     refreshSelfImp();
+    refreshApprovals();
+    const apPoll=setInterval(refreshApprovals,30000);
+    return ()=>clearInterval(apPoll);
   },[]);
 
   const runCtxSearch=async()=>{setCtxSearching(true);
@@ -3845,6 +3864,25 @@ function SystemWS(){
               </div>)}
           </>);
         })()}
+    </div>
+
+    {/* ─── Approvals ─── */}
+    <div ref={apRef} className="card" style={{marginBottom:10,padding:10,border:'1px solid rgba(245,158,11,0.25)'}}>
+      <div className="card-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span>✋ Approvals{approvals.length>0&&<span style={{color:'#f59e0b',fontSize:11,marginLeft:6}}>({approvals.length} pending)</span>}</span>
+        <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={refreshApprovals}>↻</button>
+      </div>
+      {approvals.length===0
+        ?<div style={{fontSize:11,color:'#888',padding:'8px 2px'}}>Nothing waiting on you. Actions Friday won't take on her own — connecting Google, gated goal steps, spend — show up here.</div>
+        :approvals.map(a=><div key={a.approval_id} className="card" style={{marginBottom:6,padding:8}}>
+            <div style={{fontSize:12,color:'#ddd'}}>{a.title}</div>
+            {a.action_description&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{a.action_description}</div>}
+            <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}}>{a.kind} · {a.policy_class}{a.expires_at?' · expires '+new Date(a.expires_at*1000).toLocaleString():''}</div>
+            <div style={{display:'flex',gap:6,marginTop:6}}>
+              <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#00ff80'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'approve')}>Approve</button>
+              <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#ff0080'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'deny')}>Deny</button>
+            </div>
+          </div>)}
     </div>
 
     <div className="card-title">Disk Space</div>

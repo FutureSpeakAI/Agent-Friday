@@ -1724,8 +1724,9 @@ def _tool_open_url(inp):
             return "Connecting Google was declined — not opening the authorization page."
         return (
             "I've sent an approval request to connect Google (Calendar + Gmail, "
-            "read-only) — approve it from Settings > Approvals (or the push "
-            "notification) and I'll open the authorization page right after."
+            "read-only) — approve it from the Approvals card in the System "
+            "workspace (or the notification's Review button) and I'll open "
+            "the authorization page right after."
         )
     return _open_url_in_browser(url)
 
