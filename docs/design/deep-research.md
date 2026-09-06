@@ -2,7 +2,50 @@
 
 **Date:** 2026-08-17
 **Branch:** `residency-policy` @ `33fa717`.
-**Status:** design. **No implementation code exists for this document — it lands first, by instruction.**
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code exists
+for this document — it lands first, by instruction.~~ **The backend is BUILT and has been for three
+weeks; the user-facing surface is not.** Implementation landed the same day as this document
+(`2a34678`, 2026-08-17, "feat: deep research end to end — commission, grind, verify, land,
+deliver") and was iterated on continuously through 2026-09-06; this file was last touched at
+`bd1c716` the same day and never updated, which is why it still says nothing exists.
+
+**Built, verified in the current tree:** `services/research/` (1,500 lines across `__init__.py`,
+`objects.py`, `harness.py`, `deliver.py`) — the STORM-shaped commission → grind → verify → land →
+deliver pipeline of §3; `services/judgment_gate.py` (863 lines) — §5's gate, matching the spec
+nearly line for line including the probe battery, kill switch, overturn ledger and never-send
+watchlist, plus a first-person deterministic floor added as a bug fix beyond the spec; the
+"no receipt, no render" verification (RS5, `harness.py:582-672`); wiki delivery — land and style
+(`deliver.py:128-247`); a full HTTP API in `routes/research.py` (propose/run/status/list/report,
+plus `/api/privacy/gate` and `/api/privacy/left-the-machine`, which this document did not even
+ask for); and tests (`tests/test_judgment_gate.py`, 538 lines, plus two gauntlet probes). Every
+defect this document catalogued in §1 was also fixed: the DuckDuckGo display-text-URL scraper is
+replaced (`services/web_search.py` — Firecrawl → Brave → DDG-as-last-resort, real hrefs, a
+canary distinguishing "empty" from "broken"); `browse_web`'s missing SSRF guard is closed
+(`services/web_safety.py` — and note this document's own prescribed fix, "wire `open_url`'s
+validator," was found not to work, and a real address-level check was built instead); the fetch
+cache exists (`services/web_fetch.py`); P4/P5/P6/P7 are all closed. The judgment gate ships
+**default OFF** (`core/__init__.py:1559-1562`), per §5.6.4's "additive and removable."
+
+**Not built — the specific gaps, named:**
+1. **No conversational entry point.** Nothing in `agent.py`'s tool registry can propose a research
+   commission mid-chat. The pipeline is reachable only by calling `POST /api/research/propose`
+   directly. §3.1's "a research-shaped request produces a WorkflowProposal" does not happen.
+2. **No frontend.** Neither `index.html` nor `ui_parts/app.html` calls any `/api/research/*`
+   endpoint — no proposal dialog showing the ProtectionPlan sentence, no task-tray orb bound to a
+   commission, no workspace tile for past reports. §3.7's third delivery step, "surface," is
+   unimplemented client-side even though the server writes `styled_path` for it.
+3. **§3.1's Stage A `WorkflowProposal` gate (S2/S3) is bypassed.** `research.propose()` builds an
+   ad hoc dict; `services/workflow_plan.py` (340 lines, the formal proposal machinery) exists and is
+   never imported by the research module.
+4. **The two things §8 said to retire are not retired:** `routes/contacts.py:319-350`'s stubbed
+   `POST /api/contacts/research` still writes "pending" bullets and calls no tool, exactly as §1.2
+   described it, and is still the only "research" the UI is wired to; `optional-skills/deep-research.yaml`
+   is still present and still loaded by nothing.
+5. The §11 UNKNOWNs remain unknown: no 26B structured-output probe, no Claude-vs-12b blind
+   comparison, no recorded 45-minute commission run in `docs/audits/`.
+
+Net: a fresh session should treat the backend as real and tested, and treat items 1–4 above as
+the actual remaining work — not rebuild §3 or §5.
 **Revised:** 2026-08-17, same day, after Stephen answered Q1–Q7 (§11). The two largest
 consequences: keyword-based sensitivity is rejected outright in favor of a **judgment gate**
 that classifies with a model and scrubs with receipts (§5 — a foundational component that

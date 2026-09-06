@@ -2,6 +2,15 @@
 
 **Date:** 2026-08-19
 **Status:** design. Spec only; no implementation exists and none is proposed here.
+**Re-verified 2026-09-06 (doc-reconciliation pass):** the status line above is **accurate** —
+`open_toolbox` does not exist anywhere in the codebase (checked directly). But two sentences in
+this document's body (§4.2 item 2, §4.3 item 2) described `open_toolbox` as "the existing
+lookup" and something that "already runs," which read as if it were shipped. Both meant
+*existing in the design* — specified in [`context-assembly.md`](context-assembly.md) §3.1, which
+this document inherits — not *existing in code*. They are reworded inline below so a cold
+reader cannot take them the wrong way. What actually runs today is the coarse, all-or-nothing
+`fit_tools_to_seat` trim (`services/tool_budget.py`, landed 2026-08-19), which §5's rung table
+correctly calls "Today's" — that one reference is real and stays as written.
 **Scope:** the *shape of the tool index* underneath
 [`context-assembly.md`](context-assembly.md) §3.1. That document already decided
 **that** tool schemas defer. This one decides **how the deferred tail is indexed**, and
@@ -341,8 +350,9 @@ Three artifacts, in dependency order. None of them is a required step for the mo
    one-line purpose the flat index already needs. For built-ins this is a static table.
    For MCP tools it is computed at registration by a deterministic rule (§4.3). It costs
    **zero prompt tokens** until something renders it.
-2. **A group-aware matcher inside `open_toolbox(query)`** — the existing lookup, still
-   string-matching, still no model call in the hot path (CA5). Order: exact name →
+2. **A group-aware matcher inside `open_toolbox(query)`** — the lookup as specified in
+   `context-assembly.md` §3.1 (a design, not shipped code — see the status note at the top),
+   still string-matching, still no model call in the hot path (CA5). Order: exact name →
    group-name match → verb match → keyword over one-liners. `open_toolbox("audio")` now
    returns the audio group; `open_toolbox("make a voiceover")` returns `speak_text`
    first. **The same call site, better ranking, no new protocol.**
@@ -386,8 +396,8 @@ time, and are fully usable if the rule returns nothing.** In precedence order:
    `"groups": ["audio"]`, set once per server. ElevenLabs → `audio`. GitHub →
    `filesystem, self`. A one-line edit, not a taxonomy change.
 2. **Keyword match** of the tool's own name and description against the group and verb
-   vocabularies — the same matcher `open_toolbox` already runs, applied once at
-   registration instead of per query. Higgsfield's 86 tools shatter across
+   vocabularies — the same matcher `open_toolbox` is specified to run (again: specified,
+   not built), applied once at registration instead of per query. Higgsfield's 86 tools shatter across
    vision/audio/publishing on their own descriptions, which is the correct outcome and
    requires nobody to have pre-classified them.
 3. **Nothing.** An unlabelled tool sits in a `ungrouped` bucket, appears in the flat

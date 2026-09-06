@@ -1,6 +1,24 @@
 # Vault-first onboarding — what Friday collects, and how she asks
 
-**Status:** spec. No implementation. Open questions `Q-V1`–`Q-V9` await Stephen.
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~spec. No implementation.~~ **BUILT**
+— shipped commit `0f64fc7`, 2026-08-29 ("feat(onboarding): the vault comes first, the key leaves
+the condemned building, and a person can be forgotten"), the same day this doc was written.
+Verified against the current tree: `setup_wizard.py:1571-1606` runs the exact 5-screen order
+§7.2 specifies — collects → vault password (screen 2, moved up from sixth-of-ten) → routing →
+cloud-ack (shown only when cloud is chosen) → third-party — with the comment at line 1642 noting
+the old position directly: *"The vault used to be asked here, sixth of ten... It is screen 2 now,
+above."* The false "your private information never leaves your device" / "nothing leaves your
+machine" copy this doc objected to is gone from every active screen; `services/onboarding_copy.py`
+(new since this doc — the single source that ends "three onboarding surfaces disagreeing") holds
+the corrected copy, `SCREEN_ORDER` matching this doc's §7.2 table. `_write_start_bat` no longer
+writes the passphrase at all (docstring: *"THE VAULT PASSPHRASE IS NOT WRITTEN HERE AND MUST
+NEVER BE AGAIN"* — see [`vault-passphrase-location.md`](vault-passphrase-location.md), corrected
+same pass, for where it went instead). `services/forget_person.py` also shipped, meeting this
+doc's Q-V5 precondition. One stale comment, harmless: `setup_wizard.py:1422-1423` still says the
+passphrase "lives only in start.bat," which stopped being true the same commit that added the
+comment's neighbor — the code beneath it does not act on the stale claim.
+Open questions `Q-V1`–`Q-V9` **remain genuinely open** — none were resolved by the build above,
+and this reconciliation pass did not attempt to resolve them; they still await Stephen.
 **Date:** 2026-08-29
 **Branch at time of writing:** `fix/janet-backport-5.6.4`, HEAD `c60172a`
 **Prompted by:** Stephen, 2026-08-29 — "setting up the vault should be prioritized during the installation process. Users need to be aware that Friday will collect a lot of info about them… The setup definitely needs to explain the whole point of our architecture is to allow this to occur but to protect it from exposure to the cloud."

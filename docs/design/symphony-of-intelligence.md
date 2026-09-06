@@ -1,7 +1,41 @@
 # The symphony of intelligence — how Friday should divide work across her models
 
 **Date:** 2026-08-15
-**Status:** design. No implementation code written for this document.
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
+written for this document.~~ **BUILT — the same evening.** That line was true for about 23
+minutes. Part 5's "six components, one commit each" was executed on 2026-08-15 between 18:21 and
+18:38: §5.1 context sized from the whole prompt (`24b9a35` — `services/context_budget.py`,
+`residency_policy.CONTEXT_LADDER`/`MIN_CONVERSATION_ROOM`), §5.3/S4 the sidekick survives every
+lease (`246123a` — landed as rule **R10**, `residency_policy.py:249`), §5.4 the work queue
+(`43b271f` — `services/work_queue.py`, 376 lines, `CLASSES` in the exact §2.4 order, `drain()`
+under one lease at `:286`), §5.2 `WorkflowProposal` (`f1ce1a3` — `services/workflow_plan.py`,
+340 lines, plus `routes/work_plan.py`, nine `/api/work/*` endpoints the doc never asked for),
+§5.5 the workflow panel (`3c95c38` — 638 UI lines, blocked options rendered disabled with their
+reason), §5.6 the tool-chain probe (`3446c10` — `tests/probes/toolchain_probe.py`, 15/15). The
+§6 Ollama-independence work the doc only *recommends* also shipped that night (`1b50813` Friday's
+own model store; `d313f68` `channel_toolcalls.py`, 207 lines). This file's last edit (`75c6d2a`,
+20:15) came after all of it, and the header was never revised. Downstream docs
+(`headroom.md`, `deep-research.md`) citing this as the source of S1–S4, the work queue and the
+§2.4 lease model are citing a shipped design.
+
+**Not built, named:** (1) the away-drain does not run on a timer — `scheduler.away_drain_enabled()`
+is opt-in and the comment at `scheduler.py:1124-1137` says `when_away` work "simply waits forever
+if nobody opens the panel"; deliberate, after Stephen lost a monitor to VRAM pressure on 08-17, but
+it means `when_away` is not autonomous. (2) §5.1's Part 3 recommendation of 131072 landed as
+**65536**, with reasoning at `residency_policy.py:290-304`. (3) The §0.5 structured-output probe
+against `gemma4:26b` was never run. (4) §6.4 item 3, embeddings off the daemon — only a written
+plan; no embedding seat runs on `llama-server`. (5) `workflow_plan.recommend()` adds a
+"cloud unavailable" branch the doc's four-branch heuristic does not list.
+
+**Two naming traps for a cold reader:** "S1–S4" are Stephen's four answers, not rule IDs — the
+codebase uses R-rules and S4 is R10; grep for `\bS[1-4]\b` finds nothing. And
+`services/orchestrator.py` (400 lines, `e26a33d`, 2026-06-28) is the *unrelated* earlier
+"Dual-Role Orchestration Engine," six weeks older than this document — do not cite it as symphony
+work. Five body claims below are now stale for the same reason as the header (L253 "a queue Friday
+does not have yet", L264 "nothing accumulates work into them yet", L288-294 recs 3–5 as future
+work, L432 §5.6 "still UNKNOWN" — contradicted by this doc's own §0.6/§2.6 — and L503 the
+channel-format blocker, closed by `d313f68`); they are left as written for the reasoning and
+should be read in the past tense.
 **Method:** STORM — multi-perspective questioning first, cited synthesis second.
 **Registers:** **VERIFIED** (file:line or captured output), **INFERRED**, **UNKNOWN**.
 

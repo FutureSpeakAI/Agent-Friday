@@ -1,9 +1,47 @@
 # Higgsfield — cloud motion for local stills, and a capability list that stops lying
 
 **Date:** 2026-08-17
-**Status:** design. **No implementation code exists for this document — it lands first, by
-instruction.** It is written to be built by a fresh-context session with no priors: every
-fact you need is in this file or at a cited file:line, and nothing is assumed remembered.
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
+exists for this document — it lands first, by instruction.~~ **PARTIALLY SUPERSEDED — built, in a
+different architecture than this document specifies.** Higgsfield shipped between 2026-08-21 and
+2026-08-25 (`88220ff`, `349cdf6`, `05049b2`, `d3a3115`; ~864 lines in
+`services/higgsfield_catalog.py` + `services/higgsfield_generate.py`, the shared
+`services/creative_store.py` downloader, and three unit-test files), but **not as designed here**:
+the transport is the **MCP connector with OAuth 2.1/PKCE** (tokens in
+`~/.friday/mcp_oauth/higgsfield.oauth.enc`), not §2.1's REST `Authorization: Key ID:SECRET` — there
+is no Higgsfield env var anywhere in `src/`. The catalog is **enumerated at runtime** (~120
+models), not §4.7.1's hardcoded three; and those three ids (`soul/standard`, `dop/standard`,
+`kling-video/v2.1/pro`) **do not exist on the live account** — `provider_registry.py:264-274` says
+so explicitly. Read [`higgsfield-creative-catalog.md`](higgsfield-creative-catalog.md) (marked
+BUILT) first; its §6 supersedes this document's §2.7, §4.1 and §4.8, and the two disagree
+wherever they overlap. This file has not been edited since its single commit (`d3a2f8a`).
+
+**Built (cite the catalog doc's architecture, not this one's):** runtime enumeration with credit
+pricing and cache; hosted-native picker integration (`model_catalog.HOSTED_NATIVE_TYPES`) and
+boot-time refresh; dispatch branches for image and video (`creative_engine.py:710-724`,
+`:920-938`), audio/music (`music_engine.py:323-342`), and 3D (17 models — §2.7's "no 3D
+endpoint" is wrong now, as is §2.6's "no balance endpoint"); per-submit cost preflight returning
+an honest `None` on failure; the verified pull-to-disk downloader with sidecar/manifest/provenance
+and §4.10's paid-but-unsaved reporting; an egress choke point inside `_call` that refuses rather
+than partially redacts; `creative_music` in `CAPABILITIES` and the `generate_music` description
+rewrite (§3.2's two lying music surfaces are both fixed); provider-health probing.
+
+**Specified here and NOT built, named:** `services/higgsfield_engine.py` and the entire §4.1
+durable job design — no `~/.friday/higgsfield_jobs.json`, no `HiggsfieldJob` state machine, no
+background poller, no restart re-adoption, no concurrency semaphore; `higgsfield_generate.generate()`
+**blocks the calling thread** in `_wait()` (`:233`, up to 40×15 s), which is exactly the
+restart-orphan defect §3.1 indicts Veo for. No orb lifecycle, `hf-` cancel, or `proactive_chat`
+completion push (§4.2/§4.10). **The entire §4.4 animate / local-still→cloud-motion flow** — the
+`animate_image` tool, presign→PUT upload, the three-class upload-consent gate, vault-dir refusal —
+does not exist. No `settings.higgsfield` block at all (no `daily_credit_cap`, no `upload_consent`).
+No `cost_meter` recording for Higgsfield (only Gemini/Veo/Omni record; kie.ai now does too, as of
+`8c168c6`). Cost is carried on catalog entries but **not drawn in the picker** — there is no
+`higgsfield` string in any HTML. §4.6's `now_cloud` is still an empty promise with no runner
+behind it. §4.7.5's `self_account` probe was not built, and the stale Veo sentence it set out to
+fix is still there verbatim (`self_account.py:117-119`). The two-line Veo `gate_text` fix from
+§4.5 was never applied — `generate_video` still sends its prompt ungated. The Studio Music panel
+is not repointed (`music_engine.py:121-124`, `951ca33`). Q4/Q5/Q6 remain open; Q2 is answered
+(catalog doc §6.1), Q3 and Q7 are moot.
 **Subject:** integrating [Higgsfield](https://platform.higgsfield.ai) — an asynchronous
 cloud generation API (images, video; audio/3D per-account, see §2.7) — into Friday, a
 local-first personal AI on a Windows desktop with one RTX 4070 (12 GB).

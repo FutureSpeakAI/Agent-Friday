@@ -3,6 +3,16 @@
 **Date:** 2026-08-29
 **Branch:** `fix/janet-backport-5.6.4`. **Doc-only. No implementation code exists for this
 document and none is proposed for immediate build. The build waits on Stephen's explicit go.**
+**Re-verified 2026-09-06 (doc-reconciliation pass): still accurate, with one narrow exception.**
+No grow button, no `/api/grow`, no open-ended build-test-vision-iterate connector loop exists
+anywhere in `src/`, `index.html` or `packaging/` — a repo-wide search returns exactly one hit, and
+it is a comment. That comment marks the one thing this document *did* cause: its §18.2 guard
+rules **F2/F3 are wired**. `routes/code.py:690-717` now calls `boot_guard.safe_mode()` and
+`check_self_edit()` per target file with whole-plan refusal, on the *existing* code-apply path
+(the comment there: "`boot_guard.check_self_edit` and `check_scope` shipped 2026-08-17 and were
+dead code until now"). That is a guard on the path the grow loop would use, not the grow loop.
+The existing `services/connectors.py` / `routes/connectors.py` are the pre-existing static
+connector layer, not this document's proposal.
 **Subject:** Stephen's proposal, 2026-08-29, that Friday should have a button that "builds
 connections between a Friday and anything at all" — standard buttons for popular services,
 plus an open path where she figures out an arbitrary integration herself, in a loop that
