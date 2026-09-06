@@ -298,6 +298,40 @@ def test_missing_mcp_manager_is_a_status_not_a_crash(monkeypatch):
     assert res["count"] == 0
 
 
+def test_explore_recovers_first_document_from_a_multi_block_reply(monkeypatch):
+    """Live 2026-09-06: models_explore answered image/video/audio requests
+    with MORE than one MCP content block. mcp_client.MCPManager.call() joins
+    those with "\\n" rather than assuming exactly one, so `_explore` received
+    two complete JSON documents back to back and a bare json.loads raised
+    "Extra data" on every refresh — the catalog stayed empty forever even
+    though the connector was reachable and authorized. `_explore` must
+    recover the first document rather than fail the whole enumeration."""
+    import agent_friday.services.agent as _agent
+    import json as _json
+
+    doc1 = {"items": [{"id": "a"}, {"id": "b"}], "has_more": False}
+    combined = _json.dumps(doc1) + "\n" + _json.dumps({"note": "stray block"})
+
+    class _Mgr:
+        def call(self, server, tool, args, timeout=60.0):
+            return combined
+
+    monkeypatch.setattr(_agent, "_MCP_MANAGER", _Mgr(), raising=False)
+    assert hc._explore({"action": "list", "type": "image"}) == doc1
+
+
+def test_explore_still_raises_on_genuinely_unparseable_text(monkeypatch):
+    import agent_friday.services.agent as _agent
+
+    class _Mgr:
+        def call(self, server, tool, args, timeout=60.0):
+            return "not json at all"
+
+    monkeypatch.setattr(_agent, "_MCP_MANAGER", _Mgr(), raising=False)
+    with pytest.raises(ValueError):
+        hc._explore({"action": "list", "type": "image"})
+
+
 def test_is_stale_when_never_fetched(monkeypatch):
     import agent_friday.services.model_discovery as md
     monkeypatch.setattr(md, "read_cache", lambda name: None)

@@ -295,10 +295,21 @@ def api_provider_test(name):
             result["detail"] = str(e)[:200]
         return jsonify(result)
 
-    if ptype in ("local-voice", "nemo-local"):
+    if ptype in ("local-voice", "nemo-local", "higgsfield", "kie"):
+        # These three provider types are not chat/completions APIs and have
+        # no /models endpoint, so the generic probe below (a GET to
+        # {base_url}/models) is the wrong request for all of them — it 404s
+        # for kie.ai and higgsfield every time, reporting a fine key as
+        # broken (measured live 2026-09-06: both came back HTTP 404 here
+        # while services/provider_health's own dedicated checks for the same
+        # two providers reported "ok"/"key verified"). Delegate to the
+        # per-type check that actually fits each provider's real API shape
+        # instead of duplicating — or worse, wrongly generalizing — it here.
         from agent_friday.services import provider_health
         chk = provider_health.check_provider(name, deep=True, use_cache=False)
         result.update(status=chk.get("status"), detail=chk.get("detail"))
+        if chk.get("credits") is not None:
+            result["credits"] = chk["credits"]
         return jsonify(result)
 
     import requests

@@ -53,6 +53,7 @@ PROVIDER = "kie"
 BASE_URL = "https://api.kie.ai/api/v1"
 CREATE_TASK_URL = f"{BASE_URL}/jobs/createTask"
 RECORD_INFO_URL = f"{BASE_URL}/jobs/recordInfo"
+CREDIT_URL = f"{BASE_URL}/chat/credit"
 
 #: kie.ai does not publish a fixed USD-per-credit rate; ~$0.005/credit is the
 #: figure reported across third-party reviews as of 2026-09 (docs.kie.ai
@@ -131,6 +132,61 @@ def is_configured() -> bool:
         return get_provider_registry().is_provider_available(PROVIDER)
     except Exception:
         return False
+
+
+def check_credentials(name: str = PROVIDER) -> dict:
+    """A real, free, authoritative round trip against kie.ai: GET the account
+    credit balance. Requires a valid key, spends nothing, and creates no
+    task — kie.ai has no /models endpoint to probe (services/provider_health
+    used to fall back to one anyway and get a 404 on every check) and no
+    chat-completions shape for a cheap 1-token generation, so this is the one
+    check that actually proves the key works rather than merely existing.
+
+    Returns the same shape services/provider_health._check() returns:
+    {provider, status, detail, config, proved_inference[, credits]}.
+    Never raises.
+    """
+    if not is_configured():
+        return {"provider": name, "status": "missing", "detail": "no API key",
+                "config": "missing", "proved_inference": False}
+    try:
+        import requests
+        _LIMITER.acquire()
+        resp = requests.get(CREDIT_URL, headers=_headers(), timeout=15)
+    except Exception as e:
+        return {"provider": name, "status": "down",
+                "detail": f"{type(e).__name__}: {e}"[:160],
+                "config": "ok", "proved_inference": False}
+    if resp.status_code == 401:
+        # docs.kie.ai's documented shape for this case:
+        # {"code":401,"msg":"You do not have access permissions"}
+        return {"provider": name, "status": "down",
+                "detail": "kie.ai rejected this key (HTTP 401) — it may be "
+                          "wrong, revoked, or need to be re-saved in Settings",
+                "config": "ok", "proved_inference": True}
+    if resp.status_code >= 400:
+        return {"provider": name, "status": "error",
+                "detail": f"HTTP {resp.status_code}",
+                "config": "ok", "proved_inference": False}
+    try:
+        body = resp.json()
+    except ValueError:
+        return {"provider": name, "status": "error",
+                "detail": "kie.ai returned a non-JSON response",
+                "config": "ok", "proved_inference": False}
+    if not isinstance(body, dict) or body.get("code") not in (200, None):
+        detail = f"kie.ai error {body.get('code')}: {body.get('msg') or 'unknown'}" \
+            if isinstance(body, dict) else "kie.ai returned an unexpected body"
+        return {"provider": name, "status": "down", "detail": detail[:160],
+                "config": "ok", "proved_inference": True}
+    credits = body.get("data")
+    detail = (f"key verified — {credits} credits available"
+              if isinstance(credits, (int, float)) else "key verified")
+    out = {"provider": name, "status": "ok", "detail": detail,
+           "config": "ok", "proved_inference": True}
+    if isinstance(credits, (int, float)):
+        out["credits"] = credits
+    return out
 
 
 def _request(method: str, url: str, *, json_body: dict | None = None,
