@@ -17297,6 +17297,90 @@ function SitesWS() {
     text: "Your sites & projects \u2014 portfolio status, deploy state, and one-click scaffolding via Claude Code."
   }), /*#__PURE__*/React.createElement(FSStudio, null));
 }
+// ═══ TASK RECORDS (retention is the user's setting; 0 keeps everything) ═══
+function TaskRecordsCard() {
+  const [ret, setRet] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const load = () => fetch('/api/tasks/retention').then(r => r.ok ? r.json() : null).then(d => {
+    if (d) setRet(d);
+  }).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  const save = days => {
+    setSaving(true);
+    fetch('/api/tasks/retention', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        retention_days: days
+      })
+    }).then(r => r.json()).then(() => {
+      setSaving(false);
+      load();
+    }).catch(() => setSaving(false));
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 10,
+      padding: 10,
+      border: '1px solid rgba(0,212,255,0.18)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title"
+  }, "\uD83D\uDCD3 Task records"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      padding: '4px 2px'
+    }
+  }, "Every background task writes a journal (what it did, decided, called and spent) that survives restarts. Records are kept until you delete them, or for the number of days you set here. 0 keeps everything."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: '#ccc'
+    }
+  }, "Keep records for"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    value: ret ? ret.retention_days : 0,
+    disabled: !ret || saving,
+    onChange: e => setRet(Object.assign({}, ret, {
+      retention_days: parseInt(e.target.value || '0', 10) || 0
+    })),
+    onBlur: e => save(parseInt(e.target.value || '0', 10) || 0),
+    style: {
+      width: 70,
+      fontSize: 11,
+      padding: '2px 6px',
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      color: '#fff',
+      borderRadius: 4
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: '#ccc'
+    }
+  }, "days ", ret && ret.retention_days === 0 ? '(forever)' : ''), ret && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: '#888',
+      marginLeft: 8
+    }
+  }, "reasoning capture: ", ret.capture_reasoning ? 'on' : 'off', " \xB7 encrypted at rest: ", ret.encrypt_at_rest ? 'on' : 'off')));
+}
 function SystemWS() {
   const [sys, setSys] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -17777,7 +17861,7 @@ function SystemWS() {
     },
     disabled: !!apBusy,
     onClick: () => decideApproval(a.approval_id, 'deny')
-  }, "Deny"))))), /*#__PURE__*/React.createElement("div", {
+  }, "Deny"))))), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Disk Space"), disks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -29916,6 +30000,215 @@ function fmtElapsed(sec) {
   const h = Math.floor(m / 60);
   return h + 'h ' + m % 60 + 'm';
 }
+// ═══ TASK TIMELINE + CONTROLS (docs/design/active/task-visibility.md §4.4) ═══
+// The drawer under a task card reads the task's own journal — the same record
+// the orchestrator's query surface reads — and tails it by seq cursor while
+// the task runs. A gap in the sequence is shown, never hidden.
+function TaskTimeline({
+  taskId,
+  live
+}) {
+  const [events, setEvents] = useState([]);
+  const [gaps, setGaps] = useState([]);
+  const [showReasoning, setShowReasoning] = useState(true);
+  const cursor = useRef(0);
+  useEffect(() => {
+    let alive = true;
+    cursor.current = 0;
+    setEvents([]);
+    setGaps([]);
+    const tick = () => fetch('/api/tasks/' + encodeURIComponent(taskId) + '/journal?since=' + cursor.current).then(r => r.ok ? r.json() : null).then(d => {
+      if (!alive || !d) return;
+      if (Array.isArray(d.events) && d.events.length) {
+        setEvents(prev => prev.concat(d.events).slice(-400));
+        cursor.current = d.last_seq || cursor.current;
+      }
+      if (Array.isArray(d.gaps) && d.gaps.length) setGaps(prev => prev.concat(d.gaps));
+      if (d.cursor_ahead) setGaps(prev => prev.concat([{
+        cursor_ahead: true
+      }]));
+    }).catch(() => {});
+    tick();
+    const iv = live ? setInterval(tick, 2000) : null;
+    return () => {
+      alive = false;
+      if (iv) clearInterval(iv);
+    };
+  }, [taskId, live]);
+  const fmtT = ts => ts ? new Date(ts * 1000).toLocaleTimeString() : '';
+  const row = (ev, i) => {
+    const k = ev.kind;
+    const base = {
+      key: ev.seq || i,
+      className: 'task-card-log-line',
+      title: fmtT(ev.ts)
+    };
+    if (k === 'checkpoint') return /*#__PURE__*/React.createElement("div", base, "\u25B8 ", ev.summary);
+    if (k === 'tool_call') return /*#__PURE__*/React.createElement("div", base, "\uD83D\uDD27 ", ev.name, " \xB7 ", ev.ok ? 'ok' : 'failed', ev.duration_ms != null ? ' \xB7 ' + ev.duration_ms + 'ms' : '');
+    if (k === 'model_call') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#888'
+      }
+    }), "\u2601 ", ev.model, " (", ev.seat, ")", ev.cost_usd != null ? ' \xB7 $' + Number(ev.cost_usd).toFixed(4) : '', ev.tokens_in != null ? ' \xB7 ' + ev.tokens_in + '\u2192' + ev.tokens_out + ' tok' : '');
+    if (k === 'decision') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#00d4ff'
+      }
+    }), "\u2696 ", ev.point, ": ", ev.chosen, ev.reason ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: '#888'
+      }
+    }, " \u2014 ", ev.reason) : null);
+    if (k === 'reasoning') return showReasoning ? /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#bbb',
+        fontStyle: 'italic',
+        whiteSpace: 'pre-wrap'
+      }
+    }), "\uD83D\uDCAD ", ev.text || '', ev.thinking ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#777'
+      }
+    }, "(thinking) ", ev.thinking) : null) : null;
+    if (k === 'halt') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#ff0080'
+      }
+    }), "\u25A0 ", ev.cause, ": ", ev.detail, ev.resume_hint ? ' \xB7 ' + ev.resume_hint : '');
+    if (k === 'steer') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#f59e0b'
+      }
+    }), "\u2192 steer (", ev.source, "): ", ev.message);
+    if (k === 'started' || k === 'ended' || k === 'created') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#888'
+      }
+    }), "\u2022 ", k, ev.status ? ' \xB7 ' + ev.status : '', ev.model ? ' \xB7 ' + ev.model : '');
+    return null;
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "task-card-log"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 10,
+      color: '#888',
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", null, events.length, " event", events.length === 1 ? '' : 's'), /*#__PURE__*/React.createElement("label", {
+    style: {
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: showReasoning,
+    onChange: e => setShowReasoning(e.target.checked),
+    style: {
+      marginRight: 4
+    }
+  }), "show reasoning")), gaps.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "task-card-log-line",
+    style: {
+      color: '#ff0080'
+    }
+  }, "\u26A0 record gap: ", gaps.map(g => g.cursor_ahead ? 'cursor beyond the record' : `seq ${g.missing_from}\u2013${g.missing_to} missing`).join(', '), " \u2014 this timeline is incomplete"), events.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "task-card-log-line",
+    style: {
+      color: '#888'
+    }
+  }, "\u2014 no journal yet \u2014") : events.map(row));
+}
+function TaskControls({
+  task,
+  onChanged
+}) {
+  const [steer, setSteer] = useState('');
+  const [busy, setBusy] = useState('');
+  const status = task.status || 'running';
+  const running = status === 'running' || status === 'queued';
+  const post = async (path, body) => {
+    setBusy(path);
+    try {
+      await fetch(path, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body || {})
+      });
+    } catch (e) {}
+    setBusy('');
+    if (onChanged) onChanged();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      flexWrap: 'wrap',
+      marginTop: 6,
+      alignItems: 'center'
+    }
+  }, running && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    value: steer,
+    onChange: e => setSteer(e.target.value),
+    placeholder: "Steer: tell it something without stopping it",
+    onClick: e => e.stopPropagation(),
+    style: {
+      flex: 1,
+      minWidth: 140,
+      fontSize: 11,
+      padding: '2px 6px',
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      color: '#fff',
+      borderRadius: 4
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn",
+    disabled: !steer.trim() || !!busy,
+    onClick: e => {
+      e.stopPropagation();
+      const m = steer.trim();
+      setSteer('');
+      post('/api/agent/steer', {
+        task_id: task.task_id,
+        message: m
+      });
+    }
+  }, "Steer"), /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn",
+    disabled: !!busy || task.stop_requested,
+    title: "Finish the current step, then stop. The record stays complete.",
+    onClick: e => {
+      e.stopPropagation();
+      post('/api/tasks/' + encodeURIComponent(task.task_id) + '/stop-after-step');
+    }
+  }, task.stop_requested ? 'Stopping after this step\u2026' : 'Stop after step')), !running && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn",
+    disabled: !!busy,
+    title: "Start a new task from this one's prompt. Nothing resumes automatically.",
+    onClick: e => {
+      e.stopPropagation();
+      post('/api/tasks/' + encodeURIComponent(task.task_id) + '/rerun');
+    }
+  }, "Re-run"), /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn cancel",
+    disabled: !!busy,
+    title: "Delete this task's record",
+    onClick: e => {
+      e.stopPropagation();
+      setBusy('del');
+      fetch('/api/tasks/' + encodeURIComponent(task.task_id), {
+        method: 'DELETE'
+      }).catch(() => {}).then(() => {
+        setBusy('');
+        if (onChanged) onChanged();
+      });
+    }
+  }, "Delete record")));
+}
 function TaskCard({
   task,
   expanded,
@@ -29924,8 +30217,10 @@ function TaskCard({
   onView
 }) {
   const status = task.status || 'running';
+  const stalled = status === 'running' && !!task.stalled;
+  const seenAgo = task.last_seen ? Math.max(0, Math.round(Date.now() / 1000 - task.last_seen)) : null;
   return /*#__PURE__*/React.createElement("div", {
-    className: 'task-card ' + status
+    className: 'task-card ' + status + (stalled ? ' stalled' : '')
   }, /*#__PURE__*/React.createElement("div", {
     className: "task-card-edge"
   }), /*#__PURE__*/React.createElement("div", {
@@ -29973,9 +30268,24 @@ function TaskCard({
     className: "task-card-meta"
   }, /*#__PURE__*/React.createElement("span", {
     className: "task-card-status"
-  }, status === 'running' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, status === 'running' && stalled && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#ff0080',
+      fontWeight: 700
+    }
+  }, "\u25CF"), "STALLED", seenAgo != null ? ' \xB7 last seen ' + seenAgo + 's ago' : ''), status === 'running' && !stalled && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "task-card-spinner"
-  }), "EXECUTING"), status === 'complete' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }), "EXECUTING"), status === 'interrupted' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#f59e0b',
+      fontWeight: 700
+    }
+  }, "\u23F8"), "INTERRUPTED"), status === 'cancelled' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888',
+      fontWeight: 700
+    }
+  }, "\u25A0"), "STOPPED"), status === 'complete' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "task-card-check"
   }, "\u2713"), "COMPLETE", task.evaluation && /*#__PURE__*/React.createElement("span", {
     style: {
@@ -29995,7 +30305,18 @@ function TaskCard({
     }
   }, "\u2715"), "FAILED")), /*#__PURE__*/React.createElement("span", {
     className: "task-card-elapsed"
-  }, fmtElapsed(task.elapsed))), (status === 'complete' || status === 'completed_unverified') && /*#__PURE__*/React.createElement("div", {
+  }, fmtElapsed(task.elapsed))), (task.now || task.cost_usd != null) && /*#__PURE__*/React.createElement("div", {
+    className: "task-card-sub",
+    style: {
+      marginTop: 3,
+      fontSize: 10,
+      color: '#aaa',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    },
+    title: task.now || ''
+  }, task.now ? 'now: ' + task.now : '', task.cost_usd != null && task.cost_usd > 0 ? (task.now ? ' \xB7 ' : '') + '$' + Number(task.cost_usd).toFixed(4) : ''), (status === 'complete' || status === 'completed_unverified') && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 6,
       display: 'flex',
@@ -30007,17 +30328,12 @@ function TaskCard({
       e.stopPropagation();
       onView();
     }
-  }, "View Results")), expanded && /*#__PURE__*/React.createElement("div", {
-    className: "task-card-log"
-  }, (task.log || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "task-card-log-line",
-    style: {
-      color: '#888'
-    }
-  }, "\u2014 waiting for activity \u2014") : (task.log || []).slice(-30).map((line, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    className: "task-card-log-line"
-  }, "\u2192 ", line))));
+  }, "View Results")), expanded && /*#__PURE__*/React.createElement(TaskTimeline, {
+    taskId: task.task_id,
+    live: status === 'running' || status === 'queued'
+  }), expanded && /*#__PURE__*/React.createElement(TaskControls, {
+    task: task
+  }));
 }
 function TaskTray({
   tasks,
@@ -30028,6 +30344,8 @@ function TaskTray({
   const [collapsed, setCollapsed] = useState(false);
   const sorted = [...tasks].sort((a, b) => (b.created || 0) - (a.created || 0));
   const running = sorted.filter(t => (t.status || 'running') === 'running').length;
+  const stalledN = sorted.filter(t => t.status === 'running' && t.stalled).length;
+  const interruptedN = sorted.filter(t => t.status === 'interrupted').length;
   const total = sorted.length;
   if (total === 0) return null;
   if (collapsed) {
@@ -30051,7 +30369,7 @@ function TaskTray({
     className: "task-tray"
   }, /*#__PURE__*/React.createElement("div", {
     className: "task-tray-header"
-  }, /*#__PURE__*/React.createElement("span", null, running > 0 ? `${running}/${total} TASKS · LIVE` : `${total} TASKS`), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, running > 0 ? `${running}/${total} TASKS · LIVE` : `${total} TASKS`, stalledN > 0 ? ` · ${stalledN} STALLED` : '', interruptedN > 0 ? ` · ${interruptedN} INTERRUPTED` : ''), /*#__PURE__*/React.createElement("button", {
     className: "task-card-btn",
     style: {
       padding: '1px 6px'
