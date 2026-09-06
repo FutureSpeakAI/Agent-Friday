@@ -8,6 +8,15 @@ updates:
     groups:
       python-minor-and-patch:
         update-types: [minor, patch]
+  # The Windows installer installs from these files, not from pyproject.toml.
+  - package-ecosystem: pip
+    directory: /packaging/windows/requirements
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      installer-minor-and-patch:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
