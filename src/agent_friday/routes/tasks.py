@@ -243,22 +243,179 @@ def delete_task(task_id):
     return jsonify({"status": "deleted", "journal": "deleted"})
 
 
+# ── Reading the record (task-visibility.md §4.5, TV6, TV11) ──────────────────
+# Three reads over the same journal: the raw events (with a seq cursor and
+# explicit gap reporting), a prompt-sized digest, and a tail. A principal
+# other than the local user — an orchestrator holding the observer credential
+# — gets every free-text field sealed through the egress gate and a ledger
+# row saying what left; the user's own browser gets the record intact.
+
+def _principal():
+    try:
+        from flask import g as _g
+        return getattr(_g, "friday_principal", "user") or "user"
+    except Exception:
+        return "user"
+
+
+def _serve_sealed(payload, task_id, route, *, events=0, reasoning=False):
+    from agent_friday.services import task_journal as _tj
+    who = _principal()
+    sealed, redacted, withheld = _tj.seal_for_principal(payload, who)
+    if who != "user":
+        try:
+            from agent_friday.services import activity_ledger as _al
+            _al.record("journal_read", task_id=task_id, principal=who, route=route,
+                       events=int(events), reasoning=bool(reasoning),
+                       redacted=int(redacted), withheld=int(withheld))
+        except Exception:
+            pass
+        if isinstance(sealed, dict):
+            sealed["sealed_for"] = who
+            sealed["redacted_fields"] = redacted
+            sealed["withheld_fields"] = withheld
+    return sealed
+
+
+def _int_arg(name, default=0):
+    try:
+        return int(request.args.get(name, default) or default)
+    except ValueError:
+        return default
+
+
 @tasks_bp.route('/api/tasks/<task_id>/journal')
 def task_journal_events(task_id):
     """The task's append-only journal, oldest first. `since` is a seq cursor
-    (events with seq > since). Phase 1 of task visibility: the record exists
-    and can be read; the digest/tail surfaces come in later phases."""
+    (events with seq > since). Gaps in the sequence are REPORTED, never
+    hidden: `gaps` lists missing ranges, `cursor_ahead` says the cursor is
+    past the newest event, `complete` is true only when neither applies."""
     from agent_friday.services import task_journal as _tj
-    try:
-        since = int(request.args.get('since', 0) or 0)
-    except ValueError:
-        since = 0
-    events = _tj.read(task_id, since=since)
+    since = _int_arg('since', 0)
+    limit = _int_arg('limit', 0) or None
+    res = _tj.read_with_gaps(task_id, since=since, limit=limit)
     state = _tj.read_state(task_id)
-    if not events and state is None:
+    if not res["events"] and state is None and res["journal_last_seq"] == 0:
         return jsonify({"error": "Task not found"}), 404
-    return jsonify({"task_id": task_id, "events": events, "state": state,
-                    "last_seq": (events[-1]["seq"] if events else since)})
+    payload = {"task_id": task_id, "events": res["events"], "state": state,
+               "last_seq": res["last_seq"], "journal_last_seq": res["journal_last_seq"],
+               "gaps": res["gaps"], "cursor_ahead": res["cursor_ahead"], "complete": res["complete"]}
+    return jsonify(_serve_sealed(payload, task_id, "journal", events=len(res["events"]),
+                                 reasoning=any(e.get("kind") == "reasoning" for e in res["events"])))
+
+
+@tasks_bp.route('/api/tasks/<task_id>/digest')
+def task_digest(task_id):
+    """A compact view sized for a prompt: status, cost, model and seat, the
+    last N checkpoints and decisions, halts. Reasoning prose only with
+    `?reasoning=1` — an explicit request — and for an observer it then
+    passes through the gate with a ledger row like everything else."""
+    from agent_friday.services import task_journal as _tj
+    n = max(1, min(_int_arg('n', 20), 200))
+    want_reasoning = request.args.get('reasoning', '0') in ('1', 'true', 'yes')
+    d = _tj.digest(task_id, n=n, include_reasoning=want_reasoning)
+    if d is None:
+        return jsonify({"error": "Task not found"}), 404
+    return jsonify(_serve_sealed(d, task_id, "digest", events=len(d.get("checkpoints") or []),
+                                 reasoning=want_reasoning))
+
+
+def _sse_frames(task_id, since, principal, max_wait_s=None, poll_s=1.0, idle_close_s=30.0):
+    """Generator for the SSE tail: replays everything after `since` (reporting
+    a gap first if the cursor cannot be joined to the record), then follows
+    new events until the task is terminal and quiet. Every frame carries
+    `id: <seq>` so a reconnecting client resumes with Last-Event-ID and a
+    dropped event is detected as a gap rather than silently skipped."""
+    import json as _json
+    from agent_friday.services import task_journal as _tj
+    cursor = since
+    started = _time.time()
+    last_activity = started
+    first = True
+    while True:
+        res = _tj.read_with_gaps(task_id, since=cursor)
+        if first:
+            first = False
+            if res["cursor_ahead"]:
+                yield ("event: gap\ndata: " + _json.dumps({"cursor": cursor, "journal_last_seq": res["journal_last_seq"],
+                        "detail": "cursor is beyond the record; the journal was replaced or deleted"}) + "\n\n")
+        for gp in res["gaps"]:
+            yield "event: gap\ndata: " + _json.dumps(gp) + "\n\n"
+        events = res["events"]
+        if events:
+            sealed, redacted, withheld = _tj.seal_for_principal({"events": events}, principal)
+            for ev in sealed["events"]:
+                yield f"id: {ev.get('seq')}\nevent: {ev.get('kind')}\ndata: {_json.dumps(ev, default=str)}\n\n"
+            cursor = events[-1]["seq"]
+            last_activity = _time.time()
+            if principal != "user":
+                try:
+                    from agent_friday.services import activity_ledger as _al
+                    _al.record("journal_read", task_id=task_id, principal=principal, route="events",
+                               events=len(events), reasoning=any(e.get("kind") == "reasoning" for e in events),
+                               redacted=redacted, withheld=withheld)
+                except Exception:
+                    pass
+        st = _tj.read_state(task_id) or {}
+        terminal = _tj.is_terminal(st.get("status"))
+        if terminal and _time.time() - last_activity > 2 * poll_s:
+            yield "event: end\ndata: " + _json.dumps({"status": st.get("status"), "last_seq": cursor}) + "\n\n"
+            return
+        if max_wait_s is not None and _time.time() - started >= max_wait_s:
+            return
+        if _time.time() - last_activity > idle_close_s and not terminal:
+            yield ": keepalive\n\n"
+            last_activity = _time.time()
+        _time.sleep(poll_s)
+
+
+@tasks_bp.route('/api/tasks/<task_id>/events')
+def task_events(task_id):
+    """The tail. JSON by default (same shape as /journal, cursor via `since`);
+    `?stream=1` returns Server-Sent Events with `id:` = seq on every frame.
+    A gap between the client's cursor and the record is announced as an
+    `event: gap` frame before any data — a tail that looks complete and is
+    not would defeat the reason the journal exists."""
+    from agent_friday.services import task_journal as _tj
+    since = _int_arg('since', 0)
+    if not since:
+        try:
+            since = int(request.headers.get('Last-Event-ID', 0) or 0)
+        except ValueError:
+            since = 0
+    if request.args.get('stream', '0') not in ('1', 'true', 'yes'):
+        res = _tj.read_with_gaps(task_id, since=since)
+        if not res["events"] and res["journal_last_seq"] == 0 and _tj.read_state(task_id) is None:
+            return jsonify({"error": "Task not found"}), 404
+        payload = {"task_id": task_id, "events": res["events"], "last_seq": res["last_seq"],
+                   "journal_last_seq": res["journal_last_seq"], "gaps": res["gaps"],
+                   "cursor_ahead": res["cursor_ahead"], "complete": res["complete"]}
+        return jsonify(_serve_sealed(payload, task_id, "events", events=len(res["events"]),
+                                     reasoning=any(e.get("kind") == "reasoning" for e in res["events"])))
+    if _tj.read_state(task_id) is None and not _tj.read(task_id):
+        return jsonify({"error": "Task not found"}), 404
+    principal = _principal()
+    max_wait = _int_arg('max_wait', 0) or None
+    from flask import Response as _Resp, stream_with_context as _swc
+    return _Resp(_swc(_sse_frames(task_id, since, principal, max_wait_s=max_wait)),
+                 mimetype='text/event-stream',
+                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@tasks_bp.route('/api/tasks/observer-token', methods=['POST', 'DELETE'])
+@login_required
+def observer_token():
+    """Mint (POST) or revoke (DELETE) the read-only observer credential for
+    orchestrators. User-only by construction: a request presenting an
+    observer token is refused before it reaches here (core.check_auth), so
+    an observer can neither mint nor revoke. The plaintext is returned once."""
+    from agent_friday.services import observer_access as _obs
+    if request.method == 'DELETE':
+        return jsonify({"ok": True, "revoked": _obs.revoke()})
+    token = _obs.mint()
+    return jsonify({"ok": True, "token": token, "header": _obs.HEADER,
+                    "scope": "read-only", "routes": list(_obs.READ_ONLY_PREFIXES),
+                    "note": "Shown once. Steer, cancel, delete and settings are refused to this credential."})
 
 
 @tasks_bp.route('/api/tasks/retention', methods=['GET', 'POST'])
