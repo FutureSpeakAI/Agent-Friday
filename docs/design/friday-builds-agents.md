@@ -24,6 +24,16 @@
 **Status:** design/position. **No implementation code exists for this document and none is
 proposed for immediate build.** Written to be read cold by a fresh-context session: every
 fact needed is here or at a cited `file:line`.
+**Re-verified 2026-09-06 (doc-reconciliation pass): the status above is accurate** — checked
+against the current tree, not assumed. Nothing NOOA-shaped has been built; no `nooa` dependency,
+no process-boundary/Job-Object/broker-token code exists. FA2's cited defect is still present
+verbatim (`services/worker_adapters/python_script_adapter.py:113`, `env={**os.environ,
+"FRIDAY_WORKER": "1"}`), and the vault is still plaintext at rest by default (`agent.py:5007-5055`
+logs "Vault encryption is DISABLED" whenever no passphrase was ever set up; `vault_passphrase.py`
+only stores an existing passphrase durably, it never generates one). One internal slip, not a
+claim about code: the re-check block above says "FA1-FA12" but the requirements table in §7 runs
+through **FA13**. This note exists so the next reader knows the position was checked, not carried
+forward on faith.
 **Subject:** Stephen's proposal that Friday should be able to *build agents* using
 [NVIDIA-NeMo/labs-OO-Agents](https://github.com/NVIDIA-NeMo/labs-OO-Agents) (NOOA),
 evaluated 2026-08-23 against the repository at `main` and the paper
@@ -360,7 +370,8 @@ delete the schema.**
    built-in registry down to a searchable index; the marginal win of code-as-action over
    *deferred* schemas is much smaller than over *eager* schemas.
 2. **It does not compose with the existing design; it competes with it.** `context-assembly.md`
-   §3.1 and `open_toolbox` are decided, and `fit_tools_to_seat` landed 2026-08-19.
+   §3.1 and `open_toolbox` are decided *as a design* (neither is built — `open_toolbox` exists
+   nowhere in the tree as of 2026-09-06), and `fit_tools_to_seat` landed 2026-08-19.
    Code-as-action is a second answer to the same question. Running both means maintaining
    two capability-exposure mechanisms in a project that `KNOWN_ISSUES.md` says already
    loses track of which subsystems are alive.

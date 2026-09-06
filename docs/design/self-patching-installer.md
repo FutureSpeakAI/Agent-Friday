@@ -4,6 +4,16 @@
 **Branch:** `fix/janet-backport-5.6.4` @ `f60ee0d`. **Doc-only. No implementation code exists
 for this document and none is proposed for immediate build. The build waits on Stephen's
 explicit go.**
+**Re-verified 2026-09-06 (doc-reconciliation pass): still accurate.** This document's actual
+subject — a coding-harness substrate that diffs installed-Friday against repo-Friday and
+*generates* the patch — does not exist; zero hits for `self_patch`/`patcher`/`worktree` in `src/`
+or `packaging/`. Do not mistake the three adjacent pieces for its implementation — all three
+predate `f60ee0d` and are the machinery this document builds *on*: `packaging/windows/lib/Heal.ps1`
+(1,007 lines) is a **fixed remediation menu** whose own design constraint at `:253-257` says it is
+"incapable of executing text supplied by the model" — the deliberate opposite of self-patching;
+`services/update_check.py` (421 lines, `ae67603`) **announces** a newer release and applies
+nothing; `services/repo_sync.py` (62 lines) is a blunt `git pull`, not a drift-diff-and-patch
+engine.
 
 **Subject.** Stephen, 2026-08-29: *"We will consider a way to build an updating system that
 checks the users installed Friday versus the repo Friday and figures out how to add the

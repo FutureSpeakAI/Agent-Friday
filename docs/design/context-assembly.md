@@ -4,6 +4,18 @@
 **Status:** design. **No implementation code exists for this document — it lands first, by
 instruction.** Written for a fresh-context builder: every fact needed is here or at a cited
 file:line.
+**Re-verified 2026-09-06 (doc-reconciliation pass):** this status claim is **accurate** —
+`open_toolbox` (§3.1's central mechanism) genuinely does not exist anywhere in the codebase;
+checked directly, not assumed. If you arrived here chasing a claim that open_toolbox "landed,"
+that claim is not in this document — it lives in [`tool-index.md`](tool-index.md), whose body
+narrates `open_toolbox` in the present tense ("already runs," "the existing lookup") despite that
+document's own header also saying nothing is implemented. `tool-index.md` is corrected separately,
+same pass. The real, current tool-loading mechanism — a static full list to cloud, a coarse
+all-or-nothing trim (`fit_tools_to_seat`, landed 2026-08-19) for local seats only, no on-demand
+fetch, no model-driven choice — is described in this document's own §3 as the thing being
+replaced; it is still what runs today. Two other claims in this document were found stale during
+this pass and are corrected inline where they appear (§1.4's "no `cache_control`" and §3.7's clock
+position).
 **Revised:** 2026-08-19, three times. First written from the initial token audit; revised
 when the audit's live turns landed final numbers and Stephen proposed the central mechanism
 himself: *"Can we make a tool that opens the toolbox, allowing the model to find the right
@@ -125,6 +137,9 @@ sentence.
   `usage.cache_read_input_tokens` (VERIFIED, current API reference). **Friday sends no
   `cache_control` anywhere today** — grep across `src/` finds zero occurrences — so every
   cloud token, including the heartbeat's ~42,654 hourly, bills at full price.
+  ***Corrected 2026-09-06 (doc-reconciliation pass): stale.*** `services/prompt_cache.py` shipped
+  after this document was written (commits `0c47906`, `f56de1d`, `a8659be`) and Friday does send
+  `cache_control` today. This paragraph accurately describes 2026-08-19, not the current tree.
 - **The clock defeats both backends, today.** `clock_context_block()` renders
   `%Y-%m-%d %H:%M` — minute resolution — and assembly adds it at **position 2**, directly
   after `FRIDAY_SYSTEM_PROMPT` (`model_router.py:2235`, `clock.py:47`). A byte change at
@@ -134,6 +149,12 @@ sentence.
   breakpoint placed below the clock would never hit. The audit's finding that three
   different turn types produced **identical system prompts** is the asset here: the
   prefix is already stable *except for what we inject into it*.
+  ***Corrected 2026-09-06: this section's own recommendation (CA14, move the clock) shipped.***
+  `services/model_router.py:3062-3085` moved the clock render to the end of assembly on
+  2026-08-26 (comment there: *"ORDERED LAST, 2026-08-26... used to sit at position 2"*), and
+  `prompt_cache.py`'s `VOLATILE_MARKER` now splits the cache boundary at that point. The clock no
+  longer defeats caching on either backend. This is the rarer direction of error in this pass —
+  the document undersells what shipped, rather than the reverse.
 - **What caching does not do:** it skips **recomputation**, not **residency**. Cached
   tokens still occupy the KV cache, and the compute buffer still scales with the window —
   §1.2's numbers do not move. Caching changes nothing about seat sizing, and there is

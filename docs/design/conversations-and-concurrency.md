@@ -1,9 +1,22 @@
 # Conversations — the seat belongs to the chat, the work belongs to the task
 
 **Date:** 2026-08-18
-**Status:** design. **No implementation code exists for this document — it lands first, by
-instruction.** Written for a fresh-context session with no priors: every fact needed is in
-this file or at a cited file:line.
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
+exists for this document — it lands first, by instruction.~~ **BUILT.** Commit `2497da3`
+("feat: conversations are real objects, and their transcripts do not mix") shipped the three
+structural changes this document argues for, followed by `7d15702` (archive visibility, honest
+import failure). This document's central thesis — that Friday has exactly one conversation
+backed by a single module-level history list — is no longer true. Verified against the current
+tree: `services/conversations.py` (334 lines — `create()` with per-conversation `seat` at `:119`,
+`ensure_main()`, `list_all()`, `patch()`, `append()`, `messages()`, `resolve()`, and
+`_migrate_legacy_history()` at `:268` for the move off the global list); `routes/conversations.py`
+(136 lines, with `_running_for(cid)` at `:16` for per-conversation busy state); `routes/chat.py`
+addresses every request to a conversation via `_conv_id_from(data)` (`:153`, "Main when
+unaddressed"), reads the conversation's own seat at `:630`, and keeps per-thread history
+(`:1549-1569`); the UI switcher polls `/api/conversations` (`index.html:37409`) and stamps
+`conversation_id` onto every chat request (`:39554`, `:41475`). Nothing material in this
+document's component list is missing. The body below describes the single-conversation state
+that existed on 2026-08-18; read its "today" claims in the past tense.
 **Commission, verbatim (Stephen):** *"I want to trigger background tasks, go to a new
 chat, talk with a different model, then go back to the other chat to get an update from
 the other model while the other other model does something in the background too. By

@@ -2,8 +2,30 @@
 
 **Date:** 2026-09-04
 **Branch:** `docs/headroom-spec`, off `integration/release-2026-09-03` @ `f000f07`. **Doc-only.
-Pre-approved for build: a Sonnet 5 session executes §12 after this lands. Nothing in this
-document exists yet unless marked VERIFIED.**
+Pre-approved for build: a Sonnet 5 session executes §12 after this lands.**
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~Nothing in this document exists yet
+unless marked VERIFIED.~~ **BUILT — all six phases of §12's handover shipped**, on branch
+`feat/headroom-build`, merged into release integration at `177f47b`: Phase 1 `machine_monitor`
+(read-only, `aafd813`), footprints/measured VRAM + the `verdicts()` measure job (`1985653`),
+Phase 3 `plan_chain` — the chain planner (`56751b2`, and see [`residency-policy.md`](residency-policy.md)'s
+corrected status for the **HR1/HR2/HR8/HR10/HR16/HR18** rules this phase added to that file),
+Phase 4 the Settings surface (`bf14f5b`), Phase 5 intrusion-response hooks from the monitor to the
+Arbiter (`baaeb98`), Phase 6 the onboarding hook — `starter_set`, HR15 (`badaa12`). Two
+allocator/display-reserve bugs found during the build were fixed in the same branch (`bb698f1`,
+`f84a4c8`). Verified present in the current tree: `services/gpu_headroom.py` (171 lines),
+`services/headroom_contract.py` (121 lines), the live route `GET /api/gpu/headroom`
+(`routes/research.py:162`), and three dedicated test files
+(`tests/unit/test_headroom_contract.py`, `tests/unit/test_headroom_surface_verdicts.py`,
+`tests/api/test_headroom_settings_surface.py`). Stephen's original ask — hardware-specific model
+fetching surfaced in Settings, and headroom measurement so the machine stays usable while local
+models juggle — is the thing that shipped, not a description of something planned.
+**Note for anyone tempted to search for a gap here by the word "headroom":** there is an
+unrelated third-party package, `headroom-ai` (context-*compression*, integrated into the chat
+pipeline back in June — `services/prompt_cache.py`/chat integration commits `7a8d7e1`/`99796a1`),
+whose native Rust core has its own separate, pre-existing Windows-toolchain limitation. That is a
+different subsystem under the same word and has nothing to do with the GPU/machine-headroom
+system this document specifies — don't conflate the two if you see "0% saved" mentioned elsewhere;
+it refers to the compression package, not to anything in this document.
 **Subject:** Stephen, 2026-09-04, verbatim:
 
 > *"you know, maybe hardware-specific model fetching is a function we should add to the Friday

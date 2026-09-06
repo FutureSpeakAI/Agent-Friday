@@ -7,8 +7,34 @@ directory.
 **Scheduled:** the release **after** 5.6.6. Not in the hotfix — 5.6.6 ships
 preservation plus the wizard fix to stop the bleeding tonight; a relocation with
 migration consequences for every existing install is not a thing to rush.
-**Status of this document:** analysis for the next session. **Nothing here is
-implemented, and none of it should be implemented as part of 5.6.6.**
+**Status of this document, corrected 2026-09-06 (doc-reconciliation pass):** ~~analysis for the
+next session. Nothing here is implemented.~~ **BUILT** — shipped commit `0f64fc7`, 2026-08-29
+(same day as this doc; the "next session" arrived within hours), hardened by `8eeadab`,
+2026-08-30 ("os-mode: fail-closed credential + vault-passphrase storage (PR-5)"). Verified against
+the current tree: `services/vault_passphrase.py` (535 lines) is the single resolver this document
+asked for, with F1 and F2 both fixed (the two consumers — `services/agent.py` and
+`services/credential_store.py` — now defer to it instead of disagreeing). `store()` writes to
+**both** the OS keychain and a DPAPI-wrapped file at `~/.friday/security/vault-passphrase.dpapi`
+— exactly the "Option D" (keyring primary, DPAPI fallback) this document recommends in §8.
+`setup_wizard._write_start_bat` no longer writes the passphrase at all. T1/T2 (the path-containment
+and upgrade-rehearsal tests this doc calls for) exist:
+`tests/unit/test_vault_passphrase_location.py` (+ `_migration.py`, `_os_mode.py`, `_rerun.py`) and
+`packaging/windows/tests/rehearsal/upgrade-vault-test.ps1`, moved into the repo per this
+document's own instruction rather than staying a scratch file. `friday status` (`cli.py:924-943`)
+reports where the passphrase resolved from, meeting §6's reporting requirement.
+
+**One piece named in this document is confirmed still missing, precisely:** **Q2, the recovery
+code.** This document identified "what if the keychain/DPAPI copy itself is lost (reimaged
+machine, restored profile)" as Option D's single biggest residual weakness and proposed showing a
+one-time recovery code at setup. No such mechanism exists anywhere in `vault_passphrase.py` or the
+CLI — `store()` writes only the two runtime-durable homes this document specified, nothing
+recovery-shaped beyond them. Q1 (Option E — binding the vault key to the OS account instead of a
+passphrase) was also not attempted; a passphrase remains mandatory. Q3 (moving the cloud API keys
+out of `start.bat` too) was deliberately left out of scope, per `_write_start_bat`'s own docstring
+— those keys still write in the clear. Q4 (detecting when the keychain and DPAPI copies actively
+disagree, as opposed to one simply being absent) is only partially covered: the wizard's
+re-run-safety path handles "passphrase not found" explicitly but does not compare the two stores
+against each other.
 
 ---
 

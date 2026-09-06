@@ -7,6 +7,11 @@ that is its proper home.
 **Status:** design/position. **No implementation code exists for this document — it lands
 first, by instruction.** The question it answers is not "should we use it" but which parts,
 in what position, and at what price.
+**Re-verified 2026-09-06 (doc-reconciliation pass): still accurate — and accurate by this
+document's own decision, not as debt.** A case-insensitive search for `switchyard` across `src/`,
+`packaging/`, and every `.py`/`.html`/`.rs` returns zero hits: no dependency, no vendored crate, no
+shim. §0's conclusion is "adopt the ideas, not the dependency," so "no implementation" is the
+intended terminal state. Future audits should not re-flag this as unbuilt work.
 **Subject:** [NVIDIA-NeMo/Switchyard](https://github.com/NVIDIA-NeMo/Switchyard), evaluated
 at v0.2.0, commit `f735d9dd`, cloned and read in full on 2026-08-17 — crates, docs, CI, and
 changelog, not just the README.

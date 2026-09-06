@@ -2,7 +2,23 @@
 
 **Date:** 2026-08-14
 **Branch:** `residency-policy`, off `phase-a-truth-flow` @ `53dd414`.
-**Status:** design. **No implementation code exists yet — this document lands first, by instruction.**
+**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
+exists yet — this document lands first, by instruction.~~ **BUILT.** That line was true for
+about a day. Implementation started the same date as this document (`c8a4387`, 2026-08-14,
+"ResidencyPolicy — pure placement engine, six golden plans, properties") and is now one of the
+most extensively built subsystems in the tree: `services/hardware_profile.py` (885 lines),
+`services/residency_policy.py` (2,304 lines, `plan()` + `plan_chain()`, all eleven rules
+**R1–R11** present exactly as specified below, plus **HR1/HR2/HR8/HR10/HR16/HR18** added later
+by [`headroom.md`](headroom.md)'s extension of this design), `services/residency_arbiter.py`
+(1,993 lines, the live `Arbiter` class plus `OllamaBackend`/`LlamaServerBackend`/`ComfyUIBackend`
+adapters), and `services/residency_catalog.py` (1,020 lines) — 6,200+ lines total. Verified live,
+2026-09-06: `GET /api/residency/status` on the running app returns real seats (`image`, `stt`,
+`tts`, each with a backend/device/model_id/status), a real GPU budget snapshot
+(`available_mib`/`baseline_mib`/`total_mib` for the actual card), and real refusals citing rule
+IDs from the table below (e.g. `"rule_id": "R6"`, `"rule_id": "R5"`) — this is the design running
+in production, not a description of one. The rest of this document describes what was actually
+built; treat every rule/class/function named below as VERIFIED present unless a note says
+otherwise. See `headroom.md` for the layer built on top of this one (also corrected, same pass).
 **Inherits:** [`decisions-2026-08.md`](../audits/decisions-2026-08.md) (D1–D10, notably **D4** — a
 first-class hardware profile consulted by dispatch — and **D8** — routed image generation once a
 residency scheduler exists), [`residency-state-delta.md`](../audits/residency-state-delta.md) (Phase 0).
@@ -15,6 +31,11 @@ residency scheduler exists), [`residency-state-delta.md`](../audits/residency-st
 ---
 
 ## 0. What this layer is for, in one paragraph
+
+*(2026-09-06: this paragraph describes the problem as it stood on 2026-08-14, before this
+document's own build. All three things it says "do not exist" now do — see the corrected status
+above. Left as-written below for the historical reasoning; do not read it as describing today's
+`_pick_local_model`.)*
 
 Friday must compose a local model stack differently on every machine it runs on. Today it does
 not: `routing/model_router.py:_pick_local_model` chooses among installed models **by artifact
