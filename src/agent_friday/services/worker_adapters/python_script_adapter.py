@@ -46,6 +46,39 @@ _JOBS_LOCK = threading.RLock()
 # production code rather than test isolation.
 _WORKDIR_RETENTION_S = 3600  # 1 hour -- ample time for a caller to read artifacts
 
+# Environment a worker script receives. 2026-09-06: this adapter spawned
+# with a copy of the whole os.environ -- the FULL server environment, every provider
+# key start.bat exported and FRIDAY_PASSWORD with it -- to a script whose
+# source is the caller's own `prompt` field. Two callers reach it:
+# POST /api/orchestrator/delegate (adapter_type=PYTHON_SCRIPT) and the
+# federation compute route's `analysis.run` capability, whose only trust
+# check is a peer-SELF-REPORTED score. The MCP launcher already went
+# through denylist->allowlist for exactly this leak (three recurrences;
+# see extension_security.SANDBOXED_ENV_ALLOWLIST), so this reuses that
+# allowlist verbatim rather than starting a second list that drifts.
+#
+# To let a worker see one more variable, add its NAME here. Nothing else
+# in the parent's environment reaches a worker, named or not yet invented.
+WORKER_ENV_EXTRA: frozenset = frozenset({
+    "FRIDAY_WORKER",   # set below; marks the child as a worker
+    "PYTHONIOENCODING",  # keeps a worker's stdout UTF-8 when the parent forced it
+    "PYTHONUTF8",
+})
+
+
+def worker_env() -> Dict[str, str]:
+    """The exact environment a worker subprocess is given: the sandboxed
+    MCP allowlist (PATH, TEMP, SYSTEMROOT, ... -- nothing that carries a
+    secret by construction) plus WORKER_ENV_EXTRA, plus FRIDAY_WORKER=1."""
+    from agent_friday.services.extension_security import sanitize_env_for_mcp
+    env = sanitize_env_for_mcp(dict(os.environ), trust_level="sandboxed")
+    extra = {n.upper() for n in WORKER_ENV_EXTRA}
+    for k, v in os.environ.items():
+        if k.upper() in extra:
+            env[k] = v
+    env["FRIDAY_WORKER"] = "1"
+    return env
+
 
 def _sweep_stale_workdirs(retention_s: float = _WORKDIR_RETENTION_S) -> None:
     try:
@@ -110,7 +143,7 @@ class PythonScriptAdapter(BaseAdapter):
                 text=True,
                 timeout=task.deadline_seconds,
                 cwd=workdir,
-                env={**os.environ, "FRIDAY_WORKER": "1"},
+                env=worker_env(),
             )
             stdout = result.stdout + (("\n[STDERR]\n" + result.stderr) if result.stderr else "")
             after = set(Path(workdir).iterdir())
