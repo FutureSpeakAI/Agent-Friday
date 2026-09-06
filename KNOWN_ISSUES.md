@@ -1,6 +1,6 @@
 # Known Issues
 
-**As of 2026-09-05, for v5.12.0.**
+**As of 2026-09-06, for v5.13.0.**
 
 This file lists what is broken, what is unverified, and what we do not know. It is
 maintained because a defect you can read about is cheaper than one you discover, and
@@ -667,8 +667,8 @@ up to 50 iterations. There is even a fallback that parses tool calls out of
 prose for models that emit them textually.
 
 > **So a local model WITH native tool calling uses tools fully offline, with no
-> API key.** `qwen3:8b` and `gemma4:12b` do. `gemma3:4b` does not — and that is
-> a property of the model, not of Friday.
+> API key.** `gemma4:12b` and `gemma4:26b` do. `gemma3:4b` does not — and that
+> is a property of the model, not of Friday.
 
 `function_manager` would let a model *without* native tool calling delegate the
 decision to a small specialist like `functiongemma`. That path is unbuilt, so

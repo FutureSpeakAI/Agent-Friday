@@ -257,7 +257,7 @@ Check 'path REFUSED: wildcards' `
       ((Assert-ConfinedPath 'C:\*') -eq $null)
 
 # --- model tags ---
-Set-HealAllowedModelTags @('gemma3:4b','qwen3:8b')
+Set-HealAllowedModelTags @('gemma3:4b','gemma4:12b')
 Check 'model tag accepted: gemma3:4b'      ((Assert-ModelTag 'gemma3:4b') -ne $null)
 Check 'model tag REFUSED: not in the plan' ((Assert-ModelTag 'llama3:70b') -eq $null)
 Check 'model tag REFUSED: shell-ish'       ((Assert-ModelTag 'gemma3:4b; rm -rf /') -eq $null)
