@@ -56,6 +56,16 @@ def list_tasks():
     "task complete" chat notification and for orb-syncing (the /api/processes
     poll already owns those orbs)."""
     tasks = _task_snapshot() or []
+    # Liveness (TV7) for the rows a reader watches: a running task whose
+    # heartbeat has gone stale renders as stalled, never as running; the
+    # "now:" line, cost so far and last_seen come from the record.
+    try:
+        from agent_friday.services import task_journal as _tj
+        for t in tasks:
+            if t.get('status') in ('running', 'queued', 'interrupted') and t.get('task_id'):
+                t.update(_tj.liveness(t['task_id'], t.get('status')))
+    except Exception:
+        pass
     seen = {t.get('task_id') for t in tasks if t.get('task_id')}
     _status_map = {'completed': 'complete', 'error': 'failed', 'running': 'running'}
     now = _time.time()
@@ -460,7 +470,62 @@ def api_agent_steer():
             return jsonify({"error": "Task not found"}), 404
     with _FOLLOW_UP_LOCK:
         _FOLLOW_UP_QUEUES.setdefault(task_id, []).append(message)
+    # Task journal (TV10): every steer is an event with a source.
+    try:
+        from agent_friday.services import task_journal as _tj
+        _tj.steer(message, source="user", task_id=task_id)
+    except Exception:
+        pass
     return jsonify({"ok": True, "task_id": task_id, "queued": message[:120]})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/stop-after-step', methods=['POST'])
+@login_required
+def stop_after_step(task_id):
+    """Ask a running task to stop at its next checkpoint (TV10). The current
+    step finishes; the next never starts; the record ends with a halt that
+    names the step. User-only: an observer's POST is refused before this."""
+    from agent_friday.services import task_journal as _tj
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        running = bool(t) and t.get('status') in ('queued', 'running')
+    if not t:
+        return jsonify({"error": "Task not found"}), 404
+    if not running:
+        return jsonify({"error": "task is not running", "status": t.get('status')}), 409
+    _tj.request_stop(task_id)
+    _tj.steer("stop after this step", source="user", task_id=task_id)
+    return jsonify({"ok": True, "task_id": task_id, "stop_requested": True})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/rerun', methods=['POST'])
+@login_required
+def rerun_task(task_id):
+    """Re-run an interrupted or finished task from its own prompt as a NEW
+    task (TV8: nothing resumes automatically; this is the human choosing).
+    The old record is untouched except for a decision pointing at the new
+    task. User-only."""
+    from agent_friday.services import task_journal as _tj
+    from agent_friday.services.agent import _spawn_task
+    with TASKS_LOCK:
+        t = dict(TASKS.get(task_id) or {})
+    if not t:
+        t = _tj.read_state(task_id) or {}
+    if not t:
+        return jsonify({"error": "Task not found"}), 404
+    if t.get('status') in ('queued', 'running'):
+        return jsonify({"error": "task is still running", "status": t.get('status')}), 409
+    prompt = t.get('prompt') or ''
+    if not prompt.strip():
+        return jsonify({"error": "no prompt recorded for this task; it cannot be re-run"}), 409
+    new_id = _spawn_task(t.get('name') or 'Task', prompt, description=t.get('description') or '',
+                         chain=t.get('chain'), chain_step=int(t.get('chain_step') or 0),
+                         model=t.get('model'))
+    _tj.decision("rerun", new_id, reason=f"re-run by the user from task {task_id}",
+                 task_id=task_id, alternatives=["leave as is"])
+    _tj.append(new_id, "decision", point="rerun_of", chosen=task_id,
+               reason="spawned by the user from that task's recorded prompt")
+    return jsonify({"ok": True, "task_id": new_id, "rerun_of": task_id})
 
 
 # How long a finished orb keeps ORBITING. Separate from how long its record
