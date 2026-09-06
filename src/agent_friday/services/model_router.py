@@ -100,6 +100,16 @@ def _seal_or_block(payload, provider):
 
     Nothing leaves the device when the gate can't verify it.
     """
+    # HARD SPENDING CAP, FIRST (2026-09-06). The user-set stopping cap
+    # (services/spend_guard) refuses the call here, before any gating work
+    # is spent on it. Raises SpendCapReached (a RuntimeError) so every
+    # caller's existing blocked-send handling applies unchanged.
+    try:
+        from agent_friday.services import spend_guard as _sg
+    except ImportError:
+        _sg = None
+    if _sg is not None:
+        _sg.check(provider, what=f"{provider} model call")
     # HARD CEILING, BEFORE THE GATE (2026-08-26). Caching makes the common
     # case cheap; only a limit makes a catastrophe impossible, and these are
     # different guarantees. This is the one chokepoint every cloud provider

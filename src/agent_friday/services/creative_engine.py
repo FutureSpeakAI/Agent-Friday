@@ -634,6 +634,25 @@ def _image_config(types, aspect_ratio: str):
     return types.GenerateContentConfig(**base)
 
 
+def _spend_cap_halt(what: str) -> Optional[Dict[str, Any]]:
+    """The user's hard spending cap (services/spend_guard), checked before
+    any paid creative backend is chosen. Every creative backend here is
+    cloud-billed (Gemini/Veo/Higgsfield/kie/OpenAI), so the check is on
+    the entry point, not per backend. Returns the blocked envelope this
+    module's callers already understand, or None to proceed."""
+    try:
+        from agent_friday.services import spend_guard as _sg
+        _sg.check("creative-cloud", what=what)
+    except ImportError:
+        return None
+    except Exception as e:
+        if type(e).__name__ != "SpendCapReached":
+            return None
+        return {"status": "blocked", "reason": str(e), "spend_cap": True,
+                "files": []}
+    return None
+
+
 def generate_image(prompt: str, *, model: Optional[str] = None,
                    aspect_ratio: str = "1:1", style: Optional[str] = None,
                    n: int = 1, session_ctx: Optional[dict] = None,
@@ -652,6 +671,9 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     Returns {status:'ok', files:[...], model, api_model, prompt, ...} on success,
     or {status:'blocked'|'unavailable'|'error', ...}. Never raises.
     """
+    halted = _spend_cap_halt("image generation")
+    if halted:
+        return halted
     prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
     # One place decides, and it is legible to Stephen (services/creative_policy).
     # It delegates to check_content_safety, so with the shipped defaults this is
@@ -883,6 +905,9 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     compose into the prompt, and outputs attach to the project gallery. Returns
     the same envelope shape as generate_image(). Never raises.
     """
+    halted = _spend_cap_halt("video generation")
+    if halted:
+        return halted
     prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
     # One place decides, and it is legible to Stephen (services/creative_policy).
     # It delegates to check_content_safety, so with the shipped defaults this is

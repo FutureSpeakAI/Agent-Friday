@@ -1984,6 +1984,12 @@ if sock is not None:
         # (possibly off) vault-assembly gate, stands between the assembled
         # context prompt and Google before it becomes system_instruction=.
         sys_text = _gate_voice_system_instruction(sys_text)
+        # Hard spending cap (services/spend_guard): a NEW live session is a
+        # new paid stream, so it is refused when the cap has tripped. A
+        # session already open is never cut mid-sentence -- see the
+        # boundary rules in spend_guard's module docstring.
+        from agent_friday.services import spend_guard as _sg
+        _sg.check("gemini", what="a Gemini Live voice session")
 
         live_cfg_kwargs = dict(
             response_modalities=[types.Modality.AUDIO],

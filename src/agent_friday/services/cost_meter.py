@@ -613,17 +613,27 @@ def _rolling_spend():
 
 
 # ── Budget alerts ────────────────────────────────────────────────────────────
+BUDGET_KEYS = ("daily", "monthly", "daily_enabled", "monthly_enabled",
+               # the hard stop (services/spend_guard) -- a second, separate cap
+               "hard_stop_daily", "hard_stop_monthly",
+               "hard_stop_daily_enabled", "hard_stop_monthly_enabled")
+
+
 def get_budget():
     cfg = (_load_settings().get("cost_budget") or {})
     return {"daily": cfg.get("daily", 0), "monthly": cfg.get("monthly", 0),
             "daily_enabled": cfg.get("daily_enabled", False),
-            "monthly_enabled": cfg.get("monthly_enabled", False)}
+            "monthly_enabled": cfg.get("monthly_enabled", False),
+            "hard_stop_daily": cfg.get("hard_stop_daily", 0),
+            "hard_stop_monthly": cfg.get("hard_stop_monthly", 0),
+            "hard_stop_daily_enabled": cfg.get("hard_stop_daily_enabled", False),
+            "hard_stop_monthly_enabled": cfg.get("hard_stop_monthly_enabled", False)}
 
 
 def set_budget(patch):
     from agent_friday.core import _load_settings_raw, _save_settings
     cfg = dict((_load_settings_raw().get("cost_budget") or {}))
-    for k in ("daily", "monthly", "daily_enabled", "monthly_enabled"):
+    for k in BUDGET_KEYS:
         if k in (patch or {}):
             cfg[k] = patch[k]
     _save_settings({"cost_budget": cfg})
@@ -653,6 +663,12 @@ def _push_budget_alert(period, pct, spend, limit):
 
 def _check_budget_alerts():
     b = get_budget()
+    # The hard stop announces itself at the crossing, not at the next call.
+    try:
+        from agent_friday.services import spend_guard as _sg
+        _sg.notify_if_tripped()
+    except Exception:
+        pass
     if not (b["daily_enabled"] or b["monthly_enabled"]):
         return
     today, month = _rolling_spend()
