@@ -27,6 +27,7 @@ document it is.
 |---|---|
 | [API](reference/api.md) | Every HTTP endpoint with method, path, request and response. |
 | [Roles and model identity](reference/roles-and-model-identity.md) | The contract between the residency layer and anything that renders a model picker or binds a model to a conversation. |
+| [Task observation](reference/task-observation.md) | How an orchestrator (or you) reads a running task's journal: the read-only credential, the three reads, event kinds, gaps. |
 
 ## Architecture and security
 

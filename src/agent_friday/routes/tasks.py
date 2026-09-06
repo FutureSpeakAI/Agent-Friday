@@ -457,8 +457,15 @@ def task_retention():
 def api_agent_steer():
     """Push a follow-up prompt into a running task's dual-loop queue.
 
-    POST body: { "task_id": "...", "message": "..." }
+    POST body: { "task_id": "...", "message": "...", "source": "<optional>" }
     The message is injected as a new user turn after the current agent pass finishes.
+
+    `source` names who is steering, for the record only. It is recorded as
+    `agent:<name>` when given (an orchestrator such as Fable or Astra acting
+    on the user's behalf from the user's own session), otherwise `user`. It
+    grants nothing: the read-only observer credential cannot reach this
+    route at all (core.check_auth), so a steer always comes from the user's
+    principal, and the source only says which hand the user used.
     """
     data = request.get_json() or {}
     task_id = (data.get('task_id') or '').strip()
@@ -470,13 +477,26 @@ def api_agent_steer():
             return jsonify({"error": "Task not found"}), 404
     with _FOLLOW_UP_LOCK:
         _FOLLOW_UP_QUEUES.setdefault(task_id, []).append(message)
+    source = _steer_source(data.get('source'))
     # Task journal (TV10): every steer is an event with a source.
     try:
         from agent_friday.services import task_journal as _tj
-        _tj.steer(message, source="user", task_id=task_id)
+        _tj.steer(message, source=source, task_id=task_id)
     except Exception:
         pass
-    return jsonify({"ok": True, "task_id": task_id, "queued": message[:120]})
+    return jsonify({"ok": True, "task_id": task_id, "queued": message[:120], "source": source})
+
+
+def _steer_source(raw) -> str:
+    """`user` unless the caller names an agent; then `agent:<slug>`, slug
+    limited to [a-z0-9_-] and 32 chars so the journal never stores free text
+    in a field that is rendered as an identity."""
+    import re as _re
+    s = str(raw or '').strip().lower()
+    if s.startswith('agent:'):
+        s = s[len('agent:'):]
+    s = _re.sub(r'[^a-z0-9_-]+', '-', s).strip('-')[:32]
+    return f"agent:{s}" if s and s != 'user' else 'user'
 
 
 @tasks_bp.route('/api/tasks/<task_id>/stop-after-step', methods=['POST'])

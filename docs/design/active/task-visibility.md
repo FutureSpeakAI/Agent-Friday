@@ -1,25 +1,31 @@
 # Task visibility — the transparency rule pointed inward
 
-> **Status:** partially-implemented
+> **Status:** implemented
 > **Last verified:** 2026-09-06
-> **Implementation:** phase 1 built — `services/task_journal.py`, the journal-backed `_spawn_task` / `_task_set` / `_task_log` / `_restore_tasks_from_journal` in `services/agent.py`, `routes/tasks.py` (journal read, state-aware delete, retention), the boot hook in `server.py`, the `task_journal` settings block; phases 2–5 not built. Specification for everything else: Builds on `services/agent.py` (TASKS, `_task_set`, `_task_log`, the two agentic loops), `routes/tasks.py`, `services/activity_ledger.py`, `services/cost_meter.py`, `services/spend_guard.py`, `services/approvals.py`
+> **Implementation:** all five phases — `services/task_journal.py` (journal, state, index, emitters, heartbeat, digest, gap-honest cursor, sealing, stop-after-step, liveness), `services/observer_access.py` (read-only credential, enforced in `core.check_auth` before loopback trust), the journal-backed task lifecycle and required emission in both agentic loops in `services/agent.py`, decisions at the named points in `services/model_router.py`, `services/approvals.py`, `services/spend_guard.py`, `services/agent.py`, the routes in `routes/tasks.py`, the boot hook in `server.py`, the `task_journal` settings block, the tray drawer and Task-records card in both `index.html` and `ui_parts/app.html`. Operator contract: [`docs/reference/task-observation.md`](../../reference/task-observation.md).
 > **Supersedes / superseded by:** —
 > **Written:** 2026-09-06
 
 ## Implementation notes
 
-**Phase 1 is built** (durable journal, state snapshot, index, boot
-reconciliation, encryption at rest, user delete, retention setting). Phases
-2–5 (required emission at loop checkpoints, decisions, the query surface, the
-tray, orchestrator credentials) are not. The maintainer's rulings on the §7
-questions, each built as a reversible setting or route rather than a baked-in
-assumption: retention is a user setting defaulting to keep-forever with a
-visible delete; model-reasoning capture defaults on (`capture_reasoning`,
-consumed in phase 2); the user sees everything, an orchestrator's digest
-carries decisions/status/model/cost and gets reasoning only on explicit
-request through the sealed gate with a ledger row; interrupted tasks are
-marked and offered for re-run, never resumed; orchestrators get a scoped
-read-only credential (phase 5); journals are encrypted under the vault key.
+**All five phases are built.** The maintainer's rulings on the §7 questions,
+each built as a reversible setting or route rather than a baked-in
+assumption:
+
+| Q | Ruling | Where it lives |
+|---|---|---|
+| Q1 retention | keep forever by default; user-visible control and per-task delete | `task_journal.retention_days` (0), System → Task records, `DELETE /api/tasks/<id>` |
+| Q2 reasoning capture | on by default | `task_journal.capture_reasoning`; when off, no prose is written anywhere |
+| Q3 shown vs stored | the user sees everything; an orchestrator's digest carries decisions, status, model and cost, and gets reasoning only on explicit `?reasoning=1`, through the gate, with a ledger row | `task_journal.digest`, `seal_for_principal`, `activity_ledger` kind `journal_read` |
+| Q4 interrupted tasks | marked, offered for re-run; never resumed automatically | boot reconciliation → `interrupted`; `POST /api/tasks/<id>/rerun` |
+| Q5 who may query | orchestrators hold a scoped, durable, **read-only** credential; steer and cancel stay with the user | `services/observer_access.py`, `X-Friday-Observer`, minted in System → Task records |
+| Q6 encryption | journals encrypted under the vault key when set | `task_journal.encrypt_at_rest` via `credential_store.protect` |
+
+Two departures from the text below, both deliberate: `ops/forensics-snapshot.py`
+is **kept** (§6 phase 1 proposed retiring it; the maintainer ruled otherwise),
+and the §4.5 sentence about orchestrators having steer and cancel access was
+overtaken by the Q5 ruling — an orchestrator steers only through the user's
+own session, naming itself in `source`.
 
 The maintainer's question, verbatim: *"Astra and Fable
 were unable to see any of the running tasks. It's like they were unable to
@@ -433,7 +439,8 @@ These are decisions, not defaults picked here.
 - **Q5 — Who may query.** Loopback trust (today's model) means any local
   process can read every journal. Should Fable/Astra hold a scoped,
   durable read-only credential instead, with the per-restart token
-  reserved for the browser?
+  reserved for the browser? **Ruled 2026-09-06: yes, read-only.** Built as
+  `services/observer_access.py`; see the table in the implementation notes.
 - **Q6 — Journal encryption.** Store journals under the vault key when a
   passphrase is set (they carry the same class of material as chat
   history), or plaintext under `~/.friday/` like `chat_history.json`

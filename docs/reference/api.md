@@ -752,17 +752,40 @@ Acknowledge a chat injection.
 
 ## Tasks & Processes
 
+Every task writes a durable journal; these routes read it. The full contract, including the read-only observer credential (`X-Friday-Observer`) an orchestrator presents, is in [Task observation](task-observation.md).
+
 ### `GET /api/tasks`
-List active tasks.
+List tasks. Running, queued and interrupted rows carry `now`, `last_seen`, `stalled`, `cost_usd`, `stop_requested`.
 
 ### `GET /api/tasks/<task_id>`
 Get a specific task.
 
+### `GET /api/tasks/<task_id>/journal?since=<seq>`
+Journal events after `seq`, with `gaps` and `cursor_ahead` when the record does not join up.
+
+### `GET /api/tasks/<task_id>/digest?n=20&reasoning=0`
+Prompt-sized view: status, cost, model, last `n` checkpoints and decisions, halts. Reasoning only with `reasoning=1`; sealed and ledgered for an observer.
+
+### `GET /api/tasks/<task_id>/events?since=<seq>&stream=0&max_wait=`
+Cursor tail; `stream=1` returns Server-Sent Events with `id:` = seq, `event: gap` frames, `Last-Event-ID` resume, `event: end` at terminal.
+
 ### `DELETE /api/tasks/<task_id>`
-Delete a task.
+Cancel a running task (record kept) or delete the record of a finished one. User only.
+
+### `POST /api/tasks/<task_id>/stop-after-step`
+Finish the current step, then stop; the record ends with a `halt` naming the step. User only.
+
+### `POST /api/tasks/<task_id>/rerun`
+Start a new task from this one's recorded prompt (interrupted tasks are never resumed automatically). User only.
+
+### `GET|POST /api/tasks/retention`
+Read the `task_journal` settings, or set `{"retention_days": N}` (0 = keep forever). User only.
+
+### `POST|DELETE /api/tasks/observer-token`
+Mint (shown once) or revoke the read-only observer credential. User only.
 
 ### `POST /api/agent/steer`
-Steer an active agent task.
+Steer an active agent task: `{task_id, message, source?}`. Journaled as a `steer` event; `source` is recorded as `agent:<name>` when given, else `user`. Refused to the observer credential.
 
 ### `GET /api/processes`
 List active background processes.
