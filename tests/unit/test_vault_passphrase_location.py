@@ -260,7 +260,7 @@ def test_a_torn_write_is_not_mistaken_for_a_passphrase(clean_env, friday_home, m
     `<repo_root>/start.bat` off a path fixed relative to this module's own
     location, independent of both. So once the corrupted DPAPI file (this
     test's actual subject) correctly resolves to "nothing found", `resolve()`
-    fell through the chain to the REAL project start.bat and read Stephen's
+    fell through the chain to the REAL project start.bat and read the maintainer's
     real passphrase -- which then landed, three times today, in this test's
     own assertion-failure message, in plain text, in test output that gets
     read, logged, and pasted around. `_from_start_bat` is mocked out below so

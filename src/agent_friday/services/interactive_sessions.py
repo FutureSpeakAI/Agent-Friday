@@ -31,7 +31,7 @@ Security posture — read this before changing the defaults:
     this feature warrants. The only access boundary today is session_id
     itself: an unguessable 12-hex-char token, returned solely to whichever
     call created it. Treat this as a known gap, not a solved problem —
-    Stephen's brief specifically asked whether send_to_session should be
+    the design brief specifically asks whether send_to_session should be
     "constrained, confirmed, or restricted to sessions the user opened"; the
     honest answer implemented here is "constrained by an unguessable token
     and Ring 3, not further confirmed, and not restricted to the opening
@@ -51,8 +51,9 @@ Security posture — read this before changing the defaults:
     carries FRIDAY_SESSION_DEPTH=1. spawn() refuses outright if THIS
     process's own environment already has that variable set — i.e. this
     Friday process is itself running inside a Friday-spawned session. That
-    is exactly the loop Stephen described (Friday spawns Claude Code which
-    spawns Friday again): the nested Friday inherits the marker and its own
+    is exactly the recursion the design brief warns about (Friday spawns
+    Claude Code which spawns Friday again): the nested Friday inherits the
+    marker and its own
     spawn_interactive_session calls refuse before touching Popen. It does
     NOT limit fan-out within one already-running Friday process beyond the
     concurrent-session cap below — a different, smaller risk.

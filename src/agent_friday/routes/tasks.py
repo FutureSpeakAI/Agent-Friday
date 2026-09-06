@@ -272,8 +272,8 @@ def list_processes():
     Two lifetimes, deliberately different:
 
       * **orbit** — a completed orb is gone 30 seconds after it finishes.
-        Stephen: "I do not want them hanging around in orbit around Friday's
-        avatar for longer than that."
+        Maintainer ruling: "I do not want them hanging around in orbit
+        around Friday's avatar for longer than that."
       * **record** — the detail (model, intent, log, result) stays explorable
         for the full retention window. The original comment here was right that
         transparency needs the detail to outlive the orb; it just expressed
@@ -281,8 +281,7 @@ def list_processes():
 
     A FAILED run never expires on the 30-second timer. A success that vanishes
     is fine — you saw it succeed, or you did not need to. A failure that
-    vanishes before you looked at it is the machine hiding something, and this
-    codebase has spent a day removing exactly that kind of quiet.
+    vanishes before you looked at it is the machine hiding something.
     """
     # An orphan should disappear on its own rather than wait to be asked
     # about. Runs before the lock: _reap_orphans takes it itself.
@@ -347,7 +346,7 @@ def cancel_process(pid):
     """Stop a running process and give the GPU back.
 
     Correctness, not decoration. An image job holds the Arbiter's EXCLUSIVE
-    lease: until 2026-08-16 the only ways out were to wait it out or kill the
+    lease: without this the only ways out are to wait it out or kill the
     server, and killing the server strands the lease with no language seats
     resident. Ninety seconds in and changing your mind should not cost you the
     machine.
@@ -428,13 +427,13 @@ def cancel_process(pid):
 def dismiss_failed_processes():
     """Clear every failed orb at once.
 
-    2026-08-16, Stephen: "The error orbs won't go away." The previous round got
-    half of this right — a failure that vanishes on the same 30-second timer as
-    a success is a failure the machine hid from you — and then shipped no way
-    to acknowledge one. Persistent became permanent, and they accumulated
-    around the avatar until they were the only thing there.
+    A failure that vanishes on the same 30-second timer as a success is a
+    failure the machine hid from you — but persistent must not become
+    permanent, or failed orbs accumulate around the avatar until they are the
+    only thing there.
 
-    A failure still never disappears on its own. It leaves when he says so.
+    A failure still never disappears on its own. It leaves when the user
+    says so.
     """
     cleared = 0
     with PROCESSES_LOCK:
@@ -450,9 +449,8 @@ def dismiss_failed_processes():
 #
 # A process that starts a thread and dies without calling process_update stays
 # `running` forever, and `orb_visible` is unconditionally True while a row has
-# no `ended` — so a crashed job orbits until the server restarts. Stephen ended
-# the day with a desk full of them: "a bunch of error orbs and reasoning orbs
-# floating on my desktop but I don't want or need them."
+# no `ended` — so a crashed job would orbit until the server restarts, and
+# a desktop fills with "error orbs and reasoning orbs" nobody wants or needs.
 ORB_RUNNING_MAX_AGE_S = 1800
 
 
@@ -461,7 +459,8 @@ def _reap_orphans(now=None):
 
     Conservative on purpose: only rows with no end time, older than the cap, and
     NOT holding the GPU lease. A live image job legitimately runs for minutes
-    and must never be reaped out from under him — that is his work, not litter.
+    and must never be reaped out from under the user — that is their work,
+    not litter.
     """
     import time as _t
     now = now or _t.time()

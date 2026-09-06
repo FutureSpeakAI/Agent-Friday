@@ -31,7 +31,7 @@ POLICY_VERSION = 1
 # (166.13 tok/s, 1763 MiB) — both genuinely useful, for different jobs.
 ROLES = ("interactive_brain", "heavy_hitter", "sidekick", "sidekick_heavy",
          "embedder", "stt", "tts", "image",
-         # The working roles Stephen named on 2026-08-18. They are ROLES, not
+         # The working roles the maintainer named. They are ROLES, not
          # models: one model may hold several, and several models may not hold
          # one. See ROLE_RESIDENCY for why seven roles fit a card that cannot
          # hold three copies of a 12B.
@@ -82,8 +82,8 @@ ROLE_RESIDENCY = {
     "sidekick_fast": RESIDENT,
     "function_manager": RESIDENT,   # sits inside the tool loop
     # ── embedder: ON_DEMAND, not RESIDENT ────────────────────────────────
-    # This said RESIDENT and "live recall happens mid-turn". Neither half was
-    # true on 2026-09-01. `services/role_consumers.py` classifies the embedding
+    # This said RESIDENT and "live recall happens mid-turn". Neither half is
+    # true. `services/role_consumers.py` classifies the embedding
     # seat as DISPLAYS -- "Read, never obeyed": nothing selects a model from it,
     # because `conversation_memory.EMBED_MODEL` is a module constant pinned to
     # all-MiniLM-L6-v2 and runs in-process on CPU via sentence_transformers.
@@ -153,7 +153,7 @@ MOE_CPU_LAYERS_DEFAULT = 20
 
 # The sweep, as data: (n_cpu_moe, heavy_vram_mib, tok_s).
 #
-# Re-measured 2026-08-15 WITH THE SIDEKICK RESIDENT, which is the condition
+# Re-measured WITH THE SIDEKICK RESIDENT, which is the condition
 # R10 created and therefore the condition the number has to hold under. The
 # figures are the heavy model's own GPU footprint, so they are directly
 # comparable to the lease budget.
@@ -271,14 +271,14 @@ RULE_BY_ID = {r["id"]: r for r in RULES}
 # may be picked from the VRAM curve alone — and that is the mistake this table
 # used to make.
 #
-# A tool-using seat must hold the TOOL DEFINITIONS. Measured 2026-08-15: the
+# A tool-using seat must hold the TOOL DEFINITIONS. Measured on the reference machine: the
 # 52-tool registry serialises to ~8 534 tokens, so a seat at 8192 truncates the
 # tools before the conversation even starts. gemma4:e2b scored 8/10 on the
 # structural gate at 8192 and 10/10 at a larger context — a context below the
 # tool floor manufactures exactly the tool-calling failure the gate exists to
 # detect.
 #
-# CORRECTED 2026-08-15. This constant used to be 32768, and the arithmetic
+# CORRECTED. This constant used to be 32768, and the arithmetic
 # behind it was wrong in a checkable way: it sized the window from the tool
 # registry ALONE (~8534 tokens x4) and ignored the system prompt, which at
 # ~11681 tokens is the LARGER of the two fixed costs. A 32768 seat therefore
@@ -287,10 +287,10 @@ RULE_BY_ID = {r["id"]: r for r in RULES}
 #
 # It stays as the floor rung and the dispatch fallback, not as the answer:
 # `context_for()` computes the real number from overhead + room, per role.
-# The context a tool-using seat needs. RAISED from 32768 on 2026-08-18, and the
+# The context a tool-using seat needs. RAISED from 32768, and the
 # old value was not merely tight -- it was insufficient, by a lot.
 #
-# Measured that day: one real turn against a 32,768 seat totalled 47,309 tokens
+# Measured on the reference machine: one real turn against a 32,768 seat totalled 47,309 tokens
 # (12,706 system prompt + 9,603 tools + ~25,000 injected memory and source
 # context). That is 14,541 tokens MORE than the window holds, so every such turn
 # was silently truncating its own oldest context and answering from a partial
@@ -352,7 +352,7 @@ DEFAULT_NUM_CTX = {
 # subject to the overhead arithmetic at all.
 NO_PROMPT_ROLES = frozenset({"embedder"})
 
-# R10. Seats a lease may NOT take. Stephen, 2026-08-15: "keep e2b awake so
+# R10. Seats a lease may NOT take. The maintainer's ruling: "keep e2b awake so
 # Friday is always alive." A lease used to stand down the whole pinned set,
 # which meant asking for depth made Friday mute for the duration — the machine
 # looked hung rather than busy.
@@ -608,14 +608,14 @@ def context_for(role: str, e: dict, budget_mib: int | None,
     # this family because sliding-window attention caps most of the KV cache,
     # and a straight line through flat points stays flat forever. It does not.
     #
-    # Measured 2026-08-18, and this is the whole reason for the rule: a seat
+    # Measured on the reference machine, and this is the whole reason for the rule: a seat
     # spawned at the architectural maximum of 262,144 left 448 MiB of 12,282 on
     # the card and took a monitor off the desktop. The largest MEASURED row for
     # that model is 131,072 at 7,814 MiB, so every rung above it was a guess
     # that happened to be catastrophic.
     #
-    # Raising the overhead figure to include injected context (context_budget,
-    # same day) pushed the brain's target past 131,072 and would have re-armed
+    # Raising the overhead figure to include injected context (context_budget)
+    # pushed the brain's target past 131,072 and would have re-armed
     # exactly that failure, which is how this rule came to be written.
     #
     # A model with no measurements at all is not capped -- there is nothing to
@@ -956,7 +956,7 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     # right answer: the biggest thing that fits, and the fastest thing left.
     # There is no such rule for "orchestrator" or "memory manager" -- which
     # model should route, or should read the day and decide what is worth
-    # keeping, is a judgment about how Stephen wants to work, and guessing it
+    # keeping, is a judgment about how the user wants to work, and guessing it
     # would be the policy inventing a preference and then hiding it.
     #
     # So an unassigned working role carries a refusal that says so, rather than
@@ -967,7 +967,7 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     # point of the rule. The test used to be `seats.get(role) is None`, which is
     # a placement test: a role the user HAD assigned, whose model then failed to
     # fit, collected an R3 explaining the failure and then an R11 saying "no
-    # model assigned" on top. Both were shown. Measured live 2026-08-23: five
+    # model assigned" on top. Both were shown. Measured on the reference machine: five
     # roles carried that second refusal -- orchestrator, sidekick_fast,
     # function_manager, memory_manager and researcher -- while Settings ->
     # Intelligence listed a model against every one of them two sections above.
@@ -1271,8 +1271,8 @@ def assignment_cost(assignments, entries, *, overhead_tokens=None,
 def preview_assignment(assignments, entries, profile, *, overhead_tokens=None):
     """Advice for the picker, computed BEFORE the choice is committed.
 
-    Stephen, 2026-08-18: "always advise the user when they're going to overflow
-    the memory with their selections." So this answers, at selection time, the
+    The maintainer's ruling: "always advise the user when they're going to
+    overflow the memory with their selections." So this answers, at selection time, the
     three questions a refusal-after-the-fact never does: what does this cost,
     what is left, and what would have to give.
 
@@ -1390,9 +1390,9 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
             # Say WHOSE inventory this is. "installed" was measured against the
             # residency catalogue -- the GGUFs this planner can serve through
             # llama-server, plus what the Ollama daemon reports -- and printed
-            # as though it were the machine's whole truth. On 2026-08-23 it
-            # listed gemma4:12b/26b/e2b/e4b, none of which `ollama list`
-            # returns, and omitted every tag that daemon actually holds. Both
+            # as though it were the machine's whole truth. It can list
+            # gemma4:12b/26b/e2b/e4b, none of which `ollama list`
+            # returns, and omit every tag that daemon actually holds. Both
             # halves of that are correct about their own source and neither
             # says which source it is, which is how a true list misleads.
             _inv = ", ".join(sorted(by_id)) or "(none)"
@@ -1453,9 +1453,9 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
         # `cur is not None` used to be part of this guard, so an override
         # onto an EMPTY seat skipped the VRAM check entirely and was placed
         # whether or not the card had room. Nothing exercised it while
-        # overrides were never supplied; feeding Stephen's choices in
-        # (2026-08-18) walks straight through it, and over-committing this
-        # card is what drops his second monitor. An unseated role has no
+        # overrides were never supplied; feeding the user's choices in
+        # walks straight through it, and over-committing this
+        # card is what drops a second monitor. An unseated role has no
         # VRAM of its own to reclaim, so its headroom is simply `cap`.
         if budgets and need is not None and need > headroom:
             # `cur` is None when the base plan left this role unseated, so
@@ -1728,10 +1728,10 @@ def verdicts(entry: dict, profile: dict, contract=None) -> dict:
 def num_ctx_for_model(model_id: str, default: int = TOOL_SEAT_NUM_CTX) -> int:
     """The context the PLAN specifies for whichever seat holds `model_id`.
 
-    Dispatch must apply this, not just the Arbiter at boot. Until 2026-08-15 it
-    did not: the Arbiter loaded a seat at the planned context, then the first
-    ordinary chat request reloaded the same model at Ollama's default and the
-    placement was silently lost. Measured consequence on the reference machine
+    Dispatch must apply this, not just the Arbiter at boot. Otherwise the
+    Arbiter loads a seat at the planned context, then the first
+    ordinary chat request reloads the same model at Ollama's default and the
+    placement is silently lost. Measured consequence on the reference machine
     — `gemma4:12b` resident at 262144 with 71% of it on the CPU, minutes after
     booting to a plan that said 32768 and 100% GPU.
 
@@ -1752,7 +1752,7 @@ def num_ctx_for_model(model_id: str, default: int = TOOL_SEAT_NUM_CTX) -> int:
     return default
 
 
-# ── Chains — planning the sequence Stephen described (headroom.md §6) ───────
+# ── Chains — planning the sequence the maintainer described (headroom.md §6) ─
 #
 # "speak, transcribe, reason, render, speak back" is not one lease, it is a
 # SEQUENCE of them, and today each stage takes and releases its own lease
@@ -1858,8 +1858,9 @@ def plan_chain(profile: dict, entries: list, stages: list,
        rule's own text: "the planner asks the egress gate, it does not
        decide." `strict_vault=True` is D2's stricter, default-off
        alternative: once ANY stage touches the vault, no stage in the chain
-       (before or after it) may use cloud -- an inert setting until Stephen
-       picks between the two (D2 is his decision, not this function's).
+       (before or after it) may use cloud -- an inert setting until the
+       maintainer picks between the two (D2 is that decision, not this
+       function's).
 
     `contract` is accepted, like `verdicts()`'s own, for the future Headroom
     Contract (D1 -- not decided) and is NOT read for a VRAM-slack or
@@ -2109,9 +2110,9 @@ def plan_chain(profile: dict, entries: list, stages: list,
                     (load_s or 0)
             elif basis == "measured":
                 # HR18 -- only a MEASURED shortfall refuses. This is the
-                # real, 2026-09-04 number: it can fail to fit even with
-                # everything but the retained set evicted (this phase's
-                # report names the fixture this happens on).
+                # real measured number: it can fail to fit even with
+                # everything but the retained set evicted (the golden
+                # fixtures include a case where this happens).
                 if cloud_ok and not vault_blocked:
                     out_stages.append(_cloud_stage(
                         role, model_id,

@@ -206,7 +206,7 @@ class TestReadTimeFeeder:
 
     def test_a_page_sized_paragraph_over_2000_chars_still_registers(self, tmp_path):
         """Regression pin (found live 2026-08-25 during the end-to-end walk
-        against Stephen's real CV): register_public_text's 2000-char default
+        against the maintainer's real CV): register_public_text's 2000-char default
         exists for news headlines, but a granted file's paragraphs are
         page-sized prose — extract_text joins PDF pages on "\\n\\n", and a
         real resume page routinely runs 2500-3500 chars. Before this was
@@ -321,7 +321,7 @@ class TestNeverSendOverride:
 # ── Registration must happen post-PII-scrub, not pre ────────────────────────
 
 class TestRegistrationOrderVsPiiScrub:
-    """Found live 2026-08-25 walking the motivating case against Stephen's
+    """Found live 2026-08-25 walking the motivating case against the maintainer's
     real CV: read_file's result is PII-scrubbed by a post-tool hook
     (priority 95) before it reaches the egress gate. Registering the RAW
     pre-scrub text (the original approach) meant any paragraph containing a

@@ -153,7 +153,7 @@ class IntegrityEngine:
                 # its own file fallback; this write never did, leaving the
                 # private signing key world/group-readable at the process
                 # umask (commonly 644) on a from-source Linux/macOS install
-                # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F43). The
+                # (see the 2026-09 gauntlet audit in docs/history/audits/). The
                 # public verify key is meant to be shared, so it alone is
                 # left at the default mode.
                 try:

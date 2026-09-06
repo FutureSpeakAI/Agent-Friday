@@ -797,17 +797,14 @@ class SkillOptEngine:
         epoch.baseline_score = statistics.mean(base_scores) if base_scores else 0.0
         epoch.finished_at = _now_iso()
 
-        # CORRECTION (external review, commissioned by Stephen, verified 2026-09-04):
-        # this used to fall straight into the gate below even when NO case was
-        # ever actually evaluated -- an evaluator that raised on every case, a
-        # missing evaluator with no prior execution history, and an empty
-        # eval_batch all silently produced a tied candidate_score==baseline_score
-        # (both driven to the same fallback value), and the gate's own
-        # tie-tolerance rule ("improvement < 0.005 still passes") always
-        # promotes a tie. Reproduced directly: all three cases promoted a
-        # candidate that had never been genuinely evaluated at all. Refusing to
-        # promote on zero signal completes the "inconclusive" decision this
-        # dataclass already declared but never produced.
+        # Never fall into the gate below when NO case was actually evaluated:
+        # an evaluator that raises on every case, a missing evaluator with no
+        # prior execution history, and an empty eval_batch all produce a tied
+        # candidate_score==baseline_score (both driven to the same fallback
+        # value), and the gate's own tie-tolerance rule ("improvement < 0.005
+        # still passes") always promotes a tie -- promoting a candidate that
+        # was never genuinely evaluated. Refusing to promote on zero signal is
+        # the "inconclusive" decision this dataclass declares.
         if not eval_batch:
             epoch.decision = "inconclusive"
             epoch.reason = "empty eval_batch -- no cases to evaluate, refusing to promote"

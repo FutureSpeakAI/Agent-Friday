@@ -1,10 +1,9 @@
 """Which installed model serves a role — asked once, in one place.
 
 A hardcoded model name is a dangling pointer the moment someone runs
-`ollama rm`, and on 2026-08-18 Stephen ran it three times: `gemma4:e2b`,
-`gemma4:12b` and `gemma4:26b` left the daemon while three separate modules
-still named them as constants. Every one of those modules failed differently
-and none of them said why:
+`ollama rm`. When the user removes a model that three separate modules still
+name as a constant, every one of those modules fails differently and none of
+them says why:
 
   * `judgment_gate.DEFAULT_JUDGE_MODEL` 404'd on every probe in the boot
     battery, which crawled startup and left the privacy gate quietly degraded
@@ -21,7 +20,7 @@ installed is not a model that had nothing to say.
 So the question "what should serve role X" is answered here, against what the
 daemon actually reports, and a substitution is always announced. There is no
 list of names to keep in sync — the roles map onto `capability_routing`, which
-is the setting Stephen already edits, and the size-ordered fallback is only
+is the setting the user already edits, and the size-ordered fallback is only
 reached when that points at something absent too.
 """
 from __future__ import annotations
@@ -109,7 +108,7 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     "unknown", never as "nothing is installed".
     """
     now = time.time()
-    # NEGATIVE RESULTS ARE CACHED TOO, on a shorter clock (2026-08-26).
+    # NEGATIVE RESULTS ARE CACHED TOO, on a shorter clock.
     #
     # This used to read `if _CACHE["rows"] and ...`, and the write below was
     # `if rows: _CACHE.update(...)`. Together those made an EMPTY answer
@@ -140,8 +139,8 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     # returns nothing, so a resolver that trusts the daemon alone concludes
     # her own models are missing and substitutes whatever happens to have been
     # `ollama pull`ed. That is not healing a dangling pointer; it is moving a
-    # seat off the runtime Stephen chose, and on 2026-08-18 it did exactly
-    # that to his reasoning seat.
+    # seat off the runtime the user chose -- which is exactly what happened
+    # to the reasoning seat before this store was consulted.
     #
     # "Installed" means "Friday can serve it", from either store.
     rows = list(_friday_store())
@@ -180,7 +179,7 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     # daemon. A model that exists only in Friday's store therefore resolves to
     # a name the daemon has never heard of.
     #
-    # Measured on this machine 2026-08-24. `resolve()` returned 'gemma4:e2b'
+    # Measured on the reference machine. `resolve()` returned 'gemma4:e2b'
     # for judge, orchestrator, sidekick, interactive_brain, function_manager
     # and memory_manager. `seat_endpoint('gemma4:e2b')` was None and Ollama's
     # /api/tags did not list it, so every one of those calls produced
@@ -190,9 +189,9 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
     # dozens of times in a burst -- and each 404 escalated to the cloud. A
     # trivial question ("what is two plus two") answered on claude-opus-5 in
     # 46-59s, while the seat that WAS up, gemma4:12b on port 8090, answered the
-    # same thing in 1.45s. That is Stephen's long-standing "it took forever
-    # then kicked back to the cloud, which I do not want", and the cause was
-    # never the router: it was this list promising a model nothing could call.
+    # same thing in 1.45s. That is the "it took forever then kicked back to
+    # the cloud" complaint, and the cause was never the router: it was this
+    # list promising a model nothing could call.
     #
     # So a Friday-store model counts as installed only while it has a live
     # endpoint. Daemon models are unaffected -- being in /api/tags already means
@@ -246,10 +245,10 @@ def _configured(role: str) -> str | None:
         pass
     if not cr:
         # Read the file directly. `_load_settings` is not always available this
-        # early — measured at boot 2026-08-18, where the judgment gate asked
-        # before settings were warm, got nothing, and fell through to the
-        # size-ordered guess. It picked a vision model over the reasoning seat
-        # Stephen had actually configured, purely because of import order.
+        # early — at boot the judgment gate can ask before settings are warm,
+        # get nothing, and fall through to the size-ordered guess, picking a
+        # vision model over the reasoning seat the user actually configured,
+        # purely because of import order.
         try:
             import os
             import pathlib
@@ -284,7 +283,7 @@ def resolve(role: str, configured: str | None = None) -> str | None:
 
     When the daemon is unreachable the caller's preference is returned
     unchanged. Refusing to guess is right here: a transient daemon blip must
-    not permanently rewrite which model Stephen asked for.
+    not permanently rewrite which model the user asked for.
     """
     rows = installed()
     if not rows:
@@ -303,10 +302,10 @@ def resolve(role: str, configured: str | None = None) -> str | None:
     # A vision-language model answers text fine, but it is not what anyone
     # means by "the reasoning seat", and picking one purely because it is a
     # few hundred MB smaller than the text model beside it is the kind of
-    # silently-worse choice this module exists to prevent. Measured
-    # 2026-08-18: healing Stephen's reasoning seat chose qwen3-vl:8b (6.14 GB)
-    # over his own Gemma-4-E4B (6.33 GB). Prefer text; fall back to vision
-    # only when there is nothing else.
+    # silently-worse choice this module exists to prevent. Measured on the
+    # reference machine: healing the reasoning seat chose qwen3-vl:8b (6.14 GB)
+    # over the configured Gemma-4-E4B (6.33 GB). Prefer text; fall back to
+    # vision only when there is nothing else.
     text_only = [t for t in useful if not _looks_vision(t[0])] or useful
 
     # A SEAT THAT IS ALREADY UP BEATS A SMALLER ONE THAT IS NOT.
@@ -316,7 +315,7 @@ def resolve(role: str, configured: str | None = None) -> str | None:
     # missing model is a repair, and a repair should land on the seat that
     # costs nothing to reach rather than the one that happens to be smallest.
     #
-    # Measured 2026-08-24, healing the six roles that pointed at the absent
+    # Measured on the reference machine, healing six roles that pointed at an absent
     # gemma4:e2b: size ordering chose SmolLM3-3B (1.9 GB, not loaded, would
     # need pulling into memory) while gemma4:12b was live on port 8090 and
     # answering in 1.45s. The smaller model is also markedly weaker for judging
@@ -381,19 +380,18 @@ def _is_local_name(model: str) -> bool:
 def heal(settings: dict) -> list[str]:
     """Replace local model names that are no longer installed. Returns notes.
 
-    Stephen's `orchestrator_model` sat at `gemma4:e2b` after he uninstalled
-    it, and because the flat key outranks `capability_routing` on any save
-    that does not explicitly set routing, every settings write re-stamped the
-    dead name over whatever the model picker had just chosen. That is the
-    "I change the model and it does not stick" defect, and it survived three
-    fixes aimed at the picker because the picker was never the thing that was
-    wrong.
+    A flat `orchestrator_model` left pointing at an uninstalled model is not
+    inert: because the flat key outranks `capability_routing` on any save
+    that does not explicitly set routing, every settings write re-stamps the
+    dead name over whatever the model picker just chose. That is the
+    "I change the model and it does not stick" defect, and fixes aimed at the
+    picker cannot cure it because the picker is not the thing that is wrong.
 
     Deliberately conservative:
       * only LOCAL ids are considered — a cloud id absent from `ollama list`
         means nothing;
       * only when the daemon actually answered — an unreachable daemon must
-        not rewrite his choices;
+        not rewrite the user's choices;
       * mutates in place and returns what it changed, so the caller can say so
         rather than healing in silence.
     """
@@ -428,13 +426,13 @@ def heal(settings: dict) -> list[str]:
     # NESTED SEAT NAMES THE CAPABILITY MAP DOES NOT COVER.
     #
     # The loop above only walks capability_routing and its flat mirrors, so a
-    # model named inside any OTHER settings block survived every heal. Found on
-    # this machine 2026-08-24: settings.judgment_gate.model was still
-    # 'gemma4:e2b' long after that model left the daemon.
+    # model named inside any OTHER settings block would survive every heal --
+    # settings.judgment_gate.model can hold a name long after that model has
+    # left the daemon.
     #
     # That one happens to be harmless at call time, because judgment_gate asks
     # resolve() and gets a substitute. But the stale value is what the Settings
-    # UI shows Stephen, and a config that displays a model he does not have is
+    # UI shows the user, and a config that displays a model they do not have is
     # how "I changed it and it did not stick" starts. Repair the record too, not
     # just the behaviour.
     for block, role in (("judgment_gate", "judge"),):

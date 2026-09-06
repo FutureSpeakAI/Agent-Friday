@@ -118,7 +118,7 @@ def test_existing_vault_keeps_passphrase_from_keyring(vault, enter_only, monkeyp
 def test_lost_passphrase_does_not_silently_mint_a_new_one(vault, enter_only):
     """Vault present, passphrase gone. Pressing Enter must NOT generate one.
 
-    This is the case Stephen singled out: "that is a situation to stop and
+    This is the case the maintainer singled out: "that is a situation to stop and
     explain, not to paper over by generating a new one." The default answer is
     'leave it unset', which keeps the old ciphertext recoverable if the
     passphrase turns up later.

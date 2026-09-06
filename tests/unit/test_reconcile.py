@@ -2,7 +2,7 @@
 
 docs/design/implemented/conversations-and-concurrency.md §2.5 / build step 8.
 
-Stephen's Q6: do background tasks survive a restart? Tonight the answer was
+The maintainer's Q6: do background tasks survive a restart? Tonight the answer was
 "at storage, yes; at execution, no" — a commission sat frozen at `grinding`
 while the app that started it had restarted around it, neither finished nor
 failed nor running. These tests pin the two halves of the fix:

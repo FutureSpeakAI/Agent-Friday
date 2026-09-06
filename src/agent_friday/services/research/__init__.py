@@ -30,7 +30,7 @@ __all__ = ["propose", "run", "run_async", "status", "list_commissions",
 
 def propose(question: str, *, context: str | None = None,
             disposition: str = "now_local", budget: dict | None = None) -> dict:
-    """Create a commission and compute what Stephen needs in order to veto it.
+    """Create a commission and compute what the user needs in order to veto it.
 
     Per §3.1 the protection plan arrives BEFORE the work starts, not in the
     credits: either "Claude will see a protected version of this question —

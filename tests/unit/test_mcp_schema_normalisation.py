@@ -1,6 +1,6 @@
 """One connector's JSON must not be able to silence every cloud conversation.
 
-Measured 2026-08-18 on Stephen's machine: after the Higgsfield connector
+Measured 2026-08-18 on the maintainer's machine: after the Higgsfield connector
 registered 86 tools, EVERY Anthropic turn came back "[Friday offline]" with
 
     tools.90.custom.input_schema: input_schema does not support

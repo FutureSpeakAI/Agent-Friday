@@ -686,12 +686,12 @@ def code_apply():
 
     # ── gates that already existed and had no caller ────────────────────────
     #
-    # `boot_guard.check_self_edit` and `check_scope` shipped 2026-08-17 and were
-    # dead code until now (docs/design/active/grow-button.md §18.2, F2/F3). This was the
-    # write path they were written for: `code_apply` resolved each path through
-    # `_safe_project_path` — which only proves the write stays inside ~/Projects —
-    # and then wrote the file. Staying inside the sandbox is not the same question
-    # as whether the file is one whose loss stops Friday starting.
+    # `boot_guard.check_self_edit` and `check_scope` must be called from this
+    # write path (docs/design/active/grow-button.md §18.2): `code_apply`
+    # resolves each path through `_safe_project_path` — which only proves the
+    # write stays inside ~/Projects — and then writes the file. Staying inside
+    # the sandbox is not the same question as whether the file is one whose
+    # loss stops Friday starting.
     #
     # Refusals are whole-plan, not per-file. A plan half-applied around a skipped
     # file leaves a state nobody designed, and `check_self_edit` asks for "an

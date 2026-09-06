@@ -1,10 +1,9 @@
-"""Hang watchdog (docs: toolcall-integrity-v5, follow-up after the
-2026-08-12/08-13 silent-hang incidents — friday.log went completely dark for
-hours on both occasions while the process stayed alive (0% CPU, no
-Traceback/ERROR, no exit), and nothing was captured to explain why. This
-detects the process becoming unresponsive while it's still running and
-dumps every thread's stack trace, so the next hang writes its own case file
-instead of leaving zero forensic trace.
+"""Hang watchdog (docs: toolcall-integrity-v5). A silent hang — friday.log
+going completely dark for hours while the process stays alive (0% CPU, no
+Traceback/ERROR, no exit) — leaves nothing to explain why. This detects the
+process becoming unresponsive while it's still running and dumps every
+thread's stack trace, so a hang writes its own case file instead of leaving
+zero forensic trace.
 
 Two independent firing mechanisms, layered for robustness:
   1. A lightweight heartbeat thread, monitored by a second thread that

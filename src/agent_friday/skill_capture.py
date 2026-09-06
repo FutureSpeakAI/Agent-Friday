@@ -30,8 +30,8 @@ _MAX_TRAJ_KEEP = 5000
 # Reply prefixes that mean the turn did NOT succeed.
 _DENY_PREFIXES = ("[GOVERNANCE DENY]", "[SANDBOX DENY]", "Tool error", "[Friday offline]")
 
-# F75 (2026-09-05, Stephen's direct ruling): _success_score() has never had
-# real evidence of task completion for ANY reply -- it only ever detects
+# Maintainer ruling: _success_score() has no real evidence of task
+# completion for ANY reply -- it only detects
 # CONFIRMED failure signals (an error, an obviously-truncated reply, a
 # refusal prefix). Labeling everything else 1.0 ("success") was not a weak
 # signal, it was a false one: "Done. I sent the email and booked your
@@ -50,8 +50,8 @@ FAILURE_SCORE = 0.0
 UNVERIFIED_SCORE = 0.5
 SUCCESS_SCORE = 1.0
 
-# Follow-up (not built tonight, per Stephen's ruling): what "verified"
-# should actually require, by task shape, so SUCCESS_SCORE has a real path
+# Follow-up (deferred by maintainer ruling): what "verified" should
+# actually require, by task shape, so SUCCESS_SCORE has a real path
 # to being produced instead of sitting permanently unreachable:
 #   * Action claims ("I sent/booked/created/deleted X") -- require a
 #     matching tool_trace entry whose own reported outcome is success, not
@@ -155,14 +155,13 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
                         skill_name=sk.name,
                         inputs={"message": (message or "")[:500], "tools": tools},
                         outputs={"reply_len": rec["reply_len"]},
-                        # CORRECTION (external review, commissioned by Stephen,
-                        # verified 2026-09-04): this used to send
-                        # {"quality": score, "success": score} -- keys
-                        # composite_score() never reads (it reads accuracy,
-                        # user_satisfaction, completeness, latency, cost), so
-                        # score=1.0 and score=0.0 produced the IDENTICAL
-                        # composite score. Reproduced directly: both landed
-                        # on 0.25 with default weights. `accuracy` is the one
+                        # The score must land on a key composite_score()
+                        # actually reads (accuracy, user_satisfaction,
+                        # completeness, latency, cost). Sending
+                        # {"quality": score, "success": score} makes
+                        # score=1.0 and score=0.0 produce the IDENTICAL
+                        # composite score (0.25 with default weights).
+                        # `accuracy` is the one
                         # dimension _success_score()'s semantics (no error,
                         # non-trivial reply, no refusal prefix) can honestly
                         # speak to -- it is deliberately NOT also copied into
@@ -215,11 +214,11 @@ def trajectory_stats(limit=1000):
     has no real completion-evidence check yet (see its own docstring/
     follow-up note). Previously this summed every truthy score, which
     silently folded "unverified" (the old 1.0-for-everything-plausible
-    default) into "success" -- exactly the false-positive F75 was about.
+    default) into "success" -- exactly the false positive described above.
     Reports the 3-way breakdown explicitly instead. Records written before
-    this fix landed still carry the old binary 0.0/1.0 scores, so historic
-    "success" counts here still reflect the old, less honest meaning for
-    anything captured before 2026-09-05 -- not retroactively reprocessed.
+    the three-state scoring still carry the old binary 0.0/1.0 scores, so
+    historic "success" counts reflect the old, less honest meaning -- they
+    are not retroactively reprocessed.
     """
     recs = []
     try:

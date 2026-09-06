@@ -10,13 +10,12 @@ Concretely, a model is "installed" only when it appears in the daemon's own
 inventory *after* the pull, resolved by its full tag. Not when the pull command
 exits zero — a pull can exit zero having fetched a manifest and no weights, and
 `ollama pull` on a name that resolves to a nonexistent tag is one of the ways
-this has already gone wrong tonight. Not when the name looks right. When the
-daemon lists it.
+this goes wrong. Not when the name looks right. When the daemon lists it.
 
-The verification step exists because every failure this codebase has produced
-in the last month shares one shape: something reported done that was not done.
-An installer is the worst possible place to repeat that, because the user has
-no baseline yet and nothing to compare against.
+The verification step exists because the recurring failure shape in this
+codebase is something reported done that was not done. An installer is the
+worst possible place to repeat that, because the user has no baseline yet and
+nothing to compare against.
 """
 from __future__ import annotations
 

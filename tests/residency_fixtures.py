@@ -105,7 +105,7 @@ _ARTIFACT_BYTES = {
 
 # ── Chains -- headroom.md §6.3, Phase 3 ──────────────────────────────────────
 #
-# The sequence Stephen described: "speak, transcribe, reason, render, speak
+# The sequence the maintainer described: "speak, transcribe, reason, render, speak
 # back" -- one stt stage, the resident brain, one image render, one tts
 # stage. `resident` is what plan_chain treats as ALREADY loaded (the D6
 # resident pair, e4b + e2b, §6.3's own "honest resident pair" -- NOT what

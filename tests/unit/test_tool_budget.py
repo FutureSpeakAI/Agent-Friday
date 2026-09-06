@@ -1,6 +1,6 @@
 """The request has to be buildable before anything else can be true.
 
-Measured on Stephen's machine 2026-08-18, from the daemon itself:
+Measured on the maintainer's machine 2026-08-18, from the daemon itself:
 
     request (46288 tokens) exceeds the available context size (32768 tokens)
 

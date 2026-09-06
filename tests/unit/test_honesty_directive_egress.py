@@ -83,9 +83,9 @@ def test_the_original_single_paragraph_form_would_have_been_withheld():
     regardless of what the directive says.
     """
     old_form = mr.REFUSAL_HONESTY_DIRECTIVE.replace("\n\n", "\n").replace(
-        "He told you a restaurant's name and asked whether they take "
+        "The user told you a restaurant's name and asked whether they take "
         "walk-ins — that is a lookup, not a question.",
-        "He told you the clinic's name and address and asked for its phone "
+        "The user told you the clinic's name and address and asked for its phone "
         "number — that is a lookup, not a question.",
     )
     assert "\n\n" not in old_form                       # really is one paragraph

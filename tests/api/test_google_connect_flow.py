@@ -1,6 +1,6 @@
 """The connect flow tells you what is coming, and lands you somewhere on failure.
 
-Three things Stephen called out on 2026-08-26, all of which are copy and
+Three things the maintainer called out on 2026-08-26, all of which are copy and
 routing rather than cryptography:
 
   * "Tell the user the warning screen is coming, before it appears." A person

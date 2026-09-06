@@ -133,13 +133,13 @@ class TestRecordConsent:
 
 
 class TestTextCapabilityIsRunnerAgnostic:
-    """Stephen, 2026-09-06: 'We don't require the user have ollama installed
+    """The maintainer, 2026-09-06: 'We don't require the user have ollama installed
     at all, right?' -- verified rather than assumed. Ollama is one runner
     among several (llama.cpp/GGUF via Friday's own runtime store, ComfyUI
     for image/video); a check that only recognizes the curated
     model_plan.BRAIN_MODELS ladder would call a machine incapable while a
     real, resident, non-ladder GGUF model runs well on it -- exactly
-    Stephen's own machine after deleting both Ollama models."""
+    the maintainer's own machine after deleting both Ollama models."""
 
     def test_a_resident_non_ladder_model_counts(self, monkeypatch):
         from agent_friday.services import local_seats

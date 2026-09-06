@@ -1,22 +1,22 @@
 """Output liveness — does this subsystem still earn its keep?
 
-Stephen's own recommendation, 2026-08-17, and the through-line of the whole
-day: nearly every defect found had the same signature — a subsystem reporting
-healthy while producing nothing, or producing something nothing consumed.
+The maintainer's recommendation, and the recurring defect signature in this
+codebase: a subsystem reporting healthy while producing nothing, or producing
+something nothing consumed. Representative shapes:
 
-  * the residency plan existed as JSON nothing read
-  * no wiki-distillation job existed at all, so "it stopped working" had no
+  * a residency plan that exists as JSON nothing reads
+  * a distillation job that does not exist, so "it stopped working" has no
     mechanism to have stopped
-  * Lyria was in the tool list and absent from the installed SDK
-  * the Arbiter was written and nothing booted it
-  * memory-dreaming ran nightly, on schedule, green, and consolidated **0**
-    durable facts from 215 turns
-  * session_summary completed in 291 seconds and wrote zero bytes
-  * the trust graph, people graph, user model and learning loop have no files
-  * the image progress bar had two values
-  * cancel reported success and cancelled nothing
+  * a tool listed but absent from the installed SDK
+  * an Arbiter written and never booted
+  * a nightly memory job that runs on schedule, green, and consolidates **0**
+    durable facts from hundreds of turns
+  * a summary job that completes in minutes and writes zero bytes
+  * graphs and models with no files on disk
+  * a progress bar with two values
+  * a cancel that reports success and cancels nothing
 
-Every one of those passed a "did it run?" check. Not one of them would pass
+Every one of those passes a "did it run?" check. Not one of them would pass
 "did it produce anything, and does anything read it?"
 
 So this asks three questions, in order, and the second and third are the ones
@@ -295,14 +295,12 @@ def _probe_embedder():
 def _probe_silent_work():
     """Work that ran and reported NOTHING about itself.
 
-    Stephen has opened the notifications dropdown on five separate occasions,
-    on a process that was genuinely running, and seen "— waiting for activity —"
-    every time. Nothing in this codebase treated that as a fault: the task was
-    running, so every health view said fine.
+    The user can open the notifications dropdown on a process that is
+    genuinely running and see "— waiting for activity —". Nothing else treats
+    that as a fault: the task is running, so every health view says fine.
 
     A unit of work that produces zero log lines and zero steps is not busy —
-    it is invisible, and invisible is the condition he has been staring at all
-    day. It gets reported here as the anomaly it is.
+    it is invisible. It gets reported here as the anomaly it is.
     """
     out = []
     try:
@@ -337,12 +335,11 @@ def _probe_silent_work():
 def _probe_displays():
     """A monitor Windows has dropped, and VRAM headroom for the desktop.
 
-    2026-08-17: Stephen's second monitor disappeared from Windows while the
-    panel kept showing a stale frame, and he found out by waving his mouse at a
-    dead screen. Nothing in Friday noticed. The adapter was sitting at
-    `Status: Error` in Device Manager the whole time, which is exactly the shape
-    this module exists for — a component reporting present while producing
-    nothing.
+    A monitor can disappear from Windows while the panel keeps showing a stale
+    frame, and the user finds out by waving a mouse at a dead screen. The
+    adapter sits at `Status: Error` in Device Manager the whole time, which is
+    exactly the shape this module exists for — a component reporting present
+    while producing nothing.
 
     The second half is the condition that precedes it: free VRAM below what the
     desktop needs. The arbiter budgets against a floor measured ONCE at boot
@@ -393,13 +390,11 @@ def _probe_displays():
 def _probe_seat_drift():
     """Seats the PLAN calls resident against what is measurably serving.
 
-    Added 2026-08-17 after I made this exact mistake in front of Stephen. The
-    residency plan reports the embedder seat as `status: resident`, and I read
-    that field and told him qwen3-embed was "loaded and idle, holding RAM".
-    It is not loaded. It has never been started: there is no entry for it in
+    The residency plan can report a seat as `status: resident` for a model
+    that is not loaded and has never been started: no entry for it in
     runtime/residency/endpoints.json, no llama-server process serving it, and
-    no qwen gguf in Friday's model store at all — the weights exist only in
-    Ollama's store.
+    no gguf in Friday's model store at all. Reading that field alone and
+    reporting the model as "loaded and idle, holding RAM" is a real mistake.
 
     `status` in the plan is a DECLARATION. An endpoint is EVIDENCE. Wherever
     those two disagree, the declaration is what fooled somebody, so this
@@ -419,17 +414,16 @@ def _probe_seat_drift():
             continue
         claimed = str(s.get("status") or "")
         # OWNED IS NOT THE SAME QUESTION AS REACHABLE, and asking the wrong one
-        # turned three working seats into an alarm. Observed 2026-08-25: the
-        # seat map put `sidekick_fast` and `memory_manager` on TwIL-LM3 with
-        # `backend: ollama`, and the embedder on embeddinggemma:300m served by
-        # the daemon. `owned_endpoint` only knows llama-server processes the
-        # Arbiter spawned, so all three came back None and were reported
-        # ORPHANED -- "the plan says resident, nothing is serving it" -- while
-        # every one of them was answering on :11434.
+        # turns working seats into an alarm: a seat map that puts roles on
+        # `backend: ollama` models served by the daemon gets None from
+        # `owned_endpoint`, which only knows llama-server processes the
+        # Arbiter spawned, and reports them ORPHANED -- "the plan says
+        # resident, nothing is serving it" -- while every one is answering on
+        # :11434.
         #
         # A false orphan is worse here than no probe: this report exists to be
-        # believed, and it was about to cost somebody an afternoon looking for
-        # seats that were never missing. So ask where calls actually land.
+        # believed, and a false one costs an afternoon looking for seats that
+        # were never missing. So ask where calls actually land.
         try:
             from agent_friday.services.local_call import describe_dispatch
             live = describe_dispatch(s["model_id"])["route"] in ("seat", "daemon")
@@ -568,7 +562,7 @@ def audit() -> dict:
 
 
 def render_text(report: dict | None = None) -> str:
-    """The one page Stephen glances at."""
+    """The one page the user glances at."""
     r = report or audit()
     s = r["summary"]
     lines = ["OUTPUT LIVENESS — %s" % r["generated_at"],

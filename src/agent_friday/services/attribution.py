@@ -1,12 +1,11 @@
 """Per-turn generation attribution — the badge names the model that
 ACTUALLY generated, never the seat the router intended.
 
-2026-08-14, sharpened defect #6: every one of the morning's replies was
-badged 'qwen3.6-35b-a3b-iq4nl' while the brain never bound its port — the
-'local'-seat turns were really gemma4:e4b (seat-gate substitution below the
-attribution layer) and the 'cloud'-seat turns were really Claude (ladder
-fallback). Attribution was captured at ROUTING time; dispatch decides below
-it, so the badge lied in both directions.
+Attribution captured at ROUTING time is wrong in both directions: seat-gate
+substitution (a 'local' seat whose brain never bound its port answers from a
+fallback model) and ladder fallback (a 'cloud' seat answered by a different
+provider) both happen below the router, so a badge stamped at routing names
+a model that never generated.
 
 Contract: each provider primitive calls record_generation() at the moment
 it produces final text, with the model id it truly ran; every abandoned leg

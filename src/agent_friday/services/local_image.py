@@ -11,12 +11,11 @@ Why a lease and not just "start ComfyUI": the measured VRAM ceiling makes it
 mandatory rather than advisory. Z-Image's weight FILES total ~14.5 GB
 (measured: 14,535,245,332 bytes, `artifact_bytes` on its Footprint) — but
 what actually holds the card during a render is less than that and MORE
-than either prior guess for it: **10,453 MiB, measured under the Arbiter's
-own `image_job` lease, 2026-09-04** (`residency_catalog.footprint(
+than a naive estimate: **10,453 MiB, measured under the Arbiter's own
+`image_job` lease on the reference machine** (`residency_catalog.footprint(
 "z-image-turbo-fp8", profile)`; `friday measure z-image-turbo-fp8`
-reproduces it). That resolves the disagreement this file used to carry
-alongside `residency-policy.md` §5.1's separate "~8000" guess: neither
-number was the render's real VRAM delta, and 10,453 MiB leaves only ~700–900
+reproduces it). The measured lease footprint is the authoritative number —
+not the weight-file size and not an "~8000" estimate — and 10,453 MiB leaves only ~700–900
 MiB free at the render's peak on a 12,282 MiB card, BELOW the 2,560 MiB
 Windows display-reserve floor even with every language seat evicted first
 — live evidence for why `Arbiter.grant()`'s R-DISPLAY-RESERVE check and the
@@ -26,7 +25,7 @@ just at cold start. SD 3.5 Medium measured 10,621 MiB the same way, artifact
 either loads. Without the lease the two simply fight, which is the failure
 the residency layer was built to stop.
 
-The workflow is the one proven on the reference instance 2026-08-13
+The workflow is the one proven on the reference instance
 (`UNETLoader(fp8_e4m3fn) → CLIPLoader → VAELoader → CLIPTextEncode ×2 →
 EmptySD3LatentImage → KSampler(euler/simple, 8 steps, cfg 1.0) → VAEDecode →
 SaveImage`), measured at 28.10 s warm for 1024×1024.
@@ -79,9 +78,8 @@ MODELS: dict = {
         "steps": 8, "cfg": 1.0,
         "sampler": "euler", "scheduler": "simple",
         "note": "turbo: 8 steps, fast",
-        # U7 in headroom.md was UNKNOWN — the spec found no licence recorded
-        # for this model anywhere in the tree. Read from the model's own
-        # repository, 2026-09-04: "License: apache-2.0" in Tongyi-MAI/
+        # Licence read from the model's own repository (resolves U7 in
+        # docs/design/implemented/headroom.md): "License: apache-2.0" in Tongyi-MAI/
         # Z-Image-Turbo's model card metadata. Apache-2.0 permits commercial
         # and private use, modification and redistribution.
         "licence": "Apache License 2.0 — commercial and private use, "
@@ -164,7 +162,7 @@ MODELS: dict = {
         "licence": "FLUX.1 [dev] Non-Commercial License v1.1.1",
         "licence_note": "Outputs may be used for any purpose including sale. "
                         "The MODEL itself may not be used commercially — this "
-                        "is registered for Stephen's personal use only and "
+                        "is registered for the operator's personal use only and "
                         "must never be added to provider_registry.py or any "
                         "shipped default catalog.",
     },
@@ -243,10 +241,9 @@ def is_reachable(timeout: int = 3) -> bool:
 
     `is_installed()` only proves the weights are on disk; it says nothing
     about whether the server process is running. provider_health.py needs
-    this for its own local-comfyui health check (docs/audits/
-    gauntlet-2026-09-03/findings.jsonl F2) — before this it treated
-    auth:{"type":"none"} as an unconditional "ok", the same shape as never
-    probing the provider at all.
+    this for its own local-comfyui health check — treating
+    auth:{"type":"none"} as an unconditional "ok" would be the same shape as
+    never probing the provider at all.
     """
     try:
         urllib.request.urlopen(
@@ -528,18 +525,18 @@ def _get(path, timeout=30):
 def _await_result(prompt_id, timeout=600, cancelled=None):
     """Wait for the prompt to produce files, or to stop producing anything.
 
-    Two things this got wrong before 2026-08-16, both of which turned a cancel
-    into a ten-minute hang:
+    Two constraints, either of which if missed turns a cancel into a
+    ten-minute hang:
 
-    1. It only returned on outputs or on `status.completed`. ComfyUI writes a
-       history entry ONLY when the prompt has finished (`task_done`, verified in
-       execution.py) — and an INTERRUPTED prompt finishes with
-       `status_str='error', completed=False` and no outputs. That is precisely
-       the one shape the loop treated as "not done yet", so it kept polling a
-       prompt that had already stopped, until the 600s timeout.
-    2. It had no idea cancellation existed, so the only way out was to wait.
+    1. Returning only on outputs or on `status.completed` is not enough.
+       ComfyUI writes a history entry ONLY when the prompt has finished
+       (`task_done`, verified in execution.py) — and an INTERRUPTED prompt
+       finishes with `status_str='error', completed=False` and no outputs.
+       A loop that treats that shape as "not done yet" keeps polling a
+       prompt that has already stopped, until the 600s timeout.
+    2. The wait must know cancellation exists, or the only way out is to wait.
 
-    Now: a finished-without-output entry ends the wait, and the cancel flag is
+    So: a finished-without-output entry ends the wait, and the cancel flag is
     checked every tick and actually interrupts ComfyUI rather than just noting
     that someone would like it to stop.
     """
@@ -596,13 +593,12 @@ _PHASES = {
 def _watch_progress(prompt_id, client_id, on_update, stop_flag):
     """Consume ComfyUI's websocket and report true progress.
 
-    The bar was previously two values — 0.5 when sampling started and 1.0 at
-    the end — because `_await_result` polls /history every 1.5s and history
-    only knows "not done" and "done". Meanwhile ComfyUI has been emitting
-    `progress` (step value/max) and `executing` (which node is running) the
-    whole time on a socket nothing connected to. Stephen watched a bar that
-    could not tell him anything, and the signal to make it true was already
-    arriving.
+    `_await_result` polls /history every 1.5s and history only knows "not
+    done" and "done", so a bar driven from it alone is two values — 0.5 when
+    sampling starts and 1.0 at the end — and tells the user nothing.
+    ComfyUI emits `progress` (step value/max) and `executing` (which node is
+    running) the whole time on its websocket; this is where that signal is
+    read.
 
     Runs on its own thread and never raises into the caller: a lost progress
     socket must not fail a generation that is otherwise fine.
@@ -706,8 +702,8 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
     `system=True` marks a generation Friday made for her own purposes —
     verification, diagnostics, a smoke test. Those are NOT published to the
     creations gallery and are flagged in the manifest, because test output
-    landing in Stephen's gallery is indistinguishable from his own work and he
-    had to go and delete mine by hand.
+    landing in the user's gallery is indistinguishable from their own work
+    and has to be deleted by hand.
     """
     if not is_installed():
         return {"status": "unavailable", "provider": PROVIDER,
@@ -775,10 +771,9 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
 
     # An orb for the IMAGE job, naming the image model.
     #
-    # There was none. Stephen asked for an image and saw "a gemma4 process orb
-    # instead of the stable diffusion orb" — because the only orb in flight was
-    # the language model's chat turn, correctly badged with the model that was
-    # running the conversation. The picture was being made by z-image-turbo-fp8
+    # Without it the only orb in flight is the language model's chat turn,
+    # correctly badged with the model running the conversation, and the user
+    # sees a gemma4 orb while the picture is being made by z-image-turbo-fp8
     # with nothing on screen to say so.
     #
     # It also carries a description rather than a status word, per the orb work:
@@ -846,12 +841,11 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                                 % (_idx, _total, "" if _total == 1 else "s"))
             # A SEED PER IMAGE.
             #
-            # `seed` defaulted to 0 and was never varied, and diffusion is
-            # deterministic: same prompt + same seed = the same file, byte for
-            # byte. On 2026-08-16 Stephen asked for three distinct images and
-            # got nine files that were three images repeated three times —
-            # md5-identical in groups of three. The model was asking for
-            # variety and the pipeline could not produce any.
+            # Diffusion is deterministic: same prompt + same seed = the same
+            # file, byte for byte. A fixed default seed turns a request for
+            # three distinct images into the same image three times —
+            # md5-identical — with the model asking for variety and the
+            # pipeline unable to produce any.
             _seed = seed if seed else uuid.uuid4().int % (2 ** 63)
             wf = build_workflow(_p, negative=negative, width=width,
                                 height=height, steps=steps, seed=_seed,
@@ -883,8 +877,8 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                 frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
                     else (0.1 if st == 0 else 0.9)
                 frac = (_i + min(frac, 0.99)) / _total
-                # A bar that goes BACKWARDS reads as a restart. Measured on the
-                # first live run: sampling finished at 85%, then ComfyUI's
+                # A bar that goes BACKWARDS reads as a restart. Observed on a
+                # live run: sampling finished at 85%, then ComfyUI's
                 # per-node progress reset `value` to 0 for the decode node and
                 # the bar fell to 10% just before the image appeared. Progress
                 # only ever moves forward within a job.
@@ -913,12 +907,12 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         # The SAME envelope the cloud path returns: a list of dicts with
         # filename/path/url, not bare path strings.
         #
-        # This returned `files: ["C:\\...\\x.png"]` until 2026-08-15, and
-        # every caller does `result['files'][0].get('filename')` —
-        # routes/creations._flatten_first_file among them, which raised
-        # `'str' object has no attribute 'get'` and turned a SUCCESSFUL
-        # 108-second generation into an HTTP 500. The image was on disk; the
-        # envelope was the wrong shape. A local path that returns a different
+        # Every caller does `result['files'][0].get('filename')` —
+        # routes/creations._flatten_first_file among them — so returning bare
+        # path strings (`files: ["C:\\...\\x.png"]`) raises
+        # `'str' object has no attribute 'get'` and turns a SUCCESSFUL
+        # generation into an HTTP 500 with the image already on disk. A
+        # local path that returns a different
         # contract from the cloud path is not a local path, it is a second
         # code path pretending to be one.
         #
@@ -938,7 +932,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             if system:
                 # Left where ComfyUI wrote it, deliberately. The gallery lists
                 # CREATIONS_DIR, so not copying is what keeps Friday's own test
-                # output out of Stephen's work.
+                # output out of the user's work.
                 files.append({"filename": i["filename"], "path": str(src),
                               "url": None, "source_path": str(src),
                               "system_generated": True})
@@ -954,9 +948,9 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             files.append({"filename": i["filename"], "path": str(dest),
                           "url": "/api/creations/%s" % i["filename"],
                           "source_path": str(src)})
-        # A manifest of what was made and from what. Friday could generate an
-        # image and then be unable to tell Stephen its filename — she guessed
-        # at a naming convention instead, and was wrong. ComfyUI chooses the
+        # A manifest of what was made and from what. Without it Friday can
+        # generate an image and then be unable to tell the user its filename
+        # except by guessing at a naming convention. ComfyUI chooses the
         # name, so the only reliable record is the one written here at the
         # moment the file lands.
         try:

@@ -5,12 +5,12 @@ does it roleplay fabricated bracket-syntax pseudo-calls in prose (see
 tool_integrity.py)? Ten canned prompts, each shaped to require exactly one
 registry tool.
 
-**Nothing here blocks anything.** As of 2026-08-15 the seat gate is removed:
+**Nothing here blocks anything.** The seat gate is removed:
 any installed model can be bound to any seat and will actually serve. This
 module measures and records so a curious human can look; it is never consulted
 to refuse a binding or a turn.
 
-Removed on Stephen's decision, and the evidence supports it. Gating a
+Removed on the maintainer's decision, and the evidence supports it. Gating a
 user-selected model behind a homegrown eval is not standard practice, and the
 failures this instrument fired on were a harness problem rather than a model
 one — the same four models scored 1/10, 1/10, 4/10 and 0/10 under a broken
@@ -45,7 +45,7 @@ RECOMMENDED_LOCAL_MODEL = "gemma4:latest"
 
 # Each prompt is shaped to require exactly one real tool call from the
 # production registry (agent.py CLAUDE_TOOLS) — the same tools whose names
-# leaked as bracket prose in the 2026-08-12 "start my day" confabulation.
+# leak as bracket prose when a model confabulates a "start my day" turn.
 CONFORMANCE_PROMPTS = [
     {"id": "calendar", "prompt": "What's on my calendar today?", "expect_tool": "query_calendar"},
     {"id": "email", "prompt": "Do I have any unread priority emails?", "expect_tool": "search_email"},
@@ -100,12 +100,12 @@ def _score_response(oai_message: dict, tool_names) -> dict:
 
 
 # A gate call must be able to absorb a cold load plus a full generation. The
-# old flat 120s could not: 9 of 10 cases for gemma4:12b timed out on
-# 2026-08-15 and the model scored 1/10 having never actually been tested.
+# old flat 120s could not: 9 of 10 cases for gemma4:12b timed out and the
+# model scored 1/10 having never actually been tested.
 GATE_TIMEOUT_S = 600
 
 # The context has to hold the TOOL DEFINITIONS, and they are not small.
-# Measured 2026-08-15: 52 tools serialise to 34 138 characters ~= 8 534
+# Measured on the reference machine: 52 tools serialise to 34 138 characters ~= 8 534
 # tokens, so the gate prompt is ~8 643 tokens before the model writes a word.
 #
 # An earlier value of 8192 was chosen from the KV/VRAM curve — the wrong input
@@ -161,10 +161,10 @@ def run_conformance_gate(model: str, *, provider: str = "local",
     consumed by is_seat_green(). Does not raise on a failing model — a red
     result is a valid, expected outcome.
 
-    A run in which the harness itself failed is **inconclusive**, not red. On
-    2026-08-15 concurrent gating made the models evict each other, every
-    reload blew the 120s budget, and `gemma4:12b` was recorded as 1/10 with
-    nine timeouts — then that record overwrote `gemma4:e2b`'s existing green.
+    A run in which the harness itself failed is **inconclusive**, not red.
+    Concurrent gating makes the models evict each other, every reload blows
+    the timeout budget, and a model gets recorded as 1/10 with nine timeouts
+    — a record that can then overwrite another model's existing green.
     An inconclusive run is persisted for diagnosis but never overwrites a
     prior verdict and never counts as a red.
     """
@@ -193,7 +193,7 @@ def run_conformance_gate(model: str, *, provider: str = "local",
         try:
             # temperature 0.2, unchanged. RECORDED, not fixed: this gate is not
             # reproducible at 0.2 — gemma4:e2b scored 10/10, then 8/10, then
-            # 8/10 across three runs on 2026-08-15, and the "failing" cases
+            # 8/10 across three consecutive runs, and the "failing" cases
             # pass when replayed in isolation. honesty_battery.py:317 already
             # documents the same effect on the other axis ("gemma4:latest at
             # 0.2 swings between 9/10 and 7/10") and chose 0.0 for it.
@@ -260,7 +260,7 @@ def _gate_chat_fn(model: str, ollama_url: str, *, num_ctx=GATE_NUM_CTX,
     """The chat-completion callable the gate should use for `model`, plus a
     'via' label for the stored record.
 
-    2026-08-14 alias wrinkle: the gate historically spoke ONLY Ollama, so a
+    Alias wrinkle: the gate historically spoke ONLY Ollama, so a
     model served by an OpenAI-compatible local provider (the llama.cpp
     brain) could never earn green under its own id — enforcement then
     refused every tool-using turn with 'never run'. If an enabled
@@ -304,8 +304,8 @@ def save_status(model: str, provider: str, result: dict) -> Path:
     """Persist a gate verdict.
 
     An INCONCLUSIVE run (the harness timed out or could not reach the daemon)
-    is written beside the authoritative record, never over it. On 2026-08-15 a
-    run in which nine of ten cases timed out overwrote `gemma4:e2b`'s standing
+    is written beside the authoritative record, never over it. Otherwise a
+    run in which nine of ten cases time out overwrites a model's standing
     green with a red — destroying a real verdict with a measurement that never
     happened. Evidence of a failed measurement is not evidence about a model.
     """
@@ -341,7 +341,7 @@ def is_seat_green(model: str, provider: str = "local") -> bool:
     return bool(status and status.get("passed") is True)
 
 
-# ── 2026-08-15: the honesty battery is GONE, and neither axis gates a seat. ──
+# ── The honesty battery is GONE, and neither axis gates a seat. ─────────────
 #
 # `axis_status` survives ONLY as a display: the picker chip may show whether a
 # model has a structural record, and nothing consults it to decide anything.

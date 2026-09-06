@@ -1,11 +1,11 @@
 """Receipts for tool calls - so a claim can be checked against what ran.
 
-The problem this exists for, observed on 2026-08-19: asked to call
-``mcp_higgsfield_balance``, the local seat replied *"the raw output verbatim
-was: SUCCESS: Balance retrieved"* and, in its own words, *"we assume the tool
-executed"*. It had not. The real output is ``Credits: 678.28 | Plan: ultra``.
-Nothing in the stack contradicted it, so a fabricated result reached the user
-wearing the costume of a tool output.
+The problem this exists for: asked to call ``mcp_higgsfield_balance``, a
+local seat can reply *"the raw output verbatim was: SUCCESS: Balance
+retrieved"* and, in its own words, *"we assume the tool executed"* — without
+having called it (the real output has the shape ``Credits: 678.28 | Plan:
+ultra``). Nothing in the stack contradicts it, so a fabricated result reaches
+the user wearing the costume of a tool output.
 
 No code can force a model to call a tool. What code CAN do is make the
 difference between *called* and *not called* observable, so an unbacked claim
@@ -20,8 +20,8 @@ is caught instead of narrated. That is what this module provides:
 Deliberately conservative. It flags only what it can prove: a tool named in
 the reply with no matching receipt. It does not guess at paraphrase ("I made
 you a picture"), because a false accusation of lying is its own failure and a
-noisy checker gets switched off. Catching the provable case is what closed the
-observed hole; widening it is a later decision with evidence behind it.
+noisy checker gets switched off. Catching the provable case closes the
+hole; widening it is a later decision with evidence behind it.
 
 Receipts are per-thread and per-turn: Flask handles each request on its own
 thread, so one conversation's receipts can never satisfy another's claims.

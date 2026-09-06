@@ -40,7 +40,7 @@ LOCAL_PROVIDERS = {"ollama", "local"}
 
 
 # ── Local-sink tools: exempt from the per-action input-tier deny ────────────
-# 2026-08-13 (Incident 2, F6): learn_skill writes were denied as
+# Without this exemption, learn_skill writes are denied as
 # "cloud_denied_tier_TIER_2" because check_action classifies the tool's
 # ARGUMENTS — for learn_skill, the entire skill YAML — and ordinary skill
 # vocabulary ("memory", "todo", "contact") tiers as TIER_2.

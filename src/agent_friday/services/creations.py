@@ -55,7 +55,7 @@ except Exception:
 #  DAILY CREATION
 #  Friday's daily creative expression, migrated from the Cowork
 #  scheduled task (friday-daily-creation) into the OS itself so it
-#  runs whenever the server is up — no Claude session required.
+#  runs whenever the server is up — no external agent session required.
 #
 #  Storage:  ~/.friday/creations/YYYY-MM-DD.json
 #            {date, type, title, content, mood, created}
@@ -428,8 +428,8 @@ def _record_media_daily(date_str, mode, choice, file_rec, path, extra=None):
 
 
 def _record_pending_short_production(date_str, choice, run_id, path):
-    """A short-production run paused at a checkpoint (gauntlet-2026-09-03
-    Q16) -- there is no finished file yet, but today still needs a record
+    """A short-production run paused at a checkpoint -- there is no
+    finished file yet, but today still needs a record
     so generate_daily_creation() doesn't fall through to an unrelated text
     creation, and so tomorrow's tick doesn't try to start a second one
     while this one is still waiting on the user. Notifies clearly that
@@ -493,20 +493,19 @@ def _generate_media_daily(date_str, choice, path):
             # user's capability_routing.creative_music seat choice, the
             # same as every other music_engine.generate_music() call site
             # (services/agent.py, routes/creations.py, creative_pipeline.py)
-            # -- this one alone hardcoded lyria-clip and silently ignored a
-            # user's chosen music model (docs/audits/gauntlet-2026-09-03/
-            # findings.jsonl).
+            # -- a hardcoded lyria-clip here would silently ignore the
+            # user's chosen music model.
             res = music_engine.generate_music(concept, duration_seconds=30)
         elif mode == "short-production":
             from agent_friday.services import creative_pipeline as cp
             run = cp.create_run("full-production", {"logline": concept})
             if run.get("status") == "error":
                 return None
-            # Respects the pipeline's own checkpoints (gauntlet-2026-09-03
-            # Q16): this was the ONLY caller of the full-production template
-            # that auto-advanced past all three, including the one
-            # explicitly commented "cost gate -- video is the expensive
-            # call" and the one before publishing. A run that pauses is not
+            # Respects the pipeline's own checkpoints: the full-production
+            # template has three, including the one explicitly commented
+            # "cost gate -- video is the expensive call" and the one before
+            # publishing, and this caller must not auto-advance past them.
+            # A run that pauses is not
             # a failure -- it means Friday is waiting for a look before the
             # expensive stage, or a final review before the file is
             # published, exactly like every other caller of this template.

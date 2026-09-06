@@ -7,7 +7,7 @@ made an absolute privacy promise the code does not currently keep.
   -- on two of its three branches the fallback_to_cloud setting is either
   dead code or unchecked entirely, and setup_wizard.py never sets it False
   for local_only anyway. The underlying router behavior is queued for
-  Stephen (a real product decision on whether local_only should fail
+  the maintainer (a real product decision on whether local_only should fail
   closed or fall back -- see progress.md's top-priority queue item), but
   the copy itself was simply false regardless of which way that decision
   goes, so it was corrected directly.

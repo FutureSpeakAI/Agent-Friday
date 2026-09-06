@@ -135,8 +135,8 @@ RUNTIME_OVERHEAD_GIB = 1.7
 #: `capabilities` array instead — the same check `verify_tool_capability()`
 #: runs after every install, so a wrong flag here is caught rather than shipped.
 #:
-#: 2026-09-03: Qwen is gone from this table. Product decision, stated plainly
-#: so it isn't relitigated by the next person editing this file: "We are not
+#: Qwen is gone from this table. Product decision by the maintainer, stated
+#: plainly so it isn't relitigated by the next person editing this file: "We are not
 #: shipping the model, any model, yet... Only have it fetch and install local
 #: models from the Gemma 4 family, whichever fits best on the user's hardware
 #: (e2b, e4b, 12b, or larger)... This is a placeholder: it gets replaced by
@@ -213,7 +213,7 @@ _BRAINS = (
              "table's simple GPU-or-RAM model can't express that nuance"},
     # NOT Gemma 4, and NOT selectable — this row exists purely so the
     # planner can RECOGNISE an already-installed gemma3:4b and explain why
-    # it declined to use it, the same job it did before 2026-09-03. It is
+    # it declined to use it, the same job it did before the Qwen removal. It is
     # filtered out of every download/selection path by `_pickable()`
     # (tools:False is a hard gate, not a tie-break — see that function), so
     # keeping the row here never fetches it and does not reintroduce Qwen's
@@ -279,11 +279,11 @@ BRAIN_MODELS = tuple(
 #: `tests/unit/test_model_plan.py::test_no_shipped_default_names_a_model_that_cannot_call_tools`
 #: sweeps the real settings dict and fails if a sixth copy appears.
 #:
-#: 2026-09-03: this resolved to `qwen3:4b` from launch until the Gemma-4-only
+#: This resolved to `qwen3:4b` from launch until the Gemma-4-only
 #: product decision (see the note above `_BRAINS`) removed every qwen row
 #: from the table. The sites listed above were already correctly importing
 #: this constant rather than a hardcoded name — the mechanism this docstring
-#: describes worked exactly as designed, so fixing the ladder here was the
+#: describes works as designed, so fixing the ladder here was the
 #: whole fix for all of them at once. Two places were NOT reading this
 #: constant and needed a separate fix: `knowledge_graph/indexer.py`'s
 #: user-facing "pull one" message text (a literal string, not a default
@@ -336,8 +336,7 @@ def verify_tool_capability(model_id: str, show_fn=None) -> tuple[bool | None, st
     absent. The probe returns False, which reads exactly like "this model
     cannot call tools".
 
-    Measured on 2026-08-26, against the registry and then against a live
-    daemon:
+    Measured against the registry and then against a live daemon:
 
         model            .Tools in template   /api/show capabilities
         qwen3:8b         True                 completion, tools, thinking
@@ -824,7 +823,7 @@ def brain_is_primary_capable(p: dict) -> tuple[bool, str]:
     comes back: `_via_ollama` (agent.py) sends `tools=`, `_call_ollama`
     converts to OpenAI tool schema and runs `_oai_agentic_loop`, and that loop
     calls `_execute_tool` under the same governance as the cloud path. Verified
-    by reading the chain 2026-08-22.
+    by reading the chain.
 
     So a tool-capable local model needs no API key for tools. `gemma3:4b`
     cannot, which is why an 8 GiB card ends up wanting a key while a 12 GiB

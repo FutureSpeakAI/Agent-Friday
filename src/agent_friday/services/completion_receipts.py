@@ -1,10 +1,8 @@
-"""A7 — completion-receipt law (Incident 2, F1; seats-and-transparency).
+"""A7 — completion-receipt law (docs/design/seats-and-transparency).
 
-2026-08-13: gemma4:latest, silently seated by a local_only routing flip,
-claimed "I created daily_context_check.md in your Wiki" — the file exists
-nowhere (every wiki location and the wiki-pending queue was checked). FR-2
-only caught pseudo-tool-call *syntax*; a plain-prose completion claim walked
-straight through.
+A local model can claim "I created daily_context_check.md in your Wiki" when
+the file exists nowhere. Pseudo-tool-call *syntax* detection (FR-2) does not
+catch this: a plain-prose completion claim walks straight through.
 
 The law: an assistant reply that asserts a COMPLETED side-effecting action
 (created / wrote / saved / sent / scheduled / ...) must be backed by a
@@ -73,16 +71,15 @@ _FIRST_PERSON = r"\bI(?:'ve| have| just|'d)?(?: just)?(?: successfully)?\s+"
 # a specific file that did exist — matched nothing at all.
 _IMAGE_ARTIFACT = r"\S+\.(?:png|jpe?g|webp|gif|svg|mp4|mov|wav|mp3)\b"
 
-# A PROMISE is not a completion, and nothing looked for one until 2026-08-16.
-# Both existing detectors ask "did she claim to have DONE something without a
-# receipt". Neither asks "did she say she was ABOUT to do something and then end
-# the turn without doing it", which is what actually happened, twice:
+# A PROMISE is not a completion. The other detectors ask "did she claim to
+# have DONE something without a receipt". None of them asks "did she say she
+# was ABOUT to do something and then end the turn without doing it":
 #
 #     "Give me one second to find it. I'll try to pull up the image for you now."
 #     "I'll do a quick search of your creations folder... Give me one second."
 #
-# Both times the turn ended there and no tool ran. From Stephen's side that is
-# indistinguishable from a lie, and he had to catch it himself.
+# A turn that ends there with no tool run is, from the user's side,
+# indistinguishable from a lie, and nothing else would catch it.
 _PROMISE_RE = re.compile(
     r"\b(?:"
     r"I'll (?:go(?: ahead and)? )?(?:try to |now )?(?:search|look|check|find|pull"
@@ -122,7 +119,7 @@ def find_unkept_promises(reply: str, tool_trace) -> list[str]:
             for m in _PROMISE_RE.finditer(_strip_code(reply))]
 
 
-# A FABRICATED CONSTRAINT — the fourth axis, 2026-08-16.
+# A FABRICATED CONSTRAINT — the fourth axis.
 #
 # The other three all ask "did she claim to have DONE something she didn't".
 # None of them can see the opposite fabrication: claiming she CANNOT do
@@ -131,10 +128,10 @@ def find_unkept_promises(reply: str, tool_trace) -> list[str]:
 #     "my underlying model has hard-coded safety filters that I can't override"
 #     "the system blocks it at the generation level regardless of how it's framed"
 #
-# Audited on 2026-08-16: there is no filter in the Z-Image weights, none in
-# ComfyUI, and no filter node in the graph. Both sentences were invented. They
-# are worse than an ordinary refusal, because they are unfalsifiable from the
-# user's chair and they blame a machine for a choice.
+# There is no filter in the Z-Image weights, none in ComfyUI, and no filter
+# node in the graph, so both sentences are invented. They are worse than an
+# ordinary refusal, because they are unfalsifiable from the user's chair and
+# they blame a machine for a choice.
 #
 # This is deliberately narrow. It fires only on claims about MODEL-LEVEL or
 # SYSTEM-LEVEL blocking machinery, which is the thing that does not exist. It
@@ -207,7 +204,7 @@ COMPLETION_CLAIM_REGISTRY = [
         # FILE OPERATIONS naming a specific path. `saved-image` covers making a
         # file, not touching one that already exists — so "I've opened
         # friday_local_00005.png for you" and "I checked the file, it's there"
-        # matched nothing at all, and both were false when Stephen read them.
+        # matched nothing at all, and both can be false when the user reads them.
         # Opening, reading and deleting are as side-effecting as writing, and a
         # claim about a named path is either backed by a receipt or invented.
         "id": "file-operation",

@@ -1,4 +1,4 @@
-"""Gauntlet finding F3 — resolved under Stephen's 2026-09-04 delegation to
+"""Gauntlet finding F3 — resolved under the maintainer's 2026-09-04 delegation to
 Claude (docs/history/audits/gauntlet-2026-09-03/progress.md "QUEUED FOR STEPHEN" /
 Q1; findings.jsonl F3).
 

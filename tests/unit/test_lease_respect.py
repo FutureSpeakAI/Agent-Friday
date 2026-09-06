@@ -1,6 +1,6 @@
 """Timer-driven work must not fight an exclusive GPU lease.
 
-Stephen, 2026-08-18: "An hourly heartbeat launched while I was running my last
+The maintainer, 2026-08-18: "An hourly heartbeat launched while I was running my last
 image job and the whole computer slowed to a crawl."
 
 The lease was exclusive on the way in — acquiring one evicts every seat but the

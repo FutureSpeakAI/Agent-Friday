@@ -1,14 +1,12 @@
 """
 Memory proposal routes — the manual door into services/memory_proposals.py.
 
-Gauntlet finding F53 (2026-09-04): the service module was fully built --
-propose()/pending()/approve()/reject()/state() -- but nothing in the running
-app could ever call it. Its own docstring is explicit that this is meant to
-be manual-first: "propose() is something the user RUNS, and its output is
-shown to him before any of it becomes durable." These routes are that door.
-No UI consumes them yet -- that is a separate, real design decision (where
-review lives in the app) left for later. This makes the feature reachable,
-which it was not before.
+The service module -- propose()/pending()/approve()/reject()/state() --
+needs a caller in the running app, and its own docstring is explicit that
+this is meant to be manual-first: "propose() is something the user RUNS, and
+its output is shown to them before any of it becomes durable." These routes
+are that door. No UI consumes them yet -- where review lives in the app is a
+separate, real design decision left for later.
 
   POST /api/memory/proposals/propose    — read a day, stage candidate facts
   GET  /api/memory/proposals/pending    — facts awaiting review

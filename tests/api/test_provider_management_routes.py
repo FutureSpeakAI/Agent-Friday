@@ -160,7 +160,7 @@ def test_provider_test_kie_does_not_hit_generic_models_probe(client, monkeypatch
     """kie.ai has no /models endpoint. Before this fix, Test Connection fell
     into the generic openai-compatible branch and 404'd on every kie.ai key,
     reporting a perfectly good credential as broken (live 2026-09-06,
-    Stephen: "the API key is not working correctly"). It must delegate to
+    the maintainer: "the API key is not working correctly"). It must delegate to
     provider_health's dedicated kie check instead."""
     from agent_friday.services import provider_health
 

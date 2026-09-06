@@ -25,8 +25,7 @@ from flask import Blueprint, jsonify, request
 # script's own directory); the `friday` CLI entry point and any launch from
 # another cwd did NOT - and this blueprint then failed to import and was
 # silently skipped by server.py's auto-discovery, taking the whole career
-# pipeline offline with nothing but a WARNING nobody reads. Roughly 70 such
-# skips are visible in friday.log between 2026-07-01 and 2026-08-19. Worse, an
+# pipeline offline with nothing but a WARNING nobody reads. Worse, an
 # installed wheel never shipped data/ or skills/ at all (pyproject:
 # packages.find where=["src"]), so a `pip install` user could not reach these
 # routes under any circumstances - see KNOWN_ISSUES.md Sec.3, "the career

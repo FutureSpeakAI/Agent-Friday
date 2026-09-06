@@ -4,8 +4,8 @@ Agent Friday — Local Voice Engine (Tier-1, CPU-only)
 Offline, provider-agnostic voice: **faster-whisper** ASR + **Piper** TTS, with
 energy/Silero VAD endpointing. This is the universal CPU path — no torch, no
 CUDA — that runs on every machine. It lives ALONGSIDE Gemini Live and is the
-DEFAULT engine (cloud is opt-in), per Stephen's ethos: "Local is the default,
-cloud is the opt in, always."
+DEFAULT engine (cloud is opt-in), per the maintainer's ruling: "Local is the
+default, cloud is the opt in, always."
 
 Pipeline shape (the brain is NOT in here — it's the existing LLM router):
 

@@ -1,17 +1,17 @@
 ﻿"""
 Agent Friday — how much of a context window is spent before the user types.
 
-The residency policy has to choose a `num_ctx` for every seat (rule R7). Until
-2026-08-15 it chose 32768, and the arithmetic behind that number was wrong in a
-specific, checkable way: it was derived from the **tool registry alone**.
+The residency policy has to choose a `num_ctx` for every seat (rule R7). A seat
+size derived from the **tool registry alone** is wrong in a specific, checkable
+way:
 
     52 tools, 34138 chars  ->  ~8534 tokens   x4 headroom  ->  32768
 
-That ignored the larger of the two fixed costs. Friday's system prompt measured
+That ignores the larger of the two fixed costs. Friday's system prompt measures
 46726 chars, ~11681 tokens — half again as much as the tools. The real fixed
-overhead is ~20216 tokens, so a 32768 seat had ~12552 tokens (38%) left for the
-actual conversation. Nearly two thirds of every window was gone before the user
-said anything.
+overhead is ~20216 tokens, so a 32768 seat has ~12552 tokens (38%) left for the
+actual conversation. Nearly two thirds of every window is gone before the user
+says anything.
 
 This module measures the overhead instead of assuming it, because both halves
 grow: tools get added, and the system prompt is assembled at runtime from the
@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import time
 
-# Measured on the reference instance, 2026-08-15, against the live 52-tool
+# Measured on the reference instance against the live 52-tool
 # registry and an assembled system prompt. Used only when the live sources
 # cannot be read; a stale constant is a much smaller error than assuming zero.
 MEASURED_TOOL_TOKENS = 8534
@@ -39,13 +39,13 @@ MEASURED_SYSTEM_PROMPT_TOKENS = 11681
 # Injected memory and source context: recalled conversation, wiki spans, search
 # results and anything else assembled INTO the turn before the user's words.
 #
-# This was missing entirely, and its absence is why seats came out too small.
-# Measured 2026-08-18: a real turn against a 32,768 seat totalled 47,448 tokens
-# -- roughly 13k system prompt, 9.7k tools, and ~25k of injected context that
-# nothing budgeted against the seat at all. A seat sized from tools plus system
-# prompt was therefore sized for 22k while the turn demanded 47k, and the
-# overflow is silent: the window fills and the oldest spans fall out the front,
-# so the model answers from a truncated view and nothing reports it.
+# Omitting this is why seats come out too small. Measured on the reference
+# machine: a real turn against a 32,768 seat totalled 47,448 tokens -- roughly
+# 13k system prompt, 9.7k tools, and ~25k of injected context that nothing
+# budgeted against the seat at all. A seat sized from tools plus system prompt
+# is therefore sized for 22k while the turn demands 47k, and the overflow is
+# silent: the window fills and the oldest spans fall out the front, so the
+# model answers from a truncated view and nothing reports it.
 #
 # It belongs in the overhead figure because seat sizing asks "how big must this
 # window be to hold one turn?", and injected context is unambiguously part of

@@ -8,7 +8,7 @@ T3 (chat wrap), T4 (conformance gate red/green), T5 (URL provenance) each
 have their own dedicated test files (test_chat_wrap_css.py,
 test_model_seat_gate.py + test_model_seat_gate_route.py,
 test_response_provenance.py + test_chat_provenance.py) — not duplicated
-here. T6 (real Google data end-to-end after Stephen authorizes Google and
+here. T6 (real Google data end-to-end after the maintainer authorizes Google and
 seats a green model) requires his own live action and isn't automatable.
 """
 from __future__ import annotations

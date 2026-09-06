@@ -623,12 +623,12 @@ def evaluate_content(
         content_cats.add("marketplace_paid")
 
     # ── Evaluate each subscribed pack ─────────────────────────────────────────
-    # asimov-standard is NOT skipped here (gauntlet-2026-09-03 F54 fix): its
-    # own rules above were checked ONLY via moderation.scan() against
-    # title/description TEXT, which never runs at all when scan_text is
-    # empty. Content classified purely by category metadata (e.g. an
-    # upstream classifier tagging categories=["CSAM"] with no title or
-    # description) hit neither check and passed clean. asimov-standard's
+    # asimov-standard is NOT skipped here: its own rules above are checked
+    # ONLY via moderation.scan() against title/description TEXT, which never
+    # runs at all when scan_text is empty. Content classified purely by
+    # category metadata (e.g. an upstream classifier tagging
+    # categories=["CSAM"] with no title or description) would otherwise hit
+    # neither check and pass clean. asimov-standard's
     # four rules are the same category-based shape every other pack's rules
     # already use, so letting this loop evaluate them too is defense in
     # depth for content that DOES have text (the scan already caught it,

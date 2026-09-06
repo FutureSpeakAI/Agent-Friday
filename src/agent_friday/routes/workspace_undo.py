@@ -4,17 +4,15 @@
   POST /api/workspace/<ws>/undo           undo the most recent change
   POST /api/workspace/<ws>/restore-as-of  {when} restore state at a moment
 
-Stephen, 2026-08-17: "if I decide to talk to Friday and modify one of my
+Maintainer ruling: "if I decide to talk to Friday and modify one of my
 workspaces, that needs to be easily rolled back either by telling Friday to roll
 it back or through a UI element."
 
-NOTE (2026-08-18): this module originally also registered /revert and /reset,
-believing the snapshot machinery had no routes. It did — workspace_studio.py has
-registered both since before the public release, and because 'workspace_studio'
-sorts before 'workspace_undo' in blueprint registration, Flask served the studio
-handlers and the duplicates here were dead code that LOOKED live (the app-level
-test suite proved this at runtime: the two handlers return different JSON shapes,
-and only the studio shape ever came back). The UI in ui_parts/app.html reads the
+NOTE: this module must NOT register /revert or /reset. workspace_studio.py
+registers both, and because 'workspace_studio' sorts before 'workspace_undo'
+in blueprint registration, Flask serves the studio handlers and any duplicates
+here are dead code that LOOKS live (the two handlers return different JSON
+shapes, and only the studio shape ever comes back). The UI in ui_parts/app.html reads the
 studio shape ({status, customization, versions}), so studio keeps /revert and
 /reset; this module keeps the routes only it provides. Do not re-add the
 duplicates — Flask will not warn you, it will just ignore them.

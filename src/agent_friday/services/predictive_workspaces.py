@@ -208,11 +208,11 @@ def predict_workspaces(dow=None, hour=None, top=6):
 # sit above it, so a top-level import would risk a circular import. Missing
 # or renamed warmers are no-ops, not crashes.
 #
-# CORRECTION (gauntlet-2026-09-03 F58): this used to be a `globals()` lookup
-# against this module's OWN namespace, which nothing ever populated -- every
-# warm attempt silently returned False, forever, for every workspace. Fixed
-# below for messages/wiki/contacts/trust, which do have a real cache-touching
-# function. "news" and "calendar" are left as documented no-ops: neither has
+# The lookup must resolve against the OWNING service module, not a
+# `globals()` lookup on this module's own namespace (which nothing populates,
+# so every warm attempt would silently return False for every workspace).
+# messages/wiki/contacts/trust have a real cache-touching function.
+# "news" and "calendar" are left as documented no-ops: neither has
 # a warmable cache. Calendar has none at all -- `_events_for_day()` (the
 # route's own render path) calls Google's API live on every read with no
 # caching layer to warm, so "warming" it would just be an extra, unused

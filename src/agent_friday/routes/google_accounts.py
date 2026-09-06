@@ -70,7 +70,7 @@ _PENDING_LOCK = threading.Lock()
 def list_google_accounts():
     """List connected Google accounts. Returns metadata only — never tokens.
 
-    Also surfaces the OAuth redirect_uri (toolcall-integrity-v5, 2026-08-13)
+    Also surfaces the OAuth redirect_uri
     — side-effect-free, unlike POST /connect (rate limited, starts a real
     flow), so the Settings -> Connectors panel can show it up front, before
     the user ever clicks Add Account. Pinned to loopback regardless of the
@@ -119,7 +119,7 @@ def connect_google_account():
             prompt="consent",  # force a refresh_token
         )
         with _PENDING_LOCK:
-            # 2026-08-13 PKCE fix: authorization_url() just auto-generated a
+            # PKCE: authorization_url() just auto-generated a
             # code_verifier on THIS flow instance and sent its challenge to
             # Google. The callback leg rebuilds a completely fresh Flow
             # (ga.build_auth_flow(state=state)) that never called
@@ -220,7 +220,7 @@ def google_oauth_byo():
     forgets them and falls back to the bundled client.
 
     There is deliberately no file anywhere in this. "Download this JSON and put
-    it in this directory" is what stopped the second user on 2026-08-26.
+    it in this directory" is exactly the step that stops a new user cold.
     """
     from agent_friday.services import google_oauth_client as goc
     if request.method == "GET":

@@ -1,7 +1,7 @@
 """Gauntlet finding F51, and the structural fix findings.jsonl F49 asked
 for once a second instance turned up: "if there's a common place that
 should be doing cleanup for all of them, fixing that is worth more than
-fixing the third one you find next week" (Stephen, 2026-09-04).
+fixing the third one you find next week" (the maintainer, 2026-09-04).
 
 Three independent instances of the SAME leak class have now been found in
 one day, each in a different top-level file under tests/, each because

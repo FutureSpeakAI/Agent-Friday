@@ -3,7 +3,7 @@
 Speaking is a way of typing into the open thread. `_persist_voice_turn` used to
 call `conversations.resolve(None)` unconditionally, so EVERY voice turn filed
 into Main no matter which conversation was on screen -- the last live mechanism
-of the thread-collision bug Stephen reported (two conversations merging when he
+of the thread-collision bug the maintainer reported (two conversations merging when he
 hit the mic). Main stays the fallback for callers that genuinely have no open
 thread, but it is no longer the destination for everyone.
 """

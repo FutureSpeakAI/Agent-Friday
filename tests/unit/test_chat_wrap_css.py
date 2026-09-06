@@ -49,7 +49,7 @@ class TestChatBubbleInlineStyles:
         app = _read("ui_parts/app.html")
         # app.html has TWO chatMsgs.map(...) renderers: a small 280px-wide
         # "Discuss Briefing" sidebar chat, and the main FRIDAY CHAT panel
-        # (the "You ·" / "Friday ·" + VOICE-tag window Stephen screenshotted)
+        # (the "You ·" / "Friday ·" + VOICE-tag window the maintainer screenshotted)
         # — rindex targets the latter, which is this fix's actual scope.
         assert "overflowX:'hidden'" in app
         anchor = app.rindex("chatMsgs.map((m,i)=>")

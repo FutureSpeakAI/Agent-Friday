@@ -85,7 +85,7 @@ def google_auth_start():
         )
         session['google_oauth_state'] = state
         session['google_oauth_redirect_uri'] = redirect_uri
-        # 2026-08-13 PKCE fix: authorization_url() just auto-generated a
+        # PKCE: authorization_url() just auto-generated a
         # code_verifier on THIS flow instance and sent its challenge to
         # Google. The callback below rebuilds a completely fresh Flow that
         # never called authorization_url(), so it never had a verifier of

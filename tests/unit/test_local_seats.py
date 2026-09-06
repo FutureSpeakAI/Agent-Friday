@@ -61,7 +61,7 @@ def test_the_announcement_does_not_repeat_in_a_grinding_loop(monkeypatch, capsys
 
 
 def test_an_unreachable_daemon_returns_the_caller_preference_unchanged(monkeypatch):
-    """A transient blip must not permanently rewrite what Stephen asked for."""
+    """A transient blip must not permanently rewrite what the maintainer asked for."""
     _inventory(monkeypatch, [], configured=None)
     assert seats.resolve("brain", "gemma4:12b") == "gemma4:12b"
 
@@ -196,7 +196,7 @@ def test_a_vision_model_is_used_when_it_is_the_only_thing_there(monkeypatch):
 # Arbiter as processes Friday owns. The daemon has never heard of them. A
 # resolver that trusts the daemon alone declares her own models missing and
 # substitutes whatever was last `ollama pull`ed -- moving a seat off the
-# runtime Stephen chose, which is what happened to his reasoning seat.
+# runtime the maintainer chose, which is what happened to his reasoning seat.
 
 def test_a_model_in_fridays_own_store_is_installed(monkeypatch):
     monkeypatch.setattr(seats, "_friday_store",

@@ -306,7 +306,7 @@ def create_image():
         license=data.get('license'),
         # Friday's own verification and diagnostic output. Kept out of the
         # creations gallery and flagged in the manifest, so a test image can
-        # never again sit in Stephen's gallery looking like his own work.
+        # never sit in the user's gallery looking like their own work.
         system=bool(data.get('system')),
     )
     # The body carries status ('ok'|'blocked'|'unavailable'|'error'); these create

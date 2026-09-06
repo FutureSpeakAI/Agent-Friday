@@ -23,10 +23,9 @@ string the underlying model actually receives (render_prompt).
 
 This module is PURE — no model calls, no I/O, no Flask. It is import-safe under
 FRIDAY_TESTING and offline, and `services/creative_engine.py`, `music_engine.py`,
-`creative_memory.py`, and `routes/creative_pipeline.py` consume it (gauntlet-
-2026-09-03 F63 corrected this list — `take_comparison.py` was never a
-consumer, and the video pipeline is `routes/creative_pipeline.py`, not a
-separate module).
+`creative_memory.py`, and `routes/creative_pipeline.py` consume it
+(`take_comparison.py` is not a consumer, and the video pipeline is
+`routes/creative_pipeline.py`, not a separate module).
 """
 from __future__ import annotations
 

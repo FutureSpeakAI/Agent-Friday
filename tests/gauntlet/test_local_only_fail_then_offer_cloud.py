@@ -1,4 +1,4 @@
-"""Gauntlet finding Q19 (final disposition, Stephen 2026-09-04): when
+"""Gauntlet finding Q19 (final disposition, the maintainer 2026-09-04): when
 local_only mode has no local model available at all, the product must not
 silently fall back to the cloud (that defeats the mode's whole point) and
 must not just refuse with a dead-end error either. His exact words: "the
@@ -90,7 +90,7 @@ class TestLocalOnlyFailThenOfferCloud:
             "local_only's no-local-model refusal must carry a structured "
             "offer_cloud_switch marker so the frontend can render an "
             "actual actionable choice, not just an error the user has to "
-            "act on by finding Settings themselves — Stephen: 'fail... "
+            "act on by finding Settings themselves — the maintainer: 'fail... "
             "then ask the user if it can go into cloud only mode'"
         )
         assert body.get("friday_msg", {}).get("offer_cloud_switch") is True, (
@@ -123,5 +123,5 @@ class TestLocalOnlyFailThenOfferCloud:
         assert "local" in text and ("cloud" in text or "ollama" in text), (
             "the refusal text must plainly say what's happening (no local "
             "model available) and name the offered alternative — this is "
-            "the transparency Stephen asked for, not a generic error"
+            "the transparency the maintainer asked for, not a generic error"
         )

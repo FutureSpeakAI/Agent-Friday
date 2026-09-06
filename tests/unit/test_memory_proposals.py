@@ -95,7 +95,7 @@ def test_no_turns_is_not_barren():
 
 
 # ── Nothing becomes durable without approval ─────────────────────────────────
-_GOOD = ('[{"category":"workflow","text":"Stephen commits one build at a time",'
+_GOOD = ('[{"category":"workflow","text":"the maintainer commits one build at a time",'
          '"evidence":"one commit per build"}]')
 
 

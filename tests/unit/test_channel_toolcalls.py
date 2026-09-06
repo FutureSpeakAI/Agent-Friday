@@ -5,7 +5,7 @@ own, 2026-08-15. The format is not JSON and the hard case is real:
 
     <|tool_call>call:send_note{body:Meeting moved, bring the slides.,priority:2,to:Dana,urgent:true}<tool_call|>
 
-`body` contains a comma. Split on commas and Stephen's note becomes
+`body` contains a comma. Split on commas and the maintainer's note becomes
 "Meeting moved" and the rest is thrown away — silently, and plausibly enough
 that nobody would look twice.
 """

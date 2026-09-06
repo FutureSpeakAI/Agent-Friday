@@ -10581,9 +10581,9 @@ function GeneratePanel({
   }, [mc.loaded]);
   /* Refreshes, rather than fetching once on mount. Workspaces stay mounted
      and are shown/hidden, so "I just opened the Studio" does not remount the
-     panel — Stephen generated an image and the gallery kept showing whatever
-     it had loaded earlier ("her first audience"). The file was on disk and
-     first in /api/creations the whole time. */
+     panel — otherwise a freshly generated image is on disk and first in
+     /api/creations while the gallery keeps showing whatever it loaded
+     earlier. */
   useEffect(() => {
     const load = () => fetch('/api/creations').then(r => r.json()).then(d => {
       setSeedFiles((d.files || []).filter(x => ['png', 'jpg', 'jpeg', 'webp'].includes((x.name || '').split('.').pop().toLowerCase())));
@@ -13039,12 +13039,11 @@ function StudioWS() {
     }
   });
   /* NEWEST FIRST, and never the bookkeeping files.
-     2026-08-17, Stephen: "I did not see any of these creations appear in the
-     studio." They were there — all nine of them — rendered 7,000 pixels down a
-     7,880-pixel page, below every older creation, with loading="lazy" so the
-     browser never even fetched them. Measured in the live DOM: his newest
-     image sat at offsetTop 7880 with naturalWidth 0. A gallery that puts the
-     thing you just made at the bottom has not shown it to you.
+     Oldest-first rendering puts new creations thousands of pixels down the
+     page, below every older creation, with loading="lazy" so the browser
+     never even fetches them — the user reports "I did not see any of these
+     creations appear" while they are there. A gallery that puts the thing
+     you just made at the bottom has not shown it to you.
      The manifest is a record OF the gallery, not an item in it. */
   const _hidden = new Set(['jsonl', 'log']);
   const _sorted = [...creations].filter(f => !_hidden.has((f.type || '').toLowerCase()) && f.name !== 'creations-manifest.jsonl').sort((a, b) => String(b.modified || '').localeCompare(String(a.modified || '')));
@@ -16673,12 +16672,12 @@ function WorkflowsWS() {
       setSchedules(d.schedules || []);
     }).catch(() => {});
   };
-  // 2026-09-06: this panel only ever reflects a saved chain's OWN run
-  // status (fetched on demand via the "Status" button) — it has no idea
-  // whether anything else is running. Stephen saw generate_video executing
-  // on his desktop while all 5 saved workflows showed idle/pending, which
-  // is technically correct (none of them had been run) but reads as "Friday
-  // is doing nothing" right next to visible proof she is. This polls the
+  // This panel only ever reflects a saved chain's OWN run status (fetched
+  // on demand via the "Status" button) — it has no idea whether anything
+  // else is running. A generate_video task can be executing while every
+  // saved workflow shows idle/pending, which is technically correct (none
+  // of them has been run) but reads as "Friday is doing nothing" right next
+  // to visible proof she is. This polls the
   // same task registry the Task Tray uses and surfaces anything active that
   // ISN'T one of this panel's own chain runs, so the panel stops implying a
   // silence that isn't there.
@@ -17358,10 +17357,10 @@ function SystemWS() {
       }
     }, 2000);
   };
-  // ── Approvals (V6 P5 / A3): the human-gate queue. Until 2026-09-06 a pending
-  // card had NO surface anywhere: the notification's "Review" pointed at
-  // {workspace:'system',tab:'approvals'} and nothing handled that tab, so every
-  // gated action (Google connect, gated goal steps) waited until it expired. ──
+  // ── Approvals (V6 P5 / A3): the human-gate queue. A pending card needs a
+  // surface: the notification's "Review" points at
+  // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
+  // gated action (Google connect, gated goal steps) waits until it expires. ──
   const [approvals, setApprovals] = useState([]);
   const [apBusy, setApBusy] = useState('');
   const apRef = useRef(null);
@@ -24171,7 +24170,7 @@ function useModelCatalog() {
 }
 
 /* ── ModelSearchPicker ─────────────────────────────────────────────────────
-   Stephen, 2026-08-16: "This should show a dropdown with a selector and a typed
+   Maintainer ruling: "This should show a dropdown with a selector and a typed
    search input field so any model we have access to, or any model that's
    installed, can operate within Agent Friday."
 
@@ -24183,7 +24182,7 @@ function useModelCatalog() {
 
    So: no cap, no curation, and no gating. A model that is not ready is shown
    with what it needs and is STILL selectable — the standing rule is that a bad
-   diagnostic is information, never a veto, and "never gate a model Stephen
+   diagnostic is information, never a veto, and "never gate a model the user
    selected" applies to the UI as much as to the router. */
 function ModelSearchPicker({
   catalog,
@@ -30333,7 +30332,7 @@ function ConsentFlow({ onDone }) {
             }, s.name === 'third_party' ? 'I understand' : 'Continue'))));
 }
 
-// ── Explicit cloud-consent gate (2026-09-06) ────────────────────────────────
+// ── Explicit cloud-consent gate ─────────────────────────────────────────────
 //
 // A separate decision from ConsentFlow above (which covers vault disclosure
 // and a plain routing-mode preference): whether unrestricted cloud access —
@@ -30486,7 +30485,7 @@ const WIZARD_STEPS = [{
 // download so "works with zero keys" is actually true on first run.
 //
 // The floor model comes from the backend rather than a literal here — defect
-// H3 was fixed at five Python sites on 2026-08-26 (model_plan.FLOOR_MODEL)
+// H3 is fixed at the Python sites via model_plan.FLOOR_MODEL,
 // but this wizard kept its own hard-coded 'gemma3:4b', the one row in the
 // ladder that cannot call tools. Do not reintroduce a literal model id here.
 //
@@ -31785,15 +31784,15 @@ function SettingsTabGeneral({
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
 //
-// Stephen, 2026-08-15: "The user decides when a task is heavy; perhaps Friday
+// Maintainer ruling: "The user decides when a task is heavy; perhaps Friday
 // should present a custom workflow UI with a representation of the tasks it
 // will execute, and a series of config options for the workflow, so the user
 // can choose or select 'choose for me' as an option as well."
 //
-// So: Friday proposes, Stephen disposes. Three executions, and an option that
+// So: Friday proposes, the user disposes. Three executions, and an option that
 // is unavailable is shown DISABLED WITH ITS REASON rather than hidden — a
-// missing button teaches nothing, and the reason here is always something he
-// would want to know (this work reads your vault).
+// missing button teaches nothing, and the reason here is always something the
+// user would want to know (this work reads your vault).
 const EXEC_META = {
   when_away: {
     label: 'While I’m away',
@@ -32485,12 +32484,12 @@ function fmtAgo(ts) {
    model is FOR.
 
    For image / video / music / audio the catalogue is reliable about modality,
-   and the substitution actively misleads. Measured 2026-08-24: sd3.5-medium-fp8
-   declares roles ["creative"], modalities ["image"] — and appeared in the
+   and the substitution actively misleads. Example: sd3.5-medium-fp8
+   declares roles ["creative"], modalities ["image"] — and would appear in the
    VIDEO seat picker, because the Video seat asks for role "creative" OR
-   modality "video" and the role matched. Stephen found it there and reasonably
-   asked why he had a video model he did not remember installing. Z-Image would
-   have done the same. Any creative model qualified for every creative seat.
+   modality "video" and the role matches. The user then reasonably asks why
+   they have a video model they do not remember installing. Z-Image would
+   do the same. Any creative model would qualify for every creative seat.
 
    So: substitute the role only where the catalogue cannot be trusted, and
    require the modality everywhere it can. */
@@ -32561,12 +32560,12 @@ function useIntelligence(pollMs) {
   const [err, setErr] = useState(null);
   /* A fetch that fails has to SAY so. "Reading the machine..." forever is the
      same defect as everything else here — a surface that looks like it is
-     working while producing nothing. Stephen hit exactly that on 2026-08-18:
-     he opened Settings, got the spinner, and could not tell broken from
-     unfinished. Every async surface gets a timeout and a stated failure. */
+     working while producing nothing: the user opens Settings, gets the
+     spinner, and cannot tell broken from unfinished. Every async surface
+     gets a timeout and a stated failure. */
   const load = React.useCallback(() => {
     const ctrl = new AbortController();
-    // 30s, not 12. MEASURED 2026-08-28: this route costs ~3.2s on a cold cache
+    // 30s, not 12. Measured: this route costs ~3.2s on a cold cache
     // and ~200ms warm on a fast machine with Ollama running, so twelve looked
     // generous. It is not, because the cold path is where the variance lives:
     // a machine with the Ollama daemon switched off pays ~2s per refused probe
@@ -33555,7 +33554,7 @@ function SettingsTabIntelligence() {
     // Restored from the old dropdown, which had this and the rebuild dropped
     // it. It belongs above the seats because it governs them: on "Local only"
     // a busy or failing local model produces an honest refusal instead of a
-    // quiet trip to Sonnet, which is the substitution he objected to.
+    // quiet trip to the cloud, which is the substitution the user objected to.
     E(StSection, { title: 'WHERE WORK RUNS' },
       E('div', {
         style: {
@@ -33675,8 +33674,8 @@ function SettingsTabIntelligence() {
       // §8.3's third bar: the SYSTEM volume, against the EXISTING
       // DISK_FLOOR_MIB (R8) -- not a new number. Independent of wherever
       // OLLAMA_MODELS points; this is the drive the pagefile and
-      // ~/.friday live on, and it is the one the 2026-09-04 incident
-      // filled to zero while none of the model-store checks noticed (HR5).
+      // ~/.friday live on, and it is the one that can fill to zero while
+      // none of the model-store checks notice (HR5).
       diskSys.total_mib && E(Bar, {
         label: 'System drive (Windows, Friday’s own data)',
         used: diskUsed, total: diskSys.total_mib, reserve: diskSys.floor_mib,
@@ -33684,7 +33683,7 @@ function SettingsTabIntelligence() {
              Math.round(diskSys.total_mib / 1024) + ' GB',
       }),
       // Contract level (§8.3 item 4). The full working/away/yield Contract
-      // is D1 -- Stephen's decision, not made. This line is only the idle
+      // is D1 -- a maintainer decision not yet made. This line is only the idle
       // timer work_queue already tracks, next to a button that is honest
       // about being a stub: nothing here actually releases a lease or
       // changes what the planner enforces yet.
@@ -33839,8 +33838,9 @@ function SettingsTabModels({
       }
     }, "Retry"), " or reload the page (Ctrl+Shift+R)."));
     /* Orchestrator and subagent get the SEARCHABLE picker over the whole
-       catalog. They are the two Stephen names most often and the two that were
-       stuck showing five Claude models. Creative and voice keep the curated
+       catalog. They are the two the user names most often and the two that
+       would otherwise be stuck showing a capped provider-ordered list.
+       Creative and voice keep the curated
        select: those lists are short, deliberately shaped, and tied to hardware
        setup flows. */
     if (role === 'orchestrator' || role === 'subagent') {
@@ -33973,8 +33973,8 @@ function SettingsTabModels({
     onChange: () => save({
       cite_sources: !s.cite_sources
     }),
-    /* The honest description, and the honest numbers, remeasured 2026-08-24
-       after the model judge was wired. Same question, same seat:
+    /* The honest description, and the honest numbers, measured with the
+       model judge wired. Same question, same seat:
          mode off ................. 27.4s, 21.1s
          on, answer already cites .. 22.1s  (no judge call at all)
          on, answer uncited ........ 35.7s  (judge 8.6s + a second answer)
@@ -36703,7 +36703,7 @@ function SettingsTabKnowledge({
   save
 }) {
   const kg0 = s.knowledge_graph || {};
-  // Defensive normalization: settings.json can still carry the pre-2026-09-03
+  // Defensive normalization: settings.json can still carry the legacy
   // values ("local_only"/"gated_cloud") until this specific key is next saved
   // -- the backend migrates them on every read (kg_settings()), but this GET
   // /api/settings response is the raw file, so the dropdown does the same
@@ -36899,24 +36899,18 @@ function SettingsTabKnowledge({
   }, note)));
 }
 // ── Cost & Usage ─────────────────────────────────────────────────────────────
-// Restored 2026-08-30, after two months deleted.
-//
-// This panel is the entire reason cost_meter exists. 0cd13fc replaced the
-// settings sidebar with the tabbed workspace and dropped the rendering JSX,
-// leaving the fetches, the four useState declarations and saveBudget standing
-// behind it. The meter went on recording every call correctly and delivering
-// it to nothing. /api/costs/summary returned 200 the whole time, so no probe
-// that watched the backend would ever have noticed.
-//
-// What the silence cost, measured on the install where it was found the day it
-// was found: $1,189.76 for the month, $679.29 of it one model, against a $50
-// monthly budget whose alert was off — off because the only control that could
-// arm it had been deleted along with the panel. The one spend figure still
-// reachable anywhere in the UI was a "$3.50 today" line on the Providers tab.
+// This panel is the entire reason cost_meter exists, and it must stay
+// reachable from the settings navigation. A UI rebuild that drops the
+// rendering JSX while leaving the fetches, the useState declarations and
+// saveBudget standing behind it leaves the meter recording every call
+// correctly and delivering it to nothing — /api/costs/summary keeps
+// returning 200, so no probe that watches the backend ever notices, while a
+// month's spend runs far past a budget whose alert cannot be armed because
+// the only control that could arm it is gone.
 //
 // Notes for whoever edits this next:
 //   * by_model is first, and sorted descending. "You spent $1,190" is a number
-//     a person can only wince at. "$679 of it is Opus" is one they can act on.
+//     a person can only wince at. "$679 of it is one model" is one they can act on.
 //   * Nothing here is rounded or abbreviated — 2-4 decimals, real thousands
 //     separators, never "$1.2k". A softened number argues with its reader.
 //   * The scope line under the total is load-bearing, not decoration. This
@@ -37482,17 +37476,16 @@ function SettingsWS() {
     // entry in this array and no branch in the render chain below, so nothing
     // could reach it. A complete feature, unreferenced.
     //
-    // Stephen, after installing Friday on a second user's laptop 2026-08-26: "It
-    // appears there is no way to add API keys in Friday's settings menu. I
-    // had to launch a Claude Code session on a second user's laptop to add a Gemini
-    // API key." He was right — and the panel he needed was already written.
-    // The author never missed it, because the author edits the file.
+    // Maintainer ruling: "It appears there is no way to add API keys in
+    // Friday's settings menu." The panel exists; it must be reachable from
+    // here, because a user cannot add a key by editing files the way the
+    // author can.
     id: 'providers',
     label: 'Providers',
     ico: '\u{1F511}'
   }, {
-    // Spend sits next to the keys that incur it. Restored 2026-08-30 after
-    // 0cd13fc deleted the panel and left its fetches running into nothing.
+    // Spend sits next to the keys that incur it. This entry must never be
+    // dropped: without it the panel's fetches run into nothing.
     id: 'costs',
     label: 'Cost & Usage',
     ico: '\u{1F4B0}'
@@ -37640,9 +37633,9 @@ function App() {
      `chatLoad` was one flag for the whole app and "+ New Chat" never reset it,
      so a long turn (Opus 5 on a research commission) left it stuck true; the
      next message was swallowed by the one-turn guard below and the "thinking"
-     indicator — bound to the same flag — span forever. Stephen, 2026-08-18:
-     "the new chat just showed 'Friday is thinking' and she didn't respond."
-     The guard is now scoped to the conversation that owns the running turn. */
+     indicator — bound to the same flag — spun forever ("the new chat just
+     showed 'Friday is thinking' and she didn't respond").
+     The guard is scoped to the conversation that owns the running turn. */
   /* Conversations (docs/design/implemented/conversations-and-concurrency.md §3.1).
      `chatMsgs` stays the ACTIVE conversation's transcript, so the panel below
      is unchanged — but WHICH conversation that is now moves, and each carries
@@ -37875,7 +37868,7 @@ function App() {
     }
     fetch('/api/setup/status').then(r => r.json()).then(d => setSetupDone(d.initialized)).catch(() => setSetupDone(true));
   }, []);
-  // Explicit cloud-consent gate (2026-09-06): independent of setup/
+  // Explicit cloud-consent gate: independent of setup/
   // ConsentFlow above, which is about vault disclosure and provider-routing
   // preference, not this specific decision. Checked on every load — not
   // just for a fresh install — because an existing install can carry an
@@ -37922,9 +37915,9 @@ function App() {
   const [stSycoMsg, setStSycoMsg] = useState('');
   // Real connection-health for the top-bar dot. Polled every 15s.
   const [connHealth, setConnHealth] = useState('unknown'); // 'ok' | 'degraded' | 'down' | 'unknown'
-  // 2026-08-14: per-provider inference liveness from Phase A's real probe —
-  // the seat pill was showing the CONFIGURED model all morning while its
-  // provider (llama-server) was down and tool turns silently fell back.
+  // Per-provider inference liveness from a real probe — otherwise the seat
+  // pill shows the CONFIGURED model while its provider (llama-server) is
+  // down and tool turns silently fall back.
   const [seatHealth, setSeatHealth] = useState({}); // provider -> {status,proved_inference,detail,model}
   useEffect(() => {
     let cancelled = false;
@@ -38983,10 +38976,10 @@ function App() {
   // Sonnet → Opus, Gemini, local Gemma), then fill remaining slots in catalog
   // order (available-first, provider-declared).
   /* WHAT ACTUALLY SERVED THE LAST TURN — not what settings say is bound.
-     2026-08-17: Stephen swapped his seat, the save succeeded, and every turn
-     kept being served by the old model. The pill showed his SELECTION the
-     whole time, so the app agreed with him for eleven minutes while doing
-     something else. A selection that has not taken effect has to be visible
+     If the user swaps a seat, the save succeeds, and every turn keeps being
+     served by the old model, a pill that shows the SELECTION agrees with the
+     user while the app does something else. A selection that has not taken
+     effect has to be visible
      immediately, and the only honest source is the model that generated the
      last reply — the same field the per-message badge reads. */
   const lastServed = (() => {
@@ -39107,7 +39100,7 @@ function App() {
     });
   };
   // ── Seat-gate status: DIAGNOSTIC ONLY. Nothing here gates a binding.
-  // 2026-08-15: the gate was removed. Any installed model can be assigned to
+  // The gate is removed. Any installed model can be assigned to
   // any seat and will actually serve. The chip reports whether the structural
   // tool-call check has been run and what it said — it never blocks a choice,
   // and a red/ungated model is fully selectable.
@@ -39452,11 +39445,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 `;
     try {
       // Pin the context to Gemini's 24kHz output rate. (A device-native-rate
-      // experiment on 2026-07-08 — worklet resampling 24k→48k — was reverted
-      // hours before the demo: it coincided with heavy response latency, and
-      // the pinned path is the long-proven snappy configuration. Latency wins.
-      // If long-session timbre drift returns, re-run that experiment POST-demo
-      // with ear-verified A/B — see the session notes.)
+      // experiment — worklet resampling 24k→48k — coincided with heavy
+      // response latency, and the pinned path is the long-proven snappy
+      // configuration. Latency wins. If long-session timbre drift returns,
+      // re-run that experiment with ear-verified A/B.)
       try {
         v.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: PCM_OUT_RATE
@@ -40991,19 +40983,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   };
   /* In-flight work, shown in the tray ABOVE the finished notifications.
      Same object at two moments of its life: a process while it runs, a
-     conclusion when it ends. Stephen asked for a progress bar in the tray, and
-     this is where it belongs — one place that answers both "what is happening"
+     conclusion when it ends. The tray's progress bar belongs here — one
+     place that answers both "what is happening"
      and "what finished". */
   const [liveProcs, setLiveProcs] = useState([]);
   const [failedProcs, setFailedProcs] = useState([]);
   const [orbiting, setOrbiting] = useState([]);
   const [clearingOrbs, setClearingOrbs] = useState(false);
   /* One control that empties the desk.
-     Stephen, 2026-08-18: "there are a bunch of error orbs and reasoning orbs
+     Maintainer ruling: "there are a bunch of error orbs and reasoning orbs
      floating on my desktop but I don't want or need them... I just hate how
      cluttered the desktop is with all these dead orbs floating around."
-     Per-orb dismissal existed and the only clear-all was for failures, inside
-     a panel he had to find. This lives in the top bar, appears the moment
+     Per-orb dismissal and a failures-only clear-all inside a panel the user
+     has to find are not enough. This lives in the top bar, appears the moment
      anything is in orbit, and says how many. */
   const clearOrbs = () => {
     setClearingOrbs(true);
@@ -41030,7 +41022,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       setFailedProcs((d.processes || []).filter(p => p.orb_failed && !p.dismissed));
       // Everything actually in orbit — failures AND finished-but-lingering AND
       // still-working. The old "CLEAR ALL" only knew about failures, so the
-      // reasoning and completed orbs Stephen was looking at had no exit at all.
+      // reasoning and completed orbs on the desktop had no exit at all.
       setOrbiting((d.processes || []).filter(p => p.orb_visible && !p.dismissed));
     }).catch(() => {});
     tick();
@@ -41160,12 +41152,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     window._fridayMoodSignals.chatLoad = chatLoad || qdLoading;
   }, [chatLoad, qdLoading]);
 
-  // 2026-09-06: the chat "Task complete" bubble below cut task results at a
-  // flat .substring(0, 400) with no ellipsis and no marker — a summary that
-  // stopped mid-word ("...bl") and looked finished. The backend never
-  // truncates (_task_set/_task_snapshot store and return the full text;
-  // confirmed by reading them directly), so nothing was ever lost from the
-  // record — this was display-only. Raised the cap (4000, matching the
+  // The chat "Task complete" bubble below must not cut task results at a
+  // flat substring with no ellipsis and no marker — a summary that stops
+  // mid-word looks finished. The backend never truncates (_task_set/
+  // _task_snapshot store and return the full text), so nothing is lost from
+  // the record — this is display-only. The cap is 4000 (matching the
   // "generous but bounded" figure already used elsewhere for a task result,
   // e.g. the quality evaluator's own 4,000-char budget) and, when a result
   // genuinely is longer than that, cuts at a word boundary and SAYS SO,
@@ -41565,14 +41556,14 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 
   // ── Never go quiet without saying so first ───────────────────────────────
   //
-  // Stephen, 2026-08-15: "Friday should always warn the user when local
+  // Maintainer ruling: "Friday should always warn the user when local
   // inference will (or might) cause her to go silent for any amount of time so
   // they can decide if cloud or scheduling for idle time would be better."
   //
   // The failure is not the pause, it is the UNANNOUNCED pause: the machine
   // looks hung, and you find out afterwards that the cloud would have taken
-  // four seconds. So the message is HELD, not sent, until he picks — a warning
-  // he cannot act on is a notification, and notifications get ignored.
+  // four seconds. So the message is HELD, not sent, until the user picks — a
+  // warning they cannot act on is a notification, and notifications get ignored.
   const [pausePending, setPausePending] = useState(null); // {forecast, message}
   /* His answer, remembered per seat. Without this the forecast was re-asked on
      every single send and re-prompted for a question he had already answered.
@@ -41771,7 +41762,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         time: new Date().toLocaleTimeString()
       }))]);
       // B1: every reply carries its model + seat class — the ACTUAL
-      // generator after any fallback (2026-08-14), plus the fallback chain.
+      // generator after any fallback, plus the fallback chain.
       setChatMsgs(p => [...p, {
         role: 'friday',
         text: d.response,
@@ -41780,9 +41771,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         fallback_chain: d.fallback_chain || [],
         // local_only mode refused (no local seat available) rather than
         // silently answering from the cloud — offer the user an explicit
-        // choice to switch instead of a dead-end error (findings.jsonl
-        // Q19; Stephen, 2026-09-04: "fail... then ask the user if it can
-        // go into cloud only mode").
+        // choice to switch instead of a dead-end error (maintainer ruling:
+        // "fail... then ask the user if it can go into cloud only mode").
         offer_cloud_switch: !!d.offer_cloud_switch,
         time: new Date().toLocaleTimeString()
       }]);
@@ -42889,9 +42879,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       display: 'block'
     },
     // Local-only refused (no local seat available) rather than silently
-    // answering from the cloud — this is the explicit choice Stephen
-    // asked for: fail closed, say so, then let the user decide to switch
-    // (findings.jsonl Q19). Never applied automatically.
+    // answering from the cloud — this is the explicit choice the maintainer
+    // asked for: fail closed, say so, then let the user decide to switch.
+    // Never applied automatically.
     onClick: () => apiFetch('/api/settings', {
       method: 'POST',
       headers: {
@@ -43132,8 +43122,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     /* 🎚 and not 🎙. This picks the microphone and speaker; the button beside
        it starts and stops voice mode. Two different jobs that were wearing 🎙
        and 🎤 — two Unicode microphones, side by side, indistinguishable at
-       10px. Stephen read the pair as one control rendered twice, which was a
-       fair reading of what they looked like. The titles now say which is
+       10px. The pair reads as one control rendered twice, which is a
+       fair reading of what they look like. The titles say which is
        which rather than relying on the glyph alone. */
     title: (() => {
       const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
@@ -43343,9 +43333,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     title: uploading ? ('Analysing ' + uploading) : 'Attach a file — image, PDF or text',
     /* 📁 and not 📎. The paperclip was already taken by "📎 Cite Sources" two
        controls away in the same cluster, so shipping attach as a second
-       paperclip put two identical glyphs side by side doing unrelated things.
-       Mine, added 2026-08-24 and spotted the same morning while looking into
-       why the rail seemed to have duplicate buttons. */
+       paperclip put two identical glyphs side by side doing unrelated things,
+       which reads as duplicate buttons. */
     style: { flexShrink: 0, opacity: uploading ? 0.55 : 1 },
     onClick: () => { if (!uploading && chatFileRef.current) chatFileRef.current.click(); }
   }, uploading ? '⋯' : '📁'), /*#__PURE__*/React.createElement("input", {
@@ -44284,8 +44273,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     src: `assets/icons/${w.id}.svg`,
     alt: w.label,
     // A local 404 can error BEFORE React attaches onError, so the fallback
-    // never fired and the dock showed a broken-image glyph (edition.svg,
-    // 2026-08-17). The ref runs at mount, after the load already settled,
+    // never fired and the dock showed a broken-image glyph (edition.svg).
+    // The ref runs at mount, after the load already settled,
     // and catches what the event missed.
     ref: el => {
       if (el && el.complete && el.naturalWidth === 0) {

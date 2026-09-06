@@ -118,8 +118,8 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     below can land the request on a DIFFERENT provider than predicted when the
     first leg fails operationally (seat down, timeout) — and a prompt gated
     for 'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
-    that content with no re-gating (docs/audits/gauntlet-2026-09-03/
-    findings.jsonl F30). When given, each leg calls `system_builder` with ITS
+    that content with no re-gating (see the 2026-09 gauntlet audit in
+    docs/history/audits/). When given, each leg calls `system_builder` with ITS
     OWN provider name and uses the result instead of the static `system`
     string, so the prompt is always gated for the provider actually about to
     see it. A builder that raises is treated as "no system prompt" for that
@@ -159,13 +159,13 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             "workspace": workspace or '',
             "cloud_model": model or settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
             # Unattended work is allowed to prefer a local seat. Without this
-            # the router cannot tell a scheduled heartbeat from Stephen typing,
-            # and every tool-using turn looked interactive.
+            # the router cannot tell a scheduled heartbeat from the user typing,
+            # and every tool-using turn looks interactive.
             "is_background_task": bool((session_ctx or {}).get(
                 "is_background_task")),
             "scheduled": bool((session_ctx or {}).get("scheduled")),
             # Origin signal for classify_task()'s TaskType.VOICE branch
-            # (gauntlet Q20) — set by the voice pipeline's own call site
+            # — set by the voice pipeline's own call site
             # (routes/voice.py), never inferred from message content.
             "is_voice": bool((session_ctx or {}).get("is_voice")),
         }) or {}
@@ -192,7 +192,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
 
-    # F30: re-gate the system prompt per LEG, not once for the predicted
+    # Re-gate the system prompt per LEG, not once for the predicted
     # provider — see the `system_builder` docstring above. Without a builder,
     # every leg gets the same static `system` (unchanged legacy behavior).
     def _system_for(provider_name):
@@ -209,10 +209,10 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     def _via_claude(use_model):
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
-        # 2026-08-14 incident: `use_model or model` resurrected the caller's
-        # LOCAL subagent seat (gemma4:e4b) on the fallback leg → Anthropic
-        # 404 'model: gemma4:e4b' → heartbeat dead all night. A cloud leg
-        # runs a configured CLOUD model, never a foreign id.
+        # `use_model or model` would resurrect the caller's LOCAL subagent
+        # seat (e.g. gemma4:e4b) on the fallback leg and Anthropic 404s on
+        # the foreign id, killing every heartbeat. A cloud leg runs a
+        # configured CLOUD model, never a foreign id.
         from agent_friday.services.model_router import _claude_safe_model
         return _call_claude_agent(
             messages, system=_system_for('cloud'),
@@ -241,14 +241,13 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # (text, tool_trace).
         # Fit the tool payload to the local seat's context window. Without
         # this, a vault-forced local route with the full registry (~59k
-        # tokens observed) exceeds n_ctx and the turn dies with a 400 —
-        # chat.py's dispatch trims, but this path did not (2026-08-19).
+        # tokens measured on the reference machine) exceeds n_ctx and the
+        # turn dies with a 400 — chat.py's dispatch trims, and so must this.
         _sys_out = _system_for('local')
         try:
             from agent_friday.services.tool_budget import fit_tools_to_seat
-            # Budget the whole request, not tools in isolation (2026-08-19:
-            # in-budget tools atop an ordinary prompt still overflowed the
-            # seat and 400'd).
+            # Budget the whole request, not tools in isolation: in-budget
+            # tools atop an ordinary prompt can still overflow the seat.
             _prompt_cost = (len(_sys_out or "") + sum(
                 len(m.get("content")) for m in (messages or [])
                 if isinstance(m.get("content"), str))) // 4
@@ -304,7 +303,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     errors = []
     for name, fn, use_model in attempts:
         # Name the model each leg actually tried — "local: HTTP 404" without
-        # the model id sent Stephen log-diving during the 2026-08-14 outage.
+        # the model id is undiagnosable from the log.
         _leg = f"{name} ({use_model})" if use_model else name
         try:
             text, trace = fn(use_model)
@@ -329,10 +328,9 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # "This request touches vault-protected data, so it was only tried on
         # the local model — which failed (...)". The real cause — a dead seat, a
         # context overflow — arrived in a parenthesis at the end, after a first
-        # clause that read as a refusal. Users stop at the first clause: Stephen
-        # spent a day believing the vault was blocking him because the sentence
-        # opened by telling him the vault was involved. The vault was working
-        # correctly every time. Cause first, policy second.
+        # clause that read as a refusal. Users stop at the first clause and
+        # conclude the vault is blocking them when the vault is working
+        # correctly. Cause first, policy second.
         #
         # Also: do NOT name Ollama as the thing to check. Friday's local seats
         # are served by her OWN llama-server (127.0.0.1:8090+), which is a
@@ -381,7 +379,7 @@ ACTION_PERMISSION_POLICY = (
 # Tools Claude can call when answering the user. Each tool has a handler
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 CLAUDE_TOOLS = [
-    {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If Stephen asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask him for a detail he would reasonably expect you to find, and never invent one.",
+    {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If the user asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask the user for a detail they would reasonably expect you to find, and never invent one.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
@@ -639,11 +637,10 @@ def _tool_browse_web(inp):
 
 
 def _suggest_near_miss(p: Path) -> str:
-    """WO-14 item 4: on file-not-found, name up to 3 similar filenames in the
-    same directory instead of a bare dead end (the 09:18 failure — Friday
-    guessed 'resume.pdf', it did not exist, and she had nothing better to
-    offer than asking Stephen for the exact name she should have been able
-    to find herself)."""
+    """On file-not-found, name up to 3 similar filenames in the same
+    directory instead of a bare dead end, so a guessed name ('resume.pdf')
+    that does not exist is corrected without asking the user for a name
+    Friday can find herself."""
     try:
         import difflib
         parent = p.parent
@@ -678,18 +675,17 @@ def _tool_read_file(inp):
     if result.text is None:
         return f"Could not read {p.name}: {result.error}"
     text = result.text
-    # WO-17 read-time feeder is registered in _hook_file_grant_registration
-    # (a POST-tool hook, priority 96), not here. Found live 2026-08-25: this
-    # used to call file_grants.on_file_read(p, text) at THIS point, before
-    # _hook_pii_scrub (priority 95) ran — so it registered the RAW text while
-    # the egress gate ultimately sees the PII-SCRUBBED text (phone/email/
-    # address replaced with [PII:...] placeholders). Any paragraph containing
-    # a phone number or address therefore never matched its registered span
-    # and fell through to normal classification — the grant looked live
-    # (ledger entry, check_grant='active') while the summary/skills section
-    # of a real CV stayed withheld. Registration must happen on the exact
-    # string that will actually reach the gate, which is only known after
-    # the scrub hook runs.
+    # The read-time file-grant feeder is registered in
+    # _hook_file_grant_registration (a POST-tool hook, priority 96), not here.
+    # Calling file_grants.on_file_read(p, text) at THIS point would register
+    # the RAW text before _hook_pii_scrub (priority 95) runs, while the egress
+    # gate ultimately sees the PII-SCRUBBED text (phone/email/address replaced
+    # with [PII:...] placeholders). Any paragraph containing a phone number or
+    # address would then never match its registered span and fall through to
+    # normal classification — the grant looks live (ledger entry,
+    # check_grant='active') while the summary/skills section of a real CV
+    # stays withheld. Registration must happen on the exact string that will
+    # actually reach the gate, which is only known after the scrub hook runs.
     _log_context("file_read", {"path": str(p), "bytes": len(text)})
     limit = 500_000
     out = text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
@@ -717,7 +713,7 @@ def _tool_search_files(inp):
 def _maybe_auto_open(path) -> None:
     """Open `path` for the user iff `auto_open_created_files` is on.
 
-    Stephen, 2026-09-06: "always open files you create for me upon
+    The maintainer's ruling: "always open files you create for me upon
     completing them." One shared call site for every file-creating tool
     (write_file here; services/creations._notify_creation for creative
     generations) so the preference has one place to read, not one per tool.
@@ -1039,13 +1035,12 @@ def _tool_list_workspace_history(inp):
 def _tool_query_calendar(_inp):
     """Today's + tomorrow's events across every connected Google account.
 
-    2026-08-13: rewired from the single-account bridge (which only ever
-    surfaced the FIRST/primary connected account, and collapsed a real API
-    error — e.g. the Calendar API not enabled in the GCP project — into the
-    same generic 'needs connecting' message a genuinely-unlinked account
-    would produce) to the multi-account store (services.google_accounts),
-    which lists every account, loads/refreshes credentials per account, and
-    reports per-account errors distinctly from 'not connected'."""
+    Uses the multi-account store (services.google_accounts), which lists
+    every account, loads/refreshes credentials per account, and reports
+    per-account errors (e.g. the Calendar API not enabled in the GCP
+    project) distinctly from 'not connected'. A single-account bridge would
+    surface only the primary account and collapse real API errors into the
+    same generic 'needs connecting' message an unlinked account produces."""
     try:
         from agent_friday.services import google_accounts as ga
     except Exception:
@@ -1100,10 +1095,10 @@ def _tool_query_calendar(_inp):
 def _tool_search_email(inp):
     """Search recent Gmail across every connected Google account.
 
-    2026-08-13: rewired to the multi-account store (services.google_accounts)
-    when any account is connected — same reasoning as _tool_query_calendar:
-    the old single-account path only ever saw the primary account and
-    collapsed a real API error into a generic 'needs connecting'. When NO
+    Uses the multi-account store (services.google_accounts) when any account
+    is connected — same reasoning as _tool_query_calendar: a single-account
+    path sees only the primary account and collapses a real API error into
+    a generic 'needs connecting'. When NO
     account is connected at all, this still falls back to the legacy
     _collect_messages() offline-cache path so a never-connected install
     keeps its existing (cache-based) behavior unchanged."""
@@ -1194,7 +1189,7 @@ def _tool_search_email(inp):
 
 
 def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, fetch_fn, item_key):
-    """Shared shape for the multi-account Google tools added 2026-08-13
+    """Shared shape for the multi-account Google tools
     (search_drive/list_tasks/search_contacts): zero accounts -> the standard
     honest not-connected note; accounts exist -> per-account status, and if
     every account's live fetch failed, an explicit instruction to report the
@@ -1242,8 +1237,8 @@ def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, 
 
 def _tool_search_drive(inp):
     """Search Drive file/folder names across every connected Google account.
-    2026-08-13, same multi-account/per-account-error pattern as query_calendar
-    and search_email (see their docstrings for why)."""
+    Same multi-account/per-account-error pattern as query_calendar and
+    search_email (see their docstrings for why)."""
     query = ((inp or {}).get('query') or '').strip()
     blob = _google_multi_account_tool(
         "Google Drive", "your files",
@@ -1867,8 +1862,8 @@ def _resolve_open_target(target):
 def _browser_command():
     """The user's browser, preferring Chrome. Returns an argv prefix or None.
 
-    Stephen asked specifically for images "in their own Chrome tab", which
-    `os.startfile` cannot do — that hands the file to whatever app owns .png
+    The maintainer's ruling is that images open "in their own Chrome tab",
+    which `os.startfile` cannot do — that hands the file to whatever app owns .png
     (Photos on Windows) and there is no way to say 'in a browser instead'.
     """
     if sys.platform == 'win32':
@@ -2151,15 +2146,13 @@ def _tool_navigate(inp):
 def _tool_switch_model(inp):
     """Change the chat model seat by name.
 
-    Stephen, 2026-08-18: "I asked twice for Gemma4:12B Uncensored and it didn't
-    know how to switch." There was no conversational path to a seat change at
-    all — only the UI controls — so the most natural way to ask was the one way
-    that could not work.
+    A seat change must be reachable conversationally, not only through the
+    UI controls — asking in chat is the most natural way to request it.
 
     Writes `capability_routing.reasoning`, which is what dispatch reads, and
-    verifies the write by reading it back. Matching is forgiving because he
-    types what he means, not model ids: "gemma4 12b uncensored" has to find
-    hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced:Q4_K_M.
+    verifies the write by reading it back. Matching is forgiving because
+    users type what they mean, not model ids: "gemma4 12b uncensored" has to
+    find hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced:Q4_K_M.
     """
     want = ((inp or {}).get('model') or (inp or {}).get('name') or '').strip()
     if not want:
@@ -2194,7 +2187,7 @@ def _tool_switch_model(inp):
     # in catalogue order wins, and local models sort ahead of cloud ones.
     # Local first, then first-party ids over aggregator ones: "Sonnet 5" should
     # find claude-sonnet-5 on Anthropic, not anthropic/claude-sonnet-5 on an
-    # OpenRouter account he has no key for.
+    # OpenRouter account the user may have no key for.
     ranked = sorted(ids, key=lambda t: (not t[2], '/' in t[0], t[0]))
     hit = None
     for mid, label, is_local, prov in ranked:
@@ -2351,19 +2344,16 @@ def _evaluate_output(task_id, goal, output, *, local_only=False):
     anyone is watching. It is a cloud call per task that nobody had counted,
     and it sends the goal and up to 4,000 characters of the output.
 
-    Second, and the reason for `local_only`: on 2026-08-24 a vault-protected
-    task correctly refused the cloud for the work itself and told the user
-    "It was NOT sent to a cloud provider" — and then this evaluator called
-    Anthropic about that same task's goal and output. Nothing here consulted
-    the vault policy. It was caught only because the API key was out of credit;
-    with a working key, vault-derived text would have gone silently, inside the
-    feature whose message promised it would not.
+    Second, and the reason for `local_only`: a vault-protected task refuses
+    the cloud for the work itself and tells the user "It was NOT sent to a
+    cloud provider". This evaluator must honor that same policy for the
+    task's goal and output; otherwise vault-derived text goes to Anthropic
+    silently, inside the feature whose message promised it would not.
 
-    The payload WAS gated — `_seal_or_block` classifies and redacts before the
-    send, and someone clearly thought about that. It is the third time this
-    exact distinction has been the bug (routes/chat.py's screen capture,
-    /api/analyze's uploads, now here), so it is a class rather than three
-    incidents:
+    The payload is gated — `_seal_or_block` classifies and redacts before the
+    send — but that is not sufficient. The same distinction applies to
+    routes/chat.py's screen capture and /api/analyze's uploads, so it is a
+    class of bug rather than an incident:
 
         Gating the CONTENT is not the same as gating the DECISION TO SEND.
         A redactor answers "what may leave?". It never answers "should this
@@ -2400,10 +2390,10 @@ def _evaluate_output(task_id, goal, output, *, local_only=False):
         if resp.content:
             return resp.content[0].text.strip()
         # An evaluator that could not run must not return the same verdict as
-        # one that ran and found the work middling. It used to answer
-        # "GRADE: PARTIAL" to both, so on 2026-08-24 a step that produced
-        # NOTHING was graded PARTIAL — the grader's own failure became the
-        # score, in a place people read as a judgement of the work.
+        # one that ran and found the work middling. Answering "GRADE: PARTIAL"
+        # to both would grade a step that produced NOTHING as PARTIAL — the
+        # grader's own failure becoming the score, in a place people read as
+        # a judgement of the work.
         return "GRADE: UNAVAILABLE\nREASON: The evaluator returned no content."
     except Exception as e:
         return ("GRADE: UNAVAILABLE\nREASON: The evaluator could not run, so "
@@ -2493,14 +2483,14 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         messages = [{"role": "user", "content": prompt}]
         # Load full vault/wiki context so the agent knows the user's context.
         _task_log(task_id, 'Loading vault context…')
-        # SECURITY (2026-08-25): this prompt used to be built with NO
-        # vault_control at all, so _get_friday_system_prompt fell through to
-        # its "legacy ungated" default and every TIER_2 vault/self-knowledge
-        # section rode into the system prompt in the clear. For a task that
+        # SECURITY: this prompt must carry an explicit vault_control.
+        # Without one, _get_friday_system_prompt falls through to its
+        # "legacy ungated" default and every TIER_2 vault/self-knowledge
+        # section rides into the system prompt in the clear. For a task that
         # then routes to a cloud model, the egress gate's field-wise keyword
-        # classifier was the ONLY thing standing between that raw personal
-        # context and Anthropic — the same classifier that already has a
-        # documented TIER_2 gap. chat.py and voice.py never rely on the gate
+        # classifier would be the ONLY thing standing between that raw
+        # personal context and Anthropic — a classifier with a documented
+        # TIER_2 gap. chat.py and voice.py never rely on the gate
         # alone: they pre-decide the provider and gate the prompt itself
         # (routes/chat.py:698, routes/voice.py:1159), so cloud calls see only
         # TIER_1. This does the same for background tasks.
@@ -2517,7 +2507,7 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         # operationally (seat down, timeout), _generate_agent's OWN fallback
         # ladder can retry on a DIFFERENT provider than predicted here — and a
         # prompt built once for 'local' (full TIER_2/3 content) must never
-        # ride unchanged onto a cloud retry (F30). `_sys_for` rebuilds the
+        # ride unchanged onto a cloud retry. `_sys_for` rebuilds the
         # prompt, gated for whichever provider a given leg actually is, and is
         # handed to `_generate_agent` as `system_builder` so every leg —
         # first attempt AND fallback — gets a prompt gated for ITSELF.
@@ -2540,10 +2530,10 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             keywords=prompt, workspace='task', has_tools=True)
         system = _sys_for(_task_provider)
         # Which model actually serves this is decided by the router INSIDE
-        # _generate_agent, so the old line here — a hardcoded 'Calling Claude…'
-        # written before routing — was a guess printed as a fact. It said
-        # Claude even when a local seat answered. `on_route` fires the moment
-        # the decision is made, with the decision itself, so the log names the
+        # _generate_agent, so a hardcoded 'Calling Claude…' line written
+        # before routing would be a guess printed as a fact — naming Claude
+        # even when a local seat answers. `on_route` fires the moment the
+        # decision is made, with the decision itself, so the log names the
         # real responder without duplicating the routing logic.
         def _log_route(route):
             try:
@@ -2553,8 +2543,8 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 # Warn-before-silence, applied to unattended work too. Nobody
                 # is watching a 3am heartbeat, but the pause is real and it is
                 # the reason a run that normally takes 20s sometimes takes 90 —
-                # so it belongs in the log Stephen reads afterwards rather than
-                # being left as an unexplained gap in the timings.
+                # so it belongs in the log the user reads afterwards rather
+                # than being left as an unexplained gap in the timings.
                 if route.get('is_local'):
                     from agent_friday.services import pause_forecast as _pf
                     f = _pf.before_local_turn(m)
@@ -2703,13 +2693,10 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             grade_line = next((l for l in lines if l.startswith('GRADE:')), '')
             reason_line = next((l for l in lines if l.startswith('REASON:')), '')
             if grade_line:
-                # The REASON used to be stored and never shown — not in the
-                # log, and not rendered in the panel either. So a run ended on
-                # a bare "Eval: GRADE: FAIL" with no way to find out what
-                # failed. The actual reason for the heartbeat's FAIL was:
-                # "does not reply exactly NO CHANGE — it appends an
-                # unrequested reminder note". Friday was marked down for
-                # telling Stephen about tomorrow's appointment.
+                # The REASON must be shown alongside the grade; a bare
+                # "Eval: GRADE: FAIL" gives no way to find out what failed
+                # (e.g. a heartbeat marked down for appending an unrequested
+                # reminder note instead of replying exactly NO CHANGE).
                 _task_log(task_id, 'Eval: %s' % grade_line)
                 if reason_line:
                     _task_log(task_id, '  %s' % reason_line)
@@ -3008,9 +2995,8 @@ def chain_run_status(name):
     # Only the latest run: walk back from the end until chain_step resets.
     # Strictly less-than, not <=: _retry_chain_step() spawns a retry at the
     # SAME chain_step as the failed attempt, and a same-step retry must not
-    # look like a fresh run restarting at step 0 (docs/audits/
-    # gauntlet-2026-09-03/findings.jsonl) -- only a step index that actually
-    # goes backward is a new run.
+    # look like a fresh run restarting at step 0 -- only a step index that
+    # actually goes backward is a new run.
     latest = []
     for t in rows:
         if latest and int(t.get('chain_step', 0)) < int(latest[-1].get('chain_step', 0)):
@@ -3053,10 +3039,10 @@ def chain_run_status(name):
 
 
 # ── Workflow chains as agent TOOLS ──────────────────────────────────────────
-# Until 2026-08-20 chains could only be authored via the HTTP API or the UI —
-# the seat itself could run one-off tasks but could not build a multi-step
-# pipeline. These three tools close that loop: Friday can now design a chain,
-# launch it, and watch it, entirely from a chat turn or a scheduled prompt.
+# Chains are authored via the HTTP API and the UI; these three tools give
+# the seat itself the same power, so Friday can design a chain, launch it,
+# and watch it entirely from a chat turn or a scheduled prompt instead of
+# being limited to one-off tasks.
 
 def _tool_create_workflow(inp):
     inp = inp or {}
@@ -3187,18 +3173,16 @@ def _retry_chain_step(task_id, error_text):
 #: Reply shapes that mean the agent never actually worked — the provider
 #: refused or crashed and the ERROR TEXT became the task's "result". A chain
 #: that advances past one of these ships nothing while reporting success
-#: (run 2 of the teen storybook advanced through five such steps). Treated
+#: (a storybook chain can advance through five such steps). Treated
 #: as step failure: retried if budget remains, else the chain halts.
-#: Reply shapes that mean the provider never ran the work, whatever the status
-#: says. These arrive as ordinary prose in the reply — nothing raises — so a task
+#: These arrive as ordinary prose in the reply — nothing raises — so a task
 #: carrying one of them reports "complete" and the caller believes it.
 #:
-#: 2026-08-21: every voice session's wiki distillation had been lost this way for
-#: weeks. `_spawn_voice_distill` routed to a model that is not resident, the call
-#: 404'd, the 404 text came back as the reply, and the task announced "Task
-#: complete." The record of every spoken conversation was discarded while
-#: asserting success — which is worse than failing, because nobody investigates
-#: a green light.
+#: Concrete case this protects: `_spawn_voice_distill` routed to a model that
+#: is not resident 404s, the 404 text comes back as the reply, and the task
+#: announces "Task complete" — the record of every spoken conversation is
+#: discarded while asserting success, which is worse than failing because
+#: nobody investigates a green light.
 _CHAIN_FAILURE_SIGNATURES = (
     "no model provider could run the agent",
     "exceeds the available context size",
@@ -3825,15 +3809,15 @@ def _cc_persist(granted: bool):
 
 # ── Computer Control grant: RESTORED on launch, by the owner's decision ──────
 #
-# This deliberately reverses a public-release hardening choice. The previous
-# behaviour cleared the persisted grant on every launch so Computer Control was
-# opt-in per session; Stephen asked on 2026-09-01 for the grant to survive a
-# restart, having been told what it costs, and this is that change.
+# This deliberately reverses a public-release hardening choice. Clearing the
+# persisted grant on every launch would make Computer Control opt-in per
+# session; the maintainer ruled, knowing the cost, that the grant survives a
+# restart.
 #
-# What it means, stated plainly: a grant given once now persists across server
+# What it means, stated plainly: a grant given once persists across server
 # restarts and machine reboots until it is revoked in Settings or the file is
-# deleted. A capability that can move the mouse and type on his behalf no
-# longer re-asks after a restart. That is the trade he chose.
+# deleted. A capability that can move the mouse and type on the user's behalf
+# does not re-ask after a restart. That is the chosen trade.
 #
 # What is NOT restored is the kill switch. `_cc_persist` never writes it, and a
 # fresh start therefore clears a kill — a user who panic-killed the capability
@@ -4919,7 +4903,7 @@ TOOL_RINGS.update({
 # user it is taking a screenshot, and only then learns it cannot.
 #
 # The registry is the single source of truth for every surface (text chat, the
-# local voice brain, and — since 2026-08-25 — the Gemini Live surface, which
+# local voice brain, and the Gemini Live surface, which
 # resolves its filesystem tools out of this same list). So dropping a tool HERE
 # removes it from all of them at once, and the generated surface notes stop
 # naming it in the same edit. Absent beats present-but-broken.
@@ -5297,25 +5281,24 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
 # session_id via prepare_confirmation_ctx(); everything else is unaffected.
 # Actions that stop and ask before they run.
 #
-# 2026-08-17, Stephen: "Agent Friday was not able to open the images in their
-# own Chrome tab or in their own viewer. She also was not able to open web
-# pages. Agent Friday needs to be able to take these types of actions."
+# The maintainer's ruling: "Agent Friday needs to be able to take these
+# types of actions" — opening images in their own Chrome tab or viewer, and
+# opening web pages.
 #
-# `open_path` and `open_url` were in here, and that WAS the failure. The gate
-# does not error — it denies, records a pending confirmation, and hands the
-# model a message instructing it to "ask the user this exact yes/no question
-# and then stop and wait for their reply". Every `ok=False` for open_path in
-# the 2026-08-16 ledger is that denial, not a bug: eleven attempts, seven
-# denied, four allowed only after he answered yes. The turn ends by design, so
-# "open all nine of these" could never get past the first one.
+# `open_path` and `open_url` must therefore NOT be in the unconditional set.
+# The gate does not error — it denies, records a pending confirmation, and
+# hands the model a message instructing it to "ask the user this exact
+# yes/no question and then stop and wait for their reply". The turn ends by
+# design, so with those two gated, "open all nine of these" can never get
+# past the first one.
 #
-# Opening a file he just asked for, or a page, on his own machine, at his own
-# request, is trivially reversible and is not what a confirmation gate is for.
-# It stays available as a setting for anyone who wants it; the default is that
-# Friday can do the thing she was asked to do.
+# Opening a file or page the user just asked for, on their own machine, at
+# their own request, is trivially reversible and is not what a confirmation
+# gate is for. It stays available as a setting for anyone who wants it; the
+# default is that Friday can do the thing she was asked to do.
 #
 # `write_file` and `navigate` stay gated: one creates persistent state, the
-# other moves the UI out from under him mid-task.
+# other moves the UI out from under the user mid-task.
 _ALWAYS_CONFIRM = {"write_file", "navigate", "delete_task", "spawn_interactive_session"}
 _OPTIONAL_CONFIRM = {"open_url", "open_path"}
 
@@ -5452,9 +5435,9 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 
 #: Verb prefixes a model habitually invents in front of a tool's real name.
-#: Observed: the seat called `mcp_higgsfield_get_balance` when the registered
-#: tool is `mcp_higgsfield_balance`. The arguments and intent were right; only
-#: the name was embellished.
+#: Example: a seat calls `mcp_higgsfield_get_balance` when the registered
+#: tool is `mcp_higgsfield_balance`. The arguments and intent are right; only
+#: the name is embellished.
 _TOOL_VERB_NOISE = ("get_", "fetch_", "read_", "call_", "do_", "run_",
                     "list_", "show_", "check_", "query_")
 
@@ -5573,8 +5556,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
         result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
 
-    # ── A6: every date in a tool result carries a code-computed weekday, so
-    # the model never derives one itself (Incident 2, F3). ──
+    # ── Every date in a tool result carries a code-computed weekday, so
+    # the model never derives one itself. ──
     if isinstance(result, str):
         try:
             from agent_friday.services.clock import annotate_weekdays
@@ -5752,15 +5735,15 @@ def _hook_pii_scrub(ctx, result):
 
 
 def _hook_file_grant_registration(ctx, result):
-    """WO-17 read-time feeder. Post, priority 96 — AFTER pii_scrub (95).
+    """Read-time file-grant feeder. Post, priority 96 — AFTER pii_scrub (95).
 
     Must run after the scrub, not before: registration has to match the
     EXACT string that later reaches the egress gate. read_file's raw
     extraction is scrubbed for PII first (phone/email/address → [PII:...]
-    placeholders); registering the pre-scrub text left every paragraph that
-    happened to contain a phone number or address permanently unmatched,
-    which is how a granted CV's summary section stayed withheld after the
-    grant was created (found live 2026-08-25, see _tool_read_file's note).
+    placeholders); registering the pre-scrub text leaves every paragraph that
+    happens to contain a phone number or address permanently unmatched,
+    so a granted CV's summary section stays withheld after the grant is
+    created (see _tool_read_file's note).
     """
     try:
         from agent_friday.services import file_grants as _fg
@@ -6057,7 +6040,7 @@ def _mcp_gate_args(server_name: str, tool_name: str, args):
 
 
 #: Documented defaults for Higgsfield generation, applied only when the model
-#: names no model at all. Chosen on measured price (2026-08-19): the cheapest
+#: names no model at all. Chosen on measured price: the cheapest
 #: option that does the job, per the standing "cheapest safe default" rule.
 #: These are a stated policy, not a guess — and any use is logged, because a
 #: silently-substituted model is exactly the kind of thing that should never
@@ -6141,10 +6124,10 @@ def _mcp_normalize_schema(schema: dict, tool_name: str = "") -> dict:
         tools.90.custom.input_schema: input_schema does not support
         oneOf, allOf, or anyOf at the top level
 
-    Measured 2026-08-18: this is exactly what happened once the Higgsfield
-    connector registered 86 tools. Cloud chat returned "[Friday offline]" for
-    every message, in every conversation, and the cause was a schema written
-    by a server we do not control.
+    A connector registering dozens of tools (the Higgsfield connector
+    registers 86) can make cloud chat return "[Friday offline]" for every
+    message, in every conversation, with the cause being a schema written
+    by a server this project does not control.
 
     Dropping the offending tool would be the easy fix and the wrong one — it
     silently removes a capability. Instead the branches are merged into one
@@ -6581,11 +6564,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         except Exception:
             pass
 
-    # ── Per-task cloud ceiling (2026-08-26). ──
+    # ── Per-task cloud ceiling. ──
     # `max_iters` defaults to 999 and nothing else here bounds spend: at the
-    # measured median of ~91,000 input tokens per iteration that is a
-    # theoretical 90M tokens on one task. The incident that prompted this —
-    # a crash-fallback re-sending a blown-context turn — billed ~1.43M. The
+    # median of ~91,000 input tokens per iteration measured on the reference
+    # machine that is a theoretical 90M tokens on one task, and a
+    # crash-fallback re-sending a blown-context turn can bill ~1.43M. The
     # ceiling is charged in the shared egress chokepoint, so it also covers
     # any cloud call a TOOL makes from inside this loop, not just the loop's
     # own iterations. Entered here and released in the `finally` below.
@@ -6668,14 +6651,15 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     ]
             except Exception:
                 pass
-            # Prompt-cache breakpoints (2026-08-26), applied last — after the
-            # gate and after schema normalisation — so nothing downstream can
-            # drop them. This loop is where Friday's cloud bill actually lives:
+            # Prompt-cache breakpoints, applied last — after the gate and
+            # after schema normalisation — so nothing downstream can drop
+            # them. This loop is where Friday's cloud bill actually lives:
             # every iteration re-sends the full tool tier (~14k tokens) plus the
             # entire accrued transcript, and the transcript is append-only here,
             # which is exactly the shape an incremental cache reads at 0.1x.
-            # Modelled on 14 days of real calls in ~/.friday/costs.db: an 80%
-            # cut to the input line, which is ~99% of the spend.
+            # Modelled on two weeks of real calls in ~/.friday/costs.db on the
+            # reference machine: an 80% cut to the input line, which is ~99%
+            # of the spend.
             try:
                 from agent_friday.services import prompt_cache as _pc
                 kwargs = _pc.apply_anthropic_cache(kwargs)
@@ -6690,9 +6674,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _led_tok_out += int(getattr(_u, "output_tokens", 0) or 0)
             except Exception:
                 pass
-            # Cost metering (Part D): the Anthropic tool loop used to discard
-            # resp.usage — capture input+output tokens with run/workspace
-            # attribution from session_ctx.
+            # Cost metering (Part D): resp.usage must not be discarded —
+            # capture input+output tokens with run/workspace attribution
+            # from session_ctx.
             try:
                 from agent_friday.services import cost_meter as _cm
                 _cm.meter("anthropic", kwargs.get("model"),
@@ -6715,7 +6699,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
             if resp.stop_reason != 'tool_use' or not tool_uses:
                 _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
-                # Badge truth (2026-08-14): record the model that ACTUALLY
+                # Badge truth: record the model that ACTUALLY
                 # generated this text — the badge layer reads this, never
                 # the router's intent.
                 try:
@@ -6959,8 +6943,8 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             text = (msg.get("content") or "").strip()
             # An EMPTY completion is not an answer.
             #
-            # Stephen watched gemma4:12b think for two minutes and then deliver
-            # a blank message. That is worse than an error: an error says
+            # A local seat can think for two minutes and then deliver a
+            # blank message. That is worse than an error: an error says
             # something went wrong, a blank bubble says Friday had nothing to
             # say. One retry that tells the model what happened, then an honest
             # failure — never silence dressed up as a reply.
@@ -6984,14 +6968,14 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                     _c, text = _chan.extract(text, oai_tools)
                 except Exception:
                     pass
-            # Keep the DESCRIPTION. This used to overwrite it with
-            # f'Done ({model})', which is why every finished orb in Stephen's
-            # holographic desktop read the same thing — and read the model
-            # twice, since the scene already appends its own model badge:
+            # Keep the DESCRIPTION. Overwriting it with f'Done ({model})'
+            # makes every finished orb in the holographic desktop read the
+            # same thing — and read the model twice, since the scene already
+            # appends its own model badge:
             #
             #     ⚡ Done (gemma4:12b)  🏠 gemma4
             #
-            # The model was the whole identity and the task was nowhere. An
+            # The model becomes the whole identity and the task is nowhere. An
             # orb should say WHAT IT IS; "done" is already carried by the
             # status field and by the colour.
             _orb(status='completed', progress=1.0)
@@ -7015,24 +6999,23 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
-            # Two wire shapes, and assuming one of them silently destroyed
-            # every local tool call that took an argument.
+            # Two wire shapes; assuming only one of them silently destroys
+            # every local tool call that takes an argument.
             #
             # OpenAI's spec says `arguments` is a JSON STRING. Ollama's native
             # /api/chat returns it as an already-parsed OBJECT:
             #     {"function": {"name": "get_project",
             #                   "arguments": {"name": "gamma"}}}
-            # `json.loads(dict)` raises TypeError, the except substituted {},
-            # and the tool then ran with NO arguments. Measured 2026-08-15 on
-            # a dependent 4-call chain: the model emitted `{"name": "gamma"}`
-            # correctly every time, the executor received `{}` every time, and
-            # the model — being told nothing was found — reported that the
-            # tools had failed. It read as a model too weak to chain tool
-            # calls. It was a type check.
+            # `json.loads(dict)` raises TypeError; if the except substitutes
+            # {}, the tool runs with NO arguments. On a dependent multi-call
+            # chain the model emits `{"name": "gamma"}` correctly every time,
+            # the executor receives `{}` every time, and the model — being
+            # told nothing was found — reports that the tools failed. It reads
+            # as a model too weak to chain tool calls. It is a type check.
             #
-            # This surfaced when dispatch moved to /api/chat to make num_ctx
-            # take effect (the OpenAI-compatible endpoint silently discards
-            # `options`), which traded a working context for broken arguments.
+            # Dispatch uses /api/chat so num_ctx takes effect (the
+            # OpenAI-compatible endpoint silently discards `options`), which
+            # is why the object shape must be handled here.
             _raw = fn.get("arguments")
             if isinstance(_raw, dict):
                 targs = _raw

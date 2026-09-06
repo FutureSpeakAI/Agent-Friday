@@ -177,7 +177,7 @@ def test_sensitive_prompt_is_blocked_before_submission(monkeypatch):
 # kie.ai has no /models endpoint and no chat-completions shape, so
 # services/provider_health used to fall back to a generic GET {base_url}/models
 # for it — and got a 404 every time, reporting a perfectly good key as down.
-# Found live 2026-09-06 (Stephen: "the API key is not working correctly").
+# Found live 2026-09-06 (the maintainer: "the API key is not working correctly").
 # check_credentials() is the fix: GET /chat/credit, kie.ai's one free,
 # authoritative, keyed endpoint.
 

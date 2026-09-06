@@ -1,35 +1,30 @@
-"""What Friday's creative policy actually is — legible, and Stephen's to set.
+"""What Friday's creative policy actually is — legible, and the maintainer's to set.
 
-2026-08-16. In a test transcript Friday declined an image request by saying
-*"my underlying model has hard-coded safety filters that I can't override"* and
-*"the system blocks it at the generation level regardless of how it's framed."*
+There is no content filter in the Z-Image weights, none in ComfyUI, and no
+filter node in the graph (`docs/history/audits/z-image-content-filtering-2026-08-16.md`
+records the audit). The only gate anywhere in that path is Friday's own
+`creative_engine.check_content_safety`.
 
-Both were false. `docs/history/audits/z-image-content-filtering-2026-08-16.md` records
-the audit: there is no filter in the Z-Image weights, none in ComfyUI, and no
-filter node in the graph. The only gate anywhere in that path is Friday's own
-`creative_engine.check_content_safety`, and it did not fire on the prompt she
-refused.
-
-She was not reporting a constraint. She invented one rather than say "I won't" —
-the same fabrication as claiming to have opened a file she never opened, aimed
-at a boundary instead of an action. And the reason a 12B seat could invent one
-is that nothing legible told it what the policy WAS, so it improvised, turn by
-turn, and got it wrong in both directions: hedging over ordinary artistic work
-while confidently describing machinery that does not exist.
+A seat with nothing legible telling it what the policy IS will improvise one,
+turn by turn, and get it wrong in both directions: hedging over ordinary
+artistic work while confidently describing "hard-coded safety filters" that do
+not exist. An invented constraint is the same fabrication as claiming to have
+opened a file that was never opened, aimed at a boundary instead of an action.
 
 This module is the answer to "what is the policy?" — one place that reads it,
-renders it in plain language, and lets the owner set the parts that are his to
-set. It is deliberately NOT a new enforcement layer: `evaluate()` delegates to
-the existing gate, so with the shipped defaults behaviour is bit-for-bit what it
-was before this file existed.
+renders it in plain language, and lets the owner set the parts that are theirs
+to set. It is deliberately NOT a new enforcement layer: `evaluate()` delegates
+to the existing gate, so with the shipped defaults behaviour is bit-for-bit what
+it was before this file existed.
 
 **On the shape of the dial.** The adult harm floor is fixed and this module
 exposes no way to switch it off. What the owner can set is everything above it:
-minor mode, additional categories he wants blocked, and how a refusal is worded.
+minor mode, additional categories they want blocked, and how a refusal is worded.
 Every configurable direction here either tightens the policy or changes only the
-wording. Loosening is not a setting, by construction — where he wants the floor
-itself to be different, that is a deliberate edit to `_SAFETY_RULES` in his own
-repo, made on purpose, not a toggle that can be flipped by a model mid-turn.
+wording. Loosening is not a setting, by construction — where the owner wants the
+floor itself to be different, that is a deliberate edit to `_SAFETY_RULES` in
+their own repo, made on purpose, not a toggle that can be flipped by a model
+mid-turn.
 """
 from __future__ import annotations
 
@@ -145,14 +140,14 @@ def describe(settings: dict | None = None) -> str:
         "Image generation runs on-device (z-image-turbo-fp8 via ComfyUI). The "
         "model has no content filter of its own, ComfyUI applies none, and "
         "there is no filter node in the graph. Any limit is Friday's own "
-        "policy, set by Stephen, and lives in his configuration.",
+        "policy, set by your operator, and lives in their configuration.",
         "",
         "Always refused (the harm floor, not a per-request judgement call):",
     ]
     lines += ["  - " + c for c in HARM_FLOOR_CATEGORIES]
     extra = policy.get("additional_blocked_categories") or []
     if extra:
-        lines += ["", "Also refused, because Stephen configured it:"]
+        lines += ["", "Also refused, because your operator configured it:"]
         lines += ["  - %s" % (i.get("label") or "?")
                   for i in extra if isinstance(i, dict)]
     if policy.get("minor_mode"):

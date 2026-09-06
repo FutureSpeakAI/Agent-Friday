@@ -243,23 +243,21 @@ def provider_api_key(prov: dict | None) -> str | None:
     reload sets os.environ live -- restart, and the dead key from start.bat
     is back in front of it, with the panel still reporting "connected".
 
-    Stephen, 2026-08-26: "we need to fix the installer so the Friday that
-    ships to users can swap API keys from the settings menu". Swapping was
-    the half that did not survive, and a user cannot tell a key that never
+    Maintainer ruling: "we need to fix the installer so the Friday that
+    ships to users can swap API keys from the settings menu". Swapping is
+    the half that would not survive, and a user cannot tell a key that never
     worked from one that stopped.
 
     A key saved through the product is a deliberate, later instruction. An
     environment variable is ambient configuration. That is the same
     distinction `model_router._chosen_seat` draws between an explicit binding
     and an untouched factory default, and `seat_binding` draws between "a
-    value he changed" and "the factory value".
+    value the user changed" and "the factory value".
 
-    Safe to flip: with an empty store the two rules are identical, and the
-    store was unreachable for anthropic/google-gemini until the Providers tab
-    was wired on 2026-08-26 -- this machine's store held only atlascloud and
-    firecrawl. And nothing shadows silently in either direction now, because
-    /api/providers reports `key_source`: a start.bat rotation that does not
-    take is visible rather than baffling.
+    With an empty store the two rules are identical. Nothing shadows
+    silently in either direction, because /api/providers reports
+    `key_source`: a start.bat rotation that does not take is visible rather
+    than baffling.
     """
     p = prov or {}
     if (p.get("auth") or {}).get("type", "env_var") != "env_var":
@@ -335,9 +333,9 @@ def auth_headers(prov: dict | None, api_key: str | None = None) -> dict:
 # This table exists because the Providers panel used to ask for a key by
 # naming the environment variable it would be stored under — "needs
 # ANTHROPIC_API_KEY". That sentence is complete only if you already have the
-# key. Stephen installed Friday on a second user's laptop on 2026-08-26 and had to
-# open a code editor to put a Gemini key in, because nothing anywhere in the
-# product connected "Friday needs a key" to "here is where keys come from".
+# key. A new user should not have to open a code editor to put a Gemini key
+# in because nothing in the product connects "Friday needs a key" to "here
+# is where keys come from".
 #
 # Applied in `normalize_descriptor`, so it reaches built-ins, the JSON files
 # in ~/.friday/providers/, and anything typed into Add Provider alike. A

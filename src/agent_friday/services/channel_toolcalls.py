@@ -14,8 +14,8 @@ called the tool perfectly, `tool_calls` came back `None`, and the seat looked
 like a model too weak to use tools. That is the third time this codebase has
 mistaken a parsing failure for a model failure.
 
-**The format is not JSON and cannot be parsed as JSON.** Captured live,
-2026-08-15:
+**The format is not JSON and cannot be parsed as JSON.** A real emission
+from the model:
 
     <|tool_call>call:send_note{body:Meeting moved, bring the slides.,priority:2,to:Dana,urgent:true}<tool_call|>
 
@@ -199,8 +199,8 @@ def needs_thinking_disabled(model_id: str) -> bool:
 
     With thinking on, the model reasons inside `<|channel>thought`, concludes
     that it should now emit the call, closes the channel — and generation ends
-    there, because the closing token is end-of-generation. Measured: content
-    ending `6. **Format the output:** Generate the JSON representation of the
+    there, because the closing token is end-of-generation. Observed output:
+    content ending `6. **Format the output:** Generate the JSON representation of the
     tool call.<channel|>` and `tool_calls: None`.
     """
     m = (model_id or "").lower()

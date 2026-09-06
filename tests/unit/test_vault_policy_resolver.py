@@ -20,7 +20,7 @@ from agent_friday.privacy import vault_policy
 def test_absent_key_defaults_to_gated():
     """A thin model_routing block must resolve PROTECTIVE, not open.
 
-    Stephen's live block carried 2 of 15 keys. Every gate resolving from a
+    The maintainer's live block carried 2 of 15 keys. Every gate resolving from a
     default has to default to the safe side.
     """
     p = vault_policy.resolve({}, announce=False)
@@ -179,7 +179,7 @@ def test_vault_fallback_comes_from_the_resolver(monkeypatch):
 
 # ── the switch, proved in both directions ───────────────────────────────────
 #
-# Stephen's stated intent, 2026-09-01: "I want them going to the cloud if
+# The maintainer's stated intent, 2026-09-01: "I want them going to the cloud if
 # ungated. Ungated means cloud has full access." So the flag is a real switch
 # with two honest positions, and each one is asserted end to end here: what the
 # router does with a vault-touching question, AND what the prompt builder does
@@ -219,7 +219,7 @@ def test_ungated_sends_a_vault_question_to_the_cloud():
 def test_gated_withholds_vault_context_from_a_cloud_prompt():
     from agent_friday.privacy.vault_access import VaultAccessControl, Tier
     ac = VaultAccessControl(log_path=None)
-    secret = "Stephen's Chase checking balance is $12,345.67."
+    secret = "the maintainer's Chase checking balance is $12,345.67."
     assert ac.classify(secret) == Tier.SENSITIVE
     assert ac.gate_content(secret, "cloud", fallback="redact") == ""
     assert ac.gate_content(secret, "local", fallback="redact") == secret

@@ -338,11 +338,11 @@ def effective_baseline_mib(gpu: dict, os_family: str) -> int:
     engine's golden fixtures. `refresh_display_reserve()` does the sampling and
     writes the number in as data; this function only ever reads it.
 
-    Why the field exists at all: the boot-time idle measurement alone was the
-    defect that cost a monitor on 2026-08-17. A baseline sampled once, on an
+    Why the field exists at all: a boot-time idle measurement alone is the
+    defect that can cost a monitor. A baseline sampled once, on an
     idle desktop, cannot describe a compositor whose appetite moves with
     monitor count, resolution, and how much browser is open. On the reference
-    box the cached floor read 542 MiB while dwm actually held 2,778 MiB -- a
+    machine the cached floor read 542 MiB while dwm actually held 2,778 MiB -- a
     2.2 GB under-reservation, more than an entire brain seat. The arbiter duly
     planned seats into memory Windows needed to draw the screen.
 
@@ -369,8 +369,8 @@ def effective_baseline_mib(gpu: dict, os_family: str) -> int:
 
 
 #: The rejection log fires once per sampling cycle, and the arbiter samples
-#: every minute. On 2026-09-01 that produced 1,038 identical ERROR lines in one
-#: day -- the single largest source of noise in the log, drowning the egress
+#: every minute. Uncapped, that produces over a thousand identical ERROR lines
+#: in a day -- the single largest source of noise in the log, drowning the egress
 #: gate's TIER_3 redactions, which are the lines that actually matter. Rate-cap
 #: it: say it immediately, then at most once every _REJECTION_LOG_INTERVAL_S,
 #: and say how many were suppressed so the frequency is still recoverable.
@@ -444,7 +444,7 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
     #
     # `\GPU Process Memory(*)\Dedicated Usage` counts COMMITTED allocations, not
     # what is resident on the device, and WDDM lets a process commit far more
-    # than the GPU has. Measured on this box 2026-08-23: Chrome alone reported
+    # than the GPU has. Measured on the reference machine: Chrome alone reported
     # 25,808 MiB across four counter instances on a 12,282 MiB card, for a total
     # of 26,459 MiB. An earlier sample of 13,831 MiB had already been written
     # into the in-memory profile, which drove `gpu_budgets` to
@@ -491,7 +491,7 @@ def refresh_display_reserve(profile: dict, *, ours_resident_mib: int = 0) -> dic
             # Discarding the broken WDDM reading is right. Landing on the
             # cached idle floor and stopping there is not: the floor describes
             # an empty card, and the reason we are here is that something is
-            # holding the card. Measured 2026-09-01 -- the arbiter believed
+            # holding the card. Measured on the reference machine: the arbiter believed
             # 8,451 MiB were available while nvidia-smi reported 11,557 of
             # 12,282 MiB in use by a fine-tuning run. Every placement decision
             # after that point was arithmetic against memory that did not exist.
@@ -756,22 +756,21 @@ def summary(profile: dict | None = None) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Displays — VRAM the OS needs that nothing was counting
 #
-#  2026-08-17. Stephen's second monitor vanished from Windows while still
-#  showing a stale frame. The cause was an indirect (USB) display driver
-#  crashing — `TrgIdd.dll`, device `Trigger 6 External Graphics`, which went to
-#  status Error — and NOT an NVIDIA reset: zero TDR/4101 events in twelve hours.
+#  A second monitor can vanish from Windows while still showing a stale frame
+#  when an indirect (USB) display driver crashes -- on the reference machine
+#  `TrgIdd.dll`, device `Trigger 6 External Graphics`, went to status Error
+#  with NO NVIDIA reset (zero TDR/4101 events). The card was at 11,691 MiB
+#  used of 12,282 (322 MiB free) after a 9.6 GB model had just loaded, and an
+#  indirect display driver allocates GPU memory for its framebuffer.
+#  Contributing: likely. Proven: no.
 #
-#  But the card was at 11,691 MiB used of 12,282 (322 MiB free) after the
-#  heartbeat loaded a 9.6 GB model four minutes earlier, and an indirect display
-#  driver allocates GPU memory for its framebuffer. Contributing: likely.
-#  Proven: no.
-#
-#  What IS proven is the budgeting gap it exposed. `refresh_baseline` measures
-#  `memory.used` ONCE at Arbiter boot and freezes it as the idle floor — it read
-#  542 MiB on this machine, against a documented Windows compositor cost of
-#  ~1 GB. Nothing counts monitors, nothing counts resolution, nothing notices an
-#  indirect adapter, and nothing re-measures when the display setup changes. So
-#  the arbiter can plan the card full while the desktop still needs room.
+#  What IS proven is the budgeting gap. `refresh_baseline` measures
+#  `memory.used` ONCE at Arbiter boot and freezes it as the idle floor — it
+#  reads 542 MiB on the reference machine, against a documented Windows
+#  compositor cost of ~1 GB. Without this section nothing counts monitors,
+#  nothing counts resolution, nothing notices an indirect adapter, and nothing
+#  re-measures when the display setup changes. So the arbiter can plan the
+#  card full while the desktop still needs room.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Per-monitor framebuffer cost, generously rounded. A 4K surface at 32bpp is

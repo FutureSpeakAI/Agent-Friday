@@ -1,6 +1,6 @@
 ﻿"""The seven working roles, and the arithmetic that lets them share models.
 
-Stephen, 2026-08-18: seven roles -- memory manager, function manager,
+The maintainer, 2026-08-18: seven roles -- memory manager, function manager,
 embeddings manager, orchestrator, sidekick, researcher, heavy hitter -- with
 one model allowed to hold several, and a warning BEFORE a selection overflows
 the card rather than a refusal after it.

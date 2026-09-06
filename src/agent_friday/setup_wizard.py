@@ -252,16 +252,17 @@ def _routing_block_for(provider_id: str, existing: dict,
     on their own machine.
 
     That stayed invisible while routes/chat.py silently rescued keyless
-    turns onto Ollama. Scoping that rescue out of cloud_only (the second user chose
-    cloud only on 2026-08-26 and was answered locally anyway) makes this
+    turns onto Ollama. Scoping that rescue out of cloud_only (a user who
+    chooses cloud only must not be answered locally anyway) makes this
     gap load-bearing in the other direction: without this, someone who
     picked a local model and gave no cloud key would be told to add one.
 
     An answer already on disk is left alone unless the provider changed in
     THIS run. Setup is not the only place mode can be set -- Settings ->
     Intelligence writes it too -- and recomputing a value the user has
-    already chosen, on every run, is the shape of the seat-binding defect
-    of 2026-08-24. Changing the provider answer, though, IS an instruction.
+    already chosen, on every run, is the shape of a seat-binding defect
+    (a stale value re-stamping the user's pick). Changing the provider
+    answer, though, IS an instruction.
     """
     base = _default_routing()
     if base is None:
@@ -1041,7 +1042,7 @@ def _vault_lost_passphrase(total: int, already_explained: bool = False,
                           step: int = 2) -> str:
     """A vault exists and its passphrase is gone. Stop and explain.
 
-    Stephen, 2026-08-29: "if it exists and the passphrase is not recoverable,
+    Maintainer ruling: "if it exists and the passphrase is not recoverable,
     that is a situation to stop and explain, not to paper over by generating a
     new one." Generating one here is precisely what destroys the data, because
     the ciphertext stays and only the key changes.
@@ -1316,10 +1317,10 @@ def step_connectors(total: int, existing: dict) -> dict:
     created no account. The key it wrote is read by nothing. On the next run
     it drew a green dot beside a service that had never been connected.
 
-    Stephen, installing Friday on a second user's laptop 2026-08-26: "The connect
-    services portion of the installer, once the gui comes up, should be
-    interactive. I could not click to connect my accounts and would like to."
-    He could not -- and the step implied he had.
+    Maintainer ruling: "The connect services portion of the installer, once
+    the gui comes up, should be interactive. I could not click to connect my
+    accounts and would like to." The user could not -- and the step implied
+    they had.
 
     Actually clicking to connect is gated on Friday shipping its own Google
     OAuth client (docs/design/active/google-oauth-onboarding.md). Until that is

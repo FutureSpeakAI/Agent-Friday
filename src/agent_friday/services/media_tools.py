@@ -1,8 +1,8 @@
 """Self-QC and asset-handling tools for Friday's agent seat.
 
-Born from the storybook E2E test (2026-08-19), where the seat had to say
-"I can't view pixels this session" every turn while an external agent did the
-looking. Three tools close that loop:
+Without these, the seat cannot inspect its own output ("I can't view pixels")
+and an external agent has to do the looking during a multi-step creative
+pipeline. Three tools close that loop:
 
   inspect_image — describe / QC a local image (Gemini flash vision, the same
                   provider+model the chat screenshot path already uses).

@@ -3,19 +3,15 @@ Agent Friday — Scoped Subagent Delegation
 Inspired by patterns in Goose (Apache-2.0). All code is original.
 
 Tracks scoped tasks (spawn_scoped_task/get_scoped_task/list_scoped_tasks,
-genuinely used by routes/ext_security.py). CORRECTION (gauntlet-2026-09-03
-F56): "restricted tool sets for parallel safe execution" overclaimed --
+genuinely used by routes/ext_security.py). Note the scope of the claim:
 ScopedTask.is_tool_allowed()/check_tool_permission() are this module's own
 enforcement primitives, and neither is called anywhere outside this file.
 The REAL governance gate on the tool-execution path (agent.py's Ring
 dispatch) enforces scope via a separate module, services/subagents.py's
-scope_check(), confirmed wired in there. This module tracks and lists
-scoped tasks; it does not itself restrict what tool a task can call.
-Whether to also wire this module's own check into the real dispatch path
-(defense in depth, since two independently-implemented enforcement points
-existing is itself worth a second look) was not decided here -- that
-touches a live security boundary and deserves more than a docstring-sweep
-pass.
+scope_check(). This module tracks and lists scoped tasks; it does not
+itself restrict what tool a task can call. Whether to also wire this
+module's own check into the real dispatch path (defense in depth) is an
+open decision that touches a live security boundary.
 """
 import threading, uuid, time
 from datetime import datetime, timezone
@@ -100,14 +96,11 @@ def list_scoped_tasks(include_completed: bool = False) -> list:
 def cleanup_old_tasks(max_age_hours: int = 24):
     """Remove completed tasks older than max_age_hours.
 
-    Fixed (gauntlet-2026-09-03 F56): `cutoff` was computed but never
-    compared against anything, and the removal loop was a bare `pass`
-    ("Actually keep them for now") -- this never removed a single task,
-    regardless of age, since the function was written. `completed_at` is
-    a naive UTC ISO-format string (datetime.utcnow().isoformat()), not a
-    float timestamp -- parsed and explicitly marked UTC before comparing
-    against `cutoff` (time.time()), so this doesn't silently drift by the
-    local UTC offset on a naive .timestamp() call.
+    `completed_at` is a naive UTC ISO-format string
+    (datetime.utcnow().isoformat()), not a float timestamp -- it is parsed
+    and explicitly marked UTC before comparing against `cutoff`
+    (time.time()), so this does not silently drift by the local UTC offset
+    on a naive .timestamp() call.
     """
     cutoff = time.time() - (max_age_hours * 3600)
     with _SCOPED_LOCK:

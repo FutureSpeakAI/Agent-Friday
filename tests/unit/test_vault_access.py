@@ -229,7 +229,7 @@ class TestContextSectionFallbacks:
         src = self._router_source()
         assert "classify(wiki_text, _T2)" in src, (
             "the WIKI/BRIEFING DATA section must classify with a PRIVATE "
-            "fallback; with _T1 a classifier miss sends Stephen's personal "
+            "fallback; with _T1 a classifier miss sends the maintainer's personal "
             "wiki to the cloud in full"
         )
         assert "classify(wiki_text, _T1)" not in src

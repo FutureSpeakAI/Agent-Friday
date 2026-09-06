@@ -125,7 +125,7 @@ def test_post_processors_are_never_generation_picks(mid, name, otype):
 
 
 def test_audio_splits_music_from_speech():
-    """Stephen's premise was 'music aplenty'. Measured: exactly one music
+    """The maintainer's premise was 'music aplenty'. Measured: exactly one music
     model; the rest are speech. They must not share a bucket."""
     from agent_friday.services.provider_registry import ROLE_VOICE
     out = hc.normalize([

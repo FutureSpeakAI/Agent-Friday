@@ -7,18 +7,13 @@ Live via routes/platform.py's /api/prompts/segments + /api/prompts/preview, a
 debug/preview tool that lets a caller post arbitrary segments and see how
 PromptManager.build() would assemble/truncate them.
 
-CORRECTION (gauntlet-2026-09-03 F59): the real per-request system prompt
-(services/model_router.py's _get_friday_system_prompt(), called on every
-Claude request) does not use this module at all -- it never got wired in.
-This module's PromptManager/SEGMENT_KEYS are exercised only via the preview
-route above. A create_default_manager() convenience constructor used to sit
-here claiming to return "a PromptManager with standard Friday segments
-pre-registered" and that "segments get populated by the chat pipeline at
-request time" -- neither was true: it had zero callers anywhere, and even
-its own body never called .set() for any segment, so calling it would not
-have done what its docstring promised even once wired up. Removed rather
-than guessed at, since inventing which segments belong and in what order
-is a real design decision, not a docstring fix.
+Scope: the real per-request system prompt (services/model_router.py's
+_get_friday_system_prompt(), called on every Claude request) does not use
+this module; it is not wired into the chat pipeline. PromptManager and
+SEGMENT_KEYS are exercised only via the preview route above. There is
+deliberately no "default manager" constructor: which segments belong and in
+what order is a design decision that has not been made, not something to
+guess at here.
 """
 
 class PromptSegment:

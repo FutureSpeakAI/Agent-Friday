@@ -1,4 +1,4 @@
-"""Unit tests for `model_routing.unrestricted_cloud` — Stephen's explicit
+"""Unit tests for `model_routing.unrestricted_cloud` — the maintainer's explicit
 instruction, 2026-09-03: "cloud only mode means no privacy safeguards,
 Friday operates completely with cloud models and no local inference. this
 mode must be in the app. when active, no feature or data is held back from
@@ -112,7 +112,7 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
     unrestricted mode, reasoning that selecting cloud-only IS the
     acceptance a separate flag existed to double-check.
 
-    Reversed again, same day, on Stephen's explicit ruling: that reasoning
+    Reversed again, same day, on the maintainer's explicit ruling: that reasoning
     does not survive contact with the fact that `cloud_only` is this app's
     FACTORY DEFAULT (`core.DEFAULT_SETTINGS["model_routing"]["mode"]`) --
     nobody "selects" a value they never touched. The intervening version
@@ -130,7 +130,7 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
     The live reproduction this whole investigation started from -- a
     resume's TIER_2 sections coming back gated while cloud-only was active
     and no local seat existed -- is still fixed, just through the correct
-    door: Stephen's account, once it explicitly records
+    door: the maintainer's account, once it explicitly records
     `cloud_consent={"answered": True, "choice": "cloud_unrestricted"}`, is
     unrestricted. An install that has never answered is not, no matter what
     `mode` says.
@@ -147,7 +147,7 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
         """The exact live reproduction, fixed through the recorded-consent
         door: a resume's contact/experience sections, classified TIER_2,
         pass through unchanged once cloud-only mode is paired with an
-        explicit, answered `cloud_consent` -- matching what Stephen's
+        explicit, answered `cloud_consent` -- matching what the maintainer's
         account looks like once he has actually answered the prompt, not
         what an untouched factory default looks like."""
         from agent_friday import core as _core
@@ -197,7 +197,7 @@ class TestCloudOnlyAloneStaysGatedUntilAnsweredExplicitly:
 
 class TestLocalOnlyAndSmartModesAreUnaffected:
     """The reversal above widens the condition only for the mode value
-    Stephen has to have picked on purpose. These pin the other three values
+    the maintainer has to have picked on purpose. These pin the other three values
     of the exact same `model_routing.mode` setting to their unchanged,
     still-gated behavior -- the "no regression" half of the fix."""
 
@@ -223,7 +223,7 @@ class TestLocalOnlyAndSmartModesAreUnaffected:
 class TestRedactPlaceholderNamesARealRemedyOrSaysSoHonestly:
     """Second-order bug, same report: the placeholder always claimed
     "can be read on a local seat" even with zero local models installed
-    (Stephen had just deleted functiongemma:270m and embeddinggemma:300m).
+    (the maintainer had just deleted functiongemma:270m and embeddinggemma:300m).
     A privacy block naming a remedy that does not exist is indistinguishable
     from an outage -- fix is to check, and say plainly when there is none."""
 

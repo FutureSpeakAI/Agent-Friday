@@ -5,7 +5,7 @@ accumulated 3,858 such directories since June (up to 781MB each), which
 drove the real C: drive to 0 bytes free and crashed the live Friday app
 with a stack overflow (2026-09-03 08:13).
 
-Stephen's own re-check of the first fix (test_conftest_temp_home_cleanup.py)
+The maintainer's own re-check of the first fix (test_conftest_temp_home_cleanup.py)
 found the leak WAS STILL HAPPENING in real runs -- ~60GB/hour, refilling the
 drive toward another crash within about two hours of the verifier's cleanup
 -- despite that probe reporting green. The reason: that probe calls
@@ -19,7 +19,7 @@ sqlite connection, a thread that hasn't finished closing a handle before
 pytest's sessionfinish hook fires. A single-shot rmtree with no retry hits
 this often enough in real (non-trivial) test runs to leak steadily.
 
-This probe is the proof Stephen specifically asked for: "a run that leaves
+This probe is the proof the maintainer specifically asked for: "a run that leaves
 nothing behind, verified by counting the directories before and after
 rather than by reading the fixture." It spawns a REAL pytest subprocess
 against a real, moderately heavy test file (one that actually opens

@@ -110,7 +110,7 @@ def test_license_at_creation_threads_into_manifest():
     """A license passed to provenance.write lands in the signed manifest."""
     p = _write_creation("prov-license-create.png", b"LICDATA")
     m = pv.write(p, media_type="image",
-                 license={"terms": "CC-BY-4.0", "attribution": "Stephen"})
+                 license={"terms": "CC-BY-4.0", "attribution": "the maintainer"})
     assert m["license"]["terms"] == "CC-BY-4.0"
     assert m["license"]["market"]["mode"] == "free"
     # priced license carries the price through to the manifest market block

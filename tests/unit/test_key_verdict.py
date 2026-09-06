@@ -1,6 +1,6 @@
 """"Friday isn't working" must become "this key was rejected".
 
-Stephen, 2026-08-26: a settings-side equivalent of Test-AnthropicKey "would
+The maintainer, 2026-08-26: a settings-side equivalent of Test-AnthropicKey "would
 turn 'Friday isn't working' into 'this key was rejected', which is the
 difference between a user who fixes it and a user who gives up."
 

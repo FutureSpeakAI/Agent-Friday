@@ -79,7 +79,7 @@ class TestMcpEnvLeakToSubprocess:
         # allowlist"). That was the defect, not a property to protect: a
         # denylist has to name every secret that will ever exist, and 6 more
         # real provider keys were found missing from it after this test was
-        # written. Stephen's ruling inverted the design -- a sandboxed
+        # written. The maintainer's ruling inverted the design -- a sandboxed
         # subprocess environment is now BUILT FROM an allowlist of names
         # subprocesses functionally need, so an arbitrary unrelated variable
         # (which is exactly what an unnamed-and-therefore-never-blocklisted
@@ -160,14 +160,14 @@ class TestMcpEnvLeakToSubprocess:
 
 
 class TestF67AllowlistInversion:
-    """F67 (2026-09-04): Stephen's direct ruling on a defect that recurred
+    """F67 (2026-09-04): the maintainer's direct ruling on a defect that recurred
     three times under a denylist design (F32 built it, F44 mis-fixed it,
     an external review found 6 more real provider keys missing from it) --
     invert to an allowlist, so a name nobody has thought to add yet cannot
     leak by omission the way a name nobody thought to BLOCK could."""
 
     def test_a_provider_on_no_list_at_all_does_not_arrive(self, monkeypatch):
-        """The exact proof Stephen asked for: plant a fake key for a
+        """The exact proof the maintainer asked for: plant a fake key for a
         provider that appears on NEITHER the old ENV_BLOCKLIST (which no
         longer exists) NOR any list anywhere in this codebase -- a
         hypothetical 8th, 9th, 10th provider nobody has added yet -- spawn

@@ -326,7 +326,7 @@ def set_vault_passphrase():
 def reencrypt_stale_provider_keys():
     """Maintenance path for a vault passphrase that changed under a running
     process (see credential_store.reencrypt_stale_provider_keys — most often
-    a rehearsal run overwriting the shared OS keychain entry, 2026-08-30).
+    a rehearsal run overwriting the shared OS keychain entry).
 
     Re-encrypts every stored provider key THIS process can still decrypt
     under whatever a fresh process derives right now, so it survives this

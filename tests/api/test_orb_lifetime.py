@@ -1,6 +1,6 @@
 """Green orbs leave after 30 seconds. Failed ones do not leave on a timer.
 
-Stephen: "Green ('done') process orbs need to vanish from the holographic
+The maintainer: "Green ('done') process orbs need to vanish from the holographic
 desktop after 30 seconds. I do not want them hanging around in orbit around
 Friday's avatar for longer than that."
 
@@ -99,7 +99,7 @@ def test_a_failure_does_not_vanish_on_the_success_timer(client, status):
 
 
 def test_a_very_old_failure_stops_orbiting_but_is_still_reported(client):
-    """2026-08-16, Stephen: "The error orbs won't go away."
+    """2026-08-16, the maintainer: "The error orbs won't go away."
 
     The previous round made failures persist until dismissed and then shipped
     nothing that could dismiss one, so persistent became permanent and they

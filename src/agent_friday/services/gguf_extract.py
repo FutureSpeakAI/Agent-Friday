@@ -5,17 +5,17 @@ This is what lets the Arbiter own the runtime. Rule R9 says a pinned seat is
 not delegated to a backend scheduler that evicts on its own criteria — but
 until now it had to be, because `llama-server` could not be pointed at an
 Ollama model and the seats fell back to the "degraded pin" path where the
-daemon decides. Measured consequence, 2026-08-15: the brain loaded, the
-sidekick loaded, and Ollama then evicted the brain, so the seat the plan called
-pinned was not resident and every first message of a session paid a ~13 s cold
-load.
+daemon decides. Measured consequence on the reference machine: the brain
+loaded, the sidekick loaded, and Ollama then evicted the brain, so the seat
+the plan called pinned was not resident and every first message of a session
+paid a ~13 s cold load.
 
-The earlier attempt failed with:
+A naive attempt fails with:
 
     wrong number of tensors; expected 2012, got 601
 
-which was read as "Ollama stores models across several blobs and llama.cpp
-cannot reassemble them". That was wrong. The manifest says so plainly — each
+which reads as "Ollama stores models across several blobs and llama.cpp
+cannot reassemble them". That is wrong. The manifest says so plainly — each
 model has exactly ONE layer of mediaType `application/vnd.ollama.image.model`,
 and it is a complete GGUF:
 
@@ -23,9 +23,8 @@ and it is a complete GGUF:
     gemma4:e2b   model 6830.6 MB                        license   params
     gemma4:e4b   model 9163.2 MB                        license   params
 
-My second guess was wrong too, and is worth recording because it was
-plausible: I assumed the 601-tensor file had been the 167 MB projector picked
-by mistake. Reading the GGUF headers settled it —
+The second plausible misreading — that the 601-tensor file is the 167 MB
+projector picked by mistake — is wrong too. The GGUF headers settle it —
 
     gemma4-12b   arch=gemma4   667 tensors   chat template: EMBEDDED
     gemma4-e2b   arch=gemma4  2012 tensors   chat template: NONE
@@ -35,7 +34,8 @@ The e2b file declares 2012 tensors, exactly the number llama.cpp expected. It
 got 601 because **upstream's gemma4 reader recognises only 601 of the names in
 it** — a genuine support gap for this variant, not a broken or mistaken file.
 Ollama's own engine binary loads the identical extracted file and generates
-from it, verified 2026-08-15 ("ready." in 0.90 s). So the file is portable; the
+from it (verified on the reference machine: "ready." in 0.90 s). So the file
+is portable; the
 upstream *reader* is not. `residency_arbiter.LlamaServerBackend` tries upstream
 first and falls back to Ollama's engine — as a process the Arbiter owns.
 
@@ -292,7 +292,7 @@ def projector_path(model_id: str) -> Path:
     MEDIA_PROJECTOR above, which even reports it in the result as `projector`
     -- but nothing ever read it back. `gemma4-12b.mmproj.gguf`, 160 MB, sat
     beside the weights while the seat serving those weights answered
-    "image input is not supported" to every picture (measured 2026-08-23).
+    "image input is not supported" to every picture.
 
     Existence is the caller's business: a text-only model has no projector and
     that is not an error.
@@ -303,7 +303,7 @@ def projector_path(model_id: str) -> Path:
 def ensure_chat_template(model_id: str, family_source: str | None = None) -> dict:
     """Make sure this seat has a chat template, borrowing one if it has none.
 
-    Measured 2026-08-15 on the extracted files:
+    Measured on the extracted files (reference machine):
 
         gemma4-12b   arch=gemma4  667 tensors   template: EMBEDDED (with the
                                                 tool-calling macros)

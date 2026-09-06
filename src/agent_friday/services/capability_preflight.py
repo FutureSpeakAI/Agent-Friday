@@ -2,16 +2,16 @@
 
 WHY THIS EXISTS
 ---------------
-Twice in two days a capability Friday tells the user she has turned out to rest
-on a library nobody installed:
+A capability Friday tells the user she has can rest on a library nobody
+installed. Two representative shapes:
 
-  * 2026-08-24 — the sensitivity classifier's docstring described four layers.
-    Layer 2 (Presidio) had never been listed in ``requirements.txt``, so it had
-    never run in any environment. The code was real; the packaging was not.
-  * 2026-08-25 — an uploaded PDF came back "PDF received (223KB). Install
-    pdfplumber for full analysis". ``pdfplumber`` appeared in no requirements
-    file and in no PyInstaller hidden-import list. The PDF branch of
-    ``/api/analyze-file`` had therefore never worked on this machine.
+  * a classifier layer (Presidio) described in a docstring but never listed in
+    ``requirements.txt``, so it never ran in any environment. The code was
+    real; the packaging was not.
+  * a PDF upload answered with "Install pdfplumber for full analysis" because
+    ``pdfplumber`` appeared in no requirements file and no PyInstaller
+    hidden-import list, so the PDF branch of ``/api/analyze-file`` never
+    worked on a stock install.
 
 Both are the same defect, and it is the same defect as a tool named in the
 system prompt that the model's actual surface does not contain: **something
@@ -27,12 +27,10 @@ A capability whose dependency is missing must be *absent*, not
     model can announce it.
   * ``report()`` logs the gap at startup (called from ``agent.py``'s tool
     registration, ~line 4867); ``status()`` is what ``/api/health/capabilities``
-    actually serves (routes/core_routes.py). Two functions, not one -- corrected
-    here (gauntlet-2026-09-03 F63) after the claim-extraction sweep found this
-    paragraph crediting both behaviors to ``report()`` alone. Both are real and
-    both exist; only the attribution was wrong. Either way, the gap is loud
-    rather than discovered by a user watching a file fail to appear on their
-    desktop.
+    actually serves (routes/core_routes.py). Two functions, not one: the
+    startup log and the health endpoint are separate consumers of the same
+    table. Either way, the gap is loud rather than discovered by a user
+    watching a file fail to appear on their desktop.
 
 WHAT BELONGS HERE
 -----------------

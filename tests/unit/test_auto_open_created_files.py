@@ -1,4 +1,4 @@
-"""Stephen, 2026-09-06: "always open files you create for me upon
+"""The maintainer, 2026-09-06: "always open files you create for me upon
 completing them." `_maybe_auto_open` (services/agent.py) is the one shared
 call site both file-creating paths use: `_tool_write_file` (a fresh write,
 never an append) and `services/creations._notify_creation` (every creative

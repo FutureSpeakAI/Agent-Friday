@@ -16,7 +16,7 @@ classify_task() classifies EVERY ordinary interactive message as
 TOOL_USE -- this is not an edge case, it is the default shape of a
 normal conversation.
 
-RESOLVED 2026-09-04, Stephen directly: "ordinary chat does need to
+RESOLVED 2026-09-04, the maintainer directly: "ordinary chat does need to
 respect local only in addition to Smart routing and cloud mode, but
 local only also needs a model, obviously... The August comment is
 superseded. All three modes are honoured for ordinary chat." So this fix
@@ -27,7 +27,7 @@ fallback for those two (unlike local_only, whose own absolute promise
 leaves no fallback: no local model means refuse-then-offer, see below,
 not a silent cloud answer).
 
-Also per Stephen's ruling, local_only's own failure mode when no local
+Also per the maintainer's ruling, local_only's own failure mode when no local
 model is available is NOT a bare refusal: "the system should fail to
 function and produce an error, then it should ask the user if it can go
 into cloud only mode." Fail closed, surface the error, then offer an
@@ -162,7 +162,7 @@ class TestLocalOnlyRoutesOrdinaryInteractiveChatLocally:
 
     def test_local_preferred_and_smart_also_prefer_local_for_ordinary_chat(
             self, monkeypatch):
-        """Stephen, 2026-09-04: 'ordinary chat does need to respect local
+        """The maintainer, 2026-09-04: 'ordinary chat does need to respect local
         only in addition to Smart routing and cloud mode' -- the August
         2026-08-16 comment scoping local-preference to background/
         scheduled work only is superseded for these two modes as well,
@@ -176,7 +176,7 @@ class TestLocalOnlyRoutesOrdinaryInteractiveChatLocally:
                              task_context={"has_tools": True})
             assert result["provider"] == "local", (
                 f"mode={mode} sent an ordinary interactive turn to the "
-                "cloud despite Stephen's ruling that local_preferred/smart "
+                "cloud despite the maintainer's ruling that local_preferred/smart "
                 "now also prefer local for ordinary chat, not just "
                 "background/scheduled work"
             )

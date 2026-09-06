@@ -1,11 +1,11 @@
 """Seat-gate API — a DIAGNOSTIC surface. Nothing here gates anything.
 
-As of 2026-08-15 the seat gate is removed: any installed model binds to any
+The seat gate is removed: any installed model binds to any
 seat and actually serves. What remains is the ability to RUN the structural
 tool-call check on demand and look at the result — useful when a model is
 misbehaving, never a precondition for using it.
 
-The honesty battery is gone entirely (Stephen's decision). `_run_both_axes`
+The honesty battery is gone entirely (maintainer decision). `_run_both_axes`
 keeps its name only because callers reference it; it runs one axis now.
 """
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _statuses_payload():
             models.add(lm)
     except Exception:
         pass
-    # 2026-08-14: models served by OpenAI-compatible LOCAL descriptors (the
+    # Models served by OpenAI-compatible LOCAL descriptors (the
     # llama.cpp brain) are local seats too — they must show gate chips and
     # be gateable under their own id, or the alias never earns green.
     try:
@@ -99,10 +99,10 @@ def _run_both_axes(model: str, ollama_url: str):
 
     try:
         from agent_friday.services.model_seat_gate import run_conformance_gate
-        # Gate runs are SERIALIZED across models. Concurrent gating is what
-        # broke the 2026-08-15 run: each model evicted the others from VRAM,
-        # every case paid a cold reload, and 9 of 10 cases for gemma4:12b timed
-        # out — recording 1/10 for a model that was never actually tested.
+        # Gate runs are SERIALIZED across models. Under concurrent gating
+        # each model evicts the others from VRAM, every case pays a cold
+        # reload, and cases time out — recording a failing score for a model
+        # that was never actually tested.
         with _GATE_SERIAL_LOCK:
             _log(f"acquired the gate lane for {model}")
             try:

@@ -58,7 +58,7 @@ Reuse contract (V6 §2 substrate table — harvest, don't rebuild)
   * services/orchestrator.py  — studied; not used as the default executor
                                (its worker adapters are Ollama/script/http,
                                not the rich multi-tool agent loop a goal
-                               doing "recurring autonomous work on Stephen's
+                               doing "recurring autonomous work on the user's
                                real projects" needs) but the SAME reuse
                                instinct (a swappable executor, see
                                set_executor) lets a caller wire a milestone

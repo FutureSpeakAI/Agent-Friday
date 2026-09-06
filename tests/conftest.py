@@ -179,7 +179,7 @@ def pytest_sessionfinish(session, exitstatus):
     """Best-effort: try to remove this run's temp home on a normal exit.
 
     CORRECTION (gauntlet-2026-09-03 F65, root-caused; now actually closed
-    rather than just documented -- Stephen's ruling 2026-09-04 that a
+    rather than just documented -- the maintainer's ruling 2026-09-04 that a
     residual which grew from 268MB to 3.3GB since F71 needed a real fix,
     not a bigger bound): `_sweep_stale_test_homes()`'s corrected docstring
     above still applies to a CRASHED run (this function never gets to run

@@ -2,29 +2,27 @@
 
 Why this exists
 ---------------
-Until 2026-08-23 Friday had exactly one way to look at a picture: send it to
-`gemini-2.5-flash` and paste the returned sentence into the prompt as
-`vision_description`. That path ran on ANY attached image, before
-`model_routing` was read, so a user on **Local only** — a mode whose help text
-promises *"Never leaves the machine"* — had a screenshot of their desktop sent
-to Google. A screenshot is not a bounded payload; it contains whatever was on
-screen.
+The cloud vision path sends an attached image to `gemini-2.5-flash` and pastes
+the returned sentence into the prompt as `vision_description`. If that path ran
+on ANY attached image, before `model_routing` was read, a user on **Local
+only** — a mode whose help text promises *"Never leaves the machine"* — would
+have a screenshot of their desktop sent to Google. A screenshot is not a
+bounded payload; it contains whatever was on screen.
 
-The capability to avoid that now exists locally. `residency_arbiter._spawn`
+The capability to avoid that exists locally. `residency_arbiter._spawn`
 passes `--mmproj` when the extracted projector is beside the weights, so a seat
 running `gemma4:12b` answers image questions itself. Verified end to end rather
 than by reading the command line: two images, two colours, correct both times.
 
 What this is not
 ----------------
-The cost is much lower than the first measurement suggested, and the first
-measurement is why this paragraph is specific. A throwaway CPU-only server
-(`-ngl 0`) took ~30 s, which read as "local vision is a slow fallback". The
-REAL seat runs at `-ngl 99` on the card, and measured through this module on
-2026-08-23 it described a 128x128 image in **7.2 s**. End to end through
-`/api/chat` in local_only the whole turn took 25.7 s against 17.1 s for the
-same turn on Gemini — a difference of about eight seconds, not the order of
-magnitude the CPU number implied.
+The cost is much lower than a CPU-only measurement suggests. A throwaway
+CPU-only server (`-ngl 0`) takes ~30 s, which reads as "local vision is a slow
+fallback". The REAL seat runs at `-ngl 99` on the card, and measured through
+this module on the reference machine it described a 128x128 image in
+**7.2 s**. End to end through `/api/chat` in local_only the whole turn took
+25.7 s against 17.1 s for the same turn on Gemini — a difference of about eight
+seconds, not the order of magnitude the CPU number implied.
 
 So this is not a degraded fallback. The choice still lives in the caller
 (`routes/chat.py`) rather than here, because it is a privacy decision before it
@@ -53,16 +51,16 @@ DEFAULT_PROMPT = ("Briefly describe what is visible in this image. Focus on "
                   "sentences).")
 
 # gemma4 declares `thinking`, and a small budget is consumed ENTIRELY by the
-# reasoning trace: measured 2026-08-23, max_tokens=24 returned an empty string
+# reasoning trace: measured on the reference machine, max_tokens=24 returned an empty string
 # with finish_reason "length" while the projector was loaded and working
 # perfectly. An empty reply from a thinking model is a budget symptom that looks
 # exactly like a broken capability -- ollama_manager.probe_generate documents
 # the same effect for num_predict=10.
 #
-# 400 was the first fix and it was not enough, which is the more useful lesson.
-# It held for a terse prompt on a 140x140 image and failed the next morning on
-# a 160x160 one through the upload path: same model, same projector, same code,
-# empty reply, finish_reason=length. The trace length varies with the image and
+# A budget of 400 is not enough either: it holds for a terse prompt on a
+# 140x140 image and fails on a 160x160 one through the upload path — same
+# model, same projector, same code, empty reply, finish_reason=length. The
+# trace length varies with the image and
 # the prompt, so a budget that merely clears the trace SOMETIMES produces an
 # intermittent blindness that reads as a broken seat -- worse than a consistent
 # failure, because it teaches the user the feature is unreliable rather than

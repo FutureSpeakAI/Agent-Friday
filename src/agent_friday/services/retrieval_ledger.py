@@ -2,12 +2,11 @@
 
 The gap this closes, from the spec's §1.4: vault access-log rows **stop
 entirely** when prompt gating is off. In today's posture
-(`vault_local_only: false`, Stephen's deliberate choice, `e1f1874`) an
+(`vault_local_only: false`, the maintainer's deliberate choice) an
 ungated cloud prompt produces no record of what vault material it carried —
-the 4,486-character TIER_2 measurement (`vault_policy.py:15-18`) had to be
-taken by hand, once, during the 2026-09-01 split-brain investigation. The
-egress log records what the *gate* did; nothing recorded what *assembly*
-put on the table. This does.
+the 4,486-character TIER_2 measurement (`vault_policy.py:15-18`) can only
+be taken by hand. The egress log records what the *gate* did; nothing
+records what *assembly* put on the table. This does.
 
 Interpretation, per the spec's own note at §20: this is the ASSEMBLY-side
 record — one row per named, tier-tagged section that

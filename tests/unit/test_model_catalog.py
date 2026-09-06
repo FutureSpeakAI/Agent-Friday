@@ -190,7 +190,7 @@ def test_a_stopped_ollama_daemon_names_no_models(monkeypatch):
     """A daemon that is not running has no models, and saying otherwise is
     invention — this test used to assert the opposite.
 
-    2026-08-16, Stephen: "listing Gemma4 as a cloud model, and as an Ollama
+    2026-08-16, the maintainer: "listing Gemma4 as a cloud model, and as an Ollama
     model (it is neither)." The Ollama entry came from this static fallback,
     surviving on a daemon that has been retired; the cloud badge came from the
     UI testing a `classification` field the API never sent. The provider row

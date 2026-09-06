@@ -108,10 +108,10 @@ DEFAULT_VIDEO_MODEL = "veo"
 log = _logging.getLogger("friday.creative_engine")
 
 # ── Cost metering for Veo (flat per-second, NOT token-based) ────────────────
-# docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a: this file's Gemini
-# image/video/Omni calls had ZERO cost_meter references. Veo bills a flat
-# USD-per-second rate (not tokens), so it does not fit cost_meter.PRICING's
-# per-1K-token shape — recorded via cost_meter.record(cost_usd=...) instead.
+# Every Gemini image/video/Omni call in this file must reach cost_meter. Veo
+# bills a flat USD-per-second rate (not tokens), so it does not fit
+# cost_meter.PRICING's per-1K-token shape — recorded via
+# cost_meter.record(cost_usd=...) instead.
 # Rates below are Google's published per-second rate WITHOUT native audio and
 # WITHOUT the 4K surcharge (checked against public pricing aggregator pages
 # 2026-09-04, not ai.google.dev directly) -- best-effort, moderate confidence,
@@ -399,9 +399,8 @@ def _timestamp() -> str:
     filename built from it classified TIER_3. The consequence was invisible
     and expensive: a video would render fine, and the tool result naming it
     was then withheld from the model as sensitive, so Friday could not see
-    her own success and told the user the render had been blocked. Verified
-    2026-08-19 — it is why the creations record showed working Veo videos
-    that Friday described as untested.
+    her own success and told the user the render had been blocked — working
+    Veo videos in the creations record that Friday described as untested.
 
     The 'T' separator (ISO-8601) breaks the digit run while keeping the
     timestamp readable and sortable. The classifier is left alone: a
@@ -675,7 +674,7 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     if halted:
         return halted
     prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
-    # One place decides, and it is legible to Stephen (services/creative_policy).
+    # One place decides, and it is legible to the user (services/creative_policy).
     # It delegates to check_content_safety, so with the shipped defaults this is
     # bit-for-bit the behaviour that was here before — the policy became
     # readable and settable, it did not move.
@@ -791,9 +790,8 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                 contents=full_prompt,
                 config=_image_config(types, aspect_ratio),
             )
-            # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl
-            # Q7a): this direct Gemini image call had ZERO cost_meter
-            # references. Never allowed to break image generation.
+            # Cost metering: this direct Gemini image call must reach the
+            # ledger. Never allowed to break image generation.
             try:
                 from agent_friday.services import cost_meter as _cm
                 _um = getattr(response, "usage_metadata", None)
@@ -909,7 +907,7 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     if halted:
         return halted
     prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
-    # One place decides, and it is legible to Stephen (services/creative_policy).
+    # One place decides, and it is legible to the user (services/creative_policy).
     # It delegates to check_content_safety, so with the shipped defaults this is
     # bit-for-bit the behaviour that was here before — the policy became
     # readable and settable, it did not move.
@@ -1054,8 +1052,7 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                     "message": "Veo finished but returned no video (it may have been "
                                "filtered). Try a different prompt."}
 
-        # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
-        # Veo had ZERO cost_meter references. Flat per-second rate, not
+        # Cost metering: Veo spend must reach the ledger. Flat per-second rate, not
         # token-based — see _VEO_PER_SECOND_USD's comment for the confidence
         # caveat (no audio/4K surcharge accounted for). Never allowed to
         # break video generation.
@@ -1257,9 +1254,8 @@ def _generate_video_omni(prompt, *, api_model, requested_model, aspect_ratio,
                                "(it may have been filtered). Try a "
                                "different prompt."}
 
-        # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7a):
-        # Omni had ZERO cost_meter references despite PRICING already having
-        # an entry for this exact model id. The Interactions API response
+        # Cost metering: Omni spend must reach the ledger (PRICING carries an
+        # entry for this exact model id). The Interactions API response
         # exposes no usage/usage_metadata in the installed SDK, so this is an
         # ESTIMATE from the clip-length assumption documented at
         # _OMNI_ESTIMATED_CLIP_SECONDS, not a measurement — flagged. Never

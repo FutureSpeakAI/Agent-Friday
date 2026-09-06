@@ -9,14 +9,14 @@ extracted **0 durable facts from 215 turns** (recorded in
 ``services/liveness_audit.py``).
 
 The patterns are not subtly mistuned. They are listening for a way of speaking
-Stephen does not use. He talks to Friday in the register of a technical review
--- decisive, specific, rarely first-person-declarative in those exact shapes --
-so the extractor found nothing, every night, and said it was fine.
+many users do not use. A user who talks to Friday in the register of a
+technical review -- decisive, specific, rarely first-person-declarative in
+those exact shapes -- gives the extractor nothing, every night, and it reports
+that it is fine.
 
 Meanwhile ``capability_routing.memory_manager`` -- the seat that exists to put
-a MODEL on this job -- had been assigned on his machine
-(``arbiter-local``) and read by nothing. This module is that instruction,
-carried out.
+a MODEL on this job -- can be assigned (e.g. ``arbiter-local``) and read by
+nothing. This module is that instruction, carried out.
 
 REGEX vs MODEL: they are reliable about different things
 --------------------------------------------------------
@@ -24,8 +24,8 @@ A regex matching ``my deadline is Friday`` is a perfect witness to the words it
 saw; it is quoting. It is a poor judge of whether the sentence deserves
 remembering, which is exactly why it produced nothing useful.
 
-A model saying "Stephen prefers concise answers" is INTERPRETING, possibly
-across several turns, and may describe something he never literally said. It is
+A model saying "the user prefers concise answers" is INTERPRETING, possibly
+across several turns, and may describe something they never literally said. It is
 the better judge of durability and the worse witness to the text.
 
 So model facts enter at LOWER confidence than pattern matches -- not because
@@ -116,8 +116,8 @@ CONVERSATION:
 def seat() -> Dict[str, Any]:
     """The model assigned to capability_routing.memory_manager.
 
-    This is THE consumer of that seat. Before this module it was declared,
-    defaulted, mirrored, labelled in the picker, assigned on Stephen's machine
+    This is THE consumer of that seat. Without this module it is declared,
+    defaulted, mirrored, labelled in the picker, assignable in settings
     -- and read by nothing.
     """
     try:

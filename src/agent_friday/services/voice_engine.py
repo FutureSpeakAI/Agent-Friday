@@ -708,13 +708,11 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
         text = core._PII_TAG_RE.sub("[redacted]", scrubbed)
 
     # Local-only is an absolute override, the same guarantee routes/chat.py's
-    # vision path already enforces (fixed 2026-08-23, commit 4607bd9) and
-    # routes/voice.py's engine selection now enforces too — it must win
-    # regardless of key presence or network status. Before this, "read this
-    # aloud" and the News audio briefing sent spoken text to Gemini TTS even
-    # with Local-Only Mode on, because this function only ever checked PII
-    # content and connectivity, never model_routing.mode (see
-    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    # vision path and routes/voice.py's engine selection enforce — it must
+    # win regardless of key presence or network status. Checking only PII
+    # content and connectivity here would let "read this aloud" and the News
+    # audio briefing send spoken text to Gemini TTS with Local-Only Mode on,
+    # so model_routing.mode is consulted before any cloud call.
     try:
         _local_only = str(((_load_settings() or {}).get('model_routing') or {})
                           .get('mode') or '').strip().lower() == 'local_only'
@@ -731,12 +729,10 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
     # local_preferred means "local first, cloud when it helps" — the same
     # idiom routes/chat.py:369 (vision) and routes/core_routes.py:1085
     # (file-upload analyze) already use (`mode in ('local_only',
-    # 'local_preferred')`). Before this, TTS ignored local_preferred
-    # entirely and went straight to Gemini whenever a key was present,
-    # contradicting the mode's own definition (docs/audits/
-    # gauntlet-2026-09-03/findings.jsonl). Unlike local_only above, a
-    # local_preferred TTS failure still falls through to Gemini below —
-    # "preferred," not absolute.
+    # 'local_preferred')`). TTS must honor it too rather than going straight
+    # to Gemini whenever a key is present, which would contradict the mode's
+    # own definition. Unlike local_only above, a local_preferred TTS failure
+    # still falls through to Gemini below — "preferred," not absolute.
     try:
         _local_preferred = str(((_load_settings() or {}).get('model_routing') or {})
                                .get('mode') or '').strip().lower() == 'local_preferred'
@@ -824,11 +820,9 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
         )
     )
 
-    # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q6c): this
-    # is a real, billed Gemini call that had ZERO cost_meter integration
-    # despite cost_meter.PRICING already carrying entries for the Live voice
-    # models — the TTS model id itself was also missing there until this fix.
-    # Never allowed to break speech: any failure here is swallowed.
+    # Cost metering: this is a real, billed Gemini call and must be metered
+    # like the Live voice models (cost_meter.PRICING carries the TTS model id
+    # for this). Never allowed to break speech: any failure here is swallowed.
     try:
         from agent_friday.services import cost_meter as _cm
         _um = getattr(response, "usage_metadata", None)
@@ -866,8 +860,8 @@ except Exception as _e:
 # ═══════════════════════════════════════════════════════════════
 
 LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-latest")
-# Graceful-degradation chain. All three IDs below were verified 2026-07-06 by
-# an actual bidiGenerateContent connect (open+close) against the live API —
+# Graceful-degradation chain. All three IDs below are verified by an actual
+# bidiGenerateContent connect (open+close) against the live API —
 # models.list presence alone is NOT sufficient proof, and an unverified ID in
 # this chain recreates the exact 1008-misread-as-auth-failure incident this
 # block exists to prevent. If you change any of these, re-verify with a real
@@ -1157,7 +1151,6 @@ def _strip_html(raw: str) -> str:
 # reasoning as the 45s cache on the Gmail merge in services/message_triage.py:
 # short enough to still feel live, long enough that a burst of turns pays for
 # it once. Monotonic clock so a system time change cannot freeze it.
-# (2026-08-26)
 _LIVE_CTX_TTL_S = 60.0
 _live_ctx_lock = threading.Lock()
 _live_ctx_cache = {"text": None, "at": 0.0}

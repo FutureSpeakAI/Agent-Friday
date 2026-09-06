@@ -10,10 +10,10 @@ node_modules/@babel/standalone are available the JSX is compiled at build time
 and index.html gets a plain <script> plus no Babel CDN dependency. Without
 node the build falls back to the original in-browser-transform output.
 
-REGRESSION GUARD (2026-08-24): index.html is the file the server serves
-(routes/core_routes.py opens it directly) and it has been hand-edited ahead of
-ui_parts/app.html since 2026-08-18 — app.html says so in its own first eight
-lines. app.html is now a strict SUBSET: every top-level component in it also
+REGRESSION GUARD: index.html is the file the server serves
+(routes/core_routes.py opens it directly) and it is hand-edited ahead of
+ui_parts/app.html — app.html says so in its own first eight
+lines. app.html is a strict SUBSET: every top-level component in it also
 exists in index.html, while eighteen components (the whole conversations
 feature, the model picker, Settings -> Intelligence) exist only in index.html.
 Running this build unguarded therefore DELETES real, shipped code, and does it
@@ -100,10 +100,10 @@ precompiled = False
 # last </script> in the file is its close (earlier matches are regex literals
 # inside the JS, not tags).
 #
-# The open tag is LOCATED rather than required at offset 0: app.html gained a
-# leading HTML comment on 2026-08-18, and the old `startswith` test silently
-# turned precompilation off from that commit onward — the fallback prints
-# nothing, so the only symptom was a slower, CDN-dependent, offline-broken UI.
+# The open tag is LOCATED rather than required at offset 0: app.html carries
+# a leading HTML comment, and a `startswith` test would silently turn
+# precompilation off — the fallback prints nothing, so the only symptom
+# would be a slower, CDN-dependent, offline-broken UI.
 # Any preamble before the tag is preserved verbatim.
 open_idx = app.find(BABEL_OPEN)
 close_idx = app.rfind('</script>')

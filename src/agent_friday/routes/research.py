@@ -161,7 +161,8 @@ def api_search_backend():
 
 @research_bp.route("/api/gpu/headroom")
 def api_gpu_headroom():
-    """Does the desktop still have VRAM? Stephen lost a monitor to this."""
+    """Does the desktop still have VRAM? Starving the compositor of VRAM
+    blanks a monitor."""
     from agent_friday.services import gpu_headroom
     return jsonify({"gpus": gpu_headroom.gpu_memory(),
                     "display": gpu_headroom.display_at_risk()})

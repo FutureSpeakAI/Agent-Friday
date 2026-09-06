@@ -10,7 +10,7 @@ worth being precise about which, because "it's a better API" is not a reason:
     returns real URLs from a maintained index — no scraping, nothing to break
     when a results page changes its markup.
   * browse_web extracted text with BeautifulSoup, which sees almost nothing on
-    a client-rendered page. VERIFIED 2026-08-17: react.dev, an SPA, comes back
+    a client-rendered page. VERIFIED: react.dev, an SPA, comes back
     from Firecrawl as 16,060 chars of markdown.
   * PDFs were a DISCLOSED limitation (§7.6 — "this source exists but I cannot
     read it"). VERIFIED: the STORM paper at arxiv.org/pdf/2402.14207 returns
@@ -26,7 +26,7 @@ Credits are consumed per page, so the harness treats them as a budget, not as
 free.
 
 WHAT THIS DOES NOT CHANGE: the SSRF guard. Firecrawl fetching server-side means
-THEIR infrastructure cannot reach Stephen's localhost, which removes that hole
+THEIR infrastructure cannot reach the user's localhost, which removes that hole
 for anything routed through them — but Friday still has a direct-fetch path for
 when Firecrawl is unavailable, and that path keeps its guard. The URL check
 runs BEFORE the backend is chosen (see web_fetch.fetch) precisely so there is
@@ -47,15 +47,15 @@ DEFAULT_TIMEOUT_S = 120
 SEARCH_TIMEOUT_S = 180
 
 # ── Cost metering (credit-based, not USD-per-call) ───────────────────────────
-# docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7c: Firecrawl calls had ZERO
-# cost_meter tracking despite this module's own docstring saying credits must
-# be treated as a budget. Firecrawl bills in CREDITS, and the $/credit rate
-# varies by plan tier (no single public conversion) -- rather than fabricate
-# an exact USD figure, this uses the WORST-CASE (most expensive, Hobby-tier)
-# published $/credit rate as a conservative best-effort USD estimate: a
-# budget alert erring toward overestimating spend is safer than one that
-# silently under-counts it. Checked against public pricing aggregator pages
-# 2026-09-04, not Firecrawl's own pricing page directly -- flagged.
+# Every Firecrawl call is metered, because this module's own docstring says
+# credits must be treated as a budget. Firecrawl bills in CREDITS, and the
+# $/credit rate varies by plan tier (no single public conversion) -- rather
+# than fabricate an exact USD figure, this uses the WORST-CASE (most
+# expensive, Hobby-tier) published $/credit rate as a conservative
+# best-effort USD estimate: a budget alert erring toward overestimating spend
+# is safer than one that silently under-counts it. Checked against public
+# pricing aggregator pages 2026-09-04, not Firecrawl's own pricing page
+# directly -- flagged.
 _FIRECRAWL_USD_PER_CREDIT = 0.0032
 _FIRECRAWL_SCRAPE_CREDITS = 1     # scrape/crawl/map: 1 credit per page
 _FIRECRAWL_SEARCH_CREDITS_PER_10_RESULTS = 2
@@ -72,14 +72,14 @@ def _meter(op: str, credits_used: int) -> None:
 
 # ── The rest of the surface, deliberately NOT built ───────────────────────────
 #
-# Relayed from Stephen's onboarding doc and NOT verified here, except where
+# Relayed from Firecrawl's onboarding doc and NOT verified here, except where
 # noted. Recorded so the next person does not rediscover it, and left unbuilt
 # so this change stays about search and fetch:
 #
 #   POST /v2/parse        upload a LOCAL document (PDF/DOCX/XLSX/HTML, <=50 MB)
 #                         as multipart, get markdown. Distinct from /scrape,
 #                         which takes a URL. Would let Friday read a file
-#                         Stephen drops in rather than one she can reach.
+#                         the user drops in rather than one she can reach.
 #   POST /v2/interact     browser actions on live pages — clicks, forms,
 #                         navigation. Would reach content behind an
 #                         interaction, which no fetch can.
@@ -103,7 +103,7 @@ def _meter(op: str, credits_used: int) -> None:
 # --browser`, a CLI-plus-skills install. That is for an agent driving its own
 # terminal. Friday IS the product, so this is the integrate-into-app-code case:
 # plain REST from Friday's own process, key from the encrypted store. No global
-# toolchain was added to Stephen's machine.
+# toolchain is added to the user's machine.
 
 
 def api_key() -> str:
@@ -148,12 +148,12 @@ def _gate_outbound(value: str, field: str) -> tuple[str, str]:
     part and the caller must refuse rather than send a redaction placeholder
     to a third party as if it were the real query/URL.
 
-    2026-09-06: this module was the eleventh ungated egress path from the
-    security-boundary.md §19 inventory (a36ae73 closed the other ten). The
-    query path happened to be covered because web_search.search() gates
-    before calling in, but scrape(url) from web_fetch.py was not, and a
-    gate that lives only in SOME callers is not a gate. Same shape as
-    web_search._gate_search_query: fail closed on any gate failure.
+    This module is one of the egress paths in the security-boundary.md §19
+    inventory. The query path happens to be covered because
+    web_search.search() gates before calling in, but scrape(url) from
+    web_fetch.py is not, and a gate that lives only in SOME callers is not a
+    gate. Same shape as web_search._gate_search_query: fail closed on any
+    gate failure.
     """
     try:
         from agent_friday.services import egress_gate as _eg

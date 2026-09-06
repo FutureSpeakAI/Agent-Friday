@@ -85,11 +85,10 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     # calendar.events — READ AND WRITE on events, and nothing else.
     #
-    # This was `calendar.readonly` until 2026-08-17, which is why Stephen asked
-    # four times to have the clinic's address and phone added to his
-    # chiropractor entries and never got it. There was no write tool, and the
-    # token could not have performed one if there had been. She offered a map
-    # instead and reported "Done", which is the failure this fixes.
+    # A read-only calendar scope means no write tool can succeed even if one
+    # exists; the failure mode is the assistant reporting an edit as done
+    # that it never had a mechanism to perform. The scope must match the
+    # capability that is offered.
     #
     # Deliberately `calendar.events` rather than the broader `calendar`:
     # editing events is the capability asked for. It does not need permission
@@ -1002,24 +1001,23 @@ GOOGLE_DESKTOP_REDIRECT_URI = f"http://localhost:3000{GOOGLE_CALLBACK_PATH}"
 def _google_redirect_uri(cfg, client_type=None):
     """Canonical OAuth redirect URI for this client config.
 
-    2026-08-13: previously derived from request.host_url for a "web" client
-    config — Stephen's consent attempt died with Error 400 invalid_request
-    because he reaches Friday via a hosts-file alias (http://agent.friday/),
-    and Google's secure-response-handling policy rejects ANY plain-HTTP
-    non-loopback redirect_uri outright (checked against the literal URI, not
-    something DNS/propagation ever fixes). The app also binds 0.0.0.0 when a
-    tunnel password is set, so request.host_url could just as easily be a
-    tunnel/LAN host — same rejection. Pinned to loopback for every client
-    type now, matching mcp_oauth.py's http://127.0.0.1:{port}/callback
-    pattern; an advanced settings override exists for a genuine
-    HTTPS-terminated reverse-proxy setup (see DEFAULT_SETTINGS.google_oauth).
+    Never derived from request.host_url. A user may reach Friday via a
+    hosts-file alias (e.g. http://agent.friday/), a tunnel or a LAN host (the
+    app binds 0.0.0.0 when a tunnel password is set), and Google's
+    secure-response-handling policy rejects ANY plain-HTTP non-loopback
+    redirect_uri outright with Error 400 invalid_request (checked against the
+    literal URI, not something DNS/propagation ever fixes). Pinned to loopback
+    for every client type, matching mcp_oauth.py's
+    http://127.0.0.1:{port}/callback pattern; an advanced settings override
+    exists for a genuine HTTPS-terminated reverse-proxy setup (see
+    DEFAULT_SETTINGS.google_oauth).
 
-    2026-08-13 (A6 / decision D10): the HOST stays pinned to loopback for the
-    reasons above, but the PORT is no longer hardcoded to 3000. The server
-    scans forward when 3000 is busy (_resolve_bind_port), so a literal ":3000"
-    meant consent died with redirect_uri_mismatch in precisely the situation
-    the port scan exists to survive. Google accepts any port on a loopback
-    redirect for installed apps, so following the bound port is safe.
+    A6 / decision D10: the HOST stays pinned to loopback for the reasons
+    above, but the PORT is not hardcoded to 3000. The server scans forward
+    when 3000 is busy (_resolve_bind_port), so a literal ":3000" would make
+    consent die with redirect_uri_mismatch in precisely the situation the port
+    scan exists to survive. Google accepts any port on a loopback redirect for
+    installed apps, so following the bound port is safe.
     """
     override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')
     if override:

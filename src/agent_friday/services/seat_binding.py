@@ -10,7 +10,7 @@ Friday grew two vocabularies for the same idea and reconciled them BY HAND:
 
 Hand-reconciliation is exactly how `reasoning` came to point at a model that
 had been deleted from the disk, and `local` at a `gemma3:4b` that was never
-installed (Q5). This module makes the plan authoritative so that class of
+installed. This module makes the plan authoritative so that class of
 defect cannot recur.
 
 One rule keeps it honest:
@@ -36,7 +36,7 @@ SEAT_TO_CAPABILITY = {
     "sidekick_heavy": "subagent",
     "image": "creative_image",
     # The five WORKING roles (roles contract 1). Rule R11 says these are
-    # assigned by Stephen rather than inferred, and an unassigned one is a
+    # assigned by the user rather than inferred, and an unassigned one is a
     # refusal by name -- correct, and it was also unreachable: with no
     # capability key, `overrides_from_settings` could never emit an override
     # for them, so "chosen by the user" described a choice the user had no way
@@ -56,8 +56,8 @@ SEAT_TO_CAPABILITY = {
 # `_sync_capability_routing` derives capability_routing FROM these keys, so a
 # capability written without its mirror is silently reverted.
 #
-# Caught live 2026-08-15. Binding the image seat without updating
-# `creative_model` produced a corrupted hybrid — provider `local-comfyui` with
+# Binding the image seat without updating
+# `creative_model` produces a corrupted hybrid — provider `local-comfyui` with
 # model `gemini-nano-banana-2`, a Google model on the on-device provider:
 #
 #     "creative_image": {"provider": "local-comfyui",
@@ -77,21 +77,20 @@ NEVER_BIND = {"embedder", "stt", "tts"}
 # capability_routing key -> residency role. The inverse of SEAT_TO_CAPABILITY,
 # and the missing half of this module.
 #
-# Binding ran in ONE direction: the plan wrote capability_routing. The plan,
-# though, was computed with `overrides=None`, so it never saw what Stephen had
-# actually chosen — `interactive_brain` was picked by a fit heuristic ("best
-# remaining model that fits some GPU alone") and then OVERWROTE his selection
-# at every boot.
+# Binding used to run in ONE direction: the plan wrote capability_routing.
+# The plan, though, was computed with `overrides=None`, so it never saw what
+# the user had actually chosen — `interactive_brain` was picked by a fit
+# heuristic ("best remaining model that fits some GPU alone") and then
+# OVERWROTE the user's selection at every boot. Switching the chat seat in
+# the UI was honoured by dispatch but not by the plan, and the two disagreed
+# from then on; the pause forecaster reads the plan, so it announced a
+# 30-second cold load before every message while the chosen model answered
+# at normal speed.
 #
-# Caught 2026-08-18: he switched his chat seat in the UI, dispatch honoured it,
-# the plan did not, and the two disagreed for the rest of the session. The
-# pause forecaster reads the plan, so it announced a 30-second cold load before
-# every message while the model he chose answered him at normal speed.
-#
-# His choice is now an INPUT to planning rather than something planning
-# discards. The plan stays authoritative — but it plans around what he asked
-# for, and where it cannot, `_apply_overrides` records a refusal with a reason
-# instead of silently seating something else.
+# The user's choice is an INPUT to planning rather than something planning
+# discards. The plan stays authoritative — but it plans around what the user
+# asked for, and where it cannot, `_apply_overrides` records a refusal with a
+# reason instead of silently seating something else.
 CAPABILITY_TO_SEAT = {cap: seat for seat, cap in SEAT_TO_CAPABILITY.items()}
 
 
@@ -116,8 +115,8 @@ def overrides_from_settings(settings: dict) -> dict:
         # The planner allocates VRAM on this machine. A seat pointed at
         # claude-opus-5 consumes none of it, cannot be "placed", and cannot be
         # "installed". Passing it through anyway produced the most confidently
-        # wrong warning on the Intelligence page (measured 2026-08-23, three of
-        # them at once): "override names a model that is not installed;
+        # wrong warning on the Intelligence page (observed three at once on
+        # the reference machine): "override names a model that is not installed;
         # installed: embeddinggemma:300m, functiongemma:270m, gemma4:12b, ..."
         # — a local VRAM planner refusing a cloud model for not being on the
         # disk it manages, and then listing eleven local tags at a user who had
@@ -223,21 +222,17 @@ def propose(plan: dict, settings: dict) -> dict:
     # right to: a local VRAM planner cannot place claude-opus-5 and refusing
     # it for "not being installed" was its own bug. But dropping the override
     # and then binding anyway means the planner sees an EMPTY seat, fills it
-    # with its own candidate, and `apply()` writes that over his choice. So
-    # the choice survived exactly until the next boot, every time.
+    # with its own candidate, and `apply()` writes that over the user's choice.
+    # So the choice survives exactly until the next boot, every time.
     #
-    # Measured 2026-08-24 (docs/history/audits/workflow-run-forensics-2026-08-24.md
-    # §2.2). Stephen assigned Opus 5 in Settings -> Intelligence; the plan's
-    # own `heavy = gen[0]` picked the largest GGUF on disk; and friday.log
-    # recorded the overwrite twice:
-    #
-    #   2026-08-23T15:45:53 seat binding applied: heavy_hitter->gemma4:26b, ...
-    #   2026-08-24T11:46:40 seat binding applied: heavy_hitter->gemma4:26b, ...
-    #
-    # at a model 16.95 GB on disk, on a 12 GB card, that no live endpoint was
-    # serving. From where he sits that is "I changed the setting and it did
-    # nothing" — the same sentence this module's docstring was written to
-    # retire, arriving through the one door left open.
+    # Concretely (docs/history/audits/workflow-run-forensics-2026-08-24.md
+    # §2.2): with Opus 5 assigned in Settings -> Intelligence, the plan's own
+    # `heavy = gen[0]` picked the largest GGUF on disk and the boot log
+    # recorded "seat binding applied: heavy_hitter->gemma4:26b" -- a model
+    # 16.95 GB on disk, on a 12 GB card, that no live endpoint was serving.
+    # From the user's side that is "I changed the setting and it did nothing"
+    # — the same sentence this module's docstring was written to retire,
+    # arriving through the one door left open.
     #
     # `cloud_seats_from_settings` already exists for exactly this and was
     # called by the Arbiter (residency_arbiter.py:951) and by nothing here.
@@ -251,7 +246,7 @@ def propose(plan: dict, settings: dict) -> dict:
     # `model_router._chosen_seat` already draws this distinction against
     # `_factory_reasoning_model()`; drawing it the same way here keeps one
     # rule rather than two. An untouched default is the absence of a
-    # preference; a value he changed is an instruction.
+    # preference; a value the user changed is an instruction.
     cloud_filled = {
         role for role in cloud_seats_from_settings(settings or {})
         if _differs_from_factory(SEAT_TO_CAPABILITY[role], cr.get(
@@ -283,12 +278,12 @@ def propose(plan: dict, settings: dict) -> dict:
         provider = _provider_for(seat)
         current = cr.get(cap) or {}
 
-        # 2026-08-15: NO GATE. A seat used to require both battery axes
-        # green before it could be bound, which left heavy_hitter, local and
-        # subagent permanently unbound on this machine — the plan computed
-        # them correctly and then refused to apply them. Removed on Stephen's
-        # decision: any installed model is bindable to any seat, and binding
-        # it makes it actually serve.
+        # NO GATE. A seat used to require both battery axes green before it
+        # could be bound, which left heavy_hitter, local and subagent
+        # permanently unbound — the plan computed them correctly and then
+        # refused to apply them. Removed on the maintainer's decision: any
+        # installed model is bindable to any seat, and binding it makes it
+        # actually serve.
 
         if (current.get("provider") == provider
                 and current.get("model") == model):

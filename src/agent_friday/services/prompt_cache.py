@@ -9,12 +9,12 @@ the device — but they are NOT the same guarantee and must not be confused:
     re-sends enormous stable prefixes constantly — the tool schemas on every
     iteration of the agent loop, the system prompt on every turn, and the whole
     accumulated transcript on every iteration of a task. Measured against
-    ``~/.friday/costs.db`` over the 14 days to 2026-08-26: 168,887,596 input
-    tokens went to Anthropic for $1,057.22, and 94.7% of those tokens sat in
-    calls above 50,000 tokens. Modelled against the same rows with a rolling
-    message breakpoint and the 5-minute TTL, the billable-equivalent falls to
-    33.3M — **an 80% cut to the input line**, which is where ~99% of the money
-    is (input:output ran 154:1).
+    ``~/.friday/costs.db`` over a 14-day window on the reference machine:
+    168,887,596 input tokens went to Anthropic for $1,057.22, and 94.7% of
+    those tokens sat in calls above 50,000 tokens. Modelled against the same
+    rows with a rolling message breakpoint and the 5-minute TTL, the
+    billable-equivalent falls to 33.3M — **an 80% cut to the input line**,
+    which is where ~99% of the money is (input:output ran 154:1).
 
   * **A ceiling makes the catastrophe impossible.** Caching cannot do this, and
     saying otherwise is how a cheap-per-call system still produces a $200 hour.
@@ -87,7 +87,7 @@ DEFAULT_MAX_CALL_INPUT_TOKENS = 180_000
 #: One task, summed across every iteration of its agent loop. The observed
 #: incident was ~1.43M. The largest legitimate burst in 14 days was 10.6M across
 #: 107 calls, which this WOULD refuse — deliberately: that burst cost $33.38 and
-#: Stephen should be asked before the next one, not billed for it.
+#: the user should be asked before the next one, not billed for it.
 DEFAULT_MAX_TASK_INPUT_TOKENS = 4_000_000
 
 
@@ -258,7 +258,7 @@ def _split_system(system, model):
     """Return ``system`` as blocks, with the stable prefix marked cacheable.
 
     The split is at ``VOLATILE_MARKER``. Above it: persona, cLaws, the frozen
-    Friday system prompt, self-knowledge — text that changes when Stephen edits
+    Friday system prompt, self-knowledge — text that changes when the user edits
     a file, not when a minute passes. From it down: the clock and everything
     the assembler appends after it.
 
@@ -442,8 +442,8 @@ def apply_openrouter_cache(system, model):
     breakpointed; the clock and anything after it, not) — OpenRouter honors
     the identical ``cache_control`` block shape, just placed inside a
     ``{"role": "system", "content": [...]}`` message instead of Anthropic's
-    top-level ``system`` kwarg. Confirmed against OpenRouter's prompt-caching
-    docs 2026-09-04: explicit breakpoints on system/user message content
+    top-level ``system`` kwarg. Per OpenRouter's prompt-caching
+    docs: explicit breakpoints on system/user message content
     blocks, no extra headers, tool schemas not cacheable this way (unlike the
     native path, which gets a tools breakpoint too).
 

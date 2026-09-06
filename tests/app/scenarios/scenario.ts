@@ -2,7 +2,7 @@
  * Scenario harness — testing Friday the way she is actually used.
  *
  * The mechanical tier asks "is this control wired up". This tier asks "does a
- * real task, of the kind Stephen does daily, actually come out right end to
+ * real task, of the kind the maintainer does daily, actually come out right end to
  * end". Those scenarios mostly have no single correct answer, so they are not
  * judged by comparing to an expected string. They are judged on PROPERTIES:
  *

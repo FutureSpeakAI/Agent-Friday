@@ -1,6 +1,6 @@
 """Unit tests for security-boundary.md §19 row 1: the Gemini Live system
 instruction egressed to Google with NO text-gate call of any kind, protected
-only by the (currently off, Stephen's deliberate posture per e1f1874)
+only by the (currently off, the maintainer's deliberate posture per e1f1874)
 vault-assembly gate. With `vault_local_only: false`, `_get_vault_control()`
 returns None, `_get_friday_system_prompt` assembles ungated, and the
 resulting `sys_text` went straight into `system_instruction=` at

@@ -1,5 +1,5 @@
 """The Friday Edition — E0 composer (docs/AUTONOMY... see The Friday Edition
-spec, Fable-authored, Sonnet-built).
+spec).
 
 Composes a finite morning edition entirely from Friday's EXISTING engines —
 the news archive, front_pages/, editorials/, creations/, and dreams. No new

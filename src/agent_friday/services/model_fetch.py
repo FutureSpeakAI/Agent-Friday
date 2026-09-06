@@ -90,9 +90,9 @@ def probe(url: str) -> dict:
     # ONLY X-Linked-Etag. The plain ETag on this endpoint is a git blob id or a
     # CDN tag, not a hash of the content — and it is 64 hex characters, so it
     # passes a shape check and then fails the comparison against a file that is
-    # perfectly good. Measured 2026-08-15: ETag c07418bf... against a correct
-    # file whose sha256 is 06507c7b..., which is the LFS oid the tree API
-    # reports. A verifier that rejects valid downloads gets turned off, so
+    # perfectly good (observed: ETag c07418bf... against a correct file whose
+    # sha256 is 06507c7b..., which is the LFS oid the tree API reports). A
+    # verifier that rejects valid downloads gets turned off, so
     # being wrong here is worse than not checking.
     sha = _clean_etag(info.get("X-Linked-Etag"))
     return {

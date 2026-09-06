@@ -1,6 +1,6 @@
 """Two ways to connect Google, and an honest hand-off between them.
 
-Stephen, 2026-08-26: "accept the unverified app warning AND bring your own
+The maintainer, 2026-08-26: "accept the unverified app warning AND bring your own
 with a walkthru. Let's do both."
 
 So there are two clients:
@@ -16,7 +16,7 @@ makes its precedence load-bearing — a user who has gone to the trouble of
 making their own client must never be silently routed back onto the full one.
 
 WHAT THIS FILE DOES NOT TEST is the credential itself. Friday ships with the
-bundled constants EMPTY, because only Stephen can mint them (they belong to
+bundled constants EMPTY, because only the maintainer can mint them (they belong to
 his Google Cloud project and name him as the publisher). Empty must therefore
 behave exactly like "no bundled client" — the mechanism is complete and inert
 until he pastes them in, and a half-configured client must never be offered
@@ -276,7 +276,7 @@ class TestByoStorage:
         assert cfg["installed"]["client_id"] == "mine.apps.googleusercontent.com"
 
     def test_a_discovered_file_still_works_for_existing_installs(self, monkeypatch):
-        """Stephen already has a client_secret*.json on disk. Adding a new
+        """The maintainer already has a client_secret*.json on disk. Adding a new
         storage location must not strand it."""
         monkeypatch.setattr(goc, "BUNDLED_CLIENT_ID", "b.apps.googleusercontent.com",
                             raising=False)

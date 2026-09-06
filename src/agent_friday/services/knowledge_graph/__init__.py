@@ -26,14 +26,14 @@ KG_DIR = FRIDAY_DIR / "knowledge-graph"
 # fully self-contained: settings.json only needs a "knowledge_graph" block when
 # the user changes something.
 #: Legacy indexing_mode values, mapped to the current two-value choice.
-#: "gated_cloud" existed briefly (2026-09-03) as a per-TIER compromise —
-#: TIER_1 could ride the cloud route, TIER_2/3 stayed pinned local no
-#: matter what the user picked. Replaced the same day: "he is not asking
-#: for a system that decides for people, he's asking for one that does
-#: what the person picked" — a strict per-user choice, "local" or "cloud",
-#: with the egress gate (not this module) deciding what content is safe to
-#: send. A settings.json written under the old scheme still reads
-#: correctly rather than silently reverting to the default.
+#: "gated_cloud" was a short-lived per-TIER compromise (TIER_1 could ride
+#: the cloud route, TIER_2/3 stayed pinned local no matter what the user
+#: picked). The maintainer's ruling: the system does what the person
+#: picked rather than deciding for them — a strict per-user choice,
+#: "local" or "cloud", with the egress gate (not this module) deciding
+#: what content is safe to send. A settings.json written under the old
+#: scheme still reads correctly rather than silently reverting to the
+#: default.
 _LEGACY_INDEXING_MODES = {"local_only": "local", "gated_cloud": "cloud"}
 
 KG_DEFAULT_SETTINGS = {

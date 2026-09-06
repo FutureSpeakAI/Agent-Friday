@@ -4,7 +4,7 @@ This file used to assert the opposite: that `POST /api/settings` rejected a
 `model_routing.local_model` change when the model failed a structural
 conformance gate, or had no honesty-battery record, or failed one.
 
-Stephen's decision, and the evidence supported it. Gating a user-selected
+The maintainer's decision, and the evidence supported it. Gating a user-selected
 model behind a homegrown eval is not standard practice; the structural
 failures it fired on were a broken harness (the same models scored 1/10 and
 0/10, then 10/10 once fixed); and the honesty record it refused `gemma4:26b`

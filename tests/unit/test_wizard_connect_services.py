@@ -1,7 +1,7 @@
 """The wizard must not report a connection it did not make.
 
 "CONNECT SERVICES (optional)" is step 9 of the installer's setup wizard.
-Stephen, after installing Friday on a second user's laptop 2026-08-26:
+The maintainer, after installing Friday on a second user's laptop 2026-08-26:
 
     "The connect services portion of the installer, once the gui comes up,
      should be interactive. I could not click to connect my accounts and

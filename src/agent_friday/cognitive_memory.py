@@ -13,9 +13,7 @@ keeping the earlier value anywhere. "Tamper-evident" describes the
 ledger's hash chain (a retroactive EDIT of a ledger entry is detectable);
 it says nothing about a memory FILE being recoverable once overwritten.
 
-CORRECTION (external review, commissioned by Stephen, verified 2026-09-04):
-this module's own docstring used to say "Versioned" and "rollback-to-
-timestamp" -- reproduced directly and confirmed neither is true.
+This module is NOT "versioned" and has no "rollback-to-timestamp".
 memory_rollback() cannot roll a key back to an earlier value because no
 earlier value is ever kept; see its own docstring for the full
 correction and the reproduction that proved it (write A, write B, roll
@@ -104,11 +102,9 @@ class CognitiveMemory:
         """Remove every key WRITTEN TO after ``timestamp`` -- this does NOT
         restore whatever that key held before ``timestamp``.
 
-        CORRECTION (external review, commissioned by Stephen, verified
-        against a real CognitiveMemory instance 2026-09-04): the name and
-        the old docstring both promised point-in-time restoration
-        ("roll back... to timestamp"), which this cannot do and never
-        could, because write_memory() keeps no history -- every write
+        The name suggests point-in-time restoration ("roll back... to
+        timestamp"), which this cannot do, because write_memory() keeps no
+        history -- every write
         unconditionally overwrites the one on-disk file for that key, so
         an EARLIER value is gone the instant a LATER write lands, with or
         without this function ever being called. Reproduced directly:

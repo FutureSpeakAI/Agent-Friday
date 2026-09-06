@@ -4,8 +4,8 @@ Deliberately NOT registered as an agent tool anywhere in this codebase —
 grep `tool_registry`/`tool_list`/the MCP tool-schema builders for this
 module's name and it will not appear. A model directing its own consent
 decision is the exact shape of bug `enterprise_consent_grant` was removed
-for (docs/audits/gauntlet-2026-09-03: "a tool that let Friday's own AI
-grant itself permission to send data to the cloud"). This surface exists
+for ("a tool that let Friday's own AI grant itself permission to send data
+to the cloud"; see the 2026-09 gauntlet audit in docs/history/audits/). This surface exists
 for the browser UI a human is looking at, and nowhere else.
 """
 

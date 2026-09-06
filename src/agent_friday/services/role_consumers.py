@@ -52,9 +52,9 @@ permanently-false branch, or in a route nothing calls, passes this check.
 
 The stronger form is a runtime recorder: funnel every seat read through one
 accessor that records the key, drive the named consumer, assert the key was
-touched. That was costed and declined on 2026-08-23 — seat reads are scattered
-across ~18 sites in 13 files (see MODULE NOTE below), so the recorder would
-require a cross-cutting refactor of files two other sessions were editing.
+touched. That was costed and declined — seat reads are scattered across ~18
+sites in 13 files (see MODULE NOTE below), so the recorder would require a
+cross-cutting refactor.
 
 This is the weaker form. It is chosen deliberately and its weakness is stated
 here so nobody later mistakes it for the stronger guarantee. What it CAN do
@@ -64,7 +64,7 @@ the key, so it cannot rot into documentation the way the roles contract did.
 
 MODULE NOTE — seat reads are scattered, not funnelled
 -----------------------------------------------------
-Counted 2026-08-23: ``capability_routing`` is read at roughly eighteen sites
+``capability_routing`` is read at roughly eighteen sites
 across thirteen modules. ``services/capability_router.py`` opens with "The
 single resolver that maps a CAPABILITY to a concrete provider+model" — it is
 one of the eighteen, not the funnel its docstring claims. ``routing/
@@ -96,7 +96,7 @@ class Consumer:
     ``mirror`` names a legacy flat settings key (``voice_model``,
     ``orchestrator_model``, ...) when the consumer reads the seat THROUGH that
     mirror rather than by its capability name. See MIRRORS below -- this field
-    exists because omitting it produced a false positive on 2026-08-23.
+    exists because omitting it produces a false positive for mirrored seats.
     """
 
     __slots__ = ("kind", "mirror", "module", "note", "symbol")
@@ -120,7 +120,7 @@ def _orphan(note):
 # ── The map ──────────────────────────────────────────────────────────────────
 # Every key in DEFAULT_SETTINGS["capability_routing"] must appear here, or
 # test_role_consumers::test_every_declared_seat_is_mapped fails. Each entry was
-# established by reading the code on 2026-08-23, not by assertion.
+# established by reading the code, not by assertion.
 CONSUMERS: dict[str, Consumer] = {
 
     # ── Consumed, and the read chooses a model ───────────────────────────────
@@ -169,7 +169,7 @@ CONSUMERS: dict[str, Consumer] = {
     # ── Declared and consumed by nothing ─────────────────────────────────────
     "orchestrator": _orphan(
         "WORKING ROLE. No module reads capability_routing.orchestrator. The "
-        "seat exists so Stephen can assign a router model (contract rule R11); "
+        "seat exists so the user can assign a router model (contract rule R11); "
         "the routing decision is still made by classifier heuristics in "
         "routing/model_router.py, which never consults it."),
 
@@ -186,21 +186,21 @@ CONSUMERS: dict[str, Consumer] = {
 
     "memory_manager": Consumer(
         "agent_friday.services.memory_proposals", "seat", SELECTS,
-        "WIRED 2026-08-24. memory_proposals.propose() runs fact extraction on "
-        "the assigned seat, pinned with no provider fallback. Stephen had "
-        "ALREADY assigned this seat (a local Gemma-4-E4B on arbiter-local) and "
-        "nothing read it, while memory_dreaming's six regexes consolidated 0 "
-        "durable facts from 215 turns (liveness_audit.py:12). MANUAL ONLY for "
-        "now: propose() is run by hand and its output waits for approve() "
-        "before anything reaches user_model. The nightly regex pass in "
-        "memory_dreaming is unchanged."),
+        "memory_proposals.propose() runs fact extraction on the assigned "
+        "seat, pinned with no provider fallback. Before this was wired, an "
+        "assigned seat here was read by nothing while memory_dreaming's six "
+        "regexes consolidated 0 durable facts from 215 turns "
+        "(liveness_audit.py:12). MANUAL ONLY for now: propose() is run by "
+        "hand and its output waits for approve() before anything reaches "
+        "user_model. The nightly regex pass in memory_dreaming is "
+        "unchanged."),
 
     "researcher": _orphan(
         "WORKING ROLE. No reader. Long commissions run on the subagent seat."),
 
     "creative_music": Consumer(
         "agent_friday.services.music_engine", "_seat_model", SELECTS,
-        "WIRED 2026-08-24. resolve_music_model() now consults the seat when no "
+        "resolve_music_model() consults the seat when no "
         "model is passed explicitly. Previously inert in both directions: "
         "every caller passed model= (services/creations.py:438 hardcodes "
         "'lyria-clip') and resolution fell through to the DEFAULT_MUSIC_MODEL "

@@ -77,7 +77,7 @@ class TestNothingSubstitutesAnyMore:
     daemon -> 404 -> the cloud leg forwarded the LOCAL id to Anthropic -> 404
     -> heartbeat dead all night.
 
-    The gate is gone (2026-08-15, Stephen's decision). `resolve_local_seat` is
+    The gate is gone (2026-08-15, the maintainer's decision). `resolve_local_seat` is
     a pass-through: the model asked for is the model dispatched. That removes
     the substitution step entirely, so the "stale green substitute" class of
     bug cannot recur from this cause at all.
@@ -100,7 +100,7 @@ class TestNothingSubstitutesAnyMore:
         assert gate.get_last_known_green() is None
 
     def test_a_model_that_never_scored_is_still_dispatched(self):
-        """Stephen: "I absolutely want the user to be able to set any model
+        """The maintainer: "I absolutely want the user to be able to set any model
         they wish at any seat they wish, so this is non-negotiable." """
         from agent_friday.services import model_seat_gate as gate
         seat = gate.resolve_local_seat("something-nobody-ever-tested:3b")

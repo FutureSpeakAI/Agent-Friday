@@ -9,7 +9,7 @@ the work is published". It was the ONLY caller of this template that ran
 unattended with no human ever reviewing before the expensive stage or
 before publishing to the user's Desktop.
 
-Stephen: "fix it... a checkpoint that exists and is skipped is the placebo
+The maintainer: "fix it... a checkpoint that exists and is skipped is the placebo
 pattern in a different costume... it should do what it says" (2026-09-04,
 git history checked first per his own instruction -- no deliberate reason
 for the bypass was found: the line was simply how this mode was originally
