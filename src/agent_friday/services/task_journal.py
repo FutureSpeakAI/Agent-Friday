@@ -581,3 +581,136 @@ class Heartbeat:
 def last_seen(task_id: str) -> Optional[float]:
     st = read_state(task_id) or {}
     return st.get("last_seen") or st.get("state_written")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Phase 3 — reading the record: gaps, digest, sealing for other principals
+# ═══════════════════════════════════════════════════════════════════════════
+
+def read_with_gaps(task_id: str, since: int = 0, limit: Optional[int] = None) -> Dict[str, Any]:
+    """Events with seq > since, plus every hole in the sequence.
+
+    Sequence numbers exist so a reader can tell "I have everything" from
+    "something is missing". A gap is reported, never papered over: between
+    `since` and the first event returned, between consecutive events, and
+    when `since` is beyond the newest event (a cursor ahead of the record —
+    the journal was deleted or replaced under the reader)."""
+    events = read(task_id, since=since, limit=limit)
+    all_last = 0
+    for ev in read(task_id):
+        all_last = max(all_last, int(ev.get("seq") or 0))
+    gaps: List[Dict[str, int]] = []
+    expected = since + 1
+    for ev in events:
+        s = int(ev.get("seq") or 0)
+        if s > expected:
+            gaps.append({"missing_from": expected, "missing_to": s - 1})
+        expected = s + 1
+    cursor_ahead = since > all_last
+    return {"events": events, "gaps": gaps, "cursor_ahead": cursor_ahead,
+            "last_seq": (events[-1]["seq"] if events else since),
+            "journal_last_seq": all_last, "complete": not gaps and not cursor_ahead}
+
+
+_DIGEST_KINDS = ("checkpoint", "decision", "halt", "steer", "tool_call")
+
+
+def digest(task_id: str, n: int = 20, include_reasoning: bool = False) -> Optional[Dict[str, Any]]:
+    """A compact view sized for a prompt: status, cost, model/seat, the last
+    n checkpoints and decisions, halts. Reasoning prose is NOT included
+    unless explicitly asked for (the maintainer's ruling: an orchestrator
+    gets decisions, status, model and cost by default; reasoning only on
+    explicit request, and then only through the gate)."""
+    st = read_state(task_id)
+    events = read(task_id)
+    if st is None and not events:
+        return None
+    st = st or {}
+    model_calls = [e for e in events if e.get("kind") == "model_call"]
+    cost = sum(float(e.get("cost_usd") or 0) for e in model_calls)
+    last_model = model_calls[-1] if model_calls else {}
+    decisions = [e for e in events if e.get("kind") == "decision"][-n:]
+    checkpoints = [e for e in events if e.get("kind") == "checkpoint"][-n:]
+    halts = [e for e in events if e.get("kind") == "halt"]
+    tools = [e for e in events if e.get("kind") == "tool_call"]
+    out: Dict[str, Any] = {
+        "task_id": task_id,
+        "name": st.get("name"),
+        "status": st.get("status"),
+        "created": st.get("created"), "started": st.get("started"), "ended": st.get("ended"),
+        "last_seen": st.get("last_seen") or st.get("state_written"),
+        "now": (checkpoints[-1].get("summary") if checkpoints else None),
+        "iterations": len(model_calls),
+        "model": last_model.get("model") or st.get("model"),
+        "provider": last_model.get("provider"), "seat": last_model.get("seat"),
+        "cost_usd": round(cost, 6),
+        "tool_calls": len(tools),
+        "decisions": [{"seq": d.get("seq"), "ts": d.get("ts"), "point": d.get("point"),
+                       "chosen": d.get("chosen"), "reason": d.get("reason")} for d in decisions],
+        "checkpoints": [{"seq": c.get("seq"), "ts": c.get("ts"), "iteration": c.get("iteration"),
+                         "summary": c.get("summary")} for c in checkpoints],
+        "halts": [{"seq": h.get("seq"), "cause": h.get("cause"), "detail": h.get("detail"),
+                   "resume_hint": h.get("resume_hint")} for h in halts],
+        "journal_last_seq": (events[-1]["seq"] if events else 0),
+        "unrecorded": bool(st.get("unrecorded")),
+    }
+    if include_reasoning:
+        out["reasoning"] = [{"seq": r.get("seq"), "iteration": r.get("iteration"),
+                             "text": r.get("text"), "thinking": r.get("thinking")}
+                            for r in events if r.get("kind") == "reasoning"][-n:]
+    return out
+
+
+# Fields that carry free text a task handled. Everything else in an event is
+# metadata (ids, numbers, kinds) and travels as-is.
+_SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reason", "chosen",
+                  "alternatives", "prompt", "result", "message", "description", "name",
+                  "detail", "last_checkpoint", "now")
+
+WITHHELD = "[withheld by the privacy gate]"
+
+
+def seal_for_principal(obj, principal: str, provider: str = "observer") -> tuple:
+    """Run every free-text field of a journal payload through the egress gate
+    before it leaves for a principal that is not the local user (TV11). The
+    journal is the most sensitive text in the product; serving it to a
+    cloud-backed agent is an egress, and is gated like any tool result.
+    Returns (sealed_copy, redacted_count, withheld_count). Fails CLOSED: if
+    the gate cannot be reached, every text field is withheld."""
+    if principal == "user":
+        return obj, 0, 0
+    counts = {"redacted": 0, "withheld": 0}
+    try:
+        from agent_friday.services import egress_gate as _eg
+        gate = _eg._gate_text
+        blocked = _eg.NeverSendBlocked
+    except Exception:
+        gate = None
+        blocked = Exception
+
+    def _seal_text(val, field):
+        if gate is None:
+            counts["withheld"] += 1
+            return WITHHELD
+        try:
+            out = gate(val, provider, f"task_journal.{field}")
+        except blocked:
+            counts["withheld"] += 1
+            return WITHHELD
+        except Exception:
+            counts["withheld"] += 1
+            return WITHHELD
+        if out != val:
+            counts["redacted"] += 1
+        return out
+
+    def _walk(node, field=None):
+        if isinstance(node, dict):
+            return {k: (_walk(v, k)) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v, field) for v in node]
+        if isinstance(node, str) and field in _SEALED_FIELDS and node:
+            return _seal_text(node, field)
+        return node
+
+    return _walk(obj), counts["redacted"], counts["withheld"]
