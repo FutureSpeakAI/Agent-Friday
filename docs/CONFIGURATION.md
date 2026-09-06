@@ -42,7 +42,7 @@ Settings under the `model_routing` key (top-level copies of these keys are ignor
 |-----|------|---------|-------------|
 | `mode` | string | `cloud_only` | Routing mode: `cloud_only`, `smart`, `local_preferred`, `local_only`. |
 | `default_cloud_model` | string | `claude-sonnet-5` | Cloud model used by the router when no override is specified. |
-| `local_model` | string | `gemma3:4b` | Default Ollama model for local routes — Friday's zero-cloud-key default brain (runs on ~8GB RAM; upgrade to `gemma3:12b` / `gemma3:27b` with more RAM). |
+| `local_model` | string | `gemma4:e2b` | Default Ollama model for local routes — Friday's zero-cloud-key default brain (runs on ~8GB RAM; upgrade to `gemma4:e4b`, `gemma4:12b`, or `gemma4:26b` with more RAM/VRAM). A placeholder until FutureSpeak's own model ships. |
 | `fallback_to_cloud` | boolean | `true` | Fall back to cloud when Ollama is unavailable. |
 | `ollama_url` | string | `http://localhost:11434` | Ollama API endpoint. |
 | `vault_local_only` | boolean | `true` | When `true`, vault TIER_2/TIER_3 content reaches local models only; vault-touching requests are force-routed to Ollama. |
@@ -66,7 +66,7 @@ Settings under the `model_routing` key (top-level copies of these keys are ignor
     "fallback_to_cloud": true,
     "vault_cloud_fallback": "deny",
     "task_overrides": {
-      "code": { "provider": "local", "model": "qwen3:32b" }
+      "code": { "provider": "local", "model": "gemma4:26b" }
     }
   }
 }

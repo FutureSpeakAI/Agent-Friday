@@ -126,9 +126,17 @@ access.
 **Defence:** All behavioral constraints are HMAC-SHA256 signed with a governance
 key stored in the OS credential store (Windows Credential Manager, macOS Keychain,
 Linux Secret Service) via the `keyring` library, with a file fallback at
-`~/.friday/vault/.governance-key`. The `IntegrityEngine` verifies HMAC and
-Ed25519 signatures before every action. Drift is logged to
-`~/.friday/vault/access-log.jsonl`.
+`~/.friday/vault/.governance-key`. The `IntegrityEngine` (`governance/
+proof_of_integrity.py`) can verify those HMAC and Ed25519 signatures against a
+signed manifest, but it is reachable only on demand — via `GET /api/integrity`,
+`POST /api/integrity/verify`, and the federation/provenance modules — not from
+any pre-action gate. The check that actually runs before every tool call is a
+separate mechanism, `_governance_check()` (`services/agent.py`): a ring-based
+allow/deny gate (Ring 0/1 always, Ring 2 requires auth, Ring 3 requires
+computer-control confirmation) that HMAC-signs its own audit-log entry but does
+not call `IntegrityEngine` or re-verify the signed constraint manifest. Drift in
+the constraints is detectable when the integrity-verification API is invoked,
+and logged to `~/.friday/vault/access-log.jsonl`.
 
 **Keyring fallback:** On systems without a supported keyring backend (e.g. a
 headless Linux server without Secret Service), `get_governance_key()` falls back
@@ -138,8 +146,11 @@ is weaker than OS keychain — the file is protected only by filesystem permissi
 Set up a keyring backend (`python-secretstorage` + D-Bus on Linux) to eliminate
 this risk.
 
-**Guarantee:** Constraint modifications are detectable (integrity drift) and logged.
-The HMAC key lives in the OS keychain and is not stored in the repository.
+**Guarantee:** Constraint modifications are detectable (integrity drift) via the
+on-demand attestation API, not automatically before every action, and logged.
+The HMAC key lives in the OS keychain and is not stored in the repository. The
+ring-based `_governance_check()` gate does run before every tool call, but it
+enforces allow/deny policy — it is not the same thing as manifest verification.
 
 ---
 
@@ -243,8 +254,9 @@ stops being true. Nothing here applies to a web deployment.
 
 A supply-chain attack on Flask, Anthropic SDK, sentence-transformers, or another
 dependency could bypass all application-level controls. We mitigate this with
-pinned dependency versions and optional extras (presidio, keyring) rather than
-mandatory ones.
+enforced minimum dependency versions (`pyproject.toml` and every packaging/
+requirements file use `>=` floors, not exact pins) and optional extras
+(presidio, keyring) rather than mandatory ones.
 
 ---
 
@@ -293,6 +305,6 @@ confined to `~/.friday/vault/` with 600 permissions as a fallback.
 
 ---
 
-*Last updated: 2026-07-04. This document should be updated whenever the security
+*Last updated: 2026-09-05. This document should be updated whenever the security
 architecture changes. The egress gate guarantee is a functional invariant — any
 PR that weakens it requires explicit security review.*

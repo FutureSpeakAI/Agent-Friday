@@ -1,6 +1,8 @@
 ﻿"""Agent Friday — Extension Security + Scoped Agent API routes."""
 from flask import Blueprint, request, jsonify
-from agent_friday.services.extension_security import get_audit_log, ENV_BLOCKLIST, TRUST_LEVELS
+from agent_friday.services.extension_security import (
+    get_audit_log, SANDBOXED_ENV_ALLOWLIST, TRUST_LEVELS,
+)
 from agent_friday.services.scoped_agents import spawn_scoped_task, get_scoped_task, list_scoped_tasks
 
 ext_security_bp = Blueprint("ext_security", __name__)
@@ -10,9 +12,14 @@ def api_mcp_audit():
     limit = request.args.get("limit", 100, type=int)
     return jsonify({"entries": get_audit_log(limit)})
 
-@ext_security_bp.route("/api/security/env-blocklist", methods=["GET"])
-def api_env_blocklist():
-    return jsonify({"blocked": sorted(ENV_BLOCKLIST)})
+@ext_security_bp.route("/api/security/mcp-sandbox-env", methods=["GET"])
+def api_mcp_sandbox_env():
+    """What a sandboxed/untrusted MCP server's subprocess environment is
+    built FROM (F67) -- an allowlist of names, not a denylist of secrets
+    stripped from the full inherited environment. Everything not named
+    here is simply absent from that subprocess, regardless of whether it
+    happens to be a secret."""
+    return jsonify({"allowed": sorted(SANDBOXED_ENV_ALLOWLIST)})
 
 @ext_security_bp.route("/api/security/trust-levels", methods=["GET"])
 def api_trust_levels():

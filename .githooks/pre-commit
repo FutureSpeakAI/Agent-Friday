@@ -63,4 +63,14 @@ if ! $PY "$HERE/../scripts/check_gated_prompt_callers.py"; then
     exit 1
 fi
 
+# ── Settings-control reader check ─────────────────────────────────────────
+# EGRESS GATE and (in ui_parts/app.html) Local-Only Mode wrote settings keys
+# nothing read, and both showed "Saved" regardless (docs/design/
+# security-boundary.md #18). Pure text/AST parse, stdlib only, no app import.
+if ! $PY "$HERE/../scripts/check_settings_readers.py"; then
+    echo "[pre-commit] settings-readers check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 exec $PY "$SCANNER"

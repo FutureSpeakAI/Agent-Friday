@@ -437,6 +437,13 @@ def _source_trust_meta(domain, banned=None, boosted=None):
 # fresh while smoothing bursts.
 _RSS_CACHE = {}
 _RSS_CACHE_TTL = 300  # seconds
+
+#: 2026-09-04: a real ceiling on one feed's connect+read. `feedparser.parse(url)`
+#: previously handed the fetch straight to urllib with no timeout at all, so a
+#: feed server that accepted the connection and then never sent (or trickled)
+#: data blocked that worker thread forever. See KNOWN_ISSUES.md for the
+#: incident this was found investigating.
+_RSS_FETCH_TIMEOUT_S = 8.0
 _RSS_CACHE_LOCK = threading.Lock()
 
 
@@ -502,19 +509,32 @@ def _normalize_entry(entry):
     return {"title": title, "snippet": snippet, "url": link, "source": domain, "ts": ts}
 
 
-def _parse_feed(url, limit=12):
-    """Fetch+parse one RSS feed into normalized entries, with TTL caching."""
+def _parse_feed(url, limit=12, timeout=None):
+    """Fetch+parse one RSS feed into normalized entries, with TTL caching.
+
+    2026-09-04: fetches the bytes ourselves via `urllib.request.urlopen(...,
+    timeout=...)` rather than handing the bare URL to `feedparser.parse()`,
+    which has no timeout parameter of its own and previously blocked this
+    call -- and the pool worker running it -- on a feed server that accepted
+    the connection and then never finished sending. `timeout` defaults to
+    `_RSS_FETCH_TIMEOUT_S`; overridable so a test can prove the bound is
+    real without waiting out the production value. See KNOWN_ISSUES.md.
+    """
     now = _time.time()
     with _RSS_CACHE_LOCK:
         hit = _RSS_CACHE.get(url)
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
     try:
-        import socket
+        import urllib.request
         import feedparser
-        d = feedparser.parse(url, request_headers={
+        req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
         })
+        with urllib.request.urlopen(
+                req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
+            raw = resp.read()
+        d = feedparser.parse(raw)
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
             norm = _normalize_entry(e)
@@ -533,23 +553,36 @@ def _rss_results(feeds, limit=12):
     Returns [{title, snippet, url, source, ts}] de-duplicated by headline. Feeds
     are fetched in parallel with a bounded pool so a slow feed doesn't stall the
     whole category, and each feed fails soft to an empty list.
+
+    2026-09-04: the pool used to be a `with ThreadPoolExecutor(...) as pool:`
+    block. `as_completed(futures, timeout=20)` looked like a real ceiling but
+    was not one -- the `with` statement's own `__exit__` calls
+    `pool.shutdown(wait=True)` unconditionally, an UNBOUNDED join that runs
+    regardless of whether the 20s timeout above already gave up. A single
+    feed fetch wedged past `_parse_feed`'s own timeout (itself unbounded
+    before the same date) blocked this function, and therefore whatever
+    called it, forever. The pool is now managed explicitly and shut down
+    with `wait=False`: a wedged worker thread is abandoned (Python cannot
+    force-kill a running thread), but the caller is no longer blocked by it.
     """
     feeds = [f for f in (feeds or []) if f]
     if not feeds:
         return []
     merged = []
     workers = min(8, len(feeds))
+    pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_parse_feed, f, limit): f for f in feeds}
+        futures = {pool.submit(_parse_feed, f, limit): f for f in feeds}
+        try:
             for fut in as_completed(futures, timeout=20):
                 try:
                     merged.extend(fut.result() or [])
                 except Exception:
                     continue
-    except Exception:
-        # Pool/timeout failure — fall back to whatever completed.
-        pass
+        except TimeoutError:
+            pass  # whatever finished, finished; stragglers are abandoned below
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     seen, deduped = set(), []
     for it in merged:
         key = re.sub(r"\W+", "", it["title"].lower())[:80]

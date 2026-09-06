@@ -186,7 +186,7 @@ def kg_query():
     return jsonify(result)
 
 
-_TIER_B_STATE = {"running": False, "last": None}
+_TIER_B_STATE = {"running": False, "last": None, "started_at": None}
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/reindex", methods=["POST"])
@@ -209,6 +209,13 @@ def kg_reindex():
 
         def run():
             _TIER_B_STATE["running"] = True
+            # started_at makes "how long has this been running" answerable via
+            # /api/knowledge-graph/reindex/status -- previously `running` was
+            # the entire signal, so a caller polling it saw running:true
+            # identically whether the job started 30 seconds or 7 hours ago
+            # (docs/audits/gauntlet-2026-09-03/findings.jsonl Q21, the same
+            # blind spot that let F31 run undetected for 7+ hours).
+            _TIER_B_STATE["started_at"] = time.time()
             try:
                 from agent_friday.services.knowledge_graph import indexer
                 info = indexer.reindex_tier_b(
@@ -218,17 +225,28 @@ def kg_reindex():
                 _TIER_B_STATE["last"] = info
                 return info
             except Exception as e:
-                _TIER_B_STATE["last"] = {"error": str(e)}
+                # `crashed` distinguishes an actually-unhandled exception
+                # here from reindex_tier_b()'s own OWN structured "error"
+                # field (no_local_model / egress_gate_unavailable) -- those
+                # are a clean, reported refusal, not a server fault, and
+                # returning 500 for them made a known, user-actionable
+                # condition ("pull a model or switch to Cloud") look like a
+                # crash to the client. Only this branch sets it.
+                _TIER_B_STATE["last"] = {"error": str(e), "crashed": True}
                 emit_kg_event("progress", {"message": f"tier B failed: {e}"})
-                return {"error": str(e)}
+                return {"error": str(e), "crashed": True}
             finally:
                 _TIER_B_STATE["running"] = False
 
         if sync:
             info = run()
-            if "error" in info:
+            if info.get("crashed"):
                 return jsonify({"status": "error", **info}), 500
-            return jsonify({"status": "ok", **info})
+            # A structured "error" here (no_local_model,
+            # egress_gate_unavailable) is a clean, reported refusal, not a
+            # server fault -- HTTP 200 either way, body status reflects it.
+            status = "error" if info.get("error") else "ok"
+            return jsonify({"status": status, **info})
         threading.Thread(target=run, daemon=True,
                          name="kg-tier-b-index").start()
         return jsonify({"status": "started", "tier": "B", "mode": mode})
@@ -239,7 +257,8 @@ def kg_reindex():
 @login_required
 def kg_reindex_status():
     return jsonify({"status": "ok", "running": _TIER_B_STATE["running"],
-                    "last": _TIER_B_STATE["last"]})
+                    "last": _TIER_B_STATE["last"],
+                    "started_at": _TIER_B_STATE.get("started_at")})
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/search", methods=["GET"])

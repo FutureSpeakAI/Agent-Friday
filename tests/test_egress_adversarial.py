@@ -12,19 +12,16 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 from pathlib import Path
 
-# ── Hermetic environment — must precede any project import ────────────────────
-os.environ.setdefault("FRIDAY_TESTING", "1")
-_TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_egress_adv_"))
-os.environ["USERPROFILE"] = str(_TEST_HOME)
-os.environ["HOMEDRIVE"] = _TEST_HOME.drive or "C:"
-os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
-os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
-os.environ.setdefault("FRIDAY_VAULT_PASSPHRASE", "test-vault-passphrase")
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Isolation comes from tests/conftest.py, which pytest always imports before
+# any test module under tests/ -- this file used to mint its OWN separate
+# isolated home via tempfile.mkdtemp(prefix="friday_egress_adv_") with no
+# cleanup of any kind. Found 327 leaked directories (262MB, dating back to
+# 2026-06-28 -- nearly two and a half months) while chasing down the SAME
+# leak class in tests/test_judgment_gate.py (findings.jsonl F49) and doing
+# the broader sweep across tests/ that finding's own "fix the pattern, not
+# the instance" lesson called for. Logged as F51.
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SRC = _ROOT / "src"

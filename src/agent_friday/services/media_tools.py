@@ -72,6 +72,48 @@ def _resolve_media_path(raw):
     return None, "no file found at %r (also searched the creations folders)." % str(raw)
 
 
+# security-boundary.md §19 row 3: every generate_content() call below sends
+# a caller-supplied `question` plus raw media bytes to Gemini with no gate
+# call and no ledger row at all. These two helpers close that: the question
+# is real prompt text (unlike the fixed vision-prompt constant at
+# routes/chat.py:388/:1489, §19 row 11) and must be text-gated like any
+# other cloud-bound string; the media bytes get the same
+# `record_binary_egress` receipt every other binary path already gets.
+
+_MEDIA_QUESTION_WITHHELD = "[question withheld by egress gate]"
+
+
+def _gate_vision_question(question: str, field: str) -> str:
+    """Gate a vision/audio-understanding question before it reaches Gemini.
+    FAIL-CLOSED — any gate exception, including NeverSendBlocked, withholds
+    rather than sends the raw question."""
+    if not question:
+        return question
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception:
+        return _MEDIA_QUESTION_WITHHELD
+    try:
+        gated = _eg._gate_text(question, "google-gemini", field)
+        return gated if gated else _MEDIA_QUESTION_WITHHELD
+    except _eg.NeverSendBlocked:
+        return _MEDIA_QUESTION_WITHHELD
+    except Exception:
+        return _MEDIA_QUESTION_WITHHELD
+
+
+def _record_media_binary_egress(field: str, byte_len: int) -> None:
+    """Record that media bytes left for Gemini — never raises; a ledger
+    failure must not break the tool call, but must not pretend either."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_binary_egress("google-gemini", field, action="allow",
+                                 reason="vision/audio understanding call",
+                                 byte_len=byte_len)
+    except Exception:
+        pass
+
+
 def _gemini_client():
     from agent_friday import core
     if not getattr(core, "GEMINI_API_KEY", None):
@@ -138,10 +180,12 @@ def _tool_inspect_image(inp):
     mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
             "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}[
         path.suffix.lower().lstrip(".")]
+    question = _gate_vision_question(question, "inspect_image.question")
     try:
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[question, types.Part.from_bytes(data=data, mime_type=mime)])
+        _record_media_binary_egress("inspect_image.image", len(data))
         return "[%s | %.1f KB]\n%s" % (path.name, len(data) / 1024,
                                        (resp.text or "").strip())
     except Exception as e:
@@ -162,6 +206,7 @@ def _inspect_video_frame(path, inp):
         "Describe what happens across them: subjects, motion, consistency of "
         "characters between frames, and any text/lettering.")
     parts = [question]
+    _frame_bytes = 0
     import tempfile
     for i, t in enumerate(stamps):
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
@@ -171,8 +216,10 @@ def _inspect_video_frame(path, inp):
                 ["ffmpeg", "-y", "-v", "error", "-ss", "%.2f" % t, "-i",
                  str(path), "-frames:v", "1", frame_path],
                 timeout=60, check=True)
+            _frame_data = Path(frame_path).read_bytes()
+            _frame_bytes += len(_frame_data)
             parts.append(types.Part.from_bytes(
-                data=Path(frame_path).read_bytes(), mime_type="image/png"))
+                data=_frame_data, mime_type="image/png"))
         except Exception:
             continue
         finally:
@@ -182,9 +229,11 @@ def _inspect_video_frame(path, inp):
                 pass
     if len(parts) == 1:
         return "inspect_image error: could not extract frames from %s" % path.name
+    parts[0] = _gate_vision_question(parts[0], "inspect_image.question")
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash",
                                               contents=parts)
+        _record_media_binary_egress("inspect_image.video_frames", _frame_bytes)
         return "[%s | %.1fs video, %d frames sampled]\n%s" % (
             path.name, dur, len(parts) - 1, (resp.text or "").strip())
     except Exception as e:
@@ -233,10 +282,13 @@ def _tool_inspect_audio(inp):
                     else "audio/mpeg" if path.suffix.lower() == ".mp3" \
                     else "audio/wav" if path.suffix.lower() == ".wav" \
                     else "audio/ogg"
+                _gated_question = _gate_vision_question(
+                    question, "inspect_audio.question")
                 resp = client.models.generate_content(
                     model="gemini-2.5-flash",
-                    contents=[question,
+                    contents=[_gated_question,
                               types.Part.from_bytes(data=data, mime_type=mime)])
+                _record_media_binary_egress("inspect_audio.audio", len(data))
                 lines.append("listen check: " + (resp.text or "").strip())
             except Exception as e:
                 lines.append("listen check unavailable (%s)" % e)

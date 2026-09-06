@@ -6,19 +6,33 @@ prompt pipeline (vendored verbatim from graphrag-workbench under prompts/),
 merges duplicate entities, detects communities (reusing Tier A's detector),
 writes LLM community reports, and embeds entity text locally.
 
-Sovereignty rules (non-negotiable, spec §5.4):
+Routing rules, revised 2026-09-03 (superseding the original spec §5.4
+tier-based sovereignty rule, which pinned TIER_2/3 chunks local no matter
+what the user chose for this — that was a per-tier override of a per-user
+choice, and it is gone: "he is not asking for a system that decides for
+people, he's asking for one that does what the person picked"):
   * The indexer NEVER opens a socket. Every LLM call goes through
     model_router._generate_text, which seals cloud payloads via
-    egress_gate.seal_outbound.
-  * classify-before-extract: each chunk's sensitivity is resolved BEFORE any
-    LLM call. TIER_3 chunks are indexed with a local provider or skipped —
-    never sent to cloud, in any mode.
-  * indexing_mode "local_only" (the default) pins every call to the local
-    model. "gated_cloud" lets TIER_1 chunks use the routed cloud model
-    (still sealed); TIER_2/3 stay local.
-  * egress_gate.gate_operational() == False disables cloud indexing outright.
+    egress_gate.seal_outbound (or, when the user has separately chosen
+    model_routing.unrestricted_cloud, passes them through with a ledger
+    row and no other change — the same rule as everywhere else in the app).
+  * indexing_mode is a strict PER-USER CHOICE, not a per-chunk decision:
+    "local" (the default) always uses an installed local model — nothing
+    for this pass ever reaches the network, at any sensitivity. "cloud"
+    always routes through the egress-gated cloud default — what content
+    actually reaches the wire is the gate's decision, uniformly, the same
+    way it decides for every other cloud call in the app.
+  * classify-before-extract still holds: each chunk's sensitivity is
+    resolved before any LLM call, and travels with it as an INPUT to the
+    egress gate's own decision — it no longer overrides the user's mode
+    choice here.
+  * egress_gate.gate_operational() == False disables cloud indexing
+    outright; a missing/uninstalled local model disables local indexing
+    outright — both checked ONCE at the top of reindex_tier_b, not
+    discovered one failed chunk at a time.
   * Derived records inherit their source's sensitivity, so the store
-    encrypts anything derived from TIER_2/3 sources at rest.
+    encrypts anything derived from TIER_2/3 sources at rest, regardless of
+    which mode produced them.
 """
 
 from __future__ import annotations
@@ -47,6 +61,15 @@ ENTITY_TYPES = "person,organization,project,tool,concept,event,place"
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 100
 MAX_REPORT_COMMUNITIES = 24        # cap LLM cost per index pass
+# Extraction had no equivalent cap: one LLM call per stale chunk, no ceiling.
+# When the routed cheap/free provider goes unhealthy, model_router's own
+# cross-provider circuit breaker (correct for chat: never leave the user
+# without an answer) reroutes every remaining chunk straight to the paid
+# frontier default -- a live incident (2026-09-04) ran a single Tier B pass
+# for 7+ hours straight through the night, unattended, at ~$10/hour, because
+# nothing here would ever stop asking. A corpus bigger than this cap is
+# retried on the next delta pass instead of billed to the end tonight.
+MAX_CLOUD_EXTRACT_CALLS = 200       # cap real-money LLM calls per index pass
 
 
 def _prompt(name: str) -> str:
@@ -146,7 +169,12 @@ def _cognitive_chunks() -> Iterable[dict]:
         from agent_friday.cognitive_memory import CognitiveMemory
         mem = CognitiveMemory()
         mem_dir = Path(getattr(mem, "memory_dir"))
-    except Exception:
+    except Exception as e:
+        # Total failure here is indistinguishable from "no memories yet"
+        # unless it is said out loud — see _conversation_chunks below, where
+        # the same shape of swallow hid a broken source for good.
+        print(f"  [KG] cognitive memory source failed, no cognitive facts "
+              f"indexed: {e}")
         return []
     out = []
     if not mem_dir.exists():
@@ -171,17 +199,35 @@ def _cognitive_chunks() -> Iterable[dict]:
 
 
 def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
+    """Chat turns from `ConversationMemory.recent()`.
+
+    `recent()` returns dicts shaped {text, role, timestamp, date, session_id,
+    topic_keywords} — no `turn_id` (it never surfaces Chroma's internal doc
+    id). That is fine: the id below falls back to a hash of the content,
+    which is stable across re-indexes and gives the same chunk id for the
+    same turn every time, keeping "delta" mode's dedup working.
+
+    Bug history: this used to call a `recent_turns(limit=...)` method that
+    `ConversationMemory` has never had, and read a `content` field that
+    `recent()` has never returned either. The bare `except Exception: return
+    []` below turned that AttributeError into an empty list indistinguishable
+    from "no conversations yet" — so the conversation source has never
+    actually indexed a single turn. Fixed by calling the real method with its
+    real field name, and by no longer swallowing the failure silently.
+    """
     try:
         from agent_friday.conversation_memory import ConversationMemory
         cm = ConversationMemory()
         if not cm.available():
             return []
-        turns = cm.recent_turns(limit=limit)
-    except Exception:
+        turns = cm.recent(n=limit)
+    except Exception as e:
+        print(f"  [KG] conversation source failed, no conversation turns "
+              f"indexed: {e}")
         return []
     out = []
     for t in turns or []:
-        content = str(t.get("content") or "")
+        content = str(t.get("text") or "")
         if len(content.strip()) < 40:      # skip trivia
             continue
         sens = _classify_free_text(content)
@@ -202,8 +248,16 @@ class CloudIndexingDisabled(RuntimeError):
     pass
 
 
+class LocalIndexingUnavailable(RuntimeError):
+    """Raised when mode="local" is chosen but nothing installed can run
+    extraction. Distinct from CloudIndexingDisabled so a caller (or a log)
+    can tell which side of the choice failed."""
+    pass
+
+
 def _local_model() -> str:
-    """The local model to index with, falling back to model_plan's floor.
+    """The user's PREFERRED local model name — a name, not a promise it is
+    installed. `_available_local_model()` below is what actually checks.
 
     The fallback was `gemma3:4b` in both branches — defect H3 again. Indexing
     does not itself call tools, so this one was harmless in practice, which is
@@ -219,15 +273,70 @@ def _local_model() -> str:
         return FLOOR_MODEL
 
 
+def _available_local_model() -> Optional[str]:
+    """The local model Tier B will actually use, or None if nothing
+    installed can do the job.
+
+    2026-09-03, item #1 of the "default is broken for everyone" instruction:
+    `_local_model()` names a model with no check that it is INSTALLED. On a
+    fresh install where the user picked Claude-only (no local model ever
+    downloaded) or a different rung of the ladder, every extraction call
+    failed against a model that was never on the machine — one call at a
+    time, 348 times on the reference machine, before anyone found out. This
+    asks Ollama what is actually there.
+
+    Preference order: the configured/floor preference (`_local_model()`), if
+    it is installed and tool-capable; otherwise the smallest installed
+    tool-capable model, by the same ladder `model_plan.BRAIN_MODELS` already
+    orders by footprint; otherwise None — meaningfully different from a
+    fallback string, because "no model" must be a distinguishable state a
+    caller can act on, not silently become gemma3:4b (which cannot call
+    tools and was never a real answer either).
+    """
+    try:
+        from agent_friday.services.model_plan import TOOL_CAPABLE_IDS, BRAIN_MODELS
+        from agent_friday.routing.ollama_manager import get_manager
+        installed = {m.get("name") or m.get("model")
+                    for m in (get_manager().list_models() or [])}
+    except Exception:
+        return None
+    capable_installed = installed & TOOL_CAPABLE_IDS
+    if not capable_installed:
+        return None
+    preferred = _local_model()
+    if preferred in capable_installed:
+        return preferred
+    for m in BRAIN_MODELS:
+        if m["id"] in capable_installed:
+            return m["id"]
+    return None
+
+
 def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
     """Return (model, is_local_pin) for a chunk.
 
-    local_only  → always the local model.
-    gated_cloud → TIER_1 rides the routed default (sealed by the egress
-                  gate downstream); TIER_2/3 pinned local. Cloud requires a
-                  healthy gate.
+    A strict PER-USER CHOICE (2026-09-03), not a per-tier override: earlier
+    versions of this function pinned "sensitive" chunks local even when the
+    user had chosen "cloud" for this. "He is not asking for a system that
+    decides for people, he's asking for one that does what the person
+    picked" — so that second-guessing is gone. `sensitivity` stays a
+    parameter for call-site compatibility; it no longer changes the
+    decision here. What content is actually safe to send is the egress
+    gate's job, the same as every other cloud call in the app: tier-based
+    redaction normally, or a full pass-through under the separate,
+    explicitly-chosen `model_routing.unrestricted_cloud` — this function
+    only decides ROUTING (local vs. cloud), never content.
+
+    mode "local" → the model resolved by `_available_local_model()`
+                    (raises LocalIndexingUnavailable if nothing qualifies —
+                    see the fail-fast check at the top of reindex_tier_b,
+                    which is where this is actually meant to be caught;
+                    this per-chunk path is the safety net, not the primary
+                    check, so a model that disappears mid-run cannot fall
+                    through to cloud silently).
+    mode "cloud" → the routed default; requires a healthy egress gate.
     """
-    if mode == "gated_cloud" and sensitivity <= 1:
+    if mode == "cloud":
         try:
             from agent_friday.services.egress_gate import gate_operational
             if not gate_operational():
@@ -237,14 +346,36 @@ def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
             raise
         except Exception:
             raise CloudIndexingDisabled("egress gate unavailable")
-        return None, False                 # routed default (cloud allowed)
-    return _local_model(), True
+        return None, False                 # routed default (egress-gated)
+    model = _available_local_model()
+    if model is None:
+        raise LocalIndexingUnavailable(
+            "local indexing selected, but no installed model can run "
+            "extraction (checked against the tool-capable ladder)")
+    return model, True
 
 
 def _llm(messages, system: Optional[str], sensitivity: int, mode: str,
          orb_label: Optional[str] = None) -> str:
     """Single LLM entry point for the whole indexer (spec §5.4)."""
-    model, _pinned = _resolve_model(sensitivity, mode)
+    model, pinned = _resolve_model(sensitivity, mode)
+    if pinned:
+        # _resolve_model's pin (local_only, or a TIER_2/3 chunk under
+        # gated_cloud) has to be enforced HERE -- routing/model_router.py's
+        # capability-based seat choice (settings.capability_routing.reasoning)
+        # can select a cloud model regardless of what `model=` is passed to
+        # _generate_text, which only ever uses it as a cloud-fallback label,
+        # never as a routing constraint. Before this, "Local only = nothing
+        # ever leaves this machine" (index.html's own KG settings copy, and
+        # this module's docstring) was false the moment a user picked a
+        # cloud model as their reasoning seat -- an ordinary, UI-encouraged
+        # action -- because a "pinned" chunk still rode the general router.
+        # Calling the local primitive directly, the same pattern already
+        # established for voice (F16), is the only way the pin is real.
+        from agent_friday.services.model_router import _call_ollama
+        text, _trace = _call_ollama(messages, system=system, model=model,
+                                    max_tokens=4096, orb_label=orb_label)
+        return text
     from agent_friday.services.model_router import _generate_text
     return _generate_text(messages, system=system, model=model,
                           max_tokens=4096, workspace="research",
@@ -308,12 +439,66 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     t0 = time.time()
     store = store or KnowledgeGraphStore()
     settings = kg_settings()
-    indexing_mode = str(settings.get("indexing_mode", "local_only"))
+    indexing_mode = str(settings.get("indexing_mode", "local"))
     call = llm or _llm
     say = progress or (lambda msg: None)
 
     chunks = gather_chunks()
     say(f"corpus: {len(chunks)} chunks")
+
+    # Fail FAST, not 348 times. Item #1 of the 2026-09-03 instruction: on a
+    # machine with no usable local model, the old code discovered that one
+    # doomed extraction call at a time, every single chunk, before ever
+    # saying so — the same shape of silent failure as the conversation-
+    # source bug fixed the same day, one layer up. Checked once, here,
+    # before any chunk is attempted.
+    #
+    # Gated on `call is _llm`: an injected `llm` (tests, or a caller
+    # bringing its own extraction function) owns its own backend and does
+    # not need a real Ollama or a real egress gate to exist -- that's the
+    # whole point of the injection point. Without this gate, every "local"
+    # unit test silently depends on whatever happens to be installed on the
+    # machine running pytest, which is exactly the kind of environment-
+    # dependent pass this file's own docstring ("nothing leaves the
+    # process") promises isn't happening.
+    if call is _llm and indexing_mode == "local" and _available_local_model() is None:
+        from agent_friday.services.model_plan import FLOOR_MODEL
+        say(f"TIER B CANNOT RUN: indexing_mode is 'local' but no installed "
+            f"model can run extraction. Pull one (e.g. 'ollama pull "
+            f"{FLOOR_MODEL}') or switch Settings -> Knowledge Graph to Cloud.")
+        return {
+            "tier": "B", "mode": indexing_mode, "chunks": len(chunks),
+            "extracted": 0, "extract_failures": 0, "first_failure": None,
+            "degraded": True, "skipped_tier3": 0, "entities": 0,
+            "relationships": 0, "communities": 0, "reports": 0,
+            "embedded": 0, "took_ms": int((time.time() - t0) * 1000),
+            "error": "no_local_model",
+            "message": f"Local indexing is selected, but no locally-installed "
+                       f"model can run extraction. Run 'ollama pull "
+                       f"{FLOOR_MODEL}' (or switch Settings -> Knowledge "
+                       f"Graph to Cloud) and try again.",
+        }
+    if call is _llm and indexing_mode == "cloud":
+        try:
+            from agent_friday.services.egress_gate import gate_operational
+            _cloud_ok = gate_operational()
+        except Exception:
+            _cloud_ok = False
+        if not _cloud_ok:
+            say("TIER B CANNOT RUN: indexing_mode is 'cloud' but the egress "
+                "gate self-test failed — cloud indexing refused rather than "
+                "risk an unsealed send.")
+            return {
+                "tier": "B", "mode": indexing_mode, "chunks": len(chunks),
+                "extracted": 0, "extract_failures": 0, "first_failure": None,
+                "degraded": True, "skipped_tier3": 0, "entities": 0,
+                "relationships": 0, "communities": 0, "reports": 0,
+                "embedded": 0, "took_ms": int((time.time() - t0) * 1000),
+                "error": "egress_gate_unavailable",
+                "message": "Cloud indexing is selected, but the egress "
+                           "gate's own self-test failed, so no chunk was "
+                           "sent. Fix the gate or switch to Local.",
+            }
 
     manifest = KnowledgeGraphManifest(base_dir=store.base)
     if mode == "delta":
@@ -338,28 +523,82 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                                       store.load("relationships")
                                       if r.get("tier") == "B"} if mode == "delta" else {}
     skipped_tier3 = 0
+    skipped_cloud_cap = 0
+    cloud_extract_calls = 0
     extracted = 0
     extract_failures = 0
     first_failure = None
+    # KnowledgeGraphManifest.record() keys by source_path and OVERWRITES the
+    # whole entry -- it has no notion of "this file has more chunks coming".
+    # A source over CHUNK_SIZE produces several chunks; if one is cap-skipped
+    # below but another chunk from the SAME file succeeds later in this same
+    # pass, that chunk's record() call stamps the file's CURRENT on-disk
+    # fingerprint as fully ingested. The next delta pass then sees that
+    # fingerprint, calls the file "unchanged", and never retries the
+    # cap-skipped chunk -- it is gone silently, with no failure counted,
+    # until the file happens to be edited again. Track which source_paths
+    # took a cap-skip this pass and scrub the manifest for them below, so the
+    # file's fingerprint stays stale and the whole file is picked up again on
+    # the next delta pass.
+    capped_sources: set[str] = set()
 
     for chunk in todo:
         sens = chunk["sensitivity"]
-        try:
-            model, pinned = _resolve_model(sens, indexing_mode)
-        except CloudIndexingDisabled:
-            if sens <= 1:
-                # cloud refused → degrade the whole pass to local
-                indexing_mode = "local_only"
-                model, pinned = _resolve_model(sens, indexing_mode)
-            else:
-                skipped_tier3 += 1
+        # `pinned` decides whether THIS chunk counts against the cloud-call
+        # cap below -- a locally-pinned chunk never touches the network, so
+        # it must not be charged against it. This mirrors _resolve_model's
+        # OWN branch (mode == "cloud" -> unpinned; anything else -> pinned
+        # local) without calling it: computing it from `indexing_mode` alone
+        # keeps `pinned` correct for an injected `llm` (tests, or a caller
+        # bringing its own extraction function) that owns its own backend
+        # and never touches this machine's real Ollama install or egress
+        # gate -- those calls are still governed by the user's indexing_mode
+        # choice for cap-accounting purposes, even though nothing here needs
+        # a REAL model/gate to answer that question for them.
+        pinned = indexing_mode != "cloud"
+        # The `_resolve_model` call below is a mid-run safety net behind the
+        # top-level fail-fast (a model disappearing or the gate going down
+        # partway through a run must not fall through to cloud silently) --
+        # it exists purely for its exception; `_llm` re-resolves for real
+        # (and derives its OWN `pinned`) inside itself. Only meaningful on
+        # the real default path: an injected `llm` doesn't need this
+        # machine's Ollama or gate to exist, so the safety net is skipped
+        # for it, same reasoning as the top-level checks above.
+        if call is _llm:
+            try:
+                _resolve_model(sens, indexing_mode)
+            except (CloudIndexingDisabled, LocalIndexingUnavailable) as e:
+                # No per-tier degrade-to-local here anymore: the mode is the
+                # user's choice, not something this loop overrides chunk by
+                # chunk. The top-level check in reindex_tier_b already
+                # verified the chosen path was viable before this loop
+                # started; a mid-run failure here is the rare case (gate
+                # went down, model got uninstalled) and is counted like any
+                # other failure, not silently routed around.
+                say(f"resolve failed for {chunk['id']}: {e}")
+                extract_failures += 1
+                if first_failure is None:
+                    first_failure = f"{type(e).__name__}: {e}"
                 continue
+        if not pinned and cloud_extract_calls >= MAX_CLOUD_EXTRACT_CALLS:
+            # This chunk stays "stale" in the manifest -- the next delta pass
+            # picks it back up. Silence past the cap, not a failure: nothing
+            # was attempted, let alone billed. Remember the file too: see
+            # capped_sources above -- a sibling chunk's success below must
+            # not stamp this file "up to date" out from under this one.
+            skipped_cloud_cap += 1
+            capped_sources.add(canonical(chunk["source_path"]))
+            continue
         prompt = (extract_tpl
                   .replace("{entity_types}", ENTITY_TYPES)
                   .replace("{tuple_delimiter}", TUPLE_DELIM)
                   .replace("{record_delimiter}", RECORD_DELIM)
                   .replace("{completion_delimiter}", COMPLETION_DELIM)
                   .replace("{input_text}", chunk["text"]))
+        if not pinned:
+            # Count the attempt, not just successes: a failing call can still
+            # have made (and paid for) an HTTP round trip before raising.
+            cloud_extract_calls += 1
         try:
             raw = call([{"role": "user", "content": prompt}], None, sens,
                        indexing_mode, orb_label="🧠 indexing knowledge")
@@ -407,9 +646,24 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         manifest.record(chunk["source_path"], kind="tierb",
                         produced=[chunk["id"]])
 
+    if capped_sources:
+        # A sibling chunk from one of these files may have already called
+        # manifest.record() above and stamped the file "up to date" at its
+        # current fingerprint -- undo that so the whole file stays stale and
+        # is re-attempted (all its chunks, not just the capped ones) on the
+        # next delta pass. forget() is a no-op for a file that was never
+        # recorded this pass, so this is safe either way.
+        for _src in capped_sources:
+            manifest.forget(_src)
+
     # ASCII only: progress strings reach cp1252 Windows consoles via callbacks.
     say(f"extracted {extracted} chunks -> {len(entities)} entities, "
         f"{len(relationships)} relationships ({skipped_tier3} TIER_3 skipped)")
+    if skipped_cloud_cap:
+        say(f"cloud extraction cap reached: {skipped_cloud_cap} chunk(s) left "
+            f"stale for the next delta pass instead of an uncapped cloud bill "
+            f"(cap={MAX_CLOUD_EXTRACT_CALLS}, {len(capped_sources)} source "
+            f"file(s) held back from the manifest)")
 
     # ── people the user has asked Friday to forget ───────────
     # BEFORE the dangling-relationship sweep below, so removing them takes
@@ -427,6 +681,21 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             if len(entities) != _before:
                 say(f"excluded {_before - len(entities)} forgotten "
                     f"{'person' if _before - len(entities) == 1 else 'people'}")
+            # The title check above only stops a forgotten person's OWN node
+            # from resurfacing. It says nothing about her showing up inside a
+            # SURVIVING entity's description -- "Bob's colleague Jane
+            # recommended the vendor" writes "Jane" straight into Bob's node,
+            # and forget()'s one-time community_reports scrub never sees a
+            # future write like this one. Redact on every pass, before the
+            # description-summarization step below feeds this text to an
+            # LLM, so a forgotten name can never ride back in through the
+            # summary either.
+            for e in entities.values():
+                if e.get("description"):
+                    e["description"] = _fp.redact_forgotten_names(e["description"])
+                if e.get("descriptions"):
+                    e["descriptions"] = [_fp.redact_forgotten_names(d)
+                                         for d in e["descriptions"]]
     except Exception as _fe:
         # Never let this fail an index run -- but say so, because silently
         # re-deriving a deleted person is the failure that matters.
@@ -549,21 +818,21 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     store.save_layout(layout_meta)
     manifest.save()
 
-    # Tier B used to fail SILENTLY and completely. `indexing_mode` defaults to
-    # "local_only", which pins every extraction call to the local model; on a
-    # machine with no local model every call raises, is caught above, and the
-    # chunk is skipped. Tier A still works, so the run reported success and
-    # produced a structural-only graph. The user was told the map was built.
-    #
-    # The onboarding now tells cloud-only users what they do and do not get.
-    # That sentence has to be backed by a run that says so out loud, so the
-    # failure is counted, named in the receipt, and stated plainly here.
+    # Tier B used to fail SILENTLY and completely: `indexing_mode` defaulted
+    # to a local model no install actually delivered, every call raised, was
+    # caught above, and the chunk was skipped -- Tier A still worked, so the
+    # run reported success and produced a structural-only graph. The
+    # no-viable-model case is now caught once, up front (see the fail-fast
+    # check near the top of this function); this remaining branch is for
+    # the rarer case where the chosen path WAS viable but every single call
+    # still failed for some other reason (a transient outage, a bad prompt
+    # template edit, etc.) -- still worth saying out loud, not the same
+    # failure as the one that motivated this whole rewrite.
     degraded = bool(chunks) and extracted == 0 and extract_failures > 0
     if degraded:
         say("TIER B PRODUCED NOTHING: all %d extraction calls failed (%s). "
             "The map has structural links only, not the semantic layer. "
-            "indexing_mode=%s pins extraction to a local model."
-            % (extract_failures, first_failure, indexing_mode))
+            "indexing_mode=%s." % (extract_failures, first_failure, indexing_mode))
     elif extract_failures:
         say("tier B: %d of %d chunks failed extraction"
             % (extract_failures, extract_failures + extracted))
@@ -575,6 +844,7 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         "first_failure": first_failure,
         "degraded": degraded,
         "skipped_tier3": skipped_tier3,
+        "skipped_cloud_cap": skipped_cloud_cap,
         "entities": len(entities), "relationships": len(relationships),
         "communities": len(communities), "reports": len(reports),
         "embedded": embedded,

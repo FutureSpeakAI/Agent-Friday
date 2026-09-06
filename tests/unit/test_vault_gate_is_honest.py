@@ -86,7 +86,23 @@ class TestTheToggleIsWiredToTheGate:
 
 
 class TestPartialModelRoutingSaveKeepsItsSiblings:
-    def test_saving_one_key_does_not_reset_the_block(self, friday_dir):
+    @pytest.fixture
+    def restore_model_routing(self):
+        """This test writes into the REAL, session-shared settings.json (the
+        whole point is to exercise the real _save_settings/_load_settings
+        round trip, not a mock of it) -- so it must put `model_routing` back
+        exactly as it found it, or every test after it in the same session
+        inherits `mode: "local_preferred"` instead of the real default,
+        silently routing chat local instead of cloud (gauntlet-2026-09-03
+        F64: caught this exact class recurring -- test_kg_indexer.py's
+        `restore_kg_settings` fixture already exists for the identical
+        reason on a different settings block; this test just hadn't been
+        given the same treatment yet)."""
+        original = core._load_settings().get("model_routing")
+        yield
+        core._save_settings({"model_routing": original or {}})
+
+    def test_saving_one_key_does_not_reset_the_block(self, friday_dir, restore_model_routing):
         core._save_settings({"model_routing": {
             "mode": "local_preferred",
             "vault_local_only": True,

@@ -769,20 +769,25 @@ class SkillOptEngine:
 
         cand_scores: List[float] = []
         base_scores: List[float] = []
+        eval_errors: List[str] = []
+        successful_cases = 0
 
         for case in eval_batch:
             if self.evaluator:
                 try:
                     cand_metrics = self.evaluator(skill_name, candidate.content, case)
                     base_metrics = self.evaluator(skill_name, baseline.content, case)
+                    successful_cases += 1
                 except Exception as e:
                     cand_metrics = {"accuracy": 0.0}
                     base_metrics = {"accuracy": 0.0}
-                    epoch.reason = f"evaluator error: {e}"
+                    eval_errors.append(str(e))
             else:
                 # Without an evaluator we can only rely on previously logged data.
                 cand_metrics = {"accuracy": candidate.metrics_summary.get("accuracy", 0.0)}
                 base_metrics = {"accuracy": baseline.metrics_summary.get("accuracy", 0.0)}
+                if "accuracy" in candidate.metrics_summary and "accuracy" in baseline.metrics_summary:
+                    successful_cases += 1
             cfg = storage.load_config()
             weights = cfg.get("weights", DEFAULT_WEIGHTS)
             cand_scores.append(composite_score(cand_metrics, weights))
@@ -792,6 +797,36 @@ class SkillOptEngine:
         epoch.baseline_score = statistics.mean(base_scores) if base_scores else 0.0
         epoch.finished_at = _now_iso()
 
+        # CORRECTION (external review, commissioned by Stephen, verified 2026-09-04):
+        # this used to fall straight into the gate below even when NO case was
+        # ever actually evaluated -- an evaluator that raised on every case, a
+        # missing evaluator with no prior execution history, and an empty
+        # eval_batch all silently produced a tied candidate_score==baseline_score
+        # (both driven to the same fallback value), and the gate's own
+        # tie-tolerance rule ("improvement < 0.005 still passes") always
+        # promotes a tie. Reproduced directly: all three cases promoted a
+        # candidate that had never been genuinely evaluated at all. Refusing to
+        # promote on zero signal completes the "inconclusive" decision this
+        # dataclass already declared but never produced.
+        if not eval_batch:
+            epoch.decision = "inconclusive"
+            epoch.reason = "empty eval_batch -- no cases to evaluate, refusing to promote"
+            return epoch
+
+        if successful_cases == 0:
+            epoch.decision = "inconclusive"
+            if eval_errors:
+                epoch.reason = (
+                    f"evaluator failed on all {len(eval_batch)} case(s); "
+                    f"last error: {eval_errors[-1]}; refusing to promote on no signal"
+                )
+            else:
+                epoch.reason = (
+                    "no evaluator configured and no prior execution history for "
+                    "candidate and/or baseline; refusing to promote on no signal"
+                )
+            return epoch
+
         best_score = baseline.metrics_summary.get("composite", epoch.baseline_score)
         ok, reason = self.gate.evaluate(
             candidate_score=epoch.candidate_score,
@@ -799,7 +834,19 @@ class SkillOptEngine:
             best_score=best_score,
         )
         epoch.decision = "promoted" if ok else "rejected"
-        epoch.reason = reason
+        # CORRECTION (same review): epoch.reason used to be unconditionally
+        # overwritten here, silently discarding any per-case evaluator error
+        # recorded above -- a partial evaluator failure (some cases raised,
+        # others didn't) would promote or reject with no trace that anything
+        # had gone wrong. Preserve the failure count and last error alongside
+        # the gate's own reason instead of dropping it.
+        if eval_errors:
+            epoch.reason = (
+                f"{len(eval_errors)}/{len(eval_batch)} eval case(s) had evaluator "
+                f"errors (last: {eval_errors[-1]}); {reason}"
+            )
+        else:
+            epoch.reason = reason
 
         if ok:
             self._promote(skill_name, candidate.version_id, epoch.candidate_score)

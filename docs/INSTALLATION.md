@@ -342,29 +342,34 @@ Ollama enables local model routing — required for vault access to private data
 
    The legacy `scripts/install.{sh,ps1,bat}` do something different and older:
    they pull `gemma3:4b` unconditionally, without consulting the planner. That
-   model has **no native tool calling** — prefer `qwen3:4b`, which is smaller
-   (2.5 GB against 3.3 GB) and keeps its tools.
+   model has **no native tool calling** — prefer `gemma4:e2b`, which is
+   smaller (7.2 GB against gemma3:4b's 3.3 GB download, but far lighter once
+   loaded — 1.77 GiB VRAM measured) and keeps its tools.
 
-   To pull one by hand instead:
+   To pull one by hand instead (the Gemma 4 family — Qwen was removed from
+   the ladder entirely on 2026-09-03, in favor of Gemma 4 as a placeholder
+   until FutureSpeak's own model ships):
 
 ```bash
-ollama pull qwen3:4b     # 2.50 GB; needs a  ~7 GB card
-ollama pull qwen3:8b     # 5.23 GB; needs a ~10 GB card
-ollama pull gemma4:12b   # 7.56 GB; needs a ~12 GB card
-ollama pull qwen3:14b    # 9.28 GB; needs a ~13 GB card
-ollama pull qwen3:32b    # 20.20 GB; needs a ~24 GB card
+ollama pull gemma4:e2b   # 7.2 GB;  needs a  ~5 GB card
+ollama pull gemma4:e4b   # 9.6 GB;  needs a  ~6 GB card
+ollama pull gemma4:12b   # 7.6 GB;  needs a ~11 GB card
+ollama pull gemma4:26b   # 19.0 GB; needs a ~20 GB card
 ```
 
    Those card sizes are the model's own footprint plus 2.5 GB for the desktop.
-   A model's footprint is its weights plus about 1.7 GB of runtime overhead —
-   KV cache at Friday's tool-seat context, the multimodal projector, and CUDA's
-   own context. That 1.7 GB is measured: `gemma4:12b` occupies 8,745 MiB of a
-   12 GB card against 7,023 MiB of weights.
+   A model's footprint is its weights plus runtime overhead — KV cache at
+   Friday's tool-seat context, the multimodal projector, and CUDA's own
+   context. `gemma4:12b`'s is measured directly: 7,718 MiB of a 12 GB card.
 
-   Two of these rungs are measured and three are arithmetic. `gemma4:12b` has
-   been run and timed on a 12 GB card; `qwen3:14b` and `qwen3:32b` have not
-   been run here, so their fit is calculated rather than observed. The table in
-   `services/model_plan.py` marks which is which.
+   All four rungs have real measurements behind them, though not the same
+   ones: `gemma4:e2b` and `gemma4:12b` have both a measured VRAM footprint and
+   a measured tool-calling score; `gemma4:e4b`'s VRAM is measured at a smaller
+   context than its tool-seat width; `gemma4:26b` is an MoE (26B total / 4B
+   active) whose measured footprint used a hybrid GPU+CPU split this simple
+   ladder can't represent, so its card-size figure here is the conservative
+   full-residency number, not the smaller one that actually worked in
+   production. The table in `services/model_plan.py` has the full detail.
 
 Friday auto-detects Ollama at `http://localhost:11434`. To use a different URL, set it in `~/.friday/settings.json`:
 
@@ -434,7 +439,7 @@ Friday works without it — compression falls back to passthrough.
 
 1. Confirm Ollama is running: `ollama list`
 2. Check the URL (default `http://localhost:11434`)
-3. Pull at least one model: `ollama pull qwen3:8b`
+3. Pull at least one model: `ollama pull gemma4:e2b`
 4. Check `GET /api/ollama/status` for diagnostics
 
 ### sentence-transformers download on first chat

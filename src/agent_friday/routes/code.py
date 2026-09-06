@@ -49,6 +49,7 @@ from agent_friday.services.code_engine import (
     _repo_tree,
     _run_claude_terminal,
     _safe_project_path,
+    adopt_or_reap_vibe_terminals,
 )  # noqa: E501
 from agent_friday.services.model_router import (
     _gated_vault_control,
@@ -59,6 +60,23 @@ from agent_friday.services.model_router import (
 
 code_bp = Blueprint('code', __name__)
 
+
+def _vibe_terminals_boot_reconcile():
+    """Adopt/reap vibe-code terminals left running by a previous process.
+
+    Off the request path and off the import path: the survey shells out to
+    PowerShell (WMI), and nothing about registering this blueprint — which
+    happens unconditionally, including under tests — should block on that.
+    """
+    try:
+        adopt_or_reap_vibe_terminals()
+    except Exception as e:
+        _code_log(f"vibe-terminal boot reconcile failed: {e}", source="vibe", level="error")
+
+
+if not os.environ.get("FRIDAY_TESTING"):
+    threading.Thread(target=_vibe_terminals_boot_reconcile, daemon=True,
+                     name="vibe-terminal-reconcile").start()
 
 
 @code_bp.route('/api/vibe-code/launch', methods=['POST'])
@@ -88,6 +106,7 @@ def vibe_code_launch():
         thread.start()
         launched.append(tid)
 
+    core._persist_vibe_terminals()
     return jsonify({"status": "ok", "launched": launched, "count": len(launched)})
 
 
@@ -121,6 +140,7 @@ def vibe_code_stop():
                 subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True, creationflags=_POPEN_FLAGS)
             except Exception:
                 pass
+        core._persist_vibe_terminals()
         return jsonify({"status": "ok"})
     return jsonify({"status": "error", "message": "Terminal not found"}), 404
 
@@ -131,6 +151,7 @@ def vibe_code_clear():
     to_remove = [tid for tid, t in VIBE_TERMINALS.items() if t['status'] in ('stopped', 'error', 'completed')]
     for tid in to_remove:
         del VIBE_TERMINALS[tid]
+    core._persist_vibe_terminals()
     return jsonify({"status": "ok", "removed": len(to_remove)})
 
 
@@ -660,9 +681,62 @@ def code_apply():
     if not rp:
         return jsonify({"status": "error", "message": "repo no longer found"}), 404
 
+    targets = [(f, (f.get("path") or "").replace("\\", "/"))
+               for f in record.get("files", [])]
+
+    # ── gates that already existed and had no caller ────────────────────────
+    #
+    # `boot_guard.check_self_edit` and `check_scope` shipped 2026-08-17 and were
+    # dead code until now (docs/design/grow-button.md §18.2, F2/F3). This was the
+    # write path they were written for: `code_apply` resolved each path through
+    # `_safe_project_path` — which only proves the write stays inside ~/Projects —
+    # and then wrote the file. Staying inside the sandbox is not the same question
+    # as whether the file is one whose loss stops Friday starting.
+    #
+    # Refusals are whole-plan, not per-file. A plan half-applied around a skipped
+    # file leaves a state nobody designed, and `check_self_edit` asks for "an
+    # explicit, separately-confirmed action" rather than a partial success.
+    try:
+        from agent_friday.services import boot_guard as _bg
+
+        if _bg.safe_mode():
+            return jsonify({
+                "status": "refused",
+                "message": "safe mode is on (FRIDAY_SAFE_MODE), so "
+                           "self-modification is disabled",
+            }), 409
+
+        blocked = []
+        for _f, _rel in targets:
+            _ok, _why = _bg.check_self_edit(os.path.join(rp, _rel))
+            if not _ok:
+                blocked.append({"path": _rel, "reason": _why})
+        if blocked:
+            return jsonify({
+                "status": "refused",
+                "message": blocked[0]["reason"],
+                "blocked": blocked,
+            }), 409
+
+        _ok, _why = _bg.check_scope([r for _, r in targets])
+        if not _ok and not data.get("confirm_scope"):
+            # A pause, not a refusal — the caller can say yes. `check_scope`'s
+            # own docstring: "Pause and confirm rather than refuse."
+            return jsonify({
+                "status": "refused",
+                "needs_confirmation": "scope",
+                "message": _why,
+                "paths": [r for _, r in targets],
+            }), 409
+    except ImportError:
+        # boot_guard is stdlib-only and always present; if it somehow is not,
+        # say so rather than writing files with the gate silently absent.
+        _code_log("apply refused: boot_guard unavailable", source="vibe", level="error")
+        return jsonify({"status": "error",
+                        "message": "boot_guard unavailable; refusing to write"}), 500
+
     applied, failed = [], []
-    for f in record.get("files", []):
-        rel = (f.get("path") or "").replace("\\", "/")
+    for f, rel in targets:
         safe = _safe_project_path(os.path.join(rp, rel))
         if not safe:
             failed.append({"path": rel, "error": "escapes sandbox"})
@@ -726,6 +800,7 @@ def code_kill():
     if pid_or_id in VIBE_TERMINALS:
         VIBE_TERMINALS[pid_or_id]["status"] = "stopped"
         VIBE_TERMINALS[pid_or_id]["stopped"] = datetime.now().isoformat()
+        core._persist_vibe_terminals()
     CODE_PROCESSES.pop(pid_or_id, None)
     _code_log(f"killed process {pid_or_id} (pid {os_pid})", source="monitor", level="warn")
     return jsonify({"status": "ok", "killed": pid_or_id})

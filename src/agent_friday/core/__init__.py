@@ -608,6 +608,73 @@ VIBE_TERMINALS = {}   # id -> { id, task, status, cwd, pid, started, stopped, lo
 VIBE_LOG_DIR = friday_home() / "vibe-code-logs"
 VIBE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+# `VIBE_TERMINALS` lives only in memory, so a restart forgets every vibe-code
+# terminal it launched while the cmd.exe window it spawned — running
+# `claude --dangerously-skip-permissions` somewhere under ~/Projects — keeps
+# running, unmanaged. Same disease residency_arbiter.endpoints_path() exists
+# to cure for llama-server seats: persist what is running to disk so a
+# restart can find it again, rather than only ever knowing what THIS process
+# started. code_engine.adopt_or_reap_vibe_terminals() reads this back at boot.
+VIBE_STATE_FILE = Path(os.path.expanduser("~")) / ".friday" / "vibe-code" / "terminals.json"
+VIBE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+# Bumped when the MEANING of the file changes, not its contents. Version 1 is
+# the first format written by a process that also records terminals at launch,
+# so a version-1 file is evidence that an absent terminal_id is genuinely
+# absent. A file with no version was written before that guarantee held (or by
+# the reconcile itself, which created an empty one at first boot), and an
+# absence in it proves nothing -- see adopt_or_reap_vibe_terminals.
+VIBE_STATE_VERSION = 1
+
+
+def _persist_vibe_terminals() -> None:
+    """Write VIBE_TERMINALS to disk. Atomic (tmp-then-replace), best-effort.
+
+    Same shape as residency_arbiter._publish_endpoints: a process that cannot
+    persist its terminal list is still a working process for whoever owns it
+    right now, so a write failure here is swallowed rather than raised.
+
+    The temp file carries the pid so two writers cannot land on one name. A
+    shared temp name is exactly the defect fixed in _save_settings this week:
+    concurrent writers interleave into a half-written file. Here that file is
+    the sole evidence deciding whether a live terminal gets force-killed, so a
+    torn write is not merely lost state.
+    """
+    try:
+        tmp = VIBE_STATE_FILE.with_suffix(".json.%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps({"version": VIBE_STATE_VERSION,
+                                   "terminals": VIBE_TERMINALS}, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, VIBE_STATE_FILE)
+    except Exception:
+        pass
+
+
+def _read_vibe_terminals_state() -> dict:
+    """`terminal_id -> last-known record` from disk. Never raises; {} on any problem."""
+    return _read_vibe_state().get("terminals", {})
+
+
+def _read_vibe_state() -> dict:
+    """The whole persisted vibe-terminal document. Never raises.
+
+    Returns `{}` when the file is missing or unreadable -- deliberately
+    indistinguishable from a file that exists but names no version, because
+    neither can testify that a terminal was never recorded.
+    """
+    try:
+        data = json.loads(VIBE_STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        terms = data.get("terminals") or {}
+        out = {"terminals": {str(k): v for k, v in terms.items()
+                             if isinstance(v, dict)}}
+        if isinstance(data.get("version"), int):
+            out["version"] = data["version"]
+        return out
+    except Exception:
+        return {}
+
 # ── Paths ─────────────────────────────────────────────────────
 # Two different questions, two different answers — conflating them is what
 # made FRIDAY_HOME decorative (docs/audits/friday-home-isolation-gap-2026-08-31.md).
@@ -1414,11 +1481,11 @@ DEFAULT_AGENT_PERSONALITY = (
     "You give the answer first, then the reasoning. You are honest about uncertainty."
 )
 
-
 # The one place the default local model is decided. `model_plan` imports nothing
 # from `agent_friday` (its only module-level import is `__future__`), so this is
 # free and cannot cycle. See model_plan.FLOOR_MODEL for why it is not retyped.
 from agent_friday.services.model_plan import FLOOR_MODEL as _FLOOR_MODEL  # noqa: E402
+
 
 DEFAULT_SETTINGS = {
     # NOTE for anyone adding a setting: _load_settings_raw() WHITELISTS against
@@ -1436,15 +1503,34 @@ DEFAULT_SETTINGS = {
     "away_drain": {                       # P5 — drains queued heavy work on a
         "enabled": False,                 # timer. Default OFF: it takes the GPU.
     },
+    # Empty on purpose: services/knowledge_graph/__init__.py:kg_settings() owns
+    # the real defaults (KG_DEFAULT_SETTINGS) and layers the user's saved block
+    # on top. This entry exists only so that block SURVIVES the whitelist two
+    # lines above this comment's file-mate -- without it, every knowledge-graph
+    # setting the Settings->Knowledge tab saves (index_sources, indexing_mode,
+    # power_indexer, nightly_reindex...) round-trips through settings.json and
+    # is silently discarded on the very next read, same defect class as
+    # egress_mode and the top-level vault_local_only (docs/design/
+    # security-boundary.md #18).
+    "knowledge_graph": {},
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
     "cite_sources": False,                # Source Production Mode — inline citations on every factual claim
+    # The pause-forecast "don't warn me again" escape hatch (index.html's
+    # seat-pause confirmation dialog) POSTs this key correctly wrapped in
+    # {"settings": {...}}, so it survives the whitelist read/write cycle --
+    # but it had no DEFAULT_SETTINGS entry at all, so _load_settings_raw()'s
+    # whitelist silently dropped it on every save. The dialog appeared to
+    # remember the choice for the rest of that browser tab (optimistic
+    # client-side state) and then nagged again on the next reload/restart,
+    # same defect class as knowledge_graph above (docs/audits/
+    # gauntlet-2026-09-03/findings.jsonl).
+    "pause_warnings_off": False,
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
-    "camera_auto_describe": False,
     "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices
     "voice_language": "",                  # BCP-47 (e.g. "en-US"); blank = server default
     "voice_style_prompt": "",              # free-text styling instruction passed to Gemini
@@ -1615,8 +1701,15 @@ DEFAULT_SETTINGS = {
     "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
-    # floor, and adult content is hidden in the gallery. This filters what the
-    # minor sees, not what exists — a parent toggles it off in Settings.
+    # floor — this half is real and re-checked live on every generation call.
+    # Gallery-side hiding of adult-rated or already-existing content is COMING
+    # SOON — not yet implemented: no creation record carries an adult/rating
+    # field today, and the gallery list currently filters only by file type and
+    # filename, so anything generated before the toggle was on (or by another
+    # user of this install) is still visible there for now. Coming soon means
+    # exactly that — nothing here builds it. Until it ships, this setting
+    # filters what gets generated going forward, not what already exists — a
+    # parent toggles it off in Settings.
     "minor_mode": False,
     # ── Ask before opening a file or a link? ──
     # Off. Opening something on your own machine, because you just asked for
@@ -1693,18 +1786,23 @@ DEFAULT_SETTINGS = {
         "default_cloud_model": "claude-sonnet-5",
         "task_overrides": {},
         "ollama_url": "http://localhost:11434",
-        # Default on-device model (v5): gemma3:4b — Google's open Gemma 3 4B-IT,
-        # Friday's zero-cloud-key default brain, taken from model_plan's ladder
-        # so it cannot drift from what the installer actually installs. Picked
-        # for every local route when installed (see model_router._pick_local_model);
-        # if it isn't installed the picker degrades to any installed model.
+        # Default on-device model: model_plan.FLOOR_MODEL, taken from the
+        # ladder so it cannot drift from what the installer actually
+        # installs. Picked for every local route when installed (see
+        # model_router._pick_local_model); if it isn't installed the picker
+        # degrades to any installed model.
         #
-        # Users with more card can upgrade — but to qwen3:8b, gemma4:12b,
-        # qwen3:14b or qwen3:32b, which is what `friday models` will offer.
-        # This comment used to recommend gemma3:12b / gemma3:27b. Both were
-        # checked against the registry on 2026-08-26 and NEITHER can call
-        # tools, so that advice pointed users at a bigger version of the exact
-        # problem H3 was about.
+        # 2026-09-03: this is a Gemma 4 model (currently gemma4:e2b) — Qwen
+        # was removed from the ladder entirely, not just from this default,
+        # per the product decision above `model_plan._BRAINS`: nothing is
+        # shipped or suggested yet, and when the installer fetches a local
+        # model it fetches Gemma 4 only (Apache 2.0), a placeholder until
+        # FutureSpeak's own model replaces it. Users with more card can
+        # upgrade to gemma4:e4b, :12b, or :26b — whatever `friday models`
+        # offers for the hardware it detects. This comment used to recommend
+        # gemma3:12b / gemma3:27b; both were checked against the registry on
+        # 2026-08-26 and NEITHER can call tools, so that advice pointed users
+        # at a bigger version of the exact problem H3 was about.
         "local_model": _FLOOR_MODEL,
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
@@ -1728,6 +1826,19 @@ DEFAULT_SETTINGS = {
         #   "warn"   = refuse and ask the user to enable a local model.
         "vault_local_only": True,
         "vault_cloud_fallback": "redact",
+        # ── Unrestricted cloud mode ──
+        # Explicit instruction, 2026-09-03: "cloud only mode means no privacy
+        # safeguards ... when active, no feature or data is held back from
+        # the cloud." Distinct from `mode: cloud_only` above, which only ever
+        # meant provider ROUTING PREFERENCE — this flag reaches
+        # services/egress_gate.py (is_unrestricted_cloud()) and bypasses
+        # every gate in the codebase for cloud sends: tier classification,
+        # redaction, the PII scrub, and the never-send list. Default False;
+        # read fresh on every call, never cached. Whoever turns this on
+        # should know exactly what it does — see egress_gate.py's docstring
+        # at is_unrestricted_cloud() for the complete list of what it
+        # bypasses.
+        "unrestricted_cloud": False,
     },
     # ── Distribution profile (persona preset) ──
     # Mirror of the active distro (services/distributions.py). Applied as a
@@ -2051,7 +2162,12 @@ def _load_settings():
 #: Settings blocks merged FIELD BY FIELD rather than replaced wholesale.
 #: Everything else in a delta overwrites its key, which is correct for scalars
 #: and lists and catastrophic for a config block a caller only partly edited.
-_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing")
+#: "content" joined 2026-09-04: the Content workspace's global-controls Save
+#: button only ever sends {staging_base_url, conflict_window_hours} (the two
+#: fields it edits) — without deep-merge that wholesale-replaces the block,
+#: silently resetting `enabled` and `psi_daily_cap` to nothing every time
+#: (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
 
 
 def _save_settings(data):
@@ -2557,6 +2673,39 @@ def _context_log_files(date_from=None, date_to=None):
             continue
         files.append((d, f))
     return files
+
+
+def prune_context_logs():
+    """Delete per-day context-log files older than context_retention_days.
+
+    context_retention_days has claimed "0 = keep forever; 30/90/180/365 =
+    prune older" (see its DEFAULT_SETTINGS comment) since it was added, with
+    no code ever behind that claim -- the Retention Period setting in
+    Settings > Privacy > Context Logging persisted and read back, but
+    nothing ever deleted an old entry (gauntlet-2026-09-03 F3/Q1). Each day
+    is one whole <YYYY-MM-DD>.jsonl file (see _context_log_files above), so
+    pruning is file deletion, not row surgery.
+    """
+    try:
+        days = int((_load_settings() or {}).get("context_retention_days", 0) or 0)
+    except Exception:
+        days = 0
+    if days <= 0:
+        return {"changed": False, "summary": "retention disabled (keep forever)"}
+    if not CONTEXT_LOG_DIR.exists():
+        return {"changed": False, "summary": "no context-log directory yet"}
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    removed = []
+    for f in CONTEXT_LOG_DIR.glob("*.jsonl"):
+        if f.stem < cutoff:
+            try:
+                f.unlink()
+                removed.append(f.stem)
+            except OSError:
+                pass
+    summary = (f"pruned {len(removed)} context-log day(s) older than {days}d"
+               if removed else f"nothing older than {days}d retention")
+    return {"changed": bool(removed), "count": len(removed), "summary": summary}
 
 # ── Persistent Chat History ────────────────────────────────────
 CHAT_HISTORY_FILE = FRIDAY_DIR / "chat_history.json"

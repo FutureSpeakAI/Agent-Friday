@@ -1,136 +1,113 @@
-# Agent Friday v5.8.0
+# Agent Friday v5.12.0
 
-*2026-08-30 · FutureSpeak.AI*
+*2026-09-05 · FutureSpeak.AI*
 
-**This is the last release you have to find by hand.**
+This release exists because we spent two days looking for places where what
+we told you and what the code actually does had come apart, and then fixed
+82 of the 112 things we found. This document is written the way we'd want
+one written about us: it says what was wrong before it says what's new,
+including the parts that don't make us look good.
 
-Until now there was no way for Friday to tell you a new version existed. You
-found out because someone told you, or you thought to check. From this release
-on, Friday checks once a week and says so.
-
-If you are reading this because someone sent you the link: install it, and you
-will not need the link next time.
-
----
-
-## 1. Friday now tells you when there is a newer version
-
-Once a week, Friday asks GitHub whether a newer stable release has been
-published. If there is one, you get a notification with a link to it. That is
-the entire feature.
-
-**Friday never downloads or installs anything by itself.** You click through,
-download the zip, and run the installer when it suits you — the same way you
-always have. A notification is not an update.
-
-**It sends nothing about you.** This is the part that took the most care, so it
-is worth being precise about what happens on the wire:
-
-- It is a single unauthenticated `GET` of a public GitHub URL — the same
-  request your browser makes if you visit the releases page yourself.
-- No install identifier. No usage data. No machine name, user name, or file
-  paths.
-- **Not even which version you are running.** The comparison happens on your
-  machine, against the list GitHub returns. Nothing is sent to be compared
-  against.
-- No custom `User-Agent`. Anything Friday added there — a version, a build id —
-  would be a fingerprint we chose to transmit, so there isn't one.
-
-Friday ships no telemetry, and this feature did not become the exception. There
-is a test that reconstructs the entire outgoing request — URL, query string,
-headers, body — and fails the build if it contains anything that could identify
-your install. There is a second test that feeds that check a request which
-*does* leak, and fails if the check misses it, so it cannot quietly rot into a
-formality.
-
-**If your network is down, you will not hear about it.** Offline, DNS trouble,
-GitHub rate-limiting or having a bad day: all of it is logged and none of it is
-shown to you. A tool that nags because the wifi is off is a bad houseguest.
-
-**You will not be told twice about the same release.** One notification per
-version, dismissible, and it stays gone until there is something newer.
-
-Turn it off in **Settings → About → Updates**. The same panel shows the version
-you are running, when the last check happened, and a **Check now** button.
-
-### A note if you are upgrading rather than installing fresh
-
-The weekly check arrives **switched on**, including on installs that already
-existed before this release.
-
-That was a judgement call and you are entitled to disagree with it. The
-reasoning: a sovereignty tool whose users silently miss security fixes is worse
-off than one that asks GitHub a question with no answer in it. The check sends
-nothing, and it is one click to turn off. But nobody who installed 5.7.0 asked
-for a new outbound request, so it is said here plainly rather than left to be
-discovered.
+Full technical detail lives in [CHANGELOG.md](CHANGELOG.md); the complete,
+unedited ledger — every finding, every verdict, every fix, including the ones
+still open — is in
+[`docs/audits/gauntlet-2026-09-03/`](docs/audits/gauntlet-2026-09-03/).
 
 ---
 
-## 2. `friday status` now tells you which version you are actually running
+## The three findings we'd rather not have had to report
 
-Run `friday status` and the first thing it reports is the version — read from
-the files on disk, not from what the installer wrote down.
+**A credential-sandboxing gap took three attempts to actually close.** Every
+sandboxed connector Friday spawns inherited her entire decrypted-secrets
+environment — API keys, the vault passphrase, all of it. The first fix was a
+list of secret names to block. That list was wrong the same night (it named
+two environment variables that don't exist in this codebase, while leaving
+the real one exposed). A live test then found six more currently-used
+provider credentials the list had simply never been told about. We stopped
+trying to enumerate what to hide and inverted the mechanism: a connector now
+gets an explicit list of what it's *allowed* to see, built from what it
+actually needs, and nothing else. A name nobody thought to add can no longer
+leak by omission.
 
-That distinction is not pedantry. Installers before 5.6.5 short-circuited the
-step that copies Friday's files, so upgrades from 5.6.0 through 5.6.4 replaced
-nothing while still recording the new version number in
-`install-manifest.json`. Anyone who upgraded in that window has been running
-older code than their version number claims.
+**A child-safety check had been silently bypassable for over two months.**
+Content already tagged by an upstream classifier as CSAM, a real-person
+deepfake, doxxing, or violence incitement would pass our content-policy gate
+with `blocked: False`, as long as it arrived with no title or description
+text attached — one of two independent checks skipped itself in exactly that
+condition, on the assumption the other one already had it covered. It didn't.
+This existed from the module's first commit in June and every test stayed
+green the entire time, because nothing had ever exercised that specific
+combination. We found it by reading the docstring against the code, not by
+running the suite one more time. Fixed, and we're not proud it took reading
+the fine print to catch.
 
-**If the files on disk and the manifest disagree, Friday now says so** — in
-`friday status` and in Settings → About — and tells you to re-run the latest
-installer to repair it.
+**"Local-only" did not mean local-only for ordinary conversation.** The
+single most common thing people do with Friday — chat, with tool use, mode
+set to "never leaves this machine" — could still route to the cloud under
+specific conditions, in the tool-use path, the voice pipeline, and the
+knowledge-graph indexer, independently, three separate times. Fixed
+everywhere it was found, and the product's own behavior changed as a result:
+when Friday genuinely can't honor a local-only promise now, she says so and
+offers cloud as an explicit choice, rather than quietly switching for you.
 
-This matters more now than it did yesterday, because the update check is built
-on top of it. A checker that trusted the manifest would have told exactly those
-users they were up to date. Telling someone they are current when they are not
-is worse than telling them nothing, because they stop looking.
+We also found, disclosed, and fixed two incidents the audit's *own* tooling
+caused while looking for exactly this class of bug: one test made a real,
+live API call to Google using a real key from an improperly-isolated test
+process, and a separate batch of tests made real network requests — to this
+application's own local port and to a real third-party website — because a
+helper function reaches the network by default. Both are closed. We're
+naming them because a security review that never implicates itself isn't one
+you should fully trust.
 
-Internally there were three different pieces of code answering "what version is
-this?", and one of them fell back to a hardcoded number when it could not read
-the file — so an install that did not know its own version reported one it had
-invented. There is now one implementation, unknown stays unknown, and a test
-fails the build if a fourth one appears.
+## What's actually new
 
----
+- **A real choice on cloud privacy.** Settings now has an explicit
+  "unrestricted cloud" toggle — off by default — for when you'd rather trade
+  every privacy safeguard for full cloud capability, deliberately, rather
+  than have Friday negotiate it for you.
+- **6 new local creative models** — 3 image, 3 video — added and
+  hardware-verified with measured generation times and their actual
+  licenses shown in the picker.
+- **The local brain is Gemma 4 now, not Qwen.** Qwen is removed from the
+  local model ladder entirely, replaced by the Gemma 4 family (e2b through
+  26b) as a placeholder until FutureSpeak's own model ships. If you have an
+  older Qwen model installed via Ollama, Friday will not offer to use it
+  again — pull a Gemma 4 rung instead (`friday models --install` picks the
+  right one for your hardware automatically).
+- **The hourly heartbeat got cheaper**, twice over: a job that was spending
+  roughly $12 on a single unwatched run was removed entirely, and the
+  heartbeat itself now uses prompt caching on the path that actually serves
+  it (previously wired to a path it never used) and a tool registry sized to
+  what a liveness check actually needs instead of the full 75-tool set.
+- **A stale vault key no longer strands your provider keys.** If a
+  rehearsal or test run overwrites the shared OS keychain entry mid-session,
+  a new maintenance path re-encrypts whatever the current process can still
+  decrypt under a fresh key, so it survives the next restart too.
 
-## 3. Fixes that had been waiting on a working CI
+## What's still broken, and said so plainly
 
-The test pipeline had been red since 2026-07-04 and was running zero tests. It
-was repaired just before this release, and immediately found two real defects on
-Windows — the platform Friday actually runs on:
+- One test (`test_nemo_voice.py`) fails intermittently under the full suite
+  and passes every narrower subset we've tried. Left open rather than
+  force-closed with a guess.
+- A skill-optimization "success" scorer can't yet tell a genuinely completed
+  action from a confidently fabricated claim of one. The honest minimum fix
+  shipped (it no longer defaults to "success" when it has no evidence); the
+  real fix — actually verifying completion — is specified as follow-up work,
+  not built yet.
+- A vault-classification fix (correcting false "access denied" errors on
+  ordinary tool arguments containing words like "contact" or "family") is
+  real and needed, but its own test suite currently has 2 failing tests. Not
+  shipped in this release; tracked for the next one.
+- A handful of findings are recorded as open product-design questions, not
+  bugs with an obvious answer: what "success" should mean for autonomous
+  skill learning, what a knowledge-graph eviction policy should look like,
+  what a scheduler manual-run's concurrency semantics should be. See the
+  ledger for the full list — we'd rather hand you a question than a guess.
 
-- **Concurrent settings saves could corrupt `settings.json`.** The atomic write
-  built its temporary file from one shared name, so two writers — Friday saves
-  settings from background threads as well as from the UI — could use the same
-  temp path, and one could publish a file the other was still filling. That is
-  the exact corruption the atomic write existed to prevent. Every write now gets
-  its own temp file.
+## One thing this release does not fix
 
-- **Saving settings could return a 500 for no good reason.** On Windows the
-  final rename fails while any other process holds the file open — a background
-  reader, the search indexer, antivirus. It now retries briefly. The file is
-  complete and flushed to disk before the first attempt, so a retry can never
-  publish a partial file.
-
-- **Disk speed measured as "unavailable" on the fastest disks.** The read was
-  timed with a clock whose resolution on Windows is about 15.6 ms; a cached 1 MiB
-  read finishes well inside that, so the elapsed time came out as exactly zero,
-  tripped the guard for an impossible measurement, and reported failure. The
-  model-load-time estimate that depends on it fell back to a guess. It now uses a
-  monotonic nanosecond clock.
-
----
-
-## Upgrading
-
-Download `AgentFriday-Setup-5.8.0.zip`, unzip it anywhere, and run
-**Install Agent Friday.cmd**.
-
-Your notes, settings, vault and connected accounts are kept — the installer
-replaces Friday's own files and nothing under `~/.friday`.
-
-If you upgraded in place before 5.6.5, re-running this installer also repairs an
-install whose files were never actually replaced. `friday status` will tell you
-afterwards whether the version on disk and the manifest finally agree.
+The repository's git history still contains a real vault passphrase from
+earlier in this project's life. That is a publication decision, not a code
+fix, and it is explicitly not acted on here — no history rewrite, no force
+push — until the passphrase itself has been rotated. Rewriting history around
+a still-live secret protects nothing and breaks every existing clone.

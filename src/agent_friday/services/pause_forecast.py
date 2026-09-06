@@ -207,6 +207,40 @@ def _no_pause(why: str) -> dict:
             "checked_at": time.time()}
 
 
+def _content_heavy_ask(model_id: str | None, *, vault: bool = False,
+                       cloud_ok: bool = True) -> dict:
+    """The load-time signal said no pause, but the request itself smells like
+    depth. Ask anyway.
+
+    See Q18 in docs/audits/gauntlet-2026-09-03/findings.jsonl:
+    `services.workflow_plan.looks_heavy()` was purpose-built for exactly this
+    -- its own docstring says "Only ever decides whether to ASK" -- and had
+    never been wired to anything. A warm seat and a heavy job are independent
+    facts; the load-time forecast above only ever sees the first. This is the
+    second signal, OR'd in rather than replacing the first, so neither a
+    slow-loading trivial request nor a fast-loading heavy one goes unannounced.
+
+    There is no measured duration for "this looks like a big job" the way
+    there is for a cold model load, so `seconds` borrows
+    `workflow_plan.ASK_ABOVE_S` -- the same threshold that module already uses
+    to decide whether content is worth interrupting someone about.
+    """
+    from agent_friday.services.workflow_plan import ASK_ABOVE_S
+    model = model_id or "the current seat"
+    return {
+        "will_pause": True, "seconds": ASK_ABOVE_S, "confidence": POSSIBLE,
+        "basis": "the wording looks like a deep job (refactor/audit/analyze/"
+                 "across-everything, etc.), not a measured duration",
+        "why": ("%s is already warm, so this will not wait on a cold load -- "
+                "but the message itself reads like a big job (something like "
+                "refactor/migrate/audit/analyze/across-every-file), which can "
+                "run long regardless of load time." % model),
+        "affects": [model_id] if model_id else [],
+        "options": _options(ASK_ABOVE_S, vault=vault, cloud_ok=cloud_ok),
+        "checked_at": time.time(),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  The forecasts
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,10 +445,105 @@ def before_drain(cls: str = "heavy") -> dict:
     }
 
 
+def before_chain(plan: dict, *, cloud_ok: bool = True) -> dict:
+    """headroom.md §8.1's five lines, as data: what / where / what stands
+    down / how long / what the machine will feel like. Phase 4 owns
+    RENDERING this; this function only builds it, from a
+    `residency_policy.plan_chain` ChainPlan.
+
+    A chain that never takes a lease (every stage `resident`/`cpu`/`cloud`)
+    does not pause anything — `_no_pause`, same as `before_local_turn`'s own
+    "already loaded" case: warning before every ordinary chain would be the
+    same noise this module's own docstring already refuses to produce for a
+    seat that is simply loaded and answering.
+    """
+    stages = plan.get("stages") or []
+    leased = [s for s in stages if s.get("where") == "leased"]
+    if not leased:
+        return _no_pause(
+            "nothing in this chain takes an exclusive lease -- every stage "
+            "runs resident, on CPU, or in the cloud.")
+
+    evicted_ids = sorted({m for t in (plan.get("transitions") or [])
+                         for m in (t.get("evict") or [])})
+    retained = list(plan.get("retained") or [])
+    seconds = plan.get("total_est_s")
+
+    # 1. What.
+    label = {"image": "Make an image", "video": "Make a video"}
+    what = "; ".join(
+        "%s (%s, on this machine)" % (label.get(s["role"], s["role"]),
+                                      s.get("model_id"))
+        for s in leased) or "Run this chain locally"
+
+    # 2. Where.
+    where = [{"role": s.get("role"), "model_id": s.get("model_id"),
+             "where": s.get("where")} for s in stages]
+
+    # 3. What stands down.
+    if evicted_ids and retained:
+        stands_down = ("%s steps aside for it. Friday keeps answering on %s."
+                       % (", ".join(evicted_ids), ", ".join(retained)))
+    elif evicted_ids:
+        stands_down = "%s steps aside for it." % ", ".join(evicted_ids)
+    else:
+        stands_down = ("Nothing steps aside — this chain has room beside "
+                       "what is already running.")
+
+    # 4. How long.
+    confidence = CERTAIN if seconds is not None else POSSIBLE
+    basis = "measured" if seconds is not None else ROUGH_DEFAULT_BASIS
+    how_long = (_plural(seconds) if seconds is not None else
+               "not fully measured on this machine yet")
+
+    # 5. What the machine will feel like — the contract verdict in a
+    # sentence, per §8.1's own wording ("Your screen and browser keep their
+    # memory. 1.0 GB of headroom stays free.").
+    contract_ok = plan.get("contract_ok")
+    if contract_ok is False:
+        feel = ("This does not fit under the current reserve — one or more "
+                "stages moved to the cloud instead of overloading the "
+                "card.")
+    elif contract_ok is None:
+        feel = ("Part of this has not been measured on this machine yet, "
+                "so how it will feel is not fully known.")
+    else:
+        feel = "Your screen and browser keep their memory throughout."
+
+    why = "%s. %s %s" % (what, stands_down, feel)
+    return {
+        "will_pause": True, "seconds": seconds, "confidence": confidence,
+        "basis": basis, "why": why,
+        "what": what, "where": where, "stands_down": stands_down,
+        "how_long": how_long, "feel": feel,
+        "affects": evicted_ids, "stays_awake": retained,
+        "options": _options(seconds or 0, cloud_ok=cloud_ok),
+        "checked_at": time.time(),
+    }
+
+
 def forecast(kind: str, **kw) -> dict:
-    """One entry point, so callers do not each pick their own vocabulary."""
+    """One entry point, so callers do not each pick their own vocabulary.
+
+    `text` (optional, `local_turn` only) is the actual message about to be
+    sent. It is an ADDITIONAL trigger, OR'd against the kind's own load-time
+    signal rather than replacing it: if the load-time estimate did not already
+    justify asking, but the text itself looks heavy per
+    `services.workflow_plan.looks_heavy()`, ask anyway. See Q18 -- looks_heavy
+    was written for exactly this and, before this wiring, was never called by
+    anything.
+    """
+    text = kw.pop("text", None)
     fn = {"local_turn": before_local_turn, "heavy_lease": before_heavy_lease,
-          "image": before_image, "drain": before_drain}.get(kind)
+          "image": before_image, "drain": before_drain,
+          "chain": before_chain}.get(kind)
     if fn is None:
         return _no_pause("unknown forecast kind %r" % kind)
-    return fn(**kw)
+    result = fn(**kw)
+    if kind == "local_turn" and not result.get("will_pause") and text:
+        from agent_friday.services.workflow_plan import looks_heavy
+        if looks_heavy(text):
+            return _content_heavy_ask(kw.get("model_id"),
+                                      vault=bool(kw.get("vault")),
+                                      cloud_ok=bool(kw.get("cloud_ok", True)))
+    return result

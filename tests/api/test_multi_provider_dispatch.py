@@ -68,6 +68,52 @@ def test_dispatch_to_openrouter_descriptor(monkeypatch):
     assert posts[0]["payload"]["model"] == "meta-llama/llama-4-maverick"
 
 
+def test_openrouter_claude_gets_a_prompt_cache_breakpoint(monkeypatch):
+    """A Claude model routed through OpenRouter must carry a `cache_control`
+    breakpoint on its stable system prefix, split before the clock.
+
+    2026-09-04: `apply_anthropic_cache` (services/prompt_cache.py) only ever
+    ran on the native Anthropic SDK path (_call_claude_agent) — every
+    scheduled task that routes through THIS function (OpenRouter, the hourly
+    heartbeat included) resent its full system prefix uncached on every
+    call, forever. This is the wiring that closes that gap; a non-Claude
+    model on the same provider must NOT get a breakpoint (OpenRouter only
+    honors it for Anthropic models, and marking it elsewhere is a wasted or
+    silently-ignored field at best).
+    """
+    posts = _capture_posts(monkeypatch)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-not-real")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    stable = "== AGENT PERSONALITY ==\nstable persona text. " + "x" * 6000
+    volatile = "\n== AUTHORITATIVE CLOCK ==\nCurrent datetime: 2026-09-04 10:00.\n"
+    system = stable + volatile
+
+    smr._call_openai(
+        [{"role": "user", "content": "hello"}],
+        system=system, model="anthropic/claude-sonnet-5", tools=None,
+        provider="openrouter",
+    )
+    sys_msg = posts[0]["payload"]["messages"][0]
+    assert sys_msg["role"] == "system"
+    blocks = sys_msg["content"]
+    assert isinstance(blocks, list) and len(blocks) == 2
+    assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in blocks[1]
+    assert blocks[1]["text"].startswith("== AUTHORITATIVE CLOCK ==")
+    assert blocks[0]["text"] + blocks[1]["text"] == system
+
+    # A non-Claude model on the same (caching-capable) provider: no breakpoint.
+    posts.clear()
+    smr._call_openai(
+        [{"role": "user", "content": "hello"}],
+        system=system, model="meta-llama/llama-4-maverick", tools=None,
+        provider="openrouter",
+    )
+    sys_msg2 = posts[0]["payload"]["messages"][0]
+    assert sys_msg2["content"] == system
+
+
 def test_dispatch_to_groq_descriptor(monkeypatch):
     """A second provider in the SAME process hits ITS OWN endpoint — the
     single-slot limitation is gone."""

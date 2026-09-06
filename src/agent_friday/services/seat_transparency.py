@@ -13,9 +13,11 @@ poll-on-read (core._SETTINGS_CACHE), the same mechanism the FR-1 runtime
 seat gate documents as the un-bypassable layer, so there is no writer that
 can flip a seat without this firing on the next observed turn.
 
-observe_seats() is called from the chat turn path, the history rehydrate,
-and the model catalog route — cheap (one small JSON state file) and
-idempotent per actual change.
+observe_seats() is called from /api/chat (the chat turn path), /api/chat/history
+(the rehydrate), and /api/chat/send (a second chat-turn endpoint) — cheap
+(one small JSON state file) and idempotent per actual change. (Corrected
+gauntlet-2026-09-03 F63: this previously named "the model catalog route" as
+the third call site, which does not call observe_seats() at all.)
 """
 from __future__ import annotations
 

@@ -2,15 +2,27 @@
 Agent Friday — Compute Client (Friday outsourcing work to peers)
 FutureSpeak.AI · Asimov's Mind
 
-When local adapters can't handle a task (no GPU, busy, no capability),
-the Orchestrator can delegate to federation peers via this client.
-All outbound jobs go through the egress gate.
+Lets Friday delegate a task to federation peers when local adapters can't
+handle it (no GPU, busy, no capability). All outbound jobs go through the
+egress gate.
+
+CORRECTION (gauntlet-2026-09-03 F61): "the Orchestrator can delegate...via
+this client" overclaims a wiring that doesn't exist. services/orchestrator.py
+never imports or calls anything in this module -- there is no automatic
+fallback where a local-adapter failure triggers federation delegation. What's
+real: find_providers/request_job/rate_provider/get_sent_jobs are each wired
+to a route in routes/compute.py, so delegation is reachable as a manual/
+external API call, just not something the Orchestrator invokes on its own
+when it hits local incapacity. await_result() is dead on top of that -- no
+route calls it either (the wired routes poll /api/federation/compute/status/
+<job_id> once per call instead of blocking here), so it has no caller of any
+kind, internal or external.
 
 Public API
 ----------
 find_providers(capability_type)              → list[dict]  (CapabilityCards)
 request_job(provider_id, task_spec, mψ)     → dict  (JobRequest)
-await_result(job_id, timeout)               → dict  (JobResult)
+await_result(job_id, timeout)               → dict  (JobResult) -- see correction above: unreachable, no caller
 rate_provider(job_id, quality_score)         → bool  (updates trust)
 get_sent_jobs(limit)                         → list[dict]
 """
@@ -151,14 +163,20 @@ def request_job(
 ) -> dict:
     """Send a job to a provider. Returns the job_request dict (with job_id)."""
     prompt = task_spec.get("prompt", "")
+    context = task_spec.get("context", {})
 
-    # Egress gate — check before sending
-    try:
-        from agent_friday.services.egress_gate import seal_outbound
-        safe_payload = seal_outbound({"prompt": prompt}, provider="federation")
-        prompt = safe_payload.get("prompt", prompt)
-    except Exception:
-        pass
+    # Egress gate — must run before anything leaves for a federation peer.
+    # security-boundary.md §19 row 4: this used to be `except Exception:
+    # pass`, so a gate that could not run silently became a send that
+    # skipped it — the exact bug egress_gate.py's own scrub step guards
+    # against ("A scrub that cannot run must not become a send that skips
+    # it"), generalised here to this call site. `context` is now gated too;
+    # only `prompt` used to reach seal_outbound at all.
+    from agent_friday.services.egress_gate import seal_outbound
+    safe_payload = seal_outbound({"prompt": prompt, "context": context},
+                                 provider="federation")
+    prompt = safe_payload.get("prompt", prompt)
+    context = safe_payload.get("context", context)
 
     job_id = str(uuid.uuid4())
     payload = {
@@ -169,7 +187,7 @@ def request_job(
         "prompt": prompt,
         "offered_mψ": offered_mψ,
         "sent_at": _now(),
-        "context": task_spec.get("context", {}),
+        "context": context,
     }
 
     url = provider_endpoint.rstrip("/") + "/api/federation/compute/request"

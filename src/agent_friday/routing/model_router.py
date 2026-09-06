@@ -196,7 +196,20 @@ class ModelRouter:
     def fallback_to_cloud(self):
         return self.config.get("fallback_to_cloud", True)
 
-    def classify_task(self, messages, has_tools=False, workspace=None):
+    def classify_task(self, messages, has_tools=False, workspace=None, is_voice=False):
+        """Classify the task type driving a routing decision.
+
+        `is_voice` is an explicit origin signal (not inferred from message
+        content) — set True by a caller that knows this turn came from the
+        voice pipeline (see routes/voice.py's ws-local handler). It is
+        checked first because the documented `task_overrides.voice` config
+        key (docs/CONFIGURATION.md) needs *some* caller to ever reach
+        TaskType.VOICE at all; before this, nothing in the codebase ever
+        produced it, and the three TaskType.VOICE branches in _route_basic
+        were unreachable dead code (gauntlet Q20).
+        """
+        if is_voice:
+            return TaskType.VOICE
         if not messages:
             return TaskType.SIMPLE
         last_msg = ""
@@ -583,7 +596,18 @@ class ModelRouter:
                      result.get("reason")))
         except Exception:
             pass
-        return self._finalize(result, vault_access=False)
+        # _route_basic can itself demand a refusal now (local_only mode with
+        # no local seat available, findings.jsonl Q19) -- without passing
+        # these through, _finalize below would silently overwrite them back
+        # to refuse=False/warning=None (its own defaults), the same way a
+        # bare `self._finalize(result, vault_access=False)` call already
+        # would have swallowed them; _route_vault avoids this by calling
+        # _finalize itself and returning early, but _route_basic's result
+        # flows through this shared tail, so the propagation has to happen
+        # here instead.
+        return self._finalize(result, vault_access=False,
+                              refuse=bool(result.get("refuse")),
+                              warning=result.get("warning"))
 
     def _is_registry_local(self, model_id: str) -> bool:
         """True if model_id is explicitly listed under a local-type provider
@@ -737,7 +761,8 @@ class ModelRouter:
         has_tools = bool(ctx.get("has_tools"))
         workspace = ctx.get("workspace", "")
 
-        task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace)
+        task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace,
+                                       is_voice=bool(ctx.get("is_voice")))
 
         if mode == "cloud_only":
             # cloud_only means NOTHING RUNS ON THIS MACHINE. It never meant
@@ -785,6 +810,90 @@ class ModelRouter:
                 "reason": "Routing mode is cloud_only",
             }
 
+        if mode == "local_only" and task_type != TaskType.VOICE:
+            # local_only's OWN documented promise (services/seat_transparency.
+            # py's _MODE_MEANING dict): "ALL turns go to the local seat — the
+            # cloud orchestrator is not consulted." Before this fix that only
+            # held for SCHEDULED/BACKGROUND work (the TOOL_USE branch below);
+            # an ordinary interactive turn — the single most common case —
+            # fell through this whole method with no mode check at all and
+            # went straight to cloud, empirically verified for every one of
+            # local_only/local_preferred/smart (findings.jsonl Q19). Mirrors
+            # cloud_only's own block above: an explicit choice that conflicts
+            # with the mode's absolute guarantee (a cloud task_override, or a
+            # capability_routing.reasoning seat naming a cloud model) is
+            # overridden by the mode, not honored over it — the same
+            # direction cloud_only already forces a conflicting LOCAL choice
+            # back to cloud, above.
+            def _best_local_seat():
+                local = self._local_candidates()
+                if not local:
+                    return None
+                names = {m["name"] for m in local}
+                chosen_name = None
+                try:
+                    from agent_friday.core import _load_settings as _ls
+                    cr = (_ls() or {}).get("capability_routing") or {}
+                    want = (cr.get("reasoning") or {}).get("model")
+                    if want in names:
+                        chosen_name = want
+                except Exception:
+                    pass
+                return (chosen_name or self._pick_local_model(local, task_type, self.mode)
+                        or local[0]["name"])
+
+            overrides = self.config.get("task_overrides", {})
+            if task_type in overrides:
+                override = overrides[task_type]
+                model = override.get("model")
+                provider = override.get("provider")
+                if provider in self._LOCAL_PROVIDERS or (
+                        model and self._is_registry_local(model)):
+                    return {
+                        "provider": "local",
+                        "model": model,
+                        "task_type": task_type,
+                        "reason": f"User override for {task_type} (local_only)",
+                    }
+                # The override names a cloud provider/model — local_only
+                # overrides IT, the same way cloud_only overrides a
+                # conflicting local override above.
+            picked = _best_local_seat()
+            if picked:
+                return {
+                    "provider": "local",
+                    "model": picked,
+                    "task_type": task_type,
+                    "reason": "local_only mode — the cloud orchestrator is not consulted",
+                }
+            # No local seat available at all: fail closed and say so plainly
+            # (never a silent cloud fallback — that would defeat the whole
+            # point of the mode), THEN offer cloud-only as an explicit
+            # choice the user makes, rather than a dead end. Stephen,
+            # 2026-09-04, directly: "the system should fail to function and
+            # produce an error, then it should ask the user if it can go
+            # into cloud only mode. We should always prioritize the user
+            # knowing what is being done with their data, what model is in
+            # use" — a standing transparency principle, not a rule scoped
+            # to just this case. `offer_cloud_switch` is a structured
+            # marker (not just prose in `warning`) so the chat pipeline can
+            # render this as an actual actionable choice — see
+            # routes/chat.py and index.html's handling of a refused result
+            # carrying this flag — rather than a dead-end error the user
+            # has to go find Settings to act on themselves.
+            return {
+                "provider": "local",
+                "model": None,
+                "refuse": True,
+                "offer_cloud_switch": True,
+                "task_type": task_type,
+                "warning": ("Local-only mode is on, but no local model is "
+                           "available to answer this. Install or start "
+                           "Ollama, or switch to Cloud-Only mode for this "
+                           "and future turns."),
+                "reason": "local_only mode — no local seat available",
+            }
+
         # His explicit seat is consulted BEFORE the speed/size heuristics for
         # every ordinary class. Voice keeps its own pipeline and the vault
         # route has already run and taken precedence above; a task_override is
@@ -827,45 +936,55 @@ class ModelRouter:
             # inbox, which is exactly the private material that should not be
             # leaving the machine in the first place.
             #
-            # Scoped to SCHEDULED and BACKGROUND work on Stephen's decision
-            # (2026-08-16). Interactive chat keeps today's cloud behaviour,
-            # because that is where he would feel the speed difference and he
-            # did not ask for that trade.
-            if ctx.get("is_background_task") or ctx.get("scheduled"):
-                local = self._local_candidates()
-                if local:
-                    # The BRAIN, not the fastest thing that fits. Stephen named
-                    # the 12b ("Can't Gemma 4:12b handle that?") and he is
-                    # right about the seat: a heartbeat reads a calendar and an
-                    # inbox and has to decide what is worth telling him, which
-                    # is judgement work, not reflex. _pick_local_model
-                    # optimises for speed and chose the 2B sidekick.
-                    names = {m["name"] for m in local}
-                    chosen = None
-                    try:
-                        from agent_friday.core import _load_settings as _ls
-                        cr = (_ls() or {}).get("capability_routing") or {}
-                        want = (cr.get("reasoning") or {}).get("model")
-                        if want in names:
-                            chosen = want
-                    except Exception:
-                        pass
-                    chosen = chosen or self._pick_local_model(
-                        local, task_type, self.mode) or local[0]["name"]
-                    return {
-                        "provider": "local",
-                        "model": chosen,
-                        "task_type": task_type,
-                        "reason": "Unattended tool work — kept on a local seat",
-                    }
-            # An explicit seat wins for INTERACTIVE work too.
-            #
-            # The 2026-08-16 scoping ("interactive chat keeps today's cloud
-            # behaviour") was about not silently changing the speed trade he
-            # had not asked for. Choosing a model in the picker IS asking for
+            # SUPERSEDED 2026-09-04 (findings.jsonl Q19): this was scoped to
+            # SCHEDULED and BACKGROUND work only on Stephen's 2026-08-16
+            # decision ("interactive chat keeps today's cloud behaviour...
+            # he did not ask for that trade"). Asked directly during this
+            # audit whether ordinary chat should also honor local_preferred/
+            # smart's own local-first promise, his answer: "ordinary chat
+            # does need to respect local only in addition to Smart routing
+            # and cloud mode" -- the August decision was about a tradeoff he
+            # was making at the time, not a standing exemption from what
+            # these modes' own names and UI text promise. The
+            # is_background_task/scheduled gate is gone; local preference
+            # now applies to every TOOL_USE turn under local_preferred/smart
+            # (cloud_only and local_only both return earlier in this method
+            # and never reach here), interactive or not — "cloud only as
+            # fallback" now means fallback for every turn, not just the
+            # unattended ones.
+            local = self._local_candidates()
+            if local:
+                # The BRAIN, not the fastest thing that fits. Stephen named
+                # the 12b ("Can't Gemma 4:12b handle that?") and he is right
+                # about the seat: a heartbeat reads a calendar and an inbox
+                # and has to decide what is worth telling him, which is
+                # judgement work, not reflex. _pick_local_model optimises
+                # for speed and chose the 2B sidekick.
+                names = {m["name"] for m in local}
+                chosen = None
+                try:
+                    from agent_friday.core import _load_settings as _ls
+                    cr = (_ls() or {}).get("capability_routing") or {}
+                    want = (cr.get("reasoning") or {}).get("model")
+                    if want in names:
+                        chosen = want
+                except Exception:
+                    pass
+                chosen = chosen or self._pick_local_model(
+                    local, task_type, self.mode) or local[0]["name"]
+                return {
+                    "provider": "local",
+                    "model": chosen,
+                    "task_type": task_type,
+                    "reason": "local_preferred/smart — kept on a local seat",
+                }
+            # No local seat exists at all: this is the genuine "cloud only
+            # as fallback" case local_preferred/smart's own names promise.
+            # An explicit seat pick still wins here over the bare default,
+            # for the same reason the 2026-08-16 fix originally gave this
+            # its own branch: choosing a model in the picker IS asking for
             # it, and the whole point of the redesigned picker is that the
-            # choice takes effect. Leaving this branch cloud-only meant every
-            # selection he made was cosmetic.
+            # choice takes effect.
             _m, _p = self._chosen_seat(ctx)
             chosen = self._route_chosen_seat(_m, task_type, _p)
             if chosen:

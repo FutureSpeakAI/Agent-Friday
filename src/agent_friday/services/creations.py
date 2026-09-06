@@ -427,6 +427,55 @@ def _record_media_daily(date_str, mode, choice, file_rec, path, extra=None):
     return creation
 
 
+def _record_pending_short_production(date_str, choice, run_id, path):
+    """A short-production run paused at a checkpoint (gauntlet-2026-09-03
+    Q16) -- there is no finished file yet, but today still needs a record
+    so generate_daily_creation() doesn't fall through to an unrelated text
+    creation, and so tomorrow's tick doesn't try to start a second one
+    while this one is still waiting on the user. Notifies clearly that
+    review, not a finished piece, is what's ready."""
+    creation = {
+        "date": date_str,
+        "type": "short-production",
+        "title": (choice.get("title") or choice.get("concept") or "Untitled")[:120],
+        "content": choice.get("concept") or "",
+        "file": None,
+        "url": None,
+        "media": True,
+        "pending_review": True,
+        "run_id": run_id,
+        "created": datetime.now().isoformat(),
+    }
+    try:
+        path.write_text(json.dumps(creation, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+    except Exception as e:
+        print(f"  [daily-creation] pending short-production record save failed: {e}")
+    print(f"  [daily-creation] short-production for {date_str} is awaiting "
+          f"checkpoint review (run {run_id}).")
+    if _notif_engine:
+        try:
+            _notif_engine.push(
+                title="🎬 Today's production is waiting on you",
+                body=(f"Friday started a short production — *{creation['title']}* "
+                      "— and paused at a checkpoint before the expensive stage "
+                      "or before publishing. Review it in the Workflows panel "
+                      "to let it continue."),
+                priority="medium", source="daily-creation", kind="creation",
+                dedupe_key=f"daily-creation-pending:{run_id}",
+                target={"workspace": "workflows", "run_id": run_id},
+                proactive_chat=True,
+                chat_message=(
+                    f"Today's short production, *{creation['title']}*, is "
+                    "paused waiting for your review before it continues — "
+                    "want to take a look?"
+                ),
+            )
+        except Exception as _e:
+            print(f"  [NOTIFY] daily-creation pending-review push failed: {_e}")
+    return creation
+
+
 def _generate_media_daily(date_str, choice, path):
     """Run the engine for a media daily mode. Always allows demo fallback so a
     day is produced even with no cloud key. Returns the creation record, or None
@@ -440,14 +489,31 @@ def _generate_media_daily(date_str, choice, path):
                                                  aspect_ratio="16:9", allow_demo=True)
         elif mode == "music-clip":
             from agent_friday.services import music_engine
-            res = music_engine.generate_music(concept, model="lyria-clip",
-                                              duration_seconds=30)
+            # No model= override: let resolve_music_model() honor the
+            # user's capability_routing.creative_music seat choice, the
+            # same as every other music_engine.generate_music() call site
+            # (services/agent.py, routes/creations.py, creative_pipeline.py)
+            # -- this one alone hardcoded lyria-clip and silently ignored a
+            # user's chosen music model (docs/audits/gauntlet-2026-09-03/
+            # findings.jsonl).
+            res = music_engine.generate_music(concept, duration_seconds=30)
         elif mode == "short-production":
             from agent_friday.services import creative_pipeline as cp
             run = cp.create_run("full-production", {"logline": concept})
             if run.get("status") == "error":
                 return None
-            final = cp.run(run["run_id"], until_checkpoint=False)
+            # Respects the pipeline's own checkpoints (gauntlet-2026-09-03
+            # Q16): this was the ONLY caller of the full-production template
+            # that auto-advanced past all three, including the one
+            # explicitly commented "cost gate -- video is the expensive
+            # call" and the one before publishing. A run that pauses is not
+            # a failure -- it means Friday is waiting for a look before the
+            # expensive stage, or a final review before the file is
+            # published, exactly like every other caller of this template.
+            final = cp.run(run["run_id"], until_checkpoint=True)
+            if final.get("state") == cp.AWAITING_CHECKPOINT:
+                return _record_pending_short_production(
+                    date_str, choice, final.get("run_id") or run["run_id"], path)
             fr = (final.get("context") or {}).get("production_file") \
                 or (final.get("context") or {}).get("clip_file")
             res = {"status": "ok", "files": [fr]} if fr else {"status": "error"}

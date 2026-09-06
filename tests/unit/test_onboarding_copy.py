@@ -123,16 +123,25 @@ def test_the_routing_screen_can_actually_return_a_local_mode():
         assert isinstance(m, str) and m
 
 
-def test_the_cloud_screen_says_the_map_loses_its_semantic_layer():
-    """FACT-FIX 1. Tier B pins extraction to a local model and produces nothing
-    without one -- it used to do so silently."""
+def test_the_cloud_screen_says_the_map_loses_its_semantic_layer_by_default():
+    """FACT-FIX 1, revised 2026-09-03. Tier B used to pin extraction to a
+    local model unconditionally and produce nothing without one, silently --
+    fixed the same day indexing_mode became a real per-user local/cloud
+    choice (Settings -> Knowledge Graph). The screen must describe today's
+    actual default (local) without claiming it is the only option, since it
+    no longer is."""
     ack = screen_text("cloud_ack")
-    assert "only runs on a model on this computer" in ack, (
-        "the cloud screen still implies the whole map survives cloud-only"
+    assert "by default" in ack and "model on this computer" in ack, (
+        "the cloud screen no longer describes the default local behaviour"
+    )
+    assert "settings" in ack, (
+        "the screen must point at the real escape hatch (Settings -> "
+        "Knowledge Graph) now that cloud indexing is a genuine choice, not "
+        "just describe an unconditional local pin"
     )
 
     from agent_friday.services import knowledge_graph as kg
-    assert kg.KG_DEFAULT_SETTINGS["indexing_mode"] == "local_only", (
+    assert kg.KG_DEFAULT_SETTINGS["indexing_mode"] == "local", (
         "indexing_mode changed; the sentence about the second layer may now be "
         "wrong in the other direction"
     )

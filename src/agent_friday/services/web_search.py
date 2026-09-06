@@ -22,8 +22,11 @@ know about because it was found live on 2026-08-17):
      `status` that distinguishes them, and `canary()` settles it by asking a
      question with a known stable answer.
 
-Backends, in order: Brave Web Search when BRAVE_SEARCH_API_KEY is set (the
-paid general-search key Q1 approved), DuckDuckGo HTML otherwise. The DDG path
+Backends, in order (corrected gauntlet-2026-09-03 F63 — this used to describe
+a two-backend world that predated Firecrawl and never mentioned it):
+Firecrawl leads, Brave Web Search next when BRAVE_SEARCH_API_KEY is set (the
+paid general-search key Q1 approved), DuckDuckGo HTML last. See
+active_backend()'s own docstring for the authoritative chain. The DDG path
 is a scrape and is labelled as one — when it breaks again, the caller finds
 out rather than receiving an error page dressed as research.
 """
@@ -41,6 +44,14 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 _CANARY_QUERY = "wikipedia"
 _CANARY_TTL_S = 300.0
 _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
+
+
+# Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7c): Brave
+# calls had ZERO cost_meter tracking. Brave bills a flat USD-per-query rate
+# (unlike Firecrawl's credits), checked against public pricing aggregator
+# pages 2026-09-04, not Brave's own pricing page directly -- best-effort,
+# moderate confidence, flagged.
+_BRAVE_USD_PER_QUERY = 0.005
 
 
 class SearchStatus:
@@ -311,6 +322,11 @@ def _brave(query: str, count: int) -> dict:
     if r.status_code >= 400:
         return {"status": SearchStatus.BACKEND_BROKEN,
                 "detail": f"Brave returned HTTP {r.status_code}"}
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.record("brave", "web-search", cost_usd=_BRAVE_USD_PER_QUERY, kind="tool")
+    except Exception:
+        pass
     data = r.json()
     items = ((data.get("web") or {}).get("results")) or []
     results = [{
@@ -384,6 +400,33 @@ def _duckduckgo(query: str, count: int) -> dict:
             "results": results, "detail": ""}
 
 
+def _gate_search_query(query: str, provider: str) -> tuple[str, str]:
+    """Gate a search query before it reaches Brave/DuckDuckGo/Firecrawl.
+
+    security-boundary.md §19 row 5: previously ungated. Returns
+    (gated_query, refusal_detail) — refusal_detail is "" when the query may
+    proceed unchanged; when it is non-empty the query was withheld (in whole
+    or in part) and the caller must refuse rather than send a redaction
+    placeholder to a search engine as if it were a real query.
+    """
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as e:
+        return "", f"the privacy gate could not be reached ({e}) — search not sent"
+    try:
+        gated = _eg._gate_text(query, provider, "web_search.query")
+    except _eg.NeverSendBlocked as nb:
+        return "", str(nb)
+    except Exception as e:
+        return "", f"the privacy gate failed ({e}) — search not sent"
+    if gated != query:
+        return "", ("your query contained content that stays on this "
+                    "device, so it was not sent to any search engine — "
+                    "rephrase without the private part, or use a local "
+                    "model to work with it")
+    return gated, ""
+
+
 def search(query: str, count: int = 10) -> dict:
     """Search the web. Returns {status, results[], backend, detail, query}.
 
@@ -402,6 +445,13 @@ def search(query: str, count: int = 10) -> dict:
     if brave_key():
         runners.append(("brave", _brave))
     runners.append(("duckduckgo-scrape", _duckduckgo))
+
+    gated_q, refusal = _gate_search_query(
+        q, runners[0][0] if runners else "web-search")
+    if refusal:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": refusal}
+    q = gated_q
 
     tried: list[str] = []
     last: dict = {}

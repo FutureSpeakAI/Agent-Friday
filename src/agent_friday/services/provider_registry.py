@@ -154,8 +154,16 @@ DEFAULT_PROVIDERS = [
         # fidelity for eight-step speed, SD 3.5 Medium runs thirty steps and
         # costs several times as much per picture. `note` carries that trade
         # so the choice is informed at the point it is made.
-        "models": ["z-image-turbo-fp8", "sd3.5-medium-fp8"],
-        "capabilities": ["image"],
+        # Two image models were here for a long time; five more (three video,
+        # two more image) joined 2026-09-04, each declaring the files that
+        # prove it is really here (services/local_image.py, local_video.py).
+        # FLUX.1 dev is deliberately NOT in this list — its licence forbids
+        # commercial use of the model itself, so it is registered per-machine
+        # via services/local_creative_overrides.py instead of shipping here.
+        "models": ["z-image-turbo-fp8", "sd3.5-medium-fp8",
+                   "sdxl-base-1.0", "qwen-image-q3ks",
+                   "wan2.2-ti2v-5b", "wan2.2-14b-a14b-gguf", "cogvideox-2b"],
+        "capabilities": ["image", "video"],
         "roles": [ROLE_CREATIVE],
         "cost_per_1k": {},
         "model_meta": {
@@ -180,6 +188,72 @@ DEFAULT_PROVIDERS = [
                 "licence": "Stability AI Community License",
                 "licence_note": "free commercial use below $1M annual revenue; "
                                 "attribution required if redistributed",
+            },
+            "sdxl-base-1.0": {
+                "label": "Stable Diffusion XL Base 1.0 (local image)",
+                "short": "SDXL Base",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["image"],
+                "note": "best pick for consistent styles or recurring "
+                        "characters via LoRA — measured ~55s per 1024x1024 "
+                        "image on a 4070 12GB, ~8GB VRAM peak",
+                "licence": "CreativeML Open RAIL++-M",
+                "licence_note": "no commercial-use restriction; large "
+                                "LoRA/ControlNet ecosystem",
+            },
+            "qwen-image-q3ks": {
+                "label": "Qwen-Image Q3_K_S (local image)",
+                "short": "Qwen-Image",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["image"],
+                "note": "renders legible text in images — quantized for 12GB. "
+                        "Measured: bold high-contrast text (a chalkboard "
+                        "sign) came out fully legible on a real test, but "
+                        "this is one data point, not a guarantee across all "
+                        "prompts. ~4.25 min per 1024x1024 image, ~10.7GB "
+                        "VRAM peak on a 4070 12GB — close to the ceiling",
+                "licence": "Apache 2.0",
+            },
+            "wan2.2-ti2v-5b": {
+                "label": "Wan 2.2 TI2V 5B (local video)",
+                "short": "Wan 2.2 5B",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "NOT currently reliable on 12GB cards — sampling "
+                        "completes cleanly (~9 min for 20 steps at 832x480), "
+                        "but VAE decode hung for 15+ minutes with no result "
+                        "in two separate tests (both an 81-frame and a "
+                        "29-frame clip), so this is length-independent, not "
+                        "just slow for long clips. Prefer Wan 2.2 14B GGUF "
+                        "until this is root-caused.",
+                "licence": "Apache 2.0",
+                "licence_note": "no commercial restriction",
+            },
+            "wan2.2-14b-a14b-gguf": {
+                "label": "Wan 2.2 A14B GGUF (local video)",
+                "short": "Wan 2.2 14B",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "default video model — the only one of the two Wan "
+                        "tiers confirmed reliable on this hardware. Measured "
+                        "~8.1 min for a short (~1.8s) clip at 832x480, "
+                        "~9.2-9.7GB VRAM peak on a 4070 12GB. Two-expert "
+                        "model, so expect longer clips to take "
+                        "proportionally longer — full 5s-clip timing not "
+                        "yet measured.",
+                "licence": "Apache 2.0",
+                "default": True,
+            },
+            "cogvideox-2b": {
+                "label": "CogVideoX 2B (local video)",
+                "short": "CogVideoX 2B",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "6 seconds, fixed 480x720, 8fps — reliable but the "
+                        "most limited of the three video options. Measured "
+                        "~2.4 min for a short (~1.6s) clip, ~5GB VRAM peak "
+                        "on a 4070 12GB — the lightest of the three.",
+                "licence": "Apache 2.0",
             },
         },
         "enabled": True,
@@ -228,6 +302,113 @@ DEFAULT_PROVIDERS = [
         "roles": [ROLE_CREATIVE],
         "cost_per_1k": {},
         "model_meta": {},
+        "enabled": True,
+    },
+    {
+        # kie.ai — pay-per-use creative model marketplace (image/video/audio),
+        # 30-50% cheaper than official vendor APIs because it resells API
+        # access rather than hosting compute. Stephen, 2026-09-04: wants this
+        # alongside Higgsfield because it is pay-per-use, not subscription,
+        # and it carries MiniMax/Hailuo — a model he cannot run locally.
+        #
+        # UNLIKE every other provider in this file, kie.ai has no enumerable
+        # catalog API: model discovery is a WEB PAGE (kie.ai/market), not a
+        # JSON endpoint. Higgsfield's `models_explore` MCP tool has no
+        # equivalent here, so `models` below is a HAND-CURATED, hand-VERIFIED
+        # list (each id confirmed against its docs.kie.ai page 2026-09-04) —
+        # not a hosted-native catalog that refreshes itself. Adding a model
+        # kie.ai actually ships means confirming the exact "model" string on
+        # its docs page and adding it here; guessing the string from a URL
+        # slug is unsafe — measured 2026-09-04, the Flux-2 docs page lives at
+        # /market/flux2/... but its real model id is "flux-2/..." (hyphen the
+        # URL doesn't have). A wrong string fails silently at generation time
+        # with a vendor 400, which is worse than the model being merely
+        # unlisted.
+        #
+        # Two more asymmetries with Higgsfield, both left as follow-up work
+        # rather than silently mis-wired:
+        #   * Veo 3.1 and Suno each have their OWN dedicated kie.ai endpoint
+        #     (/api/v1/veo/generate, /api/v1/generate) with their own request/
+        #     response shape, separate from the unified Market API
+        #     (/api/v1/jobs/createTask + /jobs/recordInfo) every model below
+        #     dispatches through. Neither is wired up — kie_generate.py only
+        #     speaks the unified Market API — so they are NOT in `models`.
+        #   * kie.ai's async model is submit -> POLL (or webhook). This
+        #     integration polls only (services/kie_generate.py); a webhook
+        #     needs a publicly reachable callback URL, which is an exposure
+        #     decision for Stephen, not this integration.
+        "name": "kie",
+        "label": "kie.ai",
+        "type": "kie",
+        "base_url": "https://api.kie.ai/api/v1",
+        "auth": {"type": "env_var", "key": "KIE_API_KEY"},
+        "classification": "cloud",
+        "models": [
+            # Image.
+            "nano-banana-pro", "flux-2/pro-text-to-image",
+            "flux-2/pro-image-to-image", "gpt-image-2-text-to-image",
+            "qwen/image-to-image", "bytedance/seedream-v4-edit",
+            # Video.
+            "kling-3.0/video", "hailuo/02-text-to-video-standard",
+            # Audio utilities (ElevenLabs) — catalogued, not a creative-role
+            # pick: dialogue/isolation/sound-effect tools, not a one-shot
+            # "speak this text" TTS, so roles:[] below (same treatment
+            # higgsfield_catalog gives non-core audio).
+            "elevenlabs/text-to-dialogue-v3", "elevenlabs/audio-isolation",
+            "elevenlabs/sound-effect-v2",
+        ],
+        "capabilities": ["image", "video", "audio"],
+        "roles": [ROLE_CREATIVE],
+        # kie.ai bills in CREDITS per task (reported as `creditsConsumed` on
+        # the completed task), never per-token — cost_per_1k stays empty and
+        # kie_generate.generate() feeds cost_meter.record() a direct cost_usd
+        # figure instead (see kie_generate.CREDIT_USD_ESTIMATE for the caveat
+        # on that conversion rate).
+        "cost_per_1k": {},
+        "model_meta": {
+            "nano-banana-pro": {"label": "Nano Banana Pro (kie.ai)",
+                                 "short": "Nano BPro", "roles": [ROLE_CREATIVE],
+                                 "modalities": ["image"]},
+            "flux-2/pro-text-to-image": {"label": "Flux-2 Pro (kie.ai)",
+                                          "short": "Flux-2 Pro",
+                                          "roles": [ROLE_CREATIVE],
+                                          "modalities": ["image"]},
+            "flux-2/pro-image-to-image": {
+                "label": "Flux-2 Pro — edit (kie.ai)", "short": "Flux-2 Edit",
+                "roles": [ROLE_CREATIVE], "modalities": ["image"],
+                "note": "image-to-image only — needs a source image"},
+            "gpt-image-2-text-to-image": {"label": "GPT Image 2 (kie.ai)",
+                                           "short": "GPT Image 2",
+                                           "roles": [ROLE_CREATIVE],
+                                           "modalities": ["image"]},
+            "qwen/image-to-image": {
+                "label": "Qwen — edit (kie.ai)", "short": "Qwen Edit",
+                "roles": [ROLE_CREATIVE], "modalities": ["image"],
+                "note": "image-to-image only — needs a source image"},
+            "bytedance/seedream-v4-edit": {
+                "label": "Seedream v4 — edit (kie.ai)", "short": "Seedream",
+                "roles": [ROLE_CREATIVE], "modalities": ["image"],
+                "note": "image-to-image only — needs a source image"},
+            "kling-3.0/video": {"label": "Kling 3.0 (kie.ai)",
+                                 "short": "Kling 3.0", "roles": [ROLE_CREATIVE],
+                                 "modalities": ["video"]},
+            "hailuo/02-text-to-video-standard": {
+                "label": "Hailuo 02 Standard — MiniMax (kie.ai)",
+                "short": "Hailuo 02", "roles": [ROLE_CREATIVE],
+                "modalities": ["video"],
+                "note": "MiniMax H3 is on kie.ai but its exact model id was "
+                        "not confirmed as of 2026-09-04 — this is Hailuo 02 "
+                        "Standard, the sibling model actually verified"},
+            "elevenlabs/text-to-dialogue-v3": {
+                "label": "ElevenLabs Dialogue v3 (kie.ai)", "short": "11L Dialogue",
+                "roles": [], "modalities": ["audio", "speech"]},
+            "elevenlabs/audio-isolation": {
+                "label": "ElevenLabs Audio Isolation (kie.ai)", "short": "11L Isolate",
+                "roles": [], "modalities": ["audio"]},
+            "elevenlabs/sound-effect-v2": {
+                "label": "ElevenLabs Sound Effect v2 (kie.ai)", "short": "11L SFX",
+                "roles": [], "modalities": ["audio"]},
+        },
         "enabled": True,
     },
     {

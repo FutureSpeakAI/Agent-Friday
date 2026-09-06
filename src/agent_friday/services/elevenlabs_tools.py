@@ -150,6 +150,26 @@ def _tool_speak_text(inp):
                 "into several calls — this limit exists so a runaway prompt "
                 "cannot spend the character quota in one shot."
                 % (len(text), _MAX_CHARS))
+
+    # security-boundary.md §19 row 8: spoken text is cloud egress like any
+    # other text field — gate it before it ever reaches ElevenLabs. Runs
+    # ahead of the FRIDAY_TESTING short-circuit below on purpose: the
+    # security check must not itself be something test mode skips.
+    try:
+        from agent_friday.services import egress_gate as _eg
+    except Exception as e:
+        return "speak_text error: the privacy gate could not be reached (%s)" % e
+    try:
+        gated_text = _eg._gate_text(text, "elevenlabs", "speak_text.text")
+    except _eg.NeverSendBlocked as nb:
+        return "speak_text error: " + str(nb)
+    except Exception as e:
+        return "speak_text error: the privacy gate failed (%s)" % e
+    if not gated_text:
+        return ("speak_text error: this text contained content that stays "
+                "on this device, so nothing was sent to ElevenLabs.")
+    text = gated_text
+
     if os.environ.get("FRIDAY_TESTING"):
         return "speak_text: skipped (FRIDAY_TESTING set — no network calls)."
 
@@ -188,6 +208,24 @@ def _tool_speak_text(inp):
     except Exception as e:
         return "speak_text failed: could not read audio body (%s)" % e
     elapsed = time.time() - started
+
+    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q11a):
+    # this tool's own description says it "costs characters against the
+    # ElevenLabs quota", yet had zero cost_meter references. ElevenLabs bills
+    # per character, not per token — cost_meter.PRICING carries a matching
+    # "USD per 1K characters" entry for common ElevenLabs model ids (see that
+    # table's comment), so len(text) is passed as input_tokens deliberately.
+    # A model id with no PRICING entry meters $0 rather than a guessed rate.
+    # Recorded here (a 2xx already came back from ElevenLabs, so the call was
+    # billed) rather than after the audio-validity check below, since a
+    # malformed-but-non-error response still consumed the character quota.
+    # Never allowed to break the tool.
+    try:
+        from agent_friday.services import cost_meter as _cm
+        _cm.record("elevenlabs", model_id, input_tokens=len(text), output_tokens=0,
+                  duration_ms=int(elapsed * 1000), kind="voice")
+    except Exception:
+        pass
 
     # A 200 with an HTML error page or an empty body is a failure, not a
     # creation. Reuse the canonical check rather than writing a second one.

@@ -275,17 +275,22 @@ def _has_required_tokens(defn: dict, server_cfg: dict | None) -> bool:
 
 
 # Status vocabulary (drives the badge color in the UI):
-#   connected   — live + healthy            (green)
-#   connecting  — handshake in progress     (amber, pulsing)
-#   error       — configured but failing    (red)
-#   disconnected— configured + token, off   (grey)
-#   needs_setup — missing token/OAuth client (blue — "Connect")
+#   connected        — live + healthy            (green)
+#   connecting       — handshake in progress     (amber, pulsing)
+#   error            — configured but failing    (red)
+#   disconnected     — configured + token, off   (grey)
+#   needs_setup      — missing token/OAuth client (blue — "Connect")
+#   blocked_by_policy— disabled by extension security, not a runtime failure
+#                      (orange — distinct from "error" so the real cause,
+#                      carried in `detail`, is legible rather than reading as
+#                      a generic "failed to start") (F9)
 _STATUS_COLORS = {
     "connected": "#00ff80",
     "connecting": "#f59e0b",
     "error": "#ff5470",
     "disconnected": "#7a8699",
     "needs_setup": "#00d4ff",
+    "blocked_by_policy": "#ff8c42",
     "unknown": "#888888",
 }
 
@@ -342,6 +347,20 @@ def _status_for_google(defn: dict) -> dict:
     }
 
 
+def _blocked_reason(server_name: str) -> str | None:
+    """F9: gate_mcp_config's security_note, if extension security blocked
+    *server_name* this run. Checked before anything else in _status_for_mcp
+    so a security block is reported as what it is, not misread as a runtime
+    failure — the on-disk config is deliberately left with enabled:true (so
+    fixing the command needs no manual config edit), and the live MCP manager
+    just reports 'disabled', which matches none of the branches below."""
+    try:
+        from agent_friday.services.extension_security import get_blocked_reason
+        return get_blocked_reason(server_name)
+    except Exception:
+        return None
+
+
 def _status_for_mcp(defn: dict) -> dict:
     server_name = defn.get("mcp_server") or defn["__key__"]
     cfg = _mcp_server_config(server_name)
@@ -349,6 +368,11 @@ def _status_for_mcp(defn: dict) -> dict:
     has_token = _has_required_tokens(defn, cfg)  # pragma: allowlist secret
     remote = bool(((defn.get("mcp_template") or {}).get("url"))
                   or ((cfg or {}).get("url")))
+
+    blocked = _blocked_reason(server_name)
+    if blocked:
+        return {"status": "blocked_by_policy", "detail": blocked,
+                "token_present": bool(has_token), "tool_count": 0}
 
     if cfg is None or not has_token:
         return {"status": "needs_setup",

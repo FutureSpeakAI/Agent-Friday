@@ -254,10 +254,25 @@ def test_a_torn_write_is_not_mistaken_for_a_passphrase(clean_env, friday_home, m
     The DPAPI file must be written atomically, and a corrupt blob must resolve
     to "nothing found" rather than to garbage that then derives a wrong key and
     reports the vault as broken.
+
+    2026-09-03: `clean_env`/`friday_home` isolate the environment and
+    `core.FRIDAY_DIR`, but neither touches `_from_start_bat()` -- it parses
+    `<repo_root>/start.bat` off a path fixed relative to this module's own
+    location, independent of both. So once the corrupted DPAPI file (this
+    test's actual subject) correctly resolves to "nothing found", `resolve()`
+    fell through the chain to the REAL project start.bat and read Stephen's
+    real passphrase -- which then landed, three times today, in this test's
+    own assertion-failure message, in plain text, in test output that gets
+    read, logged, and pasted around. `_from_start_bat` is mocked out below so
+    this test is hermetic (it was never meant to exercise start.bat at all),
+    and the assertion no longer embeds the resolved value or its source
+    under any circumstance -- a future regression here must be diagnosable
+    without a secret ever appearing in the failure text.
     """
     from agent_friday.services import vault_passphrase as vp
 
     monkeypatch.setitem(sys.modules, "keyring", None)
+    monkeypatch.setattr(vp, "_from_start_bat", lambda: "")
     vp.store("intact")
 
     homes = [p for p in vp.file_homes() if os.path.exists(p)]
@@ -267,4 +282,12 @@ def test_a_torn_write_is_not_mistaken_for_a_passphrase(clean_env, friday_home, m
 
     vp.reset_cache()
     secret, source = vp.resolve()
-    assert secret == "", "a corrupt blob resolved to %r from %r" % (secret, source)
+    # Never interpolate `secret` (or `source`, which can itself carry a
+    # "the FOO environment variable" fragment naming a real var) into an
+    # assertion message -- a comparison against a KNOWN, non-secret constant
+    # is exactly as diagnosable and cannot leak.
+    assert secret == "", (
+        "a corrupt DPAPI blob resolved to a non-empty secret instead of "
+        "nothing-found (source=%r is safe to print: it is one of a fixed "
+        "set of location labels, never a credential)" % (source,)
+    )

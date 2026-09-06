@@ -13191,7 +13191,7 @@ function StudioWS() {
       fontSize: 10,
       color: '#5a8a6a'
     }
-  }, "\u2014 age-appropriate filtering is on for everything Friday creates here.")), /*#__PURE__*/React.createElement("div", {
+  }, "\u2014 age-appropriate filtering is on for everything Friday creates here. Hiding older adult content from this gallery is coming soon.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -28728,16 +28728,20 @@ function ContentAccountsTab({
     setPaused(!paused);
     flash(!paused ? '⏸ All publishing paused' : '▶ Publishing resumed');
   }).catch(() => flash('Pause endpoint unavailable'));
-  const saveGlobals = () => fetch('/api/settings', {
+  const saveGlobals = () => apiFetch('/api/settings', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      content_staging_base_url: staging,
-      content_conflict_window_hours: Number(confWin) || 2
+      settings: {
+        content: {
+          staging_base_url: staging,
+          conflict_window_hours: Number(confWin) || 2
+        }
+      }
     })
-  }).then(() => flash('Saved')).catch(() => flash('Save failed'));
+  }).then(r => r.json()).then(d => flash(d.status === 'ok' ? 'Saved' : 'Save failed')).catch(() => flash('Save failed'));
   const daysLeft = iso => {
     if (!iso) return null;
     const d = Math.ceil((new Date(iso) - Date.now()) / 86400000);
@@ -29040,7 +29044,7 @@ function ContentAccountsTab({
       color: '#a8a8b4',
       marginBottom: 4
     }
-  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), " control, used only when Instagram/TikTok insist on fetching media from a URL. Assets are staged at unguessable paths and deleted after publish confirms. Leave empty to hold such posts instead \u2014 Friday never exposes a port on her own."), /*#__PURE__*/React.createElement("div", {
+  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), " already host and control, used only when Instagram/TikTok insist on fetching media from a URL. Friday does not upload or stage anything herself \u2014 the asset must already be public at that URL before publishing. Leave empty to hold such posts instead."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -30188,10 +30192,29 @@ const WIZARD_STEPS = [{
   title: 'Ready to Launch',
   subtitle: 'Your agent is configured'
 }];
-// H5 — first-run bundled-Gemma pull. Shown in the hardware step: if Ollama is
-// running but the default local model (gemma3:4b) isn't pulled yet, offer a
-// one-click download so "works with zero keys" is actually true on first run.
-const BUNDLED_MODEL = 'gemma3:4b';
+// H5 — first-run bundled-model pull. Shown in the hardware step: if Ollama is
+// running but the floor model (model_plan.FLOOR_MODEL, served as
+// hw.floor_model by /api/health/full) isn't pulled yet, offer a one-click
+// download so "works with zero keys" is actually true on first run.
+//
+// The floor model comes from the backend rather than a literal here — defect
+// H3 was fixed at five Python sites on 2026-08-26 (model_plan.FLOOR_MODEL)
+// but this wizard kept its own hard-coded 'gemma3:4b', the one row in the
+// ladder that cannot call tools. Do not reintroduce a literal model id here.
+//
+// exactTag mirrors model_setup._resolves: a bare family name (no ":") matches
+// any tag of the family, a specific tag must match exactly or with a
+// quantisation suffix ("-suffix"). The family-prefix match this replaced
+// (startsWith('gemma3')) is what let `gemma4:e2b` read as installed when only
+// `gemma4:12b` was present.
+function exactTag(names, modelId) {
+  if (!modelId) return false;
+  const tags = (names || []).map(String);
+  if (modelId.indexOf(':') === -1) {
+    return tags.some(t => t.split(':')[0] === modelId);
+  }
+  return tags.some(t => t === modelId || t.startsWith(modelId + '-'));
+}
 function WizardGemmaPull({
   hw
 }) {
@@ -30201,11 +30224,11 @@ function WizardGemmaPull({
   React.useEffect(() => () => {
     if (pollRef.current) clearInterval(pollRef.current);
   }, []);
+  const BUNDLED_MODEL = hw && hw.floor_model;
   const has = React.useMemo(() => {
-    const names = hw && hw.installed_models || [];
-    return names.some(n => String(n).startsWith('gemma3:4b') || String(n).startsWith('gemma3'));
-  }, [hw]);
-  if (!hw) return null;
+    return exactTag(hw && hw.installed_models, BUNDLED_MODEL);
+  }, [hw, BUNDLED_MODEL]);
+  if (!hw || !BUNDLED_MODEL) return null;
   if (!hw.ollama_available) {
     return /*#__PURE__*/React.createElement("div", {
       style: {
@@ -30261,7 +30284,7 @@ function WizardGemmaPull({
       pollRef.current = setInterval(() => {
         fetch('/api/ollama/status').then(r => r.json()).then(st => {
           const models = (st.models || []).map(m => m.name || m);
-          if (models.some(n => String(n).startsWith('gemma3'))) {
+          if (exactTag(models, BUNDLED_MODEL)) {
             clearInterval(pollRef.current);
             setState('done');
           } else setDetail('Downloading… (~3 GB, this can take a few minutes)');
@@ -30291,7 +30314,7 @@ function WizardGemmaPull({
     style: {
       color: '#00d4ff'
     }
-  }, BUNDLED_MODEL), " (Google's open Gemma 3 4B, ~3 GB) so Friday chats fully on-device with no API key."), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
+  }, BUNDLED_MODEL), " so Friday chats fully on-device with no API key."), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(0,212,255,0.8)',
@@ -30940,55 +30963,9 @@ function SetupWizard({
     }
   }, hw.ram_gb ? hw.ram_gb + ' GB RAM' : '—', hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : ''))), /*#__PURE__*/React.createElement(WizardGemmaPull, {
     hw: hw
-  }), hw.suggested_models && hw.suggested_models.length ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.5)',
-      fontFamily: 'JetBrains Mono',
-      marginBottom: 8
-    }
-  }, "SUGGESTED LOCAL MODELS"), hw.suggested_models.map(m => /*#__PURE__*/React.createElement("div", {
-    key: m.name,
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: 10,
-      padding: '8px 12px',
-      borderRadius: 6,
-      background: 'rgba(255,255,255,0.02)',
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      color: '#00d4ff'
-    }
-  }, m.name), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.4)',
-      textAlign: 'right'
-    }
-  }, m.task))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.3)',
-      fontFamily: 'JetBrains Mono',
-      marginTop: 6
-    }
-  }, "Ollama ", hw.ollama_available ? 'is running — these are ready to pull' : 'is not installed — add it to run these on-device', ".")) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.45)',
-      lineHeight: 1.6
-    }
-  }, "This machine will run Friday in ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#00d4ff'
-    }
-  }, "cloud mode"), " using your connected provider(s). On-device models want more RAM/VRAM \u2014 you can always add Ollama later."))), step === 5 && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement(WizardStarterSetSection, {
+    hw: hw
+  }))), step === 5 && /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: 'center',
       padding: '14px 0'
@@ -31478,22 +31455,7 @@ function SettingsTabGeneral({
     placeholder: "Describe Friday's personality..."
   }))), /*#__PURE__*/React.createElement(StSection, {
     title: "APPEARANCE"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Scene",
-    desc: "Holographic background scene."
-  }, /*#__PURE__*/React.createElement("select", {
-    className: "input",
-    style: {
-      width: '100%'
-    },
-    value: s.scene_name || 'nebula',
-    onChange: e => save({
-      scene_name: e.target.value
-    })
-  }, ['nebula', 'matrix', 'void', 'aurora', 'cosmos', 'midnight', 'prism', 'circuit', 'ocean', 'ember'].map(n => /*#__PURE__*/React.createElement("option", {
-    key: n,
-    value: n
-  }, n.charAt(0).toUpperCase() + n.slice(1))))), /*#__PURE__*/React.createElement(StToggle, {
+  }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Show All Workspaces",
     value: s.show_all_workspaces !== false,
     onChange: () => save({
@@ -31700,7 +31662,7 @@ function WorkProposal({
         color: 'rgba(255,255,255,0.85)'
       }
     }, t.title, t.touches_vault && /*#__PURE__*/React.createElement("span", {
-      title: "reads vault-tier material, which never leaves this machine",
+      title: "reads vault-tier material, which stays on this machine when Vault Local-Only is on",
       style: {
         marginLeft: 6,
         fontSize: 10,
@@ -32915,11 +32877,291 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       })));
 }
 
-function SettingsTabIntelligence({ s, save }) {
+// ── LOCAL MODELS ON THIS MACHINE (headroom.md §8.2, §12 Phase 4) ───────────
+//
+// HR1/HR2 travel here from the server, they are not decided in the browser:
+// every row's three axes come straight from `verdicts()` in
+// `residency_policy.py`, and this file only ever renders what that function
+// already decided. No row is ever labelled with one combined yes/no verdict
+// (HR2), and a row with no basis at all reads "not measured", never a green
+// tick (HR1).
+
+const _AXIS_SKIN = {
+  ready:        { c: '#00ff80', t: 'Ready' },
+  'ready-but':  { c: '#00d4ff', t: 'Ready, with caveats' },
+  degraded:     { c: '#f59e0b', t: 'Degraded' },
+  refused:      { c: '#ff4d6d', t: 'Refused' },
+  unknown:      { c: 'rgba(255,255,255,0.35)', t: 'Not measured' },
+};
+
+function AxisBadge({ axisLabel, v }) {
+  if (!v) return null;
+  const skin = _AXIS_SKIN[v.status] || _AXIS_SKIN.unknown;
+  return E('span', {
+    title: axisLabel + ': ' + (v.explanation || v.status) + ' (basis: ' + v.basis + ')',
+    style: {
+      fontSize: 9, fontFamily: 'JetBrains Mono', color: skin.c,
+      border: '1px solid ' + skin.c + '55', background: skin.c + '14',
+      borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
+    },
+  }, axisLabel + ': ' + skin.t);
+}
+
+function LocalModelRow({ r, onFetch }) {
+  const v = r.verdicts || {};
+  const allUnknown = ['fits', 'runs_well', 'worth_it']
+    .every(k => (v[k] || {}).basis === 'unknown');
+  return E('div', {
+    key: r.model_id,
+    style: { borderTop: '1px solid rgba(255,255,255,0.05)', padding: '9px 2px' },
+  },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' } },
+      E('span', {
+        style: {
+          fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.92)',
+          flex: '1 1 200px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+        },
+        title: r.model_id,
+      }, r.label),
+      E('span', {
+        style: {
+          fontSize: 9, fontFamily: 'JetBrains Mono',
+          color: r.installed === true ? '#00ff80' : r.installed === false ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.3)',
+        },
+      }, r.installed === true ? 'installed' : r.installed === false ? 'not installed' : 'installed: unknown'),
+      E(AxisBadge, { axisLabel: 'Fits', v: v.fits }),
+      E(AxisBadge, { axisLabel: 'Runs well', v: v.runs_well }),
+      E(AxisBadge, { axisLabel: 'Worth it', v: v.worth_it }),
+      !r.installed && E('button', {
+        onClick: () => onFetch(r.model_id),
+        style: {
+          cursor: 'pointer', background: 'rgba(0,212,255,0.10)',
+          border: '1px solid rgba(0,212,255,0.35)', borderRadius: 5,
+          padding: '3px 9px', color: '#cfefff', fontFamily: 'JetBrains Mono', fontSize: 10,
+        },
+      }, 'Fetch')),
+    r.licence && E('div', {
+      style: { fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+    }, 'Licence: ' + r.licence),
+    allUnknown && E('div', {
+      style: { fontSize: 10, color: 'rgba(255,255,255,0.42)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+    }, 'Not measured on this machine. Fetch it and Friday will measure it the first time it runs.'));
+}
+
+/** The pre-fetch card: what / where / what stands down / how long / what it
+ * will feel like (§8.1's five lines), reusing PauseWarning's shape rather
+ * than inventing new markup. Read-only until Fetch is pressed. */
+function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
+  const [card, setCard] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setCard(null); setErr(null);
+    apiFetch('/api/models/fetch/preflight?model=' + encodeURIComponent(modelId))
+      .then(r => r.json()).then(d => {
+        if (!live) return;
+        if (d.status !== 'ok') { setErr(d.message || 'could not read this model'); return; }
+        setCard(d);
+      }).catch(e => live && setErr(String(e)));
+    return () => { live = false; };
+  }, [modelId]);
+
+  const wrap = (children) => E('div', {
+    style: {
+      margin: '10px 0', border: '1px solid rgba(0,212,255,0.35)', borderRadius: 9,
+      padding: 12, background: '#111726',
+    },
+  }, children);
+
+  if (err) return wrap(
+    E('div', { style: { fontSize: 11, color: '#f59e0b', marginBottom: 6 } }, err),
+    E('button', {
+      onClick: onClose,
+      style: {
+        background: 'none', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6,
+        padding: '5px 10px', color: 'rgba(255,255,255,0.7)', cursor: 'pointer',
+        fontFamily: 'JetBrains Mono', fontSize: 10.5,
+      },
+    }, 'Close'));
+
+  if (!card) return wrap(E('div', {
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono' },
+  }, 'Checking the machine…'));
+
+  const c = card.card;
+  const line = (label, text) => text && E('div', {
+    key: label,
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.75)', lineHeight: 1.5, marginBottom: 4 },
+  }, E('span', { style: { color: 'rgba(255,255,255,0.4)' } }, label + ': '), text);
+
+  return wrap(
+    E('div', {
+      style: { fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff', marginBottom: 8 },
+    }, c.what),
+    line('Where', c.where),
+    line('What stands down', c.what_stands_down),
+    line('How long', (c.how_long || {}).note),
+    line('What it will feel like', c.feel),
+    E('div', { style: { display: 'flex', gap: 8, marginTop: 8 } },
+      E('button', {
+        onClick: () => onConfirm(card), disabled: confirming,
+        style: {
+          cursor: confirming ? 'default' : 'pointer',
+          background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.45)',
+          borderRadius: 6, padding: '6px 12px', color: '#cfefff',
+          fontFamily: 'JetBrains Mono', fontSize: 10.5,
+        },
+      }, confirming ? 'Fetching…' : 'Fetch'),
+      E('button', {
+        onClick: onClose,
+        style: {
+          background: 'none', border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6,
+          padding: '6px 12px', color: 'rgba(255,255,255,0.6)', cursor: 'pointer',
+          fontFamily: 'JetBrains Mono', fontSize: 10.5,
+        },
+      }, 'Cancel')));
+}
+
+const _MODALITY_HEADING = {
+  text: 'TEXT', image: 'IMAGE', video: 'VIDEO', voice: 'VOICE', embed: 'EMBEDDING',
+};
+
+function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching, fetchMsg }) {
+  const sections = ['text', 'image', 'video', 'voice', 'embed'];
+  return E(StSection, { title: 'LOCAL MODELS ON THIS MACHINE' },
+    E('div', {
+      style: {
+        fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
+        lineHeight: 1.6, marginBottom: 8,
+      },
+    }, 'One row per model Friday can run locally, installed or not. Three separate ' +
+       'axes, never one combined yes/no — a row with no basis says so plainly ' +
+       'instead of guessing.'),
+    sections.map(sec => {
+      const rows = lm[sec] || [];
+      if (!rows.length) return null;
+      return E('div', { key: sec, style: { marginTop: 10 } },
+        E('div', {
+          style: {
+            fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+            color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 2,
+          },
+        }, _MODALITY_HEADING[sec] || sec),
+        rows.map(r => E(LocalModelRow, { key: r.model_id, r: r, onFetch: setFetchFor })));
+    }),
+    // Video now gets a real row like every other modality (see `sections`
+    // above) once local_video.MODELS has earned-availability entries. This
+    // static fallback is what a build with no video catalog data at all
+    // (lm.video absent — an older server, or the field genuinely empty)
+    // falls back to, so the section is never silently missing.
+    !(lm.video || []).length && E('div', { style: { marginTop: 10 } },
+      E('div', {
+        style: {
+          fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6,
+          color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 2,
+        },
+      }, 'VIDEO'),
+      E('div', {
+        style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono', marginTop: 3 },
+      }, lm.video_note || 'Video runs in the cloud on every machine today.')),
+    fetchFor && E(FetchPreflightCard, {
+      modelId: fetchFor, onClose: () => setFetchFor(null),
+      onConfirm: confirmFetch, confirming: fetching,
+    }),
+    fetchMsg && E('div', {
+      style: {
+        fontSize: 10, fontFamily: 'JetBrains Mono', color: '#f59e0b',
+        marginTop: 8, lineHeight: 1.5,
+      },
+    }, fetchMsg));
+}
+
+// ── Wizard Hardware Check -- the starter set (headroom.md §9, §12 Phase 6) ──
+//
+// Renders `hw.starter_set` (from /api/health/full, routes/intelligence.py's
+// build_starter_set) through the SAME `LocalModelRow` component Settings ->
+// Intelligence -> LOCAL MODELS ON THIS MACHINE uses (§8.2, Phase 4) — no
+// second rendering path, no combined "compatible" (HR2). This replaces the
+// old SUGGESTED LOCAL MODELS block, which read `hw.suggested_models`
+// (`ollama_manager.recommend_models` — a second, disagreeing ladder, HR15)
+// and rendered a bare name/task pair with no fit verdict at all: a card too
+// small for the model it "suggested" looked identical to one with room to
+// spare.
+//
+// `onFetch` is a no-op here on purpose. LocalModelRow's Fetch button and the
+// pre-fetch card (FetchPreflightCard) are Settings -> Intelligence features
+// (§8.2) that need a `fetchFor`/confirm flow this step does not have its own
+// state for; the wizard's own one-click pull stays WizardGemmaPull, rendered
+// just above this section. A future pass CAN wire Fetch here by lifting that
+// state up — nothing about this component's shape blocks it.
+function WizardStarterSetSection({ hw }) {
+  const ss = hw && hw.starter_set;
+  if (!ss || ss.error) return null;
+
+  const brainFits = ((ss.brain || {}).verdicts || {}).fits || {};
+  const hasLocalBrain = !!(ss.brain && ss.brain.model_id) &&
+    brainFits.status !== 'refused';
+  const hasLocalVoice = !!(ss.voice && (ss.voice.stt || ss.voice.tts));
+  const anyLocal = hasLocalBrain || hasLocalVoice;
+
+  const noop = () => {};
+
+  if (!anyLocal) {
+    // The register this document holds throughout (§10.4, vault-first-
+    // onboarding.md §7): a machine with no local seat still gets a working
+    // product description, never an apology.
+    return E('div', {
+      style: { fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 },
+    },
+      'This machine will run Friday in ',
+      E('span', { style: { color: '#00d4ff' } }, 'cloud mode'),
+      ' using your connected provider(s). On-device models want more RAM/VRAM — you can always add one later.');
+  }
+
+  return E('div', null,
+    E('div', {
+      style: {
+        fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono',
+        marginBottom: 8,
+      },
+    }, 'WHAT THIS MACHINE CAN RUN'),
+    ss.brain && ss.brain.model_id && E('div', { key: 'brain' },
+      E(LocalModelRow, { r: ss.brain, onFetch: noop }),
+      ss.brain.why && E('div', {
+        style: {
+          fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono',
+          margin: '2px 0 8px', lineHeight: 1.5,
+        },
+      }, ss.brain.why)),
+    ss.voice && ss.voice.stt && E(LocalModelRow, { key: 'stt', r: ss.voice.stt, onFetch: noop }),
+    ss.voice && ss.voice.tts && E(LocalModelRow, { key: 'tts', r: ss.voice.tts, onFetch: noop }),
+    ss.image && ss.image.model_id && E('div', { key: 'image' },
+      E(LocalModelRow, { r: ss.image, onFetch: noop }),
+      ss.image.alternative === 'cloud' && E('div', {
+        style: {
+          fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono',
+          margin: '2px 0 8px',
+        },
+      }, 'Images run in the cloud on this machine today.')),
+    E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono',
+        marginTop: 6,
+      },
+    }, ss.video === 'cloud' ? 'Video runs in the cloud on every machine today.' : (ss.video || '')));
+}
+
+function SettingsTabIntelligence() {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
   const [savingMode, setSavingMode] = useState(null);
+  // LOCAL MODELS ON THIS MACHINE (headroom.md §8.2) -- the pre-fetch card
+  // and the one message line that reports what a fetch attempt did.
+  const [fetchFor, setFetchFor] = useState(null);   // model_id or null
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState('');
+  const [yielding, setYielding] = useState(false);
 
   const pick = (key, m) => {
     setSaving(key);
@@ -32955,6 +33197,53 @@ function SettingsTabIntelligence({ s, save }) {
   const vram = mach.vram || {};
   const ram = mach.ram || {};
   const vUsed = (vram.total_mib || 0) - (vram.free_mib || 0);
+  // §8.3's third bar: the SYSTEM volume (the pagefile, ~/.friday, logs),
+  // watched regardless of where models live (HR5) -- against the EXISTING
+  // DISK_FLOOR_MIB (R8), not a new number.
+  const diskSys = mach.disk_system || {};
+  const diskUsed = (diskSys.total_mib || 0) - (diskSys.free_mib || 0);
+  const contract = mach.contract || {};
+
+  const confirmFetch = (card) => {
+    const modelId = card.model_id;
+    const modality = (card.row || {}).modality;
+    setFetching(true);
+    if (modality === 'text') {
+      // The ONE automated fetch path that exists today (headroom.md §8.2):
+      // Ollama artifacts. HR10 -- this reports "pulling", not "installed";
+      // the row only reads installed once reload() sees it in the store.
+      apiFetch('/api/ollama/pull', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      }).then(r => r.json()).then(() => {
+        setFetchMsg('Pulling ' + modelId + ' — progress shows as a process orb. ' +
+          'This row updates once the model store actually lists it.');
+        setTimeout(reload, 6000);
+      }).catch(e => setFetchMsg('Could not start the fetch: ' + e))
+        .finally(() => { setFetching(false); setFetchFor(null); });
+    } else {
+      // No automated download exists yet for image/voice/embed weights in
+      // this build (local_image's ComfyUI files, the voice engines' own
+      // model dirs) -- HR10 forbids a SECOND success path, so this says so
+      // rather than pretending to fetch something nothing here downloads.
+      setFetchMsg(modelId + ' has no automated fetch in this build yet — ' +
+        'its files are installed manually. Once they are on disk, use ' +
+        '"friday measure ' + modelId + '" so this row can show a real verdict.');
+      setFetching(false);
+      setFetchFor(null);
+    }
+    setTimeout(() => setFetchMsg(''), 15000);
+  };
+
+  const pressYield = () => {
+    setYielding(true);
+    apiFetch('/api/machine/level', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'yield' }),
+    }).then(r => r.json()).then(d2 => {
+      alert(d2.message || 'Noted.');
+    }).catch(() => {}).finally(() => setYielding(false));
+  };
 
   const setMode = (id) => {
     setSavingMode(id);
@@ -33095,6 +33384,47 @@ function SettingsTabIntelligence({ s, save }) {
         sub: Math.round((ram.available_mib || 0) / 1024) + ' GB free of ' +
              Math.round(ram.total_mib / 1024) + ' GB',
       }),
+      // §8.3's third bar: the SYSTEM volume, against the EXISTING
+      // DISK_FLOOR_MIB (R8) -- not a new number. Independent of wherever
+      // OLLAMA_MODELS points; this is the drive the pagefile and
+      // ~/.friday live on, and it is the one the 2026-09-04 incident
+      // filled to zero while none of the model-store checks noticed (HR5).
+      diskSys.total_mib && E(Bar, {
+        label: 'System drive (Windows, Friday’s own data)',
+        used: diskUsed, total: diskSys.total_mib, reserve: diskSys.floor_mib,
+        sub: Math.round((diskSys.free_mib || 0) / 1024) + ' GB free of ' +
+             Math.round(diskSys.total_mib / 1024) + ' GB',
+      }),
+      // Contract level (§8.3 item 4). The full working/away/yield Contract
+      // is D1 -- Stephen's decision, not made. This line is only the idle
+      // timer work_queue already tracks, next to a button that is honest
+      // about being a stub: nothing here actually releases a lease or
+      // changes what the planner enforces yet.
+      E('div', {
+        style: {
+          display: 'flex', alignItems: 'center', gap: 8, marginTop: 8,
+          fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.5)',
+        },
+      },
+        E('span', null, 'Posture: '),
+        E('span', { style: { color: 'rgba(255,255,255,0.8)' } }, contract.level || 'working'),
+        !contract.levels_enforced && E('span', {
+          title: 'The full working/away/yield Contract is not built yet (headroom.md D1) — this label does not change what is enforced.',
+          style: { color: 'rgba(255,255,255,0.32)' },
+        }, '(not yet enforced)'),
+        typeof contract.idle_s === 'number' && E('span', {
+          style: { color: 'rgba(255,255,255,0.35)' },
+        }, '· idle ' + Math.round(contract.idle_s) + 's'),
+        E('button', {
+          onClick: pressYield, disabled: yielding,
+          title: 'Tell Friday you need the machine now. Today this is noted but not enforced.',
+          style: {
+            cursor: yielding ? 'default' : 'pointer', marginLeft: 'auto',
+            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 5, padding: '3px 9px', color: 'rgba(255,255,255,0.75)',
+            fontFamily: 'JetBrains Mono', fontSize: 10,
+          },
+        }, yielding ? 'noting…' : 'I need my machine')),
       E('div', {
         style: { fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.55)', marginTop: 6 },
       },
@@ -33130,6 +33460,14 @@ function SettingsTabIntelligence({ s, save }) {
         heading: 'Worth knowing',
         blurb: null,
       })),
+
+    // ── LOCAL MODELS ON THIS MACHINE ────────────────────────────────────────
+    // headroom.md §8.2. Not a new tab -- 65f70ce fixed a round of links to
+    // Settings tabs that did not exist, and the machine already lives here.
+    E(LocalModelsSection, {
+      lm: d.local_models || {}, fetchFor: fetchFor, setFetchFor: setFetchFor,
+      confirmFetch: confirmFetch, fetching: fetching, fetchMsg: fetchMsg,
+    }),
 
     // ── PROVIDERS ────────────────────────────────────────────────────────────
     E(StSection, { title: 'PROVIDERS' },
@@ -33257,6 +33595,15 @@ function SettingsTabModels({
         placeholder: 'Search all models for ' + label.toLowerCase() + '…'
       })));
     }
+    // Creative's picked model may carry a `note` (a real trade-off — steps,
+    // speed, resolution limits) and a `licence`/`licence_note` (real
+    // conditions on using it — commercial-use thresholds, personal-use-only
+    // restrictions). A <select> can't show rich subtext per option, so this
+    // renders the CURRENTLY selected model's note/licence as a line below the
+    // dropdown instead — updates the moment the selection changes, same
+    // derived-state-from-mc.byId read the "via Model Browser" label above
+    // already relies on.
+    const selMeta = role === 'creative' ? mc.byId[s[key]] : null;
     return /*#__PURE__*/React.createElement(StRow, {
       key: key,
       label: label,
@@ -33278,7 +33625,18 @@ function SettingsTabModels({
       key: m.id,
       value: m.id,
       disabled: m.available === false
-    }, (m.label || m.id) + (m.available === false ? ' — needs ' + (m.needs_key || 'setup') : '')))));
+    }, (m.label || m.id) + (m.available === false ? ' — needs ' + (m.needs_key || 'setup') : '')))), selMeta && (selMeta.note || selMeta.licence || selMeta.licence_note) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.4)',
+        marginTop: 6,
+        lineHeight: 1.5
+      }
+    }, selMeta.note && /*#__PURE__*/React.createElement("div", null, selMeta.note), (selMeta.licence || selMeta.licence_note) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#ffb347'
+      }
+    }, selMeta.licence, selMeta.licence && selMeta.licence_note ? ' — ' : '', selMeta.licence_note)));
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "CAPABILITY ROUTING"
@@ -33994,7 +34352,7 @@ function SettingsTabPrivacy({
       marginBottom: 8,
       lineHeight: 1.6
     }
-  }, "Your vault is ", /*#__PURE__*/React.createElement("b", null, "not encrypted at rest"), ". Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain \u2014 never on disk, never sent anywhere)."), /*#__PURE__*/React.createElement("div", {
+  }, "Your vault is ", /*#__PURE__*/React.createElement("b", null, "not encrypted at rest"), ". Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain, with an encrypted on-disk backup only this account can read \u2014 never sent anywhere)."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -34050,6 +34408,18 @@ function SettingsTabPrivacy({
     }),
     desc: "Force all AI processing to local models. Cloud providers receive no vault data."
   })), /*#__PURE__*/React.createElement(StSection, {
+    title: "CLOUD MODE"
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Unrestricted Cloud",
+    value: !!(s.model_routing || {}).unrestricted_cloud,
+    onChange: () => save({
+      model_routing: {
+        ...(s.model_routing || {}),
+        unrestricted_cloud: !(s.model_routing || {}).unrestricted_cloud
+      }
+    }),
+    desc: "Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."
+  })), /*#__PURE__*/React.createElement(StSection, {
     title: "YOUR DATA"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -34104,31 +34474,6 @@ function SettingsTabPrivacy({
       fontFamily: 'JetBrains Mono'
     }
   }, eraseMsg)), /*#__PURE__*/React.createElement(StSection, {
-    title: "EGRESS GATE"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 12,
-      lineHeight: 1.6
-    }
-  }, "Controls what data leaves the device. Tier 1 (public) passes through. Tier 2 (sensitive) is redacted. Tier 3 (private) is blocked."), /*#__PURE__*/React.createElement(StRow, {
-    label: "Cloud Mode"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6
-    }
-  }, ['audit', 'enforce'].map(m => /*#__PURE__*/React.createElement("button", {
-    key: m,
-    className: `settings-btn ${(s.egress_mode || 'enforce') === m ? 'active' : ''}`,
-    onClick: () => save({
-      egress_mode: m
-    }),
-    style: {
-      fontSize: 12
-    }
-  }, m.charAt(0).toUpperCase() + m.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
     title: "CONTEXT LOGGING"
   }, /*#__PURE__*/React.createElement(StToggle, {
     label: "Full Context Logging",
@@ -34143,7 +34488,7 @@ function SettingsTabPrivacy({
     onChange: () => save({
       off_record: !s.off_record
     }),
-    desc: "Disable logging for this session."
+    desc: "Disable logging until you turn this back on."
   }), /*#__PURE__*/React.createElement(StRow, {
     label: "Retention Period"
   }, /*#__PURE__*/React.createElement("div", {
@@ -35405,7 +35750,22 @@ function ModelBrowser({
       color: 'rgba(255,255,255,0.35)',
       fontFamily: 'JetBrains Mono'
     }
-  }, modIcons(m), m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key')), /*#__PURE__*/React.createElement("button", {
+  }, modIcons(m), m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key'),
+  // Creative-only rows carry the real trade-off (steps, speed, resolution)
+  // and licence terms — surfaced here, not just in the Settings dropdown,
+  // since Model Browser is the other place these get picked (the
+  // Image/Video buttons a few lines down).
+  (m.note || m.licence) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.3)',
+      marginTop: 2
+    }
+  }, m.note, m.note && m.licence ? ' · ' : '', m.licence && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#ffb347'
+    }
+  }, m.licence))), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 10,
@@ -36054,7 +36414,15 @@ function SettingsTabKnowledge({
   s,
   save
 }) {
-  const kg = s.knowledge_graph || {};
+  const kg0 = s.knowledge_graph || {};
+  // Defensive normalization: settings.json can still carry the pre-2026-09-03
+  // values ("local_only"/"gated_cloud") until this specific key is next saved
+  // -- the backend migrates them on every read (kg_settings()), but this GET
+  // /api/settings response is the raw file, so the dropdown does the same
+  // translation rather than rendering blank against an <option> that no
+  // longer exists.
+  const _modeMap = { local_only: 'local', gated_cloud: 'cloud' };
+  const kg = { ...kg0, indexing_mode: _modeMap[kg0.indexing_mode] || kg0.indexing_mode || 'local' };
   const src = kg.index_sources || {
     wiki: true,
     conversations: true,
@@ -36146,17 +36514,21 @@ function SettingsTabKnowledge({
     style: lbl
   }, "Semantic indexing"), /*#__PURE__*/React.createElement("div", {
     style: sub
-  }, "Where Tier-B LLM extraction runs. Local only = nothing ever leaves this machine.")), /*#__PURE__*/React.createElement("select", {
+  }, "Where Tier-B LLM extraction runs — your choice, not automatic. Local: nothing ever leaves this machine. Cloud: routes through Friday's normal cloud privacy rules" + ((s.model_routing || {}).unrestricted_cloud ? " — currently UNRESTRICTED, see Privacy & Security" : "") + ".")), /*#__PURE__*/React.createElement("select", {
     style: sel,
-    value: kg.indexing_mode || 'local_only',
+    value: kg.indexing_mode || 'local',
     onChange: e => patch({
       indexing_mode: e.target.value
     })
   }, /*#__PURE__*/React.createElement("option", {
-    value: "local_only"
-  }, "Local only (private, default)"), /*#__PURE__*/React.createElement("option", {
-    value: "gated_cloud"
-  }, "Gated cloud (public content only, sealed)"))), /*#__PURE__*/React.createElement("div", {
+    value: "local"
+  }, "Local (private, default)"), /*#__PURE__*/React.createElement("option", {
+    value: "cloud"
+  }, "Cloud (frontier models)"))), /*#__PURE__*/React.createElement("div", {
+    style: {...sub, marginTop: -6, marginBottom: 9}
+  }, "Active now: ", /*#__PURE__*/React.createElement("b", {
+    style: {color: kg.indexing_mode === 'cloud' ? '#ff9f43' : '#4ade80'}
+  }, kg.indexing_mode === 'cloud' ? 'CLOUD' : 'LOCAL')), /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: lbl
@@ -36238,6 +36610,423 @@ function SettingsTabKnowledge({
     }
   }, note)));
 }
+// ── Cost & Usage ─────────────────────────────────────────────────────────────
+// Restored 2026-08-30, after two months deleted.
+//
+// This panel is the entire reason cost_meter exists. 0cd13fc replaced the
+// settings sidebar with the tabbed workspace and dropped the rendering JSX,
+// leaving the fetches, the four useState declarations and saveBudget standing
+// behind it. The meter went on recording every call correctly and delivering
+// it to nothing. /api/costs/summary returned 200 the whole time, so no probe
+// that watched the backend would ever have noticed.
+//
+// What the silence cost, measured on the install where it was found the day it
+// was found: $1,189.76 for the month, $679.29 of it one model, against a $50
+// monthly budget whose alert was off — off because the only control that could
+// arm it had been deleted along with the panel. The one spend figure still
+// reachable anywhere in the UI was a "$3.50 today" line on the Providers tab.
+//
+// Notes for whoever edits this next:
+//   * by_model is first, and sorted descending. "You spent $1,190" is a number
+//     a person can only wince at. "$679 of it is Opus" is one they can act on.
+//   * Nothing here is rounded or abbreviated — 2-4 decimals, real thousands
+//     separators, never "$1.2k". A softened number argues with its reader.
+//   * The scope line under the total is load-bearing, not decoration. This
+//     table is Friday's own model calls. Claude Code bills its own account and
+//     none of it lands here. A total that looks complete and isn't is worse
+//     than no total at all.
+//   * The tab mounting IS the refresh gate. The deleted version gated its
+//     useEffect on openSections.costs, a key whose only toggle went with the
+//     JSX, so the effect could never fire even in principle.
+function SettingsTabCosts() {
+  const [costSummary, setCostSummary] = useState(null);
+  const [costSeries, setCostSeries] = useState([]);
+  const [costSched, setCostSched] = useState([]);
+  const [costBudget, setCostBudget] = useState({
+    daily: 0,
+    monthly: 0,
+    daily_enabled: false,
+    monthly_enabled: false
+  });
+  const [costRange, setCostRange] = useState('month');
+  const [costErr, setCostErr] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  const refreshCosts = () => {
+    apiFetch('/api/costs/summary?range=' + costRange).then(r => r.json()).then(d => {
+      if (d && d.status === 'ok') {
+        setCostSummary(d.summary || null);
+        setCostErr('');
+      } else {
+        setCostErr((d && d.message) || 'the cost meter did not answer');
+      }
+      setLoaded(true);
+    }).catch(() => {
+      setCostErr('could not reach the cost meter');
+      setLoaded(true);
+    });
+    apiFetch('/api/costs/timeseries?range=month').then(r => r.json()).then(d => setCostSeries(d.series || [])).catch(() => {});
+    apiFetch('/api/costs/scheduled?range=month').then(r => r.json()).then(d => setCostSched(d.scheduled || [])).catch(() => {});
+    apiFetch('/api/costs/budget').then(r => r.json()).then(d => {
+      if (d && d.budget) setCostBudget(d.budget);
+    }).catch(() => {});
+  };
+  useEffect(() => {
+    refreshCosts();
+    const id = setInterval(refreshCosts, 8000);
+    return () => clearInterval(id);
+  }, [costRange]);
+
+  // Optimistic locally, then reconciled against what the server actually
+  // stored — set_budget merges server-side, so the response is the truth.
+  const saveBudget = patch => {
+    setCostBudget(b => Object.assign({}, b, patch));
+    apiFetch('/api/costs/budget', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(patch)
+    }).then(r => r.json()).then(d => {
+      if (d && d.budget) setCostBudget(d.budget);
+    }).catch(() => {});
+  };
+
+  // Money keeps every digit the meter recorded. cost_meter rounds to 4dp on
+  // the way in; this rounds no further.
+  const usd = n => '$' + Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4
+  });
+  const num = n => Number(n || 0).toLocaleString();
+  const pct = n => (Number(n || 0) * 100).toFixed(1) + '%';
+
+  const mono = {
+    fontFamily: 'JetBrains Mono'
+  };
+  const dim = 'rgba(255,255,255,0.35)';
+
+  // A breakdown reads as a ranked list with a proportion bar, because the
+  // question it answers is "what is the big one", not "what is the list".
+  const breakdown = obj => {
+    const rows = Object.entries(obj || {}).map(([k, v]) => ({
+      k: k,
+      usd: (v && v.usd) || 0,
+      calls: (v && v.calls) || 0
+    })).sort((a, b) => b.usd - a.usd);
+    if (!rows.length) return /*#__PURE__*/React.createElement("div", {
+      style: Object.assign({
+        fontSize: 11,
+        color: dim
+      }, mono)
+    }, "nothing recorded in this range");
+    const peak = Math.max.apply(null, rows.map(r => r.usd).concat([0])) || 1;
+    return rows.map(r => /*#__PURE__*/React.createElement("div", {
+      key: r.k,
+      style: {
+        marginBottom: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: Object.assign({
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        gap: 10,
+        fontSize: 11
+      }, mono)
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'rgba(255,255,255,0.75)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      },
+      title: r.k
+    }, r.k), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: r.usd > 0 ? '#fff' : dim
+      }
+    }, usd(r.usd)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: dim,
+        marginLeft: 10
+      }
+    }, num(r.calls), " calls"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 4,
+        background: 'rgba(255,255,255,0.06)',
+        borderRadius: 2,
+        marginTop: 4,
+        overflow: 'hidden'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        width: Math.max(0, r.usd / peak * 100) + '%',
+        background: '#00d4ff',
+        borderRadius: 2
+      }
+    }))));
+  };
+
+  const s = costSummary;
+  // Peak is taken over the bars actually drawn. Computing it over the whole
+  // series while rendering only the tail scales every bar against a spike
+  // that is off-screen, which makes a busy month look quiet — a chart that
+  // renders wrong is a chart that lies.
+  const pts = (costSeries || []).slice(-30);
+  const peak = Math.max.apply(null, [1].concat(pts.map(p => p.usd || 0)));
+
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "SPEND"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 12
+    }
+  }, [['today', 'Today'], ['7d', 'Last 7 days'], ['month', 'This month']].map(([r, label]) => /*#__PURE__*/React.createElement("span", {
+    key: r,
+    onClick: () => setCostRange(r),
+    style: Object.assign({
+      cursor: 'pointer',
+      fontSize: 10,
+      padding: '4px 10px',
+      borderRadius: 5,
+      border: '1px solid ' + (costRange === r ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.1)'),
+      color: costRange === r ? '#00d4ff' : 'rgba(255,255,255,0.5)'
+    }, mono)
+  }, label))), costErr && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 11,
+      color: '#fbbf24',
+      marginBottom: 10
+    }, mono)
+  }, costErr), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 30,
+      color: '#fff',
+      fontFamily: 'Orbitron'
+    }
+  }, usd(s && s.total_usd)), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      textAlign: 'right'
+    }, mono)
+  }, num(s && s.total_calls), " calls", /*#__PURE__*/React.createElement("br", null), num(((s && s.input_tokens) || 0) + ((s && s.output_tokens) || 0)), " in + out tokens")), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      marginTop: 8,
+      lineHeight: 1.5
+    }, mono)
+  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ffb347',
+      marginTop: 6,
+      lineHeight: 1.5
+    }, mono),
+    title: "These providers' rates could not be verified against their own pricing page, so no dollar figure is shown for them rather than guessing one -- see the model breakdown below."
+  }, num(s.unpriced_calls), " call", s.unpriced_calls === 1 ? '' : 's', " this period ", s.unpriced_calls === 1 ? 'is' : 'are', " not priced (real spend, unverified rate) — not included in the total above."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-end',
+      gap: 2,
+      height: 40,
+      marginTop: 16
+    }
+  }, pts.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    title: p.date + ': ' + usd(p.usd) + ' (' + num(p.calls) + ' calls)',
+    style: {
+      flex: 1,
+      minWidth: 2,
+      height: Math.max(2, (p.usd || 0) / peak * 40) + 'px',
+      background: 'rgba(0,212,255,0.55)',
+      borderRadius: '1px 1px 0 0'
+    }
+  })), !pts.length && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, loaded ? 'No spend recorded yet.' : 'Loading...')), !!pts.length && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 9,
+      color: dim,
+      marginTop: 5
+    }, mono)
+  }, /*#__PURE__*/React.createElement("span", null, pts[0].date), /*#__PURE__*/React.createElement("span", null, "daily, peak ", usd(peak)), /*#__PURE__*/React.createElement("span", null, pts[pts.length - 1].date))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY MODEL"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Which model the money went to. Local models meter at $0."), breakdown(s && s.by_model)), /*#__PURE__*/React.createElement(StSection, {
+    title: "PROMPT CACHE"
+  }, s && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 22,
+      color: '#fff',
+      fontFamily: 'Orbitron'
+    }
+  }, pct(s.cache_hit_rate)), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, "hit rate")), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.5)',
+      marginTop: 8,
+      lineHeight: 1.6
+    }, mono)
+  }, "read from cache  ", num(s.cache_read_tokens), " tok", /*#__PURE__*/React.createElement("br", null), "written to cache ", num(s.cache_write_tokens), " tok", /*#__PURE__*/React.createElement("br", null), "fresh input     ", num(s.input_tokens), " tok"), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 8,
+      lineHeight: 1.5
+    }, mono)
+  }, "The share of input tokens served from cache at 0.1x. A rate near zero over a busy range means the prefix is being broken upstream, not that caching is unavailable."))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY PROVIDER"
+  }, breakdown(s && s.by_provider)), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY KIND"
+  }, breakdown(s && s.by_kind)), /*#__PURE__*/React.createElement(StSection, {
+    title: "BY WORKSPACE"
+  }, breakdown(s && s.by_workspace)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
+    title: "SCHEDULED JOBS (THIS MONTH)"
+  }, (costSched || []).map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.schedule_id,
+    style: Object.assign({
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 11,
+      padding: '3px 0',
+      color: 'rgba(255,255,255,0.6)'
+    }, mono)
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, r.schedule_id), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#fff',
+      flexShrink: 0,
+      marginLeft: 10
+    }
+  }, usd(r.usd))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BUDGET ALERTS"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Off by default, and left off until you switch them on here."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: 'toggle-pill ' + (costBudget.daily_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      daily_enabled: !costBudget.daily_enabled
+    })
+  }, "Daily"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "0.5",
+    value: costBudget.daily,
+    onChange: e => saveBudget({
+      daily: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: 'toggle-pill ' + (costBudget.monthly_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      monthly_enabled: !costBudget.monthly_enabled
+    })
+  }, "Monthly"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    value: costBudget.monthly,
+    onChange: e => saveBudget({
+      monthly: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")));
+}
 function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
   // Settings straight onto Providers. The global covers a window that is
@@ -36284,6 +37073,12 @@ function SettingsWS() {
     id: 'providers',
     label: 'Providers',
     ico: '\u{1F511}'
+  }, {
+    // Spend sits next to the keys that incur it. Restored 2026-08-30 after
+    // 0cd13fc deleted the panel and left its fetches running into nothing.
+    id: 'costs',
+    label: 'Cost & Usage',
+    ico: '\u{1F4B0}'
   }, {
     id: 'work',
     label: 'Work',
@@ -36393,7 +37188,7 @@ function SettingsWS() {
   }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
-  }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
+  }), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
     s: s,
     save: save
   }), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
@@ -36812,7 +37607,6 @@ function App() {
     news_priorities: [...NEWS_TOPICS],
     communication_style: 'professional',
     camera_interval_sec: 3,
-    camera_auto_describe: false,
     tts_voice: 'Aoede',
     voice_language: '',
     voice_style_prompt: '',
@@ -36853,7 +37647,6 @@ function App() {
     camera: false,
     privacy: false,
     computer_control: false,
-    scheduler: false,
     costs: false,
     hooks: false,
     federation: false,
@@ -37419,189 +38212,13 @@ function App() {
     } catch (e) {}
     refreshGoogleAccounts();
   };
-  // ══ Self-Sufficient Friday: Scheduled Tasks / Cost & Usage / Active Hooks ══
-  // ── Scheduler (Part A) ──
-  const [schedules, setSchedules] = useState([]);
-  const [schedBuiltins, setSchedBuiltins] = useState([]);
-  const [schedHistory, setSchedHistory] = useState({}); // id -> [runs] (expanded)
-  const [schedMsg, setSchedMsg] = useState('');
-  const [schedForm, setSchedForm] = useState(null); // null=closed; else draft
-  const refreshSchedules = () => fetch('/api/schedules').then(r => r.json()).then(d => {
-    if (d && d.schedules) {
-      setSchedules(d.schedules);
-      setSchedBuiltins(d.builtin_tasks || []);
-    }
-  }).catch(() => {});
-  useEffect(() => {
-    if (settingsOpen && openSections.scheduler) {
-      refreshSchedules();
-      const id = setInterval(refreshSchedules, 5000);
-      return () => clearInterval(id);
-    }
-  }, [settingsOpen, openSections.scheduler]);
-  const toggleSchedule = s => {
-    fetch('/api/schedules/' + s.id, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        enabled: !s.enabled
-      })
-    }).then(() => refreshSchedules()).catch(() => {});
-  };
-  const runScheduleNow = s => {
-    setSchedMsg('Running ' + s.name + '…');
-    fetch('/api/schedules/' + s.id + '/run-now', {
-      method: 'POST'
-    }).then(r => r.json()).then(d => {
-      setSchedMsg(d.status === 'ok' ? s.name + ' started' : 'Run failed');
-      setTimeout(() => setSchedMsg(''), 4000);
-      setTimeout(refreshSchedules, 1500);
-    }).catch(() => {
-      setSchedMsg('Run failed');
-    });
-  };
-  const deleteSchedule = s => {
-    if (!window.confirm('Delete schedule "' + s.name + '"?')) return;
-    fetch('/api/schedules/' + s.id, {
-      method: 'DELETE'
-    }).then(() => refreshSchedules()).catch(() => {});
-  };
-  const loadHistory = s => {
-    if (schedHistory[s.id]) {
-      setSchedHistory(h => {
-        const n = {
-          ...h
-        };
-        delete n[s.id];
-        return n;
-      });
-      return;
-    }
-    fetch('/api/schedules/' + s.id + '/history?limit=10').then(r => r.json()).then(d => setSchedHistory(h => ({
-      ...h,
-      [s.id]: d.history || []
-    }))).catch(() => {});
-  };
-  const saveNewSchedule = () => {
-    const f = schedForm;
-    if (!f.name) {
-      setSchedMsg('Name required');
-      return;
-    }
-    const spec = f.trigger === 'interval' ? {
-      every_minutes: parseInt(f.every || 60, 10)
-    } : f.trigger === 'weekly' ? {
-      weekday: parseInt(f.weekday ?? 6, 10),
-      hour: parseInt(f.hour || 9, 10),
-      minute: parseInt(f.minute || 0, 10)
-    } : {
-      hour: parseInt(f.hour || 9, 10),
-      minute: parseInt(f.minute || 0, 10)
-    };
-    const task = f.kind === 'builtin' ? {
-      kind: 'builtin',
-      ref: f.ref || schedBuiltins[0] || ''
-    } : {
-      kind: 'agent_prompt',
-      prompt: f.prompt || '',
-      model: f.model || undefined,
-      workspace: f.workspace || undefined
-    };
-    if (f.kind === 'agent_prompt' && !f.prompt) {
-      setSchedMsg('Prompt required for an agent task');
-      return;
-    }
-    fetch('/api/schedules', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: f.name,
-        trigger: f.trigger,
-        spec,
-        task,
-        notify: f.notify || 'on_complete',
-        enabled: true
-      })
-    }).then(r => r.json()).then(d => {
-      if (d.status === 'ok') {
-        setSchedForm(null);
-        setSchedMsg('Task added');
-        setTimeout(() => setSchedMsg(''), 3000);
-        refreshSchedules();
-      } else {
-        setSchedMsg(d.message || 'Create failed');
-      }
-    }).catch(() => setSchedMsg('Create failed'));
-  };
-  const fmtTrigger = s => {
-    const sp = s.spec || {};
-    if (s.trigger === 'interval') return 'every ' + (sp.every_minutes || 60) + ' min';
-    const hm = String(sp.hour ?? 9).padStart(2, '0') + ':' + String(sp.minute || 0).padStart(2, '0');
-    if (s.trigger === 'weekly') {
-      const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][sp.weekday ?? 6];
-      return wd + ' ' + hm;
-    }
-    return 'daily ' + hm;
-  };
-  const fmtTime = ts => {
-    if (!ts) return '—';
-    try {
-      return new Date(ts * 1000).toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (e) {
-      return '—';
-    }
-  };
-  const schedStatusColor = s => s.last_status === 'failed' ? '#ef4444' : s.running ? '#00d4ff' : s.enabled ? '#34d399' : 'rgba(255,255,255,0.3)';
-
-  // ── Cost & Usage (Part D) ──
-  const [costSummary, setCostSummary] = useState(null);
-  const [costSeries, setCostSeries] = useState([]);
-  const [costSched, setCostSched] = useState([]);
-  const [costBudget, setCostBudget] = useState({
-    daily: 5,
-    monthly: 50,
-    daily_enabled: false,
-    monthly_enabled: false
-  });
-  const [costRange, setCostRange] = useState('month');
-  const refreshCosts = () => {
-    fetch('/api/costs/summary?range=' + costRange).then(r => r.json()).then(d => setCostSummary(d.summary || null)).catch(() => {});
-    fetch('/api/costs/timeseries?range=month').then(r => r.json()).then(d => setCostSeries(d.series || [])).catch(() => {});
-    fetch('/api/costs/scheduled?range=month').then(r => r.json()).then(d => setCostSched(d.scheduled || [])).catch(() => {});
-    fetch('/api/costs/budget').then(r => r.json()).then(d => {
-      if (d.budget) setCostBudget(d.budget);
-    }).catch(() => {});
-  };
-  useEffect(() => {
-    if (settingsOpen && openSections.costs) {
-      refreshCosts();
-      const id = setInterval(refreshCosts, 8000);
-      return () => clearInterval(id);
-    }
-  }, [settingsOpen, openSections.costs, costRange]);
-  const saveBudget = patch => {
-    setCostBudget(b => ({
-      ...b,
-      ...patch
-    }));
-    fetch('/api/costs/budget', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(patch)
-    }).catch(() => {});
-  };
-  const usd = n => '$' + Number(n || 0).toFixed(2);
+  // ══ Self-Sufficient Friday: Cost & Usage / Active Hooks ══
+  // (Scheduled Tasks used to live here as a second, fully dead "Scheduler"
+  // section: its state, 7 handlers, and 5s poll were never wired to any JSX
+  // in this file and were removed. The real, working scheduler UI is the
+  // Workflows tab's schedules panel, using differently-named handlers
+  // (runSched/toggleSched/deleteSched). Cost & Usage lives in
+  // SettingsTabCosts() above.)
 
   // ── Active Hooks (Part B) ──
   const [hooksList, setHooksList] = useState([]);
@@ -40364,7 +40981,6 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const [cameraSource, setCameraSource] = useState('screen'); // 'screen' | 'webcam' | 'both'
   const [cameraFacing, setCameraFacing] = useState('user'); // 'user' | 'environment'
   const [cameraIntervalSec, setCameraIntervalSec] = useState(3);
-  const [cameraAutoDescribe, setCameraAutoDescribe] = useState(false);
   const [cameraControlsOpen, setCameraControlsOpen] = useState(false);
   const [cameraSendIndicator, setCameraSendIndicator] = useState(false);
   const cameraFrameRef = useRef(null);
@@ -40480,11 +41096,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       }));
     } catch (_) {}
   }, [voiceOn]);
-  // Persist camera prefs through /api/settings (interval + auto-describe).
+  // Persist camera prefs through /api/settings (interval).
   useEffect(() => {
     if (typeof agentSettings.camera_interval_sec === 'number') setCameraIntervalSec(agentSettings.camera_interval_sec);
-    if (typeof agentSettings.camera_auto_describe === 'boolean') setCameraAutoDescribe(agentSettings.camera_auto_describe);
-  }, [agentSettings.camera_interval_sec, agentSettings.camera_auto_describe]);
+  }, [agentSettings.camera_interval_sec]);
   const toggleCamera = () => {
     if (cameraOn) {
       setCameraOn(false);
@@ -40620,7 +41235,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            kind: 'local_turn'
+            kind: 'local_turn',
+            message: m
           })
         });
         const f = await fr.json();
@@ -40710,6 +41326,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         model: d.model,
         seat: d.seat,
         fallback_chain: d.fallback_chain || [],
+        // local_only mode refused (no local seat available) rather than
+        // silently answering from the cloud — offer the user an explicit
+        // choice to switch instead of a dead-end error (findings.jsonl
+        // Q19; Stephen, 2026-09-04: "fail... then ask the user if it can
+        // go into cloud only mode").
+        offer_cloud_switch: !!d.offer_cloud_switch,
         time: new Date().toLocaleTimeString()
       }]);
       // Execute any structured actions Friday returned (navigate, open_path…).
@@ -41805,7 +42427,41 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       dest: 'clipboard',
       ico: '📋'
     }]
-  })), /*#__PURE__*/React.createElement("div", {
+  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      display: 'block'
+    },
+    // Local-only refused (no local seat available) rather than silently
+    // answering from the cloud — this is the explicit choice Stephen
+    // asked for: fail closed, say so, then let the user decide to switch
+    // (findings.jsonl Q19). Never applied automatically.
+    onClick: () => apiFetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        settings: {
+          model_routing: {
+            mode: 'cloud_only'
+          }
+        }
+      })
+    }).then(r => r.json()).then(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Switched to Cloud-Only mode — send your message again.',
+      time: new Date().toLocaleTimeString()
+    }])).catch(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Could not switch modes — try Settings → Intelligence directly.',
+      time: new Date().toLocaleTimeString()
+    }]))
+  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',

@@ -8,10 +8,23 @@ Arbiter's **exclusive image lease**, which performs the eviction and the
 reload, and hands the GPU back afterwards.
 
 Why a lease and not just "start ComfyUI": the measured VRAM ceiling makes it
-mandatory rather than advisory. Z-Image's weights are ~14.5 GB against a
-12282 MiB card, so the language seats must be out of VRAM before it loads.
-Without the lease the two simply fight, which is the failure the residency
-layer was built to stop.
+mandatory rather than advisory. Z-Image's weight FILES total ~14.5 GB
+(measured: 14,535,245,332 bytes, `artifact_bytes` on its Footprint) — but
+what actually holds the card during a render is less than that and MORE
+than either prior guess for it: **10,453 MiB, measured under the Arbiter's
+own `image_job` lease, 2026-09-04** (`residency_catalog.footprint(
+"z-image-turbo-fp8", profile)`; `friday measure z-image-turbo-fp8`
+reproduces it). That resolves the disagreement this file used to carry
+alongside `residency-policy.md` §5.1's separate "~8000" guess: neither
+number was the render's real VRAM delta, and 10,453 MiB leaves only ~700–900
+MiB free at the render's peak on a 12,282 MiB card, BELOW the 2,560 MiB
+Windows display-reserve floor even with every language seat evicted first
+— live evidence for why `Arbiter.grant()`'s R-DISPLAY-RESERVE check and the
+mid-lease monitor (`docs/design/headroom.md` §4.3, §7) both matter here, not
+just at cold start. SD 3.5 Medium measured 10,621 MiB the same way, artifact
+11,638,004,202 bytes. So the language seats must be out of VRAM before
+either loads. Without the lease the two simply fight, which is the failure
+the residency layer was built to stop.
 
 The workflow is the one proven on the reference instance 2026-08-13
 (`UNETLoader(fp8_e4m3fn) → CLIPLoader → VAELoader → CLIPTextEncode ×2 →
@@ -37,6 +50,9 @@ _log = logging.getLogger("friday.local_image")
 
 MODEL_ID = "z-image-turbo-fp8"        # the DEFAULT seat, not the only one
 SD35_MEDIUM_ID = "sd3.5-medium-fp8"
+SDXL_ID = "sdxl-base-1.0"
+QWEN_IMAGE_ID = "qwen-image-q3ks"
+FLUX_DEV_ID = "flux1-dev-fp8"          # per-machine only — see local_creative_overrides
 PROVIDER = "local-comfyui"
 COMFY_PORT = 8188
 DEFAULT_STEPS = 8
@@ -63,6 +79,14 @@ MODELS: dict = {
         "steps": 8, "cfg": 1.0,
         "sampler": "euler", "scheduler": "simple",
         "note": "turbo: 8 steps, fast",
+        # U7 in headroom.md was UNKNOWN — the spec found no licence recorded
+        # for this model anywhere in the tree. Read from the model's own
+        # repository, 2026-09-04: "License: apache-2.0" in Tongyi-MAI/
+        # Z-Image-Turbo's model card metadata. Apache-2.0 permits commercial
+        # and private use, modification and redistribution.
+        "licence": "Apache License 2.0 — commercial and private use, "
+                   "modification and redistribution permitted "
+                   "(https://huggingface.co/Tongyi-MAI/Z-Image-Turbo)",
     },
     SD35_MEDIUM_ID: {
         "label": "Stable Diffusion 3.5 Medium (local image)",
@@ -79,6 +103,70 @@ MODELS: dict = {
         "note": "30 steps, higher fidelity, slower",
         "licence": "Stability AI Community License — free below $1M annual "
                    "revenue; attribution required when redistributed",
+    },
+    SDXL_ID: {
+        "label": "Stable Diffusion XL Base 1.0 (local image)",
+        "short": "SDXL Base",
+        # One bundled checkpoint, same shape as SD 3.5 Medium's loader — but
+        # SDXL's VAE is 4-channel, not the 16-channel SD3/Flux family, so it
+        # needs the plain EmptyLatentImage rather than EmptySD3LatentImage.
+        "files": [("checkpoints", "sd_xl_base_1.0.safetensors")],
+        "steps": 30, "cfg": 7.0,
+        "sampler": "dpmpp_2m", "scheduler": "karras",
+        "note": "best pick for consistent styles or recurring characters "
+                "via LoRA — measured ~55s per 1024x1024 image on a 4070 "
+                "12GB, ~8GB VRAM peak",
+        "licence": "CreativeML Open RAIL++-M",
+        "licence_note": "no commercial-use restriction; large LoRA/ControlNet "
+                        "ecosystem",
+    },
+    QWEN_IMAGE_ID: {
+        "label": "Qwen-Image Q3_K_S (local image)",
+        "short": "Qwen-Image",
+        # Split-file, GGUF-quantized — UnetLoaderGGUF/CLIPLoaderGGUF rather
+        # than UNETLoader/CLIPLoader (ComfyUI-GGUF custom node). Same
+        # `clip_type="qwen_image"` recipe as the full-precision model.
+        "files": [("diffusion_models", "Qwen_Image-Q3_K_S.gguf"),
+                  ("text_encoders", "qwen_2.5_vl_7b_fp8_scaled.safetensors"),
+                  ("vae", "qwen_image_vae.safetensors")],
+        "gguf": True,
+        "steps": 20, "cfg": 4.0,
+        "sampler": "euler", "scheduler": "simple",
+        "note": "renders legible text in images — quantized for 12GB. "
+                "Measured: bold high-contrast text (a chalkboard sign) came "
+                "out fully legible on a real test, but this is one data "
+                "point, not a guarantee across all prompts. ~4.25 min per "
+                "1024x1024 image, ~10.7GB VRAM peak on a 4070 12GB — close "
+                "to the ceiling",
+        "licence": "Apache 2.0",
+    },
+    # FLUX.1 [dev] — per-machine only. Absent from provider_registry.py's
+    # shipped `models` list; it only offers itself when
+    # services/local_creative_overrides.py's overlay names it AND these files
+    # are on disk. Registered here (inert without both) because that is what
+    # "fine to ship in source" means for a personal-use-only model.
+    FLUX_DEV_ID: {
+        "label": "FLUX.1 Dev (personal use)",
+        "short": "FLUX.1 Dev",
+        "files": [("diffusion_models",
+                   "flux_dev_fp8_scaled_diffusion_model.safetensors"),
+                  ("text_encoders", "t5xxl_fp8_e4m3fn.safetensors"),
+                  ("text_encoders", "clip_l.safetensors"),
+                  ("vae", "ae.safetensors")],
+        "steps": 20, "cfg": 1.0,        # guidance is embedded via FluxGuidance
+        "guidance": 3.5,
+        "sampler": "euler", "scheduler": "simple",
+        "note": "highest quality local image option, personal-use only. "
+                "Measured ~95s per 1024x1024 image, ~11.6GB VRAM peak on a "
+                "4070 12GB — only ~700MB headroom left on this card, so "
+                "treat it as usable but fragile: a larger resolution or "
+                "concurrent GPU use could push it over.",
+        "licence": "FLUX.1 [dev] Non-Commercial License v1.1.1",
+        "licence_note": "Outputs may be used for any purpose including sale. "
+                        "The MODEL itself may not be used commercially — this "
+                        "is registered for Stephen's personal use only and "
+                        "must never be added to provider_registry.py or any "
+                        "shipped default catalog.",
     },
 }
 
@@ -150,6 +238,24 @@ def interrupt_comfy(timeout: int = 10) -> bool:
         return False
 
 
+def is_reachable(timeout: int = 3) -> bool:
+    """Is the local ComfyUI server actually up and answering right now?
+
+    `is_installed()` only proves the weights are on disk; it says nothing
+    about whether the server process is running. provider_health.py needs
+    this for its own local-comfyui health check (docs/audits/
+    gauntlet-2026-09-03/findings.jsonl F2) — before this it treated
+    auth:{"type":"none"} as an unconditional "ok", the same shape as never
+    probing the provider at all.
+    """
+    try:
+        urllib.request.urlopen(
+            "http://127.0.0.1:%d/system_stats" % COMFY_PORT, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def comfy_root() -> Path:
     return runtime_dir() / "ComfyUI"
 
@@ -186,16 +292,31 @@ def build_workflow(prompt: str, *, negative: str = "", width: int = 1024,
                    model_id: str | None = None) -> dict:
     """The ComfyUI graph for one picture, on whichever model is seated.
 
-    Both graphs end identically — EmptySD3LatentImage → KSampler → VAEDecode →
-    SaveImage — because both are SD3-family latents. They differ only in how
-    the model, CLIP and VAE arrive: Z-Image loads three separate files, and the
-    SD 3.5 Medium repackage carries all three in one checkpoint.
+    Z-Image, Qwen-Image and FLUX end identically — EmptySD3LatentImage →
+    KSampler → VAEDecode → SaveImage, all being 16-channel SD3-family latents.
+    SD 3.5 Medium and SDXL bundle model+CLIP+VAE in one checkpoint instead of
+    three separate files. SDXL additionally differs downstream: its VAE is the
+    4-channel SDXL family, so it takes EmptyLatentImage, not EmptySD3LatentImage.
     """
     spec = model_spec(model_id)
-    if (model_id or MODEL_ID) == SD35_MEDIUM_ID:
+    mid = model_id or MODEL_ID
+    if mid == SD35_MEDIUM_ID:
         return _sd35_workflow(prompt, negative=negative, width=width,
                               height=height, steps=steps, cfg=cfg, seed=seed,
                               filename_prefix=filename_prefix, spec=spec)
+    if mid == SDXL_ID:
+        return _sdxl_workflow(prompt, negative=negative, width=width,
+                              height=height, steps=steps, cfg=cfg, seed=seed,
+                              filename_prefix=filename_prefix, spec=spec)
+    if mid == QWEN_IMAGE_ID:
+        return _qwen_image_workflow(prompt, negative=negative, width=width,
+                                    height=height, steps=steps, cfg=cfg,
+                                    seed=seed, filename_prefix=filename_prefix,
+                                    spec=spec)
+    if mid == FLUX_DEV_ID:
+        return _flux_workflow(prompt, width=width, height=height, steps=steps,
+                              seed=seed, filename_prefix=filename_prefix,
+                              spec=spec)
     return {
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": "z_image_turbo_fp8_e4m3fn.safetensors",
@@ -260,6 +381,129 @@ def _sd35_workflow(prompt, *, negative, width, height, steps, cfg, seed,
                          "denoise": 1.0}},
         "8": {"class_type": "VAEDecode",
               "inputs": {"samples": ["7", 0], "vae": ["1", 2]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"images": ["8", 0],
+                         "filename_prefix": filename_prefix}},
+    }
+
+
+def _sdxl_workflow(prompt, *, negative, width, height, steps, cfg, seed,
+                   filename_prefix, spec) -> dict:
+    """Stable Diffusion XL Base 1.0, from its single bundled checkpoint.
+
+    Structurally identical to `_sd35_workflow` except the latent: SDXL's VAE is
+    4-channel (the original SD family), not the 16-channel SD3/Flux one, so it
+    takes EmptyLatentImage rather than EmptySD3LatentImage — feeding it the
+    wrong one is a shape mismatch at VAEDecode, not a subtle quality loss.
+    """
+    ckpt = spec["files"][0][1]
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": ckpt}},
+        "4": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["1", 1], "text": prompt}},
+        "5": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["1", 1], "text": negative}},
+        "6": {"class_type": "EmptyLatentImage",
+              "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "7": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "positive": ["4", 0],
+                         "negative": ["5", 0], "latent_image": ["6", 0],
+                         "seed": seed, "steps": steps, "cfg": cfg,
+                         "sampler_name": spec.get("sampler", "dpmpp_2m"),
+                         "scheduler": spec.get("scheduler", "karras"),
+                         "denoise": 1.0}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["7", 0], "vae": ["1", 2]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"images": ["8", 0],
+                         "filename_prefix": filename_prefix}},
+    }
+
+
+def _qwen_image_workflow(prompt, *, negative, width, height, steps, cfg, seed,
+                         filename_prefix, spec) -> dict:
+    """Qwen-Image, GGUF-quantized. Only the diffusion_models file is actually
+    a `.gguf` — text_encoders and vae are the same fp8-scaled/plain
+    safetensors any full-precision Qwen-Image build uses. So only the UNET
+    loader is the GGUF variant (UnetLoaderGGUF, from ComfyUI-GGUF); the CLIP
+    and VAE loaders are the ordinary CLIPLoader/VAELoader. Downstream of the
+    loaders this is the same 16-channel SD3-family graph as Z-Image.
+
+    `type="qwen_image"` is a real CLIPLoader recipe (verified in nodes.py's
+    INPUT_TYPES list).
+    """
+    unet_name = spec["files"][0][1]
+    clip_name = spec["files"][1][1]
+    vae_name = spec["files"][2][1]
+    return {
+        "1": {"class_type": "UnetLoaderGGUF",
+              "inputs": {"unet_name": unet_name}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": clip_name, "type": "qwen_image",
+                         "device": "default"}},
+        "3": {"class_type": "VAELoader",
+              "inputs": {"vae_name": vae_name}},
+        "4": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["2", 0], "text": prompt}},
+        "5": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["2", 0], "text": negative}},
+        "6": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "7": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "positive": ["4", 0],
+                         "negative": ["5", 0], "latent_image": ["6", 0],
+                         "seed": seed, "steps": steps, "cfg": cfg,
+                         "sampler_name": spec.get("sampler", "euler"),
+                         "scheduler": spec.get("scheduler", "simple"),
+                         "denoise": 1.0}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"images": ["8", 0],
+                         "filename_prefix": filename_prefix}},
+    }
+
+
+def _flux_workflow(prompt, *, width, height, steps, seed, filename_prefix,
+                   spec) -> dict:
+    """FLUX.1 [dev] — personal-use only, see FLUX_DEV_ID's licence_note.
+
+    FLUX has no real negative prompt: the reference workflow encodes an empty
+    string for it and gets its actual guidance from FluxGuidance's embedded
+    value instead, which is why KSampler runs at cfg 1.0 here (real CFG would
+    double up on guidance and wash the image out) — same shape as Z-Image's
+    turbo cfg for a different reason.
+    """
+    unet_name, clip_l, t5xxl, vae_name = (
+        spec["files"][0][1], spec["files"][2][1], spec["files"][1][1],
+        spec["files"][3][1])
+    guidance = spec.get("guidance", 3.5)
+    return {
+        "1": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": unet_name, "weight_dtype": "fp8_e4m3fn"}},
+        "2": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": clip_l, "clip_name2": t5xxl,
+                         "type": "flux", "device": "default"}},
+        "3": {"class_type": "VAELoader",
+              "inputs": {"vae_name": vae_name}},
+        "4": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["2", 0], "text": prompt}},
+        "4b": {"class_type": "FluxGuidance",
+               "inputs": {"conditioning": ["4", 0], "guidance": guidance}},
+        "5": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["2", 0], "text": ""}},
+        "6": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "7": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "positive": ["4b", 0],
+                         "negative": ["5", 0], "latent_image": ["6", 0],
+                         "seed": seed, "steps": steps, "cfg": 1.0,
+                         "sampler_name": spec.get("sampler", "euler"),
+                         "scheduler": spec.get("scheduler", "simple"),
+                         "denoise": 1.0}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
         "9": {"class_type": "SaveImage",
               "inputs": {"images": ["8", 0],
                          "filename_prefix": filename_prefix}},

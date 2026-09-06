@@ -145,7 +145,7 @@ and an 8 GB NVIDIA card you'll see something close to this:
         Runs on your processor, no graphics card needed. Arrives with the
         install rather than as a separate download.
   GET  Local conversational brain
-        qwen3:4b on GPU. 2.5 GiB.
+        gemma4:e2b on GPU. 7.2 GiB.
   NO   Local image generation
         8 GiB card, but 2.5 GiB goes to your desktop and 1.0 GiB to seat
         overhead, leaving 4.5 GiB. Image models need about 6 GiB.
@@ -290,10 +290,11 @@ service over the internet. Here's the honest picture of each.
 
 **Everything on your laptop, no key, nothing sent anywhere:**
 
-- Conversation — she runs a model called `qwen3:4b` on your graphics card
-- **Her tools** — reading files, searching the web, her calendar. `qwen3:4b`
-  can call tools, and they run through the same registry and the same vault
-  gate the cloud path uses
+- Conversation — she runs a model from the Gemma 4 family (`gemma4:e2b` on a
+  typical laptop; a bigger card gets a bigger rung) on your graphics card
+- **Her tools** — reading files, searching the web, her calendar. Every model
+  she can be seated on locally calls tools, and they run through the same
+  registry and the same vault gate the cloud path uses
 - Her memory — remembering things, finding them later, building up a picture
   of what matters to you
 - Everything you write to her stays on the machine
@@ -303,9 +304,9 @@ service over the internet. Here's the honest picture of each.
 - **Tools that hold together over a long job.** Local tool use is built and it
   works — the local loop calls the same tools, under the same vault gate and the
   same governance rings as the cloud one. What a Claude key buys is a model that
-  keeps its footing across many steps rather than a few. One older model in
-  Friday's table, `gemma3:4b`, cannot call tools at all; the ones she picks for
-  a graphics card can.
+  keeps its footing across many steps rather than a few. An older model,
+  `gemma3:4b`, cannot call tools at all and is never offered — every model she
+  actually picks for a graphics card can.
 - **Sharper conversation** on complicated questions and long documents.
 
 **What a Google Gemini key adds:** talking to Friday out loud, and making
