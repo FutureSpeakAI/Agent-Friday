@@ -1,5 +1,7 @@
 # Residency state delta — what the repo actually is, 2026-08-14
 
+> **Historical record — 2026-08-14.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-14
 **Branch at read time:** `phase-a-truth-flow` @ `53dd414`, working tree clean.
 **Purpose:** Phase 0 of the residency-and-orchestration mission. Read-only. Records what
@@ -230,10 +232,10 @@ recovered to 22.1 GB when it unloaded. At 2.8 GB free there is no such headroom 
 to default plan, a 12b → 26b → 12b heavy-turn lease cycle, a ComfyUI image lease with GPU
 handback — all load and unload multi-GB models on this exact machine. They are the workload
 that inflates the pagefile. Running them at 2.8 GB free risks exhausting the system drive of
-Stephen's live daily-driver machine, which is precisely the risk A7 paused for rather than
+the maintainer's live daily-driver machine, which is precisely the risk A7 paused for rather than
 absorbed unilaterally.
 
-This is a **decision for Stephen, not a blocker I should resolve** (§6, Q2). It does not stop
+This is a **decision for the maintainer, not a blocker I should resolve** (§6, Q2). It does not stop
 Phase 1: the design doc, the fixtures, the policy engine and its unit/property tests are all
 pure computation and cost no disk.
 
@@ -276,7 +278,7 @@ engine would be actively misleading.
 
 ---
 
-## 6. Open questions for Stephen
+## 6. Open questions for the maintainer
 
 Blocking ones first. Q1 and Q2 shape Phase 1's output; Q3 is the relayed gap.
 
@@ -287,7 +289,7 @@ not running, and the mission's P1 plan has no role for it. Three coherent answer
 26b MoE be the heavy_hitter as the P1 plan says; (b) keep the artifact but treat
 `llama-server` as a *second backend the arbiter owns* — design requirement 6 already names
 llama-server process control, so the seam exists; (c) keep it as-is and accept a dangling
-capability. I will not choose this unasked: it deletes 16.8 GB of Stephen's disk or leaves his
+capability. I will not choose this unasked: it deletes 16.8 GB of the maintainer's disk or leaves his
 reasoning seat pointing at nothing.
 
 **Q2 — Do the Phase 2 live integration tests run on this machine at 2.8 GB free?** (§4.4)

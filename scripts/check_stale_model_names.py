@@ -9,7 +9,7 @@ was fixed in the ladder itself, then found AGAIN independently in three
 more places over the next three days: the setup wizard's hardcoded default,
 `install.ps1`'s own five-rung ladder (`scripts/gen_installer_ladder.py`
 exists because of that one), and finally the public README — found by
-Stephen looking at the published repo, after a same-session documentation
+The maintainer looking at the published repo, after a same-session documentation
 reconciliation pass had already run and missed it. Four fixes for one
 fact is the same disease `check_settings_readers.py` exists for on the
 settings side: a value asserted in more than one place drifts, and nothing

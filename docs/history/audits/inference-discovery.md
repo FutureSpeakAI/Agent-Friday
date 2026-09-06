@@ -1,5 +1,7 @@
 # Inference Discovery Audit — Agent Friday reference instance
 
+> **Historical record — 2026-08-13.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-13
 **Scope:** read-only inspection of `%USERPROFILE%\Projects\friday-desktop` at commit `656b70b` (branch `fix/toolcall-integrity-v5`, tree clean at audit start).
 **Method:** file reading, ripgrep, directory listing, `git ls-files`. No code executed against the repo; no files modified. Four parallel read-only explorations, with every load-bearing claim independently re-verified by the author via direct `grep`/`sed` before inclusion.
@@ -172,7 +174,7 @@ Output caps are separately hardcoded per path: `max_tokens=4096` for `_call_open
 **Provider health for the two primary providers is key-presence only.**
 - **VERIFIED** `services/provider_health.py:222-243` — read in full. The function returns `{"status": "missing"}` if no key; performs a live check **only** when `deep=True` **and** `ptype == "openai-compatible"` — and even that live check is `GET {base}/models`, a *listing* call, not an inference call. The final line is an unconditional `return {"provider": name, "status": "ok", "detail": "key present"}`.
 - **VERIFIED** `routes/platform.py:683` — `/api/health/full` calls `provider_health.check_all(deep=False)`. **`deep=True` is never passed by any route.**
-- **INFERRED, with high confidence:** a revoked, rate-limited, or zero-credit Anthropic or Gemini key reports `"ok"` on every health surface Friday exposes. This is exactly the "healthy while inference is broken" failure mode. It is also the failure mode Stephen has hit before — the memory record `project_voice_mode_fix` documents a revoked Gemini key diagnosed only by a `1008` error at call time, not by any health check.
+- **INFERRED, with high confidence:** a revoked, rate-limited, or zero-credit Anthropic or Gemini key reports `"ok"` on every health surface Friday exposes. This is exactly the "healthy while inference is broken" failure mode. It is also the failure mode the maintainer has hit before — the memory record `project_voice_mode_fix` documents a revoked Gemini key diagnosed only by a `1008` error at call time, not by any health check.
 
 **The one check that would actually prove inference works is dead code.**
 - **VERIFIED** `routing/ollama_manager.py:196` — `def health_check(self, model):` POSTs a real `/api/generate` request (`"Say hello in one word."`, `num_predict: 10`) and returns whether non-empty text came back.
@@ -218,7 +220,7 @@ Output caps are separately hardcoded per path: `max_tokens=4096` for `_call_open
 1. **Ollama install recommendations.** `recommend_models()` (`routing/ollama_manager.py:182`) tiers VRAM/RAM → qwen3 4b/8b/14b/32b, surfaced via `GET /api/ollama/models`, `/api/health/full`, and the setup wizard. **Critically: `recommend_models()` is never called by the dispatch path.** `routing/model_router.py:_pick_local_model` chooses among *already-installed* models by reported install size and re-detects nothing about the host.
 2. **Voice tier gate.** `gpu_tier_ready()` decides CPU (Whisper+Piper) vs GPU (NeMo) for the voice subsystem only.
 
-**Nothing detected feeds chat, image, or embedding model selection.** Those are purely user-declared. **INFERRED:** the "assess the hardware, recommend models that fit" direction Stephen describes exists today only as a hardcoded qwen3 ladder for Ollama installs — the mechanism is present but is neither general nor connected to routing.
+**Nothing detected feeds chat, image, or embedding model selection.** Those are purely user-declared. **INFERRED:** the "assess the hardware, recommend models that fit" direction the maintainer describes exists today only as a hardcoded qwen3 ladder for Ollama installs — the mechanism is present but is neither general nor connected to routing.
 
 **Single-GPU assumption, with a concrete parsing bug:** `nvidia-smi --query-gpu=... --format=csv,noheader,nounits` emits **one line per GPU**. `detect_hardware()` does `result.stdout.strip().split(",")` and reads `parts[0]`/`parts[1]` — it does not iterate lines. On a multi-GPU host, VRAM parsing is undefined. `nemo_voice.py` likewise uses `torch.cuda.current_device()` with no device-index parameter — there is no way to pin voice inference to a non-default GPU. (Not a defect on this single-4070 instance; recorded for the server/multi-GPU form factor.)
 
@@ -319,7 +321,7 @@ Output caps are separately hardcoded per path: `max_tokens=4096` for `_call_open
 
 | # | Risk | Blast radius | Evidence |
 |---|---|---|---|
-| **R1** | **Health checks report `ok` while inference is broken.** `/api/health` hardcodes `"status": "ok"`; provider health for Anthropic/Gemini is key-presence only; `deep=True` is never passed; the one inference-proving function has zero call sites. | **Whole system.** Every operator decision, dashboard, and automated recovery path built on health is built on a signal that cannot report failure. Stephen has already lost time to a revoked key that health would have called healthy. | §8, VERIFIED |
+| **R1** | **Health checks report `ok` while inference is broken.** `/api/health` hardcodes `"status": "ok"`; provider health for Anthropic/Gemini is key-presence only; `deep=True` is never passed; the one inference-proving function has zero call sites. | **Whole system.** Every operator decision, dashboard, and automated recovery path built on health is built on a signal that cannot report failure. the maintainer has already lost time to a revoked key that health would have called healthy. | §8, VERIFIED |
 | **R2** | **No context-window awareness.** Three reduction layers use hardcoded constants (200k tokens / 2M chars / 50 turns) while real per-model window data sits unread in the catalog. | **Every non-Claude-Opus model.** Small-window local models overflow with no compaction; large-window models get compacted needlessly. Scales directly against the multi-device direction, where small models are the norm. | §5, VERIFIED |
 | **R3** | **`worker_adapters/ollama_adapter.py` bypasses the egress gate**, hardcodes the base URL, and uses a non-tool-calling endpoint. | **Security contract.** The one architectural invariant the codebase explicitly protects — that the fail-closed egress contract cannot drift between paths — has an undocumented hole. Local-only today, so no live data exfiltration, but the invariant is not actually invariant. | §2, VERIFIED |
 | **R4** | **Two live configuration surfaces are dead**: `capability_routing.embedding.model` and `.fridayhints` `preferred_model`. Both are stored, both are returned over HTTP, neither is read. | **User trust.** A setting that visibly exists and silently does nothing is worse than an absent one; it produces confident, wrong mental models and unreproducible bug reports. | §6, §9, VERIFIED |
@@ -360,13 +362,13 @@ Output caps are separately hardcoded per path: `max_tokens=4096` for `_call_open
 2. **Full contents and count of `CLAUDE_TOOLS`** — its single-registry role is verified from every call site, but the literal was not enumerated. Resolve by reading the definition in `services/agent.py`.
 3. **Behaviour of `_call_openai` against a non-tool-calling OpenAI-compatible endpoint** — no conformance gate exists for that path. Resolve by pointing Friday at such an endpoint and observing whether it errors, hangs, or silently drops tools.
 4. **Whether any UI surface reads `provider_health.stats()`/`all_stats()`** (the real measurement plane) rather than the shallow `check_all()`. Resolve by grepping the built UI bundle and remaining routes.
-5. **Whether `worker_adapters/ollama_adapter.py`'s egress-gate bypass is a deliberate scope decision** — the code carries no comment either way, unlike the Gemini gap which is explicitly annotated. Resolve by asking Stephen (see Q2).
+5. **Whether `worker_adapters/ollama_adapter.py`'s egress-gate bypass is a deliberate scope decision** — the code carries no comment either way, unlike the Gemini gap which is explicitly annotated. Resolve by asking the maintainer (see Q2).
 6. **Whether CI runs a non-Windows leg** — `.github/workflows/` was not inspected. Determines whether R8 would ever be caught.
 7. **Actual behaviour on context overflow with a small-window local model** — whether Ollama errors or silently truncates. Determines whether R2 manifests as a crash or as quiet quality loss.
 
 ---
 
-## Decision questions for Stephen
+## Decision questions for the maintainer
 
 Each is answerable in one sentence.
 

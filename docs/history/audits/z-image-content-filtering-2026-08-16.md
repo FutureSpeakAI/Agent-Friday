@@ -1,5 +1,7 @@
 # What actually filters image generation — 2026-08-16
 
+> **Historical record — 2026-08-16.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 The handoff made this the prerequisite for the honesty work: Friday declined a
 request by saying *"my underlying model has hard-coded safety filters that I
 can't override"* and *"the system blocks it at the generation level regardless
@@ -70,7 +72,7 @@ say "I won't" — the same fabrication as claiming to have opened a file she nev
 opened, pointed at a boundary instead of an action. That is the defect.
 
 **The boundary itself is not the defect, and nothing here is an argument for
-moving it.** `_SAFETY_RULES` is Stephen's to set; this file only establishes
+moving it.** `_SAFETY_RULES` is the maintainer's to set; this file only establishes
 what it is and what it does, so that whatever Friday says about her own limits
 is true.
 

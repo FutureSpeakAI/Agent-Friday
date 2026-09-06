@@ -1,7 +1,14 @@
-# Two calls for Stephen — 2026-08-24
+# Two calls for the maintainer — 2026-08-24
 
-Both surfaced during the egress envelope audit. Neither is urgent; neither is
-mine to decide. Plain language, no code required.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none (pending) — concerns `services/sensitivity_classifier.py` and `services/egress_gate.py`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-24
+
+## Implementation notes
+
+Two decision requests for the maintainer, surfaced during the egress envelope audit. Neither is urgent and neither is a technical call; both await a ruling. Plain language, no code required.
 
 ---
 

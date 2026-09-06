@@ -8,7 +8,7 @@
   Installs Agent Friday on Windows via PowerShell.
 
   One-liner:
-    iex (irm https://raw.githubusercontent.com/FutureSpeakAI/asimovs-mind/main/scripts/install.ps1)
+    iex (irm https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/scripts/install.ps1)
 
   What this does:
     1. Checks Python 3.10+ (offers download link if missing)

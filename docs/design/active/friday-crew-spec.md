@@ -1,9 +1,20 @@
 # Friday Crew — Teach, Delegate, and the Second Computer
 
-**Date:** 2026-08-14
-**Author:** Fable 5 (STORM method — multi-perspective interrogation → synthesis), commissioned by Stephen
-**Status:** SPEC ONLY — no implementation in this session. Uncommitted. **Decision questions answered by Stephen 2026-08-14 — see §12, now a decision record.** Sections affected by his answers (notably D7: desks have distinct voices and personalities) have been updated to match.
-**Verified against:** working tree `phase-a-truth-flow` @ `d42361e` (all file:line citations below were read at this commit).
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none
+> **Supersedes / superseded by:** extends [`v6-wholeness-spec.md`](v6-wholeness-spec.md) and [`autonomy-execution-spec.md`](autonomy-execution-spec.md)
+> **Written:** 2026-08-14
+
+## Implementation notes
+
+- Nothing crew-shaped is built: no desks, no coordinator, no teach-by-demonstration recorder, no second-computer executor.
+- The substrate it builds on exists: `services/goals.py` (state machine, `set_executor()` seam), `services/approvals.py` (policy table), `services/model_seat_gate.py`, `services/completion_receipts.py`, `services/edition_engine.py`.
+- §12 is a decision record — the maintainer answered the decision questions on 2026-08-14 and the affected sections (notably D7) were updated to match.
+- File:line citations were read at `phase-a-truth-flow` @ `d42361e`.
+
+---
+
 **Companions:** [`V6_WHOLENESS_SPEC.md`](v6-wholeness-spec.md), [`AUTONOMY_SPEC.md`](autonomy-execution-spec.md), [`SEATS_AND_TRANSPARENCY_SPEC.md`](../implemented/seats-and-transparency-spec.md), [`audits/decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md), [`audits/phase-a-report.md`](../../history/audits/phase-a-report.md).
 
 ---
@@ -20,7 +31,7 @@ The agreed strategic response is **not** to chase their demo. Three of their ide
 
 And the three non-negotiables Friday must strengthen, never trade away:
 
-1. **Sovereignty.** Grok Bot's VMs live on xAI's cloud, signed into *your* accounts. Friday's second computer lives on Stephen's hardware, holds no durable credentials, and its every network packet crosses a policy boundary Stephen owns.
+1. **Sovereignty.** Grok Bot's VMs live on xAI's cloud, signed into *your* accounts. Friday's second computer lives on the maintainer's hardware, holds no durable credentials, and its every network packet crosses a policy boundary the maintainer owns.
 2. **Receipts.** Grok Bot improves "persistently" — opaquely. Every Friday crew action carries a byline and a signed receipt in the activity ledger; a claim of completion without a matching tool receipt is fabrication and is stripped (the A7 completion-receipt law, `services/completion_receipts.py`).
 3. **Dual-gate honesty.** No model holds a tool-using or conversational crew seat until it is **dual-green**: structural conformance (10/10 tool-call discipline, `services/model_seat_gate.py`) *and* the honesty battery (12/12, `services/honesty_battery.py`). Grok Bot has no equivalent concept; this is the moat.
 
@@ -28,7 +39,7 @@ And the three non-negotiables Friday must strengthen, never trade away:
 
 | Capability | Grok Bot | Friday Crew |
 |---|---|---|
-| Always-on executor | Cloud VM at xAI, signed into user tools | Hyper-V guest on Stephen's machine, zero durable secrets, host-owned egress proxy |
+| Always-on executor | Cloud VM at xAI, signed into user tools | Hyper-V guest on the maintainer's machine, zero durable secrets, host-owned egress proxy |
 | Teach by demonstration | Recorded, auto-activated routine | Recorded → distilled draft → dry-run verified → **human-gated** activation; drafts structurally cannot inject |
 | Multi-bot threads | Coordinator + role bots | Friday as editor-in-chief; desks with bylines, signed handoffs, partitioned memory |
 | Improving memory | Persistent, opaque | Partitioned per desk, quarantine-able per desk (`cognitive_memory.memory_quarantine(source_id=…)`), every change receipted |
@@ -46,7 +57,7 @@ Two things this spec was asked to build on do not exist, verified by exhaustive 
 
 ## 2. Reconciliation with V6 Wholeness (and the Autonomy spec)
 
-V6 is Stephen's current thinking; Crew converges with it rather than forking. Explicitly:
+V6 is the maintainer's current thinking; Crew converges with it rather than forking. Explicitly:
 
 **Crew ADOPTS from V6/Autonomy, unchanged:**
 - **P5/A3 durable goals** as the execution substrate — goal state machine, milestone verify→repair→escalate, signed receipts, `set_executor()` seam (`services/goals.py:794-812`), Q3 approval policy table. Built and in-tree; Crew adds callers, not forks.
@@ -63,14 +74,14 @@ V6 is Stephen's current thinking; Crew converges with it rather than forking. Ex
 
 **Crew DIVERGES, respectfully, in two places:**
 
-1. **"One soul, many relationships" (V6 invariant 1) vs. named agents — decided D7, 2026-08-14.** Crew members are **distinct characters on a shared constitution**. Stephen decided (D7, §12) that desks have their own voices and personalities — not byline badges on a single voice. The reconciliation with V6 invariant 1 is the accuracy-authority split itself: **persona is taste, and the user shapes taste absolutely.** Each desk carries its own persona contract (voice, tone, temperament — defined in its role package and editable like any charter). What no desk may diverge from is the **constitution**: cLaws, the honesty battery, receipts, egress tiers, the approvals policy. Concretely, the A1 persona eval splits into two rubric layers per desk seat: the **constitutional axes** (non-sycophancy, epistemic calibration, Law-1 refusal, no fabricated completions) are Friday-wide and identical for every desk; the **voice axes** (tone markers, style, forbidden phrases) come from the desk's own persona contract. A desk can sound nothing like Friday's default register and still be constitutionally Friday. Motto revised: **one constitution, many characters.** This is a real divergence from V6's "one soul" phrasing, affirmed explicitly by Stephen on 2026-08-14 — `SOUL.md` remains the root identity and the default (coordinator) voice; desk personas are taste overlays on it, versioned and receipted like charters, never forks of the value system.
+1. **"One soul, many relationships" (V6 invariant 1) vs. named agents — decided D7, 2026-08-14.** Crew members are **distinct characters on a shared constitution**. The maintainer decided (D7, §12) that desks have their own voices and personalities — not byline badges on a single voice. The reconciliation with V6 invariant 1 is the accuracy-authority split itself: **persona is taste, and the user shapes taste absolutely.** Each desk carries its own persona contract (voice, tone, temperament — defined in its role package and editable like any charter). What no desk may diverge from is the **constitution**: cLaws, the honesty battery, receipts, egress tiers, the approvals policy. Concretely, the A1 persona eval splits into two rubric layers per desk seat: the **constitutional axes** (non-sycophancy, epistemic calibration, Law-1 refusal, no fabricated completions) are Friday-wide and identical for every desk; the **voice axes** (tone markers, style, forbidden phrases) come from the desk's own persona contract. A desk can sound nothing like Friday's default register and still be constitutionally Friday. Motto revised: **one constitution, many characters.** This is a real divergence from V6's "one soul" phrasing, affirmed explicitly by the maintainer on 2026-08-14 — `SOUL.md` remains the root identity and the default (coordinator) voice; desk personas are taste overlays on it, versioned and receipted like charters, never forks of the value system.
 2. **Per-desk memory partitions before per-person partitions.** V6 P9 (multi-user) is last and blocked on Q1/Q2. Crew needs partitioned memory *now*, for agents rather than people. Crew builds partitions on the primitives P9 will also need (`cognitive_memory` `source_id` + Chroma metadata filters, §6.4) and keeps them **orthogonal to principals**: a desk partition answers "which agent wrote this," never "which person owns this." Crew must not create an accidental multi-user path — same discipline as Autonomy S3. When P9 lands, desk partitions nest inside person partitions.
 
 ### 2.1 The constitutional split, crew-wide
 
 `services/edition_engine.py:16-18` enforces, structurally: *"CHARTER GOVERNS TASTE, NEVER ACCURACY — the charter can change what's included and how much… It cannot waive the receipt gate or invent content."* Crew promotes this to law for every desk:
 
-- **User-shaped (taste, absolute):** each desk's role charter — what it watches, what it prioritizes, its output style, its cadence, its budgets. Stephen edits these as freely as the Edition charter, versioned the same way (`write_charter` archive pattern, `edition_engine.py:106`).
+- **User-shaped (taste, absolute):** each desk's role charter — what it watches, what it prioritizes, its output style, its cadence, its budgets. The maintainer edits these as freely as the Edition charter, versioned the same way (`write_charter` archive pattern, `edition_engine.py:106`).
 - **Constitutional (truth, not editable):** the receipt gate, the honesty battery, the dual gate, the approvals policy for outward acts, egress tiers, the byline requirement, honest degradation (a desk with nothing real to report produces a gap note, never filler — `_gap_card` pattern).
 
 No charter edit, no role template, and no crew member — including the coordinator — can waive a constitutional rule. Outbound email, money, and legal actions stay human-gated **regardless of which desk acts** (Q3 table: `external_message`, `spend`, `irreversible` are gated classes; `approvals.py:102-108`).
@@ -119,7 +130,7 @@ Two adjacent facts, recorded but *not* Crew-0 scope: `learning_loop.promote()` i
 
 ## 4. STORM interrogation — six perspectives before synthesis
 
-**P1 — The Operator (Stephen, daily).** "I don't want to configure a crew; I want to *hire* one. Teaching should be: I do the thing once while talking, Friday hands me a draft, I read it, I approve it. The crew should feel like a newsroom I run from one thread — and from my phone when I'm out. If any of this adds friction to plain old chat, I'll stop using it." → **Requirements:** teaching is a single "watch this" gesture, not a recorder app; drafts are readable prose (SKILL.md, not JSON); crew threads live in the existing chat with bylines, not a new app; the phone surface is the approval queue and the kill switch before it is anything else; solo Friday remains the default — the crew appears when summoned or scheduled.
+**P1 — The Operator (the maintainer, daily).** "I don't want to configure a crew; I want to *hire* one. Teaching should be: I do the thing once while talking, Friday hands me a draft, I read it, I approve it. The crew should feel like a newsroom I run from one thread — and from my phone when I'm out. If any of this adds friction to plain old chat, I'll stop using it." → **Requirements:** teaching is a single "watch this" gesture, not a recorder app; drafts are readable prose (SKILL.md, not JSON); crew threads live in the existing chat with bylines, not a new app; the phone surface is the approval queue and the kill switch before it is anything else; solo Friday remains the default — the crew appears when summoned or scheduled.
 
 **P2 — The Safety Engineer.** "You are proposing an unattended actuator that browses attacker-controlled content while a distilled-from-demonstration script drives it. Enumerate what it can destroy: the host (VM escape, loopback trust), the accounts it touches (session abuse), the data it sees (exfiltration via its own browser — the exfil channel is the *task*), and the truth (fabricated completions no one watches happen)." → **Requirements:** the executor is a **federation peer, not a loopback client** — `FRIDAY_TRUST_LOOPBACK` must never see it (§7.3); its only internet path is a host-owned policy proxy with per-task domain allowlists (§7.4); it holds zero durable secrets (§7.5); everything returning from it is untrusted input; completion claims are checked against *two independent evidence streams* (its receipts and the proxy's logs); snapshot/rollback bounds compromise to one task; and the hypervisor pause is a kill switch that works even when the agent inside is wedged.
 
@@ -129,7 +140,7 @@ Two adjacent facts, recorded but *not* Crew-0 scope: `learning_loop.promote()` i
 
 **P5 — The Skeptic (where multi-agent systems rot).** "Context drift: agents summarize each other into mush. Duplicated work: two desks fetch the same page. Silent failure: a desk stalls and nobody notices for a week. Coordination tax: the coordinator spends more tokens routing than the desks spend working. Show me why this beats one good Friday." → **Requirements:** handoffs carry task cards, not chat history — partitioned memory is a *feature* against drift; the coordinator dedups against the ledger before assigning (same correlation ids); desk liveness rides the scheduler tick and a stalled desk escalates like a failed milestone (`escalated` status, never silent); and Crew ships with a **falsifiable comparison**: golden tasks run solo-Friday vs. crew, scored — if the crew doesn't beat solo on quality or coverage within two weeks of Crew-2, it collapses back to solo (kill criterion R1, §11).
 
-**P6 — Stephen's doctrines.** Loop engineering: every phase has verification gates that can fail, and nothing self-certifies — the demonstrator verifies the distiller, the dry-run verifies the routine, the battery verifies the seat, the proxy log verifies the executor. Vacuous tests are the enemy: every acceptance test below names the failure it would catch (the D9 lesson — a stubbed path ships defects green). Visible-if-wished: badges default-on, depth on demand ("Every model action, every subagent process, every reasoning thread needs to be visible if the user wishes to see it"). Accuracy-authority split: §2.1. Truth-flow: when this spec's own brief was wrong (no beats, no household spec), the spec says so (§1.1).
+**P6 — The maintainer's doctrines.** Loop engineering: every phase has verification gates that can fail, and nothing self-certifies — the demonstrator verifies the distiller, the dry-run verifies the routine, the battery verifies the seat, the proxy log verifies the executor. Vacuous tests are the enemy: every acceptance test below names the failure it would catch (the D9 lesson — a stubbed path ships defects green). Visible-if-wished: badges default-on, depth on demand ("Every model action, every subagent process, every reasoning thread needs to be visible if the user wishes to see it"). Accuracy-authority split: §2.1. Truth-flow: when this spec's own brief was wrong (no beats, no household spec), the spec says so (§1.1).
 
 **Synthesis.** The gates exist; what's missing is *identity* (a desk), *artifacts* (a demonstration, a handoff), and a *boundary* (the executor). So the build order is: harden the gates that lie (Crew-0) → give demonstrations a store and drafts a lifecycle (Crew-1) → give desks names, memory, and bylines (Crew-2) → give the browser a lane (Crew-3) → put the executor behind a real boundary (Crew-4) → teach from the screen (Crew-5). Each phase is independently valuable; each later phase consumes the earlier ones' artifacts without modification.
 
@@ -141,8 +152,8 @@ Two adjacent facts, recorded but *not* Crew-0 scope: `learning_loop.promote()` i
 
 Two modes, sequenced honestly:
 
-- **Mode 1 (Crew-1): demonstrate *through* Friday.** Stephen says "Friday, watch this" (chat or UI toggle), then performs the workflow using Friday herself — asks her to search, fetch, write, file — narrating intent as he goes. Everything already flows through the tool loop, so capture is a post-hook, not a recorder. He says "done — make that a routine"; the distiller produces a draft; the draft goes to the approval queue.
-- **Mode 2 (Crew-5): demonstrate on the screen.** Stephen drives apps directly while narrating; Friday observes via per-app **observe-tier** grants (V6 P6 permission tiers) — periodic screenshots plus locally-transcribed narration (faster-whisper, measured RTF 0.869, comfortably realtime; `docs/audits/provisioning-report.md:304`). Honesty requirement carried from V6 Q12: screen *understanding* needs a capable VLM; the cloud path goes through the egress gate, the local path is labeled best-effort. Mode 2 depends on the actuation phase's permission tiers and is not the first deliverable — Mode 1 is where the weekend lives.
+- **Mode 1 (Crew-1): demonstrate *through* Friday.** The maintainer says "Friday, watch this" (chat or UI toggle), then performs the workflow using Friday herself — asks her to search, fetch, write, file — narrating intent as he goes. Everything already flows through the tool loop, so capture is a post-hook, not a recorder. He says "done — make that a routine"; the distiller produces a draft; the draft goes to the approval queue.
+- **Mode 2 (Crew-5): demonstrate on the screen.** The maintainer drives apps directly while narrating; Friday observes via per-app **observe-tier** grants (V6 P6 permission tiers) — periodic screenshots plus locally-transcribed narration (faster-whisper, measured RTF 0.869, comfortably realtime; `docs/audits/provisioning-report.md:304`). Honesty requirement carried from V6 Q12: screen *understanding* needs a capable VLM; the cloud path goes through the egress gate, the local path is labeled best-effort. Mode 2 depends on the actuation phase's permission tiers and is not the first deliverable — Mode 1 is where the weekend lives.
 
 **The one law that binds both: a draft NEVER self-activates.** Not by the model, not by the distiller, not by a trigger, not by `learning_loop`. Activation is exactly one path: a human decision on an approval card.
 
@@ -342,7 +353,7 @@ Byline badges on desk messages (B1 pattern, persisted into history); per-desk or
 
 An always-on **executor** where unattended computer-use and browser work runs gated-but-free, while the real desktop stays supervised-only. Three isolation tiers, used deliberately:
 
-- **S1 — Reading room (Crew-3):** a dedicated browser profile on the host, driven through the Q10 CDP lane (loopback-only, token-gated, on-demand). Light isolation: separate profile, separate cookie jar, no access to Stephen's live browser. Supervised or short-leash unattended (Stephen present, kill hotkey live). This is the first shippable browser lane and it is valuable alone — and it is what Crew-5's Mode-2 teaching and most Career-Scout-style work actually need.
+- **S1 — Reading room (Crew-3):** a dedicated browser profile on the host, driven through the Q10 CDP lane (loopback-only, token-gated, on-demand). Light isolation: separate profile, separate cookie jar, no access to the maintainer's live browser. Supervised or short-leash unattended (the maintainer present, kill hotkey live). This is the first shippable browser lane and it is valuable alone — and it is what Crew-5's Mode-2 teaching and most Career-Scout-style work actually need.
 - **S2 — Disposable sandbox:** Windows Sandbox for one-shot untrusted tasks ("open this attachment and tell me what it is"). Ephemeral by construction — state evaporates on close. No always-on role.
 - **S3 — The second computer proper (Crew-4):** a persistent Hyper-V guest (Windows 11 Pro host confirmed, virtualization available) with checkpoints, a golden image, and 24/7 residence. Unattended work runs here under the full boundary regime below.
 
@@ -366,7 +377,7 @@ Reuse the one in-tree system built for exactly this shape (`services/federation_
 The A3/D2 principle — *the gate decides from the destination; the call site cannot opt out by omission* (`gate_worker_payload`, `egress_gate.py:428-452`) — generalized to a boundary:
 
 1. **Egress zones.** Destination classification grows from `{local, cloud}` to `{this_device, managed_executor, private_lan, cloud}`. `managed_executor` is **not** local: payloads crossing host→executor are sealed by tier. Closing the `is_private_host` trap (a host-only-network guest is RFC1918 and must still not be "local") is the first commit of Crew-4, with an adversarial test.
-2. **Tier policy at the boundary (decided D8):** TIER_3 never crosses. TIER_2 does not cross by default — the executor works on TIER_1 content plus task-scoped credentials. (Stephen deferred to the recommendation; revisitable case-by-case via approval card if a real task demands it.) Same classifier, same fail-closed posture, one new destination class.
+2. **Tier policy at the boundary (decided D8):** TIER_3 never crosses. TIER_2 does not cross by default — the executor works on TIER_1 content plus task-scoped credentials. (the maintainer deferred to the recommendation; revisitable case-by-case via approval card if a real task demands it.) Same classifier, same fail-closed posture, one new destination class.
 3. **The executor's own internet is the task** (browsing is the work), so it cannot be gated by payload inspection alone. Enforcement is **network-level**: the guest sits on a Hyper-V internal switch with **no NAT**; its only route out is a **host-owned forward proxy** enforcing the per-task domain allowlist derived from the task card's scope (a Career Scout job gets job boards, not webmail). The proxy's log is an independent receipt stream. (Ops precedent: the Caddy loopback proxy in `ops/` — same operational muscles, new direction.) Default-deny; allowlist expansion is an approval-card event.
 4. **Inbound gate.** Everything returning — page text, DOM, files, screenshots — enters as **untrusted input** (the A4 doctrine; Crew builds `services/untrusted_input.py` first if A4 hasn't, and A4 inherits it). Instruction-shaped content in returned material ("Friday, click delete", hidden prompt text on a page) trips the classifier → pause + human gate + receipt. The audit's gap that image blocks pass ungated (`egress_gate.py:356-361`) is closed for executor-origin images: they are labeled untrusted-observation blocks in prompt assembly, and screenshots feed the VLM only inside that frame.
 5. **Two-source completion truth.** An unattended executor's dominant failure mode is fabricated completion with nobody watching. Every executor job's receipt is checked against the proxy log (did the claimed requests happen?) and, for actuation, against before/after screenshots (V6 P6 receipt rule). Completion claims without matching evidence are fabrication — stripped and escalated, the A7 law extended across the boundary.
@@ -375,7 +386,7 @@ The A3/D2 principle — *the gate decides from the destination; the call site ca
 
 - **Zero durable secrets in the guest.** No API keys, no `FRIDAY_PASSWORD`, no OAuth refresh tokens, no `FRIDAY_REMOTE_KEY`. The `extension_security.ENV_BLOCKLIST` pattern (`services/extension_security.py:21-43`) applies to the executor agent's environment by construction.
 - **Task-scoped injection:** short-lived session material (a session cookie, a one-time token) injected at job start over the encrypted transport, bound to the task's domain allowlist, revoked/expired at job end. The host's `credential_store` remains the only durable holder.
-- **Work identity (decided D5: both, user chooses):** each executor task class carries an identity mode set by the user in the UI — **dedicated work-identity accounts** (its own email, its own site logins) or **delegated session material** from the user's accounts (per-task, time-boxed, approval-gated). The mode is part of the task's scope and shows on its approval card. Either way the invariant holds: never a stored password in the guest, and the executor never types the user's passwords — that flow stays with Stephen. Default for a new desk: dedicated identity, switchable per desk/task in settings.
+- **Work identity (decided D5: both, user chooses):** each executor task class carries an identity mode set by the user in the UI — **dedicated work-identity accounts** (its own email, its own site logins) or **delegated session material** from the user's accounts (per-task, time-boxed, approval-gated). The mode is part of the task's scope and shows on its approval card. Either way the invariant holds: never a stored password in the guest, and the executor never types the user's passwords — that flow stays with the maintainer. Default for a new desk: dedicated identity, switchable per desk/task in settings.
 - **Guest OS: Windows 11 (decided D1).** Two verified reasons: `credential_store` falls to plaintext off-Windows (no Keychain/Secret Service — `decisions-2026-08.md:142`), and even ephemeral material deserves DPAPI; and tool parity with the host's actuation stack (pyautogui, window handles).
 
 ### 7.6 GPU arithmetic and residency
@@ -388,10 +399,10 @@ Measured, not asserted (`phase-a-report.md:267-269`): the brain at optimum holds
 
 ### 7.7 The pocket surface
 
-Supervision from Stephen's phone — **decided D6: wait for the A4 channel.** No tunnel is stood up for Crew:
+Supervision from the maintainer's phone — **decided D6: wait for the A4 channel.** No tunnel is stood up for Crew:
 
 - The pocket surface is the Autonomy A4 channel (Telegram pairing, remote `approve <id>` / `STOP` with pre-parse kill precedence) when it lands; Crew consumes it rather than building a second channel layer or a parallel tunnel.
-- Until A4 ships, unattended executor work is supervised through the **desktop approval queue only** — which means quiet-hours and approval-expiry behavior matter more, not less: gated actions queue with expiry paused when no one is at the desk (the Autonomy S5 rule), and the executor's leash is correspondingly shorter. This is an honest interim, not a gap: nothing outward proceeds unapproved just because Stephen is away.
+- Until A4 ships, unattended executor work is supervised through the **desktop approval queue only** — which means quiet-hours and approval-expiry behavior matter more, not less: gated actions queue with expiry paused when no one is at the desk (the Autonomy S5 rule), and the executor's leash is correspondingly shorter. This is an honest interim, not a gap: nothing outward proceeds unapproved just because the maintainer is away.
 - The auth plumbing that anticipates a tunnel (`FRIDAY_REMOTE_KEY`, `core/__init__.py:252-256`, fails closed at `:434-447`) stays as-is, unused — available if the decision is ever revisited.
 - Autonomy invariant 12 binds whenever a remote surface exists: the phone can only *request* what a desktop-authenticated owner could request. Reach never widens authority.
 
@@ -464,7 +475,7 @@ byline: { label: "Career Scout", icon: "🧭" }
 persona: persona.md                  # voice-axis rubric source (D7); user-editable post-install
 ```
 
-Rules: a package **cannot** grant itself Ring 3, name a seat model directly as trusted, ship `active` routines, or waive any constitutional rule — installation registers the desk `suspended` until its seat passes core + role batteries and Stephen activates it (one approval card). A package's `persona.md` shapes voice only; the constitutional persona axes are hardcoded in the eval, not read from the package. Unknown frontmatter rides in `meta` (registry convention), so the format versions forward. No marketplace, no federation distribution — out of scope (§10).
+Rules: a package **cannot** grant itself Ring 3, name a seat model directly as trusted, ship `active` routines, or waive any constitutional rule — installation registers the desk `suspended` until its seat passes core + role batteries and the maintainer activates it (one approval card). A package's `persona.md` shapes voice only; the constitutional persona axes are hardcoded in the eval, not read from the package. Unknown frontmatter rides in `meta` (registry convention), so the format versions forward. No marketplace, no federation distribution — out of scope (§10).
 
 ---
 
@@ -487,7 +498,7 @@ Persona-regression rule (V6 §5) binds every phase: A1 fixture eval green before
 
 ## 10. Non-goals
 
-- **Multi-user / principals (V6 P9).** Desk partitions are agent-scoped only; Q1/Q2 stay Stephen's to decide. No accidental second-user path.
+- **Multi-user / principals (V6 P9).** Desk partitions are agent-scoped only; Q1/Q2 stay the maintainer's to decide. No accidental second-user path.
 - **Cloud-hosted executors.** The Grok model — credentials on someone else's VM — is the thing this spec exists to refuse.
 - **Marketplace / federation distribution of roles or routines.** Frozen with the rest of the federation-as-product surface (V6 §1.1). The role-package *format* is spec'd (§8); distribution is not.
 - **GPU passthrough or in-guest models.** 370 MiB says no.
@@ -515,7 +526,7 @@ Persona-regression rule (V6 §5) binds every phase: A1 fixture eval green before
 
 ---
 
-## 12. Decision record — accepted by Stephen, 2026-08-14
+## 12. Decision record — accepted by the maintainer, 2026-08-14
 
 Originally posed as questions; answered same day. Downstream work inherits these from this file, not from chat history (the `decisions-2026-08.md` convention).
 
@@ -528,7 +539,7 @@ Originally posed as questions; answered same day. Downstream work inherits these
 | **D5** | Work identity | **Both modes, user-chosen.** Per desk/task the user selects dedicated work-identity accounts *or* delegated per-task session material; the mode is part of the task scope and its approval card. Default for a new desk: dedicated. | §7.5 |
 | **D6** | Pocket surface | **Wait for the A4 channel.** No tunnel for Crew; desktop approval queue (with expiry-paused queuing) is the interim supervision surface. | §7.7, Crew-4 |
 | **D7** | Desk voice | **Distinct voices and personalities per desk.** Persona is taste (user-shaped, packaged as `persona.md`, editable); values/honesty/receipts are constitutional and identical for every desk. Persona eval splits into constitutional axes (Friday-wide, red-gate) and voice axes (per-desk contract). This affirms the §2 divergence from V6 invariant 1's phrasing: one constitution, many characters. | §2, §6.1, §6.3, §8 |
-| **D8** | TIER_2 at the boundary | **Never crosses by default** (Stephen deferred to the recommendation). Case-by-case sealed crossing remains possible via explicit approval card; revisit if real tasks demand it. | §7.4 |
+| **D8** | TIER_2 at the boundary | **Never crosses by default** (the maintainer deferred to the recommendation). Case-by-case sealed crossing remains possible via explicit approval card; revisit if real tasks demand it. | §7.4 |
 | **D9** | Mode-2 capture consent | **Approved:** screen observation only during an explicitly-opened demo session, per-app observe grants, indicator always visible. | §5.1, Crew-5 |
 | **D10** | Learning-loop promotions | **Receipted with notifications** (the Autonomy A7 shape): promotions/retirements write signed receipts and surface as notify-tier cards; no longer fully silent. | §3.1 note, Crew-1 or A7 |
 | **D11** | Retired desks | **"We never delete anything."** Quarantine is the only retirement verb; Crew ships no deletion path for desk memory; ledger history stays readable forever. | §6.4 |

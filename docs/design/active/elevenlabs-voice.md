@@ -1,15 +1,19 @@
 # ElevenLabs as Friday's voice — decided architecture
 
-**Document:** `docs/design/elevenlabs-voice.md`
-**Status:** **Architecture decided (2026-08-19, Stephen). Not built.** §§1–3, 5
-remain the evaluation that produced the decision; §§4, 4.1–4.5 and 6 record
-what was settled. Nothing in this document is implemented.
-**Written:** 2026-08-19, alongside the `speak_text` / `list_voices` tools
-(`services/elevenlabs_tools.py`), which *are* built and are a different thing.
-**Amended:** 2026-08-19 — Friday's voice settled on Gemini Flash Live; subagent
-voices settled as an opt-in ElevenLabs feature over a default relay.
-**Companion docs:** `docs/VOICE_SYSTEM_SPEC.md`, `docs/VOICE_SYSTEM_OVERHAUL_SPEC.md`,
-`docs/contracts/roles-and-model-identity.md`, `docs/SEATS_AND_TRANSPARENCY_SPEC.md`.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none (see notes)
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-19
+
+## Implementation notes
+
+- This is a decision record with one unbuilt design. (B) — replacing Friday's speaking voice with ElevenLabs — was rejected deliberately on 2026-08-19; Friday stays on Gemini Flash Live native audio. That is a settled decision, not unfinished work.
+- (C) — opt-in ElevenLabs voices for subagents over a default of Friday relaying (§4) — is designed and not built.
+- `services/elevenlabs_tools.py` (`speak_text`, `list_voices`) is built, but it is (A) produced audio, a separate feature written alongside this document, not an implementation of it.
+- Companion: [`voice-system-spec.md`](voice-system-spec.md) in this directory.
+
+---
 
 **One-line thesis:** *ElevenLabs is the right tool for audio Friday **produces**
 and the wrong tool for audio Friday **speaks** — because Tier 3 is already a
@@ -354,7 +358,7 @@ upgrade.
 
 ## 6. Decisions, and the order to build them in
 
-**Settled (2026-08-19, Stephen):**
+**Settled (2026-08-19, the maintainer):**
 
 1. **(A) Produced audio — shipped.** `speak_text` / `list_voices` are
    registered and follow the existing tool pattern. Narration was a real hole;

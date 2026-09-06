@@ -1,7 +1,7 @@
 # Agent Friday - Windows installer :: RECOMMENDED tier
 #
 # Friday starts and works without these; noticeably less of her works.
-# A failure here is a warning in Stephen's report and a calm sentence for
+# A failure here is a warning in the maintainer's report and a calm sentence for
 # her. It is never a stop.
 #
 # Verified 2026-08-21 on Windows 11 in embeddable CPython 3.12.10: resolves

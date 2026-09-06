@@ -1,34 +1,18 @@
 # Conversations — the seat belongs to the chat, the work belongs to the task
 
-**Date:** 2026-08-18
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
-exists for this document — it lands first, by instruction.~~ **BUILT.** Commit `2497da3`
-("feat: conversations are real objects, and their transcripts do not mix") shipped the three
-structural changes this document argues for, followed by `7d15702` (archive visibility, honest
-import failure). This document's central thesis — that Friday has exactly one conversation
-backed by a single module-level history list — is no longer true. Verified against the current
-tree: `services/conversations.py` (334 lines — `create()` with per-conversation `seat` at `:119`,
-`ensure_main()`, `list_all()`, `patch()`, `append()`, `messages()`, `resolve()`, and
-`_migrate_legacy_history()` at `:268` for the move off the global list); `routes/conversations.py`
-(136 lines, with `_running_for(cid)` at `:16` for per-conversation busy state); `routes/chat.py`
-addresses every request to a conversation via `_conv_id_from(data)` (`:153`, "Main when
-unaddressed"), reads the conversation's own seat at `:630`, and keeps per-thread history
-(`:1549-1569`); the UI switcher polls `/api/conversations` (`index.html:37409`) and stamps
-`conversation_id` onto every chat request (`:39554`, `:41475`). Nothing material in this
-document's component list is missing. The body below describes the single-conversation state
-that existed on 2026-08-18; read its "today" claims in the past tense.
-**Commission, verbatim (Stephen):** *"I want to trigger background tasks, go to a new
-chat, talk with a different model, then go back to the other chat to get an update from
-the other model while the other other model does something in the background too. By
-juggling cloud and local processing I can become more efficient."*
-**The prompting incident:** he clicked "+ New Chat" while an Opus 5 research commission
-ran in the background; the new chat showed "Friday is thinking" forever and never
-answered, though a free local model sat idle. §2.1 names the exact mechanism.
-**Build on:** the current default working branch (at spec time `higgsfield-integration`,
-HEAD `d3a2f8a`; this doc lands there because it is the tree's active branch — cherry-pick
-freely). Several sessions are live in this repo; check `git status` first, commit only
-your own files. **The Higgsfield build session is editing `index.html` and
-`services/agent.py` in this tree right now** — §6 says how to sequence around that.
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/conversations.py`, `routes/conversations.py`, `routes/chat.py`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-18
+
+## Implementation notes
+
+Built in commit `2497da3` ("conversations are real objects, and their transcripts do not mix"), followed by `7d15702` (archive visibility, honest import failure). `services/conversations.py` owns `create()` with a per-conversation seat, `ensure_main()`, `list_all()`, `patch()`, `append()`, `messages()`, `resolve()` and `_migrate_legacy_history()`; `routes/conversations.py` tracks per-conversation busy state; `routes/chat.py` addresses every request to a conversation (Main when unaddressed) and reads that conversation's own seat; the UI switcher polls `/api/conversations` and stamps `conversation_id` onto every chat request.
+Read the body's "today" claims in the past tense: the single-conversation state it describes existed on 2026-08-18 and no longer does.
+Commission (the maintainer, verbatim): *"I want to trigger background tasks, go to a new chat, talk with a different model, then go back to the other chat to get an update from the other model while the other other model does something in the background too. By juggling cloud and local processing I can become more efficient."* The prompting incident: "+ New Chat" was clicked while a cloud research commission ran in the background; the new chat showed "Friday is thinking" forever while a free local model sat idle. §2.1 names the mechanism.
+
+---
 
 **Evidence registers:**
 - **VERIFIED** — the cited line, commit, file on disk, or runtime-state file was read
@@ -45,7 +29,7 @@ a single module-level history list serialized to a single JSON file, fed to ever
 call; a "session id" that is the calendar date; a confirmation slot keyed by that date, so
 a "yes" typed anywhere approves whatever was pending anywhere else; a model seat stored in
 global settings, so picking a model in one chat repoints every chat; and one boolean in
-the UI meaning "Friday is busy," whose stuckness is the exact hang Stephen hit. Background
+the UI meaning "Friday is busy," whose stuckness is the exact hang the maintainer hit. Background
 work, meanwhile, belongs to nobody: task records carry no owner, completions are delivered
 only to a browser tab that personally witnessed the finish, and the channel built for
 unprompted delivery has produced 43 messages that no client has ever read (**VERIFIED**,
@@ -89,7 +73,7 @@ Standing law, each earned by an incident; §4 maps them to mechanisms:
 4. **Warn before going silent, with a real estimate.** 5. **Report conclusions into the
 conversation unprompted.** 6. **A subsystem that runs and produces nothing is a failure
 even when it exits zero.** And from the judgment-gate work, now law:
-7. **Stephen's explicit instruction outranks the classifier** at the cloud-egress gate —
+7. **The maintainer's explicit instruction outranks the classifier** at the cloud-egress gate —
    this spec must not weaken that, and §3.2's per-conversation seats must not create a
    path around the vault rules (they don't: MC8).
 
@@ -185,7 +169,7 @@ events (`agent.py:3033-3034`) which force-route *any* turn to cloud while CC is 
 | Higgsfield job | N/A — spec only at audit time (build in flight in this tree); its spec *does* mandate boot re-adoption | per its spec | per its spec |
 | Scheduled run | **Yes, by design** — `schedules.json` + due-ness from persisted `last_run_ts`; in-memory `_RUNNING` clears rather than strands | global (`schedule_id`/`run_id`) | self-updating bell entry; deliberately filtered out of chat |
 
-**Stephen's three surviving commissions, adjudicated (his Q6): design at the storage
+**The maintainer's three surviving commissions, adjudicated (his Q6): design at the storage
 layer, luck at the execution layer.** Live proof on disk right now (**VERIFIED**,
 `~/.friday/research/`): the server restarted at 16:44:47 (`friday_server.pid`,
 `friday.log`); commission `7a2fdcb4f468` is frozen at `grinding` (3 findings) and
@@ -334,7 +318,7 @@ different jobs); Q-S2 lets him veto.
 - **Precedence, absolute (MC8):** vault-forced local routing and the judgment gate
   outrank the conversation binding, exactly as they outrank the global seat today — a
   conversation bound to Opus still runs its vault-touching turns locally, with the
-  existing explanation shapes. And Stephen's explicit instruction outranks the
+  existing explanation shapes. And the maintainer's explicit instruction outranks the
   classifier at the gate, unchanged: binding a conversation to a cloud model **is not**
   an explicit egress instruction for vault content; the gate's existing rules decide,
   per payload, as now.
@@ -503,7 +487,7 @@ force-route is *disclosed* in any conversation it redirects.
 | **MC5** | Boot reconciles every persistent store: structured work resumes from its checkpoint; free-form work is reported `interrupted` into its owning conversation with a restart offer. A restart may never silently erase in-flight work from the record |
 | **MC6** | A missing bound model produces a stated choice at dispatch, never a silent fallback (disclosed substitution law) |
 | **MC7** | Confirmations are scoped to the conversation that asked. A "yes" approves only what its own conversation queued |
-| **MC8** | Vault law and the judgment gate outrank any conversation binding and any per-turn override, unchanged — and Stephen's explicit instruction outranks the classifier, unchanged. Per-conversation seats create no new egress path |
+| **MC8** | Vault law and the judgment gate outrank any conversation binding and any per-turn override, unchanged — and the maintainer's explicit instruction outranks the classifier, unchanged. Per-conversation seats create no new egress path |
 | **MC9** | Every cloud call is attributed to its conversation in the cost ledger; the sum is visible before the bill |
 | **MC10** | The reply badge names the model that answered *this* turn, from turn-scoped attribution — never from a module global |
 
@@ -564,7 +548,7 @@ UI changes through `ui_stage.py`.
    message in the store; reload renders it; unread badge counts it.
 8. **Boot reconciliation** — research resume (+ orb registration + empty-dir fix),
    queue `running`→`queued`, ledger `interrupted` notices. **Live acceptance: booting
-   this build on Stephen's machine unfreezes `7a2fdcb4f468` and `b81e25eab743`** — the
+   this build on the maintainer's machine unfreezes `7a2fdcb4f468` and `b81e25eab743`** — the
    frozen commissions are the fixture reality provided. Test (offline): a synthetic
    frozen commission resumes at its recorded stage; an interrupted task's notice
    appears in its owner's store.
@@ -602,7 +586,7 @@ UI changes through `ui_stage.py`.
 
 ---
 
-## 8. Open questions for Stephen
+## 8. Open questions for the maintainer
 
 Each answerable in a sentence.
 

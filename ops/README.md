@@ -1,8 +1,8 @@
 # Agent Friday — local presentation proxy (`agent.friday`)
 
-Presentation infrastructure for the **Thursday July 9 demo**. It makes the browser
+Optional presentation infrastructure for one machine. It makes the browser
 address bar read **`https://agent.friday`** with a clean padlock and no port —
-instead of `localhost:3000`.
+instead of `localhost:3000`. Nothing in the application depends on it.
 
 This lives **beside** the app. It does **not** touch Friday's source, voice code,
 knowledge/galaxy code, or its `:3000` port. It is a hosts entry + a Caddy reverse
@@ -50,10 +50,10 @@ that runs as **SYSTEM** (highest privileges, restart-on-failure). On every boot 
 up on loopback `:443` with the trusted CA. Starts immediately too (no reboot needed).
 
 **Why a scheduled task, not a `sc.exe`/NSSM service:** Caddy has no native Windows
-service interface (needs a wrapper), and `caddy start`/`caddy stop` hang on this box.
+service interface (needs a wrapper), and `caddy start`/`caddy stop` hang on the reference machine.
 A boot task running hidden `caddy run` under a supervising PowerShell loop is
 dependency-free, runs as SYSTEM before login, and lets us fold in the **hosts
-self-heal** (re-check every 30 s; restore from backup if Spybot wipes it) that a bare
+self-heal** (re-check every 30 s; restore from backup if a security tool wipes it) that a bare
 service wrapper couldn't do.
 
 Because the SYSTEM account has its own Caddy storage, the `Caddyfile` pins **machine-wide
@@ -99,15 +99,15 @@ To also delete the downloaded binary, certs, and machine-wide runtime:
 Remove-Item -Recurse -Force $env:USERPROFILE\.friday\proxy, C:\ProgramData\AgentFriday
 ```
 
-## What needed admin elevation (what Stephen approved)
+## What needs admin elevation
 
 All three bring-up actions are per-machine and require an elevated (admin) token;
 UAC prompts once per script run:
 
 1. **Hosts file edit** — `C:\Windows\System32\drivers\etc\hosts` is
    admin-write-only. Adds `127.0.0.1 agent.friday` and `::1 agent.friday`.
-   (On this box the file is also flagged **ReadOnly** by Spybot immunization —
-   the script clears that attribute for the write and restores it after.)
+   (Some anti-malware tools flag the file **ReadOnly**; the script clears that
+   attribute for the write and restores it after.)
 2. **Trusting the local CA** — the script installs Caddy's local root CA into
    the Windows `LocalMachine\Root` store. This is what makes the padlock clean
    with no self-signed warning. (We install it directly via the .NET `X509Store`
@@ -140,21 +140,20 @@ The hosts file is backed up before any edit: a **write-once** `hosts.friday.orig
   upstream restart; stale-keepalive reuse was also tested and auto-recovers, so no
   keepalive change was needed.)
 
-## ⚠️ Spybot & the hosts file (important for the demo)
+## Hosts-file immunization tools
 
-This machine runs **Spybot – Search & Destroy**, whose resident service
-(`SDFSSvc`) keeps the hosts file **ReadOnly** ("immunized") and periodically
-re-asserts it. During setup this was observed to occasionally **reset the hosts
-file** when it was modified rapidly. The scripts defend against this:
+Some anti-malware tools (Spybot's hosts immunization is one) keep the hosts
+file **ReadOnly** and periodically re-assert it, and can reset the file when it
+is modified rapidly. The scripts defend against this:
 
 - they keep a **write-once pristine backup** `hosts.friday.orig` and a rolling
   `hosts.friday.bak`;
 - every write is verified — if it would shrink or empty the file, the script
   **restores from backup and aborts** rather than leave a broken hosts file;
-- they restore the ReadOnly attribute after editing so Spybot stays satisfied.
+- they restore the ReadOnly attribute after editing.
 
-**If `agent.friday` ever stops resolving during the demo** (Spybot reset the
-file), restore it in one line from an elevated PowerShell:
+If `agent.friday` stops resolving because the file was reset, restore it in
+one line from an elevated PowerShell:
 
 ```powershell
 $h="$env:SystemRoot\System32\drivers\etc\hosts"; (Get-Item $h -Force).IsReadOnly=$false; Copy-Item "$h.friday.bak" $h -Force; ipconfig /flushdns
@@ -162,5 +161,5 @@ $h="$env:SystemRoot\System32\drivers\etc\hosts"; (Get-Item $h -Force).IsReadOnly
 
 `hosts.friday.bak` holds the full original list **plus** the `agent.friday`
 block. To restore the pristine list **without** the block, copy `hosts.friday.orig`
-instead. For a rock-solid demo, consider temporarily pausing Spybot's hosts
+instead. For an uninterrupted presentation, consider pausing hosts
 immunization beforehand.

@@ -1,6 +1,8 @@
 # Server Death Forensics - 2026-08-20 incident
 
-**Investigator:** Claude (Cowork session)
+> **Historical record — 2026-08-20.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
+**Investigator:** an engineering session
 **Evidence captured:** 2026-08-20 14:38 - 14:52 local
 **Machine:** the reference workstation
 **Tree:** `C:\Users\<user>\Projects\friday-desktop` (~276 uncommitted files from other sessions; nothing committed, reverted, or cleaned during this investigation)
@@ -316,7 +318,7 @@ disturbed no state. Nothing was committed, reverted, stashed, or cleaned.
 
 # ADDENDUM - Remediation and restoration (2026-08-20 15:20-15:45)
 
-Authorised by Stephen after the Phase 1 report above. **Nothing was committed.**
+Authorised by the maintainer after the Phase 1 report above. **Nothing was committed.**
 
 ## A. Exactly what I changed (for the session landing this tree)
 
@@ -1055,7 +1057,7 @@ permanently broken is not the same as shipping a working feature.
 Also affected: `skills/application_engine/engine.py:28` and `skills/job_scanner/scanner.py:31`
 both import `data.job_tracker_schema`, so the whole subsystem moves or none of it does.
 
-### Options, with trade-offs - Stephen's call
+### Options, with trade-offs - the maintainer's call
 
 **Option 1 - Move `data/` and `skills/` under `src/agent_friday/`.**
 - *For:* actually fixes it; one packaging model; no sys.path shims anywhere.

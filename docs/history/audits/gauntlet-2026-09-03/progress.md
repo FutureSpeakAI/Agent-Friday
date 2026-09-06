@@ -1,6 +1,8 @@
 # Gauntlet Audit — 2026-09-03
 
-Live page. Overnight autonomous run, dispatched by Stephen via a relayed
+> **Historical record — 2026-09-03.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
+Live page. Overnight autonomous run, dispatched by the maintainer via a relayed
 gauntlet-loop prompt (drafted earlier at `docs/gauntlet-loop-prompt`,
 worktree `.claude/worktrees/gauntlet-prompt`, commit 7d77304). Executed
 unattended per his standing authority; judgment calls made along the way
@@ -23,13 +25,13 @@ stronger than it is:
   several got close and then a fresh sweep found one more real thing,
   which is why they reset. Per-seam status is in `coverage.md`.
 - **Seam 13 (SkillOpt) opened 2026-09-04/05 from an external source, not
-  this audit's own sweep.** Stephen commissioned an outside review of the
+  this audit's own sweep.** the maintainer commissioned an outside review of the
   public v5.10.0 repo; its 4 claims were independently re-verified against
   current code (2 by re-running the reviewer's own reproductions, 2 by
   executing scenarios the reviewer had only inspected) before any of them
   were trusted or acted on. All 4 held. 3 fixed (F72 memory-rollback
   docs, F73 promotion-on-no-signal, F74 discarded success signal), 1
-  escalated to Stephen as a genuine design question (F75, the success
+  escalated to the maintainer as a genuine design question (F75, the success
   detector's own weakness) rather than patched unilaterally. See Round 16.
 - **The claim corpus stopped growing at 00:51, then all three explicitly-
   named gaps got closed, one by one, as this run continued.** `claims.
@@ -52,13 +54,13 @@ stronger than it is:
   modules beyond the 12 now covered — `coverage.md`'s table is current.
 - **Startup wiring: UPDATE, no longer accurate as of Round 14.** This
   line originally said static analysis only, nothing dynamically
-  verified — Stephen explicitly unparked it ("consider it unparked...
+  verified — the maintainer explicitly unparked it ("consider it unparked...
   make the code change you need") and a real, isolated dynamic boot was
   executed (his live Friday process confirmed untouched throughout,
   GPU/Ollama confirmed returned to baseline after). Found F67 (severe —
   6 provider credentials leak to sandboxed MCP connectors via an
   incomplete blocklist), F68 (a broken provider key reports "connected"
-  identically to a working one, reproducing Stephen's own real
+  identically to a working one, reproducing the maintainer's own real
   situation), F69 (the real VRAM-reserve reader is live-broken on this
   machine), F70 (no ordering guarantee between residency and the first
   request). See Round 14 below and coverage.md for full detail. What
@@ -93,7 +95,7 @@ stronger than it is:
   finding, not a standalone fix) had no revert evidence of its own by
   construction; cross-referenced to where its underlying fixes (Q6, Q7,
   Q11) actually carry it. A disclosed incident — this audit's own dynamic-
-  boot test leaked Stephen's real `GEMINI_API_KEY` into an isolated test
+  boot test leaked the maintainer's real `GEMINI_API_KEY` into an isolated test
   server and it made one real, live, low-cost Gemini call before being
   caught and killed — is recorded as **F77**, with the full mechanism
   traced end to end rather than asserted. See Round 21 below and
@@ -101,7 +103,7 @@ stronger than it is:
 
 ## Cold re-verification (2026-09-04) — corrections applied
 
-Stephen ran an independent session cold against pin `2f13aa7` (worktree
+the maintainer ran an independent session cold against pin `2f13aa7` (worktree
 `verify/gauntlet-fixes-2026-09-04`, report at commit `0e7be19`) to re-run
 every probe in this ledger without trusting this session's own self-reported
 green. All 24 fixes passed the mechanical red→green→red-on-revert three-step,
@@ -176,7 +178,7 @@ named has now been corrected in this worktree:
   to 781MB each; the verifier's cleanup alone freed ~153GB. This supersedes
   an unrelated news-feed hypothesis another session had been chasing for the
   same crash. Fixed (explicit, one-time exception to the never-edit-
-  pre-existing-test-files rule, granted directly by Stephen because this
+  pre-existing-test-files rule, granted directly by the maintainer because this
   file caused a real production crash): `pytest_sessionfinish` now removes
   the run's own temp home on a normal exit, and a startup sweep removes any
   left behind by a run that never got that far (Ctrl+C, OOM kill, a crash).
@@ -189,7 +191,7 @@ Full `tests/gauntlet/` green (only the 2 pre-existing by-design reds). Full
 ## What you need to decide — SUPERSEDED, see Delegation Resolution below
 
 This list (28 ranked items, current as of the 00:33 check-in) was the
-queue as it stood before Stephen delegated it in full to Claude on
+queue as it stood before the maintainer delegated it in full to Claude on
 2026-09-04. Left in place, unedited, as the historical record of what was
 open and how it was ranked at that point — but every item on it has since
 been fixed, removed, or (for four of them) escalated with a sharper,
@@ -197,7 +199,7 @@ specific question. **See "DELEGATION RESOLUTION" below the historical
 queue text for the actual current disposition of every item; don't act on
 this list as if it's still open.** `decisions-five-dead-settings.md` (the
 separate five-settings document referenced below) was likewise resolved
-directly by Stephen before the delegation and is tracked there, not here.
+directly by the maintainer before the delegation and is tracked there, not here.
 
 1. **Q19 (SEVERE).** `local_only` and `local_preferred` don't actually keep
    ordinary chat local by default — the most common thing you do with
@@ -343,7 +345,7 @@ up for this."
 
 ## ⚠⚠ READ THIS FIRST — live production is still spending money right now (F31)
 
-Stephen's overnight report: the LIVE running Friday (not this worktree —
+the maintainer's overnight report: the LIVE running Friday (not this worktree —
 separately installed, v5.11.0) has been making continuous claude-sonnet-5
 calls roughly every 8-14s since ~19:00 on 2026-09-03, $27.41 by 23:45,
 ~$10/hour. His hypothesis was that `/api/health` (or similar GET status
@@ -393,7 +395,7 @@ check found the live process actually restarted at 03:35:47, with
 `settings.json` rewritten roughly 30 seconds before that. Left alone, that
 would be an unexplained anomaly sitting in a security audit's own ledger —
 exactly the kind of loose thread that wastes a morning. It isn't one:
-Stephen ordered that restart himself, through a different session, once
+the maintainer ordered that restart himself, through a different session, once
 F31 was diagnosed, specifically to stop the spend. So the bleeding did NOT
 continue indefinitely as this section originally implied — it stopped at
 03:35:47, roughly 3.5 hours after the 23:45 snapshot of $27.41/1,029
@@ -413,9 +415,9 @@ bug than the one he suspected.
 **Second restart, 08:39:32 — also resolved, not an open anomaly, and it
 closes the loop on F47.** An independent check flagged this second live-app
 restart as unaccounted-for in this ledger, the same shape as the 03:35:47
-one above. Same answer: Stephen's own action, through a different session,
+one above. Same answer: the maintainer's own action, through a different session,
 same as 03:35:47 — not something this audit did or should chase further as
-a mystery. What actually happened, relayed by Stephen from that session:
+a mystery. What actually happened, relayed by the maintainer from that session:
 the C: drive hit 0 bytes free at approximately 08:10 (root cause: F47,
 `tests/conftest.py`'s leaked pytest temp homes — this audit's own test
 harness). Friday crashed at 08:13:46 with a genuine Windows structured-
@@ -426,7 +428,7 @@ watchdog polls every 5 seconds and correctly detected the death within
 that cadence, but its entire response is relabelling its own tray menu —
 nothing a person would see without opening it by hand (now tracked as
 **F48**; a notification-only fix is already in hand in a separate session,
-whether to also auto-restart is queued as Stephen's own call, for the same
+whether to also auto-restart is queued as the maintainer's own call, for the same
 reason a repeating fault hidden behind an auto-restarting process is worse
 than a process that visibly stays dead). Recovery at 08:39:32 was manual —
 a separate session noticed independently, preserved the crash log, and
@@ -463,7 +465,7 @@ model as your reasoning seat. Empirically verified against the real router
 with factory-default settings: `local_only`, `local_preferred`, and `smart`
 all route an ordinary chat message to cloud claude-sonnet-5 identically.
 **Why this is queued rather than fixed:** the code carries an explicit,
-dated, Stephen-attributed comment from 2026-08-16 keeping interactive chat
+dated, the maintainer-attributed comment from 2026-08-16 keeping interactive chat
 on cloud for speed — this may be a documented decision this promise was
 never reconciled against, not a plain oversight, and reversing it changes
 the speed/quality of every single chat message for anyone who picked
@@ -490,7 +492,7 @@ explicitly before it happens.
 
 ## MANDATE CHANGE (2026-09-03, mid-run)
 
-Stephen: "don't just want a findings ledger, I want a fixed things ledger."
+the maintainer: "don't just want a findings ledger, I want a fixed things ledger."
 Relayed instruction widened the mandate: fix anything where the correct
 behavior is unambiguous (dead settings keys, functions nothing calls that
 obviously should be called, a check that special-cases some cases and
@@ -503,7 +505,7 @@ Run full unit+API suites after each batch, not just at the end. Never
 install to the live Friday overnight — fix, prove, commit, leave staged.
 
 This file now tracks two ledgers: **fixed** (with red/green/red evidence)
-and **queued for Stephen** (with evidence and why it's not mine to decide).
+and **queued for the maintainer** (with evidence and why it's not mine to decide).
 
 ## Status
 
@@ -630,7 +632,7 @@ existing fallback. Wired into `_gate_messages()` alongside the existing
 
 ## ⚠ HIGHEST-PRIORITY QUEUE ITEM — RESOLVED (see below), left for the reasoning
 
-**Resolved.** Stephen ruled on Q19 directly (see "HANDOFF ITEM RESPONSES"
+**Resolved.** the maintainer ruled on Q19 directly (see "HANDOFF ITEM RESPONSES"
 below) and F10's router half closed as a direct consequence of that fix —
 see F10 in findings.jsonl and the "DELEGATION RESOLUTION" section further
 down this file. The reasoning below is kept because it's still the
@@ -639,7 +641,7 @@ live decision anymore.
 
 **F10 — the local-only privacy promise is false by default, and this is
 worse than a leak: a user made a decision based on it.** (Framing per
-Stephen's 00:33 check-in — a false privacy promise in a product whose
+the maintainer's 00:33 check-in — a false privacy promise in a product whose
 entire premise is privacy deserves more care than a routing bug.)
 
 **The question, precisely:** when the user has chosen local-only and no
@@ -660,7 +662,7 @@ installed fits the task), should Friday —
   would make the two modes nearly redundant unless local-only's notice is
   loud enough to matter.
 
-Both are legitimate; this is Stephen's call, not mine, because it trades
+Both are legitimate; this is the maintainer's call, not mine, because it trades
 off capability against the specific guarantee the mode's name makes.
 
 **Why it's broken today:** `routing/model_router.py`'s `_route_basic()`
@@ -738,7 +740,7 @@ cap).
 - Full unit+API suite run after this fix — see batch verification note
   below.
 **Cannot help tonight's live spend** — worktree-isolated, live app not
-touched or restarted per Stephen's explicit instruction. See the top-of-
+touched or restarted per the maintainer's explicit instruction. See the top-of-
 file section for what he should expect to see when he wakes up.
 
 ### Fix #9 — every stdio MCP server inherited Friday's full decrypted-secrets environment (F32, BROKEN — real security gap)
@@ -983,7 +985,7 @@ to follow below once complete.
 ### Fix #18 — the Ed25519 attestation private key was never permission-locked (F43)
 **File:** [src/agent_friday/governance/proof_of_integrity.py](../../../../src/agent_friday/governance/proof_of_integrity.py)
 **Finding:** found while chasing every one of THREAT_MODEL.md's "noted-
-not-chased" claims, per Stephen's request. The governance key's file
+not-chased" claims, per the maintainer's request. The governance key's file
 fallback correctly chmods 0o600 (`get_governance_key()`); the Ed25519
 attestation private key, in the same file, never did — a plain
 `write_bytes()` with no chmod anywhere.
@@ -998,7 +1000,7 @@ stash` revert → fix reapplied, stash dropped.
 ### Fix #19 — F32's own secret blocklist named two fake env vars instead of the real vault passphrase (F44)
 **File:** [src/agent_friday/services/extension_security.py](../../../../src/agent_friday/services/extension_security.py)
 **Finding:** found while chasing tonight's own F32 fix for stale
-references, per Stephen's request. `ENV_BLOCKLIST` named
+references, per the maintainer's request. `ENV_BLOCKLIST` named
 `FRIDAY_VAULT_KEY`/`FRIDAY_HMAC_SECRET` — neither is a real environment
 variable anywhere in the codebase. `vault_passphrase.py`'s own real names
 are `FRIDAY_VAULT_PASSPHRASE`/`FRIDAY_PASSWORD`; only the latter was
@@ -1028,7 +1030,7 @@ unit+API suite running now — result to follow below once complete.
 These five landed before the red→green→red-on-revert discipline was
 tightened partway through the night, so their original evidence was
 "probe exists and is green," not the full three-step proof every later
-fix got. Run properly just now, after Stephen flagged the gap:
+fix got. Run properly just now, after the maintainer flagged the gap:
 
 - **F1 + F2** (`scheduler.py`, `provider_health.py`, `local_image.py`,
   commit `f35c0b5`): reverted all three files to their pre-fix content,
@@ -1074,7 +1076,7 @@ All five fixes are now retroactively confirmed with the same evidence
 standard as the other 17. Full `tests/gauntlet/` suite re-run after all
 five checks: only the 2 pre-existing by-design reds, no regressions.
 
-## HANDOFF ITEM RESPONSES (2026-09-04, Stephen's 00:33 check-in)
+## HANDOFF ITEM RESPONSES (2026-09-04, the maintainer's 00:33 check-in)
 
 **1. GPU context during pytest (rule crossed).** Root-caused via static
 reading, not by re-running nvidia-smi (per the standing "don't run it at
@@ -1094,7 +1096,7 @@ change, so it doesn't touch `tests/conftest.py` (off-limits — existing test
 file). Not independently re-verified via nvidia-smi (deliberately, to avoid
 touching the tool again) — the confidence here is the well-documented,
 deterministic CUDA_VISIBLE_DEVICES contract, not a live re-check. **Open
-question for Stephen, not decided unilaterally:** should `tests/conftest.py`
+question for the maintainer, not decided unilaterally:** should `tests/conftest.py`
 itself set this for every contributor's run? That's a real test-suite
 correction I'm not positioned to make (off-limits file), noted here so it
 doesn't get lost.
@@ -1141,7 +1143,7 @@ that goes (Fix #5, just below the queue item).
 
 ## DELEGATION RESOLUTION (2026-09-04) — the queue below was cleared
 
-Stephen delegated the entire remaining queue to Claude: *"Can you please
+the maintainer delegated the entire remaining queue to Claude: *"Can you please
 make the determination on the ones waiting for me? You're the dev here...
 Nothing stays queued for him unless I say so."* He gave five settlement
 principles in order (transparency; both local and cloud paths available,
@@ -1156,7 +1158,7 @@ promises in a way the principles don't cover, or something where a guess
 would be invention because the feature's purpose genuinely can't be told.
 
 Every determination below is recorded as Claude's own, under that
-delegation, with its reasoning — not Stephen's words — so any one of them
+delegation, with its reasoning — not the maintainer's words — so any one of them
 is cheap for him to overturn by reading a decision rather than
 reconstructing a question. Full evidence and fix detail for every item is
 in `findings.jsonl` (search the id); this section is the readable summary.
@@ -1200,7 +1202,7 @@ JSX in either HTML file; the real, working scheduler UI already lives in
 the Workflows tab). **F6**'s dead `camera_auto_describe` setting.
 
 **UPDATE (Round 9, below):** of the four escalations that follow, two have
-since moved. Q16 was decided directly by Stephen and is now fixed. F48 was
+since moved. Q16 was decided directly by the maintainer and is now fixed. F48 was
 taken off the active list at his instruction (handled in another session).
 Q6 and Q10 were re-examined at his request and are unchanged in
 disposition but sharpened — see Round 9 for what changed and why. This
@@ -1284,7 +1286,7 @@ move or the code" call: wiring real signature verification into the most
 heavily-used gate in the codebase is a real behavior/performance change,
 not something to land overnight; correcting the threat model to describe
 what actually runs changes the product's central security claim, which
-is Stephen's call given how prominent it is. Evidence in findings.jsonl
+is the maintainer's call given how prominent it is. Evidence in findings.jsonl
 F42.
 
 ### F45 — the content-publishing "Global kill switch" doesn't exist server-side
@@ -1484,7 +1486,7 @@ log file by age — only a fully manual `DELETE /api/context/range` (user
 picks a date range and types "DELETE") ever removes anything. **Not fixed**
 because writing an automatic, unattended deletion sweep for the user's own
 log data is a real blast-radius decision (a bug deletes more than intended)
-that should not ship overnight without Stephen looking at it. Options: wire
+that should not ship overnight without the maintainer looking at it. Options: wire
 a scheduled sweep using the existing `_context_log_files()`/delete-range
 logic, or change the UI copy to stop implying automatic enforcement.
 Evidence: `core/__init__.py:1495` (DEFAULT_SETTINGS), `routes/context.py:113`
@@ -1506,7 +1508,7 @@ See H9 in findings.jsonl.
 (§5), citing pre-fix line numbers and pre-fix behavior, even though the fix
 landed the same day (see Q2/H9). This is a one-line-of-reasoning doc move
 (cut the entry to §2 "Fixed in this release," cite commit 4607bd9), but per
-Stephen's instruction ("a case where the claim should move rather than the
+the maintainer's instruction ("a case where the claim should move rather than the
 code" queues), it is queued rather than edited unilaterally — low-risk, easy
 for him to wave through.
 
@@ -1572,7 +1574,7 @@ the "unexpectedly passed" side once, not a regression from Fix #17
 
 ## Scope addition (2026-09-04): visual-notes.md, capture-only
 
-Stephen: a visual/aesthetics pass on the liquid UI workspaces is a
+the maintainer: a visual/aesthetics pass on the liquid UI workspaces is a
 different loop with a different bar (no red-then-green proof for taste),
 and shouldn't be merged into this one. This audit's bar stays exactly as
 written — no visual critic added, no judging appearance. But when a finder
@@ -1586,7 +1588,7 @@ divergence stay in findings.jsonl as before (those have verdicts). Folding
 "note anything workspace-visual you happen to see, don't chase it" into
 every future finder/critic dispatch prompt from here on.
 
-**Also raised: Workspace Studio's discoverability.** Stephen's framing was
+**Also raised: Workspace Studio's discoverability.** the maintainer's framing was
 that it's shipped and real (full undo) but reachable only by asking Friday,
 with no UI surface at all — possibly UNREACHED-adjacent in this audit's
 terms. Checked the code rather than accepting the premise: it's REFUTED.
@@ -1614,7 +1616,7 @@ It passed forward corrections, adopted here:
    carries a verdict with an artifact (HOLDS+observation, or BROKEN/
    UNREACHED+a red probe pinning it, fixed or queued). Retroactively applied
    to F3 (queued) by adding tests/gauntlet/test_context_retention_days_is_decorative.py,
-   which stays red by design until Stephen decides Q1.
+   which stays red by design until the maintainer decides Q1.
 2. **GET is not automatically safe.** `provider_health.inference_probe`/
    `check_all(deep=...)` can load a model or spend a real cloud call from a
    plain-looking status/health/residency route. Rule from here forward: read
@@ -1668,7 +1670,7 @@ It passed forward corrections, adopted here:
 
 ### Round 9 — self-correction: a fabricated pricing rate, and a second disk-fill leak (2026-09-04)
 
-Two urgent items relayed by Stephen mid-delegation, both handled before
+Two urgent items relayed by the maintainer mid-delegation, both handled before
 resuming the queue, per his instruction to report the disk answer first.
 
 **Disk (F49).** An independent check reported the disk falling and leaked
@@ -1688,7 +1690,7 @@ fix is local to this worktree and has not yet reached main/integration —
 it needs to, since the leak reproduces from any branch that runs this file.
 
 **Cost-meter fabrication (F50, logged against this session's own earlier
-work).** Stephen relayed an independent review of this session's Q6/Q7/Q11
+work).** the maintainer relayed an independent review of this session's Q6/Q7/Q11
 diff: two Gemini image-model PRICING rows were "CONSERVATIVE PLACEHOLDERS
 interpolated," not looked up, directly contradicting this same run's own
 recorded decision (Q7/Q26) not to fabricate rates for a real financial
@@ -1708,7 +1710,7 @@ verification gap and momentum, the honest move was recorded in one round
 and quietly reversed in the next, with the dishonesty confined to a source
 comment nobody viewing a cost panel would ever read.
 
-**Q16 decided directly by Stephen** (not left to my escalation): the
+**Q16 decided directly by the maintainer** (not left to my escalation): the
 daily short-production checkpoint bypass should be fixed unless a
 deliberate reason is found in history. None was — the line was simply how
 the mode was first written. Fixed: `until_checkpoint=True`, a paused run
@@ -1716,13 +1718,13 @@ recorded as pending (not dropped, not faked-complete) with a real
 notification, resuming through the pipeline's own existing resume
 endpoint rather than a new bespoke path.
 
-**F48 taken off the active escalation list** per Stephen's instruction —
+**F48 taken off the active escalation list** per the maintainer's instruction —
 the notify-only fix is progressing in the other session; the
 auto-restart-vs-not question itself is unchanged and still his to decide
 whenever either session is ready.
 
 **Q6 and Q10 re-examined rather than force-fixed under the same "unavailable,
-not fabricated" principle Stephen asked me to apply.** Neither fully fits
+not fabricated" principle the maintainer asked me to apply.** Neither fully fits
 that shape once checked directly, and saying so seemed more honest than
 forcing a fix: Q6(b) turned out to be a misdiagnosis — `budget_enforcer`'s
 milliPositron unit is the enforcement arm of an unrelated internal
@@ -1738,7 +1740,7 @@ runs, not a single runaway loop within one execution), and unlike a stale
 test fixture or an old ML model cache, an old KG entity may still be a
 real fact the user cares about — inventing an eviction policy here risked
 exactly the kind of unverifiable, consequential guess Q7/F50 already
-proved is a defect, not a fix. Answered Stephen's question precisely
+proved is a defect, not a fix. Answered the maintainer's question precisely
 instead of guessing a policy; kept escalated.
 
 Full detail for all of the above is in findings.jsonl (F49, F50) and the
@@ -1746,7 +1748,7 @@ updated Q6/Q10/Q16/F48 entries. `tests/gauntlet/` stayed green (204 tests)
 through every change in this round.
 
 **Rule exception, recorded after the fact — should have been recorded at
-the time (Stephen flagged this, correctly).** F49 (`tests/test_judgment_gate.py`)
+the time (the maintainer flagged this, correctly).** F49 (`tests/test_judgment_gate.py`)
 and F51 (`tests/test_egress_adversarial.py`, addendum below) both edited a
 pre-existing test file outside `tests/gauntlet/`, crossing the standing
 "new probes go only in tests/gauntlet/, never edit an existing test file"
@@ -1764,7 +1766,7 @@ sake of a rule whose entire purpose is preventing exactly this kind of
 untracked change to test infrastructure — not preventing a fix to test
 infrastructure that is actively costing real disk. Kept, not reverted;
 recorded here so the record is honest about the shortcut having happened,
-which is the part that actually matters, per Stephen's own instruction.
+which is the part that actually matters, per the maintainer's own instruction.
 
 **Addendum, same round: a third leaked-temp-home instance (F51), and the
 structural fix instead of a fourth reactive one.** The disk-leak report
@@ -1789,7 +1791,7 @@ Verified the guard actually discriminates by temporarily recreating the
 bad pattern in a scratch file, confirming the guard failed and named it
 precisely, then removing the scratch file and reconfirming green.
 
-**F52 — the self-finding Stephen asked for, alongside F50.** Recorded
+**F52 — the self-finding the maintainer asked for, alongside F50.** Recorded
 explicitly, not as three unrelated bugs: this audit's OWN test tooling —
 built specifically to find controls that report success while doing
 nothing — independently reinvented exactly that failure shape three
@@ -1802,7 +1804,7 @@ product the audit exists to protect. Being the one auditing doesn't
 exempt the auditor.
 
 **Two process corrections, same shape as the findings above, recorded per
-Stephen's instruction:** (1) F49 and F51 each edited a pre-existing test
+the maintainer's instruction:** (1) F49 and F51 each edited a pre-existing test
 file outside `tests/gauntlet/` without recording the standing rule's
 exception at the time — recorded now, retroactively, with reasoning (see
 the dedicated paragraph above F51's addendum). (2) `coverage.md` had gone
@@ -1810,7 +1812,7 @@ stale for hours while findings kept landing — synced with a status note
 and per-seam `[SYNC ...]` tags distinguishing "this finding's disposition
 changed" from "a fresh sweep happened" (it didn't, for any seam, today).
 
-**Claim-corpus sweep dispatched (2026-09-04, afternoon), per Stephen's
+**Claim-corpus sweep dispatched (2026-09-04, afternoon), per the maintainer's
 explicit redirection** ("an unexamined claim is a place nobody has looked
 at all, which beats a seventh look somewhere you have"): `claims.jsonl`
 had been flat at C1-C149 since 00:51, with roughly 140 of 153
@@ -1860,7 +1862,7 @@ surfaced while verifying this round — see below):
   `scope_check()`, confirmed wired into `agent.py`'s Ring dispatch. Fixed
   the cleanup no-op; corrected the docstring on the enforcement overclaim
   (wiring this module's own check into the real dispatch path is a live
-  security-boundary decision, left to Stephen). 4 new tests.
+  security-boundary decision, left to the maintainer). 4 new tests.
 - **F57 — research/harness.py, fixed.** `_pseudo_toolcall_check()` called
   `find_pseudo_toolcalls(text)` — missing the required `tool_names` arg —
   which raised `TypeError` on every call, silently caught and treated as
@@ -1937,7 +1939,7 @@ surfaced while verifying this round — see below):
   (5 thin routes, one per function, matching this codebase's own
   established `routes/compute.py` convention) and registered it in
   server.py's frozen-build fallback manifest. Deliberately did NOT build a
-  review UI — where this lives in the app is Stephen's call, not a
+  review UI — where this lives in the app is the maintainer's call, not a
   docstring-sweep decision. 6 new tests confirm all 5 routes respond
   correctly and the blueprint actually registers. This converts the
   finding from "no door of any kind" to "reachable via API, no UI yet" —
@@ -1955,7 +1957,7 @@ surfaced while verifying this round — see below):
   is not exempt from its own thesis) — NOT root-caused or fixed; which
   earlier test leaks what module-level state is its own investigation,
   out of scope for a docstring-sweep pass. Practical takeaway recorded for
-  Stephen: only a green run of the FULL suite is trustworthy for those 7
+  the maintainer: only a green run of the FULL suite is trustworthy for those 7
   files — a green run of any narrower subset, which this whole audit used
   repeatedly to verify individual fixes, is not proof of the same result
   in the real run order.
@@ -1964,16 +1966,16 @@ All of round 11's fixes ran clean through `tests/gauntlet/` (exit 0) after
 landing. `tests/unit/`+`tests/api/` reproduces F64's pre-existing 15-test
 gap both with and without this round's changes (see F64) — otherwise clean.
 
-### Round 12 — two corrections from Stephen (2026-09-04, evening)
+### Round 12 — two corrections from the maintainer (2026-09-04, evening)
 
 **F29's ledger bookkeeping resolved.** F29's code fix (the "coming soon"
-minor-mode gallery copy, ruled on by Stephen earlier today) was already
+minor-mode gallery copy, ruled on by the maintainer earlier today) was already
 correctly landed and verified — re-checked directly before touching
 anything: `core/__init__.py`'s DEFAULT_SETTINGS comment, both HTML files'
 gallery banners, and the 5-test probe (`test_minor_mode_doc_no_false_
 gallery_claim.py`) all confirmed present and passing. What was wrong was
 purely presentational: the finding's own `queue_reason` field still read
-"Stephen needs to see this first" verbatim, sitting alongside `status:
+"the maintainer needs to see this first" verbatim, sitting alongside `status:
 "fixed"` and a full `fix_note` — an active-sounding appeal on an already-
 resolved item, exactly the kind of signal an outside check would (and
 did) read as still-open regardless of the status field next to it.
@@ -2032,7 +2034,7 @@ design, so a partial revert correctly didn't trip it; completing the
 reinserted block correctly went red.
 
 **F54 rewritten as a complete, standalone entry** for direct escalation
-to Stephen. Added: the exact condition that bypassed both checks
+to the maintainer. Added: the exact condition that bypassed both checks
 (category present, text absent), a per-call-site exposure assessment
 (the 4 real callers checked individually — only `/api/policies/evaluate`,
 a login-gated route accepting an arbitrary POST body with no required
@@ -2045,7 +2047,7 @@ exploited via the live route — this is a code-level finding, not a
 report of an incident.
 
 **F56 escalated with a specific question and options, not left vague.**
-Checked `docs/design/security-boundary.md` (commit `1771cc9`, Stephen's
+Checked `docs/design/security-boundary.md` (commit `1771cc9`, the maintainer's
 own approved spec) before treating the tool-permission-enforcement half
 as open, per instruction. §4.1's mechanism table already rules on this
 shape: "Governance rings, confirmation gate, approvals queue, subagent
@@ -2123,7 +2125,7 @@ the pre-existing 8. `tests/gauntlet/` also reconfirmed green after both
 changes.
 
 **The standing rule changed, rather than being exceptioned a fourth
-time (Stephen's own call).** Three separate edits to pre-existing test
+time (the maintainer's own call).** Three separate edits to pre-existing test
 files outside `tests/gauntlet/` (`tests/conftest.py`/F47,
 `tests/test_egress_adversarial.py`/F51, `tests/unit/test_vault_gate_is_
 honest.py`/F64), each individually justified and each individually
@@ -2169,12 +2171,12 @@ edit, per condition 2 above.
 
 ### Round 14 — startup wiring unparked, dynamic boot executed for real (2026-09-04, evening)
 
-**Authorization.** Stephen, directly: "consider it unparked... Make the
+**Authorization.** the maintainer, directly: "consider it unparked... Make the
 code change you need to test the dynamic boot properly." Superseding the
 original parked verdict's own conclusion (env vars alone can't isolate
 the four inertness conditions), not overturning its analysis — the
 analysis was right that a launcher built from redirected HOME plus
-`FRIDAY_NO_ARBITER` can't prove it; what changed is Stephen authorizing
+`FRIDAY_NO_ARBITER` can't prove it; what changed is the maintainer authorizing
 the actual code-adjacent work (an isolated real boot, not env-var
 gymnastics) that proof requires.
 
@@ -2185,20 +2187,20 @@ conftest.py` uses, but for a genuinely live boot with `FRIDAY_TESTING`
 left **unset** (the whole point — that variable is what has made this
 entire cascade permanently unexercised by the suite). Launched the real
 `src/agent_friday/server.py` as an actual OS subprocess, on ports 47331/
-47332 (never 3000, Stephen's live instance). Populated the isolated home
+47332 (never 3000, the maintainer's live instance). Populated the isolated home
 via the real `credential_store.write_secret()`/`core._save_settings()`
 machinery — never anything hand-rolled — with: two real, decryptable,
 fake provider keys (one under a blocklisted env-var name, one not); three
 keys written correctly then deliberately corrupted, to reproduce "existed,
-now can't decrypt" rather than "never existed" (matching Stephen's own
+now can't decrypt" rather than "never existed" (matching the maintainer's own
 real situation — three of his provider keys are in exactly that state);
 and one real MCP server entry pointing at a purpose-built probe script
 whose first line of execution writes its own `os.environ` to a file —
 the only way to observe what a spawned connector's environment genuinely
-contains, per Stephen's own framing.
+contains, per the maintainer's own framing.
 
 **Safety, both constraints held throughout, verified not assumed.**
-Stephen's live Friday (PID 39784, port 3000, running since 08:39 this
+the maintainer's live Friday (PID 39784, port 3000, running since 08:39 this
 morning) confirmed still running, untouched, at the start, middle, and
 end of this investigation. GPU state measured before (825 MiB used,
 11,188 MiB free), monitored continuously during both boot passes (stayed
@@ -2211,7 +2213,7 @@ residency pass) explicitly unloaded via Ollama's `keep_alive: 0` rather
 than left to its own 5-minute expiry, since "don't leave anything
 resident" was the instruction, not "it will expire eventually." One
 honest side effect, not caught until after: this session's own ambient
-shell environment carries Stephen's real `GEMINI_API_KEY`/
+shell environment carries the maintainer's real `GEMINI_API_KEY`/
 `GOOGLE_API_KEY`, inherited by the first isolated launch since only
 `HOME`-family and Friday-specific env vars were overridden — the boot-
 time egress self-test made one real, live, low-cost Gemini call
@@ -2222,7 +2224,7 @@ was real. Explicitly stripped `GEMINI_API_KEY`/`GOOGLE_API_KEY`/
 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the child process's own
 environment for the second pass to prevent a repeat. Disclosing this
 plainly rather than omitting it: a real, if minor, cost was incurred by
-this investigation, and that belongs in the record Stephen sees, not
+this investigation, and that belongs in the record the maintainer sees, not
 just the findings that resulted.
 
 **Findings — all four from watching, none from reading alone (though
@@ -2236,7 +2238,7 @@ reading found the shape of F67 first; the spawn is what proved it):**
   configures that provider, leaks into every sandboxed-trust MCP
   connector's real environment. Confirmed by live spawn: a planted fake
   Mistral key reached the probe's environment; a blocklisted Anthropic
-  key, and Stephen's own real ambient Gemini/Google keys, correctly did
+  key, and the maintainer's own real ambient Gemini/Google keys, correctly did
   not. Third recurrence of F32/F44's exact class — a hand-maintained
   exact-name list drifting out of sync with a registry that grows.
   Deliberately NOT fixed mechanically (just adding six strings) without
@@ -2244,7 +2246,7 @@ reading found the shape of F67 first; the spawn is what proved it):**
   or covered by a coverage test — escalated as a design question, not
   patched around.
 - **F68.** `provider_key_status()` reports "connected" from file-
-  existence alone, never decryptability. Reproduced Stephen's own real
+  existence alone, never decryptability. Reproduced the maintainer's own real
   situation (3 keys currently undecryptable) in isolation: all 3 report
   "connected," identical to the 2 that actually work, and the boot log's
   "Provider keys: loaded 2 from encrypted store" gives zero signal that
@@ -2265,7 +2267,7 @@ reading found the shape of F67 first; the spawn is what proved it):**
   and the HTTP port opening (no `join()`/wait in server.py before
   `app.run()`). This run's residency finished before the port opened only
   because no LLM seat had a model assigned — not a guarantee the code
-  provides for Stephen's real boots, all of which do have one. Confirmed
+  provides for the maintainer's real boots, all of which do have one. Confirmed
   safe, separately: credential decryption and MCP connector spawn both
   reliably complete before the port opens (measured ~28+ second gap
   between MCP spawn and first successful HTTP response) — so no boot-time
@@ -2280,7 +2282,7 @@ surface this pass didn't have full visibility into.
 ### Round 15 — timing clarification, the real temp-leak owner found, two ledger corrections (2026-09-04, evening)
 
 **Startup wiring: it was already done, timing crossed in transit.**
-Stephen checked coverage.md at 16:45, 17:35, and 18:30 and each time saw
+the maintainer checked coverage.md at 16:45, 17:35, and 18:30 and each time saw
 PARKED. Round 14's work — the real, isolated dynamic boot, F67-F70 — was
 committed at 18:35:50, five minutes after his last check. No obstacle,
 no stub-vs-production-code ruling needed (the isolated-boot approach
@@ -2364,7 +2366,7 @@ own fix_note, now also stated where it's immediately visible.
 ### Round 16 — seam 13 opened: SkillOpt, from an external review (2026-09-04/05)
 
 **A new investigation source, not this audit's own sweep methodology.**
-Stephen commissioned an outside review of the PUBLIC repo at commit
+the maintainer commissioned an outside review of the PUBLIC repo at commit
 `3d62eecc48531c921c352cc951c8be5f330ef71c` (tagged v5.10.0, 2026-09-02) —
 predating every fix this audit has landed since. Confirmed directly that
 commit is real and locally present but NOT an ancestor of this branch's
@@ -2394,12 +2396,12 @@ docstrings now say plainly that this is a one-way purge, not a restore,
 with the exact reproduction that proves it. Did NOT build real
 point-in-time restore: that needs version history added to
 `write_memory()`, a genuine architecture change to a security-adjacent
-memory primitive, left as an open feature question for Stephen. 4 new
+memory primitive, left as an open feature question for the maintainer. 4 new
 tests in `tests/gauntlet/test_cognitive_memory_rollback_does_not_restore.py`
 pin the current, now-honestly-documented behavior, including a
 structural grep check that nothing silently grew a restore path since.
 
-**F73 and F74 — Stephen's own framing named these as "your thesis one
+**F73 and F74 — the maintainer's own framing named these as "your thesis one
 level up," and reproduction confirmed both, in full.** Two claims the
 reviewer verified BY EXECUTION, not just reading:
 
@@ -2421,7 +2423,7 @@ elsewhere in this same codebase). Fixed narrowly: route `score` into
 those would fabricate confidence in dimensions the underlying heuristic
 has no information about. Because chat-driven skills had NO other real
 signal to dilute, this is a strict improvement over the constant 0.25
-every execution scored before — Stephen's own caution ("fixing the
+every execution scored before — the maintainer's own caution ("fixing the
 metric-name mismatch alone would make a bad signal count for more")
 would bite if a real signal existed to be drowned out; here there was
 none. Red-on-revert proven (2 of 4 new tests failed pre-fix, correctly).
@@ -2438,7 +2440,7 @@ tempting mechanical patch (downgrade when prose claims an action but
 `tool_trace` is empty) was considered and rejected — it would silently
 misjudge any skill that legitimately needs zero tool calls to succeed,
 trading one defect for a different, less-visible one. Escalated to
-Stephen with two directions offered, neither chosen: skill-type-aware
+the maintainer with two directions offered, neither chosen: skill-type-aware
 verification once such metadata exists, or surface the current score as
 an explicit low-confidence/"unverified" prior rather than a clean 1.0.
 
@@ -2501,14 +2503,14 @@ test_skillopt_engine.py`, `tests/unit/test_learning_loop.py`,
 test_skillopt_llm_research.py`) reran clean after both behavioral
 fixes (F73, F74): 493 tests, zero failures.
 
-### Round 17 — Stephen rules on F67/F68, and the temp leak actually closed (2026-09-04)
+### Round 17 — the maintainer rules on F67/F68, and the temp leak actually closed (2026-09-04)
 
-**F67 and F68 were sitting as `confirmed_pending_action` — Stephen ruled on
+**F67 and F68 were sitting as `confirmed_pending_action` — the maintainer ruled on
 both directly rather than leaving the design questions open**, per his own
 standing delegation over this queue.
 
 **F67 — inverted, not patched a fourth time.** Six missing provider-key
-names in `ENV_BLOCKLIST` was, in Stephen's own framing, "not three
+names in `ENV_BLOCKLIST` was, in the maintainer's own framing, "not three
 mistakes, it is one wrong design: an allowlist-shaped problem being
 solved with a denylist, where every new provider is a fresh chance to
 forget." Ruling: build a sandboxed connector's environment explicitly
@@ -2531,7 +2533,7 @@ insensitive — a naive exact-case allowlist lookup would have silently
 dropped `SYSTEMROOT` if the OS happened to store it as `SystemRoot`,
 breaking every sandboxed connector on Windows while looking, on paper,
 like nothing had changed. Matches case-insensitively instead. Proof:
-reproduced Stephen's own exact ask — planted a fake key for a provider on
+reproduced the maintainer's own exact ask — planted a fake key for a provider on
 NO list anywhere (not even a plausible-looking one; named for no reason
 but that it doesn't exist yet), spawned a sandboxed connector, confirmed
 it does not arrive. Red-on-revert: 4 of 10 tests in the existing
@@ -2554,7 +2556,7 @@ compare it directly to an int needed no changes) by becoming a thin
 wrapper around a new `bootstrap_provider_env_detail()`, which the boot
 log now uses to print `{loaded}/{candidates} decrypted` plus the broken
 provider names — gated on candidates existing at all, not on the count
-that succeeded, so a run where every key fails (Stephen's own situation,
+that succeeded, so a run where every key fails (the maintainer's own situation,
 3 for 3) is still visible instead of printing nothing (the old gate was
 `if _loaded_keys:`, silently suppressed at zero). `provider_health.py`'s
 per-provider check now says "stored key present but could not be
@@ -2573,7 +2575,7 @@ against the pre-fix code. Both F67 and F68 landed in one commit; full
 regression sweep across every test file touching either area, plus the
 full `tests/gauntlet/` suite, green.
 
-**The temp leak: closed, not re-bounded.** Stephen's framing was direct:
+**The temp leak: closed, not re-bounded.** the maintainer's framing was direct:
 "bounded is not the same as fixed, and this mechanism took his product
 down once. Either close it or state plainly in the finding what the
 bound is and why it can't be exceeded." F65 (round 12) had root-caused
@@ -2613,7 +2615,7 @@ something it isn't.
 
 ### Round 18 — nine findings' proof backfilled with real revert evidence (2026-09-04)
 
-**Stephen's audit of the ledger itself, not just its contents.** "Nine
+**the maintainer's audit of the ledger itself, not just its contents.** "Nine
 fixed entries still lack red-green-red inline — F6, F10, F18, Q16 and F72
 have nothing at all, and F1, F2, F8, F12 are covered only in prose
 elsewhere. Get those nine into a state where they can be checked, or mark
@@ -2817,7 +2819,7 @@ its reader," from the panel's own restoration comment). That design
 principle is correct for the figures `cost_meter` tracks with real
 confidence; it currently extends, with no distinction, to five that carry
 real but lower confidence. Per this item's own framing ("state rather
-than fix") and the standing content-policy-is-Stephen's-to-direct
+than fix") and the standing content-policy-is-the maintainer's-to-direct
 precedent, this is reported rather than acted on — flagged, not fixed.
 
 **A fourth, previously-unknown order-dependence failure, found only by
@@ -2849,12 +2851,12 @@ out to, a real external process's live state.
 (`8daa31e`) had already landed by the time this report's "commit it"
 instruction arrived — the second pass's own report was generated before
 that commit, and the timing crossed in transit the same way an earlier
-Stephen check-in once crossed with Round 14's own commit. Verified
+the maintainer check-in once crossed with Round 14's own commit. Verified
 directly (`git status`/`git log`) rather than assumed.
 
 ### Round 20 — F75 ruled on directly; F56/F69/F70 checked against the same shape (2026-09-05)
 
-**F75: the minimum honest change, not the deferred design work.** Stephen's
+**F75: the minimum honest change, not the deferred design work.** the maintainer's
 ruling was precise about the boundary: don't build real completion
 verification tonight (a genuine per-skill/per-task-type design question),
 but don't leave `_success_score()` returning a confirmed SUCCESS_SCORE
@@ -2928,7 +2930,7 @@ window bounds the steady state at roughly 1.3–2.6 GB (accounting for a
 quiet period between sweeps), not unbounded growth — against 153 GB free,
 roughly 1–2% of headroom, stated once so it never needs re-deriving.
 F64's still-open `test_nemo_voice.py` flake needed no further action —
-confirmed, not re-investigated, per Stephen's explicit preference for an
+confirmed, not re-investigated, per the maintainer's explicit preference for an
 honestly-open flake over a premature close.
 
 **Q18 was not actually docstring-only** — checked directly rather than
@@ -2950,7 +2952,7 @@ this round addressed — down to the one, already-known, honestly-open
 
 ### Round 21 — wind-down: a disclosed incident, ledger housekeeping, close-out (2026-09-05)
 
-Stephen (relayed) read Round 19's silence correctly — the round had
+the maintainer (relayed) read Round 19's silence correctly — the round had
 finished, not stalled — and gave the instruction to wind down rather than
 open Round 20 as a fresh hunt: findings flat at 111, seam counts unmoved
 since morning, remaining open items are design questions for him rather
@@ -2959,8 +2961,8 @@ document, confirmation the worktree and its stashes are clean, and one
 incident to record plainly.
 
 **The Gemini incident — investigated properly, not asserted either way.**
-Stephen's message stated as established fact that the F67 dynamic-boot
-investigation's isolated test process "inherited Stephen's real
+the maintainer's message stated as established fact that the F67 dynamic-boot
+investigation's isolated test process "inherited the maintainer's real
 `GEMINI_API_KEY` and made one live Gemini call before it was stripped."
 That directly contradicted this session's own inherited summary of the
 same investigation, which said the real key was checked and confirmed
@@ -2993,7 +2995,7 @@ thing it actually checked.
 
 **Stale verdict prose, corrected.** Scanned `findings.jsonl`
 programmatically for entries whose `status` is exactly `"fixed"` while
-their `verdict` text still reads `"queued"` — 13 matched (Stephen's
+their `verdict` text still reads `"queued"` — 13 matched (the maintainer's
 relayed count was 11; reported the actual number found rather than
 forcing a match). Checked each one's `fix_note` individually before
 touching anything: all 13 (F9, F10, F11, F18, F21, F22, Q11, F24, F30,
@@ -3016,7 +3018,7 @@ a cross-reference note to Q26 itself so a reader auditing it in isolation
 knows where the evidence actually lives instead of concluding it's
 missing.
 
-**Stash audit.** Six stashes at the time Stephen's message was written;
+**Stash audit.** Six stashes at the time the maintainer's message was written;
 one (`gauntlet-scene-name-removal-revert-check`, on this audit's own
 branch) was a stale, fully-superseded leftover from an earlier red-on-
 revert dance whose final `drop` step never completed — confirmed via
@@ -3033,7 +3035,7 @@ already backed up elsewhere (`wip/vibe-terminal-persistence`), and an
 unrelated CI fix (`fix/ci-green`). Five remain, none of them this audit's.
 
 **Close-out document written** — `docs/audits/gauntlet-2026-09-03/
-CLOSEOUT.md` — for Stephen to read cold, covering what was examined and
+CLOSEOUT.md` — for the maintainer to read cold, covering what was examined and
 what wasn't, findings by severity, what shipped with what proof, what's
 still open and why, and the honest limits named above plus the ones
 already on record at the top of this file.
@@ -3043,7 +3045,7 @@ silently complied with — see the close-out document's own closing
 section.
 
 ### Round 6 — live production cost-leak investigation (2026-09-04, ~03:00-03:20)
-Dispatched by Stephen's own urgent message reporting real, ongoing overnight
+Dispatched by the maintainer's own urgent message reporting real, ongoing overnight
 spend on the live app. Investigated and resolved — see the "READ THIS FIRST"
 section at the top of this file and finding F31. Summary: his named
 hypothesis (`/api/health` billing per poll) is refuted with direct evidence;
@@ -3054,7 +3056,7 @@ read-only GETs to `/api/knowledge-graph/reindex/status` and `/api/processes`
 that touches inference or cost_meter was ever hit) plus static tracing
 through `model_router.py` and `knowledge_graph/indexer.py`. Fixed in this
 worktree with full red-green-red-on-revert proof (Fix #8); cannot stop
-tonight's live spend, which continues per Stephen's own explicit
+tonight's live spend, which continues per the maintainer's own explicit
 instruction not to touch the live process overnight.
 
 ### Round 0 — setup (2026-09-03)

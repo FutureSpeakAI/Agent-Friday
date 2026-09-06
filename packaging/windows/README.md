@@ -1,6 +1,7 @@
 # Agent Friday — Windows installer
 
-For Stephen. This is the maintainer's document; it is not what she sees.
+The maintainer's guide to the installer: how it is built, its design rules,
+and its layout. It is not what the person installing Friday sees.
 
 ---
 
@@ -24,8 +25,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
 Produces `dist\AgentFriday-Setup-<version>.zip`, about 21 MB. That zip is the
-thing you send. She unzips it anywhere and double-clicks
-**Install Agent Friday.cmd**. Nothing else is needed on her machine.
+thing you send. The user unzips it anywhere and double-clicks
+**Install Agent Friday.cmd**. Nothing else is needed on their machine.
 
 The build needs no Python of its own — it uses the embeddable interpreter it
 just downloaded to build the wheels. It **aborts** rather than producing a
@@ -63,9 +64,9 @@ interpreter and asking it its version, platform and `sys.path` — a Microsoft
 Store stub would sail through a `Test-Path`. Ollama is verified by locating and
 running the binary, not by trusting the installer's exit code.
 
-**2. She never sees a stack trace, a path, or an exit code.**
+**2. The user never sees a stack trace, a path, or an exit code.**
 
-Two output channels. `Say-*` is hers: plain English, one sentence, always with
+Two output channels. `Say-*` is the user's: plain English, one sentence, always with
 something she can do. `Write-Log` is yours: everything, ugly, complete.
 
 **3. No output ever names a secret — not its value, and not its name.**
@@ -104,7 +105,7 @@ to remove itself is not removable in practice.
 | `lib/Heal.ps1` | Bounded self-repair. Read the header before changing anything. |
 | `tests/Test-Installer.ps1` | 82 assertions. |
 
-Installed layout on her machine, all under `%LOCALAPPDATA%\AgentFriday`:
+Installed layout on the user's machine, all under `%LOCALAPPDATA%\AgentFriday`:
 `app\` (the source tree), `python\` (private interpreter), `logs\`, `cache\`,
 `tools\`, `install-manifest.json`, and four `.cmd` launchers.
 

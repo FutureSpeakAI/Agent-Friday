@@ -1,14 +1,19 @@
 # One tool registry — how filesystem action works on every surface
 
-**Date:** 2026-08-25
-**Branch:** `higgsfield-integration`
-**Status:** design, with the first increment BUILT (§7). The rest is specified, not built.
-**Commit state (2026-08-25 10:25):** all of §7 is committed — §7.4–§7.6 as `b1fe0d0`,
-§7.1–§7.3 as `50b98ce`. The parallel session's governance-ring fix landed alongside as
-`e4a3b3c` (see §2.2 and §9a). The voice pair could not be split: `routes/voice.py`
-imports `_voice_tool_names` from `voice_engine.py`, so committing the latter alone would
-have left HEAD with an `ImportError` and an unregistered voice blueprint — verified by
-parsing HEAD and diffing it against the seventeen symbols the import names.
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/voice_engine.py`, `routes/voice.py`
+> **Supersedes / superseded by:** depends on [`context-assembly.md`](context-assembly.md) §3.1–§3.7
+> **Written:** 2026-08-25
+
+## Implementation notes
+
+- §7 (the first increment) is built and committed: the voice surface resolves out of the registry (`_VOICE_SHARED_TOOLS` / `_voice_shared_tool_specs()` in `services/voice_engine.py`), the prompt is generated from the resolved surface, voice tool calls emit process orbs, a missing dependency removes a tool from the registry, and silent tool loss is loud.
+- §9 lists what is not built: deleting `== AVAILABLE TOOLS ==` from the system prompt, trim-before-generate, the drift test, `NON_BLOCKING` for slow voice tools, unified `_voice_tool_run` dispatch, and extending `_VOICE_SHARED_TOOLS`.
+- §1, §8 and §9a are the investigation record from 2026-08-24/25 (a stale process, a restart mid-verification, withdrawn claims); read them as history, not current state.
+
+---
+
 **Scope:** the tool surface across all four model/modality combinations — local model
 and cloud model, text and voice — and specifically how local filesystem action works
 for a cloud model given the egress gate.
@@ -27,7 +32,7 @@ CORE/DEFERRED split and seat arithmetic, which stand unamended.
 
 ## 0. The answer, up front
 
-**Stephen's question was "is this Friday, or Gemini, or both?" The answer is Friday,
+**The maintainer's question was "is this Friday, or Gemini, or both?" The answer is Friday,
 almost entirely.** Gemini's Live API did what it was told. It was told about nine tools
 and it called two of them. Everything else Friday narrated, she narrated because her
 system prompt told her she had roughly thirty-five tools and her actual surface
@@ -46,7 +51,7 @@ file never appeared on the desktop.
 > capability whose dependency is missing is **absent from the registry**, not present
 > and broken.
 
-Stephen asked for that position to be tested rather than agreed with. §5 tests it. Three
+The maintainer asked for that position to be tested rather than agreed with. §5 tests it. Three
 of its four clauses survive intact. The fourth — "each surface derives by explicit
 policy" — needs one amendment: the policy must be a *filter over the registry*, never a
 *second list*, because a second list is exactly what the voice surface already was.
@@ -57,7 +62,7 @@ policy" — needs one amendment: the policy must be a *filter over the registry*
 
 ### 1.1 The running process was 21 hours stale
 
-At the time Stephen's transcript was produced, the process serving Friday was PID 28404,
+At the time the maintainer's transcript was produced, the process serving Friday was PID 28404,
 `venv\Scripts\python.exe server.py`, started **2026-08-24 11:49:44** (**MEASURED**,
 `Get-CimInstance Win32_Process` + `Get-NetTCPConnection` on port 3000).
 
@@ -77,7 +82,7 @@ That process therefore did *not* contain:
 | five privacy fixes | committed 08-25 07:37–08:08 | no |
 | New Chat fix | committed 08-25 08:08 | no |
 
-Stephen hard-reloaded the browser for a frontend fix. A hard reload replaces the client;
+The maintainer hard-reloaded the browser for a frontend fix. A hard reload replaces the client;
 it does not replace the Python process. **The first correct answer to a large part of
 that transcript was "restart", not "redesign."**
 
@@ -110,7 +115,7 @@ can write files, has exactly one move left. It says "writing that to your deskto
 (`routes/voice.py:1784`), and the gate logs every call (**VERIFIED**). That makes
 `friday.log` a complete per-call receipt for the voice surface.
 
-For the whole of Stephen's session, the log contains (**MEASURED**):
+For the whole of the maintainer's session, the log contains (**MEASURED**):
 
 ```
 08:18:03 ALLOW provider=google-gemini field=live.tool.navigate_workspace tier=TIER_1
@@ -119,21 +124,21 @@ For the whole of Stephen's session, the log contains (**MEASURED**):
 08:24:07 ALLOW provider=google-gemini field=live.tool.navigate_workspace tier=TIER_1
 ```
 
-Four calls. Two tool names. **Exactly the two Stephen confirmed worked.** There is no
+Four calls. Two tool names. **Exactly the two the maintainer confirmed worked.** There is no
 `live.tool.read_file`, no `live.tool.search_wiki`, no `live.tool.write_file`, because
 those tools were never declared and so could never be called. Every other action in that
 transcript was narration.
 
 ### 1.4 Correction to a lead: orbs are not the ground truth on voice
 
-Stephen's premise was that a process orb appears whenever a tool executes, so no orb
+The maintainer's premise was that a process orb appears whenever a tool executes, so no orb
 means nothing ran. **The premise does not hold on the voice surface.** `voice_engine.py`
 and `routes/voice.py` contained **zero** calls to `process_register` / `process_update` /
 `process_log` (**MEASURED**, grep). The text agent loop has emitted an orb per tool call
 for a long time (`agent.py::_orb_tool_trace`); the Gemini Live path emitted none.
 
 So orb-absence was not evidence of non-execution — it was evidence of nothing at all. The
-conclusion Stephen drew was right; the instrument he drew it from was not connected. The
+conclusion the maintainer drew was right; the instrument he drew it from was not connected. The
 egress log was the real receipt. §7.3 connects the instrument.
 
 ### 1.5 The wiki search did not fail — it never ran
@@ -186,7 +191,7 @@ Two things in that table are worth pausing on.
 **First, the local voice surface was more capable than the cloud voice surface.**
 `/ws/voice-local` runs the ordinary agent pipeline, so it had `read_file` and
 `write_file` all along. The Gemini Live surface — the better model, the nicer voice, the
-one Stephen actually uses — was the impoverished one. Nobody decided that.
+one the maintainer actually uses — was the impoverished one. Nobody decided that.
 
 **Second, the local text seat's trimming is severe and was measured today**
 (**MEASURED**, `friday.log`):
@@ -311,7 +316,7 @@ it cannot take screenshots, which is true.
 
 ---
 
-## 4. Where Stephen's starting position needs amending
+## 4. Where the maintainer's starting position needs amending
 
 He proposed four clauses. Testing each:
 
@@ -351,7 +356,7 @@ the ordering. §9 item 2.
 
 ## 5. Filesystem access for a cloud model, given the egress gate
 
-This is the part Stephen asked to be checked rather than assumed, and the code is
+This is the part the maintainer asked to be checked rather than assumed, and the code is
 already right — it just was not reachable from voice.
 
 **The shape is: the tool executes locally; only its result is tier-gated.** Concretely,
@@ -388,7 +393,7 @@ permitted) and then be told most of the result was withheld. That is the system 
 
 ## 6. Async, and why `NON_BLOCKING` is not the fix
 
-Stephen's hypothesis was that a model firing a call and continuing to talk is a
+The maintainer's hypothesis was that a model firing a call and continuing to talk is a
 configuration error, not a capability limit. Reasonable, and worth stating why it is not
 what happened here.
 
@@ -467,7 +472,7 @@ so a *deny* reads as a deny, not a success), and tier-redact args and results th
 `_tier_safe_summary` because `/api/processes` is readable without the vault. The orb
 lingers six seconds so a sub-second call is still seen.
 
-Stephen's instrument now measures what he believed it measured: **an announced action
+The maintainer's instrument now measures what he believed it measured: **an announced action
 with no orb is narration, provably.**
 
 ### 7.4 Missing dependency ⇒ absent from the registry (R5)
@@ -542,7 +547,7 @@ Verified live against the running process (**MEASURED**):
 * `http://127.0.0.1:8090/v1/models` returns `gemma4:12b`, capabilities
   `["completion","multimodal"]`.
 
-**Correction to how `:8090` behaves** (Stephen, 2026-08-25, superseding the working
+**Correction to how `:8090` behaves** (the maintainer, 2026-08-25, superseding the working
 assumption used earlier in the day). The seat is a **child of the Friday server**, not an
 independent process. It died with the tray tree and came back on its own this boot. The
 earlier characterisation — "it does not come back with the app" — was true of *some*
@@ -573,18 +578,13 @@ as "working", and `answering:` is the field that makes the difference checkable.
 **What this invalidates:** one conclusion, and it is a conclusion about the *present*,
 not about the transcript. "The running process does not contain yesterday's voice fixes,
 so restart before redesigning" was true when I checked and is false now. It remains the
-correct explanation of what Stephen experienced — the transcript was produced by the
+correct explanation of what the maintainer experienced — the transcript was produced by the
 stale process, and §1.3's four log lines are from that process.
 
 **What survives unchanged:** everything else. §1.5 in particular — the wiki search never
 ran — never depended on the seat's state, because `_tool_search_wiki` never touches a
 seat. The nine-tool measurement is from `git show HEAD:` and the historical log, not from
 live state.
-
-**One caveat I owe Stephen.** He restarted for his own reasons; my edits went live as a
-side effect, mid-verification. They are sound — §7.7 exercised the handlers directly and
-the live `/api/health/capabilities` response proves the import path is clean — but they
-reached production without his sign-off, which is not how I would have sequenced it.
 
 ---
 
@@ -668,7 +668,7 @@ rule that fails the same way twice is a rule with a gap in it, not a discipline 
 
 ---
 
-## 10. Open questions for Stephen
+## 10. Open questions for the maintainer
 
 - **Q1.** `run_command` on the voice surface: deliberately excluded. Shell execution from
   a speech recogniser, with homophones, is a different risk class. Agree, or do you want

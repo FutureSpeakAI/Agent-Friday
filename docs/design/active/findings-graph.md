@@ -1,6 +1,13 @@
 # A findings graph for Friday
 
-**Status:** design only. Nothing here is built. Written 2026-08-23.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-23
+
+---
+
 **Scope constraint, firm:** no graph database. Files, `jq`, and Git.
 **Source:** *Graph Engineering: A Crash Course*, read in full 2026-08-23.
 
@@ -221,7 +228,7 @@ Permitted `anchor.kind`:
 - `third_party_error` — an error string produced by software we did not write.
   llama.cpp's *"image input is not supported — hint: you may need to provide the
   mmproj"* is worth more than any amount of my reasoning about `--mmproj`.
-- `human_observation` — Stephen saw it. Named as an anchor because it is one.
+- `human_observation` — the maintainer saw it. Named as an anchor because it is one.
 
 Explicitly **not** anchors: another session's summary, a previous finding, an
 audit document, anything I wrote. A finding whose anchor cites another finding

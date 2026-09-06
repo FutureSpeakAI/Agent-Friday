@@ -1,86 +1,37 @@
 # Headroom — the machine stays usable while Friday works
 
-**Date:** 2026-09-04
-**Branch:** `docs/headroom-spec`, off `integration/release-2026-09-03` @ `f000f07`. **Doc-only.
-Pre-approved for build: a Sonnet 5 session executes §12 after this lands.**
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~Nothing in this document exists yet
-unless marked VERIFIED.~~ **BUILT — all six phases of §12's handover shipped**, on branch
-`feat/headroom-build`, merged into release integration at `177f47b`: Phase 1 `machine_monitor`
-(read-only, `aafd813`), footprints/measured VRAM + the `verdicts()` measure job (`1985653`),
-Phase 3 `plan_chain` — the chain planner (`56751b2`, and see [`residency-policy.md`](residency-policy.md)'s
-corrected status for the **HR1/HR2/HR8/HR10/HR16/HR18** rules this phase added to that file),
-Phase 4 the Settings surface (`bf14f5b`), Phase 5 intrusion-response hooks from the monitor to the
-Arbiter (`baaeb98`), Phase 6 the onboarding hook — `starter_set`, HR15 (`badaa12`). Two
-allocator/display-reserve bugs found during the build were fixed in the same branch (`bb698f1`,
-`f84a4c8`). Verified present in the current tree: `services/gpu_headroom.py` (171 lines),
-`services/headroom_contract.py` (121 lines), the live route `GET /api/gpu/headroom`
-(`routes/research.py:162`), and three dedicated test files
-(`tests/unit/test_headroom_contract.py`, `tests/unit/test_headroom_surface_verdicts.py`,
-`tests/api/test_headroom_settings_surface.py`). Stephen's original ask — hardware-specific model
-fetching surfaced in Settings, and headroom measurement so the machine stays usable while local
-models juggle — is the thing that shipped, not a description of something planned.
-**Note for anyone tempted to search for a gap here by the word "headroom":** there is an
-unrelated third-party package, `headroom-ai` (context-*compression*, integrated into the chat
-pipeline back in June — `services/prompt_cache.py`/chat integration commits `7a8d7e1`/`99796a1`),
-whose native Rust core has its own separate, pre-existing Windows-toolchain limitation. That is a
-different subsystem under the same word and has nothing to do with the GPU/machine-headroom
-system this document specifies — don't conflate the two if you see "0% saved" mentioned elsewhere;
-it refers to the compression package, not to anything in this document.
-**Subject:** Stephen, 2026-09-04, verbatim:
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/machine_monitor.py`, `services/gpu_headroom.py`, `services/headroom_contract.py`, `services/residency_policy.py` (`plan_chain`, rules HR1/HR2/HR8/HR10/HR16/HR18), `routes/research.py` (`GET /api/gpu/headroom`)
+> **Supersedes / superseded by:** extends [`residency-policy.md`](residency-policy.md)
+> **Written:** 2026-09-04
 
-> *"you know, maybe hardware-specific model fetching is a function we should add to the Friday
-> desktop settings menu!"*
+## Implementation notes
 
-and, sharpening it:
+All six phases of §12 shipped (merged at `177f47b`): the read-only machine monitor, footprints and measured VRAM with the `verdicts()` measure job, the chain planner, the Settings surface, intrusion-response hooks from the monitor to the Arbiter, and the onboarding `starter_set` hook (HR15). Tests: `tests/unit/test_headroom_contract.py`, `tests/unit/test_headroom_surface_verdicts.py`, `tests/api/test_headroom_settings_surface.py`. Read everything marked PROPOSED below as built unless a note says otherwise.
+Not the same thing: the third-party `headroom-ai` package (context *compression*, `services/prompt_cache.py`) shares the word and nothing else; "0% saved" elsewhere refers to that package.
+Subject (the maintainer, 2026-09-04): *"maybe hardware-specific model fetching is a function we should add to the Friday desktop settings menu"* and *"we need to ensure the user's machine runs capably for at least surface level work while Friday does stuff with local models … headroom measurement is vital."*
+Inherits, and does not restate: [`residency-policy.md`](residency-policy.md) (HardwareProfile, CatalogEntry, `plan()`, R1–R11, fixtures P1–P6, the lease model); [`symphony-of-intelligence.md`](symphony-of-intelligence.md) §2.4–2.5; [`../audits/model-suite-determination.md`](../../history/audits/model-suite-determination.md) (a seat reads 1,229 MiB idle and 9,652 MiB exercised — measure under load); [`../audits/residency-implementation-report.md`](../../history/audits/residency-implementation-report.md) §7 (grant 37.96 s, release 47.98 s); [`../contracts/roles-and-model-identity.md`](../../reference/roles-and-model-identity.md); [`vault-first-onboarding.md`](vault-first-onboarding.md) §2.4 and Q-V9; `KNOWN_ISSUES.md` §1.
+Method: ground truth read from the codebase at `f000f07` first, evidence stated with provenance, simulated disagreement (§10), cited synthesis.
 
-> *"we need to ensure the user's machine runs capably for at least surface level work while
-> Friday does stuff with local models, including juggling local models such as a user, engaging
-> a local voice model and then executing against the outputs with a local reasoning model, which
-> then fires a workflow with local image or video models, etc ... so: headroom measurement is
-> vital."*
-
-**Method:** STORM — ground truth read from the codebase first (§2), the week's evidence stated
-with its provenance (§3), simulated disagreement at full strength (§10), cited synthesis. Every
-claim about the tree was checked on 2026-09-04 at `f000f07` unless marked otherwise. No code was
-run, no GPU was touched, nothing under `Friday-Models` was opened.
-
-**Inherits, and does not restate:**
-
-- [`residency-policy.md`](residency-policy.md) — HardwareProfile, CatalogEntry, the pure
-  `plan()`, rules **R1–R11**, the six fixtures P1–P6, and the Arbiter's lease model. **This
-  document is an extension of that one.** Where it changes a rule it says so by number.
-- [`symphony-of-intelligence.md`](symphony-of-intelligence.md) — §2.4 the lease model and
-  latency classes; §2.5 the 53-second rule, which is the origin of the work queue.
-- [`../audits/model-suite-determination.md`](../../history/audits/model-suite-determination.md) — the
-  finding this document leans on hardest: **a seat reads 1,229 MiB idle and 9,652 MiB
-  exercised.** Measure under load, never at idle.
-- [`../audits/residency-implementation-report.md`](../../history/audits/residency-implementation-report.md)
-  §7 — the only measured lease transitions: **grant 37.96 s, release 47.98 s.**
-- [`../contracts/roles-and-model-identity.md`](../../reference/roles-and-model-identity.md) — the
-  two alias tables and the rule that a residency class is not a model count.
-- [`vault-first-onboarding.md`](vault-first-onboarding.md) §2.4 and Q-V9; and
-  the onboarding-interview design (an unpublished working note) (branch
-  `worktree-spec-onboarding-interview`, `1c22361`, not on this branch) §16.2 (V1–V3) and D5. §9
-  here supplies what those two documents ask for from the hardware side.
-- `KNOWN_ISSUES.md` §1 — the invisible-success failure class. §2.9 of this document lists three
-  live instances found on the way.
+---
 
 **Evidence registers**
 
 - **VERIFIED** — the cited file/line was read during this audit, 2026-09-04, at `f000f07`.
 - **MEASURED** — a number produced by a stated method, by a named prior session, in a cited
   document or source comment. None were re-measured here.
-- **REPORTED** — a number relayed in the brief for this document from Stephen's own week. Not
+- **REPORTED** — a number relayed in the brief for this document from the maintainer's own week. Not
   in the tree, not re-measured. Used as design evidence, labelled as such every time.
 - **INFERRED** — a conclusion from verified facts, reasoning shown.
 - **UNKNOWN** — not determined; the check that would settle it is named.
-- **PROPOSED** — design in this document. Nothing marked PROPOSED exists.
+- **PROPOSED** — design in this document as written on 2026-09-04; subsequently built (see the notes above).
 
 ---
 
 ## 0. The position, up front
 
-**Stephen is asking for something smaller than what already exists, on top of something that
+**The maintainer is asking for something smaller than what already exists, on top of something that
 does not exist at all.** Both halves matter, and the second is the work.
 
 1. **The measuring machinery is largely built — for text.** A detected, cached HardwareProfile
@@ -89,7 +40,7 @@ does not exist at all.** Both halves matter, and the second is the work.
    lines, `tests/golden/residency/P1–P6.json`); an Arbiter that owns llama-server processes and
    grants exclusive leases with timeouts and rollback (`services/residency_arbiter.py`, 1,624
    lines); a catalog of VRAM measured at stated contexts (`residency_catalog.SEED_MEASUREMENTS`);
-   a pause forecaster that warns before silence with the three-way choice Stephen approved
+   a pause forecaster that warns before silence with the three-way choice the maintainer approved
    (`services/pause_forecast.py`); a work queue with an idle-aware drain (`services/work_queue.py`);
    and a Settings panel called **THE MACHINE** that already draws the VRAM bar with a reserve
    marker (`index.html:33019`). All **VERIFIED**. "Hardware-specific model fetching in Settings"
@@ -103,7 +54,7 @@ does not exist at all.** Both halves matter, and the second is the work.
      *total*, never from what is *available* right now (§2.3). Disk is checked against a cached
      figure on whichever volume holds the model store, while the incident that took the live
      app down this week filled the *system* volume with something that was not a model (§2.4).
-   - **No notion of a chain.** A lease is one thing taking the card. The sequence Stephen
+   - **No notion of a chain.** A lease is one thing taking the card. The sequence the maintainer
      described — speak, transcribe, reason, render, speak back — is four or five stages with
      different residency needs, and today each would take and release its own lease with the
      brain reloading between them, or be refused outright by `_local_brain_ready()` while an
@@ -130,13 +81,13 @@ does not exist at all.** Both halves matter, and the second is the work.
    decision removed from `model_plan._BRAINS`; and the Settings panel draws a 1 GB reserve the
    planner does not use.
 
-**What only Stephen decides** is in §13. The largest is D1: the default posture, which is a
+**What only the maintainer decides** is in §13. The largest is D1: the default posture, which is a
 trade between Friday's quality and the user's machine, and on his own card it means the
 resident brain is smaller than the one he runs today (§6.3, §14.4).
 
 ---
 
-## 1. What Stephen asked for, itemised
+## 1. What the maintainer asked for, itemised
 
 | # | Ask, in his words or close to them | Where answered |
 |---|---|---|
@@ -163,7 +114,7 @@ resident brain is smaller than the one he runs today (§6.3, §14.4).
 | `services/residency_arbiter.py` | Boots to plan; `grant("heavy_turn" \| "image_job")` with serial lock, timeouts derived from `est_load_s`, rollback; `admit()` runs R2+R8 before a load; `_ours_resident_mib()` for the display probe | `local_image.generate`, `work_queue.drain`, `routes/residency.py` | VERIFIED |
 | `services/gpu_headroom.py` | `check(need_mib)` and `display_at_risk()` against a **fixed 1,024 MiB** reserve; **only reports, never evicts** | `/api/intelligence` machine panel, `scheduler.py` away-drain (`check(6000)`), `research/harness.py` | VERIFIED |
 | `services/pause_forecast.py` | "Will Friday go quiet, for how long, how sure" — `local_turn`, `heavy_lease`, `image`, `drain`; confidence + basis; the three-way options | `/api/work/forecast`, `routes/chat.py:634`, `local_image.generate` (eta on the orb) | VERIFIED |
-| `services/work_queue.py`, `workflow_plan.py` | Classes `reflex/interactive/heavy/image/background`; dispositions `when_away/now_local/now_cloud`; `idle_seconds()`, `is_away()`; proposals Friday raises and Stephen decides | `scheduler.py`, `/api/work/*`, chat UI | VERIFIED |
+| `services/work_queue.py`, `workflow_plan.py` | Classes `reflex/interactive/heavy/image/background`; dispositions `when_away/now_local/now_cloud`; `idle_seconds()`, `is_away()`; proposals Friday raises and the maintainer decides | `scheduler.py`, `/api/work/*`, chat UI | VERIFIED |
 | `services/model_plan.py` | The Gemma-4 `_BRAINS` ladder with **measured** `vram_gib`; `plan()` returns tiers with `ready/install/refused` and the rule; `FLOOR_MODEL` derived | `cli.cmd_models`, `install.ps1` (by copy), `core.DEFAULT_SETTINGS` | VERIFIED |
 | `services/model_setup.py`, `model_store.py` | Install reports success only when the daemon lists the tag; Friday's own GGUF store reads facts from headers | CLI, Arbiter (`gguf_models`) | VERIFIED |
 | `services/local_image.py` | Z-Image Turbo FP8 and SD 3.5 Medium via ComfyUI under the exclusive lease; `licence` field on SD 3.5; cancel as a job flag | `creative_engine.generate_image` | VERIFIED |
@@ -189,7 +140,7 @@ Every one of these is "how much VRAM the desktop keeps." **VERIFIED**, each at i
 | `residency_policy.VRAM_RESERVE_MIB` (R3) | 1,024 | `gpu_budgets`, *on top of* the baseline | buffers and slack in the plan |
 | `model_plan.DISPLAY_RESERVE_GIB` | 2.5 GiB | installer ladder pick, `friday models` | which rung is offered |
 
-**INFERRED, and this is the finding:** on Stephen's single-monitor 4070 the planner refuses to
+**INFERRED, and this is the finding:** on the maintainer's single-monitor 4070 the planner refuses to
 plan below **2,560 + 1,024 = 3,584 MiB** of headroom, the Settings panel tells him the reserve
 is **1,024**, and the gate that actually stands between a lease and the display driver accepts
 **256 MiB** free. The 2026-08-17 monitor loss happened at 322 MiB free
@@ -211,7 +162,7 @@ a different field of the same name).
 
 **INFERRED:** a user with a browser holding 8 GB, a game, or a second Friday is invisible to the
 RAM rule. The rule protects the machine from Friday's own resident set, not from Friday's
-resident set *plus the user's day*. R2 is necessary and not sufficient for R2 in Stephen's sense.
+resident set *plus the user's day*. R2 is necessary and not sufficient for R2 in the maintainer's sense.
 
 ### 2.4 Disk: three checks, one cached figure, and the wrong volume
 
@@ -249,7 +200,7 @@ which is why §12 sequences measurement before planning.
 
 ### 2.6 What the chain does today, stage by stage
 
-Take Stephen's sentence literally on P1 with the code as it stands:
+Take the maintainer's sentence literally on P1 with the code as it stands:
 
 1. **Speak.** `routes/voice.py:902` refuses a local session unless `_local_brain_ready()` names a
    `reasoning` seat (**VERIFIED**). So a voice session presupposes a resident brain.
@@ -327,7 +278,7 @@ one-line change this document does not make.
 
 ## 3. The week's evidence, and what it changes
 
-**REPORTED, from the brief.** A training run held **11,928 of 12,282 MiB** on Stephen's RTX
+**REPORTED, from the brief.** A training run held **11,928 of 12,282 MiB** on the maintainer's RTX
 4070. It did not fail. Step time went from **~7 s to ~57 s**. The GPU drew **51 W of 200 W**
 while reporting **100 % utilisation** — cores stalled on memory — and the kernel logged repeated
 residency failures as Windows paged allocations in and out. **354 MiB** was the difference
@@ -510,7 +461,7 @@ Rules that make this honest rather than decorative:
 - **HR2** — no surface renders a single combined "compatible / incompatible". Three axes, or
   nothing. The one-word summary is permitted only as the *worst* of the three, with the axis
   named ("Degraded — RAM").
-- **HR16** — `licence` is shown and never enforced. Stephen's standing rule: build the dial, he
+- **HR16** — `licence` is shown and never enforced. The maintainer's standing rule: build the dial, he
   points it (`feedback_content_policy_is_stephens_to_direct`). FLUX's output restriction is
   a `ready-but`, worded from the licence text, with the URL.
 - A `degraded` on *runs well* still offers the fetch, with the reason on the button. The user
@@ -521,9 +472,9 @@ Rules that make this honest rather than decorative:
 | Modality | Measurement job | Who runs it | Register |
 |---|---|---|---|
 | Text | Exists: daemon `/api/ps` at stated `num_ctx`, plus **a load sample** — the arbiter records `nvidia-smi` `memory.used` delta mid-generation on first use of each seat (the 1,229 vs 9,652 lesson) | Arbiter, automatically, on first use | PROPOSED extension |
-| Image | Under `image_job`: `nvidia-smi` sample at the render's midpoint, ComfyUI start wall-clock, render wall-clock at 1024², steps as configured; per model in `local_image.MODELS` | **Requires the GPU. Not the Sonnet session's to run** — recorded by Stephen or a GPU-permitted session, then committed to `SEED_MEASUREMENTS` with the workflow named. Until then the image seat is `unknown` and the surface says so | PROPOSED |
+| Image | Under `image_job`: `nvidia-smi` sample at the render's midpoint, ComfyUI start wall-clock, render wall-clock at 1024², steps as configured; per model in `local_image.MODELS` | **Requires the GPU** — recorded on a GPU-equipped machine, then committed to `SEED_MEASUREMENTS` with the workflow named. Until then the image seat is `unknown` and the surface says so | PROPOSED |
 | Video | No local backend; no row. A candidate (LTX, Wan) gets a `declared` row with `requires` from its card only when a backend exists to serve it. Until then the chain's video stage is cloud, and the surface says "video runs in the cloud on every machine today" | — | PROPOSED; §14.2 |
-| STT / TTS | `host_ram_mib` from the server's RSS delta across `WhisperASR.load()` / `PiperTTS.load()`; RTF already measured; NeMo tier declared `vram_min_mib: 4096` from `MIN_VRAM_GB` | Sonnet session can measure host RAM on CPU without a GPU | PROPOSED |
+| STT / TTS | `host_ram_mib` from the server's RSS delta across `WhisperASR.load()` / `PiperTTS.load()`; RTF already measured; NeMo tier declared `vram_min_mib: 4096` from `MIN_VRAM_GB` | Measurable on CPU without a GPU | PROPOSED |
 | Embed | Exists (`qwen3-embedding:0.6b` 2,029 MiB); `all-MiniLM-L6-v2` 90 MB declared (`model_plan.EMBEDDER`) | — | VERIFIED |
 
 **HR6** — an idle reading is never written as a footprint. The `measured_at` field is written
@@ -531,7 +482,7 @@ only by a job that ran the model.
 
 ---
 
-## 6. Chains — planning the sequence Stephen described
+## 6. Chains — planning the sequence the maintainer described
 
 ### 6.1 The shape
 
@@ -593,7 +544,7 @@ Numbers are P1 measurements carried across as `residency-policy.md` §5 does; im
 arithmetic with a 2,560 Windows display reserve and the 1,024 R3 reserve; the live figure will
 differ and the planner's is authoritative.
 
-**P1 — RTX 4070 12,282 / 32 GB DDR4 (Stephen).** Available ≈ 12,282 − 1,024 − 2,560 =
+**P1 — RTX 4070 12,282 / 32 GB DDR4 (the maintainer).** Available ≈ 12,282 − 1,024 − 2,560 =
 **8,698 MiB**. `gemma4:12b` at 32k (7,718) + `gemma4:e2b` (1,811) = 9,529 **does not fit under
 an honest reserve** (MEASURED, `model-suite-determination` memory, 2026-08-18). The honest
 resident pair is `e4b` (3,081) + `e2b` (1,811) = 4,892, leaving 3,806.
@@ -618,11 +569,11 @@ image** → tts. Honest and complete; nothing stands down.
 Z-Image measures near the "~8,000" figure, the image stage **fits beside the brain** with no
 eviction — which is a change to **R5** ("image takes an exclusive lease"): under this document
 the lease is exclusive *only when the budget says so*, the same way R6 decides pin-versus-lease
-from the numbers rather than from the model. Stephen accepted R5 as written on 2026-08-14; the
+from the numbers rather than from the model. The maintainer accepted R5 as written on 2026-08-14; the
 relaxation is **D7**.
 
 **P4 — 24 + 12 dual.** Image on `gpu:1`, everything else keeps serving (R5 already). The chain
-has no transitions at all. The only fixture where Stephen's sentence runs as he imagines it.
+has no transitions at all. The only fixture where the maintainer's sentence runs as he imagines it.
 
 **P5 — CPU-only 32 GB.** stt/tts cpu; brain `e2b` on CPU (slow, DDR4-bound); image **refused**
 (R5, no GPU) → cloud. The RAM contract governs: 32,768 − 6,144 OS − 4,096 available floor.
@@ -635,7 +586,7 @@ has no transitions at all. The only fixture where Stephen's sentence runs as he 
 Every `ChainPlan` carries `alternatives`: the same chain with each non-vault stage moved to the
 cloud, and the whole chain as `when_away`. A stage that is `refused` locally is rendered with
 its cloud alternative *selected*, not merely available, because a refusal with no next step is
-the thing Stephen's principle forbids. Cloud availability is checked the way
+the thing the maintainer's principle forbids. Cloud availability is checked the way
 `work_plan._cloud_available()` does today — a key must exist — so the card never offers a
 choice that cannot be honoured (HR8).
 
@@ -711,7 +662,7 @@ a saving claimed is a saving measured.
 ### 8.2 The Settings surface — R1
 
 In **Settings → Intelligence**, below THE MACHINE, a new section **LOCAL MODELS ON THIS
-MACHINE**. It is not a new tab, because Stephen's `65f70ce` fixed a round of links to tabs that
+MACHINE**. It is not a new tab, because the maintainer's `65f70ce` fixed a round of links to tabs that
 did not exist and the Intelligence tab is where the machine already lives.
 
 One row per model Friday knows how to run locally, whether or not it is installed — text from
@@ -896,7 +847,7 @@ recommends. The planner will place any of the three and say what each costs.
 The disagreements resolve into four commitments the rest of the document already carries:
 measured numbers gate, declared numbers inform, unknown numbers never fit; Friday yields and
 never fights; every refusal is rendered as a working alternative; and the trade between
-Friday's quality and the machine's headroom is Stephen's, made visible, not the planner's,
+Friday's quality and the machine's headroom is the maintainer's, made visible, not the planner's,
 made quietly.
 
 ---
@@ -926,13 +877,12 @@ made quietly.
 
 ---
 
-## 12. Phasing — the handover to the Sonnet 5 session
+## 12. Phasing — the build handover
 
-Each phase lists files, tests, and the acceptance check. **The session has no GPU and must not
+Each phase lists files, tests, and the acceptance check. **A build without GPU access must not
 fabricate a measurement**: anything unmeasured stays `unknown` and the surface says so. Items
-marked **[Stephen / GPU]** are recorded by him or by a session with GPU permission, then
-committed. Work in a worktree off `integration/release-2026-09-03`; do not touch
-`gauntlet-audit-2026-09-03`. UI edits go through `scripts/ui_stage.py` (`index.html` is the
+marked **[maintainer / GPU]** are recorded on a GPU-equipped machine, then
+committed. UI edits go through `scripts/ui_stage.py` (`index.html` is the
 served source of truth, **VERIFIED**, `ui_stage.py:SERVED`). A pre-commit hook,
 `settings-readers-check`, fails a commit unless every written settings key has a
 `DEFAULT_SETTINGS` entry, a reader, and **agreement between `index.html` and
@@ -981,7 +931,7 @@ UI edits must be mirrored remains **UNKNOWN**: check `git log -5 -- ui_parts/app
 2. Voice host RAM: measure `WhisperASR.load()` / `PiperTTS.load()` RSS delta on CPU; record as
    `measured` for the CPU-only fingerprint the session is on, `derived` elsewhere. NeMo row
    `declared` from `MIN_VRAM_GB`.
-3. Image: **[Stephen / GPU]** — one render per model in `local_image.MODELS` under the Arbiter
+3. Image: **[maintainer / GPU]** — one render per model in `local_image.MODELS` under the Arbiter
    with `nvidia-smi` sampled at the midpoint; ComfyUI start and render wall-clock. Until
    recorded, both rows are `unknown` and §8.2 says so. The session writes the measurement job
    (`friday measure <model_id>`) and the test that the job refuses to write an idle reading (HR6).
@@ -1035,7 +985,7 @@ worktrees. Phase 3 needs 2's record shape (not its measurements). Phase 4 needs 
 
 ---
 
-## 13. Decisions only Stephen makes
+## 13. Decisions only the maintainer makes
 
 | # | Decision | Options | This document's recommendation |
 |---|---|---|---|
@@ -1061,7 +1011,7 @@ settings.
 
 The sentence describes §8.2. Everything that makes §8.2 honest — a contract, a monitor,
 footprints for three modalities, a chain planner — is nine tenths of the work and none of it is
-a menu. Stephen's second sentence knew this ("headroom measurement is vital"); this document
+a menu. The maintainer's second sentence knew this ("headroom measurement is vital"); this document
 takes the second sentence as the brief.
 
 ### 14.2 There are no local video models to juggle

@@ -4,7 +4,7 @@
 #  FutureSpeak.AI · Asimov's Mind
 #
 #  Usage:
-#    curl -fsSL https://raw.githubusercontent.com/FutureSpeakAI/asimovs-mind/main/scripts/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/scripts/install.sh | bash
 #
 #  What this does:
 #    1. Checks Python 3.10+

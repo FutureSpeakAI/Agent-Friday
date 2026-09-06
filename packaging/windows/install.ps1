@@ -515,7 +515,7 @@ function Restore-AppUserFiles {
 
         Idempotent, and safe to call when nothing was saved. If $AppDir is
         missing (the copy failed outright) the holding folder is LEFT so a
-        retry, or Stephen, can still recover it. #>
+        retry, or the maintainer, can still recover it. #>
     param([Parameter(Mandatory)][string] $KeepDir,
           [Parameter(Mandatory)][string] $AppDir)
     if (-not (Test-Path -LiteralPath $KeepDir)) { return 0 }

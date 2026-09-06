@@ -1,5 +1,7 @@
 # Install readiness — 8 GB machines (RTX 4060), v5.6.0
 
+> **Historical record — 2026-08-25.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 > ## ⚠ Re-check 2026-08-29 — read this before the body
 >
 > This note was written **2026-08-25 against v5.6.0**. The repository has since
@@ -25,7 +27,7 @@
 > the NeMo/voice section, and every "Not verified" item at the foot of this
 > document. Those remain open.
 
-**Answer: yes, via the cloud-first path Stephen described — with one specific
+**Answer: yes, via the cloud-first path the maintainer described — with one specific
 change to how the install is run.** An earlier revision of this note led with
 "no". That was wrong, and it was wrong because it assessed the *local* seat and
 treated the cloud seat as the fallback rather than as the day-one product.
@@ -52,13 +54,13 @@ good. Executed against `ModelRouter` with the shipped defaults
 | State | Route | `refuse` | Outcome |
 |---|---|---|---|
 | **No local model at all** (the 8 GB machine, cloud-first) | `cloud` / `claude-sonnet-5` | `False` | works; vault content redacted downstream |
-| Model present, seat dead (Stephen, this morning) | `local` / `gemma4:12b` | `False` | **single local attempt, no cloud fallback → fails** |
+| Model present, seat dead (the maintainer, this morning) | `local` / `gemma4:12b` | `False` | **single local attempt, no cloud fallback → fails** |
 | No local model, `deny` fallback (not the default) | `cloud` | `True` | refuses |
 
 **The two states invert.** `_route_vault` only force-routes local when
 `_local_candidates()` returns something. With an empty list it falls through to
 the `redact` branch and routes cloud. So **having zero local models is strictly
-safer than having a broken one** — Stephen's morning failure is unreachable on a
+safer than having a broken one** — the maintainer's morning failure is unreachable on a
 machine that never had a local seat to break.
 
 The vault path does not treat a missing local seat as failure. It treats it as
@@ -66,7 +68,7 @@ The vault path does not treat a missing local seat as failure. It treats it as
 
 ### 2. Self-healing is real, and it is genuinely Claude-first — at install time
 
-Stephen's memory is accurate. `packaging/windows/lib/Heal.ps1` is a real
+the maintainer's memory is accurate. `packaging/windows/lib/Heal.ps1` is a real
 Claude-powered repair loop: `model = 'claude-sonnet-5'`, 12 heals max, 25-minute
 budget, a fixed 13-item remediation menu, and validators that refuse anything
 the model returns which isn't on the menu.
@@ -100,7 +102,7 @@ It also runs **only during the installer** — it is PowerShell in
 heals.
 
 **And it has never executed.** *[CORRECTED 2026-08-29: true when written, false now. `packaging/windows/tests/rehearsal/` drives real installs, and 5.6.5/5.6.6/5.7.0 were each proved by upgrading a published build in place. `%LOCALAPPDATA%\AgentFriday` is still absent on this machine — the rehearsals use a redirected install root — so the sentence below is right about the path and wrong about the conclusion.]* There is no install at
-`%LOCALAPPDATA%\AgentFriday` on Stephen's own machine — the installer has never
+`%LOCALAPPDATA%\AgentFriday` on the maintainer's own machine — the installer has never
 been run for real, here or anywhere. `Test-Installer.ps1` covers the *validators*
 (hostile paths, bad tags, argument quoting are all refused correctly); it does
 not drive a single failure → Claude → remediate → verify cycle.
@@ -186,7 +188,7 @@ Two independent planners agree within 4 MiB.
 `model_plan` independently: `8.0 - 2.5 - 1.0 = 4.5 GiB` = 4,608 MiB.
 
 The fixed 3,584 MiB reserve is **43.8 %** of her card against **29.2 %** of
-Stephen's. Same absolute reserve, nearly half her card. 8 GB is a different
+the maintainer's. Same absolute reserve, nearly half her card. 8 GB is a different
 tier, not a smaller one.
 
 | Model | Needs | Fits 4,604? | Tools |
@@ -200,7 +202,7 @@ tier, not a smaller one.
 
 Executed against the 4060 profile at 8, 16 and 32 GiB RAM: it picks `gemma3:4b`
 every time and refuses local image generation with the arithmetic. **Nothing
-impossible is chosen.** The "largest model on disk wins" defect Stephen
+impossible is chosen.** The "largest model on disk wins" defect the maintainer
 remembers lives in the runtime arbiter's heavy-hitter pick, where rule R6
 refuses it. `services/model_plan.py` is a different, sounder piece of code — and
 the installer correctly defers to it rather than hardcoding a tag.
@@ -273,7 +275,7 @@ Pre-warmed at install rather than mid-sentence: MiniLM ~90 MB, faster-whisper
 
 ---
 
-## What she gets that Stephen does not have to think about
+## What she gets that the maintainer does not have to think about
 
 - **Honest degraded-layer report.** `privacy_layers.describe()` says
   `"N/4 layers active … DEGRADED — not running: X"` and refuses to say four

@@ -246,12 +246,30 @@ def should_skip(path: str) -> bool:
     return any(s in low for s in SKIP_PATH_SUBSTR) or low.endswith(SKIP_EXT)
 
 
-def detect() -> list:
+def tracked_files() -> list[str]:
+    out = _run(["git", "ls-files"])
+    return [f for f in out.splitlines() if f.strip()]
+
+
+def file_lines(path: str):
+    """Yield (lineno, text) for every line of a tracked file (--tree mode)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for lineno, text in enumerate(fh, 1):
+                yield lineno, text.rstrip("\r\n")
+    except OSError:
+        return
+
+
+def detect(whole_tree: bool = False) -> list:
+    """Scan staged additions (default) or every line of every tracked file
+    (whole_tree=True, used by CI to prove the public tree is clean)."""
     findings = []
-    for path in staged_files():
+    files = tracked_files() if whole_tree else staged_files()
+    for path in files:
         if should_skip(path):
             continue
-        for lineno, text in added_lines(path):
+        for lineno, text in (file_lines(path) if whole_tree else added_lines(path)):
             if any(marker in text for marker in LINE_ALLOW_MARKERS):
                 continue
             if _is_deliberately_public(text):
@@ -283,7 +301,7 @@ def _say(line: str) -> None:
 
 def report(findings: list) -> None:
     _say("")
-    _say("X COMMIT BLOCKED -- potential secrets / PII in staged changes")
+    _say("X BLOCKED -- potential secrets / PII found")
     _say("")
     for path, lineno, category, snippet in findings:
         _say(f"  {path}:{lineno}  [{category}]")
@@ -294,13 +312,14 @@ def report(findings: list) -> None:
     _say("  - Replace personal PII (emails, names, phone, SSN) with placeholders.")
     _say("  - Use ~ / Path.home() / %USERPROFILE% instead of C:\\Users\\<name>\\ paths.")
     _say("  - False positive? Append  '# pragma: allowlist secret'  to that line.")
-    _say("  - See SECURITY.md and .github/SECURITY_POLICY.md for the full policy.")
+    _say("  - See SECURITY.md for the full policy.")
     _say("")
 
 
 if __name__ == "__main__":
+    _whole_tree = "--tree" in sys.argv
     try:
-        _findings = detect()
+        _findings = detect(whole_tree=_whole_tree)
     except Exception as exc:  # never hard-fail a commit on a scanner/detection bug
         print(f"[security_scan] warning: scanner error, not blocking commit: {exc}",
               file=sys.stderr)

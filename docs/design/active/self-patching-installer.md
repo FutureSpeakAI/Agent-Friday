@@ -1,28 +1,27 @@
 # One harness, three targets — the self-patching installer as the first consumer
 
-**Date:** 2026-08-29
-**Branch:** the 5.6.4 backport branch @ `f60ee0d`. **Doc-only. No implementation code exists
-for this document and none is proposed for immediate build. The build waits on Stephen's
-explicit go.**
-**Re-verified 2026-09-06 (doc-reconciliation pass): still accurate.** This document's actual
-subject — a coding-harness substrate that diffs installed-Friday against repo-Friday and
-*generates* the patch — does not exist; zero hits for `self_patch`/`patcher`/`worktree` in `src/`
-or `packaging/`. Do not mistake the three adjacent pieces for its implementation — all three
-predate `f60ee0d` and are the machinery this document builds *on*: `packaging/windows/lib/Heal.ps1`
-(1,007 lines) is a **fixed remediation menu** whose own design constraint at `:253-257` says it is
-"incapable of executing text supplied by the model" — the deliberate opposite of self-patching;
-`services/update_check.py` (421 lines, `ae67603`) **announces** a newer release and applies
-nothing; `services/repo_sync.py` (62 lines) is a blunt `git pull`, not a drift-diff-and-patch
-engine.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none
+> **Supersedes / superseded by:** substrate for [`grow-button.md`](grow-button.md); inherits FA1–FA13 from [`friday-builds-agents.md`](friday-builds-agents.md)
+> **Written:** 2026-08-29
 
-**Subject.** Stephen, 2026-08-29: *"We will consider a way to build an updating system that
+## Implementation notes
+
+- The subject — a coding-harness substrate that diffs installed-Friday against repo-Friday and generates the patch — does not exist; zero hits for `self_patch`/`patcher`/`worktree` in `src/` or `packaging/`. The build waits on the maintainer's explicit go.
+- Three adjacent pieces predate this document and are the machinery it builds on, not its implementation: `packaging/windows/lib/Heal.ps1` is a fixed remediation menu that is by design "incapable of executing text supplied by the model"; `services/update_check.py` announces a newer release and applies nothing; `services/repo_sync.py` is a blunt `git pull`.
+- File:line citations were read against the working tree at `f60ee0d`.
+
+---
+
+**Subject.** The maintainer, 2026-08-29: *"We will consider a way to build an updating system that
 checks the users installed Friday versus the repo Friday and figures out how to add the
 missing pieces or fix changed code. This will be like our self-healing installer, instead.
 it's a self-patching installer."* And, correcting my framing of the harness as a per-feature
 cost decision: *"I think the patcher needs a coding harness. So does the installer. So does
 Friday."*
 
-**The architectural claim this document is built on**, which is Stephen's and is right: there
+**The architectural claim this document is built on**, which is the maintainer's and is right: there
 is **one coding-harness substrate** and **three consumers with different targets**. The
 installer, the patcher, and Friday's own open-ended self-extension are not three features that
 each happen to call a model. They are three targets pointed at one engine.
@@ -76,7 +75,7 @@ is a **comparable object** (§5), a **router** (§7), and a Python home for the 
 currently only exist as PowerShell.
 
 **2. The pinned target is the whole prize, and its boundary is exactly the routing boundary.**
-Stephen's observation — that the patcher has an external definition of correct the agent cannot
+The maintainer's observation — that the patcher has an external definition of correct the agent cannot
 rewrite — is correct and is the reason to build it first. But the guarantee has a precise edge:
 **it holds for release-owned files and ends the moment a file is locally modified.** For a
 locally-modified file the desired state is "release change *plus* local change", and nothing
@@ -109,7 +108,7 @@ build time and a JSON file in the payload.
 
 ---
 
-## 1. What Stephen asked, itemised
+## 1. What the maintainer asked, itemised
 
 | | requirement | answered in |
 |---|---|---|
@@ -146,7 +145,7 @@ Two properties worth naming because the Python side of the substrate must inheri
   used to decide success.** This is the same rule as the grow button's red-first gate, arrived
   at independently, three weeks earlier, in a different language.
 - **Console output is split in two** — `Say-*` for the user (plain English, *"no paths, no exit
-  codes, no stack traces, no jargon, ever"*) and `Write-Log` for Stephen (everything). That
+  codes, no stack traces, no jargon, ever"*) and `Write-Log` for the maintainer (everything). That
   split is exactly what §12's human gate needs and it already exists.
 
 ### 2.2 `Heal.ps1` — a bounded model, not a harness
@@ -405,7 +404,7 @@ exist). The production Friday on this machine **is the git checkout**. Two conse
    also what is serving. That is exactly the condition the patcher must be safe under, and it
    is not an edge case here — it is the normal state.
 
-### 4.4 The three drift symptoms Stephen named, checked
+### 4.4 The three drift symptoms the maintainer named, checked
 
 **"Changes written but not restarted into."** Partly. The five edits are dated 08-26 10:49
 and 08-28 18:12/18:32; the server started 08-29 10:04:53, so it *did* import them. The general
@@ -438,7 +437,7 @@ conversations/concurrency MC1–MC9 series from 08-18 and `091dde5` (judgment-se
 
 ## 5. The comparable object — defining "the user's installed Friday"
 
-Stephen's question: *is it a file manifest with hashes, a version marker, both, and what about
+The maintainer's question: *is it a file manifest with hashes, a version marker, both, and what about
 files a user or a prior agent legitimately modified locally?*
 
 **Answer: three artifacts, not one, and the third is the one that makes the second usable.**
@@ -1019,7 +1018,7 @@ All four converge on the same ranking, and it is not the ranking the feature's n
    puts itself back" is the only sentence the user cares about, and today it is not true of code.
 4. Everything else, including the harness.
 
-**The harness is fourth.** That is not an argument against Stephen's claim that all three
+**The harness is fourth.** That is not an argument against the maintainer's claim that all three
 consumers need one — they do, and building it once is right. It is a statement about order: the
 substrate's *value* is in verify-first, provenance, and reversibility, and the model is the part
 that runs least often.

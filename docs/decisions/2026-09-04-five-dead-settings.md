@@ -1,19 +1,16 @@
 # Five settings that persist and redraw but drive nothing — five decisions
 
-**ANSWERED by Stephen, not yet built.** Four get built for real: streaming
-responses, auto-open chat, compact mode (a genuine small-window mode, not
-a CSS tweak), and startup workspace. The fifth, `scene_name`, was
-investigate-and-remove-if-dead — investigated and confirmed fully dead
-(the real holographic-background system runs on entirely different state;
-removing this setting does not touch it) and removed, with a proof test
-(`tests/gauntlet/test_dead_scene_name_setting_removed.py`). This ruling
-predates and is separate from the 2026-09-04 delegation of the main
-findings queue (see `progress.md`'s "DELEGATION RESOLUTION" section) —
-the four real builds are substantial, standalone feature work (real
-token streaming, a real compact UI mode, etc.), each large enough to
-warrant its own implementation pass rather than being folded into that
-queue-clearing session. Not attempted here; recorded so the ruling isn't
-lost and isn't mistaken for still being an open question.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none yet — `scene_name` removed, with proof test `tests/gauntlet/test_dead_scene_name_setting_removed.py`; the other four are ruled but unbuilt
+> **Supersedes / superseded by:** —
+> **Written:** 2026-09-04
+
+## Implementation notes
+
+Ruled by the maintainer; not yet built. Four get built for real: streaming responses, auto-open chat, compact mode (a genuine small-window mode, not a CSS tweak) and startup workspace. The fifth, `scene_name`, was investigate-and-remove-if-dead — confirmed fully dead (the real holographic-background system runs on different state) and removed. The four builds are substantial standalone feature work, each warranting its own implementation pass; this record exists so the ruling is not mistaken for a still-open question. The options and "my read" lines below are the original request as put to the maintainer.
+
+---
 
 These were found 2026-09-03 (KNOWN_ISSUES.md) and re-confirmed tonight:
 each toggle/picker saves correctly, reads back correctly, and is the

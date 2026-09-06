@@ -74,7 +74,7 @@ function Initialize-Console {
     }
 }
 
-# --- Logging (Stephen's side) -------------------------------------------
+# --- Logging (the maintainer's side) -------------------------------------------
 
 function Initialize-Log {
     param([Parameter(Mandatory)][string] $Path)
@@ -95,7 +95,7 @@ function Initialize-Log {
 }
 
 function Write-Log {
-    <#  Everything goes here. This is the file Stephen reads. It is allowed to
+    <#  Everything goes here. This is the file the maintainer reads. It is allowed to
         be technical, verbose and ugly. It is NOT allowed to contain secrets -
         see Protect-LogText, which every caller of Write-Log routes through. #>
     param(
@@ -210,7 +210,7 @@ function Say-Problem {
 }
 
 function Add-InstallWarning {
-    <#  A thing that did not stop the install but that Stephen must see.
+    <#  A thing that did not stop the install but that the maintainer must see.
 
         -Informational marks entries that belong in his report but must NOT
         drive anything she is told. Without this split, the note "get-pip.py
@@ -515,7 +515,7 @@ function Invoke-Step {
 
       .PARAMETER Optional
         The install can complete usefully without this. A failure becomes a
-        warning in Stephen's report and a calm sentence for her, not a stop.
+        warning in the maintainer's report and a calm sentence for her, not a stop.
     #>
     param(
         [Parameter(Mandatory)][string]      $Id,
@@ -662,7 +662,7 @@ function Get-HealEvents { return ,@($script:HealEvents) }   # see Get-InstallWar
 # --- Finishing -----------------------------------------------------------
 
 function Complete-Install {
-    <# Writes the report Stephen reads. Called on success AND on failure -
+    <# Writes the report the maintainer reads. Called on success AND on failure -
        a failed install is exactly when the report matters most. #>
     param(
         [switch] $Failed,

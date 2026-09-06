@@ -1,5 +1,7 @@
 # Gauntlet Audit — Close-Out (2026-09-03 through 2026-09-05)
 
+> **Historical record — 2026-09-03 through 2026-09-05.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Written for someone who wasn't here. If that's you in a month, this is the
 page to start on — the other three (`findings.jsonl`, `coverage.md`,
 `progress.md`) are the working ledger, the seam map, and the round-by-round
@@ -16,10 +18,10 @@ individually.
 Two days, ~112 findings, 82 shipped with a real red-green-red-on-revert
 proof cycle, ~7 accepted as documented non-issues, ~8 confirmed as holding
 observations rather than defects, and a handful still genuinely open as
-design questions only Stephen can settle. Three separate real credential/
+design questions only the maintainer can settle. Three separate real credential/
 data-boundary breaks were found and closed (a repeat pattern, not one
 lucky catch). One incident happened during the audit's own work — a real,
-live, low-cost Gemini API call using Stephen's real key, caught and
+live, low-cost Gemini API call using the maintainer's real key, caught and
 disclosed rather than left in a transcript. One test still fails
 intermittently and is honestly left open rather than force-closed. 1 of 13
 seams met the audit's own closure bar; the other 12 are in various states
@@ -69,7 +71,7 @@ rather than trusting what it says about itself.
   verification found a wrong fix (F37) and several weak probes; once when
   a second found the suite-invocation gap above. Both rounds of external
   correction were accepted and acted on, not argued with.
-- **An externally-commissioned review** (Stephen's own initiative, not
+- **An externally-commissioned review** (the maintainer's own initiative, not
   this audit's sweep) of the SkillOpt subsystem (seam 13, opened
   2026-09-04) — its 4 claims were independently re-verified against
   current code before anything was fixed or trusted, and one (F75) turned
@@ -102,7 +104,7 @@ rather than trusting what it says about itself.
   specific pair of interacting files.** It reproduces only under the full,
   documented bare `pytest` invocation — every narrower combination tried
   (unit alone, unit+api, unit+gauntlet, unit+api+gauntlet) stayed green.
-  Left open deliberately rather than force-closed with a guess; Stephen
+  Left open deliberately rather than force-closed with a guess; the maintainer
   has separately confirmed this disposition is the right one.
 - **13 entries had `status: fixed` while their `verdict` field still read
   "queued"** — stale prose left over from each finding's original triage,
@@ -153,7 +155,7 @@ Full detail for every one of these lives in `findings.jsonl`.
   what a sandboxed connector *may* see, rather than a hand-maintained
   denylist of what it may not — which is the only version of this fix that
   can't be reopened by a 4th provider being added later. This is the
-  pattern Stephen's own closing message called out by name.
+  pattern the maintainer's own closing message called out by name.
 - **F54 — the content-policy harm floor (H1-H4) was silently bypassed**
   for category-only content matches. Fixed.
 - **F37 — a TIER_3, encryption-flagged knowledge-graph page's real content
@@ -165,25 +167,25 @@ Full detail for every one of these lives in `findings.jsonl`.
 - **F34 / F10 / Q19 — Friday's own "local only" promise was false** for
   the single most common interaction (ordinary interactive chat with tool
   use), in three related but distinct ways across three findings. Fixed
-  via Q19's re-triage, per Stephen's direct ruling on what the product
+  via Q19's re-triage, per the maintainer's direct ruling on what the product
   should do when it can't honor the promise (fail with an error and offer
   cloud-only mode, rather than silently switching).
 - **F68 — a provider key that exists on disk but cannot be decrypted
-  reports "connected," identical to a working key** — reproduced Stephen's
+  reports "connected," identical to a working key** — reproduced the maintainer's
   own real situation (3 undecryptable keys) exactly, with zero indication
   in the boot log that anything had failed. Fixed: `provider_key_status()`
   now attempts a real decrypt and reports three distinct states.
 - **F76 — this audit's own test suite made real, live network requests**
   to whatever was listening on this application's own default port
-  (very likely Stephen's real, running Friday instance) and to a real
+  (very likely the maintainer's real, running Friday instance) and to a real
   third-party site, because a Google-OAuth-gate test suite passed those
   URLs to a function that reaches the network by default and was never
   mocked. Self-found while re-verifying an unrelated fix; fixed by mocking
   the one collaborator these tests were never actually about.
-- **F77 — this audit's own dynamic-boot harness leaked Stephen's real
+- **F77 — this audit's own dynamic-boot harness leaked the maintainer's real
   `GEMINI_API_KEY`** into an isolated test server, which made one real,
   live Gemini API call before being caught. Full account in its own
-  section below — this is the incident Stephen's wind-down message asked
+  section below — this is the incident the maintainer's wind-down message asked
   to have recorded plainly.
 
 ### High — real defects with real, if narrower, impact (fixed unless noted)
@@ -198,7 +200,7 @@ claims that no longer matched code). **F75 — open by design, not by
 omission**: the mechanism that scores whether a chat turn "succeeded" was
 a reply-shape heuristic that could score a fabricated success claim
 identically to a real one, feeding Friday's own skill-learning loop a
-false signal. Escalated to Stephen rather than patched unilaterally;
+false signal. Escalated to the maintainer rather than patched unilaterally;
 ruling below.
 
 ### Medium / Low
@@ -232,7 +234,7 @@ real `GEMINI_API_KEY` (or `GOOGLE_API_KEY`, `ANTHROPIC_BASE_URL`) from the
 environment the launching shell already had. `core/__init__.py`'s
 module-level `GEMINI_API_KEY` reads directly from `os.environ` at import
 time, independent of Friday's own encrypted credential vault — so the
-isolated server's in-memory key was Stephen's real one from the moment it
+isolated server's in-memory key was the maintainer's real one from the moment it
 booted, regardless of the (deliberately corrupted, for an unrelated test)
 vault-stored key.
 
@@ -287,7 +289,7 @@ transcript evidence) is in `findings.jsonl` under **F77**, not only here.
 ## What remains open, and why
 
 - **F75** (success-detector false-positive) — the minimum honest fix
-  landed per Stephen's direct ruling (a third "unverified" state replacing
+  landed per the maintainer's direct ruling (a third "unverified" state replacing
   the false "success" default); the real fix (genuine completion
   verification, per task/skill type) is specified as follow-up work
   directly in `skill_capture.py` and deliberately not built. This is a
@@ -305,7 +307,7 @@ transcript evidence) is in `findings.jsonl` under **F77**, not only here.
   question have zero live callers anywhere, so there is no consumed false
   signal to stop asserting.
 - **Q10** (KG correction semantics + unbounded growth) and **Q6(a)**
-  (USD budget alerts-only-by-design) remain open exactly because Stephen
+  (USD budget alerts-only-by-design) remain open exactly because the maintainer
   asked to keep them as specific, named escalations rather than have an
   eviction policy or a budget-enforcement default invented unilaterally.
 - **Q24** (scheduler Run Now can race into concurrent double-execution)
@@ -320,7 +322,7 @@ transcript evidence) is in `findings.jsonl` under **F77**, not only here.
 committed (see the commit landing this file).
 
 This repo's stash stack is shared across every worktree and concurrent
-session on this machine. Six stashes existed when Stephen's wind-down
+session on this machine. Six stashes existed when the maintainer's wind-down
 message was written; five remain now:
 
 - **Dropped**: `gauntlet-scene-name-removal-revert-check`, a stale

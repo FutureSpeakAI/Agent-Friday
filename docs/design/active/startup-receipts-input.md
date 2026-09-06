@@ -1,9 +1,16 @@
 # Startup receipts — an input to the voice-failures spec
 
-*Written 2026-08-25 for the session cataloguing the 35 voice failures. Not a
-proposal to build separately — this belongs inside that spec's mechanism if the
-shapes agree, and the point of handing it over is to get one mechanism instead
-of three.*
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none (`routes/startup_report.py` still reports only which blueprints registered)
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-25
+
+## Implementation notes
+
+- Written as an input to a voice-failures spec, not as a standalone proposal: the reporter registry described here belongs inside that spec's mechanism if the shapes agree. No reporter registry exists beside `BLUEPRINT_REPORT` in `server.py`.
+
+---
 
 ## The paragraph
 

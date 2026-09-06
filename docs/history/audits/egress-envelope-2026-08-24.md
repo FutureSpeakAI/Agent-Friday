@@ -1,5 +1,7 @@
 # Egress envelope audit — 2026-08-24
 
+> **Historical record — 2026-08-24.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Triggered by `tests/unit/test_egress_gate.py::test_tool_definitions_scanned`
 failing at clean HEAD, reported as "tool descriptions containing PII reach the
 cloud unredacted". Scope was: verify the finding, map what the gate actually

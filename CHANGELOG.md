@@ -39,7 +39,7 @@ from 7 failures to 123 the moment the change landed, all in egress-gate
 tests that had assumed cloud-only-with-nothing-else-set was still gated —
 correctly, as it turned out.
 
-Fixed for real this time, on Stephen's explicit ruling: unrestricted cloud
+Fixed for real this time, on the maintainer's explicit ruling: unrestricted cloud
 access is now earned by an **explicit, recorded decision**
 (`model_routing.cloud_consent`), never inherited from any value of `mode`.
 Two shapes, gated on whether the machine's own hardware can honor the
@@ -149,11 +149,11 @@ after a run like this would be its own kind of dishonesty.
   found and fixed in the voice pipeline (F16, F20, F33) and knowledge-graph
   indexing (F34, F37 — the latter's first fix was itself proven wrong by a
   cold re-verification pass: a case-mismatch made it a no-op for a section
-  literally named "Private"). Fixed per Stephen's direct ruling: when Friday
+  literally named "Private"). Fixed per the maintainer's direct ruling: when Friday
   can't honor a local-only promise, she now fails with an error and offers
   cloud-only mode, rather than silently switching.
 - **A provider's connection status could say "connected" while the stored
-  key was actually undecryptable** — reproduced against Stephen's own real
+  key was actually undecryptable** — reproduced against the maintainer's own real
   situation, three keys in exactly this state. `provider_key_status()` used
   to check only whether the key *file* existed, never whether it could
   actually be decrypted. Fixed: a genuine three-state status (connected /
@@ -162,7 +162,7 @@ after a run like this would be its own kind of dishonesty.
   it was a UI that did nothing in either direction (F40). Built for real.
 - The audit's own tooling caused two real incidents while looking for this
   exact class of bug: a live, real API call to Google's Gemini using
-  Stephen's real key from an isolated test server that hadn't cleared it
+  the maintainer's real key from an isolated test server that hadn't cleared it
   from its environment (F77), and multiple tests making real, unmocked
   network requests — to this application's own default port and to a real
   third-party site — because a URL-validation helper reaches the network by
@@ -212,7 +212,7 @@ after a run like this would be its own kind of dishonesty.
   keys the current process can still decrypt under whatever a fresh process
   derives now, for the case where a rehearsal or test run overwrites the
   shared OS keychain entry mid-session.
-- A test was found leaking Stephen's real vault passphrase into its own
+- A test was found leaking the maintainer's real vault passphrase into its own
   assertion-failure output — in plain text, three times — because it never
   isolated the one code path (`start.bat` parsing) its fixture didn't cover.
   Fixed; the test is now fully hermetic.
@@ -642,7 +642,7 @@ Python versions) passed green.
 
 ### A decision made on your behalf — please overrule it if you disagree
 
-Stephen asked for the weekly check to be **on by default for new
+The maintainer asked for the weekly check to be **on by default for new
 installations**. It is.
 
 Existing installs upgrading into this release **also get it switched on**,
@@ -734,7 +734,7 @@ the first item. If you have not upgraded yet, take 5.6.6 and skip 5.6.5.**
   autostart on a machine that already had it enabled now actually disables it,
   instead of leaving it on and recording `false`. `schema_version` → 2.
 
-### Known, unchanged, and Stephen's to decide
+### Known, unchanged, and the maintainer's to decide
 
 - The vault passphrase still lives inside the app directory — the property that
   made the above possible. 5.6.6 preserves the file; it does not relocate the
@@ -801,7 +801,7 @@ install may have been reporting a version it was not running.**
   plainly that an in-place upgrade before 5.6.5 may not have applied.
 
 - **The uninstaller addressed the author by name.** Its closing line read
-  `For Stephen: …LAST-UNINSTALL-REPORT.md` on every machine it ran on. It now
+  `For the maintainer: …LAST-UNINSTALL-REPORT.md` on every machine it ran on. It now
   reads `Details:`.
 
 ### Corrections to the 5.6.4 release notes
@@ -1066,7 +1066,7 @@ that weren't hers.
 - **Google connects without a JSON file.** A guided, in-app walkthrough
   replaces "go create a Cloud project and drop credentials.json here." A
   one-click path is also built and takes precedence when available, but it
-  ships **inert** — the shared client ID and secret are empty until Stephen
+  ships **inert** — the shared client ID and secret are empty until the maintainer
   mints them for his own Google Cloud project, so today everyone still uses
   the walkthrough. Full reasoning, including why this had to publish in
   Production rather than Testing mode, is in the commit and

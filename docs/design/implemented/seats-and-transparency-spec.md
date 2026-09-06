@@ -1,6 +1,16 @@
 # Seats & Transparency Spec (feature/seats-and-transparency)
 
-**Date:** 2026-08-13 · **Author:** Fable 5 (spec by Fable orchestrator from Incident 2 forensics; implementation Fable 5 seat) · **Base:** fix/toolcall-integrity-v5 @ f3ee6da
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/model_seat_gate.py`, `services/hosted_catalog.py`, `services/model_catalog.py`, `routes/chat.py`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-13
+
+## Implementation notes
+
+Streams A and B shipped on the `feature/seats-and-transparency` branch (base `fix/toolcall-integrity-v5` @ `f3ee6da`): live local and hosted catalogs, the seat taxonomy in Settings, the honesty battery as a second gate axis, auto-gating on seating, the authoritative clock, the completion-receipt law, model badges, seat-change visibility and the activity ledger. The Incident 2 evidence below is the forensic record that motivated the work.
+
+---
 
 ## Incident 2 — verified evidence (2026-08-13, 10:41–10:58 chat)
 
@@ -74,7 +84,7 @@ exist and hold structural-axis results only.
   trajectories.jsonl / behavioral_monitor / work_log.db with correlation ids — exact joins,
   not heuristics.
 - **B4 Global activity ledger.** Filterable stream of model invocations, subagent spawns,
-  tool calls (seat, model, duration, tokens/cost where available). Principle (Stephen,
+  tool calls (seat, model, duration, tokens/cost where available). Principle (the maintainer,
   verbatim): "Every model action, every subagent process, every reasoning thread needs to
   be visible if the user wishes to see it." Badges default-on; depth on demand.
 - **B5 Retry-scope isolation.** Validator corrective injections and rejected drafts are
@@ -106,10 +116,3 @@ Each with a test that can fail where applicable:
 - The retry-leak fixture never reaches visible history.
 - learn_skill saves work or fail actionably.
 - Full suite green; UI screenshots at 360px and 1200px, actually looked at.
-
-## Operational constraints
-
-Work only in worktree `..\friday-desktop-seats` (this branch). Stephen's live server runs
-from the main working copy on :3000 — never kill/bind/restart it. Edition worktree
-(`..\friday-desktop-edition`, feature/edition-e0) untouched. Google/OAuth lane parked.
-No secret values in output or commits. Commit as you go; push when green; never touch main.

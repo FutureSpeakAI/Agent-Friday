@@ -1,5 +1,7 @@
 # CI was red for eight weeks and ran no tests for the last two
 
+> **Historical record — 2026-08-30.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **2026-08-30.** Fixed in PR #4 (`9d96d23`). This note exists because the fix is
 the small part; the reason nobody noticed is the part worth keeping.
 

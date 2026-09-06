@@ -1,34 +1,19 @@
 # Context assembly — the toolbox opens on demand, the transcript gets a budget, and nothing is trimmed in silence
 
-**Date:** 2026-08-19
-**Status:** design. **No implementation code exists for this document — it lands first, by
-instruction.** Written for a fresh-context builder: every fact needed is here or at a cited
-file:line.
-**Re-verified 2026-09-06 (doc-reconciliation pass):** this status claim is **accurate** —
-`open_toolbox` (§3.1's central mechanism) genuinely does not exist anywhere in the codebase;
-checked directly, not assumed. If you arrived here chasing a claim that open_toolbox "landed,"
-that claim is not in this document — it lives in [`tool-index.md`](tool-index.md), whose body
-narrates `open_toolbox` in the present tense ("already runs," "the existing lookup") despite that
-document's own header also saying nothing is implemented. `tool-index.md` is corrected separately,
-same pass. The real, current tool-loading mechanism — a static full list to cloud, a coarse
-all-or-nothing trim (`fit_tools_to_seat`, landed 2026-08-19) for local seats only, no on-demand
-fetch, no model-driven choice — is described in this document's own §3 as the thing being
-replaced; it is still what runs today. Two other claims in this document were found stale during
-this pass and are corrected inline where they appear (§1.4's "no `cache_control`" and §3.7's clock
-position).
-**Revised:** 2026-08-19, three times. First written from the initial token audit; revised
-when the audit's live turns landed final numbers and Stephen proposed the central mechanism
-himself: *"Can we make a tool that opens the toolbox, allowing the model to find the right
-one and only use those tokens?"* — which is deferred tool loading, and it is not
-hypothetical: it is exactly how the harness these build sessions run in works today (§3.1).
-Revised a third time the same day for Stephen's follow-up — *"would prompt caching help?"* —
-which interacts with the toolbox in a way this spec must resolve: §1.4 verifies what each
-backend actually offers, §3.7 resolves the interaction and orders the prompt around it.
-**Measured against:** the prompt-token audit (an unpublished working note)
-final form (commits `e5cf151`, `9504c8d` — live turns, sandboxed against real data), plus
-commit `ed10711` (the display-reserve measurement). Cited as **AUDIT**.
-**Branch note:** lands on the tree's active branch; doc-only; other sessions hold
-uncommitted work here — this commit touches only this file.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none
+> **Supersedes / superseded by:** detailed by [`tool-index.md`](tool-index.md)
+> **Written:** 2026-08-19
+
+## Implementation notes
+
+- Nothing in this document is built. `open_toolbox` (§3.1's central mechanism) does not exist anywhere in the codebase; checked directly. The mechanism was the maintainer's own proposal: *"Can we make a tool that opens the toolbox, allowing the model to find the right one and only use those tokens?"* — which is deferred tool loading.
+- What runs today is the mechanism §3 describes as the thing being replaced: a static full tool list to cloud seats and a coarse all-or-nothing trim (`fit_tools_to_seat` in `services/tool_budget.py`) for local seats only — no on-demand fetch, no model-driven choice.
+- [`tool-index.md`](tool-index.md) specifies the shape of the deferred index underneath §3.1; where the two touch, this document wins.
+- Two claims in the body were found stale and are corrected inline where they appear: §1.4's "no `cache_control`" and §3.7's clock position. The measurements are cited as **AUDIT** (a prompt-token audit, an unpublished working note).
+
+---
 
 **Evidence registers:** **MEASURED** / **VERIFIED** / **INFERRED** / **UNKNOWN**.
 
@@ -39,7 +24,7 @@ uncommitted work here — this commit touches only this file.
 A real turn on Friday carries **65,799 tokens of overhead before the conversation counts**
 (AUDIT §6, MEASURED live), which forced the tool seats to a 131,072-token window — and on
 the card Friday actually runs on, even 65,536 eats the display reserve that has cost
-Stephen his second monitor twice today (`ed10711`, MEASURED: 32,768 leaves 1,936 MiB free;
+the maintainer his second monitor twice today (`ed10711`, MEASURED: 32,768 leaves 1,936 MiB free;
 65,536 leaves 551, under the 1,024 reserve). The window cannot grow to fit the overhead;
 **the overhead has to shrink to fit the card.** The two numbers that matter: tool schemas
 are **14,041 tokens on every turn** — the largest fixed cost, growing with every MCP
@@ -47,7 +32,7 @@ connector he adds — and the transcript is **858–1,046 tokens today but 42,61
 ordinary-length messages**, because its cap counts messages, not tokens: invisible now,
 dominant later, the worst shape a cost can have. This document specifies the fix in the
 order the measurement ranks it: **deferred tool schemas** (a small resident core, everything
-else as names with a lookup tool — Stephen's own proposal), **a token budget for the
+else as names with a lookup tool — the maintainer's own proposal), **a token budget for the
 transcript** with relevance-first dropping, **assembly fitted to the actual seat**, a
 **report for every trim**, **an order of assembly that keeps prompt caches warm** (stable
 prefix first; the minute-resolution clock evicted from it), and **instrumentation that
@@ -104,14 +89,14 @@ the true failure is worse in a different way** (`ed10711`, observed live): llama
 *rejects* an over-length request with a 400 naming the count — *"request (47448 tokens)
 exceeds the available context size"* — and the dispatch ladder then answers from the
 **cloud**, with the local-fallback notice. So on Arbiter-owned seats the failure is loud,
-but its consequence is that **turns Stephen chose to keep local quietly become Anthropic
+but its consequence is that **turns the maintainer chose to keep local quietly become Anthropic
 turns** whenever his conversation grows past what the seat holds. (The old Ollama daemon
 path did truncate silently; those seats are nearly retired.) Either way the cure is the
 same and stands: an assembler that never emits more than the seat holds.
 
 ### 1.4 What prompt caching actually offers — VERIFIED against both backends
 
-Stephen asked whether prompt caching would help. Verified before designing, per the
+The maintainer asked whether prompt caching would help. Verified before designing, per the
 commission's own rule: don't design against a capability that isn't there.
 
 **Both backends cache by byte-identical prefix.** The cache covers the prompt from its
@@ -187,7 +172,7 @@ carries hundreds of tools without paying for them: most tools are *not* in conte
 system note lists their **names**, full schemas arrive only when a **search/fetch tool** is
 called with the names or keywords needed, and from that moment the fetched tools are
 callable like any other. The cost of the entire long tail is a list of names plus one
-lookup call when one is actually wanted. That is Stephen's toolbox sentence, running in
+lookup call when one is actually wanted. That is the maintainer's toolbox sentence, running in
 production, serving this very build. Friday gets the same shape:
 
 **The registry splits in two:**
@@ -200,7 +185,7 @@ production, serving this very build. Friday gets the same shape:
     looked up must be resident — a model that cannot reach the toolbox can do nothing at
     all); `search_web` and `browse_web` (the retrieve-cite directive lives in their
     descriptions and must never be a fetch away from a turn that needs to look something
-    up); `navigate`, `spawn_task`, `search_wiki`, `read_wiki`, `write_file`. Stephen may
+    up); `navigate`, `spawn_task`, `search_wiki`, `read_wiki`, `write_file`. The maintainer may
     edit the floor — Q1.
   - Estimated resident cost: **~3,000–3,800 tokens** (INFERRED from measured per-schema
     averages; step 1 of the build measures it exactly).
@@ -352,7 +337,7 @@ itself.
 - `turn_audit.json` becomes a rotating per-day record instead of a one-shot.
 - A **weekly overhead regression check** in the existing self-improvement loop: if the
   resident fixed cost (core schemas + index + system prompt) grows >10% week-over-week,
-  Stephen gets a notification naming the source — which is exactly how the next
+  the maintainer gets a notification naming the source — which is exactly how the next
   connector's tax, or the next persona edit's creep, becomes visible the week it happens
   instead of at the next crisis audit.
 
@@ -435,12 +420,12 @@ conditional** (on a warm prefix, resident schemas were free anyway — though on
 cold prefixes stay common: displacement, interleaving, restarts), **its headroom argument
 is not** — schemas occupy the context window and the KV cache cached or not, and headroom
 is what makes 32,768 livable. Deferral stays on headroom alone. (Cloud note: Anthropic
-now ships the cache-preserving form of exactly Stephen's mechanism — tools declared with
+now ships the cache-preserving form of exactly the maintainer's mechanism — tools declared with
 `defer_loading` and surfaced mid-conversation by `tool_addition` blocks, beta, Opus 5
 onward. If the cloud seat is ever Opus 5, the assembler can adopt it and even fetch-turns
 keep their cache; on Sonnet-class seats the bounded cold fetch-turn stands.)
 
-**The answer to Stephen's question, in three parts:**
+**The answer to the maintainer's question, in three parts:**
 - **Latency: yes, and mostly locally.** The five-minute local call was prompt
   processing. With this order, turn N+1 re-prefills only its delta instead of
   re-reading the entire conversation — this is the single largest latency lever
@@ -545,7 +530,7 @@ Each step one commit, offline-testable, real bodies / fake transport; UI via `ui
 
 ---
 
-## 7. Open questions for Stephen
+## 7. Open questions for the maintainer
 
 Each answerable in a sentence.
 

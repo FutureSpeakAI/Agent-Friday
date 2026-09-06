@@ -1,5 +1,7 @@
 # Which gate refused?
 
+> **Historical record — 2026-08-25.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 *Written 2026-08-25, after a day spent believing the vault was blocking the news.*
 
 Friday has three independent gates that can refuse a tool call. To the user they
@@ -20,7 +22,7 @@ what makes the symptom confusing.
 
 ## The worked example
 
-Stephen asked local voice for the news and was told it was prohibited "even
+the maintainer asked local voice for the news and was told it was prohibited "even
 though we were using local". Reasonable reading: the vault is blocking a local
 session, which would be backwards, since the vault exists to keep private data
 off *cloud* seats.

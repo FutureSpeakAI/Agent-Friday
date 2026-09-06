@@ -1,40 +1,15 @@
 # Relocating the vault passphrase out of the app directory
 
-**Date:** 2026-08-29
-**Decision:** *made.* Stephen, 2026-08-29: *"yeah, that def needs to live in a
-safe place that can never get overwritten."* The passphrase moves out of the app
-directory.
-**Scheduled:** the release **after** 5.6.6. Not in the hotfix — 5.6.6 ships
-preservation plus the wizard fix to stop the bleeding tonight; a relocation with
-migration consequences for every existing install is not a thing to rush.
-**Status of this document, corrected 2026-09-06 (doc-reconciliation pass):** ~~analysis for the
-next session. Nothing here is implemented.~~ **BUILT** — shipped commit `0f64fc7`, 2026-08-29
-(same day as this doc; the "next session" arrived within hours), hardened by `8eeadab`,
-2026-08-30 ("os-mode: fail-closed credential + vault-passphrase storage (PR-5)"). Verified against
-the current tree: `services/vault_passphrase.py` (535 lines) is the single resolver this document
-asked for, with F1 and F2 both fixed (the two consumers — `services/agent.py` and
-`services/credential_store.py` — now defer to it instead of disagreeing). `store()` writes to
-**both** the OS keychain and a DPAPI-wrapped file at `~/.friday/security/vault-passphrase.dpapi`
-— exactly the "Option D" (keyring primary, DPAPI fallback) this document recommends in §8.
-`setup_wizard._write_start_bat` no longer writes the passphrase at all. T1/T2 (the path-containment
-and upgrade-rehearsal tests this doc calls for) exist:
-`tests/unit/test_vault_passphrase_location.py` (+ `_migration.py`, `_os_mode.py`, `_rerun.py`) and
-`packaging/windows/tests/rehearsal/upgrade-vault-test.ps1`, moved into the repo per this
-document's own instruction rather than staying a scratch file. `friday status` (`cli.py:924-943`)
-reports where the passphrase resolved from, meeting §6's reporting requirement.
+> **Status:** partially-implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/vault_passphrase.py`, `setup_wizard.py`, `cli.py` (`friday status`), `tests/unit/test_vault_passphrase_location*.py`, `packaging/windows/tests/rehearsal/upgrade-vault-test.ps1`
+> **Supersedes / superseded by:** companion: `vault-first-onboarding.md` (same directory)
+> **Written:** 2026-08-29
 
-**One piece named in this document is confirmed still missing, precisely:** **Q2, the recovery
-code.** This document identified "what if the keychain/DPAPI copy itself is lost (reimaged
-machine, restored profile)" as Option D's single biggest residual weakness and proposed showing a
-one-time recovery code at setup. No such mechanism exists anywhere in `vault_passphrase.py` or the
-CLI — `store()` writes only the two runtime-durable homes this document specified, nothing
-recovery-shaped beyond them. Q1 (Option E — binding the vault key to the OS account instead of a
-passphrase) was also not attempted; a passphrase remains mandatory. Q3 (moving the cloud API keys
-out of `start.bat` too) was deliberately left out of scope, per `_write_start_bat`'s own docstring
-— those keys still write in the clear. Q4 (detecting when the keychain and DPAPI copies actively
-disagree, as opposed to one simply being absent) is only partially covered: the wizard's
-re-run-safety path handles "passphrase not found" explicitly but does not compare the two stores
-against each other.
+## Implementation notes
+
+Decision (the maintainer, 2026-08-29): *"yeah, that def needs to live in a safe place that can never get overwritten."* Shipped in `0f64fc7` the same day and hardened by `8eeadab` (fail-closed os-mode storage). `services/vault_passphrase.py` is the single resolver; `store()` writes to both the OS keychain and a DPAPI-wrapped file at `~/.friday/security/vault-passphrase.dpapi` — §8's Option D. Both consumers (`services/agent.py`, `services/credential_store.py`) defer to it (F1/F2 fixed); `_write_start_bat` no longer writes the passphrase; T1/T2 exist; `friday status` reports where the passphrase resolved from (§6).
+Still missing: **Q2, the recovery code** — nothing recovery-shaped exists for a reimaged machine or restored profile. Q1 (Option E, OS-account binding) was not attempted; a passphrase remains mandatory. Q3 (moving cloud API keys out of `start.bat`) was deliberately left out of scope; those keys still write in the clear. Q4 (detecting keychain/DPAPI disagreement) is only partial: "not found" is handled, the two stores are not compared.
 
 ---
 
@@ -102,7 +77,7 @@ on "how does a user notice", which §6 picks up.
 
 ---
 
-## 3. The requirement Stephen set, and what it has to mean
+## 3. The requirement the maintainer set, and what it has to mean
 
 > *whatever location wins has to be somewhere the installer provably cannot
 > delete — and "provably" should mean a test.*
@@ -139,7 +114,7 @@ test run happens to take. Both.
 
 ## 4. The options
 
-Each is judged on Stephen's three questions: **what happens to an existing
+Each is judged on the maintainer's three questions: **what happens to an existing
 passphrase during the move**, **what happens if the move is interrupted**, and
 **how a user recovers if the new location is lost.**
 
@@ -310,7 +285,7 @@ without it trades a visible fragile store for an invisible fragile store.
 ## 7. Open questions for the next session
 
 - **Q1.** Is Option E offered as a choice, or is a passphrase mandatory? This is
-  a threat-model question and it is Stephen's. Everything else follows from it.
+  a threat-model question and it is the maintainer's. Everything else follows from it.
 - **Q2.** Recovery code in the same release, or does relocation ship without one?
   §5 argues same release; the counter-argument is scope.
 - **Q3.** Does `start.bat` keep the *API keys* after the passphrase leaves? They

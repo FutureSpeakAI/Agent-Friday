@@ -1,5 +1,7 @@
 # Forensics — the Voice-Triage workflow run, 2026-08-24 11:03–11:30
 
+> **Historical record — 2026-08-24.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Written from the ledger (`~/.friday/activity_ledger.jsonl`), `friday.log`,
 `chat_history.json`, `~/.friday/workflows/*.json`, `~/.friday/settings.json`
 and the residency runtime files — then traced back into the tree. Every claim
@@ -105,7 +107,7 @@ two `model_invocation` records for `gemma4:26b` on 2026-08-15 at 57.9 s and
 
 ### How it got into the heavy_hitter seat
 
-Not by Stephen choosing it. `friday.log` records the write twice:
+Not by the maintainer choosing it. `friday.log` records the write twice:
 
 ```
 2026-08-23T15:45:53 friday.seat_binding — seat binding applied:
@@ -176,7 +178,7 @@ exists precisely to mark those seats as *filled elsewhere* — and
 role in `SEAT_TO_CAPABILITY`, and if the plan seated *anything* there, it emits
 a change. So:
 
-1. Stephen picks Opus 5 for a role.
+1. the maintainer picks Opus 5 for a role.
 2. `overrides_from_settings` drops it (it's cloud).
 3. The planner, seeing no override, seats its own pick — `gen[0]`, the 26b.
 4. `apply()` at `:251` overwrites `capability_routing[heavy_hitter]` with
@@ -215,7 +217,7 @@ system line appeared in chat.
 `:53` labels `reasoning` **"Everyday conversation"**. Current settings hold
 `reasoning: claude-opus-5` and `heavy_hitter: gemma4:26b`.
 
-**Not determinable from the ledger:** which of the two rows Stephen actually
+**Not determinable from the ledger:** which of the two rows the maintainer actually
 clicked. Both readings end in the same place — if he set `heavy_hitter`, §2.2
 overwrote it; if he set `reasoning`, that value survived (it is cloud), and its
 local counterpart `interactive_brain` was overwritten on 08-23 to `gemma4:12b`,
@@ -325,7 +327,7 @@ exact class of defect; it is still live for `e2b`.
 The local brain's context window (32,768) was exceeded by the accumulated tool
 loop. `routes/chat.py:885-908` catches it, logs the warning, sets
 `_provider = 'cloud'`, rebuilds and re-gates the prompt, and re-sends. The reply
-Stephen saw at 11:19:36 is stamped `model=claude-sonnet-5, seat=cloud` in
+the maintainer saw at 11:19:36 is stamped `model=claude-sonnet-5, seat=cloud` in
 `chat_history.json` and matches a `model_invocation` of 53.4 s / 332,437 tokens
 in the ledger.
 
@@ -353,7 +355,7 @@ Two things worth separating:
 
 There **is** a deliberate refusal mode: `routes/chat.py:856-885` — if
 `model_routing.mode == "local_only"`, the cloud is refused and the user is told
-why. Stephen's mode is `local_preferred`, so the fallback is enabled by
+why. the maintainer's mode is `local_preferred`, so the fallback is enabled by
 configuration. That is a real choice he made; it is the *silence and the cost*
 of the fallback that are not.
 
@@ -386,7 +388,7 @@ And then, `services/self_account.py:184-187`:
 parts.append("Name the seat and the actual model when you say which "
              "one is answering. 'Gemma 4' is a brand, not an answer — "
              "the 12b and the 26b are different models with different "
-             "speeds, and Stephen can tell.")
+             "speeds, and the maintainer can tell.")
 ```
 
 `services/agent.py:2186` — `_task_worker` calls

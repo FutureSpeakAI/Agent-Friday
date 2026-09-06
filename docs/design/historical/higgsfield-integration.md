@@ -1,55 +1,19 @@
 # Higgsfield — cloud motion for local stills, and a capability list that stops lying
 
-**Date:** 2026-08-17
-**Status, corrected 2026-09-06 (doc-reconciliation pass):** ~~design. No implementation code
-exists for this document — it lands first, by instruction.~~ **PARTIALLY SUPERSEDED — built, in a
-different architecture than this document specifies.** Higgsfield shipped between 2026-08-21 and
-2026-08-25 (`88220ff`, `349cdf6`, `05049b2`, `d3a3115`; ~864 lines in
-`services/higgsfield_catalog.py` + `services/higgsfield_generate.py`, the shared
-`services/creative_store.py` downloader, and three unit-test files), but **not as designed here**:
-the transport is the **MCP connector with OAuth 2.1/PKCE** (tokens in
-`~/.friday/mcp_oauth/higgsfield.oauth.enc`), not §2.1's REST `Authorization: Key ID:SECRET` — there
-is no Higgsfield env var anywhere in `src/`. The catalog is **enumerated at runtime** (~120
-models), not §4.7.1's hardcoded three; and those three ids (`soul/standard`, `dop/standard`,
-`kling-video/v2.1/pro`) **do not exist on the live account** — `provider_registry.py:264-274` says
-so explicitly. Read [`higgsfield-creative-catalog.md`](../implemented/higgsfield-creative-catalog.md) (marked
-BUILT) first; its §6 supersedes this document's §2.7, §4.1 and §4.8, and the two disagree
-wherever they overlap. This file has not been edited since its single commit (`d3a2f8a`).
+> **Status:** superseded
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/higgsfield_catalog.py`, `services/higgsfield_generate.py`, `services/creative_store.py` — built to a different architecture than this document specifies
+> **Supersedes / superseded by:** superseded by [`higgsfield-creative-catalog.md`](../implemented/higgsfield-creative-catalog.md) (its §6 overrides §2.7, §4.1 and §4.8 here)
+> **Written:** 2026-08-17
 
-**Built (cite the catalog doc's architecture, not this one's):** runtime enumeration with credit
-pricing and cache; hosted-native picker integration (`model_catalog.HOSTED_NATIVE_TYPES`) and
-boot-time refresh; dispatch branches for image and video (`creative_engine.py:710-724`,
-`:920-938`), audio/music (`music_engine.py:323-342`), and 3D (17 models — §2.7's "no 3D
-endpoint" is wrong now, as is §2.6's "no balance endpoint"); per-submit cost preflight returning
-an honest `None` on failure; the verified pull-to-disk downloader with sidecar/manifest/provenance
-and §4.10's paid-but-unsaved reporting; an egress choke point inside `_call` that refuses rather
-than partially redacts; `creative_music` in `CAPABILITIES` and the `generate_music` description
-rewrite (§3.2's two lying music surfaces are both fixed); provider-health probing.
+## Implementation notes
 
-**Specified here and NOT built, named:** `services/higgsfield_engine.py` and the entire §4.1
-durable job design — no `~/.friday/higgsfield_jobs.json`, no `HiggsfieldJob` state machine, no
-background poller, no restart re-adoption, no concurrency semaphore; `higgsfield_generate.generate()`
-**blocks the calling thread** in `_wait()` (`:233`, up to 40×15 s), which is exactly the
-restart-orphan defect §3.1 indicts Veo for. No orb lifecycle, `hf-` cancel, or `proactive_chat`
-completion push (§4.2/§4.10). **The entire §4.4 animate / local-still→cloud-motion flow** — the
-`animate_image` tool, presign→PUT upload, the three-class upload-consent gate, vault-dir refusal —
-does not exist. No `settings.higgsfield` block at all (no `daily_credit_cap`, no `upload_consent`).
-No `cost_meter` recording for Higgsfield (only Gemini/Veo/Omni record; kie.ai now does too, as of
-`8c168c6`). Cost is carried on catalog entries but **not drawn in the picker** — there is no
-`higgsfield` string in any HTML. §4.6's `now_cloud` is still an empty promise with no runner
-behind it. §4.7.5's `self_account` probe was not built, and the stale Veo sentence it set out to
-fix is still there verbatim (`self_account.py:117-119`). The two-line Veo `gate_text` fix from
-§4.5 was never applied — `generate_video` still sends its prompt ungated. The Studio Music panel
-is not repointed (`music_engine.py:121-124`, `951ca33`). Q4/Q5/Q6 remain open; Q2 is answered
-(catalog doc §6.1), Q3 and Q7 are moot.
-**Subject:** integrating [Higgsfield](https://platform.higgsfield.ai) — an asynchronous
-cloud generation API (images, video; audio/3D per-account, see §2.7) — into Friday, a
-local-first personal AI on a Windows desktop with one RTX 4070 (12 GB).
-**Build on:** the current default working branch (at spec time: `app-level-test-suite`,
-HEAD `05076cb`). The judgment-gate work from `deep-research-gate` is **already merged into
-that HEAD** (`git log HEAD..deep-research-gate` is empty — verified). Do not branch off
-`deep-research-gate` or `residency-policy`. Other sessions may be active in this repo:
-check `git status` before you start, commit only your own files, and never commit secrets.
+Higgsfield shipped 2026-08-21 → 08-25, but not as designed here: the transport is the MCP connector with OAuth 2.1/PKCE (tokens in `~/.friday/mcp_oauth/higgsfield.oauth.enc`), not §2.1's REST key header; the catalog (~120 models) is enumerated at runtime, and §4.7.1's three hardcoded ids do not exist on the live account. Where the two documents disagree, the catalog document is right.
+Built: runtime enumeration with credit pricing and cache; hosted-native picker integration and boot-time refresh; dispatch for image, video, audio/music and 3D (§2.7's "no 3D endpoint" and §2.6's "no balance endpoint" are both wrong now); per-submit cost preflight; the verified pull-to-disk downloader with sidecar/manifest/provenance; an egress choke point that refuses rather than partially redacts; `creative_music` in `CAPABILITIES`; provider-health probing.
+Not built: `services/higgsfield_engine.py` and the whole §4.1 durable-job design (`generate()` blocks in `_wait()`, the restart-orphan defect §3.1 indicts Veo for); the §4.4 animate / local-still→cloud-motion flow and its upload-consent gate; `settings.higgsfield`; `cost_meter` recording for Higgsfield; cost drawn in the picker; §4.6 `now_cloud`; §4.7.5 `self_account`; the §4.5 Veo `gate_text` fix; the Studio Music repoint. Q4/Q5/Q6 open; Q2 answered (catalog doc §6.1); Q3/Q7 moot.
+Subject: integrating [Higgsfield](https://platform.higgsfield.ai) — an asynchronous cloud generation API — into a local-first personal AI on a Windows desktop with one RTX 4070 (12 GB).
+
+---
 
 **Evidence registers:**
 - **VERIFIED** — the cited line, file on disk, or vendor doc page was read during the
@@ -71,7 +35,7 @@ lifecycle (submit → poll → download), a file-upload path that makes **local-
 cloud-motion** a first-class flow, and — because its jobs consume zero local VRAM — a real
 backing for the "run it in the cloud now" option Friday already offers when heavy work is
 proposed and the GPU is busy. The integration's two non-negotiables: **every output is
-pulled to Stephen's disk before a job is called done** (Higgsfield deletes outputs after
+pulled to the maintainer's disk before a job is called done** (Higgsfield deletes outputs after
 as little as seven days), and **the capability list tells the truth the moment this is
 wired** — which also means correcting one stale self-description and one dishonest tool
 description that predate this work (§3.1, §3.2).
@@ -143,7 +107,7 @@ Content-Type: application/json
 ```
 
 The credential is an **ID + secret pair**, created at `https://cloud.higgsfield.ai`.
-Stephen has said "I have an API key" — **he may hold only one half; Q1 asks.** Legacy
+The maintainer has said "I have an API key" — **he may hold only one half; Q1 asks.** Legacy
 `hf-api-key` / `hf-secret` headers are accepted but deprecated. Vendor guidance: keep
 credentials server-side, store encrypted, rotate immediately on exposure.
 
@@ -218,7 +182,7 @@ suggestion.
 - **The limit is concurrency, not rate**: N requests queued-or-running at once (example
   error: *"Maximum number of concurrent requests (4) has been reached"* — HTTP 400, **no
   `Retry-After` header**). The N is per-account/subscription, shown in the dashboard.
-  Per-model caps may also exist. **UNKNOWN for Stephen's account — Q7.**
+  Per-model caps may also exist. **UNKNOWN for the maintainer's account — Q7.**
 - **Billing:** account credits; **only successful generations are charged**. `failed` and
   `nsfw` are not charged; a successfully canceled queued request is **refunded**. Credits
   **expire one year** after purchase. Cost varies by model and parameters; a
@@ -237,7 +201,7 @@ envelope reserves an `audio` slot and video artifacts may include `fbx`/`ply` (3
 but **no audio/music or 3D model endpoint appears anywhere in the public docs** — the
 catalogue is account-gated. Consequence for this spec: the video path is designed and
 buildable now; **whether the music lie gets *fixed* by Higgsfield or merely *disclosed*
-depends on what Stephen's dashboard actually lists — Q2.** Do not wire a music tool to an
+depends on what the maintainer's dashboard actually lists — Q2.** Do not wire a music tool to an
 endpoint this document cannot name.
 
 ### 2.8 Polling and webhooks
@@ -454,7 +418,7 @@ Retention is ≥7 days, then gone (§2.6). Therefore:
 - **Download failure is a first-class state**: retry on the poll cadence with backoff,
   `download_attempts` counted. After 5 failed attempts, push a **warning notification**
   carrying the raw output URL and the expiry date ("I generated this but cannot pull it
-  to disk — link valid until ~<date>, error: <detail>") so Stephen can save it manually.
+  to disk — link valid until ~<date>, error: <detail>") so the maintainer can save it manually.
   The job stays `downloading` and keeps retrying daily until day 6, then makes a final
   attempt and, if still failing, marks `failed` with the full account. **At no point does
   Friday say "done" while the only copy lives on someone else's server** — losing work he
@@ -505,7 +469,7 @@ Everything sent to Higgsfield leaves the machine. Three payload classes, three r
     and the orb** ("this sends the image to Higgsfield").
   - A **user-supplied or unknown-provenance** image (no sidecar) requires **explicit
     per-job confirmation** naming the file and the destination. A photo of his family is
-    exactly this case; Friday asks, every time. Q5 lets Stephen loosen or tighten this.
+    exactly this case; Friday asks, every time. Q5 lets the maintainer loosen or tighten this.
   - A file under any vault-sensitive directory (`_sensitive_vault_dirs()`:
     `~/.friday/{finance,health}`, `vault/{legal,finances,family}` — **VERIFIED**
     `services/agent.py:4052-4064`) is **refused for upload outright**; the answer is the
@@ -513,7 +477,7 @@ Everything sent to Higgsfield leaves the machine. Three payload classes, three r
     `touches_vault + now_cloud` — the engine honors the same law at its own front door.
 - **Which side a job ran is always visible:** the orb label, the result summary, and the
   sidecar all carry provider + model. No job silently changes sides: a local render never
-  falls back to cloud (or vice versa) without a new decision surfaced to Stephen — the
+  falls back to cloud (or vice versa) without a new decision surfaced to the maintainer — the
   disclosed-substitution rule.
 
 ### 4.6 Where it sits among the Arbiter, the queue, and the heavy-work choice
@@ -596,13 +560,13 @@ The registration work, using §3.7's checklist:
 
 ### 4.9 Webhooks: no. Polling, with the reasoning on record
 
-Stephen runs a Cloudflare tunnel, so a webhook is *feasible* — and still the wrong call
+The maintainer runs a Cloudflare tunnel, so a webhook is *feasible* — and still the wrong call
 today:
 
 - **The vendor signs nothing** (§2.8). A webhook endpoint through the tunnel is an
   unauthenticated inbound surface where anyone who learns the URL can inject
   `{"status": "completed", "payload": {...}}` with attacker-controlled output URLs —
-  which §4.3 would then download to Stephen's disk. Mitigating that means treating every
+  which §4.3 would then download to the maintainer's disk. Mitigating that means treating every
   webhook as only a *hint* and re-verifying via authenticated `GET status_url` — at which
   point the webhook saves a few seconds of poll latency at the cost of a standing public
   endpoint, secret-URL management, dedup logic, and a new attack surface on the machine
@@ -614,7 +578,7 @@ today:
 signatures), the design is pre-committed here: webhook = wake-up signal only; the poller
 confirms via `status_url`; payload URLs from the webhook body are never trusted; the
 endpoint path carries a per-job random token and rejects unknown ids. Q6 records
-Stephen's appetite.
+The maintainer's appetite.
 
 ### 4.10 Failure, honestly
 
@@ -624,7 +588,7 @@ Stephen's appetite.
 | `nsfw` | Reported as **Higgsfield's content moderation**, in those words — *their* gate, not Friday's. Friday's own cLaws gate already ran pre-submit; if the vendor still refuses, Friday says who refused and why that is all she knows. She never invents a filter of her own to explain it (the `creative_policy.py:1-33` incident is the standing law here), and never silently reruns with an altered prompt |
 | `canceled` | Refunded (§2.6); stated |
 | 423/503 model blocked | Disclosed as the model being down *at the provider*; another model is offered, **never silently substituted** |
-| Ambiguous submit timeout | Job `unknown`; no resubmit (§2.5 — no idempotency); status polled if a request_id exists; otherwise Stephen is told exactly what is and isn't known |
+| Ambiguous submit timeout | Job `unknown`; no resubmit (§2.5 — no idempotency); status polled if a request_id exists; otherwise the maintainer is told exactly what is and isn't known |
 | Download failure | §4.3's escalation ladder — never silent, never "done" |
 | Poller dead / jobs stuck | The liveness audit pattern applies: a job in `queued`/`in_progress` whose `updated_at` is older than 3× the poll cap is a **failure of the poller**, flagged by the scheduler tick — a subsystem that runs and produces nothing is a failure even when it exits zero |
 
@@ -636,7 +600,7 @@ impossible upstream (§2.2) — Friday says so and offers to discard-on-arrival 
 **Completion reports unprompted:** terminal transitions push
 `notifications_engine.push(proactive_chat=True, chat_message=...)` with the outcome, the
 gallery link, and the cost — the seam the deep-research spec named P4, now built and
-merged (**VERIFIED**: `deep-research-gate` is in HEAD). A generation Stephen forgot he
+merged (**VERIFIED**: `deep-research-gate` is in HEAD). A generation the maintainer forgot he
 asked for announces itself; a failure announces itself equally.
 
 ### 4.11 House rules → mechanisms
@@ -707,7 +671,7 @@ from §2's doc quotes until then), behind a fake transport.
 
 ---
 
-## 7. Open questions for Stephen
+## 7. Open questions for the maintainer
 
 Each answerable in a sentence.
 

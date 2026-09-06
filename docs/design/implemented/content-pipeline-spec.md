@@ -1,13 +1,17 @@
 # Agent Friday — Content Pipeline Specification
 
-**FutureSpeak.AI · Asimov's Mind**
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/content_pipeline.py`, `services/content_composer.py`, `services/publisher.py`, `services/analytics_collector.py`, `routes/content_pipeline.py`, `services/platforms/`
+> **Supersedes / superseded by:** —
+> **Written:** 2026-07-04
 
-| | |
-|---|---|
-| **Status** | ~~SPEC — design document. Nothing below is implemented yet except where explicitly marked *(exists)*.~~ **SHIPPED — corrected 2026-09-06 (doc-reconciliation pass).** Phases 1–6 are complete and running in the boot path; the struck-through line was stale documentation debt, not a status. Verified against the current tree: `services/content_pipeline.py` (1,507 lines — the SQLite WAL store and full §3.3 status machine), `services/content_composer.py` (1,083 — `adapt`/`preview`/`suggest_hashtags`/`convert_format`), `services/publisher.py` (1,043 — the exact 8-step §7.1 dispatch: moderation → egress gate → adapter → ψ earn), `services/analytics_collector.py` (568 — Wilson-score trend detection, `learning_loop.observe()`), `routes/content_pipeline.py` (**28 routes**, blueprint registered at `server.py:80,120`), and **all eleven platform adapters plus a mock** under `services/platforms/` (10,605 lines; LinkedIn, X, Instagram, YouTube, Bluesky, Mastodon, Reddit, TikTok make real API calls through mockable `_request()`/`_http()` seams; Substack and Medium are the assisted-handoff/legacy-token shapes §4 *designs* — spec-compliant, not gaps). The **six-tab `ContentWS`** (`index.html:29431` — Compose/Calendar/Queue/Analytics/Accounts/Ideas, exactly §10.1's rail) is wired into the workspace map and reachable. Quick-Post/SendTo (§10.2) and repurposing (§9, `/api/content/repurpose`) exist. **~15,800 lines of service/route code, ~3,900 of UI, 11,700 of tests** across 26 files, the adapter-contract battery covering all eleven platforms; a subset was run in this pass and passed with zero failures. Proof the header predates reality: `publisher.py:262-278` carries a dated **2026-08-17** operational bug report ("content publisher hasn't even been used so it should not be running… 1,440 times a day") and its fix — the tick changed from §6.2's 1-minute always-on to 15 minutes, default-off, enable-on-first-schedule. **Real remaining gaps, named:** Phase 7 A/B verdict scoring is partial (`ContentVariant` and the compose-tab variant creator exist; there is no dedicated paired-attribution winner-promotion scorer beyond the general Wilson trend code); §16's open questions (X tier economics, headless graduation, ψ calibration) are still open by the doc's own admission; and **no real-account OAuth flow has been verified end to end** — the code passes mocked tests, but "a human connected a LinkedIn account and a post landed" is not something this pass could confirm. |
-| **Version** | 1.0 · 2026-07-04 |
-| **Scope** | A full social-media management system built into the sovereign AI desktop OS: create → compose → schedule → publish → monitor → learn, across eleven platforms plus the Friday Federation. |
-| **Bridges** | Studio (creative engines) → the outside world. Companion to the Creator Economy & Federation design (Layers 1–3, all built) and the model-agnostic provider architecture (provider registry + capability routing). |
+## Implementation notes
+
+Phases 1–6 are built and run in the boot path: the SQLite store and §3.3 status machine (`content_pipeline.py`), the composer, the 8-step §7.1 publisher dispatch (moderation → egress gate → adapter → ψ earn), Wilson-score analytics, 28 routes, and all eleven platform adapters plus a mock under `services/platforms/` (Substack and Medium are the assisted-handoff shapes §4 designs, not gaps). The six-tab `ContentWS` (§10.1), Quick-Post/SendTo (§10.2) and repurposing (§9) exist.
+Divergence from the text: the publisher tick is 15 minutes, default-off, enabled on first schedule — not §6.2's always-on 1-minute tick.
+Not built: Phase 7 A/B verdict scoring is partial (`ContentVariant` exists; no dedicated paired-attribution winner-promotion scorer); §16's open questions remain open; no real-account OAuth flow has been verified end to end.
+Scope: a full social-media management system for the sovereign desktop — create → compose → schedule → publish → monitor → learn, across eleven platforms plus the Friday Federation. Companion to the Creator Economy & Federation design (Layers 1–3, built) and the provider registry + capability routing.
 
 ---
 

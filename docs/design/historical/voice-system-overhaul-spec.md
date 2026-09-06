@@ -1,25 +1,15 @@
 # Agent Friday Voice System -- Technical Specification
 
-> **ACCURACY ADDENDUM (2026-07-06, verified by live API probes):** §1.1's
-> model-retirement claims are partly WRONG. Real `bidiGenerateContent`
-> connect probes show `gemini-3.1-flash-live-preview` and
-> `gemini-2.5-flash-native-audio-preview-12-2025` both still connect fine,
-> while `gemini-2.5-flash-preview-native-audio` — introduced below as a
-> "verified" fallback — does not exist upstream (1008 on connect). The
-> shipped chain is now `gemini-2.5-flash-native-audio-latest` →
-> `gemini-2.5-flash-native-audio-preview-09-2025` →
-> `gemini-3.1-flash-live-preview`, with a `_RETIRED_LIVE_MODELS` denylist.
-> Also: pyttsx3 is installed (the "missing" claim below is stale), and the
-> auto-correction described in §1.2 was inert as written (the marker
-> heuristic vouched for the very IDs it was meant to catch) — fixed. The
-> forward-looking spec is `docs/VOICE_SYSTEM_SPEC.md`; treat this document
-> as the historical incident record.
+> **Status:** historical
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/voice_engine.py`, `services/local_voice.py`, `services/nemo_voice.py`, `services/voice_installer.py`, `routes/voice.py`
+> **Supersedes / superseded by:** forward-looking spec: `docs/VOICE_SYSTEM_SPEC.md` (this document is the incident record and current-state reference for July 2026)
+> **Written:** 2026-07-06
 
-**Document:** `docs/VOICE_SYSTEM_OVERHAUL_SPEC.md`
-**Status:** Post-overhaul reference (July 2026)
-**Codebase:** the `friday-desktop` repository root
-**Audience:** FutureSpeak.AI engineering, contributors, and future maintainers
+## Implementation notes
 
+Post-overhaul reference for July 2026; treat it as the historical incident record, not the current design. Audience: contributors and future maintainers.
+Accuracy addendum (2026-07-06, verified by live `bidiGenerateContent` probes): §1.1's model-retirement claims are partly wrong — `gemini-3.1-flash-live-preview` and `gemini-2.5-flash-native-audio-preview-12-2025` both still connect, while `gemini-2.5-flash-preview-native-audio` (named below as a "verified" fallback) does not exist upstream (1008 on connect). The shipped chain is `gemini-2.5-flash-native-audio-latest` → `gemini-2.5-flash-native-audio-preview-09-2025` → `gemini-3.1-flash-live-preview`, with a `_RETIRED_LIVE_MODELS` denylist. pyttsx3 is installed (the "missing" claim below is stale). The §1.2 auto-correction was inert as written (the marker heuristic vouched for the very IDs it was meant to catch) and has been fixed.
 
 ---
 

@@ -1,16 +1,18 @@
 # The tool index — groups are metadata, not a maze
 
-**Date:** 2026-08-19
-**Status:** design. Spec only; no implementation exists and none is proposed here.
-**Re-verified 2026-09-06 (doc-reconciliation pass):** the status line above is **accurate** —
-`open_toolbox` does not exist anywhere in the codebase (checked directly). But two sentences in
-this document's body (§4.2 item 2, §4.3 item 2) described `open_toolbox` as "the existing
-lookup" and something that "already runs," which read as if it were shipped. Both meant
-*existing in the design* — specified in [`context-assembly.md`](context-assembly.md) §3.1, which
-this document inherits — not *existing in code*. They are reworded inline below so a cold
-reader cannot take them the wrong way. What actually runs today is the coarse, all-or-nothing
-`fit_tools_to_seat` trim (`services/tool_budget.py`, landed 2026-08-19), which §5's rung table
-correctly calls "Today's" — that one reference is real and stays as written.
+> **Status:** active
+> **Last verified:** 2026-09-06
+> **Implementation:** none
+> **Supersedes / superseded by:** detail under [`context-assembly.md`](context-assembly.md) §3.1
+> **Written:** 2026-08-19
+
+## Implementation notes
+
+- Nothing here is built. `open_toolbox` does not exist anywhere in the codebase (checked directly). Two sentences in the body (§4.2 item 2, §4.3 item 2) once described it as "the existing lookup" and something that "already runs"; both meant *existing in the design* and are reworded inline so a cold reader cannot take them the wrong way.
+- What runs today is the coarse, all-or-nothing `fit_tools_to_seat` trim (`services/tool_budget.py`), which §5's rung table correctly calls "Today's".
+
+---
+
 **Scope:** the *shape of the tool index* underneath
 [`context-assembly.md`](context-assembly.md) §3.1. That document already decided
 **that** tool schemas defer. This one decides **how the deferred tail is indexed**, and
@@ -28,9 +30,6 @@ new here is a measured inventory of the registry *by group*, the arithmetic of f
 versus grouped indexing across a **growing** registry, and one structural correction to
 how the grouping is allowed to work. Where this document and `context-assembly.md`
 touch, `context-assembly.md` wins and this one supplies detail.
-
-**Branch note:** doc-only. Two other sessions hold ~274 uncommitted files in this tree;
-this commit touches only this file. No code was read into and no code was written.
 
 **Evidence registers:** **MEASURED** / **VERIFIED** / **INFERRED** / **UNKNOWN**.
 
@@ -54,11 +53,11 @@ Three sentences of why:
    *less* reliable as the seat gets *better* (§5.4). So the group must never be a hop.
    Groups rank and filter; they never gate, and nothing is only reachable through one.
 
-The design that follows is the version of Stephen's idea that survives its own
+The design that follows is the version of the maintainer's idea that survives its own
 strongest objection: **you get the grouping, and the model never has to know it
 exists.**
 
-**Two decisions govern everything below** (Stephen, 2026-08-19):
+**Two decisions govern everything below** (the maintainer, 2026-08-19):
 
 - **§7.0 — never silently drop tools; disclose and offer, but do not block.** Proceed
   with the best subset, disclose visibly which groups were withheld, offer the upgrade in
@@ -118,7 +117,7 @@ thread as each server completes its handshake (`agent.py:5410-5443`), get the na
 not of the source tree.
 
 The connector numbers that *are* on record, from `tool_budget.py:12-16` (MEASURED on
-Stephen's machine, 2026-08-18): **Higgsfield 86 tools, GitHub 26**, together
+the maintainer's machine, 2026-08-18): **Higgsfield 86 tools, GitHub 26**, together
 "roughly 36k" tokens. And AUDIT measured tool schemas at **14,041 live** against 9,603
 on a bare import with GitHub alone connected — a 4,438-token delta over 26 tools =
 **171 tok/connector-tool**, within 2% of the built-in mean. Connector schemas are not
@@ -141,7 +140,7 @@ cheaper or dearer per tool; there are simply many more of them.
 
 And `context-assembly.md` §1.2 (commit `ed10711`, MEASURED) fixes the seat that produced
 it: on the RTX 4070's 12,282 MiB, `gemma4:12b` at 32,768 leaves 1,936 MiB free and at
-65,536 leaves **551 MiB** — under the 1,024 MiB display reserve that has cost Stephen a
+65,536 leaves **551 MiB** — under the 1,024 MiB display reserve that has cost the maintainer a
 monitor twice. **The seat cannot grow. The payload must shrink.**
 
 Against a 32,768 seat with a 4,096-token output reserve — **28,672 usable** — and
@@ -165,17 +164,17 @@ the reason this is now a design question rather than an outage.
 
 **But the disclosure it promises does not reach the user, and this is verifiable.**
 `tool_budget.py:72-77` says the note is *"suitable for the model's system prompt AND for
-telling Stephen, because a capability that quietly is not there is the failure this
+telling the maintainer, because a capability that quietly is not there is the failure this
 module exists to prevent."* In practice the note has exactly two destinations: a
 `print()` to the console (`tool_budget.py:105`), and the **model's system prompt** at
 three call sites — `chat.py:739`, `agent.py:218`, `model_router.py:789`, each appending
 `"\n[SEAT] " + note`. **A grep for `[SEAT]` across `static/` and `ui_parts/` returns
-nothing** (VERIFIED, this session). So 112 tools vanish, Friday tells *herself* about it,
-and Stephen is told nothing where he is working.
+nothing** (VERIFIED during this audit). So 112 tools vanish, Friday tells *herself* about it,
+and the maintainer is told nothing where he is working.
 
 That is the gatekeeping pattern in its quietest form — not a refusal, just a smaller
 Friday arriving without comment. §6.1 is where this document stops accepting it, under a
-decision Stephen has now made explicitly (§7.0).
+decision the maintainer has now made explicitly (§7.0).
 
 ### 1.4 Cost concentration — MEASURED
 
@@ -387,7 +386,7 @@ the names remain reachable in one call, always.
 
 ### 4.3 Adding a vendor without rewriting the taxonomy
 
-This is Stephen's second question, and it has a mechanical answer.
+This is the maintainer's second question, and it has a mechanical answer.
 
 **A new connector's tools get group labels from a deterministic rule at registration
 time, and are fully usable if the rule returns nothing.** In precedence order:
@@ -410,7 +409,7 @@ any capability being lost.** That is what makes a growing registry safe, and it 
 the maintenance burden of the taxonomy is bounded — a stale group label costs ranking
 quality, never reach.
 
-### 4.4 Audio — the group Stephen is right about
+### 4.4 Audio — the group the maintainer is right about
 
 Audio today is 4 tools / 1,067 tokens. The ElevenLabs surface named in the addendum —
 text-to-speech, speech-to-speech, voice cloning, voice design, dubbing, translation,
@@ -426,7 +425,7 @@ grouping.** `speak_text` (ElevenLabs), `generate_music` (Higgsfield-bound) and
 `inspect_audio` (local whisper) belong together because a user asking about audio does
 not know or care which of three backends answers.
 
-**Within audio, the cut is by capability, exactly as Stephen proposes** — the §2.3 verb
+**Within audio, the cut is by capability, exactly as the maintainer proposes** — the §2.3 verb
 facet doing its job:
 
 - **generate** — TTS, SFX generation, music generation
@@ -614,7 +613,7 @@ Stated rather than papered over:
 
 ### 6.1 The escape hatch — explicit, and cheap
 
-Stephen's standing rule, from `roles-and-model-identity.md` §5: *"This is advice, not a
+The maintainer's standing rule, from `roles-and-model-identity.md` §5: *"This is advice, not a
 gate... Do not refuse, and do not silently substitute."* Applied to tools:
 
 | rule | statement |
@@ -626,7 +625,7 @@ gate... Do not refuse, and do not silently substitute."* Applied to tools:
 | **GT9** | **Never silently drop tools. Disclose and offer, but do not block.** When the full surface will not fit, Friday **proceeds** with the best available subset, **discloses visibly** what was withheld and why, and **offers the upgrade path in one step**. Three parts; the third is not optional. |
 | **GT10** | Disclosure is **ambient, never modal**. The turn is never halted to ask a question about tool loading. The choice is *available*, not *demanded*. |
 
-**GT9 — the three parts, and why each is load-bearing** (Stephen's decision, §7.0):
+**GT9 — the three parts, and why each is load-bearing** (the maintainer's decision, §7.0):
 
 1. **Proceed.** The user asked for something. Answer it with the best subset available.
    Do not halt the turn to ask a question first. A withheld tool is a degraded answer;
@@ -642,7 +641,7 @@ gate... Do not refuse, and do not silently substitute."* Applied to tools:
    surface** — it is a re-dispatch, not a new conversation. An offer that costs the user
    a retype is not an offer.
 
-**GT10 — the failure mode this design is defending against.** Stephen has already
+**GT10 — the failure mode this design is defending against.** The maintainer has already
 objected to Friday asking *"do you want to wait for it?"* on every message after a model
 switch. **A modal on each turn would be worse than the silent drop, not better** — it
 converts a quiet capability loss into a loud tax on every single turn, and it is
@@ -698,7 +697,7 @@ Nothing here is a code change today; this is the order a builder should take.
 ### 6.3 Graceful degradation — the ladder, and what is never allowed
 
 The failure this replaces hard-failed with no fallback. This one has five rungs and the
-bottom of the ladder is a sentence to Stephen, not a 400.
+bottom of the ladder is a sentence to the maintainer, not a 400.
 
 **When the payload will not fit, in order. Rungs 1–4 all proceed and answer; only rung 5
 cannot.**
@@ -715,7 +714,7 @@ cannot.**
 from rung 1 straight past 2 and 3 to a connector-less registry — which is why 112 tools
 disappear when a *grouped index of all 176* would have cost ~2,950 tokens and withheld
 nothing. Rungs 2 and 3 are not degradations at all; they are the design, and they are why
-GT9's disclosure should be **rare in practice** rather than a line Stephen learns to
+GT9's disclosure should be **rare in practice** rather than a line the maintainer learns to
 ignore. A disclosure that fires on every turn has already failed.
 
 **Never allowed, at any rung:** a tool that exists but cannot be reached; a subset served
@@ -748,7 +747,7 @@ to be hunted specifically.
   local seat, including a leg that requires fetch-then-call. Below 15/15, revert. This
   is the instrument that caught the argument-dropping bug; it is a score, not a vibe.
 - **Fixed-cost regression** (CA13) — >10% week-over-week growth in CORE + index notifies
-  Stephen with the source named. This is how the next vendor's tax becomes visible the
+  the maintainer with the source named. This is how the next vendor's tax becomes visible the
   week it lands.
 
 **The silent-substitution detector — the one that matters, three independent methods:**
@@ -821,7 +820,7 @@ tests:**
 
 ### 7.0 DECIDED — withheld tools are disclosed and offered, never blocked and never silent
 
-**Stephen, 2026-08-19.** Asked whether `fit_tools_to_seat`'s current behaviour (drop 112
+**The maintainer, 2026-08-19.** Asked whether `fit_tools_to_seat`'s current behaviour (drop 112
 connector tools, note it internally) was acceptable, or whether the choice should be his:
 
 > **Never silently drop tools. Disclose and offer, but do not block.**
@@ -861,7 +860,7 @@ Two second-order consequences worth stating, because they were not in the questi
 
 ### 7.0b DECIDED — the line goes in the conversation, and the upgrade control goes with it
 
-**Stephen, 2026-08-19**, answering whether the disclosure belongs in the transcript or on
+**The maintainer, 2026-08-19**, answering whether the disclosure belongs in the transcript or on
 the orb:
 
 > **The disclosure line goes in the conversation, not on the orb.**
@@ -939,7 +938,7 @@ default, or do you want to be told when a connector arrives unclassified?
 ## 8. Sources
 
 - **Measurement.** Static `ast` extraction of `services/agent.py`,
-  `services/media_tools.py`, `services/elevenlabs_tools.py` (this session, 2026-08-19,
+  `services/media_tools.py`, `services/elevenlabs_tools.py` (during this audit, 2026-08-19,
   read-only, no import, no server contact). Estimator `len(json.dumps())//4` per
   `services/tool_budget.py:40-45`; calibrated against AUDIT's 58-tool/9,603-token
   offline figure to within 1.4% per tool.
@@ -977,6 +976,6 @@ default, or do you want to be told when a connector arrives unclassified?
 - `docs/SEATS_AND_TRANSPARENCY_SPEC.md` A7 (completion-receipt law), B2 (no silent
   changes), A4(6) (connection state must be freshly checked, never asserted from memory)
   — the honesty invariants §6.4's detector repoints.
-- The two-layer index proposal itself: a practitioner report, relayed by Stephen,
+- The two-layer index proposal itself: a practitioner report, relayed by the maintainer,
   including the 30%-vs-100% reliability caveat with no denominator. Treated throughout
   as an unverified signal designed against, never as a measurement (§5.4).

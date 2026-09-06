@@ -1,5 +1,7 @@
 # Model Suite Determination — this machine, first case
 
+> **Historical record — 2026-08-17.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Date:** 2026-08-17
 **Machine:** i7-10700F (8c/16t), 32 GB DDR4, RTX 4070 12 GB (12,282 MiB), Windows 11 Pro
 **Branch:** `model-suite-determination` (worktree, off `residency-policy`)

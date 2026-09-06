@@ -1,35 +1,20 @@
 # Contributing to Agent Friday
 
-Thank you for taking the time to contribute. This document covers everything you need to get started.
+Thank you for contributing. This document covers setup, the checks every change
+must pass, and the parts of the codebase that need extra care. It is written as
+present-tense engineering rules; the reasoning behind a rule, where it matters,
+lives in a linked design or security note rather than here.
 
-## Code of Conduct
+All contributors follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-All contributors are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Please read it before participating.
+## Reporting bugs and requesting features
 
-## How to contribute
-
-### Reporting bugs
-
-Open an issue using the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md). Include:
-- OS, Python version, and how you installed Agent Friday
-- Steps to reproduce
-- What you expected vs. what happened
-- Relevant logs (check the terminal output or `~/.friday/logs/`)
-
-### Requesting features
-
-Open an issue using the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md). Describe the problem you're trying to solve, not just the solution.
-
-### Submitting a pull request
-
-1. **Fork** the repo and create a branch from `main`.
-2. **Install** in editable mode: `pip install -e .` then `pip install pytest`
-3. **Run the tests** before and after your change: `pytest tests/unit tests/api -q`
-4. **Keep changes focused** — one logical change per PR. Refactors and bug fixes belong in separate PRs.
-5. **No new external dependencies** without prior discussion in an issue.
-6. Open a PR using the [pull request template](.github/PULL_REQUEST_TEMPLATE.md).
-
-CI runs `pytest` on Windows and Ubuntu against Python 3.11 and 3.12, plus `ruff check --select E9,F63,F7,F82`. Both must pass.
+- Bugs: use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md).
+  Include your OS, Python version, how you installed Agent Friday, steps to
+  reproduce, and the relevant lines from the terminal or `~/.friday/logs/`.
+- Features: use the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md).
+  Describe the problem before the solution.
+- Security problems: **do not open a public issue.** See [SECURITY.md](SECURITY.md).
 
 ## Development setup
 
@@ -37,127 +22,118 @@ CI runs `pytest` on Windows and Ubuntu against Python 3.11 and 3.12, plus `ruff 
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
 python -m venv venv
-# Windows
-venv\Scripts\activate
-# Linux / macOS
-source venv/bin/activate
-
-pip install -e .
-pip install pytest
-pytest tests/unit tests/api -q
-```
-
-### Enable the git hooks — first thing, before your first commit
-
-```bash
+venv\Scripts\activate          # Windows
+source venv/bin/activate       # Linux / macOS
+pip install -e ".[dev]"
 git config core.hooksPath .githooks
 ```
 
-This is one line and it is not optional in practice, because the hook enforces
-things a reviewer cannot reliably catch by reading a diff. It runs four checks:
+`pip install -e ".[dev]"` installs the application in editable mode plus
+`pytest` and `ruff`. Optional capability groups (`voice-local-lite`, `local`,
+`google`, …) are listed in `pyproject.toml`; the test suite needs none of them.
 
-1. **Secret / PII scan.** This repository is public and its history has been
-   scrubbed once already. Bypass a single false positive with a trailing
-   `# pragma: allowlist secret`.
-2. **Import smoke test** (~4 s, only when `venv/` exists). A module-level
-   use-before-definition in `services/agent.py` once killed every server start
-   about two seconds in, and the tray was discarding stderr, so six overnight
-   failures left no trace. Ruff cannot catch it — the names *are* defined, just
-   too late — so only a real import proves statement order is sound.
-3. **Gated-prompt caller check** — see below.
-4. The scanner runs last and its exit status is the hook's.
+The last line enables the repository's git hooks. It is required: the hooks
+enforce invariants a reviewer cannot reliably catch by reading a diff (see
+[Repository guards](docs/development/repository-guards.md)).
 
-Emergency bypass is `git commit --no-verify`, and it is discouraged in the
-ordinary way but genuinely bad here: two of these checks exist because the
-failure they catch is *silent*.
+## Required checks
 
-### Why `_get_friday_system_prompt` demands arguments you might not want to think about
+Run these before opening a pull request. CI runs the same set on Windows and
+Ubuntu.
 
-`scripts/check_gated_prompt_callers.py` will fail your commit if you call
-`_get_friday_system_prompt()` without both `provider=` and `vault_control=`.
-Both are keyword-only and neither has a default. This is deliberate, and the
-reason is worth understanding before you reach for a value that makes the error
-go away.
+| Check | Command |
+|---|---|
+| Unit and API suites | `pytest tests/unit tests/api -q` |
+| Security and egress-boundary suites | `pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py -q` |
+| Import smoke test | `python scripts/check_imports.py` |
+| Fatal-rule lint | `ruff check --select E9,F63,F7,F82 .` |
+| Gated-prompt callers | `python scripts/check_gated_prompt_callers.py` |
+| Settings readers | `python scripts/check_settings_readers.py` |
+| Stale model names | `python scripts/check_stale_model_names.py` |
 
-The function's former defaults were `provider='cloud'` and `vault_control=None`
-— which its own docstring already described as "legacy ungated". On
-2026-08-25 we found **22 call sites** that had taken those defaults, meaning
-TIER_2 vault content was assembled into a system prompt and shipped to a cloud
-provider whenever the call happened to route there. Nobody chose that; they just
-did not pass an argument.
+The unit and API suites are hermetic: no live server, no network, no API keys.
+Tests that need a live server (`tests/test_friday_ui.py`, `tests/test_ui_audit.py`)
+or real network are deselected by default; see `pytest.ini`.
 
-Making the parameters required converts a silent leak into a loud `TypeError`.
-But a `TypeError` is only loud if something *calls* the function — and **two of
-the twenty-two were background jobs** (a daily unattended briefing and a
-session-summary distiller) that would not have run again, and so would not have
-raised, until their next scheduled run hours or a day later. Hence the static
-scan: it makes the same failure loud at commit time regardless of which code
-path would eventually have hit it. It is a stdlib-only AST parse, so it runs
-even without the venv.
+## Submitting a pull request
 
-**So: decide the gating.** If you are building a prompt for a local model, say
-so. If it is going to the cloud, say that, and pass the vault control that
-belongs to the caller. Do not pass `provider='cloud', vault_control=None` to
-silence the checker — that is precisely the bug, spelled out longhand.
+1. Branch from `main`.
+2. Keep each pull request to one logical change. Refactors and bug fixes are
+   separate pull requests.
+3. Every bug fix includes a test that fails before the change and passes after
+   it. Run it in both directions.
+4. No new external dependency without prior discussion in an issue.
+5. Fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md),
+   including the security checklist when it applies.
 
-### `index.html` is the UI, not `ui_parts/`
+## Engineering invariants
 
-**Read this before running any UI build.** `index.html` is the file the server
-serves and the source of truth. `ui_parts/app.html` is now a strict **subset**
-of it: every top-level component in `app.html` also exists in `index.html`, but
-**18 top-level components — including the entire conversations feature — exist
-only in `index.html`.**
+These are the rules the hooks and guards exist to enforce. Each is stated as
+the invariant; the guard that checks it is named.
 
-Running `src/agent_friday/ui/build_ui.py` naively therefore *deletes shipped
-code*, silently. Since 2026-08-24 the build refuses to write output that drops
-any top-level component the existing `index.html` defines, and tells you which
-ones. `--force` overrides it, and you should not use `--force` unless you
-genuinely mean to discard the components it names.
-
-Also note: **JSX precompilation was silently off from 18 August until 25
-August.** The precompile step falls back to in-browser Babel when it cannot run,
-printing a message that nobody read. If you are touching the UI build, check
-that precompilation actually happened rather than assuming.
-
-### The forensics snapshotter is a scheduled task
-
-Named `AgentFridayForensics`, installed by `ops/forensics-install.ps1`. If you
-need it to stop — it writes snapshots on a timer and will keep doing so across
-reboots — run `ops/forensics-down.ps1`. `ops/forensics-verify.ps1` reports its
-state. It is a Windows scheduled task, so uninstalling the app is not what stops
-it.
+- **Cloud prompt construction requires an explicit vault control.**
+  `_get_friday_system_prompt()` takes keyword-only `provider=` and
+  `vault_control=` with no defaults. A caller that builds a prompt for a local
+  model says so; a caller that builds one for the cloud passes the vault control
+  it owns. Passing `provider='cloud', vault_control=None` to satisfy the check
+  is the bug the check exists to catch. Guard: `scripts/check_gated_prompt_callers.py`.
+- **A settings control must be read by something.** Every key the UI writes
+  must exist in `DEFAULT_SETTINGS` (unknown keys are dropped on load) and must
+  have a reader under `src/`. Guard: `scripts/check_settings_readers.py`. The
+  guard proves a reader exists, not that the reader enforces the setting; a
+  behavioural test is still required.
+- **Module-level statement order must be sound.** A dictionary mutated above
+  its own definition passes `ruff` (the name exists, just later) and kills the
+  server at import. Guard: `scripts/check_imports.py`.
+- **Nothing may claim success it has not verified.** A component that cannot
+  verify its own result says so; "done" without verification is a defect.
+- **`index.html` is the UI.** It is the served file and the source of truth;
+  `ui_parts/app.html` is a hand-maintained mirror. A UI change edits both, and
+  the build tool refuses to regenerate `index.html` in a way that drops
+  components. See [UI build](docs/development/ui-build.md).
+- **User-facing documentation never names a retired model.** Guard:
+  `scripts/check_stale_model_names.py`.
+- **The repository is public.** No credentials, personal identifiers, local
+  paths, or private material. Guard: the pre-commit scanner in `.githooks/`.
 
 ## Project layout
 
 ```
-src/agent_friday/    # Python package (Flask app)
+src/agent_friday/    # the Python package (Flask app)
   server.py          # entry point, Flask app object
+  cli.py             # `friday` command-line entry point
   core/              # shared state, DEFAULT_SETTINGS, auth, config, vault helpers
-  cli.py             # `friday` CLI entry point
-  services/          # background services
-  routes/            # Flask Blueprints, one per domain
-  routing/           # model router, Ollama manager
-  privacy/           # vault access, crypto
-  pipeline/          # context pruner, compressor
-  governance/        # proof of integrity, behavioral monitor
-  ui/                # build_ui.py, liquid_ui.py
+  services/          # background services and engines
+  routes/            # Flask blueprints, one per domain
+  routing/           # model routing, Ollama management, provider descriptors
+  privacy/           # vault access control, crypto, cloud consent
+  governance/        # proof of integrity, behavioural monitor
+  pipeline/          # context pruning and compression
+  ui/                # UI build tooling
+  seed/              # bundled skills and data shipped inside the package
 tests/
   unit/              # fast, no server, no LLM
-  api/               # Flask test client, all LLM calls stubbed
-docs/                # reference documentation
+  api/               # Flask test client, every LLM call stubbed
+  security/          # egress-boundary suites
+packaging/windows/   # the Windows installer and its tests
+docs/                # documentation — start at docs/README.md
 ```
 
-## Sensitive areas
+## Sensitive subsystems
 
-The following subsystems have security implications — changes here get extra review:
+Changes here have security implications and receive extra review. Say so in
+the pull request.
 
-- `src/agent_friday/privacy/` — vault access control and encryption
-- `src/agent_friday/governance/` — Asimov cLaws, behavioral monitor
-- `src/agent_friday/services/sensitivity_classifier.py` — egress gate
-- `src/agent_friday/services/egress_gate.py` — fail-closed outbound classifier
+- `src/agent_friday/privacy/` — vault access control, encryption, cloud consent
+- `src/agent_friday/governance/` — behavioural constraints and integrity
+- `src/agent_friday/services/egress_gate.py` and `sensitivity_classifier.py` — the fail-closed outbound gate
+- `src/agent_friday/services/credential_store.py` and `vault_passphrase.py` — where secrets live
+- Authentication, session, and cookie handling in `src/agent_friday/core/`
 
-If you're unsure whether a change affects these areas, say so in the PR and a maintainer will review it.
+## Local-only files
 
-## Reporting security vulnerabilities
-
-Please **do not** open a public issue for security vulnerabilities. See [SECURITY.md](SECURITY.md).
+Some files in a working tree are intentionally never committed: launch scripts
+that hold keys, per-user runtime state, generated assets, and private notes.
+`.gitignore` covers the classes; for a file that is specific to one clone, use
+`.git/info/exclude` rather than adding its name to the public ignore file.
+Check a path with `git check-ignore -v <path>`.

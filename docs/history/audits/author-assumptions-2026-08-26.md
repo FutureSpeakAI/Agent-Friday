@@ -1,9 +1,11 @@
 # Where Friday still assumes her operator wrote her
 
+> **Historical record — 2026-08-26.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 Swept 2026-08-26, after the first install on a second person's machine.
 Fixed items are listed for completeness; the open ones are the point.
 
-The framing, which is Stephen's: **every path that requires knowing where a
+The framing, which is the maintainer's: **every path that requires knowing where a
 JSON file goes, or opening a code editor to set a key, is a path that was
 never walked by someone who didn't build it.** Each finding below is that
 same sentence wearing different clothes.
@@ -61,7 +63,7 @@ without a shell. They are the same defect as "place a JSON file at
    should point there like the others do.
 
 6. **`README.md:71`** — "Run `friday models` to see what your machine can
-   hold". True and useful for Stephen. There is no in-app equivalent.
+   hold". True and useful for the maintainer. There is no in-app equivalent.
 
 ---
 
@@ -105,7 +107,7 @@ worth a release.
 Specced separately in `docs/design/google-oauth-onboarding.md`. It is the
 largest remaining instance of this pattern and the only one that is a
 business decision rather than an implementation. Q-G1 (is Friday a product
-for strangers, or a tool for people Stephen knows?) decides the rest.
+for strangers, or a tool for people the maintainer knows?) decides the rest.
 
 ---
 

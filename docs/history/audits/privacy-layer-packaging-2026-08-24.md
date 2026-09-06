@@ -1,5 +1,7 @@
 # Privacy-layer packaging audit — 2026-08-24
 
+> **Historical record — 2026-08-24.** Kept as an engineering record of the state of the tree on that date. Claims here describe that date, not the current code; the current status of any subsystem is in the documents linked from [docs/README.md](../../README.md) (one level deeper for the gauntlet subdirectory: `../../../README.md`).
+
 **Question asked:** the sensitivity classifier's docstring described a four-layer
 defence. Does the shipped artifact actually run four layers?
 
@@ -143,7 +145,7 @@ embeddings — that is, of the two layers this audit has just shown do not exist
 the shipped artifact. The vault path made it worse still: `vault_access.classify`
 passes `use_embeddings=False`, so Layer 3 was off even where it *was* installed.
 
-The consequence was live, not theoretical. Real wiki files of Stephen's reached
+The consequence was live, not theoretical. Real wiki files of the maintainer's reached
 Anthropic **verbatim**: `vault_access.gate_content(raw, "anthropic")` returned the
 string unchanged and logged `[VAULT] ALLOW provider=anthropic tier=TIER_1`. The
 only thing that had ever stood between `emergency contact: 555-1234` and the cloud

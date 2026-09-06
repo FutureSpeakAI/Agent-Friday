@@ -25,117 +25,50 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 
 ---
 
-## Option 0: Download the Packaged App (No Python Required)
+## Supported installation paths
 
-The fastest path on Windows needs no Python, Git, or terminal at all: download
-the `AgentFriday-Setup-*.zip` attached to the
+| Method | Supported | Platforms | Notes |
+|---|---|---|---|
+| **Windows installer zip** (`AgentFriday-Setup-<version>.zip`) | **Yes — primary** | Windows 10/11 | Embedded CPython, source payload, wheelhouse. No Python, Git or terminal needed. Installs Ollama and sizes a local model to your GPU, or recommends a cloud key. Take the newest zip; every older one is superseded. |
+| **Source checkout** (`pip install -e .`) | **Yes** | Windows, macOS, Linux | The developer path and the only path on macOS/Linux. Feature differences by platform are in the README. |
+| **Wheel** (`python -m build`, `pip install agent_friday-*.whl`) | Yes, for the application and bundled seed skills | Windows, macOS, Linux | Not published to PyPI; build it yourself. CI verifies the wheel carries the seed skills' data files. |
+| **One-line installers** (`scripts/install.sh`, `install.ps1`, `install.bat`) | Yes, as a convenience over the source path | Linux/macOS/WSL2, Windows | They clone this repository and run `friday setup`. Read them before piping anything to a shell. |
+| **`AgentFriday.exe`** (PyInstaller) | **No** | — | The recipe (`AgentFriday.spec`) is kept for reference. The last published binary is from July 2026 and predates current privacy fixes; do not use it. Any `.exe` in a checkout's `dist/` is that same build. |
+
+### The Windows installer
+
+Download the zip from the
 [latest release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest),
 unzip it anywhere, and double-click **Install Agent Friday.cmd**. SmartScreen
-may warn on first launch — see the SmartScreen note below for the one-click
-bypass.
+may warn on first launch; see the note below. Everything installs per-user
+under `%LOCALAPPDATA%\AgentFriday`; no administrator rights are used.
 
-> ⚠️ **Take the newest zip, and do not go back for an older one.** Every
-> `5.6.x` before `5.6.6` is superseded — `5.6.5` deletes your vault passphrase
-> on an in-place upgrade (see the red box below), `5.6.1` was tagged a few hours
-> before the API-key pre-flight it was written to add, so the published `5.6.1`
-> zip promises a self-repair loop it cannot verify a key for, and `5.6.0` is
-> older still. See [RELEASE_NOTES.md](../../RELEASE_NOTES.md).
+Upgrading over an existing install keeps everything under `~/.friday`. Two
+older installer defects are worth knowing if your install predates them:
+5.6.0–5.6.4 did not replace application files on upgrade (running the current
+installer repairs it), and 5.6.5 deleted a vault passphrase that lived only in
+`start.bat` (since 5.7.0 the passphrase lives in the OS keychain and a
+DPAPI-wrapped file that no installer touches). Both are in
+[KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).
 
-> 🔴 **Did you upgrade using `5.6.5`? Your vault passphrase may be gone.**
-> The passphrase lives in `start.bat` inside Friday's app folder and — unless
-> you ran `friday vault-setup` — nowhere else. The installer's copy step deletes
-> that folder, and `start.bat` is deliberately never shipped, so it does not
-> come back. Before `5.6.5` the copy short-circuited and the file survived by
-> accident; `5.6.5` fixed the short-circuit and made this reachable.
-> `~/.friday/vault` stays on disk, encrypted, with its key deleted — **there is
-> no recovery** unless you have another copy. Check `friday vault-setup` (the OS
-> keychain), any launch script you kept, and wherever you saved it. `5.6.6`
-> preserves the file. Full detail and the recovery order:
-> [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md) §0.
->
-> **Whatever version you are on, run `friday vault-setup` now.** The keychain
-> copy is the only one the installer never touches.
+### What a packaged install runs, privacy-wise
 
-> 🔴 **Upgrading from any version before 5.6.5? Read this too.** Installers
-> `5.6.0`–`5.6.4` did not replace Friday's own files when an install already
-> existed — the copy step short-circuited, while the installer still wrote the
-> new version number and reported success. An install that reached its version
-> by upgrading has been running the code it *first* installed. Running the
-> `5.6.6` installer over the top repairs it from any prior version and keeps
-> everything under `~/.friday`. If you connected a credentialed MCP server
-> (Airtable, Gmail, GitHub, Slack) while on an affected install, rotate that
-> credential — it was stored and served in plaintext. See
-> [CHANGELOG.md](../../CHANGELOG.md) under 5.6.5 and 5.6.6.
+The sensitivity classifier declares four layers; which ones run depends on the
+install. The installer's *memory* tier adds the embedding layer
+(`sentence-transformers`, about 2.5 GB, announced and skippable); its
+*recommended* tier installs Presidio, which runs observe-only and reports as
+inactive by design. On first run Friday probes its own layers and prints the
+result, with a boxed `SENSITIVITY CLASSIFIER IS RUNNING DEGRADED` notice when
+anything declared is not running. Seeing `presidio` listed as inactive is
+expected. The reasoning is in the
+[threat model](../security/threat-model.md).
 
-> ⚠️ **The releases page also carries an `AgentFriday.exe`. It is not current.**
-> The newest published `AgentFriday.exe` is **v5.4.0, built 6 July 2026**. It
-> predates every egress-gate fix made on 24–25 August — among them the
-> classifier gaining its first phone/address/account-number regexes, the wiki
-> context section that failed *open* on a classifier miss, and the voice path
-> that failed open at its strongest verdict — and it predates 5.5.0 entirely.
-> The `dist/AgentFriday.exe` in a checkout is that same 6 July build.
->
-> **Do not treat either as a current build.** Use the installer zip above, or
-> run from source.
+Nothing downloads a model behind your back: Presidio's spaCy model is only
+fetched under `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`, and
+the embedding model (`all-MiniLM-L6-v2`) arrives on first use after the
+installer has warned about the memory tier.
 
-The steps that follow are the from-source path, recommended for developers and
-anyone who wants to read or modify the code they run.
-
-### The two packaged builds are not the same product, privacy-wise
-
-This matters more than a packaging detail usually would, so it is stated up
-front rather than buried:
-
-| | **`AgentFriday.exe`** (PyInstaller, one file) | **`AgentFriday-Setup-*.zip`** (Windows installer) |
-|---|---|---|
-| What it is | A single frozen binary | An embedded CPython plus a source payload and a wheelhouse |
-| Sensitivity classifier | **Layers 1a + 1b only** — regex and keyword | Layers 1a + 1b, **plus Layer 3** (embeddings) if the memory tier installs |
-| `sentence-transformers` | **Excluded on purpose** (pulls torch: over 4 GB measured, against a ~152 MB binary) | Installed by the *memory* tier (~2.5 GB, announced and skippable) |
-| `presidio-analyzer` | Not bundled | Installed by the *recommended* tier — but **observe-only**, see below |
-| PDF extraction | Bundled (`pdfplumber` pinned in the spec) | Installed by the *recommended* tier |
-
-Neither build is "the weakened one" by accident. The `.exe` trades Layer 3 for
-not shipping a 4+ GB tensor library, which is the right trade for a desktop
-download. What is **not** acceptable is claiming otherwise, so Friday tells you
-which layers are live at every boot — see the next section.
-
-### What a fresh install actually reports
-
-On first run Friday probes its own privacy layers and prints the result. A
-healthy source install prints something like:
-
-```
-  Privacy layers: Sensitivity classifier: 3/4 layers active (source checkout). DEGRADED - not running: presidio.
-```
-
-and, when anything is inactive, a boxed notice you are meant to read:
-
-```
-  ╔════════════════════════════════════════════════════════════╗
-  ║  NOTICE: SENSITIVITY CLASSIFIER IS RUNNING DEGRADED       ║
-  ║  inactive: presidio                                       ║
-  ║  Egress decisions use the remaining layers only.          ║
-  ╚════════════════════════════════════════════════════════════╝
-```
-
-**Seeing `presidio` listed as inactive is expected and correct**, even after an
-installer run that installed it. Presidio is deliberately not enforced — the
-reasoning is in [THREAT_MODEL.md](../security/threat-model.md#1-cloud-side-exposure-of-sensitive-data),
-and the short version is that measurement found it *worse* than the regex it
-would supplement while escalating half of ordinary conversation.
-
-### Nothing downloads a model behind your back
-
-Two things worth stating explicitly, because both are common in this class of
-tool and neither happens here:
-
-- **Presidio's ~590 MB spaCy model is never fetched.** `AnalyzerEngine()` — the
-  call that would pull it — is only constructed when you opt in with
-  `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`. Both default to
-  off, so a normal install never constructs one.
-- **The embedding model is lazy and announced.** `all-MiniLM-L6-v2` arrives on
-  first use, into `%USERPROFILE%\.cache\huggingface`, and the installer warns
-  about the ~2.5 GB memory tier before starting it and lets you skip it.
+The steps that follow are the from-source path.
 
 ---
 
@@ -263,11 +196,31 @@ XML, and Friday reads it with the standard library. There is deliberately no
 
 ## Step 4: Configure API Keys
 
-Cloud keys are **optional in principle, and asked about in practice.** Friday can chat with no key at all through a local model on Ollama, but since 5.6.1 the Windows installer asks which way you want to run her and recommends the key on a graphics card too small to hold a model comfortably — so a zero-key install is a choice you make, not the default you fall into. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted per provider under `~/.friday/providers/keys/` (vault-passphrase or Windows DPAPI protection).** One honest caveat: the setup wizard has historically also written keys and the vault passphrase as plaintext `SET` lines into launch scripts, and those plaintext values *override* the encrypted store at import. Treat any `start.bat` or `friday_startup.vbs` on your machine as containing live secrets. See KNOWN_ISSUES.md §7.
+Cloud keys are **optional in principle, and asked about in practice.** Friday
+can chat with no key at all through a local model on Ollama; the Windows
+installer asks which way you want to run her and recommends a key on a graphics
+card too small to hold a model comfortably. Add a key to upgrade reasoning
+(Anthropic) or unlock voice and creative work (Gemini).
 
-### Option A: Setup Wizard (Recommended)
+Where a key ends up depends on how you enter it:
 
-Run `friday setup`, or use the first-run wizard that opens in your browser. Either way, keys are immediately encrypted and stored in the credential store, and `friday setup` also arms the vault passphrase. This is the safest path — a hand-edited `start.bat` with a plaintext key is **not** recommended.
+| Entered through | Stored in | Protection |
+|---|---|---|
+| **Settings → Providers** in the running app | `~/.friday/providers/keys/<provider>.key` | Encrypted: vault key (Argon2id → AES-256-GCM) when a vault passphrase is set, otherwise Windows DPAPI, otherwise plaintext with a one-time warning. |
+| **`friday setup`** (the command-line wizard) | `~/.friday/settings.json`, `~/.friday/config.yaml`, and a `start.bat` launcher in the checkout | **Plaintext.** These files are outside the repository or gitignored, but treat them as containing live secrets. |
+| Environment variables | your shell or system environment | Wins over every stored copy. |
+
+The vault passphrase is never written to a launch script: `friday setup` and
+`friday vault-setup` store it in the OS keychain and a DPAPI-wrapped file
+under `~/.friday/security/`. Full detail: [SECURITY.md](../../SECURITY.md).
+
+### Option A: Settings → Providers (recommended)
+
+Start Friday, open **Settings → Providers**, and paste the key. It is verified
+against the provider and stored in the encrypted store. `friday setup` is the
+terminal alternative for a first run; it configures routing, the vault
+passphrase, and voice as well, but writes provider keys in plaintext as shown
+above.
 
 ### Option B: Environment Variables
 
@@ -417,6 +370,36 @@ On first launch:
 ├── audio-cache/            # TTS cache
 └── vibe-code-logs/         # Coding session logs
 ```
+
+---
+
+## The local model ladder
+
+Which local model you get is decided by your hardware, not by a default in a
+configuration file. The planner takes the largest brain that fits your card:
+
+| Your card | You get | Download | What it is |
+|---|---|---|---|
+| 5 GB | `gemma4:e2b` | 7.2 GB | The smallest seat that keeps its tools — quick lookups, formatting, status checks |
+| 6 GB | `gemma4:e4b` | 9.6 GB | A solid everyday model |
+| 11 GB | `gemma4:12b` | 7.6 GB | Measured at 49–54 tok/s, fully resident on a 12 GB card — the model Friday is tuned against |
+| 20 GB+ | `gemma4:26b` | 19.0 GB | The largest offered — an MoE, closest to a cloud model for tool use |
+
+"Your card" is the whole card: 2.5 GB comes off it for the desktop, and each
+model's own KV cache, projector and CUDA context are counted inside its
+footprint. `friday models` shows what your machine can hold and the arithmetic
+behind anything it refuses.
+
+Size is capability, not just speed. On published function-calling benchmarks a
+4B model scores in the low 80s on single-call syntax and in the teens on
+multi-turn exchanges, and the failure is invisible: the model keeps talking
+fluently while losing the thread of a multi-step job. That is why an 8 GB card
+defaults to a cloud key rather than a local model, and why every model in the
+table calls tools natively — the planner refuses to select a tool-incapable
+model at any tier, and re-checks that flag against the daemon after every
+install rather than trusting a table. A model can still *narrate* a tool call
+it never made; `tool_integrity.find_pseudo_toolcalls` catches that after the
+fact rather than preventing it.
 
 ---
 

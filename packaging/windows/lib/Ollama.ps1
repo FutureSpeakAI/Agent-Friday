@@ -26,7 +26,7 @@
     attempt it goes and looks for a working `ollama` binary. If none of the
     attempts produce one, it does not fail the install and it does not lie: it
     tells her, in one sentence, to install Ollama from a link, records the
-    situation for Stephen, and lets the rest of setup complete. Friday with a
+    situation for the maintainer, and lets the rest of setup complete. Friday with a
     cloud key and no local model is a reduced Friday, not a broken one.
 #>
 

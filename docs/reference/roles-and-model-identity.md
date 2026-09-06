@@ -1,11 +1,14 @@
-﻿# Contract: roles, model identity, and the budget preview
+# Contract: roles, model identity, and the budget preview
 
-**Status:** live on branch `model-suite-determination`. **Audience:** anything that renders a model
-picker, binds a model to a conversation, or shows the user what their machine can hold.
+> **Status:** implemented
+> **Last verified:** 2026-09-06
+> **Implementation:** `services/residency_policy.py` (`ROLES`, `resolve_role`), `services/residency_catalog.py` (`canonical_model_id`, `installed_entries`, `duplicate_candidates`)
+> **Supersedes / superseded by:** —
+> **Written:** 2026-08-18
 
-This exists because two sessions agreeing verbally is how a picker ends up rendering thirteen seats
-as thirteen simultaneous models. If you are building against the residency layer, this file is the
-agreement; the session report that produced it is not.
+## Implementation notes
+
+A live contract. Audience: anything that renders a model picker, binds a model to a conversation, or shows the user what their machine can hold. It exists because two parties agreeing verbally is how a picker ends up rendering thirteen seats as thirteen simultaneous models; if you are building against the residency layer, this file is the agreement.
 
 ---
 
@@ -18,7 +21,7 @@ interactive_brain  heavy_hitter  sidekick  sidekick_heavy  embedder  stt  tts  i
 orchestrator  sidekick_fast  function_manager  memory_manager  researcher
 ```
 
-The five new ones are the **working roles** Stephen named on 2026-08-18. Do not assume a role is a
+The five new ones are the **working roles** the maintainer named on 2026-08-18. Do not assume a role is a
 model, and do not assume a role list is a count of resident processes. See §3.
 
 ---
@@ -132,7 +135,7 @@ Response is **always 200**, including when the selection does not fit. Notable f
 | `models[]` | per-model rows: `roles`, `residency`, `device`, `vram_mib`, `sized`, `num_ctx` |
 | `resident_vram_mib` / `peak_lease_vram_mib` / `peak_vram_mib` / `peak_state` | the three states the card passes through, and the worst |
 
-**This is advice, not a gate.** Stephen's standing rule all day: a model he selects wins. Show the
+**This is advice, not a gate.** The maintainer's standing rule: a model the user selects wins. Show the
 consequence, let him choose. Do not refuse, and do not silently substitute.
 
 Two traps:
