@@ -1002,7 +1002,7 @@ def _gate_messages(messages: list, provider: str,
         # _oai_agentic_loop (services/agent.py) echoes these back into the
         # conversation exactly the way the Anthropic loop echoes tool_use,
         # so they need the same treatment _gate_tool_use gives that shape
-        # (docs/audits/gauntlet-2026-09-03/findings.jsonl F12 — confirmed
+        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F12 — confirmed
         # unreachable by any current retry path, hardened anyway since it
         # costs nothing and the same shape was a real leak once already).
         if isinstance(msg.get("tool_calls"), list):

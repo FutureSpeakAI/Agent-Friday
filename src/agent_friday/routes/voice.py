@@ -841,7 +841,7 @@ def _local_brain_ready() -> bool:
         # "reasoning" capability -- passing "reasoning" itself isn't a
         # valid role, so _configured() returned None immediately and this
         # never consulted the user's actual orchestrator model
-        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
         return bool(_seats.resolve("brain"))
     except Exception:
         return False
@@ -899,7 +899,7 @@ def _resolve_voice_engine(settings=None):
     # Tier-1 voice deps not installed (`pip install -e .[voice-local-lite]`,
     # an easy-to-skip separate step) got their microphone audio and Friday's
     # spoken replies streamed to Gemini Live anyway — silently (see
-    # docs/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
     _local_only = str(((settings.get('model_routing') or {})
                        .get('mode')) or '').strip().lower() == 'local_only'
     if _local_only:
@@ -1160,7 +1160,7 @@ def voice_setup_install_cancel():
 
 def _ws_auth_ok(ui_tok_ok: bool) -> bool:
     """Mirror core.login_required()'s fail-closed semantics for a WebSocket
-    handshake (F21, docs/audits/gauntlet-2026-09-03/findings.jsonl).
+    handshake (F21, docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
 
     Both `/ws/voice-local` and `/ws/live` used to gate on bare `FRIDAY_PASSWORD`
     directly: `if FRIDAY_PASSWORD and not authenticated and not loopback and
@@ -2736,7 +2736,7 @@ if sock is not None:
                         # already in progress: audio keeps streaming to
                         # Gemini for as long as the call runs, which the
                         # renewal loop's own docstring says can be hours
-                        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+                        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
                         try:
                             _renewal_local_only = str(
                                 ((_load_settings() or {}).get('model_routing') or {})
@@ -2762,7 +2762,7 @@ if sock is not None:
                         # this is the one exit that must send first. Without
                         # it, opening voice mode in a second tab silently
                         # killed the first tab's call with no signal at all
-                        # (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+                        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
                         if not _live_conn_current(_conn_gen):
                             _vlog('superseded by a newer voice connection — zombie handler exiting')
                             _safe_send({"type": "status",

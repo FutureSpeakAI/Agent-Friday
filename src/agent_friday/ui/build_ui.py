@@ -153,8 +153,8 @@ if os.path.exists(output) and not _force:
             f'Size: existing {len(existing):,} bytes -> assembled {len(combined):,} bytes.\n'
             f'\n'
             f'index.html is the source of truth. Edit it directly. ui_parts/app.html is\n'
-            f'a stale hand-maintained mirror kept only for history; see its header note\n'
-            f'and docs/audits/release-readiness.md.\n'
+            f'a hand-maintained mirror kept for history; see its header note and\n'
+            f'docs/development/ui-build.md.\n'
             f'\n'
             f'Re-run with --force if you genuinely intend to discard the components above.'
         )

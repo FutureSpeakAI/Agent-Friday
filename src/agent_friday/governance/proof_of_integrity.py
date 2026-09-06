@@ -147,13 +147,13 @@ class IntegrityEngine:
                 self._signing_key = SigningKey.generate()
                 key_file.parent.mkdir(parents=True, exist_ok=True)
                 key_file.write_bytes(bytes(self._signing_key))
-                # THREAT_MODEL.md promises this key is "confined to
+                # docs/security/threat-model.md promises this key is "confined to
                 # ~/.friday/vault/ with 600 permissions as a fallback" --
                 # get_governance_key() below already does exactly this for
                 # its own file fallback; this write never did, leaving the
                 # private signing key world/group-readable at the process
                 # umask (commonly 644) on a from-source Linux/macOS install
-                # (docs/audits/gauntlet-2026-09-03/findings.jsonl F43). The
+                # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F43). The
                 # public verify key is meant to be shared, so it alone is
                 # left at the default mode.
                 try:

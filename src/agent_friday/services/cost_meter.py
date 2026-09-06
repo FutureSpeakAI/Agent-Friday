@@ -38,7 +38,7 @@ DB_PATH = FRIDAY_DIR / "costs.db"
 # under Google's free/quota-based tier — the real risk is quota throttling or
 # an error, not a bill — so there is nothing to record. Stated explicitly so
 # a future reader can tell "verified free, intentionally unmetered" apart
-# from "someone forgot" (docs/audits/gauntlet-2026-09-03/findings.jsonl).
+# from "someone forgot" (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
 #
 # ── Per-direction pricing (USD per 1K tokens) ────────────────────────────────
 # Real pricing is input ≠ output. Unknown models fall back to the blended
@@ -127,7 +127,7 @@ PRICING = {
 
     # ── Opt-in provider catalogs (routing/provider_descriptors.py
     #    BUILTIN_EXTRA_PROVIDERS) that previously metered as exactly $0 for
-    #    every call (docs/audits/gauntlet-2026-09-03/findings.jsonl Q11b) --
+    #    every call (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q11b) --
     #    the _call_openai -> cost_meter.meter() code path already worked,
     #    this table was just empty for these five.
     #

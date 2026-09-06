@@ -51,7 +51,7 @@ API_ROOT = "https://api.elevenlabs.io/v1"
 #   eleven_multilingual_v2 — highest quality, the right default for narration.
 #   eleven_flash_v2_5      — ~10x cheaper and much lower latency; the right
 #                            choice for conversational use. See
-#                            docs/design/elevenlabs-voice.md.
+#                            docs/design/active/elevenlabs-voice.md.
 DEFAULT_MODEL = "eleven_multilingual_v2"
 DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"      # "Rachel" — a stock voice
 DEFAULT_VOICE_NAME = "Rachel"
@@ -209,7 +209,7 @@ def _tool_speak_text(inp):
         return "speak_text failed: could not read audio body (%s)" % e
     elapsed = time.time() - started
 
-    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q11a):
+    # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q11a):
     # this tool's own description says it "costs characters against the
     # ElevenLabs quota", yet had zero cost_meter references. ElevenLabs bills
     # per character, not per token — cost_meter.PRICING carries a matching

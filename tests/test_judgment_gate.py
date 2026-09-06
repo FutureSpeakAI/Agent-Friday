@@ -1,7 +1,7 @@
 """
 Judgment gate — the safety property, tested adversarially.
 
-docs/design/deep-research.md §5. The whole layer exists to let a model rescue
+docs/design/active/deep-research.md §5. The whole layer exists to let a model rescue
 material the keyword rules over-blocked, and the whole risk is that a model
 could be talked into rescuing something it must not. So the load-bearing test
 here is not "does judgment work" — it is:

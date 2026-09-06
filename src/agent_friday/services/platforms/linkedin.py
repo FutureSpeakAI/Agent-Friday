@@ -1,5 +1,5 @@
 """
-LinkedIn platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.3).
+LinkedIn platform adapter (docs/design/implemented/content-pipeline-spec.md §4.3).
 
 Versioned REST posts (``POST /rest/posts`` + ``LinkedIn-Version`` header —
 the successor to ugcPosts), the ``initializeUpload`` media flow (images and

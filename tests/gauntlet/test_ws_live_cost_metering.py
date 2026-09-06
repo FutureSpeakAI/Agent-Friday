@@ -3,7 +3,7 @@ Gemini Live voice websocket (routes/voice.py `ws_live`) makes real, billed
 Gemini Live API calls with ZERO cost_meter integration anywhere in the
 file, despite `cost_meter.PRICING` already carrying entries for exactly
 these Live model ids -- clear evidence the original intent was to track
-this, just never wired (docs/audits/gauntlet-2026-09-03/findings.jsonl,
+this, just never wired (docs/history/audits/gauntlet-2026-09-03/findings.jsonl,
 Q6).
 
 `ws_live` is a closure nested inside a Flask-Sock route registration

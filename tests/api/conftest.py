@@ -2,7 +2,7 @@
 client plus the offline transport doubles. Scoped to tests/api/ so the heavy
 import is only paid by tests that exercise routes.
 
-INVERTED DEFAULT (decision D9, docs/audits/decisions-2026-08.md)
+INVERTED DEFAULT (decision D9, docs/decisions/2026-08-architecture-decisions.md)
 ---------------------------------------------------------------
 Real provider bodies run BY DEFAULT. The autouse `_offline_backends` fixture
 patches the *transport* — the Anthropic SDK client, `requests.post`, and

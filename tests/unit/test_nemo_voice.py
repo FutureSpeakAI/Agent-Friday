@@ -4,7 +4,7 @@ These run in CI with NO torch-CUDA, NO NeMo, and NO GPU — exactly the suite's
 philosophy. The module must import for free, probe deps/GPU without importing the
 heavy stack, report an honest "missing"/"down" health, and convert audio
 correctly. The real GPU inference path is validated manually (see
-docs/TIER2_NEMO_VOICE.md); here we cover everything that doesn't need a card.
+docs/user-guide/local-voice-gpu-tier.md); here we cover everything that doesn't need a card.
 """
 import array
 

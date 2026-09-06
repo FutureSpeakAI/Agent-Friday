@@ -1,4 +1,4 @@
-"""machine_monitor — sample() and verdict() (docs/design/headroom.md §4.3).
+"""machine_monitor — sample() and verdict() (docs/design/implemented/headroom.md §4.3).
 
 The load-bearing test is the thrash signature against the REPORTED figures
 from spec §3: a training run held 11,928 of 12,282 MiB on the reference RTX

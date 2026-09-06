@@ -1,5 +1,5 @@
 """
-Agent Friday — Knowledge Graph API (docs/KNOWLEDGE_SYSTEM_SPEC.md §5.5)
+Agent Friday — Knowledge Graph API (docs/design/implemented/knowledge-system-spec.md §5.5)
 
   GET   /api/knowledge-graph/summary          counts, communities, index health
   GET   /api/knowledge-graph/graph            nodes+edges (+layout) for the 3D view
@@ -213,7 +213,7 @@ def kg_reindex():
             # /api/knowledge-graph/reindex/status -- previously `running` was
             # the entire signal, so a caller polling it saw running:true
             # identically whether the job started 30 seconds or 7 hours ago
-            # (docs/audits/gauntlet-2026-09-03/findings.jsonl Q21, the same
+            # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q21, the same
             # blind spot that let F31 run undetected for 7+ hours).
             _TIER_B_STATE["started_at"] = time.time()
             try:

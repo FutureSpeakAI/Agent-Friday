@@ -203,7 +203,7 @@ def _run_agent(text: str) -> str:
     # (previously) that single baked prompt was handed to _generate_agent's
     # fallback ladder — which can land on a DIFFERENT provider than predicted
     # when the first leg fails operationally, reusing a prompt gated for the
-    # wrong destination (docs/audits/gauntlet-2026-09-03/findings.jsonl F30).
+    # wrong destination (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F30).
     # `_gated_system_prompt(provider, ...)` builds it for an EXPLICIT
     # provider (no internal prediction) and is passed as `system_builder`, so
     # _generate_agent re-gates the prompt for whichever provider each leg —

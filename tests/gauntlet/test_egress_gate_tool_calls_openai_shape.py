@@ -6,7 +6,7 @@ shape's equivalent field: an assistant message's `tool_calls[].function.
 arguments` (a JSON-encoded string carrying real user data -- what was
 written to the vault, a file path, a search query).
 
-A dedicated verification pass (docs/audits/gauntlet-2026-09-03/findings.jsonl
+A dedicated verification pass (docs/history/audits/gauntlet-2026-09-03/findings.jsonl
 F12) confirmed this gap is NOT reachable today from any real entry point --
 every current retry-with-provider-switch path rebuilds a fresh, plain
 {role, content} message list rather than reusing a raw `tool_calls`-bearing

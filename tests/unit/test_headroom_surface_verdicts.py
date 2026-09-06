@@ -1,5 +1,5 @@
 """The surface's guard against a control that looks informative and is not
-(docs/design/headroom.md §8.4, §12 Phase 4 item 4).
+(docs/design/implemented/headroom.md §8.4, §12 Phase 4 item 4).
 
 Two instruments, matching the design doc's own pairing:
 

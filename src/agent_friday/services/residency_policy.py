@@ -11,7 +11,7 @@ meaningful and what lets a refusal be reproduced from a bug report.
 
 The rules live in RULES as inspectable data with stable ids, so every refusal
 cites one and a human can read the policy without reading the code. Thresholds
-and their justifications are in docs/design/residency-policy.md.
+and their justifications are in docs/design/implemented/residency-policy.md.
 
 Two shapes of output, and both matter equally:
   * a Placement — role, model, device, num_ctx, offload, pinned vs leased;
@@ -136,7 +136,7 @@ ASSIGNED_ROLES = ("orchestrator", "sidekick_fast", "function_manager",
 # NOT the display reserve `services/headroom_contract.resolve_display_reserve()`
 # reconciles -- this is planner SLACK on top of the baseline (see
 # `gpu_budgets()` below: `available_mib = total - VRAM_RESERVE_MIB - baseline`),
-# a buffer against the margin §3.2 of `docs/design/headroom.md` measured
+# a buffer against the margin §3.2 of `docs/design/implemented/headroom.md` measured
 # (354 MiB was the gap between working and thrashing). Left at its existing
 # value: closing the display-reserve hole does not, on its own, tell us
 # whether 1,024 MiB of additional slack is still the right number -- that is
@@ -180,7 +180,7 @@ MOE_CPU_LAYERS_DEFAULT = 20
 # So the likeliest reading is that Ollama evicts the sidekick under memory
 # pressure and each probe pays a reload. R10 stops the ARBITER evicting it; it
 # cannot stop the daemon — the same degraded-pin problem that leaves the brain
-# unresident (docs/audits/symphony-live-2026-08-15.md §4). Consistent with two
+# unresident (docs/history/audits/symphony-live-2026-08-15.md §4). Consistent with two
 # independent signals, still not directly confirmed.
 #
 # One run per candidate: a direction, not a settled number.

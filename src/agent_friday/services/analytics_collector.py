@@ -1,5 +1,5 @@
 """
-Agent Friday — Analytics Collector (docs/CONTENT_PIPELINE_SPEC.md §8)
+Agent Friday — Analytics Collector (docs/design/implemented/content-pipeline-spec.md §8)
 FutureSpeak.AI · Asimov's Mind
 
 The monitor/learn half of the pipeline: two scheduler builtins registered by

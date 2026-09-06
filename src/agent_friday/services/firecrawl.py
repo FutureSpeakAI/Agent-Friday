@@ -47,7 +47,7 @@ DEFAULT_TIMEOUT_S = 120
 SEARCH_TIMEOUT_S = 180
 
 # ── Cost metering (credit-based, not USD-per-call) ───────────────────────────
-# docs/audits/gauntlet-2026-09-03/findings.jsonl Q7c: Firecrawl calls had ZERO
+# docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7c: Firecrawl calls had ZERO
 # cost_meter tracking despite this module's own docstring saying credits must
 # be treated as a budget. Firecrawl bills in CREDITS, and the $/credit rate
 # varies by plan tier (no single public conversion) -- rather than fabricate

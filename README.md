@@ -34,7 +34,7 @@ Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, a
 
 > **The `AgentFriday.exe` on the releases page is not a current build.** It was
 > built on 6 July 2026 and predates every egress-gate fix made since — see
-> [docs/INSTALLATION.md](docs/INSTALLATION.md#option-0-download-the-packaged-app-no-python-required)
+> [docs/INSTALLATION.md](docs/getting-started/installation.md#option-0-download-the-packaged-app-no-python-required)
 > for what that means. Use the installer zip, or run from source.
 
 Or install from source:
@@ -48,7 +48,7 @@ friday models --install
 friday           # launches the server, opens http://localhost:3000
 ```
 
-**New here? [docs/TUTORIAL.md](docs/TUTORIAL.md) gets you to a first working
+**New here? [docs/TUTORIAL.md](docs/getting-started/tutorial.md) gets you to a first working
 conversation in about twenty minutes and then stops.**
 
 **Install from a clone, not from a wheel.** `data/` and `skills/` live at the
@@ -117,7 +117,7 @@ paths write to the encrypted store. Environment variables (`ANTHROPIC_API_KEY`,
 plaintext key file (e.g. a hand-edited `start.bat`) is **not** the recommended
 pattern — prefer `friday setup`.
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, including the one-line shell installer, GPU setup, Ollama, and the Windows SmartScreen bypass.
+See [docs/INSTALLATION.md](docs/getting-started/installation.md) for the complete setup guide, including the one-line shell installer, GPU setup, Ollama, and the Windows SmartScreen bypass.
 
 ---
 
@@ -125,23 +125,23 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, i
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | System diagrams, pipeline flows, Mermaid charts |
-| [API Reference](docs/API.md) | Every endpoint with methods, paths, request/response |
-| [Installation](docs/INSTALLATION.md) | Fresh-machine setup, prerequisites, troubleshooting |
-| [Configuration](docs/CONFIGURATION.md) | All `settings.json` options |
-| [Skills](docs/SKILLS.md) | Skill system, SkillOpt, auto-research loop |
-| [SELF.md](SELF.md) | Friday's self-knowledge document |
+| [Architecture](docs/architecture/overview.md) | System diagrams, pipeline flows, Mermaid charts |
+| [API Reference](docs/reference/api.md) | Every endpoint with methods, paths, request/response |
+| [Installation](docs/getting-started/installation.md) | Fresh-machine setup, prerequisites, troubleshooting |
+| [Configuration](docs/user-guide/configuration.md) | All `settings.json` options |
+| [Skills](docs/user-guide/skills.md) | Skill system, SkillOpt, auto-research loop |
+| [SELF.md](src/agent_friday/SELF.md) | Friday's self-knowledge document |
 | [Credits](CREDITS.md) | Third-party libraries and inspirations |
-| [Threat Model](THREAT_MODEL.md) | Security posture, trust boundaries, known gaps |
+| [Threat Model](docs/security/threat-model.md) | Security posture, trust boundaries, known gaps |
 
 ---
 
 ## Key Features
 
 - **Sovereign Vault** — TIER 1/2/3 access control; TIER_2 (private) and TIER_3 (sensitive) data never leave the local model. AES-256-GCM + Argon2id at rest.
-- **Layered Safety Classifier** — Fail-closed egress gate with sensitivity classifier as single source of truth; HMAC-SHA256 signed behavioral constraints (Asimov's cLaws). The classifier declares four layers and **tells you at every boot how many are actually running** — usually two in the packaged `.exe`, three from source. See [THREAT_MODEL.md](THREAT_MODEL.md) for what ships, and for why Presidio NER was evaluated and deliberately left unenforced.
+- **Layered Safety Classifier** — Fail-closed egress gate with sensitivity classifier as single source of truth; HMAC-SHA256 signed behavioral constraints (Asimov's cLaws). The classifier declares four layers and **tells you at every boot how many are actually running** — usually two in the packaged `.exe`, three from source. See [THREAT_MODEL.md](docs/security/threat-model.md) for what ships, and for why Presidio NER was evaluated and deliberately left unenforced.
 - **Your files, on your terms** — Friday can find and read local documents: `search_files` searches Documents, Downloads, Desktop and her own creations (by name, or inside extractable text), and she extracts **real text from PDFs and `.docx`** rather than handing a model raw bytes. She never searches the vault, and when a PDF has no text layer she says so instead of guessing.
-- **File Grants — a permission model, not a switch** — The egress gate is fail-closed, which makes Friday least useful on exactly the documents you most want help with. So you can grant a specific file to the cloud, deliberately and on the record. Grants are **content-pinned by SHA-256** (edit the file and the grant goes stale); folder and glob grants **must expire within 30 days**; a **deny always beats a grant**; **no model on any surface can create one** — not chat, not voice, not a prompt-injected document; and the append-only HMAC'd ledger at `~/.friday/privacy/file_grants.jsonl` is built so that corrupting it can only ever *tighten* what may be sent. Full design in [docs/FILE_GRANTS.md](docs/FILE_GRANTS.md).
+- **File Grants — a permission model, not a switch** — The egress gate is fail-closed, which makes Friday least useful on exactly the documents you most want help with. So you can grant a specific file to the cloud, deliberately and on the record. Grants are **content-pinned by SHA-256** (edit the file and the grant goes stale); folder and glob grants **must expire within 30 days**; a **deny always beats a grant**; **no model on any surface can create one** — not chat, not voice, not a prompt-injected document; and the append-only HMAC'd ledger at `~/.friday/privacy/file_grants.jsonl` is built so that corrupting it can only ever *tighten* what may be sent. Full design in [docs/FILE_GRANTS.md](docs/user-guide/file-grants.md).
 - **Holographic UI** — Three.js WebGL interface with audio reactivity, process orbs, and personality evolution visualized as progressively complex geometric structures.
 - **Knowledge Galaxy** — Your wiki as a navigable 3D galaxy: pages are stars, links and title-mentions are filaments, wiki sections cluster into glowing constellations. Fly through it, hover to trace connections, double-click a star to open the page. Behind it, a two-tier knowledge graph: an always-on structural tier (no LLM, instant, works offline) plus an opt-in GraphRAG semantic tier — **local-only by default**, with sensitive-derived data vault-encrypted at rest and an adversarial egress test suite guarding the cloud boundary.
 - **Voice Mode** — Real-time WebSocket audio pipeline; on-device Whisper + Piper by default (Tier-1 CPU, Tier-2 NeMo GPU), or optional Google Gemini Live cloud voice with barge-in interruption and auto-reconnecting hours-long sessions.

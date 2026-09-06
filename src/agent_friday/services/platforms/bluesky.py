@@ -1,5 +1,5 @@
 """
-Bluesky / AT Protocol platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.7).
+Bluesky / AT Protocol platform adapter (docs/design/implemented/content-pipeline-spec.md §4.7).
 
 XRPC against the user's PDS (default ``bsky.social``). Auth is the simplest
 open-protocol path: **app password** → ``com.atproto.server.createSession``

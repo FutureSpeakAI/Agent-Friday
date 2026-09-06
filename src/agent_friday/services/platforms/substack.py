@@ -1,5 +1,5 @@
 """
-Substack adapter — assisted handoff (docs/CONTENT_PIPELINE_SPEC.md §4.10).
+Substack adapter — assisted handoff (docs/design/implemented/content-pipeline-spec.md §4.10).
 
 Substack has **no official API** (unofficial endpoints are cookie-authed and
 ToS-gray — not a foundation), so this adapter never pretends to automate:

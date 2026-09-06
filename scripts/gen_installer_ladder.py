@@ -6,7 +6,7 @@ think" — so it carries its own copy of the brain ladder as a PowerShell
 literal. A copy that is retyped by hand is not a copy, it is a second
 default that drifts: the installer's own five-rung Qwen ladder was hand-
 maintained and grew stale of `model_plan._BRAINS` (see `headroom.md` §2.9,
-`docs/design/headroom.md`). This script is the fix — it makes the copy a
+`docs/design/implemented/headroom.md`). This script is the fix — it makes the copy a
 BUILD ARTIFACT instead of a hand edit.
 
 Usage, from the repo root::

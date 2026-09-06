@@ -1,6 +1,6 @@
 """Per-tier end-to-end voice smoke tests — the verification gate.
 
-Contract (docs/VOICE_SYSTEM_SPEC.md §10): every tier either passes a real
+Contract (docs/design/active/voice-system-spec.md §10): every tier either passes a real
 audio round-trip, or SKIPS with an actionable message that tells a human
 exactly what to install. A silent pass-by-omission is a spec violation.
 

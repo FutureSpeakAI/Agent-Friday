@@ -1,5 +1,5 @@
 """
-Medium adapter — legacy-token API or assisted handoff (docs/CONTENT_PIPELINE_SPEC.md §4.11).
+Medium adapter — legacy-token API or assisted handoff (docs/design/implemented/content-pipeline-spec.md §4.11).
 
 Medium's official REST API v1 (``api.medium.com``) is **deprecated — new
 integration tokens are no longer issued**. This adapter feature-detects:

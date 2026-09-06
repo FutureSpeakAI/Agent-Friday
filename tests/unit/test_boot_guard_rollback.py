@@ -13,7 +13,7 @@ start"*, and at that commit:
   * `recent_notes()` had zero callers, so the trail was written and never read.
 
 Evidence versus guard, counted rather than blurred (the rule this repo applies
-to a growth loop's own tests, `docs/design/grow-button.md` §6.2: a test that
+to a growth loop's own tests, `docs/design/active/grow-button.md` §6.2: a test that
 passed before the change proves nothing about the change). Of the 18 tests here,
 **12 failed at `30cb426` and are evidence**; **6 passed and are regression
 guards** on machinery this change rewrites — `test_self_editable_paths_still_
@@ -27,7 +27,7 @@ restore paths underneath them are being replaced wholesale, not because they
 demonstrate F1.
 
 The tests are grouped by the finding they pin (F1-F4 in
-`docs/design/grow-button.md` §18.2). Each asserts a fact about the enforcement,
+`docs/design/active/grow-button.md` §18.2). Each asserts a fact about the enforcement,
 not about a setting — `security-boundary.md` §18.3's rule, which is what these
 four defects each defeated.
 """

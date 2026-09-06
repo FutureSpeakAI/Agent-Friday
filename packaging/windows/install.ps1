@@ -343,7 +343,7 @@ if ($null -ne $cardGib) { $usableGib = [math]::Round($cardGib - 2.5, 1) }
 # and is not derived — edit it in the script's own BLURBS table. HR14:
 # tests/unit/test_installer_ladder_matches_plan.py fails on drift. Before
 # 2026-09-04 this block was retyped by hand and had no drift check at all
-# (docs/design/headroom.md §2.9) — the figures below did not change, only
+# (docs/design/implemented/headroom.md §2.9) — the figures below did not change, only
 # how they are kept honest going forward.
 # BEGIN GENERATED: brainLadder
 $brainLadder = @(

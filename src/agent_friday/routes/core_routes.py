@@ -116,23 +116,27 @@ def serve_favicon():
                                mimetype='image/x-icon')
 
 
+_LIVE_DIR = os.path.join(os.path.abspath('static'), 'live')
+
+
 @core_bp.route('/friday-live')
 @core_bp.route('/friday-live/')
 def serve_friday_live():
     # Same root_path-vs-cwd trap as /static above: a relative directory
-    # resolves against src/agent_friday/core/, not the repo root where the
-    # Friday Live PWA files live. Anchor to cwd like the other asset routes.
-    return send_from_directory(os.path.abspath('.'), 'friday_live.html')
+    # resolves against src/agent_friday/core/, not the repo root. The Friday
+    # Live PWA files live under static/live/; anchor to cwd like the other
+    # asset routes. URL paths are unchanged (the manifest scopes to /friday-live).
+    return send_from_directory(_LIVE_DIR, 'friday_live.html')
 
 
 @core_bp.route('/friday-live/manifest.json')
 def serve_friday_live_manifest():
-    return send_from_directory(os.path.abspath('.'), 'friday_live_manifest.json', mimetype='application/manifest+json')
+    return send_from_directory(_LIVE_DIR, 'friday_live_manifest.json', mimetype='application/manifest+json')
 
 
 @core_bp.route('/friday-live/sw.js')
 def serve_friday_live_sw():
-    resp = send_from_directory(os.path.abspath('.'), 'friday_live_sw.js', mimetype='application/javascript')
+    resp = send_from_directory(_LIVE_DIR, 'friday_live_sw.js', mimetype='application/javascript')
     resp.headers['Service-Worker-Allowed'] = '/friday-live/'
     resp.headers['Cache-Control'] = 'no-cache'
     return resp

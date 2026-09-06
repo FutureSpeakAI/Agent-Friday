@@ -1,4 +1,4 @@
-"""Gauntlet finding Q27: THREAT_MODEL.md said "We mitigate this with pinned
+"""Gauntlet finding Q27: docs/security/threat-model.md said "We mitigate this with pinned
 dependency versions and optional extras (presidio, keyring) rather than
 mandatory ones." pyproject.toml and every packaging/windows/requirements/
 *.txt file in the repo use only ">=" floors -- zero exact "==" pins exist
@@ -9,7 +9,7 @@ pins -- keeping the true "optional extras" half) and grounds that the repo
 still contains zero exact pins, so the correction is not itself stale.
 
 Red -> green -> red-on-revert proof: fails against the old literal claim
-(proving THREAT_MODEL.md really made it) and passes against the corrected
+(proving docs/security/threat-model.md really made it) and passes against the corrected
 text.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_THREAT_MODEL = _REPO_ROOT / "THREAT_MODEL.md"
+_THREAT_MODEL = _REPO_ROOT / "docs/security/threat-model.md"
 
 _OLD_CLAIM = "We mitigate this with\npinned dependency versions and optional extras (presidio, keyring) rather than\nmandatory ones."
 
@@ -35,7 +35,7 @@ class TestThreatModelNoFalsePinClaim:
         text = _THREAT_MODEL.read_text(encoding="utf-8")
         collapsed = re.sub(r"\s+", " ", text)
         assert "pinned dependency versions" not in collapsed, (
-            "THREAT_MODEL.md still claims dependency versions are pinned "
+            "docs/security/threat-model.md still claims dependency versions are pinned "
             "-- pyproject.toml and every requirements file use only '>=' "
             "floors, zero exact '==' pins exist anywhere; see "
             "findings.jsonl Q27"

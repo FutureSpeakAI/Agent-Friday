@@ -449,7 +449,7 @@ def _probe_seat_drift():
 
 
 def _probe_machine_monitor():
-    """The headroom monitor (`docs/design/headroom.md` §4.3, §8.4).
+    """The headroom monitor (`docs/design/implemented/headroom.md` §4.3, §8.4).
 
     RAN — a sample in the last two minutes (the loop's own cadence is 60s at
     rest, 5s under a lease; two minutes is generous headroom above the rest
@@ -459,7 +459,7 @@ def _probe_machine_monitor():
     on a machine with a card would be the exact "reports healthy, produces
     nothing" shape this file exists to catch.
     CONSUMED — the Arbiter's chain-boundary re-check citing a sample id.
-    That is Phase 3 (`docs/design/headroom.md` §12), not built yet, so this
+    That is Phase 3 (`docs/design/implemented/headroom.md` §12), not built yet, so this
     reads `ORPHANED` on every machine until it lands. Per the Phase 1
     acceptance note, that is the EXPECTED reading right now, not a defect —
     named here so it does not silently read `ok` in the meantime.

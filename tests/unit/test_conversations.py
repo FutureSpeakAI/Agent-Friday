@@ -2,7 +2,7 @@
 
 The store this replaces was a single global transcript, and "+ New Chat" wiped
 it — so there was no such thing as returning to an earlier conversation.
-docs/design/conversations-and-concurrency.md §3.1 step 1: "two conversations
+docs/design/implemented/conversations-and-concurrency.md §3.1 step 1: "two conversations
 hold disjoint transcripts; a turn's context never contains the other's
 messages; clear is scoped."
 """

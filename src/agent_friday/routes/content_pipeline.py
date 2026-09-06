@@ -1,5 +1,5 @@
 """
-Agent Friday — Content Pipeline API Routes (docs/CONTENT_PIPELINE_SPEC.md §11)
+Agent Friday — Content Pipeline API Routes (docs/design/implemented/content-pipeline-spec.md §11)
 FutureSpeak.AI · Asimov's Mind
 
 /api/content/* v2 — the social-media pipeline surface. The legacy

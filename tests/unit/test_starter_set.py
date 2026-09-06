@@ -1,4 +1,4 @@
-"""The onboarding starting set (docs/design/headroom.md §9, §12 Phase 6).
+"""The onboarding starting set (docs/design/implemented/headroom.md §9, §12 Phase 6).
 
 `routes.intelligence.build_starter_set(profile)` is the one call chain the
 spec names: `hardware_profile.get()` -> `model_plan.plan()` for the brain ->

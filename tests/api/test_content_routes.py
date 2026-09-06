@@ -1,4 +1,4 @@
-"""API tests — Content Pipeline routes (docs/CONTENT_PIPELINE_SPEC.md §11).
+"""API tests — Content Pipeline routes (docs/design/implemented/content-pipeline-spec.md §11).
 
 Covers every route in the §11 table against an isolated content store
 (DB + publish log + voice cards monkeypatched to tmp), the mock platform

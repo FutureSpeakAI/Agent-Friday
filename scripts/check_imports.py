@@ -8,7 +8,7 @@ it mutates, creating a module-level use-before-definition. The server could not
 import. It died ~2s into every start, before its own file logging existed, and
 the tray discarded the child's stderr - so seven consecutive failures produced
 no traceback anywhere and the cause took a full forensic pass to find.
-See docs/audits/server-death-forensics.md.
+See docs/history/audits/server-death-forensics.md.
 
 The same dict had been spliced apart once before (commit e8c6140, "rejoin the
 dict d207fec spliced apart in agent.py"). Twice is a pattern, not an accident.

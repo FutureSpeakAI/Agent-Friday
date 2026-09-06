@@ -1,5 +1,5 @@
 """Gauntlet finding F3 — resolved under Stephen's 2026-09-04 delegation to
-Claude (docs/audits/gauntlet-2026-09-03/progress.md "QUEUED FOR STEPHEN" /
+Claude (docs/history/audits/gauntlet-2026-09-03/progress.md "QUEUED FOR STEPHEN" /
 Q1; findings.jsonl F3).
 
 Settings > Privacy > Context Logging > Retention Period persists

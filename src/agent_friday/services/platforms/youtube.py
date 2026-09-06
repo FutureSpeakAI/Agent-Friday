@@ -1,5 +1,5 @@
 """
-YouTube platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.6).
+YouTube platform adapter (docs/design/implemented/content-pipeline-spec.md §4.6).
 
 YouTube Data API v3 over Friday's existing Google OAuth plumbing
 (``services/google_accounts.py``) — same encrypted token store, three extra

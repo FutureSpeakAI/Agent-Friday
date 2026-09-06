@@ -31,7 +31,7 @@ AUDIT_FILE = AUDIT_DIR / "extension_audit.jsonl"
 # six more live, real provider-key env vars (MISTRAL_API_KEY,
 # DEEPSEEK_API_KEY, XAI_API_KEY, FIREWORKS_API_KEY, PERPLEXITY_API_KEY,
 # COHERE_API_KEY) that had never been added at all
-# (docs/audits/gauntlet-2026-09-03/findings.jsonl). A denylist has to name
+# (docs/history/audits/gauntlet-2026-09-03/findings.jsonl). A denylist has to name
 # every secret that will ever exist; every new provider this codebase
 # adds is a fresh chance to forget one. Stephen's ruling: invert it.
 #

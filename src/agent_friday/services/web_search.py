@@ -46,7 +46,7 @@ _CANARY_TTL_S = 300.0
 _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
 
 
-# Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q7c): Brave
+# Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7c): Brave
 # calls had ZERO cost_meter tracking. Brave bills a flat USD-per-query rate
 # (unlike Firecrawl's credits), checked against public pricing aggregator
 # pages 2026-09-04, not Brave's own pricing page directly -- best-effort,

@@ -714,7 +714,7 @@ def _synthesize_tts_wav(text, voice=None, style='briefing', allow_local=True):
     # aloud" and the News audio briefing sent spoken text to Gemini TTS even
     # with Local-Only Mode on, because this function only ever checked PII
     # content and connectivity, never model_routing.mode (see
-    # docs/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
     try:
         _local_only = str(((_load_settings() or {}).get('model_routing') or {})
                           .get('mode') or '').strip().lower() == 'local_only'
@@ -824,7 +824,7 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
         )
     )
 
-    # Cost metering (docs/audits/gauntlet-2026-09-03/findings.jsonl Q6c): this
+    # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q6c): this
     # is a real, billed Gemini call that had ZERO cost_meter integration
     # despite cost_meter.PRICING already carrying entries for the Live voice
     # models — the TTS model id itself was also missing there until this fix.

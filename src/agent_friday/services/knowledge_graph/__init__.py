@@ -1,7 +1,7 @@
 """Knowledge graph package — Friday's connected second brain.
 
 Two-tier graph over the wiki, conversation memory, and cognitive memory
-(docs/KNOWLEDGE_SYSTEM_SPEC.md):
+(docs/design/implemented/knowledge-system-spec.md):
 
   Tier A — structural: wiki pages as nodes, [[wikilinks]]/markdown-links/title
            mentions as edges, communities from link structure. No LLM, offline,

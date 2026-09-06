@@ -927,7 +927,7 @@ def api_intelligence():
             "reserve_mib": ram.get("os_reserve_mib"),
         }
 
-    # The headroom monitor's own reading (docs/design/headroom.md §4.3,
+    # The headroom monitor's own reading (docs/design/implemented/headroom.md §4.3,
     # §12 Phase 1) -- so THE MACHINE reads one source for utilisation/power/
     # disk-system/thrash instead of a page-specific probe. `vram`/`ram`
     # above are left exactly as they were (§8.3's correction is Phase 4's

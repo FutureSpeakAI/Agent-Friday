@@ -46,7 +46,7 @@ _log = logging.getLogger("friday.gpu_headroom")
 # `headroom_contract.resolve_display_reserve()` -- the same one
 # `Arbiter.grant()`'s R-DISPLAY-RESERVE check now uses -- so `check()` and
 # `display_at_risk()` stop disagreeing with the gate that actually stands
-# between a lease and the display driver (`docs/design/headroom.md` §2.2,
+# between a lease and the display driver (`docs/design/implemented/headroom.md` §2.2,
 # HR3: one reserve, defined once). This is what those two functions fall
 # back to only when the profile or the contract module cannot be reached at
 # all (e.g. before `hardware_profile` has ever detected a machine) --
@@ -80,7 +80,7 @@ def gpu_memory() -> list[dict] | None:
     "plenty free" — the whole point is to fail toward leaving the desktop alone.
 
     Reads `machine_monitor.gpu_rows()` rather than calling `nvidia-smi`
-    itself (`docs/design/headroom.md` §4.3, §12 Phase 1: one nvidia-smi call
+    itself (`docs/design/implemented/headroom.md` §4.3, §12 Phase 1: one nvidia-smi call
     for the whole tree, not two disagreeing ones). `machine_monitor` extends
     the same query string this function used to own with the four fields the
     monitor's thrash signature needs; this function keeps its own short

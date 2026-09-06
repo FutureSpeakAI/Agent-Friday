@@ -3,7 +3,7 @@
 WHY THIS IS A SCRIPT AND NOT A DONE DEED
 ----------------------------------------
 At 13:08:58 `_save_settings` persisted DEFAULT_SETTINGS over Stephen's 83 keys
-(see docs/audits/workflow-run-forensics-2026-08-24.md, addendum A, and the
+(see docs/history/audits/workflow-run-forensics-2026-08-24.md, addendum A, and the
 commit that fixed both halves). His real values survive in
 `~/.friday/settings.json.bak-preheal`, taken at 12:39.
 

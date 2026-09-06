@@ -1,5 +1,5 @@
 """
-Mastodon platform adapter (docs/CONTENT_PIPELINE_SPEC.md §4.8).
+Mastodon platform adapter (docs/design/implemented/content-pipeline-spec.md §4.8).
 
 Plain REST per instance — the adapter is **instance-aware**: the base URL is
 configuration (``instance``), and limits are discovered live from

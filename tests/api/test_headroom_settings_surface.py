@@ -1,4 +1,4 @@
-"""Phase 4's two new routes (docs/design/headroom.md §8.1, §8.2, §8.3,
+"""Phase 4's two new routes (docs/design/implemented/headroom.md §8.1, §8.2, §8.3,
 §12 Phase 4 items 1 and 3): the pre-fetch preflight card and the yield
 button's stub.
 """

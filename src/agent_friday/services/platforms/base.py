@@ -1,5 +1,5 @@
 """
-Platform adapter contract (docs/CONTENT_PIPELINE_SPEC.md §4.1).
+Platform adapter contract (docs/design/implemented/content-pipeline-spec.md §4.1).
 
 A PlatformAdapter bridges the content pipeline to one outbound social platform.
 Adapters own transport and translation, never governance — moderation, egress

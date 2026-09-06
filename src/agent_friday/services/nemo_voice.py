@@ -34,7 +34,7 @@ Design rules (identical philosophy to Tier-1, so both tiers coexist cleanly):
 Windows note: NeMo is Linux-first. On Windows+RTX it usually works under a recent
 torch-CUDA wheel, but if a clean install proves painful the engine's automatic
 fallback to Tier-1 (onnxruntime, rock-solid on Windows) keeps voice working. See
-docs/TIER2_NEMO_VOICE.md + tests/MANUAL_TEST_PROCEDURES.md.
+docs/user-guide/local-voice-gpu-tier.md + tests/MANUAL_TEST_PROCEDURES.md.
 """
 from __future__ import annotations
 

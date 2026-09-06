@@ -1,5 +1,5 @@
 """
-Platform adapter registry + lifecycle (docs/CONTENT_PIPELINE_SPEC.md §4.1).
+Platform adapter registry + lifecycle (docs/design/implemented/content-pipeline-spec.md §4.1).
 
 Mirrors ``services/channels/manager.py``: lazy singleton adapters behind
 double-checked locking, non-secret config in ``~/.friday/platforms.json``,

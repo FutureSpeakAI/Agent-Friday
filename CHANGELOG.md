@@ -1251,7 +1251,7 @@ rather than test fixtures.
 - The egress guarantee now names its own limits, including the fact that a file
   grant is a deliberate hole, and that the classifier is only as good as its
   patterns.
-- New [docs/FILE_GRANTS.md](docs/FILE_GRANTS.md) documenting the permission
+- New [docs/FILE_GRANTS.md](docs/user-guide/file-grants.md) documenting the permission
   model properly.
 - `docs/INSTALLATION.md` now states plainly that the `.exe` and the Windows
   installer **are not equivalent privacy products**, and that no model is
@@ -1303,7 +1303,7 @@ the same suspicion as the property itself.
   endpoints under `/api/privacy/`. File grants pin a SHA-256 and may be
   permanent; folder and glob grants must expire within 30 days; deny beats
   grant; no model on any surface can create one; a corrupted ledger can only
-  tighten. See [docs/FILE_GRANTS.md](docs/FILE_GRANTS.md).
+  tighten. See [docs/FILE_GRANTS.md](docs/user-guide/file-grants.md).
 - **KV cache quantization on the local seat**, with automatic fallback to f16
   when the server does not support `--cache-type-k/v`.
 - **Configurable Gmail window** — `gmail_window_days` setting and a `?days=`

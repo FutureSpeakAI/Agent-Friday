@@ -1,4 +1,4 @@
-"""Gauntlet finding F43: THREAT_MODEL.md's Key Storage table promises the
+"""Gauntlet finding F43: docs/security/threat-model.md's Key Storage table promises the
 Ed25519 attestation private key is "confined to ~/.friday/vault/ with 600
 permissions as a fallback." IntegrityEngine._load_or_generate_ed25519()
 wrote the key file with a plain write_bytes() and never called chmod
@@ -8,7 +8,7 @@ filename is the write site itself. The SAME file, two functions later
 0o600 wrapped in a try/except with a warning log on failure. The pattern
 existed, it just wasn't applied to this second private key.
 
-On a from-source Linux/macOS install (a row THREAT_MODEL.md's own
+On a from-source Linux/macOS install (a row docs/security/threat-model.md's own
 compatibility table treats as first-class), the file inherited the
 process umask (commonly 644), so any other local account on a shared
 machine could read the private signing key used for federation/peer
@@ -47,7 +47,7 @@ class TestEd25519KeyFilePermissions:
         key_calls = [c for c in calls if c[0] == ".attestation-key-ed25519"]
         assert key_calls, (
             "the Ed25519 attestation PRIVATE key file was never chmod'd at "
-            "all -- THREAT_MODEL.md promises it is confined with 600 "
+            "all -- docs/security/threat-model.md promises it is confined with 600 "
             "permissions as a fallback, but the write site never applied "
             "any restrictive mode"
         )
