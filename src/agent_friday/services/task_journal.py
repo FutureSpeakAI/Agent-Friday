@@ -666,7 +666,10 @@ def digest(task_id: str, n: int = 20, include_reasoning: bool = False) -> Option
 # metadata (ids, numbers, kinds) and travels as-is.
 _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reason", "chosen",
                   "alternatives", "prompt", "result", "message", "description", "name",
-                  "detail", "last_checkpoint", "now")
+                  "detail", "last_checkpoint", "now",
+                  # task rows served by /api/tasks and /api/tasks/<id> (2026-09-06
+                  # audit: these were on the observer allowlist but unsealed)
+                  "log", "label", "output", "error")
 
 WITHHELD = "[withheld by the privacy gate]"
 

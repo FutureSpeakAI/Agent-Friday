@@ -19,8 +19,9 @@ than by convention:
    mint another credential. Those stay with the user.
 2. **Sealed.** Every free-text field served to a non-user principal passes
    through the egress gate first, the way a tool result would. Withheld
-   material is marked `[WITHHELD]`, the redaction is journaled as a `gate`
-   decision on the task, and every read is a row in the activity ledger.
+   material is marked `[withheld by the privacy gate]`, a read that redacted
+   or withheld anything is journaled as a `gate` decision on the task, and
+   every read is a row in the activity ledger.
 
 ## The credential
 
@@ -51,8 +52,10 @@ token is `401`; a recognised token on any route outside the allowlist, or on
 any method other than `GET`, is `403` with `"principal": "observer"` in the
 body.
 
-Routes an observer may `GET`: anything under `/api/tasks`, `/api/processes`,
-`/api/activity`, and `/api/orchestrator/status|workers|results`.
+Routes an observer may `GET`: anything under `/api/tasks` (every free-text
+field sealed) and `/api/activity` (whitelisted metadata only). Process orbs
+and orchestrator worker outputs are not on the allowlist: they do not seal
+their text yet, so they are refused rather than served raw.
 
 ## The three reads
 
