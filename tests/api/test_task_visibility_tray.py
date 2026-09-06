@@ -277,3 +277,15 @@ def test_observer_token_can_be_minted_and_revoked_from_the_system_workspace(rel)
     assert "method: 'POST'" in card.replace('method:"POST"', "method: 'POST'").replace("method:'POST'", "method: 'POST'")
     assert "'DELETE'" in card or '"DELETE"' in card
     assert "Shown once" in card, f"{rel}: the one-time nature of the token is not shown"
+
+
+@pytest.mark.parametrize("rel", ("index.html", "ui_parts/head.html"))
+def test_every_rendered_task_state_has_a_visible_colour(rel):
+    """Found in the browser 2026-09-06: INTERRUPTED and STOPPED rendered in
+    black on the dark panel because only running/complete/failed had a
+    colour rule. The label text was pinned and green; the pixels were not.
+    Every state TaskCard can render must have a .task-card-status rule."""
+    css = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+    for state in ("running", "complete", "failed", "interrupted", "cancelled", "running.stalled"):
+        assert re.search(r"\.task-card\." + re.escape(state) + r" \.task-card-status \{ color:", css), \
+            f"{rel}: no colour for the {state} state"

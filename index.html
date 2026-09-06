@@ -688,6 +688,19 @@ window.addEventListener('DOMContentLoaded',function(){
         .task-card.running .task-card-status { color: #f59e0b; }
         .task-card.complete .task-card-status { color: #00ff80; }
         .task-card.failed .task-card-status { color: #ff0080; }
+        /* Task visibility states. Found in the browser 2026-09-06: without
+           these the INTERRUPTED and STOPPED labels inherited black on the
+           dark panel and were invisible, while the tests that pin the label
+           text stayed green. */
+        .task-card.interrupted .task-card-status { color: #f59e0b; }
+        .task-card.cancelled .task-card-status { color: #aaa; }
+        .task-card.running.stalled .task-card-status { color: #ff0080; }
+        .task-card.interrupted .task-card-edge {
+            background: #f59e0b; animation: none;
+            box-shadow: 0 0 8px rgba(245,158,11,0.5);
+        }
+        .task-card.cancelled .task-card-edge { background: #666; animation: none; }
+        .task-card.running.stalled .task-card-edge { background: #ff0080; animation: none; }
         .task-card-spinner {
             width: 7px; height: 7px; border-radius: 50%;
             background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,0.7);
