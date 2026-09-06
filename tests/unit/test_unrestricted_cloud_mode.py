@@ -105,16 +105,104 @@ class TestUnrestrictedModeBypassesEverything:
         assert out == text
 
 
-def test_unrestricted_mode_is_a_distinct_flag_from_routing_mode(monkeypatch):
-    """model_routing.mode == "cloud_only" (the pre-existing, default routing
-    preference) must NOT, by itself, trip unrestricted mode -- conflating
-    the two would silently disable every safeguard for the app's own
-    factory default, which is not what was asked for."""
-    from agent_friday import core as _core
-    monkeypatch.setattr(
-        _core, "_load_settings",
-        lambda: {"model_routing": {"mode": "cloud_only"}})
-    assert eg.is_unrestricted_cloud() is False
+class TestCloudOnlyModeAloneNowMeansUnrestricted:
+    """SUPERSEDES `test_unrestricted_mode_is_a_distinct_flag_from_routing_mode`
+    (this test's old name, same day, a few hours earlier). That version
+    asserted mode=="cloud_only" must NOT trip unrestricted mode, reasoning
+    that cloud_only is the factory default and conflating the two would
+    silently disable every safeguard for it -- a real concern, not a
+    mistake.
+
+    Reversed 2026-09-06, reproduced live against Stephen's running app twice
+    the same day: (1) GPT-6 Astra refused despite cloud-only being selected,
+    and (2) a resume's TIER_2 sections (phone, email, two experience
+    paragraphs) came back as "[EGRESS-GATE: TIER_2 content withheld ... can
+    be read on a local seat]" while cloud-only was active and no local seat
+    existed at all -- reproduced with `eg.gate_text()` directly, real
+    settings, real classifier. Stephen's own words, stated twice: "I want
+    them going to the cloud if ungated. Ungated means cloud has full
+    access." Selecting cloud-only IS the acceptance this flag existed to
+    double-check; asking for it twice was the bug.
+
+    This can never regress local_only/smart/local_preferred -- see the class
+    below -- because they are different values of the exact same setting
+    this reads.
+    """
+
+    def test_cloud_only_mode_alone_is_now_unrestricted(self, monkeypatch):
+        from agent_friday import core as _core
+        monkeypatch.setattr(
+            _core, "_load_settings",
+            lambda: {"model_routing": {"mode": "cloud_only"}})
+        assert eg.is_unrestricted_cloud() is True
+
+    def test_reproduces_the_live_resume_redaction_bug_fixed(self, monkeypatch):
+        """The exact live reproduction: a resume's contact/experience
+        sections, classified TIER_2, must pass through unchanged once
+        cloud-only mode alone is read as unrestricted -- no explicit
+        `unrestricted_cloud` flag set, matching Stephen's real settings.json
+        at the time (`{"mode": "cloud_only", "vault_local_only": False}`)."""
+        from agent_friday import core as _core
+        monkeypatch.setattr(
+            _core, "_load_settings",
+            lambda: {"model_routing": {"mode": "cloud_only",
+                                       "vault_local_only": False}})
+        resume = (
+            "== RESUME ==\nJohn Smith\nPhone: 555-123-4567\n"  # pragma: allowlist secret
+            "Email: john.smith@example.com\n\n"
+            "== EXPERIENCE ==\nSenior Engineer at Acme Corp, 2019-2024. Led "
+            "a team of five building distributed systems for the payments "
+            "platform, cutting latency by 40 percent and mentoring three "
+            "junior engineers along the way.\n\n"
+            "== EDUCATION ==\nBS Computer Science, State University, 2015.\n"
+        )
+        out = eg.gate_text(resume, "openrouter", "tool_result.content")
+        assert out == resume
+        assert "EGRESS-GATE" not in out
+
+
+class TestLocalOnlyAndSmartModesAreUnaffected:
+    """The reversal above widens the condition only for the mode value
+    Stephen has to have picked on purpose. These pin the other three values
+    of the exact same `model_routing.mode` setting to their unchanged,
+    still-gated behavior -- the "no regression" half of the fix."""
+
+    @pytest.mark.parametrize("mode", ["smart", "local_only", "local_preferred", ""])
+    def test_every_other_mode_value_stays_gated(self, monkeypatch, mode):
+        from agent_friday import core as _core
+        monkeypatch.setattr(
+            _core, "_load_settings",
+            lambda: {"model_routing": {"mode": mode}})
+        assert eg.is_unrestricted_cloud() is False, (
+            f"mode={mode!r} must not become unrestricted")
+
+    def test_absent_mode_key_stays_gated(self, monkeypatch):
+        """A settings dict that never wrote `mode` at all (e.g. a process
+        reading raw settings before the router's own `cloud_only` in-code
+        default would apply) must not be read as an explicit choice."""
+        from agent_friday import core as _core
+        monkeypatch.setattr(
+            _core, "_load_settings", lambda: {"model_routing": {}})
+        assert eg.is_unrestricted_cloud() is False
+
+
+class TestRedactPlaceholderNamesARealRemedyOrSaysSoHonestly:
+    """Second-order bug, same report: the placeholder always claimed
+    "can be read on a local seat" even with zero local models installed
+    (Stephen had just deleted functiongemma:270m and embeddinggemma:300m).
+    A privacy block naming a remedy that does not exist is indistinguishable
+    from an outage -- fix is to check, and say plainly when there is none."""
+
+    def test_names_local_seat_when_one_exists(self, monkeypatch):
+        monkeypatch.setattr(eg, "_local_model_available", lambda: True)
+        out = eg._redact_placeholder(eg.Tier.PRIVATE)
+        assert "can be read on a local seat" in out
+
+    def test_says_plainly_when_none_exists(self, monkeypatch):
+        monkeypatch.setattr(eg, "_local_model_available", lambda: False)
+        out = eg._redact_placeholder(eg.Tier.PRIVATE)
+        assert "no local model is currently installed" in out
+        assert "can be read on a local seat" not in out
 
 
 class TestKnowledgeGraphRoutingIsIndependentOfTheFlag:
