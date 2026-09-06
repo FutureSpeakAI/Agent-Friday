@@ -3718,6 +3718,26 @@ function SitesWS(){
     <FSStudio/>
   </div>);
 }
+// ═══ TASK RECORDS (retention is the user's setting; 0 keeps everything) ═══
+function TaskRecordsCard(){
+  const[ret,setRet]=useState(null);const[saving,setSaving]=useState(false);
+  const load=()=>fetch('/api/tasks/retention').then(r=>r.ok?r.json():null).then(d=>{if(d)setRet(d)}).catch(()=>{});
+  useEffect(()=>{load()},[]);
+  const save=days=>{setSaving(true);fetch('/api/tasks/retention',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days})}).then(r=>r.json()).then(()=>{setSaving(false);load()}).catch(()=>setSaving(false))};
+  return(<div className="card" style={{marginBottom:10,padding:10,border:'1px solid rgba(0,212,255,0.18)'}}>
+    <div className="card-title">📓 Task records</div>
+    <div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>Every background task writes a journal (what it did, decided, called and spent) that survives restarts. Records are kept until you delete them, or for the number of days you set here. 0 keeps everything.</div>
+    <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
+      <span style={{fontSize:11,color:'#ccc'}}>Keep records for</span>
+      <input type="number" min="0" step="1" value={ret?ret.retention_days:0} disabled={!ret||saving}
+        onChange={e=>setRet({...ret,retention_days:parseInt(e.target.value||'0',10)||0})}
+        onBlur={e=>save(parseInt(e.target.value||'0',10)||0)}
+        style={{width:70,fontSize:11,padding:'2px 6px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',color:'#fff',borderRadius:4}}/>
+      <span style={{fontSize:11,color:'#ccc'}}>days {ret&&ret.retention_days===0?'(forever)':''}</span>
+      {ret&&<span style={{fontSize:10,color:'#888',marginLeft:8}}>reasoning capture: {ret.capture_reasoning?'on':'off'} · encrypted at rest: {ret.encrypt_at_rest?'on':'off'}</span>}
+    </div>
+  </div>);
+}
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
   // Context log state
@@ -3864,6 +3884,9 @@ function SystemWS(){
           </>);
         })()}
     </div>
+
+    {/* ─── Task records ─── */}
+    <TaskRecordsCard/>
 
     {/* ─── Approvals ─── */}
     <div ref={apRef} className="card" style={{marginBottom:10,padding:10,border:'1px solid rgba(245,158,11,0.25)'}}>
@@ -7178,9 +7201,65 @@ function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing
 
 // ═══ TASK TRAY (background task runner UI) ═══
 function fmtElapsed(sec){if(sec==null)return'0s';const s=Math.floor(sec);if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m '+r+'s';const h=Math.floor(m/60);return h+'h '+(m%60)+'m'}
+// ═══ TASK TIMELINE + CONTROLS (docs/design/active/task-visibility.md §4.4) ═══
+// The drawer under a task card reads the task's own journal — the same record
+// the orchestrator's query surface reads — and tails it by seq cursor while
+// the task runs. A gap in the sequence is shown, never hidden.
+function TaskTimeline({taskId,live}){
+  const[events,setEvents]=useState([]);const[gaps,setGaps]=useState([]);const[showReasoning,setShowReasoning]=useState(true);
+  const cursor=useRef(0);
+  useEffect(()=>{let alive=true;cursor.current=0;setEvents([]);setGaps([]);
+    const tick=()=>fetch('/api/tasks/'+encodeURIComponent(taskId)+'/journal?since='+cursor.current).then(r=>r.ok?r.json():null).then(d=>{
+      if(!alive||!d)return;
+      if(Array.isArray(d.events)&&d.events.length){setEvents(prev=>prev.concat(d.events).slice(-400));cursor.current=d.last_seq||cursor.current;}
+      if(Array.isArray(d.gaps)&&d.gaps.length)setGaps(prev=>prev.concat(d.gaps));
+      if(d.cursor_ahead)setGaps(prev=>prev.concat([{cursor_ahead:true}]));
+    }).catch(()=>{});
+    tick();const iv=live?setInterval(tick,2000):null;
+    return()=>{alive=false;if(iv)clearInterval(iv)};
+  },[taskId,live]);
+  const fmtT=ts=>ts?new Date(ts*1000).toLocaleTimeString():'';
+  const row=(ev,i)=>{const k=ev.kind;const base={key:ev.seq||i,className:'task-card-log-line',title:fmtT(ev.ts)};
+    if(k==='checkpoint')return <div {...base}>▸ {ev.summary}</div>;
+    if(k==='tool_call')return <div {...base}>🔧 {ev.name} · {ev.ok?'ok':'failed'}{ev.duration_ms!=null?' · '+ev.duration_ms+'ms':''}</div>;
+    if(k==='model_call')return <div {...base} style={{color:'#888'}}>☁ {ev.model} ({ev.seat}){ev.cost_usd!=null?' · $'+Number(ev.cost_usd).toFixed(4):''}{ev.tokens_in!=null?' · '+ev.tokens_in+'→'+ev.tokens_out+' tok':''}</div>;
+    if(k==='decision')return <div {...base} style={{color:'#00d4ff'}}>⚖ {ev.point}: {ev.chosen}{ev.reason?<span style={{color:'#888'}}> — {ev.reason}</span>:null}</div>;
+    if(k==='reasoning')return showReasoning?<div {...base} style={{color:'#bbb',fontStyle:'italic',whiteSpace:'pre-wrap'}}>💭 {ev.text||''}{ev.thinking?<div style={{color:'#777'}}>(thinking) {ev.thinking}</div>:null}</div>:null;
+    if(k==='halt')return <div {...base} style={{color:'#ff0080'}}>■ {ev.cause}: {ev.detail}{ev.resume_hint?' · '+ev.resume_hint:''}</div>;
+    if(k==='steer')return <div {...base} style={{color:'#f59e0b'}}>→ steer ({ev.source}): {ev.message}</div>;
+    if(k==='started'||k==='ended'||k==='created')return <div {...base} style={{color:'#888'}}>• {k}{ev.status?' · '+ev.status:''}{ev.model?' · '+ev.model:''}</div>;
+    return null;};
+  return(<div className="task-card-log">
+    <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#888',marginBottom:4}}>
+      <span>{events.length} event{events.length===1?'':'s'}</span>
+      <label style={{cursor:'pointer'}}><input type="checkbox" checked={showReasoning} onChange={e=>setShowReasoning(e.target.checked)} style={{marginRight:4}}/>show reasoning</label>
+    </div>
+    {gaps.length>0&&<div className="task-card-log-line" style={{color:'#ff0080'}}>⚠ record gap: {gaps.map(g=>g.cursor_ahead?'cursor beyond the record':`seq ${g.missing_from}–${g.missing_to} missing`).join(', ')} — this timeline is incomplete</div>}
+    {events.length===0?<div className="task-card-log-line" style={{color:'#888'}}>— no journal yet —</div>:events.map(row)}
+  </div>);
+}
+function TaskControls({task,onChanged}){
+  const[steer,setSteer]=useState('');const[busy,setBusy]=useState('');
+  const status=task.status||'running';const running=status==='running'||status==='queued';
+  const post=async(path,body)=>{setBusy(path);try{await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})}catch(e){}setBusy('');if(onChanged)onChanged();};
+  return(<div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6,alignItems:'center'}}>
+    {running&&<>
+      <input value={steer} onChange={e=>setSteer(e.target.value)} placeholder="Steer: tell it something without stopping it" onClick={e=>e.stopPropagation()}
+        style={{flex:1,minWidth:140,fontSize:11,padding:'2px 6px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',color:'#fff',borderRadius:4}}/>
+      <button className="task-card-btn" disabled={!steer.trim()||!!busy} onClick={e=>{e.stopPropagation();const m=steer.trim();setSteer('');post('/api/agent/steer',{task_id:task.task_id,message:m})}}>Steer</button>
+      <button className="task-card-btn" disabled={!!busy||task.stop_requested} title="Finish the current step, then stop. The record stays complete." onClick={e=>{e.stopPropagation();post('/api/tasks/'+encodeURIComponent(task.task_id)+'/stop-after-step')}}>{task.stop_requested?'Stopping after this step…':'Stop after step'}</button>
+    </>}
+    {!running&&<>
+      <button className="task-card-btn" disabled={!!busy} title="Start a new task from this one's prompt. Nothing resumes automatically." onClick={e=>{e.stopPropagation();post('/api/tasks/'+encodeURIComponent(task.task_id)+'/rerun')}}>Re-run</button>
+      <button className="task-card-btn cancel" disabled={!!busy} title="Delete this task's record" onClick={e=>{e.stopPropagation();setBusy('del');fetch('/api/tasks/'+encodeURIComponent(task.task_id),{method:'DELETE'}).catch(()=>{}).then(()=>{setBusy('');if(onChanged)onChanged()})}}>Delete record</button>
+    </>}
+  </div>);
+}
 function TaskCard({task,expanded,onToggle,onCancel,onView}){
   const status=task.status||'running';
-  return(<div className={'task-card '+status}>
+  const stalled=status==='running'&&!!task.stalled;
+  const seenAgo=task.last_seen?Math.max(0,Math.round(Date.now()/1000-task.last_seen)):null;
+  return(<div className={'task-card '+status+(stalled?' stalled':'')}>
     <div className="task-card-edge"/>
     <div className="task-card-row">
       <div style={{flex:1,minWidth:0,cursor:'pointer'}}
@@ -7199,20 +7278,22 @@ function TaskCard({task,expanded,onToggle,onCancel,onView}){
     </div>
     <div className="task-card-meta">
       <span className="task-card-status">
-        {status==='running'&&<><span className="task-card-spinner"/>EXECUTING</>}
+        {status==='running'&&stalled&&<><span style={{color:'#ff0080',fontWeight:700}}>●</span>STALLED{seenAgo!=null?' · last seen '+seenAgo+'s ago':''}</>}
+        {status==='running'&&!stalled&&<><span className="task-card-spinner"/>EXECUTING</>}
+        {status==='interrupted'&&<><span style={{color:'#f59e0b',fontWeight:700}}>⏸</span>INTERRUPTED</>}
+        {status==='cancelled'&&<><span style={{color:'#888',fontWeight:700}}>■</span>STOPPED</>}
         {status==='complete'&&<><span className="task-card-check">✓</span>COMPLETE{task.evaluation&&<span style={{marginLeft:6,fontSize:'0.75em',opacity:0.7}}>{(task.evaluation.match(/GRADE:\s*(\w+)/)||[])[1]||''}</span>}</>}
         {status==='completed_unverified'&&<><span style={{color:'#f59e0b',fontWeight:700}}>⚠</span>UNVERIFIED</>}
         {status==='failed'&&<><span style={{color:'#ff0080',fontWeight:700}}>✕</span>FAILED</>}
       </span>
       <span className="task-card-elapsed">{fmtElapsed(task.elapsed)}</span>
     </div>
+    {(task.now||task.cost_usd!=null)&&<div className="task-card-sub" style={{marginTop:3,fontSize:10,color:'#aaa',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={task.now||''}>{task.now?'now: '+task.now:''}{task.cost_usd!=null&&task.cost_usd>0?(task.now?' · ':'')+'$'+Number(task.cost_usd).toFixed(4):''}</div>}
     {(status==='complete'||status==='completed_unverified')&&<div style={{marginTop:6,display:'flex',gap:4}}>
       <button className="task-card-btn results" onClick={e=>{e.stopPropagation();onView()}}>View Results</button>
     </div>}
-    {expanded&&<div className="task-card-log">
-      {(task.log||[]).length===0?<div className="task-card-log-line" style={{color:'#888'}}>— waiting for activity —</div>:
-        (task.log||[]).slice(-30).map((line,i)=><div key={i} className="task-card-log-line">→ {line}</div>)}
-    </div>}
+    {expanded&&<TaskTimeline taskId={task.task_id} live={status==='running'||status==='queued'}/>}
+    {expanded&&<TaskControls task={task}/>}
   </div>);
 }
 function TaskTray({tasks,onCancel,onView}){
@@ -7220,6 +7301,8 @@ function TaskTray({tasks,onCancel,onView}){
   const[collapsed,setCollapsed]=useState(false);
   const sorted=[...tasks].sort((a,b)=>(b.created||0)-(a.created||0));
   const running=sorted.filter(t=>(t.status||'running')==='running').length;
+  const stalledN=sorted.filter(t=>t.status==='running'&&t.stalled).length;
+  const interruptedN=sorted.filter(t=>t.status==='interrupted').length;
   const total=sorted.length;
   if(total===0)return null;
   if(collapsed){
@@ -7229,7 +7312,7 @@ function TaskTray({tasks,onCancel,onView}){
   }
   return(<div className="task-tray">
     <div className="task-tray-header">
-      <span>{running>0?`${running}/${total} TASKS · LIVE`:`${total} TASKS`}</span>
+      <span>{running>0?`${running}/${total} TASKS · LIVE`:`${total} TASKS`}{stalledN>0?` · ${stalledN} STALLED`:''}{interruptedN>0?` · ${interruptedN} INTERRUPTED`:''}</span>
       <button className="task-card-btn" style={{padding:'1px 6px'}} onClick={()=>setCollapsed(true)} title="Collapse">_</button>
     </div>
     {sorted.slice(0,8).map(t=><TaskCard key={t.task_id} task={t}
