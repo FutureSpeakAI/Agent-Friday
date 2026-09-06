@@ -388,10 +388,23 @@ def gate_action(*, kind: str, subject_type: str, subject_id: str, title: str,
     status = appr.get("status")
     if status == "approved":
         appr, first = _consume(appr)
-        return {"status": "approved" if first else "auto_approved", "approval": appr}
-    if status in ("denied", "expired", "blocked"):
-        return {"status": "denied", "approval": appr}
-    return {"status": status, "approval": appr}  # "pending" | "auto_approved"
+        out = {"status": "approved" if first else "auto_approved", "approval": appr}
+    elif status in ("denied", "expired", "blocked"):
+        out = {"status": "denied", "approval": appr}
+    else:
+        out = {"status": status, "approval": appr}  # "pending" | "auto_approved"
+    # Task journal (task-visibility.md TV4, point=approval): the gate's
+    # verdict and the policy class that produced it, as already computed.
+    try:
+        from agent_friday.services import task_journal as _tj
+        if _tj.current_task():
+            _tj.decision("approval", out["status"],
+                         reason=f"{kind}: policy_class={appr.get('policy_class')}, "
+                                f"gated={appr.get('gated')}; {title}",
+                         alternatives=["auto_approved", "pending", "denied"])
+    except Exception:
+        pass
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════

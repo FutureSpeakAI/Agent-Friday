@@ -239,6 +239,15 @@ def _record_halt(t: Dict[str, Any], provider: str, desc: str, attr: Dict[str, An
     )
     _log.warning("HARD SPENDING CAP: refused %s (%s) -- $%.2f of $%.2f %s",
                  desc, provider, t["spend"], t["limit"], p)
+    # Task journal (task-visibility.md TV4, point=spend_cap).
+    try:
+        from agent_friday.services import task_journal as _tj
+        if _tj.current_task():
+            _tj.decision("spend_cap", "refused",
+                         reason=f"${t['spend']:.2f} of ${t['limit']:.2f} {p} hard cap already spent; {desc}",
+                         alternatives=["allowed"])
+    except Exception:
+        pass
 
 
 # ── status for the UI / API ──────────────────────────────────────────────────

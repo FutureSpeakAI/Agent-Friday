@@ -137,6 +137,20 @@ def _seal_or_block(payload, provider):
             "Egress gate is non-functional (startup self-test failed); cloud "
             "send blocked. Fix the gate (see boot log) or use a local model."
         )
+    # Task journal (docs/design/active/task-visibility.md TV4, point=gate):
+    # the verdict is already known here — compare what was handed in with
+    # what may leave — so it is written down rather than recomputed.
+    try:
+        from agent_friday.services import task_journal as _tj
+        if _tj.current_task():
+            _keys = ("system", "messages", "prompt", "context")
+            _changed = [k for k in _keys if k in payload and sealed.get(k) != payload.get(k)]
+            _tj.decision("gate", "redacted" if _changed else "allowed",
+                         reason=(f"egress gate withheld or redacted content in {', '.join(_changed)}"
+                                 if _changed else "egress gate passed the payload unchanged"),
+                         alternatives=[provider])
+    except Exception:
+        pass
     return sealed
 
 

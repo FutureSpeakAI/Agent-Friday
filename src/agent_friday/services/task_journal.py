@@ -429,3 +429,155 @@ def reset_for_tests() -> None:
         _SEQ.clear()
         _UNRECORDED_NOTIFIED.clear()
         _DELETED.clear()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Phase 2 — required emission (TV3, TV4, TV7) and reasoning capture
+# ═══════════════════════════════════════════════════════════════════════════
+# The loops and decision points call these with no task id of their own; the
+# worker pushes its task id onto a thread-local stack for the duration of the
+# run, so a decision made three modules deep (the egress gate, the spend
+# guard, the approval queue) lands in the right journal without plumbing.
+# Outside a task (an interactive chat turn) every emitter is a no-op.
+
+_CURRENT = threading.local()
+
+_SUMMARY_CAP = 200
+_TEXT_CAP = 4000
+_ARGS_CAP = 1000
+
+
+def push_task(task_id: str) -> None:
+    stack = getattr(_CURRENT, "stack", None)
+    if stack is None:
+        stack = _CURRENT.stack = []
+    stack.append(str(task_id))
+
+
+def pop_task() -> None:
+    stack = getattr(_CURRENT, "stack", None)
+    if stack:
+        stack.pop()
+
+
+def current_task() -> Optional[str]:
+    stack = getattr(_CURRENT, "stack", None)
+    return stack[-1] if stack else None
+
+
+def resolve_task_id(session_ctx=None, task_id=None) -> Optional[str]:
+    """Explicit id, else the session context's, else the thread's current task."""
+    if task_id:
+        return str(task_id)
+    tid = (session_ctx or {}).get("task_id") if isinstance(session_ctx, dict) else None
+    return str(tid) if tid else current_task()
+
+
+def capture_reasoning_enabled() -> bool:
+    return bool(settings().get("capture_reasoning", True))
+
+
+def _cap(text, n):
+    if text is None:
+        return None
+    s = text if isinstance(text, str) else json.dumps(text, default=str, ensure_ascii=False)
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def _emit(kind: str, session_ctx=None, task_id=None, **fields) -> Optional[int]:
+    tid = resolve_task_id(session_ctx, task_id)
+    if not tid:
+        return None
+    return append(tid, kind, **fields)
+
+
+def checkpoint(iteration: int, phase: str, summary: str, *, session_ctx=None, task_id=None):
+    """One per loop iteration, BEFORE the model call: the 'now:' a reader sees."""
+    return _emit("checkpoint", session_ctx, task_id, iteration=iteration, phase=phase,
+                 summary=_cap(summary, _SUMMARY_CAP))
+
+
+def model_call(*, model, provider, seat, tokens_in=None, tokens_out=None, cost_usd=None,
+               duration_ms=None, iteration=None, stop_reason=None, session_ctx=None, task_id=None):
+    return _emit("model_call", session_ctx, task_id, model=model, provider=provider, seat=seat,
+                 tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd,
+                 duration_ms=duration_ms, iteration=iteration, stop_reason=stop_reason)
+
+
+def reasoning(*, text=None, thinking=None, iteration=None, model=None, session_ctx=None, task_id=None):
+    """The model's own words between tool calls (and provider thinking when the
+    provider returns it). Honours task_journal.capture_reasoning: when off,
+    nothing of the prose is written anywhere in the journal."""
+    if not capture_reasoning_enabled():
+        return None
+    if not (text or thinking):
+        return None
+    return _emit("reasoning", session_ctx, task_id, iteration=iteration, model=model,
+                 text=_cap(text, _TEXT_CAP), thinking=_cap(thinking, _TEXT_CAP))
+
+
+def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, session_ctx=None, task_id=None):
+    if ok is None:
+        r = str(result or "")
+        ok = not (r.startswith("[VAULT") or r.startswith("[Error") or r.lower().startswith("error"))
+    return _emit("tool_call", session_ctx, task_id, name=name, args=_cap(args, _ARGS_CAP),
+                 ok=bool(ok), duration_ms=duration_ms, result_summary=_cap(result, _SUMMARY_CAP * 2))
+
+
+def decision(point: str, chosen, *, reason=None, alternatives=None, session_ctx=None, task_id=None):
+    """A choice Friday's own code made at a known line, with the reason it
+    already held. Points: seat_select, ladder_fallback, retry, gate, approval,
+    spend_cap, chain_advance, evaluate."""
+    return _emit("decision", session_ctx, task_id, point=point, chosen=_cap(chosen, _SUMMARY_CAP * 2),
+                 alternatives=[_cap(a, _SUMMARY_CAP) for a in (alternatives or [])][:8] or None,
+                 reason=_cap(reason, _TEXT_CAP // 4))
+
+
+def steer(message: str, source: str = "user", *, session_ctx=None, task_id=None):
+    return _emit("steer", session_ctx, task_id, message=_cap(message, _TEXT_CAP // 4), source=source)
+
+
+# ── heartbeat (TV7) ──────────────────────────────────────────────────────────
+
+HEARTBEAT_STATE_S = 10     # last_seen in state.json this often
+HEARTBEAT_JOURNAL_S = 60   # and a journal row this often
+
+
+class Heartbeat:
+    """Daemon thread that proves a running task's thread is alive: writes
+    `last_seen` into state.json every 10 s and a heartbeat event every 60 s
+    until stop() is called. A stale last_seen renders as stalled, never as
+    running."""
+
+    def __init__(self, task_id: str):
+        self.task_id = str(task_id)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"heartbeat-{self.task_id[:8]}", daemon=True)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        last_journal = 0.0
+        while not self._stop.wait(HEARTBEAT_STATE_S):
+            now = time.time()
+            try:
+                st = read_state(self.task_id)
+                if not st or is_terminal(st.get("status")):
+                    return
+                st["last_seen"] = now
+                write_state(self.task_id, st)
+                if now - last_journal >= HEARTBEAT_JOURNAL_S:
+                    append(self.task_id, "heartbeat")
+                    last_journal = now
+            except Exception:
+                continue
+
+
+def last_seen(task_id: str) -> Optional[float]:
+    st = read_state(task_id) or {}
+    return st.get("last_seen") or st.get("state_written")

@@ -181,6 +181,16 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             on_route(dict(route, model=routed_model, provider=provider))
         except Exception:
             pass
+    # Task journal (TV4, point=seat_select): the router's verdict, with the
+    # reason it already produced.
+    try:
+        _journal().decision("seat_select", f"{provider}/{routed_model or '(provider default)'}",
+                            reason=str(route.get("reason") or route.get("why")
+                                       or f"mode={routing_cfg.get('mode', 'default')}"),
+                            alternatives=[p for p in ("local", "cloud", "openai") if p != provider],
+                            session_ctx=session_ctx)
+    except Exception:
+        pass
 
     # Honor the router's verdicts BEFORE any provider sees the request.
     # refuse=True means vault access was required and the configured fallback
@@ -312,6 +322,17 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             errors.append(f"{_leg}: empty response")
         except Exception as e:
             errors.append(f"{_leg}: {e}")
+        # Task journal (TV4, point=ladder_fallback): a leg failed; say which
+        # and what comes next, from the ladder already in hand.
+        try:
+            _idx = [n for n, _f, _m in attempts].index(name)
+            _remaining = [n for n, _f, _m in attempts][_idx + 1:]
+            _journal().decision("ladder_fallback",
+                                f"next: {_remaining[0]}" if _remaining else "no legs left",
+                                reason=errors[-1], alternatives=_remaining,
+                                session_ctx=session_ctx)
+        except Exception:
+            pass
         # Badge truth: every abandoned leg is part of this message's
         # provenance — the reply the user finally sees came from whichever
         # leg succeeded next.
@@ -2579,6 +2600,13 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         behavior — the full registry, via _generate_agent's own default.
     """
     timeout = _load_settings().get('task_timeout_seconds', TASK_TIMEOUT_SECONDS)
+    # Task journal (task-visibility.md TV3/TV7): every emitter below this
+    # frame — in the loops, the gate, the spend guard, the approval queue —
+    # resolves its task from this thread-local; the heartbeat proves the
+    # thread is alive while it runs. Both are undone in the finally.
+    _tj = _journal()
+    _tj.push_task(task_id)
+    _heartbeat = _tj.Heartbeat(task_id).start()
     _task_set(task_id, status='running', started=_time.time())
     _task_log(task_id, f'Spawning agent: {name} (timeout: {timeout}s)')
     if description:
@@ -2779,15 +2807,24 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         # own work must not be graded by it — see _evaluate_output. Same signal
         # the work used, read the same way, so the two cannot drift apart.
         _eval_local_only = False
+        _eval_skip_reason = "vault-protected task: the evaluator is a cloud call and was not run"
         try:
             from agent_friday.core import _vault_local_only as _vlo
             _eval_local_only = bool(_vlo())
-        except Exception:
+        except Exception as _vlo_err:
             _eval_local_only = True   # cannot tell → do not send
+            # The journal must say WHY it was skipped. "Cannot tell" and
+            # "vault-protected" are different facts; conflating them hid the
+            # case where this import itself fails and the evaluator never runs.
+            _eval_skip_reason = (f"could not determine the vault policy "
+                                 f"({type(_vlo_err).__name__}: {str(_vlo_err)[:120]}); "
+                                 f"fail closed, evaluator not run")
         if _eval_local_only:
             _task_log(task_id, 'Skipping quality evaluation — it is a cloud '
                                'call and this task is vault-protected.')
             evaluation = None
+            _tj.decision("evaluate", "skipped", task_id=task_id, reason=_eval_skip_reason,
+                         alternatives=["GRADE: PASS", "GRADE: PARTIAL", "GRADE: FAIL"])
         else:
             _task_log(task_id, 'Running quality evaluation (cloud)…')
             evaluation = _evaluate_output(task_id, prompt, reply or '',
@@ -2797,6 +2834,9 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             lines = evaluation.splitlines()
             grade_line = next((l for l in lines if l.startswith('GRADE:')), '')
             reason_line = next((l for l in lines if l.startswith('REASON:')), '')
+            _tj.decision("evaluate", grade_line or "GRADE: (none)",
+                         reason=reason_line or "no reason line", task_id=task_id,
+                         alternatives=["GRADE: PASS", "GRADE: PARTIAL", "GRADE: FAIL", "GRADE: UNAVAILABLE"])
             if grade_line:
                 # The REASON must be shown alongside the grade; a bare
                 # "Eval: GRADE: FAIL" gives no way to find out what failed
@@ -2851,12 +2891,19 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         # A FAILED task must report too. Silence on failure is the worse half
         # of this gap: it reads exactly like success to anyone not watching.
         _report_task_completion(task_id, name, 'failed', f'[Error] {e}')
+        _tj.decision("retry", "chain_retry_considered", reason=f"task failed: {str(e)[:200]}",
+                     task_id=task_id)
         # A failed CHAIN link retries itself (per-step budget) instead of the
         # chain dying silently mid-run — the workflow UI shows the retry.
         try:
             _retry_chain_step(task_id, str(e))
         except Exception as re_:
             _task_log(task_id, f'Chain retry error: {re_}')
+    finally:
+        try:
+            _heartbeat.stop()
+        finally:
+            _tj.pop_task()
 
 
 def _report_task_completion(task_id, name, status, result_text):
@@ -3269,8 +3316,13 @@ def _retry_chain_step(task_id, error_text):
     used = int(t.get('chain_retry', 0))
     if used >= int(step.get('retries', 1)):
         _task_log(task_id, f'Chain halted: step {idx + 1} failed with no retries left.')
+        _journal().decision("retry", "halted", task_id=task_id,
+                            reason=f"step {idx + 1} used {used}/{step.get('retries', 1)} retries; {error_text[:200]}",
+                            alternatives=["retry"])
         return None
     _task_log(task_id, f'→ retrying step {idx + 1} ({used + 1}/{step.get("retries", 1)})')
+    _journal().decision("retry", f"retry {used + 1}/{step.get('retries', 1)}", task_id=task_id,
+                        reason=error_text[:300], alternatives=["halt"])
     prompt = (f"The previous attempt at this step FAILED with: {error_text[:500]}\n"
               f"Diagnose what went wrong and complete the step properly this time.\n\n"
               f"---\n\n{step['prompt']}")
@@ -3360,6 +3412,12 @@ def _advance_task_chain(task_id, result_text):
                           f"(\"{t.get('name')}\"):\n\n{result_text[:6000]}\n\n"
                           f"---\n\nYour task:\n{prompt}")
             _task_log(task_id, f"→ chaining to step {nxt + 1}/{len(steps)}: {step['name']}")
+            _journal().decision("chain_advance", f"step {nxt + 1}/{len(steps)}: {step['name']}",
+                                task_id=task_id,
+                                reason=("previous step's result threaded as context"
+                                        if step.get('with_context', True) and result_text else
+                                        "previous step complete; no context threaded"),
+                                alternatives=["stop chain"])
             return _spawn_task(
                 name=step['name'],
                 prompt=prompt,
@@ -6519,7 +6577,17 @@ def _register_agent_orb(orb_label, orb_category, orb_icon, model, session_ctx=No
 def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     """Append one completed tool call to the orb's thread view: a compact
     log line plus a timed step entry. Args/results are tier-redacted via
-    _tier_safe_summary before touching the process record. Best-effort."""
+    _tier_safe_summary before touching the process record. Best-effort.
+
+    Also the single place every executed tool call — allowed or vault-denied,
+    on either loop — passes, so the task journal's tool_call event is written
+    here (task-visibility.md TV3), before the orb early-return."""
+    try:
+        _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
+                             result=_tier_safe_summary(result, limit=400, kind="result"),
+                             duration_ms=int(duration_ms or 0))
+    except Exception:
+        pass
     if not orb_id:
         return
     try:
@@ -6726,6 +6794,16 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                       label="Reasoning…" if iter_count == 1 else f"Reasoning (step {iter_count})",
                       progress=min(0.05 + (iter_count - 1) * 0.1, 0.9),
                       step={"type": "reason", "iter": iter_count, "ts": _time.time()})
+            # Task journal (TV3): the checkpoint is a step of the loop, written
+            # BEFORE the model call so a crash mid-call still records the
+            # iteration it was in. tests/unit/test_task_journal_emission.py
+            # counts these against real iterations.
+            _tj_loop = _journal()
+            _tj_loop.checkpoint(iter_count, "model_call",
+                                f"Reasoning (step {iter_count}) on {model or ANTHROPIC_MODEL_DEFAULT}",
+                                session_ctx=session_ctx)
+            if _steer_inject:
+                _tj_loop.steer(_steer_inject, source="operator-file", session_ctx=session_ctx)
 
             kwargs = {
                 "model": model or ANTHROPIC_MODEL_DEFAULT,
@@ -6785,22 +6863,43 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             _t0 = _time.time()
             resp = client.messages.create(**kwargs)
             # B4: accumulate token counts for the activity-ledger record.
+            _iter_tok_in = _iter_tok_out = 0
             try:
                 _u = getattr(resp, "usage", None)
-                _led_tok_in += int(getattr(_u, "input_tokens", 0) or 0)
-                _led_tok_out += int(getattr(_u, "output_tokens", 0) or 0)
+                _iter_tok_in = int(getattr(_u, "input_tokens", 0) or 0)
+                _iter_tok_out = int(getattr(_u, "output_tokens", 0) or 0)
+                _led_tok_in += _iter_tok_in
+                _led_tok_out += _iter_tok_out
             except Exception:
                 pass
             # Cost metering (Part D): resp.usage must not be discarded —
             # capture input+output tokens with run/workspace attribution
             # from session_ctx.
+            _iter_cost = None
             try:
                 from agent_friday.services import cost_meter as _cm
-                _cm.meter("anthropic", kwargs.get("model"),
-                          getattr(resp, "usage", None),
-                          duration_ms=int((_time.time() - _t0) * 1000),
-                          session_ctx=session_ctx,
-                          kind=(session_ctx or {}).get("kind"))
+                _iter_cost = _cm.meter("anthropic", kwargs.get("model"),
+                                       getattr(resp, "usage", None),
+                                       duration_ms=int((_time.time() - _t0) * 1000),
+                                       session_ctx=session_ctx,
+                                       kind=(session_ctx or {}).get("kind"))
+            except Exception:
+                pass
+            # Task journal (TV3/TV4): what the call cost and where it ran,
+            # then the model's own words (reasoning capture, a setting).
+            try:
+                _tj_loop.model_call(model=kwargs.get("model"), provider="anthropic", seat="cloud",
+                                    tokens_in=_iter_tok_in, tokens_out=_iter_tok_out,
+                                    cost_usd=_iter_cost if isinstance(_iter_cost, (int, float)) else None,
+                                    duration_ms=int((_time.time() - _t0) * 1000),
+                                    iteration=iter_count, stop_reason=getattr(resp, "stop_reason", None),
+                                    session_ctx=session_ctx)
+                _think = " ".join(getattr(b, "thinking", "") or "" for b in resp.content
+                                  if getattr(b, "type", None) == "thinking").strip() or None
+                _prose = " ".join(getattr(b, "text", "") or "" for b in resp.content
+                                  if getattr(b, "type", None) == "text").strip() or None
+                _tj_loop.reasoning(text=_prose, thinking=_think, iteration=iter_count,
+                                   model=kwargs.get("model"), session_ctx=session_ctx)
             except Exception:
                 pass
 
@@ -6999,7 +7098,15 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         pass
     loops = max_iters if oai_tools else 1
     _empty_retried = False
+    _tj_loop = _journal()
+    _round = 0
     for _ in range(loops):
+        _round += 1
+        # Task journal (TV3): checkpoint before the call, same contract as the
+        # Anthropic loop; the coverage test counts these against rounds.
+        _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
+                            session_ctx=session_ctx)
+        _t_round = _time.time()
         resp = send_fn(convo, oai_tools)
 
         usage = resp.get("usage", {}) or {}
@@ -7023,15 +7130,31 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         except Exception:
             pass
         # Cost metering (Part D): durable per-direction ledger with attribution.
+        _round_cost = None
         try:
             from agent_friday.services import cost_meter as _cm
-            _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx)
+            _round_cost = _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx)
         except Exception:
             pass
 
         choices = resp.get("choices", [])
         msg = (choices[0].get("message", {}) if choices else {}) or {}
         tool_calls = msg.get("tool_calls") or []
+        # Task journal (TV3/TV4): the call, then the model's words.
+        try:
+            _tj_loop.model_call(model=_meter_model, provider=_meter_as, seat=_led_seat,
+                                tokens_in=int(usage.get("prompt_tokens", 0) or 0),
+                                tokens_out=int(usage.get("completion_tokens", 0) or 0),
+                                cost_usd=_round_cost if isinstance(_round_cost, (int, float)) else None,
+                                duration_ms=int((_time.time() - _t_round) * 1000),
+                                iteration=_round,
+                                stop_reason=(choices[0].get("finish_reason") if choices else None),
+                                session_ctx=session_ctx)
+            _tj_loop.reasoning(text=(msg.get("content") or "").strip() or None,
+                               thinking=(msg.get("reasoning_content") or msg.get("reasoning") or None),
+                               iteration=_round, model=_meter_model, session_ctx=session_ctx)
+        except Exception:
+            pass
 
         # ── The gemma4 e-series speaks a channel format, not OpenAI shape ──
         #

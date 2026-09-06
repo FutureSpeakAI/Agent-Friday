@@ -76,9 +76,9 @@ def test_a_full_run_leaves_a_complete_journal_and_state():
     kinds = [e["kind"] for e in tj.read(tid)]
     assert kinds[0] == "created" and "started" in kinds and "ended" in kinds
     assert kinds.index("started") < kinds.index("ended")
-    # The worker logs a couple of wrap-up lines after it sets the terminal
-    # status; those are checkpoints too and stay in the record.
-    assert set(kinds[kinds.index("ended") + 1:]) <= {"checkpoint"}, kinds
+    # The worker logs a couple of wrap-up lines and records the evaluator's
+    # verdict after it sets the terminal status; those stay in the record.
+    assert set(kinds[kinds.index("ended") + 1:]) <= {"checkpoint", "decision"}, kinds
     assert kinds.count("checkpoint") >= 3, kinds          # spawn/description/finalize log lines
     ended = [e for e in tj.read(tid) if e["kind"] == "ended"][0]
     assert ended["status"] == snap["status"] and "all done" in (ended["result"] or "")
