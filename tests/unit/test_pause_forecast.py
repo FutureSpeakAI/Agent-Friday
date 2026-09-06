@@ -1,6 +1,6 @@
 """Friday never goes quiet without saying so first.
 
-Stephen, 2026-08-15: "Friday should always warn the user when local inference
+The maintainer, 2026-08-15: "Friday should always warn the user when local inference
 will (or might) cause her to go silent for any amount of time so they can
 decide if cloud or scheduling for idle time would be better."
 
@@ -73,7 +73,7 @@ def test_a_loaded_daemon_model_does_not_warn_on_every_single_turn(arb, monkeypat
     This used to assert the opposite: a daemon-served model was a "might",
     because Ollama can evict without announcing it. That is true — and it is
     true before EVERY message, forever, so warning on it meant warning always.
-    Stephen hit exactly that: a confirmation before every message he sent,
+    The maintainer hit exactly that: a confirmation before every message he sent,
     which he had to scroll up to answer before anything would proceed.
 
     A prompt that fires every time is not a safety feature. It is noise, and
@@ -93,7 +93,7 @@ def test_a_loaded_daemon_model_does_not_warn_on_every_single_turn(arb, monkeypat
 def test_a_model_that_just_answered_is_not_called_cold(arb, monkeypatch):
     """The residency plan is not the only witness to what is loaded.
 
-    Stephen switched his chat seat; the setting changed and the plan did not,
+    The maintainer switched his chat seat; the setting changed and the plan did not,
     so his model appeared in no seat and no resident set. The forecaster read
     that as "cold" and announced a 30-second wait before every message, while
     that same model answered him at normal speed. A model that served a turn a

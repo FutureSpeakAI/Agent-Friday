@@ -478,12 +478,12 @@ def _exec_text_stage(stage, prompt, context):
     ws = stage.get("workspace") or ""
     _kw = prompt[:400]
 
-    # F30: `_predict_route_provider` predicts ONE provider and the prompt used
-    # to be gated for it once — but _generate_text's own fallback ladder can
-    # land on a DIFFERENT provider than predicted when the first leg fails
-    # operationally, reusing a prompt gated for the wrong destination
-    # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F30). `_sys_for` rebuilds
-    # the prompt for an EXPLICIT provider and is passed as `system_builder` so
+    # `_predict_route_provider` predicts ONE provider, but _generate_text's
+    # own fallback ladder can land on a DIFFERENT provider than predicted when
+    # the first leg fails operationally; a prompt gated once for the predicted
+    # provider would then be reused for the wrong destination. `_sys_for`
+    # rebuilds the prompt for an EXPLICIT provider and is passed as
+    # `system_builder` so
     # every ladder leg — first attempt and every fallback — is gated for the
     # provider it actually calls.
     def _sys_for(provider_name):

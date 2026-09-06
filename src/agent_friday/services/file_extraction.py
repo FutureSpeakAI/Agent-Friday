@@ -1,10 +1,10 @@
-"""File text extraction — WO-14.1.
+"""File text extraction.
 
-read_file used to decode every file as UTF-8 with errors='replace' and hand
+read_file must not decode every file as UTF-8 with errors='replace' and hand
 the result straight to the model. For a PDF or .docx that is not text at all
-— it is a compressed/binary container — so the "text" was mojibake, and the
-model narrated a confident summary over it (voice session 2026-08-25, item
-#20: "four pages, senior AI leadership" over 8,000 chars of raw PDF bytes).
+— it is a compressed/binary container — so the "text" is mojibake, and the
+model narrates a confident summary over it ("four pages, senior AI
+leadership" over 8,000 chars of raw PDF bytes).
 
 extract_text() is the single place that decides whether a file's bytes can
 become real text, and never falls back to raw-bytes-as-text for a format it

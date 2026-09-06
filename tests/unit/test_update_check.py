@@ -550,7 +550,7 @@ def test_scheduler_registers_the_check_enabled_by_default():
         "the update check is not in the built-in roster, so no install gets it"
     )
     meta = sched.BUILTIN_TASKS[uc.SCHEDULE_REF]
-    assert meta["default_enabled"] is True, "Stephen asked for on by default"
+    assert meta["default_enabled"] is True, "the maintainer asked for on by default"
     assert meta["notify"] == "silent", (
         "a non-silent schedule pushes 'Update check — complete' every week, and "
         "pushes a failure notification every time the network is down"
@@ -590,7 +590,7 @@ def test_a_fresh_install_actually_gets_an_enabled_schedule(tmp_path, monkeypatch
         "never runs and the Settings toggle controls nothing"
     )
     rec = seeded[uc.SCHEDULE_ID]
-    assert rec["enabled"] is True, "Stephen asked for on by default"
+    assert rec["enabled"] is True, "the maintainer asked for on by default"
     assert rec["trigger"] == "interval"
     assert rec["spec"]["every_minutes"] == uc.TICK_MINUTES
     assert rec["notify"] == "silent"
@@ -600,7 +600,7 @@ def test_a_fresh_install_actually_gets_an_enabled_schedule(tmp_path, monkeypatch
 def test_an_existing_install_is_opted_in_on_upgrade(tmp_path, monkeypatch):
     """THE DECISION MADE ON STEPHEN'S BEHALF, pinned so it cannot drift silently.
 
-    Stephen asked for on-by-default for NEW installations. `_seed_and_reconcile`
+    The maintainer asked for on-by-default for NEW installations. `_seed_and_reconcile`
     also adds newly-registered built-ins to installs that predate them, so
     people who already installed get it switched on too. Nobody asked for that.
 

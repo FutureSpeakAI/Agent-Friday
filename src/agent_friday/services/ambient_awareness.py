@@ -15,7 +15,7 @@ These are meant to drive *adaptive behavior*: shorter replies when energy is
 low, suppressed interruptions during creative flow, and a subtle tint on the
 holographic scene.
 
-CORRECTION (gauntlet-2026-09-03 F60): only the scene tint is real end-to-end.
+Actuation status: only the scene tint is wired end-to-end.
 get_ambient_state() computes hints (response_length, suppress_interruptions,
 defer_nonurgent_notifications, tone, offer_breaks) via
 ambient_behavior_hints_for() and a scene_mood via ambient_scene_mood_for() on
@@ -26,11 +26,11 @@ also stashed on window._fridayAmbientState, but nothing reads it back out --
 suppress_interruptions and response_length are computed and thrown away.
 ambient_prompt_directive(), the function that would splice a "keep replies
 short" / "don't interrupt, they're in flow" paragraph into a system prompt,
-has zero callers anywhere -- the chat pipeline never asks it for one. So two
-of the three claimed adaptive behaviors are sensing with no actuation: real
-signal, nothing downstream acts on it. Wiring either one in (frontend
-notification suppression, or a chat-pipeline prompt splice) is a real UX/
-behavior decision and wasn't done here.
+has no callers -- the chat pipeline never asks it for one. So two of the
+three adaptive behaviors are sensing with no actuation: real signal, nothing
+downstream acts on it. Wiring either one in (frontend notification
+suppression, or a chat-pipeline prompt splice) is a UX/behavior decision
+still to be made.
 
 Signals come from two places: explicit ``record_signal()`` calls (workspace
 switches, task completions) and a passive read of existing state (the TASKS

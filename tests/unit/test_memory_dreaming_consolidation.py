@@ -60,7 +60,7 @@ class TestConsolidation:
         assert "preference" in cats
 
     def test_mines_bio_fact(self):
-        mem = FakeMemory([_turn("My name is Stephen and my company is FutureSpeak.")])
+        mem = FakeMemory([_turn("My name is the maintainer and my company is FutureSpeak.")])
         r = md.dream(day="2026-06-30", memory=mem)
         assert any(f["category"] == "bio" for f in r["consolidated"])
 

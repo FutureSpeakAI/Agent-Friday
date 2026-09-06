@@ -1,9 +1,9 @@
-"""User-granted cloud egress permissions for local files — WO-17.
+"""User-granted cloud egress permissions for local files.
 
-Grounding (voice session 2026-08-25, 09:19:50): "Just fair warning, I can't
-bring sensitive personal info from that resume up to the cloud." The gate
-makes Friday least useful on exactly the work Stephen cares most about —
-analyzing his own documents with a frontier model — and the realistic
+Grounding: "Just fair warning, I can't bring sensitive personal info from
+that resume up to the cloud." The gate makes Friday least useful on exactly
+the work the user cares most about — analyzing their own documents with a
+frontier model — and the realistic
 alternative to a grant is worse than a grant: pasting the same content into
 the chat box by hand, which crosses the wire anyway with no registry, no
 audit, no receipt. A grant inside the system with an audit trail beats a
@@ -14,9 +14,8 @@ uses. No send-time exemption API exists here — nothing accepts a flag on a
 call. `on_file_read()` is called by read_file at the moment a file is
 actually read (NOT by search_files — a content-search snippet from a
 granted file still gates normally; file_search.py's own `_search_content()`
-already discloses this as its "WO-17 KNOWN GAP," failing toward gating
-rather than leaking, corrected here to match — gauntlet-2026-09-03 F63);
-if the resolved path carries a live grant, it
+discloses this as its "KNOWN GAP," failing toward gating rather than
+leaking); if the resolved path carries a live grant, it
 registers that read's exact paragraphs with `egress_gate.register_public_text
 (text, origin="user-grant:<id>")`, exactly as news_engine registers a
 fetched article. A prompt-injected model cannot register spans: the only way
@@ -250,7 +249,7 @@ def _split_paragraphs(text: str) -> list[str]:
 
 def scan_path(path: Path) -> dict:
     """Classifier findings for a file, for the grant dialog. Generated from
-    the system's OWN scan (WO-17 §1) — never parametrized by model text, so a
+    the system's OWN scan — never parametrized by model text, so a
     prompt-injected file cannot shape what the consent screen shows."""
     from agent_friday.services.file_extraction import extract_text
     from agent_friday.services.sensitivity_classifier import classify, Tier
@@ -335,7 +334,7 @@ def create_scope_grant(path_or_pattern: str, kind: str, expiry_days: float) -> d
         "path": p,
         "created_ts": time.time(),
         "expires_ts": time.time() + expiry_days * 86400.0,
-        "never_send_override": False,   # WO-17 §3: override is file-grant only
+        "never_send_override": False,   # override is file-grant only
     }
     return _append_event(event)
 
@@ -394,9 +393,9 @@ def check_grant(path: Path, sha256_hex: str | None = None) -> GrantCheck:
 
 # A granted paragraph is page-sized prose (extract_text joins pages on
 # "\n\n"), not a headline — register_public_text's 2000-char default is a
-# NEWS constraint that silently dropped 3 of 4 pages of a real CV during
-# end-to-end verification (2026-08-25): the grant looked live (ledger entry,
-# check_grant='active') while most of the document still gated normally.
+# NEWS constraint that would silently drop 3 of 4 pages of a real CV: the
+# grant looks live (ledger entry, check_grant='active') while most of the
+# document still gates normally.
 _GRANT_SPAN_MAX_LEN = 50_000
 
 
@@ -416,7 +415,7 @@ def _register_deny_spans(text: str) -> None:
 
 
 def on_file_read(path: Path, text: str) -> GrantCheck:
-    """The read-time feeder (WO-17's central move). Call this — and only this
+    """The read-time feeder (the central move). Call this — and only this
     — after a file's content is actually extracted, before returning it to a
     tool caller. There is no other path into the grant span registries: a
     caller cannot hand the gate a flag, and a model cannot register spans by

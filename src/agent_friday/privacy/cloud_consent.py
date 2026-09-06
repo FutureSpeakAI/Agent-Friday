@@ -3,23 +3,22 @@
 Why this module exists
 -----------------------
 `model_routing.mode` defaults to ``"cloud_only"`` on every fresh install —
-that is the factory setting, not a choice anyone made. Until 2026-09-06,
+that is the factory setting, not a choice anyone made. If
 ``services/egress_gate.py``'s ``is_unrestricted_cloud()`` treated that
-factory default (plus a separate, easily-missed ``unrestricted_cloud``
-flag) as license to bypass every privacy safeguard in the codebase: tier
-classification, redaction, the PII scrub, the never-send list, all of it.
-A stranger who never opened Settings inherited "no safeguards" the moment
-they picked cloud-only as their provider — which most people do, since it
-needs no local model and no setup.
+factory default (or a separate, easily-missed ``unrestricted_cloud``
+flag) as license to bypass every privacy safeguard in the codebase — tier
+classification, redaction, the PII scrub, the never-send list, all of it —
+a stranger who never opened Settings would inherit "no safeguards" the
+moment they picked cloud-only as their provider, which most people do,
+since it needs no local model and no setup.
 
-Stephen's ruling: unrestricted cloud access is earned by an explicit
+Maintainer ruling: unrestricted cloud access is earned by an explicit
 decision, never inherited from a default. And the decision is only real on
 hardware that can actually deliver the alternative — offering "private
 local" as an option on a machine that cannot run local models well enough
 to do the work (reasoning, voice, image, video, and the arbiter juggling
-between them) is a promise the hardware will break, which is the exact
-failure mode this whole week's work has been about surfacing rather than
-hiding.
+between them) is a promise the hardware will break — a failure mode to
+surface rather than hide.
 
 So there are two shapes, and which one a user sees depends on their own
 hardware, verified against the same verdict machinery the model picker and
@@ -48,7 +47,7 @@ Migration for existing installs
 --------------------------------
 An install that had already set the old standalone ``unrestricted_cloud``
 flag to True is treated as having already made this choice — that flag's
-whole meaning under the pre-2026-09-06 design WAS "give the cloud full
+whole meaning under the earlier design WAS "give the cloud full
 access", so re-asking would be asking the same question the user already
 answered under a different name. Everyone else, regardless of what
 ``mode`` happens to be, is unanswered until they see one of the two
@@ -148,7 +147,7 @@ def resolve(config: dict | None = None) -> ConsentStatus:
                                  capability_snapshot=cc.get("capability_snapshot"),
                                  source="settings")
 
-        # Grandfather-in: the pre-2026-09-06 standalone flag WAS this same
+        # Grandfather-in: the legacy standalone flag WAS this same
         # decision under a different name.
         if bool(cfg.get("unrestricted_cloud", False)):
             return ConsentStatus(answered=True, choice=CHOICE_CLOUD, at=None,
@@ -202,17 +201,16 @@ def _text_capable(profile: dict, ladder_rows: list) -> tuple:
     and `local_models_catalog()`'s "text" rows only ever cover the curated
     `model_plan.BRAIN_MODELS` ladder. Checking only those rows answers
     "capable" or not based on which of four specific tags happen to be
-    resident, blind to anything else Friday can actually serve — Stephen's
-    own machine has a real 3.19 GiB GGUF in Friday's runtime store that is
-    not one of the four ladder rungs, and a curated-ladder-only check would
-    call that machine incapable while it is actively running local
-    reasoning.
+    resident, blind to anything else Friday can actually serve — a machine
+    running a GGUF from Friday's runtime store that is not one of the
+    ladder rungs would be called incapable by a curated-ladder-only check
+    while it is actively running local reasoning.
 
     `local_seats.installed()` is already the correct, runner-agnostic
     signal for "what can Friday actually serve" — Friday's own store UNION
     the Ollama daemon, built specifically because trusting the daemon alone
-    moved Stephen's real reasoning seat off its runtime on 2026-08-18 (see
-    that module's own docstring). Every name it returns is checked directly
+    can move a real reasoning seat off its runtime (see that module's own
+    docstring). Every name it returns is checked directly
     against `residency_policy.verdicts()`, the same function that produces
     the curated ladder's own rows — never a second, different bar for a
     model just because it did not come from the ladder.

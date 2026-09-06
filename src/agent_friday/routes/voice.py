@@ -385,8 +385,8 @@ def _voice_reply_cap(settings=None) -> int:
       + 16,384 (the unset reply cap)
       = 41,184 tokens against a served window of 32,768
 
-    and gemma4:12b answered ``500 Context size has been exceeded`` (measured
-    2026-08-25, reproduced on demand). Because a vault-touching turn is
+    and gemma4:12b answers ``500 Context size has been exceeded``
+    (reproducible on demand). Because a vault-touching turn is
     forbidden from retrying on a cloud provider, that 500 was the whole turn:
     Friday could not call a single tool. The identical request with this cap at
     300 succeeded in 19 seconds and called tools normally.
@@ -577,9 +577,9 @@ def _gate_voice_tool_result(result: str, fname: str) -> str:
     """Gate a voice tool result before it reaches Gemini. FAIL-CLOSED.
 
     Every exit is either the gated text or an explanatory withheld
-    placeholder — NEVER the raw `result` passed in. This is the fix for N-1
-    (2026-08-25): the previous version wrapped the whole gate call in one
-    broad `except Exception: <log and fall through>`, and `_gate_text` raises
+    placeholder — NEVER the raw `result` passed in. Wrapping the whole gate
+    call in one broad `except Exception: <log and fall through>` is the
+    defect this guards against: `_gate_text` raises
     `egress_gate.NeverSendBlocked` for never-send material BY DESIGN (see its
     docstring) — so the gate's strongest verdict was exactly the case that
     fell through to the pre-gate, ungated `result`. A gate that fails open on
@@ -650,11 +650,11 @@ def _gate_voice_system_instruction(sys_text: str) -> str:
     personality, self-knowledge, and (when the vault gate is on) TIER-gated
     vault material — going straight to Google as `system_instruction=`. The
     vault-assembly gate (`_get_vault_control()`) only runs when
-    `vault_local_only` is true; with it false (Stephen's current posture,
-    `e1f1874`) `_get_friday_system_prompt` assembles ungated and NOTHING
-    stood between the result and Google — no egress-gate call existed on
-    this path at all, unlike the sibling tool-result and live.text paths
-    just above. FAIL-CLOSED, same shape as those: any gate exception,
+    `vault_local_only` is true; with it false, `_get_friday_system_prompt`
+    assembles ungated, so this gate is the only thing standing between the
+    result and Google — the same egress-gate call the sibling tool-result
+    and live.text paths just above make. FAIL-CLOSED, same shape as those:
+    any gate exception,
     including NeverSendBlocked, withholds rather than sends the raw prompt.
     """
     try:
@@ -840,8 +840,7 @@ def _local_brain_ready() -> bool:
         # "brain" is the ROLE token _ROLE_TO_CAPABILITY maps to the
         # "reasoning" capability -- passing "reasoning" itself isn't a
         # valid role, so _configured() returned None immediately and this
-        # never consulted the user's actual orchestrator model
-        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+        # never consulted the user's actual orchestrator model.
         return bool(_seats.resolve("brain"))
     except Exception:
         return False
@@ -893,13 +892,12 @@ def _resolve_voice_engine(settings=None):
     except Exception:
         cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
     # Local-only is an absolute override, the same guarantee routes/chat.py's
-    # vision path already enforces (fixed 2026-08-23, commit 4607bd9) — it
+    # vision path already enforces — it
     # must win regardless of `voice_engine` preference or whether the Gemini
     # key is valid. Before this, a user with Local-Only Mode on but the
     # Tier-1 voice deps not installed (`pip install -e .[voice-local-lite]`,
     # an easy-to-skip separate step) got their microphone audio and Friday's
-    # spoken replies streamed to Gemini Live anyway — silently (see
-    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl, voice-pipeline finding).
+    # spoken replies streamed to Gemini Live anyway — silently.
     _local_only = str(((settings.get('model_routing') or {})
                        .get('mode')) or '').strip().lower() == 'local_only'
     if _local_only:
@@ -1160,7 +1158,7 @@ def voice_setup_install_cancel():
 
 def _ws_auth_ok(ui_tok_ok: bool) -> bool:
     """Mirror core.login_required()'s fail-closed semantics for a WebSocket
-    handshake (F21, docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+    handshake (see the 2026-09 gauntlet audit in docs/history/audits/).
 
     Both `/ws/voice-local` and `/ws/live` used to gate on bare `FRIDAY_PASSWORD`
     directly: `if FRIDAY_PASSWORD and not authenticated and not loopback and
@@ -1187,8 +1185,8 @@ def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
     """Record cost_meter usage from one Gemini Live streaming chunk, if it
     carries usage_metadata. Returns whether a charge was recorded.
 
-    CORRECTION (weak-probe audit, 2026-09-05): extracted out of ws_live's
-    receive loop (Q6c) so this has its own testable identity. ws_live
+    Extracted out of ws_live's receive loop so this has its own testable
+    identity. ws_live
     itself is a closure nested inside a Flask-Sock route registration
     function, deeply inside an async Gemini Live streaming session --
     reaching this exact line from a test previously meant either mocking
@@ -1263,8 +1261,8 @@ if sock is not None:
         #     session_ctx the gate saw {} and denied search_news, search_web and
         #     every other network op with "ring-2 network op requires
         #     authenticated session". Friday, handed a governance refusal, told
-        #     Stephen she was locked out of the news — which he reasonably read
-        #     as the vault refusing him ON A LOCAL SESSION. The vault had
+        #     the user she was locked out of the news — which reads as the
+        #     vault refusing them ON A LOCAL SESSION. The vault had
         #     nothing to do with it and logged ALLOW / TIER_1 on the same call.
         #   * zero-trust vault check_action — `session_ctx.get("provider",
         #     "cloud")`. Absent a ctx it evaluated a LOCAL brain as cloud.
@@ -1330,9 +1328,9 @@ if sock is not None:
                         else "starting local voice")})
         # A GPU tier that RUNS but displaces the resident brain is not a
         # downgrade, so the block above stays silent for it -- and the user
-        # would otherwise meet the cost as "why did Friday get slow?". Measured
-        # 2026-08-24: holding the ASR working set took local replies from 0.30s
-        # to 3.08s and back. Say it at the point of use, once per session.
+        # would otherwise meet the cost as "why did Friday get slow?" (holding
+        # the ASR working set can take local replies from ~0.3s to ~3s). Say
+        # it at the point of use, once per session.
         if tier == "gpu":
             try:
                 from agent_friday.services.nemo_voice import gpu_status
@@ -1392,7 +1390,7 @@ if sock is not None:
             # LENGTH. This is the local path's ONLY brevity control that the
             # model itself can honour, and it has to be concrete: "reasonably
             # concise" produced 183-word answers to "how does your vault work"
-            # (measured 2026-08-25) — 73 seconds of uninterruptible speech for
+            # — over a minute of uninterruptible speech for
             # one question. Even frontier speech-to-speech models still need an
             # explicit "avoid long answers" line; no model choice removes this.
             "LENGTH — THIS IS SPOKEN, SO LENGTH IS TIME. Answer in ONE to THREE "
@@ -1428,15 +1426,13 @@ if sock is not None:
         turn_log = []
         _turn_lock = threading.Lock()
         # ── Barge-in on the LOCAL path ──────────────────────────────────────
-        # The client has always sent {"type":"barge"} when Stephen hits Escape
-        # or talks over her; /ws/live acts on it, and this handler dropped it on
-        # the floor — it decoded only audio/conversation/text/end, so `barge`
-        # fell through every branch and vanished. Worse, it could not have been
-        # read anyway: _handle_turn ran INLINE in the receive loop, so for the
-        # whole think-and-speak window (20s+ on a local seat) nothing called
-        # ws.receive() at all. Local voice was not "hard to interrupt", it was
-        # structurally uninterruptible — which is the real reason she reads as
-        # droning next to Gemini, whose prompt actually asks for LONGER answers.
+        # The client sends {"type":"barge"} when the user hits Escape or talks
+        # over her; /ws/live acts on it, and this handler must too. If
+        # _handle_turn ran INLINE in the receive loop, nothing would call
+        # ws.receive() for the whole think-and-speak window (20s+ on a local
+        # seat) and local voice would be structurally uninterruptible — which
+        # reads as droning next to Gemini, whose prompt actually asks for
+        # LONGER answers.
         #
         # Two pieces, both needed: this flag, which _speak checks between
         # sentences, and running each turn on its own thread (below) so the loop
@@ -1449,7 +1445,7 @@ if sock is not None:
             Per-sentence so Friday starts speaking the first sentence while later
             ones are still being synthesized (the key latency mitigation). The
             per-sentence boundary is also the barge-in checkpoint: one sentence
-            is the worst-case delay between Stephen interrupting and silence."""
+            is the worst-case delay between the user interrupting and silence."""
             for sentence in split_sentences(text):
                 if done.is_set() or _barge.is_set():
                     return
@@ -1492,7 +1488,7 @@ if sock is not None:
                     # weeks: the two ends of the cascade were fine and the
                     # middle was absent. Same defect as the wiki distillation
                     # loss and the `friday doctor` model check — resolving a
-                    # NAME instead of asking what is loaded (2026-08-21).
+                    # NAME instead of asking what is loaded.
                     #
                     # local_seats.resolve() returns only installed seats and
                     # returns the caller's preference unchanged when the daemon
@@ -1519,7 +1515,7 @@ if sock is not None:
                                      "provider": _prov,
                                      # Lets classify_task() reach TaskType.VOICE
                                      # so a user's task_overrides.voice config
-                                     # actually takes effect (gauntlet Q20).
+                                     # actually takes effect.
                                      "is_voice": True},
                         workspace=settings.get("active_workspace") or "",
                     )
@@ -1714,8 +1710,7 @@ if sock is not None:
         # stale tab that fetched session-info before local-only was turned
         # on (or any client that connects to /ws/live directly, bypassing
         # the recommendation) could stream mic audio and conversation text
-        # to Gemini regardless of the setting (docs/audits/
-        # gauntlet-2026-09-03/findings.jsonl).
+        # to Gemini regardless of the setting.
         try:
             _ws_local_only = str(((_load_settings() or {}).get('model_routing') or {})
                                  .get('mode') or '').strip().lower() == 'local_only'
@@ -2484,11 +2479,10 @@ if sock is not None:
                                             resume_handle[0] = _sru.new_handle
                                             _handle_model[0] = model_name
                                             _live_resume_store(_sru.new_handle, model_name, live_voice, gen=_conn_gen)
-                                        # Cost metering (docs/audits/gauntlet-2026-09-03/
-                                        # findings.jsonl Q6c): the Gemini Live session is a
-                                        # real, billed call that had ZERO cost_meter
-                                        # integration despite PRICING already carrying rates
-                                        # for this exact model. usage_metadata arrives
+                                        # Cost metering: the Gemini Live session is a
+                                        # real, billed call and must be metered like any
+                                        # other (PRICING carries rates for this exact
+                                        # model). usage_metadata arrives
                                         # per-chunk on the live stream (cumulative for the
                                         # session so far, per the API's own semantics) —
                                         # metered as its own row every time it shows up
@@ -2735,8 +2729,7 @@ if sock is not None:
                         # local-only on mid-call has no effect on a call
                         # already in progress: audio keeps streaming to
                         # Gemini for as long as the call runs, which the
-                        # renewal loop's own docstring says can be hours
-                        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+                        # renewal loop's own docstring says can be hours.
                         try:
                             _renewal_local_only = str(
                                 ((_load_settings() or {}).get('model_routing') or {})
@@ -2761,8 +2754,7 @@ if sock is not None:
                         # -- _safe_send() itself no-ops once done is set, so
                         # this is the one exit that must send first. Without
                         # it, opening voice mode in a second tab silently
-                        # killed the first tab's call with no signal at all
-                        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+                        # killed the first tab's call with no signal at all.
                         if not _live_conn_current(_conn_gen):
                             _vlog('superseded by a newer voice connection — zombie handler exiting')
                             _safe_send({"type": "status",

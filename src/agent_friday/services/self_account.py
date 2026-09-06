@@ -127,11 +127,10 @@ def capabilities() -> list:
 
     # Calendar, read vs WRITE, probed against the token's real scopes.
     #
-    # This is the capability she claimed by implication for months. Stephen
-    # asked four times to have a clinic's address added to his chiropractor
-    # entries; there was no write tool and the legacy token was read-only, and
-    # she said neither — she offered a map and reported "Done". A capability
-    # list that cannot tell read from write is how that happens.
+    # A capability list that cannot tell read from write lets the model claim
+    # calendar editing by implication: asked to add an address to an event
+    # with no write tool and a read-only token, it says neither — it offers a
+    # map and reports "Done".
     try:
         from agent_friday.services.calendar_write import write_ready
         ok, why = write_ready()
@@ -184,7 +183,7 @@ def describe(include_policy: bool = True) -> str:
         parts.append("Name the seat and the actual model when you say which "
                      "one is answering. 'Gemma 4' is a brand, not an answer — "
                      "the 12b and the 26b are different models with different "
-                     "speeds, and Stephen can tell.")
+                     "speeds, and the user can tell.")
 
     caps = capabilities()
     if caps:

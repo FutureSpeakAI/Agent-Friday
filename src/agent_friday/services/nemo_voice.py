@@ -95,8 +95,8 @@ def nemo_deps_status() -> dict:
 def nemo_deps_installed() -> bool:
     """True when the minimum Tier-2 stack (torch + NeMo + g2p) is importable.
 
-    ``nltk`` is in this list because of a real, reproduced failure, and the way
-    it failed is worth keeping written down.
+    ``nltk`` is in this list because of a reproducible failure mode worth
+    keeping written down.
 
     FastPitch's checkpoint config names its g2p as
     ``nemo.collections.tts.torch.g2ps.EnglishG2p``. NeMo resolves that path
@@ -109,13 +109,11 @@ def nemo_deps_installed() -> bool:
         'nemo.collections.tts.torch.g2ps.EnglishG2p' is blocked ...
         to prevent potential arbitrary code execution.
 
-    A missing pip package was therefore reported as a SECURITY refusal — which
-    is why this read as "GPU voice is broken" rather than "one dependency is
-    missing" for as long as it did. Meanwhile the tier gate consulted only
-    torch/NeMo/CUDA/VRAM, all of which passed, so health cheerfully reported
-    "NeMo GPU voice ready" while the TTS half could not load at all. Checking
-    it here is what makes that claim honest. (Fixed 2026-08-25; installing nltk
-    made TTS load in 52s and synthesise 3.3s of audio in 0.96s.)
+    A missing pip package is therefore reported as a SECURITY refusal — which
+    reads as "GPU voice is broken" rather than "one dependency is missing".
+    A tier gate that consults only torch/NeMo/CUDA/VRAM would have health
+    report "NeMo GPU voice ready" while the TTS half cannot load at all.
+    Checking it here is what makes that claim honest.
     """
     d = nemo_deps_status()
     return bool(d["nemo"] and d["torch"] and d["nltk"])
@@ -155,7 +153,7 @@ def gpu_status() -> dict:
                                   f"{info['vram_free_gb']}GB free / {info['vram_gb']}GB")
                 # TWO AUTHORITIES THAT DISAGREE BY 9.5 GB.
                 #
-                # Measured on this machine 2026-08-24, same card, same second,
+                # Measured on the reference machine, same card, same second,
                 # with gemma4:12b resident on llama.cpp:
                 #
                 #     torch.cuda.mem_get_info  ->  10.0 GB free
@@ -167,11 +165,12 @@ def gpu_status() -> dict:
                 # nvidia-smi reports what is genuinely unused right now.
                 #
                 # Believing torch alone is not harmless. Allocating the 3 GB a
-                # NeMo ASR session wants DID succeed against 0.4 GB of real free
-                # memory -- and the resident brain went from 0.30 s to 3.08 s per
-                # turn, a 10.3x slowdown, sustained for as long as the memory was
-                # held, recovering to 0.43 s once released. Nothing crashed. The
-                # cost was invisible and entirely in latency.
+                # NeMo ASR session wants succeeds against 0.4 GB of real free
+                # memory -- and the resident brain goes from 0.30 s to 3.08 s per
+                # turn (measured on the reference machine), a 10x slowdown,
+                # sustained for as long as the memory is held, recovering once
+                # released. Nothing crashes. The cost is invisible and entirely
+                # in latency.
                 #
                 # So the gate no longer decides on torch's number alone. It keeps
                 # torch's answer (that IS what allocation will see) and adds the
@@ -218,7 +217,8 @@ def gpu_status() -> dict:
 #: What a single-stream NeMo ASR session actually wants resident (GB). Used to
 #: decide whether the GPU tier would be contending with something else rather
 #: than filling idle memory. Matches the 0.6B RNN-T fp16 figure in MIN_VRAM_GB's
-#: note, and is the size that was actually allocated in the 2026-08-24 test.
+#: note, and is the size actually allocated when measured on the reference
+#: machine.
 _ASR_WORKING_SET_GB = 3.0
 
 

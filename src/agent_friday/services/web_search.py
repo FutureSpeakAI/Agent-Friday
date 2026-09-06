@@ -2,7 +2,7 @@
 web_search — structured web search with URLs you can actually fetch.
 
 Three defects this replaces (deep-research.md P1, plus one the design did not
-know about because it was found live on 2026-08-17):
+know about because it was found against the live service):
 
   1. The old scraper returned `.result__url`'s DISPLAY TEXT as the url — a
      truncated, scheme-less domain string. search_web found a page and handed
@@ -22,10 +22,9 @@ know about because it was found live on 2026-08-17):
      `status` that distinguishes them, and `canary()` settles it by asking a
      question with a known stable answer.
 
-Backends, in order (corrected gauntlet-2026-09-03 F63 — this used to describe
-a two-backend world that predated Firecrawl and never mentioned it):
-Firecrawl leads, Brave Web Search next when BRAVE_SEARCH_API_KEY is set (the
-paid general-search key Q1 approved), DuckDuckGo HTML last. See
+Backends, in order: Firecrawl leads, Brave Web Search next when
+BRAVE_SEARCH_API_KEY is set (the paid general-search key the maintainer
+approved), DuckDuckGo HTML last. See
 active_backend()'s own docstring for the authoritative chain. The DDG path
 is a scrape and is labelled as one — when it breaks again, the caller finds
 out rather than receiving an error page dressed as research.
@@ -46,11 +45,10 @@ _CANARY_TTL_S = 300.0
 _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
 
 
-# Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q7c): Brave
-# calls had ZERO cost_meter tracking. Brave bills a flat USD-per-query rate
-# (unlike Firecrawl's credits), checked against public pricing aggregator
-# pages 2026-09-04, not Brave's own pricing page directly -- best-effort,
-# moderate confidence, flagged.
+# Cost metering: every Brave call is recorded. Brave bills a flat
+# USD-per-query rate (unlike Firecrawl's credits), checked against public
+# pricing aggregator pages 2026-09-04, not Brave's own pricing page directly
+# -- best-effort, moderate confidence, flagged.
 _BRAVE_USD_PER_QUERY = 0.005
 
 
@@ -62,7 +60,7 @@ class SearchStatus:
 
 
 def brave_key() -> str:
-    """The Brave subscription token, from wherever Stephen put it.
+    """The Brave subscription token, from wherever the user put it.
 
     Environment first (start.bat, which is how every other key here is set),
     then the encrypted provider store, then settings. Checking all three

@@ -135,10 +135,10 @@ def api_providers_list():
                  "origin": reg.provider_origin(name)}
         # WHICH key is in play, and enough of it to recognise. Two sources can
         # hold a key for the same provider -- one saved in Settings, one in the
-        # environment from start.bat -- and until 2026-08-26 the environment
-        # silently won, so a key swapped in Settings came back dead after the
-        # next restart with nothing on screen disagreeing. The precedence is
-        # fixed (provider_descriptors.provider_api_key); this is what makes it
+        # environment from start.bat -- if the environment silently won, a
+        # key swapped in Settings would come back dead after the next restart
+        # with nothing on screen disagreeing. The precedence is defined in
+        # provider_descriptors.provider_api_key; this is what makes it
         # legible, in both directions.
         try:
             from agent_friday.routing.provider_descriptors import (
@@ -300,9 +300,9 @@ def api_provider_test(name):
         # no /models endpoint, so the generic probe below (a GET to
         # {base_url}/models) is the wrong request for all of them — it 404s
         # for kie.ai and higgsfield every time, reporting a fine key as
-        # broken (measured live 2026-09-06: both came back HTTP 404 here
-        # while services/provider_health's own dedicated checks for the same
-        # two providers reported "ok"/"key verified"). Delegate to the
+        # broken (both come back HTTP 404 here while
+        # services/provider_health's own dedicated checks for the same
+        # two providers report "ok"/"key verified"). Delegate to the
         # per-type check that actually fits each provider's real API shape
         # instead of duplicating — or worse, wrongly generalizing — it here.
         from agent_friday.services import provider_health

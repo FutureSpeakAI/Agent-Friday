@@ -1,4 +1,4 @@
-"""Gauntlet finding Q7 part (b) — resolved under Stephen's 2026-09-04
+"""Gauntlet finding Q7 part (b) — resolved under the maintainer's 2026-09-04
 delegation (docs/history/audits/gauntlet-2026-09-03/progress.md; findings.jsonl Q7).
 
 The original finding: creations.py's _daily_budget_remaining() computes

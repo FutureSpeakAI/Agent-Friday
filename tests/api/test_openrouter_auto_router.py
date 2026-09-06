@@ -1,6 +1,6 @@
 """OpenRouter Auto Router — "let Friday decide", and the wire format for it.
 
-Stephen, 2026-08-30: "Let Friday decide the model (OpenRouter required) based
+The maintainer, 2026-08-30: "Let Friday decide the model (OpenRouter required) based
 upon task complexity and the user's cost priority settings."
 
 The cost priority IS OpenRouter's `cost_tier`. It rides a `plugins` entry;

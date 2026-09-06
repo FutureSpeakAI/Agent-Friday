@@ -4,7 +4,7 @@ This file used to pin FR-1: an un-bypassable check re-evaluated on every
 tool-using dispatch, which substituted a "red" model with the last one that had
 scored green, and stripped tools entirely when no green fallback existed.
 
-Stephen removed it, and the evidence backed him:
+The maintainer removed it, and the evidence backed him:
 
   * The structural failures it fired on were a broken harness. gemma4:12b,
     26b, e2b and e4b scored 1/10, 1/10, 4/10 and 0/10 under a gate that set no
@@ -22,7 +22,7 @@ tools". That is the argument against a homegrown eval standing between a user
 and a model they chose.
 
     "I absolutely want the user to be able to set any model they wish at any
-     seat they wish, so this is non-negotiable."   — Stephen, 2026-08-15
+     seat they wish, so this is non-negotiable."   — the maintainer, 2026-08-15
 
 What is pinned here is the inverse of what used to be: resolve_local_seat is a
 pass-through, and there is no fallback machinery left for anything to go wrong

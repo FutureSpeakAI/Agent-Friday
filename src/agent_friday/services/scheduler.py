@@ -132,14 +132,13 @@ def _normalize_record(rec, *, source="user"):
     sid = rec.get("id") or f"sch_{uuid.uuid4().hex[:10]}"
     task = dict(rec.get("task") or {})
     # Builtin tasks (news, weekly digest, memory dreaming, KG reindex, etc.)
-    # shipped with zero retry tolerance: register_builtin_task() has no retry
-    # parameter and this used to fall back to {"max": 0, ...} for everyone, so
-    # any transient failure (a network blip, a momentarily-busy GPU) marked the
-    # job failed on its very first attempt and it silently waited until its
-    # next normal slot -- which can be a full day/week away (docs/audits/
-    # gauntlet-2026-09-03/findings.jsonl F25). Give builtin schedules a
-    # conservative non-zero default; an explicit retry config (already set by
-    # the caller, or a user's own edit) always wins over this fallback.
+    # need retry tolerance: register_builtin_task() has no retry parameter,
+    # and a {"max": 0, ...} fallback would let any transient failure (a
+    # network blip, a momentarily-busy GPU) mark the job failed on its very
+    # first attempt and silently wait until its next normal slot -- which can
+    # be a full day/week away. Give builtin schedules a conservative non-zero
+    # default; an explicit retry config (already set by the caller, or a
+    # user's own edit) always wins over this fallback.
     if "retry" in rec:
         default_retry = dict(rec["retry"])
     elif task.get("kind") == "builtin":
@@ -332,12 +331,11 @@ def _append_run(entry):
             # Rotate PER SCHEDULE, not globally.
             #
             # A flat "keep the last N lines" is a rotation policy that lets the
-            # noisiest job delete everyone else's history. Measured 2026-08-16:
-            # `content_publisher`, running every 60 seconds, held 451 of the 500
-            # slots, and session_summary / memory_dreaming / learning_epoch had
-            # ZERO surviving records. That is not a cosmetic problem — it is why
-            # "has anything been distilled to my wiki lately?" could not be
-            # answered from the log at all, and the question stayed open a day.
+            # noisiest job delete everyone else's history: a job running every
+            # 60 seconds can hold 451 of 500 slots while the nightly jobs have
+            # ZERO surviving records. That is not a cosmetic problem — it means
+            # "has anything been distilled to my wiki lately?" cannot be
+            # answered from the log at all.
             #
             # Each schedule now keeps its own last RUNS_PER_SCHEDULE records, so
             # a once-a-day job's history survives a once-a-minute neighbour.
@@ -424,10 +422,10 @@ def _notify_run(rec, status, summary):
         return
     try:
         if status == "failed":
-            # Failure bodies carry the WHOLE reason. The old [:300] cut the
-            # 2026-08-14 heartbeat error mid-word, right before the leg that
-            # named the actionable cause ("openai: No OpenAI-compatible API
-            # key set") — Stephen saw a truncated blob and read it as "no
+            # Failure bodies carry the WHOLE reason. A [:300] cut truncates a
+            # multi-leg escalation error mid-word, right before the leg that
+            # names the actionable cause ("openai: No OpenAI-compatible API
+            # key set"), and the user reads the truncated blob as "no
             # detail". 900 chars covers a three-leg escalation error;
             # anything longer is a traceback that belongs in the log.
             _ne.push(title=f"⚠️ Scheduled task failed: {rec.get('name')}",
@@ -559,13 +557,12 @@ def dispatch(rec, *, manual=False):
     """Run a due (or manually-triggered) schedule on its own daemon thread."""
     sid = rec.get("id")
     with _RUNNING_LOCK:
-        # `manual` used to exempt "Run Now" from this guard entirely, so a
-        # user re-clicking Run Now (or clicking it while a normal tick had
-        # already dispatched the same schedule) started a second concurrent
+        # `manual` must NOT exempt "Run Now" from this guard: a user
+        # re-clicking Run Now (or clicking it while a normal tick has already
+        # dispatched the same schedule) would start a second concurrent
         # `_body()` closure calling the same builtin function while the first
-        # was still running -- both threads then called _patch_record() on
-        # the same record with no ordering guarantee (docs/audits/
-        # gauntlet-2026-09-03/findings.jsonl Q24). A manual dispatch now
+        # is still running, and both threads would then call _patch_record()
+        # on the same record with no ordering guarantee. A manual dispatch
         # respects the exact same in-flight guard as an automatic one: a
         # re-trigger of an already-running schedule is refused, not
         # double-fired.
@@ -583,9 +580,9 @@ def dispatch(rec, *, manual=False):
     # than overloading last_run_ts's "start of the current in-flight run"
     # vs. "start of the last completed run" dual meaning) so a consumer of
     # list_schedules()/run_history() can compute elapsed time for a run in
-    # progress without knowing that overload (docs/audits/gauntlet-2026-09-03/
-    # findings.jsonl Q21 — visibility for "this has been running unusually
-    # long", the same blind spot that let F31 run undetected for 7+ hours).
+    # progress without knowing that overload — visibility for "this has been
+    # running unusually long", otherwise a blind spot that lets a stuck job
+    # run undetected for hours.
     _mark = dict(last_run_ts=started, last_run_date=now.strftime("%Y-%m-%d"),
                 started_at=started)
     if rec.get("trigger") == "once":
@@ -839,9 +836,9 @@ def _register_default_builtin_tasks():
 
     # knowledge-graph-reindex — nightly Tier A rebuild + Tier B delta at 03:30,
     # after memory dreaming (03:00) so freshly consolidated facts make it into
-    # the graph. This was ported from notifications._register_default_daily_jobs
-    # (orphaned by the scheduler migration — nothing called that function, so
-    # this job never ran; see docs/history/audits/gauntlet-2026-09-03/findings.jsonl F1).
+    # the graph. Registered HERE, not in notifications._register_default_daily_jobs:
+    # nothing calls that function since the scheduler migration, so a job
+    # registered only there never runs.
     try:
         from agent_friday.services.notifications import _run_knowledge_reindex_job
         register_builtin_task("knowledge_graph_reindex", _run_knowledge_reindex_job,
@@ -934,9 +931,9 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] update_check unavailable: {e}")
 
-    # context-log retention sweep — the Retention Period setting in
-    # Settings > Privacy > Context Logging persisted and read back but had no
-    # code behind it; this is that code (gauntlet-2026-09-03 F3/Q1). A no-op
+    # context-log retention sweep — the code behind the Retention Period
+    # setting in Settings > Privacy > Context Logging, which would otherwise
+    # persist and read back with nothing enforcing it. A no-op
     # when context_retention_days is 0 (keep forever, the default).
     try:
         from agent_friday.core import prune_context_logs
@@ -964,7 +961,7 @@ def _afternoon_briefing_job():
         "proactive insight. Clean markdown, lead with the most urgent item.\n\n"
         f"{live_context}"
     )
-    # UNATTENDED (2026-08-25): this runs daily at 16:00 with nobody watching —
+    # UNATTENDED: this runs daily at 16:00 with nobody watching —
     # a gating gap here leaks silently, every day, not once. Gate exactly like
     # every other briefing call site rather than trusting the egress
     # classifier alone.
@@ -1008,15 +1005,15 @@ _DEFAULT_AGENT_SCHEDULES = [
                 "summarize it in one or two lines. If nothing is new, reply "
                 "exactly: NO CHANGE."
             ),
-            # 2026-09-04: this task was running with the FULL 75-tool
-            # registry (~13.3k tokens every call, of image gen / code exec /
-            # computer control / etc. a liveness check never touches) — "the
-            # payload is the defect" per Stephen's own framing. Narrowed to
-            # what the prompt's calendar/inbox check actually needs. There is
-            # NO tool for "background tasks that finished in the last hour"
-            # (get_briefing is the daily summary, not this) — that clause in
-            # the prompt has never been checkable by the model; flagged to
-            # Stephen rather than silently rewritten here.
+            # Narrowed to what the prompt's calendar/inbox check actually
+            # needs. Running this with the FULL ~75-tool registry costs
+            # ~13.3k tokens every call for image gen / code exec / computer
+            # control / etc. that a liveness check never touches — per the
+            # maintainer, "the payload is the defect". There is NO tool for
+            # "background tasks that finished in the last hour" (get_briefing
+            # is the daily summary, not this), so that clause in the prompt
+            # is not checkable by the model; it stays as written pending a
+            # maintainer decision rather than being silently rewritten here.
             "tools": ["query_calendar", "find_calendar_events", "search_email"],
         },
         "enabled": True,
@@ -1024,17 +1021,15 @@ _DEFAULT_AGENT_SCHEDULES = [
         # emit a per-run notification or bump the unread badge (anti-spam).
         "notify": "status",
     },
-    # sch_job_intelligence REMOVED 2026-09-04, on Stephen's direct instruction
-    # ("removed entirely"), not merely disabled. A single 07:44 run consumed
-    # 3.86M input tokens against claude-sonnet-5 — roughly $12 for one
-    # execution of a daily job nobody was watching. Deleted from the live
-    # store the same day (services/scheduler.py:_seed_default_agent_schedules
-    # only re-adds an id that is ABSENT from the store, so leaving this
-    # definition in place would have silently reseeded it on the next fresh
-    # install or wiped store); removed here too so it can never come back
-    # through that path. If career-pipeline scanning is wanted again, it
-    # needs a real token budget on the prompt, not a resurrection of this
-    # entry.
+    # There is deliberately NO sch_job_intelligence entry: the maintainer
+    # ruled it "removed entirely", not merely disabled. A single run of it
+    # consumed 3.86M input tokens against claude-sonnet-5 — roughly $12 for
+    # one execution of a daily job nobody was watching. It must not be
+    # re-added here either: _seed_default_agent_schedules only re-adds an id
+    # that is ABSENT from the store, so a definition in this list would
+    # silently reseed it on the next fresh install or wiped store. If
+    # career-pipeline scanning is wanted again, it needs a real token budget
+    # on the prompt, not a resurrection of that entry.
 ]
 
 
@@ -1073,8 +1068,8 @@ def _uses_gpu(rec) -> bool:
 
     Conservative on purpose: anything that reaches a model counts. A schedule
     that only moves files is not worth delaying, but guessing wrong in that
-    direction merely delays a chore, and guessing wrong the other way is what
-    took his machine down.
+    direction merely delays a chore, and guessing wrong the other way can
+    take the user's display down under VRAM pressure.
     """
     kind = (rec or {}).get("kind") or (rec or {}).get("action") or ""
     if kind in ("agent_prompt", "agent", "task", "prompt", "briefing",
@@ -1129,9 +1124,9 @@ def _tick():
 #
 # Deliberately DEFAULT OFF, and that is not caution theatre. This is the one
 # piece of the design that starts taking the GPU on a schedule, and taking the
-# GPU is not free on this machine: Stephen lost a second monitor to VRAM
-# pressure on 2026-08-17. A background job that quietly claims the card while
-# he is working is a job that can take his screen. He turns it on.
+# GPU is not free on a 12 GB card: VRAM pressure can drop a monitor from the
+# desktop. A background job that quietly claims the card while the user is
+# working is a job that can take their screen. The user turns it on.
 #
 # Even when enabled it will not start a drain without display headroom.
 

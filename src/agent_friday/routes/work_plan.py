@@ -9,8 +9,8 @@ Two halves:
   * proposals — what Friday intends to do, and the choice she is asking for
   * queue     — what was decided, what is parked, what a drain cost
 
-Nothing here decides that work is heavy. It carries a question to Stephen and
-carries his answer back.
+Nothing here decides that work is heavy. It carries a question to the user
+and carries their answer back.
 """
 from __future__ import annotations
 
@@ -251,7 +251,7 @@ def _seat_for(cls):
     """Which model a class runs on, from the live plan rather than a constant.
 
     Reads capability_routing, which the residency plan drives (seat_binding),
-    so a re-plan or a seat change Stephen makes in the picker takes effect here
+    so a re-plan or a seat change the user makes in the picker takes effect here
     without this module knowing any model names.
     """
     from agent_friday.core import _load_settings

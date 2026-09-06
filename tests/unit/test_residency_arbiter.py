@@ -156,7 +156,7 @@ def test_a_seat_without_a_gguf_says_its_pin_is_unenforced(arb):
 # ── heavy lease ──────────────────────────────────────────────────────────────
 
 def test_heavy_lease_displaces_the_brain_but_not_the_sidekick(arb):
-    """R10. Stephen, 2026-08-15: "keep e2b awake so Friday is always alive."
+    """R10. The maintainer, 2026-08-15: "keep e2b awake so Friday is always alive."
 
     A heavy lease takes the brain — that is the cost of depth on one card. It
     does not take the sidekick, so Friday keeps answering at 166 tok/s while

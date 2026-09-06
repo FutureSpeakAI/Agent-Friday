@@ -60,13 +60,13 @@ DEFAULT_PROVIDERS = [
         "type": "anthropic",
         "base_url": "https://api.anthropic.com",
         "auth": {"type": "env_var", "key": "ANTHROPIC_API_KEY"},
-        # The CURRENT Claude family, 2026-08-17. Superseded ids (opus-4-6/4-7/4-8,
+        # The CURRENT Claude family only. Superseded ids (opus-4-6/4-7/4-8,
         # sonnet-4-5/4-6) are gone rather than kept "just in case": a stale
         # hardcoded model id is the same defect class as the picker's
         # provider-ordered cap — nobody maintains it, and it quietly becomes
-        # what the product actually uses. `start.bat` was pinning
-        # ANTHROPIC_MODEL=claude-sonnet-4-6, overriding the configured
-        # sonnet-5 on every launch.
+        # what the product actually uses (a launch script pinning
+        # ANTHROPIC_MODEL to a retired id overrides the configured model on
+        # every launch).
         "models": ["claude-sonnet-5", "claude-opus-5", "claude-fable-5",
                    "claude-haiku-4-5-20251001"],
         "capabilities": ["tools", "vision"],
@@ -154,9 +154,8 @@ DEFAULT_PROVIDERS = [
         # fidelity for eight-step speed, SD 3.5 Medium runs thirty steps and
         # costs several times as much per picture. `note` carries that trade
         # so the choice is informed at the point it is made.
-        # Two image models were here for a long time; five more (three video,
-        # two more image) joined 2026-09-04, each declaring the files that
-        # prove it is really here (services/local_image.py, local_video.py).
+        # Each model here (four image, three video) declares the files that
+        # prove it is really present (services/local_image.py, local_video.py).
         # FLUX.1 dev is deliberately NOT in this list — its licence forbids
         # commercial use of the model itself, so it is registered per-machine
         # via services/local_creative_overrides.py instead of shipping here.
@@ -307,9 +306,10 @@ DEFAULT_PROVIDERS = [
     {
         # kie.ai — pay-per-use creative model marketplace (image/video/audio),
         # 30-50% cheaper than official vendor APIs because it resells API
-        # access rather than hosting compute. Stephen, 2026-09-04: wants this
-        # alongside Higgsfield because it is pay-per-use, not subscription,
-        # and it carries MiniMax/Hailuo — a model he cannot run locally.
+        # access rather than hosting compute. The maintainer's decision: it
+        # sits alongside Higgsfield because it is pay-per-use, not
+        # subscription, and it carries MiniMax/Hailuo — a model that cannot
+        # be run locally.
         #
         # UNLIKE every other provider in this file, kie.ai has no enumerable
         # catalog API: model discovery is a WEB PAGE (kie.ai/market), not a
@@ -319,7 +319,7 @@ DEFAULT_PROVIDERS = [
         # not a hosted-native catalog that refreshes itself. Adding a model
         # kie.ai actually ships means confirming the exact "model" string on
         # its docs page and adding it here; guessing the string from a URL
-        # slug is unsafe — measured 2026-09-04, the Flux-2 docs page lives at
+        # slug is unsafe — as of 2026-09-04, the Flux-2 docs page lives at
         # /market/flux2/... but its real model id is "flux-2/..." (hyphen the
         # URL doesn't have). A wrong string fails silently at generation time
         # with a vendor 400, which is worse than the model being merely
@@ -336,7 +336,7 @@ DEFAULT_PROVIDERS = [
         #   * kie.ai's async model is submit -> POLL (or webhook). This
         #     integration polls only (services/kie_generate.py); a webhook
         #     needs a publicly reachable callback URL, which is an exposure
-        #     decision for Stephen, not this integration.
+        #     decision for the maintainer, not this integration.
         "name": "kie",
         "label": "kie.ai",
         "type": "kie",

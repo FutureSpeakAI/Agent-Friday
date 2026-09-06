@@ -1,6 +1,6 @@
 """A key you swap in Settings must still be the key after a restart.
 
-Stephen, 2026-08-26: "we need to fix the installer so the Friday that ships
+The maintainer, 2026-08-26: "we need to fix the installer so the Friday that ships
 to users can swap API keys from the settings menu". Swap, not just add — a
 key that never worked and a key that stopped working look identical to a
 user, so replacing one is the realistic case, not the exotic one.
@@ -90,7 +90,7 @@ def test_a_key_saved_in_settings_beats_a_stale_start_bat(monkeypatch, store):
 def test_the_environment_still_works_when_nothing_was_saved(monkeypatch, store):
     """No stored key: behaviour is byte-identical to before this change.
 
-    This is why the change is safe to ship. Stephen's store holds no
+    This is why the change is safe to ship. The maintainer's store holds no
     anthropic key, so for him the two rules are the same rule.
     """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key-from-start-bat")

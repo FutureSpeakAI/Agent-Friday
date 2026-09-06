@@ -2,7 +2,7 @@
 externally sourced): SkillOptEngine.run_epoch() could promote a candidate
 skill version that was never actually evaluated.
 
-The external review (Stephen commissioned an outside read of the public
+The external review (the maintainer commissioned an outside read of the public
 v5.10.0 repo) inspected but did not execute this one, so per instruction
 it was reproduced here before being trusted. All four reproductions it
 asked for confirmed the claim against current code, before this fix:

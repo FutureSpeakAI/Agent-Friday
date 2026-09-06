@@ -1,17 +1,15 @@
 """
 gpu_headroom — do not take the card out from under the desktop.
 
-WHY THIS EXISTS. Stephen lost a monitor to VRAM pressure on 2026-08-17: the
-second display dropped off Windows entirely while the GPU was full. The
-residency budget reserves VRAM for models; the current evidence is that it
-reserves nothing for the compositor, which needs its own hundreds of megabytes
-to keep a desktop drawn. A model that fits "the free VRAM" can therefore fit
-by taking the space the screen was using.
+WHY THIS EXISTS. VRAM pressure can drop a display: a second monitor falls off
+Windows entirely while the GPU is full. The residency budget reserves VRAM for
+models; on its own it reserves nothing for the compositor, which needs its own
+hundreds of megabytes to keep a desktop drawn. A model that fits "the free
+VRAM" can therefore fit by taking the space the screen was using.
 
-Measured live on this machine while writing this module: 12,282 MiB total,
-11,775 used, **238 free** — with one 12B seat resident at 7,718 MiB. That is
-not a theoretical margin, it is a machine one allocation away from dropping a
-display again.
+Measured on the reference machine: 12,282 MiB total, 11,775 used, **238
+free** — with one 12B seat resident at 7,718 MiB. That is not a theoretical
+margin, it is a machine one allocation away from dropping a display.
 
 So: any job that is about to claim a large amount of VRAM asks here first, and
 a caller that cannot get headroom does not proceed silently. It says so and
@@ -21,18 +19,17 @@ This module only ever REPORTS. It never evicts, never kills, and never takes
 the decision away from the Arbiter — a headroom checker that started freeing
 memory on its own would be a second, quieter allocator fighting the first.
 
-CORRECTION (gauntlet-2026-09-03 F62): "any job... asks here first" overclaims.
-`residency_arbiter.py` — the highest-stakes VRAM consumer, and the exact
-subsystem that caused the 238 MiB incident above — does not import this
-module at all. It uses a separately-implemented display-reserve check,
-`hardware_profile.vram_headroom()` / `display_reserve_mib()`, apparently
-written to address the same incident. This module's own `check()`/
-`gpu_memory()` do have real callers (research/harness.py, scheduler.py's
-background jobs; `display_at_risk()` for reporting) — it is not dead code —
-but the subsystem this docstring's own origin story is about does not
-consult it. Two parallel, non-shared implementations of the same "don't
-take the display's VRAM" check exist; this was not reconciled here (a real
-architecture decision, not a docstring fix), only disclosed.
+Scope caveat: "any job... asks here first" overclaims. `residency_arbiter.py`
+— the highest-stakes VRAM consumer — does not import this module at all. It
+uses a separately-implemented display-reserve check,
+`hardware_profile.vram_headroom()` / `display_reserve_mib()`, which addresses
+the same failure. This module's own `check()`/`gpu_memory()` do have real
+callers (research/harness.py, scheduler.py's background jobs;
+`display_at_risk()` for reporting) — it is not dead code — but the Arbiter
+does not consult it. Two parallel, non-shared implementations of the same
+"don't take the display's VRAM" check exist; reconciling them is an
+architecture decision that has not been made, so it is disclosed here rather
+than papered over (see the 2026-09 gauntlet audit in docs/history/audits/).
 """
 from __future__ import annotations
 
@@ -54,7 +51,7 @@ _log = logging.getLogger("friday.gpu_headroom")
 # the emergency fallback it is, not a second definition.
 #
 # 1024 MiB covers the Windows compositor plus a browser's GPU process, which
-# is what is actually running when Stephen is at the machine.
+# is what is actually running when the user is at the machine.
 _FALLBACK_RESERVE_MIB = 1024
 
 _CACHE: dict = {"ts": 0.0, "data": None}

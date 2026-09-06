@@ -1,9 +1,9 @@
-"""B2 — seat-change visibility (Incident 2; seats-and-transparency).
+"""B2 — seat-change visibility (docs/design/seats-and-transparency).
 
-2026-08-13 10:16:59: model routing flipped to local_only (settings.json
-mtime) with zero UI confirmation, silently seating gemma4:latest for an
-entire chat while the UI still displayed the cloud orchestrator. Verified
-defects F1-F3 all happened on that silently-seated model.
+A settings.json write can flip model routing to local_only with zero UI
+confirmation, silently seating a local model for an entire chat while the UI
+still displays the cloud orchestrator. Every fabrication defect on a
+silently-seated model is invisible until the seat change itself is visible.
 
 Contract: ANY change to the seat-relevant settings keys — whether written by
 the UI, the CLI's raw _save_config, or a direct file edit — produces (a) a
@@ -15,9 +15,8 @@ can flip a seat without this firing on the next observed turn.
 
 observe_seats() is called from /api/chat (the chat turn path), /api/chat/history
 (the rehydrate), and /api/chat/send (a second chat-turn endpoint) — cheap
-(one small JSON state file) and idempotent per actual change. (Corrected
-gauntlet-2026-09-03 F63: this previously named "the model catalog route" as
-the third call site, which does not call observe_seats() at all.)
+(one small JSON state file) and idempotent per actual change. The model
+catalog route does not call observe_seats().
 """
 from __future__ import annotations
 
@@ -33,7 +32,7 @@ _STATE_FILE = core.FRIDAY_DIR / "seat_state.json"
 _LOCK = threading.Lock()
 
 # Human-readable labels for what each watched key means (A3 taxonomy).
-# 2026-08-14 defect #7: no hardcoded "(cloud)" — the orchestrator seat can
+# No hardcoded "(cloud)" — the orchestrator seat can
 # be an on-device provider (the llama.cpp brain); seat class is derived per
 # provider classification in effective_seat(), not baked into labels.
 _WATCHED = {

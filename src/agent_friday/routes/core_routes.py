@@ -367,9 +367,9 @@ def list_models():
             # Stale-while-REVALIDATE, with the revalidate part actually wired.
             # This endpoint reported anthropic as stale/never-fetched for its
             # whole life while POST /api/models/refresh sat one screen away,
-            # working, waiting to be called (verified 2026-08-18: the picker
-            # served the hardcoded fallback list; one manual refresh returned
-            # 10 live models). Reporting a problem is not handling it — a
+            # working, waiting to be called (the picker served the hardcoded
+            # fallback list while one manual refresh returned the live
+            # lineup). Reporting a problem is not handling it — a
             # stale catalog now kicks its own background refresh, throttled so
             # UI polling cannot hammer the provider.
             _kick_stale_catalog_refresh(cat_meta)
@@ -790,7 +790,7 @@ def api_setup_complete():
 
 # ── Agent Settings endpoints ──────────────────────────────────
 def _check_local_model_seat_gate(new_settings):
-    """No-op. The seat gate was REMOVED on 2026-08-15 (Stephen's decision).
+    """No-op. The seat gate is REMOVED (maintainer decision).
 
     This used to reject a `model_routing.local_model` save on two counts: a
     failed structural conformance gate, and a failed-or-missing honesty
@@ -1114,8 +1114,8 @@ def analyze_file():
 
     THE ROUTING MODE IS CHECKED BEFORE ANYTHING IS SENT. This endpoint existed
     for months with no caller, and wiring it up unchanged would have reopened
-    the hole that `routes/chat.py` carried until 2026-08-23: an image reaching
-    Gemini regardless of the mode the user chose.
+    the hole `routes/chat.py` once carried: an image reaching Gemini
+    regardless of the mode the user chose.
 
     The comment that used to sit on the image branch said image bytes cannot be
     text-classified by the egress gate, so sending them "is a conscious

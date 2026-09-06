@@ -1,10 +1,9 @@
-"""Calendar WRITES — the capability Stephen asked for four times and never got.
+"""Calendar WRITES — editing events, with a token that can actually do it.
 
-2026-08-17, from his transcript: at 7:51, 7:54, 7:56 and 8:02 he asked Friday to
-add a clinic's address and phone number to his chiropractor entries. She had no
-tool that could do it, the OAuth token was read-only so no tool could have, and
-she never said either. She offered a map, then reported "Done. I've opened the
-navigation." Eleven minutes for an action that never had a mechanism.
+Invariant: a calendar edit the user asks for must either be performed by a
+real tool on a token with write scope, or be refused out loud. Offering a
+substitute (a map, a navigation link) and reporting "Done" for an action that
+never had a mechanism is the failure this module exists to prevent.
 
 **Design: additive edits proceed, destructive edits confirm.**
 
@@ -13,12 +12,12 @@ every field touched comes back in the receipt, so an unwanted change is
 reversible without a backup. Clearing a field or deleting an event can lose
 something that is not recoverable from the receipt, so those ask.
 
-That line sits where it does on purpose. Stephen is rightly sick of
-confirmation gates, and the one in his transcript was worse than an
-interruption: it asked permission for a map he never requested while the
-calendar edit he did request went unanswered. A confirmation must be about the
-action at hand, must not displace the request, and must not end the turn. An
-additive calendar edit clears all three bars by not existing.
+That line sits where it does on purpose. The maintainer's ruling is that
+confirmation gates are a cost: a gate that asks permission for something the
+user never requested, while the edit they did request goes unanswered, is
+worse than an interruption. A confirmation must be about the action at hand,
+must not displace the request, and must not end the turn. An additive
+calendar edit clears all three bars by not existing.
 """
 from __future__ import annotations
 

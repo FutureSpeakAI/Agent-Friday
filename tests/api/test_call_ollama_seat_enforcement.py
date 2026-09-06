@@ -5,7 +5,7 @@ This file used to pin the opposite, in the live `_call_ollama` path: that a
 with no fallback had its tools stripped entirely, and that a model which had
 never been gated was refused the same as one that failed.
 
-All of that is gone. Stephen, verbatim:
+All of that is gone. The maintainer, verbatim:
 
     "I absolutely want the user to be able to set any model they wish at any
      seat they wish, so this is non-negotiable."

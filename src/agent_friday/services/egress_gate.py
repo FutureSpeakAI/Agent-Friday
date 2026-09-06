@@ -12,7 +12,7 @@ Architecture:
 These are separate by design. The router can be wrong or bypassed; the gate is
 the last line of defense and cannot be bypassed without modifying this module.
 
-ENVELOPE COVERAGE (audited 2026-08-24). The gate's promise is "nothing
+ENVELOPE COVERAGE. The gate's promise is "nothing
 sensitive leaves this device", which only equals "scan the messages" if every
 prose-bearing field of the payload is gated. Currently gated:
 
@@ -32,7 +32,7 @@ WHERE A REAL PII LIBRARY WOULD HELP (Presidio and friends are under separate
 evaluation; nothing here presumes that decision). The classifier is keyword-
 and pattern-driven, and the deterministic identifier scrub (core._scrub_pii,
 run at §5.5 step 1) covers only ``system``/``messages``/``prompt``. The tool
-paths added on 2026-08-24 therefore get the TIER gate but not the scrub, so
+paths therefore get the TIER gate but not the scrub, so
 they fail closed — an argument containing one email address is withheld whole
 rather than having the address masked and the rest preserved. That is safe but
 blunt. A real entity recogniser would let all these paths mask spans instead of
@@ -175,40 +175,35 @@ def _is_cloud(provider: str) -> bool:
 
 
 # ── Unrestricted cloud mode ─────────────────────────────────────────────────
-# Stephen's original instruction, 2026-09-03: "cloud only mode means no
-# privacy safeguards ... when active, no feature or data is held back from
-# the cloud." That instruction is still honored, but no longer through a
-# standalone settings flag read live here — see `is_unrestricted_cloud()`'s
-# own docstring below and `privacy/cloud_consent.py` for why the decision
-# moved to a recorded, hardware-checked, spoof-resistant choice instead.
+# The maintainer's ruling: "cloud only mode means no privacy safeguards ...
+# when active, no feature or data is held back from the cloud." That
+# instruction is honored, but not through a standalone settings flag read
+# live here — see `is_unrestricted_cloud()`'s own docstring below and
+# `privacy/cloud_consent.py` for why the decision is a recorded,
+# hardware-checked, spoof-resistant choice instead.
 # `model_routing.unrestricted_cloud` still exists in DEFAULT_SETTINGS, but
 # only as a one-time migration input read by `cloud_consent.resolve()`; it
-# is dead in this file now.
+# is not read in this file.
 
 
 def is_unrestricted_cloud() -> bool:
     """True when every privacy safeguard is off. Default False.
 
-    2026-09-06, superseded same day: for a few hours this read
-    `model_routing.mode == "cloud_only"` as sufficient on its own, on the
-    reasoning that selecting cloud-only IS the acceptance the separate
-    `unrestricted_cloud` flag existed to double-check. That reasoning did
-    not survive contact with the fact that `cloud_only` is this app's
-    FACTORY DEFAULT — a value nobody chose is not a choice, and the change
-    meant every fresh install inherited "no safeguards" the moment someone
-    picked cloud-only as their provider, which is what most people do,
-    since it needs no local model and no setup. `tests/unit/
-    test_unrestricted_cloud_mode.py`'s reasoning three days before that
-    ("conflating them would silently disable every safeguard for the app's
-    own default") was correct, and this restores it in a form that also
-    fixes the real complaint underneath both changes: unrestricted access
-    is now earned by an explicit, recorded decision
-    (`model_routing.cloud_consent`), never inherited from any value of
-    `mode`. See `privacy/cloud_consent.py` for the full design — the two
-    screens a user actually sees, why the decision is gated on whether
-    their own hardware can honour the local alternative first, and why the
-    write path is not reachable from the same generic settings save a
-    model's own tools can already call.
+    `model_routing.mode == "cloud_only"` is NOT sufficient on its own, even
+    though selecting cloud-only looks like the acceptance a separate
+    `unrestricted_cloud` flag would double-check: `cloud_only` is this
+    app's FACTORY DEFAULT, and a value nobody chose is not a choice. Treating
+    it as consent would give every fresh install "no safeguards" the moment
+    someone picked cloud-only as their provider, which is what most people
+    do, since it needs no local model and no setup (see `tests/unit/
+    test_unrestricted_cloud_mode.py`: conflating them would silently disable
+    every safeguard for the app's own default). Unrestricted access is
+    earned by an explicit, recorded decision (`model_routing.cloud_consent`),
+    never inherited from any value of `mode`. See `privacy/cloud_consent.py`
+    for the full design — the two screens a user actually sees, why the
+    decision is gated on whether their own hardware can honour the local
+    alternative first, and why the write path is not reachable from the
+    same generic settings save a model's own tools can already call.
 
     Read failures fail CLOSED (safeguards stay on) — the inverse of every
     other fail-open risk in this module, because this is the one flag
@@ -290,7 +285,7 @@ _PUBLIC_MAX = 20000          # bounded; oldest-wins eviction is not worth it
 _PUBLIC_ORIGINS: dict = {}
 
 
-# ── WO-17: user-granted file content ──────────────────────────────────────────
+# ── User-granted file content ─────────────────────────────────────────────────
 #
 # A SECOND FEEDER of the registry above, not a new mechanism. `file_grants.py`
 # calls register_public_text(paragraph, origin="user-grant:<id>") at READ TIME
@@ -300,7 +295,7 @@ _PUBLIC_ORIGINS: dict = {}
 # call, only exact-match lookups against text that was actually read.
 #
 # _OVERRIDE_PARAS is separate and narrower: a file grant may (with an explicit,
-# separately-acknowledged checkbox) override Stephen's own never-send
+# separately-acknowledged checkbox) override the user's own never-send
 # watchlist for THAT file's exact paragraphs only. It is consulted before the
 # never-send floor raises (see _gate_text_span), never before the classifier.
 _OVERRIDE_PARAS: set = set()
@@ -333,7 +328,7 @@ def register_override_text(text: str, origin: str = "", max_len: int = 2000) -> 
                 _PUBLIC_ORIGINS[t] = str(origin)[:500]
 
 
-# ── WO-17: provider-echo ───────────────────────────────────────────────────────
+# ── Provider-echo ──────────────────────────────────────────────────────────────
 #
 # The companion rule that keeps a granted file's OWN analysis, written by a
 # cloud provider, from being redacted on its way back to that same provider in
@@ -364,7 +359,7 @@ def register_provider_echo(text: str, provider: str) -> None:
 
 def _never_send_covered_by_override(text: str) -> bool:
     """True when EVERY paragraph that trips the never-send floor is covered
-    by a registered file-grant override (WO-17 §3).
+    by a registered file-grant override.
 
     A lookup, not a flag: the caller supplies only `text`, and this checks it
     against paragraphs that were actually registered by file_grants.py at
@@ -388,7 +383,7 @@ def _never_send_covered_by_override(text: str) -> bool:
 
 
 def _origin_reason(origin: str) -> str:
-    """Render an origin string into the egress-log reason, distinguishing WO-17
+    """Render an origin string into the egress-log reason, distinguishing
     grant/echo provenance from ordinary third-party-published news — the
     acceptance bar that every grant-passed span be attributable to its grant id."""
     if origin.startswith("user-grant:"):
@@ -406,14 +401,14 @@ def register_public_text(text: str, origin: str = "", max_len: int = 2000) -> No
     wrote.
 
     max_len defaults to 2000 (a headline or a summary, not a document) for
-    every existing caller (news, web_fetch). WO-17 (2026-08-25) found this
-    cap silently swallowing 3 of a 4-page granted CV's paragraphs — the gate
-    splits a tool result on the SAME page-sized "\\n\\n" boundaries this
-    registers, and a resume page routinely runs well past 2000 characters,
-    so the grant looked like it worked (no error, ledger entry created,
-    check_grant returned 'active') while most of the document silently kept
-    gating normally. file_grants.py passes a document-sized max_len; the
-    default is unchanged for every other caller.
+    every existing caller (news, web_fetch). Applied to a granted file, that
+    cap silently swallows 3 of a 4-page CV's paragraphs — the gate splits a
+    tool result on the SAME page-sized "\\n\\n" boundaries this registers,
+    and a resume page routinely runs well past 2000 characters, so the grant
+    looks like it worked (no error, ledger entry created, check_grant
+    returns 'active') while most of the document silently keeps gating
+    normally. file_grants.py passes a document-sized max_len; the default is
+    unchanged for every other caller.
     """
     if not text or not isinstance(text, str):
         return
@@ -468,14 +463,13 @@ class NeverSendBlocked(RuntimeError):
 
 
 #: Cheap, cached "does a local model actually exist right now" check —
-#: 2026-09-06: the placeholder below used to say "can be read on a local
-#: seat" unconditionally, including on a machine with none installed
-#: (Stephen had just deleted functiongemma:270m and embeddinggemma:300m).
-#: A privacy block that names a remedy which does not exist is
-#: indistinguishable from an outage, which is exactly the complaint: "when a
-#: required local seat is absent, the failure should say so plainly rather
-#: than presenting as a privacy block." Short TTL because this can change
-#: mid-session (a download finishing, Ollama starting) without a restart.
+#: the placeholder below must not say "can be read on a local seat"
+#: unconditionally, including on a machine with none installed. A privacy
+#: block that names a remedy which does not exist is indistinguishable from
+#: an outage; when a required local seat is absent, the failure should say
+#: so plainly rather than presenting as a privacy block. Short TTL because
+#: this can change mid-session (a download finishing, Ollama starting)
+#: without a restart.
 _LOCAL_AVAIL_CACHE: dict = {"ts": 0.0, "val": None}
 _LOCAL_AVAIL_TTL_S = 30.0
 
@@ -518,13 +512,13 @@ def _local_model_available() -> bool:
 
 def _redact_placeholder(tier: int) -> str:
     name = Tier.NAMES.get(tier, f"TIER_{tier}")
-    # WO-1 (2026-08-25): the placeholder used to state only WHAT happened
-    # (withheld) and never WHAT TO DO about it, so a model with no honesty
-    # directive (or one that had just been redacted for the same reason —
-    # see REFUSAL_HONESTY_DIRECTIVE above) filled the gap with a plausible
-    # invented answer instead of reporting the withholding. The behavioral
-    # instruction is now IN the placeholder itself, so it survives even when
-    # nothing else in the prompt tells the model how to react.
+    # The placeholder must state not only WHAT happened (withheld) but WHAT
+    # TO DO about it: a model with no honesty directive (or one that has
+    # just been redacted for the same reason — see REFUSAL_HONESTY_DIRECTIVE
+    # above) otherwise fills the gap with a plausible invented answer instead
+    # of reporting the withholding. The behavioral instruction is IN the
+    # placeholder itself, so it survives even when nothing else in the
+    # prompt tells the model how to react.
     if _local_model_available():
         return (
             f"[EGRESS-GATE: {name} content withheld — did not leave your device. "
@@ -532,9 +526,9 @@ def _redact_placeholder(tier: int) -> str:
             f"might have said. Tell the user this specific item was withheld by "
             f"the privacy gate and can be read on a local seat.]"
         )
-    # 2026-09-06: naming a remedy that does not exist reads as the gate lying,
-    # not as an outage — say plainly that there is currently no local model to
-    # fall back to, rather than pointing at a seat this machine does not have.
+    # Naming a remedy that does not exist reads as the gate lying, not as an
+    # outage — say plainly that there is currently no local model to fall
+    # back to, rather than pointing at a seat this machine does not have.
     return (
         f"[EGRESS-GATE: {name} content withheld — did not leave your device. "
         f"Do not retry the call, invent the content, or describe what it "
@@ -697,28 +691,28 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
             continue                                  # cannot scrub → cannot send
 
         # ── STEPHEN_SUBSTANCE requires that the scrub ACTUALLY separated
-        # something (found live, 2026-08-17, with the gate switched on) ──
+        # something ──
         #
-        # §5.2 defines STEPHEN_SUBSTANCE as "his material, where the SUBSTANCE
-        # matters and the IDENTITY can be separated", treated by "scrubbed —
-        # identifying spans replaced by placeholders — then re-verified, then
-        # sent". The leak: for
+        # §5.2 defines STEPHEN_SUBSTANCE as "the user's material, where the
+        # SUBSTANCE matters and the IDENTITY can be separated", treated by
+        # "scrubbed — identifying spans replaced by placeholders — then
+        # re-verified, then sent". The leak this prevents: for
         #
         #   "My custody hearing is on the 14th and my lawyer says my ex will
         #    contest it."
         #
-        # the judge correctly answered STEPHEN_SUBSTANCE — and the scrubber
-        # found NOTHING to replace, because the sentence carries no name,
+        # the judge correctly answers STEPHEN_SUBSTANCE — and the scrubber
+        # finds NOTHING to replace, because the sentence carries no name,
         # number or address. It is pure first-person substance. verify_outgoing
-        # then passed it, since it blocks at SENSITIVE and this classifies
-        # PRIVATE. So a span the judge had just identified as Stephen's own
-        # private material travelled verbatim.
+        # then passes it, since it blocks at SENSITIVE and this classifies
+        # PRIVATE. So a span the judge had just identified as the user's own
+        # private material would travel verbatim.
         #
         # A scrub that replaced nothing did not separate identity from
         # substance; it confirmed they cannot be separated. That is the
         # definition of NEVER_SEND, so the span is withheld. ABOUT_THE_WORLD is
-        # unaffected — third-party material has no identity of his to separate,
-        # which is the whole point of the verdict.
+        # unaffected — third-party material has no identity of the user's to
+        # separate, which is the whole point of the verdict.
         if verdict == jg.STEPHEN_SUBSTANCE and not _sub:
             _log(provider, field, det_tier, "redact",
                  "judgment=STEPHEN_SUBSTANCE but the scrub replaced nothing — "
@@ -759,13 +753,13 @@ def _gate_text(text: str, provider: str, field: str,
     and, if that withheld something from a JSON payload, descends into the
     structure instead of surrendering the whole result.
 
-    THE BUG THIS FIXES (found 2026-08-24). The span-wise rescue splits on blank
-    lines and newlines. `json.dumps` emits ONE LINE with no separators, so for
-    every JSON-returning tool the rescue never engaged: a single incidental
-    phrase anywhere in the result replaced the ENTIRE payload with a
-    125-character notice. Measured — a 636-character news result came back as
-    125 characters, which is why voice could call search_news and never read
-    the answer back.
+    THE BUG THIS PREVENTS. The span-wise rescue splits on blank lines and
+    newlines. `json.dumps` emits ONE LINE with no separators, so for every
+    JSON-returning tool the rescue would never engage: a single incidental
+    phrase anywhere in the result replaces the ENTIRE payload with a
+    125-character notice (a 636-character news result comes back as 125
+    characters, so voice can call search_news and never read the answer
+    back).
 
     Deliberately placed HERE rather than at the tool-result call site, because
     the callers that need it do not share one. The voice leg gates its tool
@@ -811,9 +805,9 @@ def _gate_text_span(text: str, provider: str, field: str,
         return text
 
     if is_unrestricted_cloud():
-        # Stephen's explicit instruction, 2026-09-03: "cloud only mode means
-        # no privacy safeguards ... when active, no feature or data is held
-        # back from the cloud." Off by default (see is_unrestricted_cloud).
+        # The maintainer's explicit ruling: "cloud only mode means no privacy
+        # safeguards ... when active, no feature or data is held back from
+        # the cloud." Off by default (see is_unrestricted_cloud).
         # Deliberately ahead of the never-send floor below — "no data is
         # held back" was stated in exactly those terms, not "except the
         # watchlist". This is the ONLY bypass of that floor anywhere in the
@@ -826,9 +820,8 @@ def _gate_text_span(text: str, provider: str, field: str,
         return text
 
     # ── §5.3 the never-list: the floor, and it moves for nothing ──
-    # Found by the probe battery on 2026-08-17, before this layer ever shipped:
-    # the never-send check originally lived inside the judgment appeal, so with
-    # judgment disabled — the DEFAULT — a planted never-send token sailed
+    # The never-send check must not live inside the judgment appeal: with
+    # judgment disabled — the DEFAULT — a planted never-send token would sail
     # straight through. A floor that only exists when an optional layer is
     # switched on is not a floor. It runs here: unconditionally, ahead of the
     # trusted and public registries (no provenance exemption may override it),
@@ -849,7 +842,7 @@ def _gate_text_span(text: str, provider: str, field: str,
             f"stopped. Use a local model to work with this."
         )
     elif _never:
-        # WO-17 §3: every never-send-tripping paragraph in this text is
+        # Every never-send-tripping paragraph in this text is
         # individually covered by a file grant's explicit override — the
         # floor still applied, it just found consent already on file for the
         # exact paragraphs it flagged. Fall through to normal gating below,
@@ -903,7 +896,7 @@ def _gate_text_span(text: str, provider: str, field: str,
             if _p_trusted:
                 gated.append(p)
                 trusted += 1
-                # WO-17 acceptance: every grant-passed span must be
+                # Acceptance bar: every grant-passed span must be
                 # attributable to its grant id in the egress log, even when
                 # this is a partial (span-level) rescue that never reaches
                 # the whole-field log line below.
@@ -1002,9 +995,8 @@ def _gate_messages(messages: list, provider: str,
         # _oai_agentic_loop (services/agent.py) echoes these back into the
         # conversation exactly the way the Anthropic loop echoes tool_use,
         # so they need the same treatment _gate_tool_use gives that shape
-        # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F12 — confirmed
-        # unreachable by any current retry path, hardened anyway since it
-        # costs nothing and the same shape was a real leak once already).
+        # (not reachable by any current retry path, hardened anyway since it
+        # costs nothing and the same shape is a known leak vector).
         if isinstance(msg.get("tool_calls"), list):
             out = {**out, "tool_calls": _gate_tool_calls(
                 msg["tool_calls"], provider, f"message[{i}].tool_calls", log_path)}
@@ -1023,8 +1015,8 @@ _MESSAGE_WITHHELD = ("[EGRESS-GATE: message withheld — it stayed on this "
 # What the model sees in place of a SENSITIVE tool result. An empty string
 # (what _gate_text returns for SENSITIVE) would read as "the tool returned
 # nothing" and send the agent loop into pointless retries; this marker lets it
-# report the withholding and move on. WO-1 (2026-08-25): states the behavioral
-# instruction explicitly, same reasoning as _redact_placeholder above — a
+# report the withholding and move on. It states the behavioral instruction
+# explicitly, same reasoning as _redact_placeholder above — a
 # model with no other honesty context still knows not to invent the result.
 _TOOL_RESULT_WITHHELD = ("[tool result withheld by egress gate — SENSITIVE "
                          "content stays on this device; use a local model to "
@@ -1121,7 +1113,7 @@ _ARG_WITHHELD = "[withheld by egress gate]"
 # Tool DEFINITIONS are static: first-party descriptions ship in the binary, and
 # an MCP server's description + schema are fixed at registration and re-sent,
 # byte-identical, on every single cloud call. Classifying them per call is pure
-# repeat work, and it is not free. Measured 2026-08-24, 112 MCP tools with six
+# repeat work, and it is not free. Measured on the reference machine, 112 MCP tools with six
 # schema properties each, steady state (classifier models already warm, so this
 # excludes the ~25s one-time lazy load that dominates any first measurement):
 #
@@ -1203,12 +1195,12 @@ def _tool_view(tool: dict) -> tuple[dict, str]:
     name/description/parameters under ``function`` (built by
     routing.model_router.anthropic_to_openai_tools).
 
-    The gate used to read the top level only, so on every openai-compatible
+    Reading the top level only would mean that on every openai-compatible
     CLOUD provider — openai, openrouter, any openai-shaped cloud seat — the
-    name came back "" , failed the ``mcp_`` prefix test, and the description
-    travelled ungated. The Anthropic path withheld the very same string. That
-    is not a policy difference, it is the gate reading the wrong envelope
-    (found 2026-08-24).
+    name comes back "", fails the ``mcp_`` prefix test, and the description
+    travels ungated while the Anthropic path withholds the very same string.
+    That is not a policy difference, it is the gate reading the wrong
+    envelope.
     """
     inner = tool.get("function")
     if isinstance(inner, dict) and ("name" in inner or "description" in inner):
@@ -1354,11 +1346,10 @@ def _gate_tools(tools: list, provider: str,
     First-party tool descriptions are static text authored in this repository
     and shipped in the binary. They cannot leak the vault because they were
     never in the vault — they are documentation, not user data. Running them
-    through a content classifier meant any description containing an ordinary
-    word like "contact", "family" or "calendar" was blanked, and the model was
-    handed a list of tools it could not read. That does not protect anything;
-    it just makes Friday look incapable, and it did so on every cloud-fallback
-    turn for an unknown length of time (found 2026-08-21).
+    through a content classifier means any description containing an ordinary
+    word like "contact", "family" or "calendar" is blanked, and the model is
+    handed a list of tools it cannot read. That does not protect anything;
+    it just makes Friday look incapable on every cloud-fallback turn.
 
     MCP tool descriptions are still gated: they arrive at runtime from a
     third-party server, so unlike first-party text they are not something this
@@ -1630,7 +1621,7 @@ def seal_outbound(
     return sealed
 
 
-# ── Startup self-test (R2, Fable 5 adversarial review) ────────────────────────
+# ── Startup self-test (R2) ────────────────────────────────────────────────────
 _SELF_TEST_RESULT = None  # None = not yet run; dict {"ok": bool, ...} once run
 
 

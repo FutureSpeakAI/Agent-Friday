@@ -38,17 +38,16 @@ DB_PATH = FRIDAY_DIR / "costs.db"
 # under Google's free/quota-based tier — the real risk is quota throttling or
 # an error, not a bill — so there is nothing to record. Stated explicitly so
 # a future reader can tell "verified free, intentionally unmetered" apart
-# from "someone forgot" (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+# from "someone forgot".
 #
 # ── Per-direction pricing (USD per 1K tokens) ────────────────────────────────
 # Real pricing is input ≠ output. Unknown models fall back to the blended
 # provider_registry rate (used for both directions) or 0 for local/on-device.
 PRICING = {
-    # Published USD per 1M, divided by 1000. Checked against Anthropic's price
-    # page 2026-08-28. Opus 5 sat at 0.015/0.075 (a 3x overcharge) and Fable 5
-    # at 0.003/0.015 (a 3.3x undercharge) for the whole 5.6.x line, so the most
-    # expensive model in the lineup was billed as the cheapest and the default
-    # model was billed at triple. Every spend figure downstream inherited both.
+    # Published USD per 1M, divided by 1000. Verified against Anthropic's price
+    # page 2026-08-28. These rows must track the published page exactly: every
+    # spend figure downstream inherits any error here, and the default model's
+    # row is the one most often wrong.
     "claude-fable-5":             {"in": 0.010, "out": 0.050},   # $10 / $50
     "claude-opus-5":              {"in": 0.005, "out": 0.025},   # $5  / $25
     "claude-sonnet-5":            {"in": 0.003, "out": 0.015},   # $3  / $15
@@ -79,11 +78,10 @@ PRICING = {
     "gemini-omni-flash":          {"in": 0.0015, "out": 0.0175},
     "gemini-omni-flash-preview":  {"in": 0.0015, "out": 0.0175},
     # Gemini TTS (voice_engine.py _synthesize_tts_wav_gemini) — the exact model
-    # id that function calls. ai.google.dev/gemini-api/docs/pricing, checked
+    # id that function calls. ai.google.dev/gemini-api/docs/pricing, verified
     # 2026-09-04: $0.50/1M input (text) tokens, $10/1M output (audio) tokens.
-    # Was completely unmetered before this fix despite the entries above for
-    # the Live models already existing (docs/audits/gauntlet-2026-09-03/
-    # findings.jsonl Q6c) — the TTS model id itself was also missing here.
+    # The Live-model rows above do not cover it; the TTS id needs its own row
+    # or the call meters $0.
     "gemini-2.5-flash-preview-tts": {"in": 0.0005, "out": 0.010},
     # Gemini native image models ("Nano Banana" family — creative_engine.py).
     # Google bills image OUTPUT as a fixed token count per image (not a flat
@@ -99,13 +97,9 @@ PRICING = {
     # gemini-3.1-flash-lite-image (Nano Banana 2 Lite): $0.25/1M input,
     # $30/1M output.
     # VERIFIED directly against ai.google.dev/gemini-api/docs/pricing,
-    # 2026-09-04 (2026-09-04 gauntlet-audit correction: the two 3.1 rows were
-    # previously CONSERVATIVE PLACEHOLDERS interpolated from the 2.5/3-pro
-    # rows rather than looked up -- both were wrong, each understating the
-    # real output rate by exactly 2x. Findings.jsonl F50 logs the lapse:
-    # shipping an interpolated guess in a field a cost panel treats as fact,
-    # right after recording the "don't fabricate rates" decision elsewhere
-    # in the same pass.)
+    # 2026-09-04. Rows here are looked up, never interpolated from sibling
+    # models: the cost panel treats this field as fact, and an interpolated
+    # placeholder is indistinguishable from a verified rate downstream.
     "gemini-2.5-flash-image":      {"in": 0.0003, "out": 0.030},
     "gemini-3-pro-image":           {"in": 0.002, "out": 0.120},
     "gemini-3.1-flash-image":      {"in": 0.0005, "out": 0.060},
@@ -126,10 +120,9 @@ PRICING = {
     "eleven_flash_v2_5":         {"in": 0.05, "out": 0.0},
 
     # ── Opt-in provider catalogs (routing/provider_descriptors.py
-    #    BUILTIN_EXTRA_PROVIDERS) that previously metered as exactly $0 for
-    #    every call (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q11b) --
-    #    the _call_openai -> cost_meter.meter() code path already worked,
-    #    this table was just empty for these five.
+    #    BUILTIN_EXTRA_PROVIDERS). The _call_openai -> cost_meter.meter() path
+    #    meters these; a provider whose ids are absent from this table meters
+    #    as exactly $0 for every call, which reads as "free" downstream.
     #
     # Mistral declares its model ids explicitly in BUILTIN_EXTRA_PROVIDERS
     # (models=(...)), so this key is GUARANTEED to match what a real call
@@ -138,25 +131,20 @@ PRICING = {
     "mistral-large-latest":  {"in": 0.0005, "out": 0.0015},
 }
 
-# ── Deliberately NOT priced (2026-09-04) ─────────────────────────────────────
-# mistral-small-latest, deepseek-chat, deepseek-reasoner, and the well-known
-# Groq/xAI/Cohere model ids all had rows here as of an earlier draft of this
-# fix -- every one of them sourced from public pricing-aggregator pages
-# (cloudzero.com, aipricing.guru, etc.), not the provider's own page, despite
-# a real attempt to fetch each provider's own pricing page directly (Mistral's
-# own page shows Mistral Large's rate but not Mistral Small's; DeepSeek's own
-# docs page did not render a pricing table for this fetch and its listed
-# current model ids -- deepseek-v4-flash/-pro -- don't even match
-# deepseek-chat/deepseek-reasoner, suggesting those ids may be stale; Groq/
-# xAI/Cohere's own pages were not confirmed either). Per this session's own
-# "don't fabricate rates" decision -- violated once already for the Gemini
-# 3.1 image rows above (findings.jsonl F50) -- these are recorded as UNPRICED
-# rather than guessed at a second time. record()/price_for() below return
+# ── Deliberately NOT priced ───────────────────────────────────────────────────
+# Invariant: rates not confirmed against the provider's own pricing page are
+# recorded as unpriced rather than guessed. Third-party pricing aggregators
+# (cloudzero.com, aipricing.guru, etc.) are not an acceptable source. The
+# models below could not be confirmed that way (Mistral's own page lists
+# Mistral Large but not Mistral Small; DeepSeek's docs did not render a
+# pricing table and list current ids -- deepseek-v4-flash/-pro -- that do not
+# match deepseek-chat/deepseek-reasoner, so those ids may be stale; Groq/xAI/
+# Cohere's own pages were not confirmed). record()/price_for() below return
 # None for a model in this set: the call is still logged (tokens, provider,
 # model, timestamp), with cost_usd stored as NULL, not 0.0 -- an honest gap a
 # UI can render as "not priced," not a number that looks like a fact.
-# Revisit once a real per-model rate can be confirmed directly from each
-# provider's own current pricing page. See findings.jsonl F50.
+# Move a model out of this set only when its rate is confirmed directly from
+# the provider's own current pricing page.
 UNPRICED_MODELS = frozenset({
     "mistral-small-latest",
     "deepseek-chat", "deepseek-reasoner",
@@ -187,8 +175,8 @@ def price_for(model, speed=None):
     if not model:
         return {"in": 0.0, "out": 0.0}
     if model in UNPRICED_MODELS:
-        # Deliberately unpriced (see UNPRICED_MODELS above, findings.jsonl
-        # F50) -- None is the "genuinely unknown, do not compute a number"
+        # Deliberately unpriced (see UNPRICED_MODELS above) -- None is the
+        # "genuinely unknown, do not compute a number"
         # signal cost_for()/record() propagate through to a NULL cost_usd
         # row, distinct from a confirmed $0.0 (a real local model).
         return None
@@ -332,7 +320,7 @@ def _conn():
             for idx, col in (("idx_cost_ts", "ts"), ("idx_cost_ws", "workspace"),
                              ("idx_cost_prov", "provider")):
                 _CONN.execute(f"CREATE INDEX IF NOT EXISTS {idx} ON cost_calls({col})")
-            # ── Prompt-cache columns (2026-08-26). ──
+            # ── Prompt-cache columns. ──
             # Anthropic reports cached input SEPARATELY from `input_tokens`:
             # a cache hit shows up as `cache_read_input_tokens` and the row's
             # `input_tokens` counts only the uncached remainder. Without these
@@ -418,7 +406,7 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
                 # ALSO comes back None, `cost` stays None and is stored as
                 # SQL NULL below -- an honest "we don't know", never silently
                 # coerced back to a $0.0 that would look like a verified free
-                # call (findings.jsonl F50).
+                # call.
                 try:
                     from agent_friday.services import pricing as _pricing
                     live = _pricing.cost_usd(provider, model,
@@ -521,7 +509,7 @@ def summary(rng="today", frm=None, to=None):
         n, itok, otok, total, crtok, cwtok = cur.fetchone()
         # Calls with cost_usd IS NULL: a model this build could not verify a
         # real rate for (cost_meter.UNPRICED_MODELS), logged honestly rather
-        # than guessed at (findings.jsonl F50). Surfaced so the cost panel
+        # than guessed at. Surfaced so the cost panel
         # can show "N calls not priced" instead of folding them silently
         # into total_usd as if they cost nothing.
         unpriced = conn.execute(
@@ -570,12 +558,10 @@ def timeseries(rng="month", bucket="day"):
         key = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
         b = buckets.setdefault(key, {"date": key, "usd": 0.0, "calls": 0})
         # cost is NULL for a call whose model this build could not verify a
-        # real rate for (UNPRICED_MODELS, findings.jsonl F50/F64) -- summary()
-        # already excludes NULL from its SQL-level SUM via COALESCE; this
-        # loop sums in Python, so it must skip None explicitly or `+=` raises
-        # TypeError the first time an unpriced call lands in the range
-        # (found via a real crash: F64's investigation of an order-dependent
-        # test failure traced to exactly this -- not hypothetical).
+        # real rate for (UNPRICED_MODELS) -- summary() already excludes NULL
+        # from its SQL-level SUM via COALESCE; this loop sums in Python, so it
+        # must skip None explicitly or `+=` raises TypeError the first time an
+        # unpriced call lands in the range.
         if cost is not None:
             b["usd"] += cost
         b["calls"] += 1

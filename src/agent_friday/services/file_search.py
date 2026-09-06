@@ -1,15 +1,13 @@
-"""Local file discovery — search_files (WO-14 / WO-16 Stage A, partial Stage B).
+"""Local file discovery — search_files (Stage A, partial Stage B).
 
-Grounding: 09:18, voice session 2026-08-25 — Stephen asked Friday to find his
-resume in Downloads. She guessed a filename, failed, and asked him to supply
-the exact name. There was no discovery verb anywhere in the registry, only
-read-by-exact-path.
+Grounding: a user asks Friday to find their resume in Downloads. Without a
+discovery verb in the registry — only read-by-exact-path — she guesses a
+filename, fails, and asks the user to supply the exact name.
 
 Live walk, not an index. The scoped roots are a few thousand files on an
 SSD; a bounded os.walk resolves a name query well under a second. An index
-would be a standing staleness bug — precisely the failure shape this whole
-audit fights ("the index says the file exists" is the same lie as every
-other subsystem reporting a stored belief instead of live state).
+would be a standing staleness bug ("the index says the file exists" is the
+same lie as any subsystem reporting a stored belief instead of live state).
 
 Privacy: the search itself is deterministic local code, no LLM in the loop.
 Results are plain JSON handed back through the SAME single choke point every
@@ -160,7 +158,7 @@ def search_files(query: str = "", root: str | None = None,
                   content_query: str = "", newest_first: bool = True,
                   limit: int = _DEFAULT_LIMIT) -> dict:
     """Name/metadata search (Stage A) with optional bounded content search
-    (Stage B — hollow for PDF/docx until WO-14.1's extraction is in use)."""
+    (Stage B — hollow for PDF/docx unless file_extraction is in use)."""
     limit = max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT))
     roots, err = _resolve_root(root)
     if err:
@@ -214,12 +212,12 @@ def _search_content(roots, query, content_query, newest_first, limit, deadline, 
         if result.text is None:
             continue
         text = result.text[: _MAX_CONTENT_BYTES]
-        # WO-17 KNOWN GAP (2026-08-25): a content-search snippet does NOT yet
-        # feed the grant registry. It used to call file_grants.on_file_read
-        # here, before this handler's JSON result is PII-scrubbed by the
-        # generic post-tool hook — the same order-of-operations bug fixed for
-        # read_file in _hook_file_grant_registration (see agent.py). Doing
-        # the equivalent fix here needs a JSON-aware post-hook that re-walks
+        # KNOWN GAP: a content-search snippet does NOT yet feed the grant
+        # registry. Calling file_grants.on_file_read here would run before
+        # this handler's JSON result is PII-scrubbed by the generic post-tool
+        # hook — the same order-of-operations bug read_file avoids via
+        # _hook_file_grant_registration (see agent.py). Doing the
+        # equivalent fix here needs a JSON-aware post-hook that re-walks
         # results[].snippet against results[].path after scrubbing, which is
         # real additional work, not a one-line move. Until then: a granted
         # file's full read passes; its content-search snippet still gates

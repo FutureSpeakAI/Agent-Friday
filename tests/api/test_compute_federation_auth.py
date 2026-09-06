@@ -33,10 +33,10 @@ VERIFIED, AND PARTLY WRONG. Two separate things are true here:
    originally-relayed one.
 
 The REAL remaining risk -- any LOOPBACK caller (i.e., any process running as
-Stephen, not just his browser) gets free code execution here via a trust
+The maintainer, not just his browser) gets free code execution here via a trust
 check that is a self-reported float -- is unchanged by this fix and cannot
 be closed by an auth decorator. It is reported, not silently redesigned;
-see the session's report to Stephen.
+see the session's report to the maintainer.
 """
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ class TestArbitraryCodeExecutionIsReal:
             # login." That IS this app's accepted trust boundary; the point
             # of this test is that "trusted local user" here means "any
             # process able to reach this loopback port with a self-reported
-            # trust score", not "Stephen, specifically".
+            # trust score", not "the maintainer, specifically".
         )
         assert resp.status_code == 200, resp.get_data(as_text=True)
         assert _wait_for_marker(marker, timeout=15.0), (

@@ -6,7 +6,7 @@ and keeps it true: it boots the default plan, grants capability leases, and
 executes transitions serially with timeouts and rollback.
 
 Why it owns processes rather than asking a daemon nicely (rule R9). Measured on
-the reference instance 2026-08-14: loading gemma4:12b (8001 MiB) and then
+the reference instance: loading gemma4:12b (8001 MiB) and then
 gemma4:e2b (1763 MiB) against a 9997 MiB budget leaves ONLY the e2b resident.
 Ollama evicted the model the policy considers pinned, at every num_ctx tried,
 with no model-count limit reached and no report anywhere. A residency layer
@@ -108,11 +108,11 @@ def exclusive_lease() -> dict | None:
     way IN and unenforced afterwards: any timer that woke up and called a local
     model loaded ~7 GB straight back onto a card an image job believed it owned.
 
-    Stephen, 2026-08-18: "An hourly heartbeat launched while I was running my
-    last image job and the whole computer slowed to a crawl." The heartbeat was
-    harmless while background work went to the cloud; moving it to a local
-    model (correctly — it was costing a million tokens a day) turned it into a
-    GPU competitor, and nothing taught the scheduler about leases.
+    The maintainer's report: "An hourly heartbeat launched while I was running
+    my last image job and the whole computer slowed to a crawl." The heartbeat
+    is harmless while background work goes to the cloud; moving it to a local
+    model (correctly — it was costing a million tokens a day) turns it into a
+    GPU competitor unless the scheduler knows about leases.
     """
     try:
         arb = get_arbiter()
@@ -189,15 +189,16 @@ def _publish_endpoints(procs: dict, drop=()) -> None:
     a measurement probe, a worker, a script — has no Arbiter, so it asks the
     Ollama daemon, and with the daemon stopped it raises "Ollama is not
     running" about a model that is loaded and healthy two ports away.
-    Measured 2026-08-15: the tool-chain probe scored 0/5 with that error while
-    the same seat answered a real turn inside the server in 4.5 s.
+    Measured on the reference machine: the tool-chain probe scored 0/5 with
+    that error while the same seat answered a real turn inside the server in
+    4.5 s.
 
     MERGES, never clobbers. `procs` is one process's view, and a fresh process
-    starts with an empty one. Observed 2026-08-19T22:26:54: pid 8620 booted and
-    wrote {"endpoints": {}} over the file while gemma4:e4b — spawned by the
-    previous process at 22:16:52 — sat healthy on :8091 serving requests. Every
-    reader (`seat_endpoint`, `_published_endpoint`, tool_budget's /props probe)
-    went blind to a live seat in exactly the restart window where it matters.
+    starts with an empty one. A fresh process that writes {"endpoints": {}}
+    over the file while a seat spawned by the previous process sits healthy
+    on its port makes every reader (`seat_endpoint`, `_published_endpoint`,
+    tool_budget's /props probe) blind to a live seat in exactly the restart
+    window where it matters.
     So entries this process does not own are kept iff they still answer
     /health; our own entries always win, and a foreign entry claiming a port
     we now own is dropped rather than health-checked against OUR server.
@@ -250,7 +251,7 @@ def owned_endpoint(model_id: str) -> str | None:
     briefly worse rather than better. Extracting the brain's GGUF moved it off
     the Ollama daemon into a process the Arbiter runs on a loopback port — at
     which point dispatch, which still asked the daemon on :11434, could not
-    find it. Measured 2026-08-15: the brain sat resident and unreachable while
+    find it. Measured on the reference machine: the brain sat resident and unreachable while
     an ordinary "reply with one word" turn fell through to the cloud and took
     2m05s, against 16s when the same model was served by the daemon.
 
@@ -291,8 +292,8 @@ def owned_provider(model_id: str) -> dict | None:
         # LOCAL_CAPABLE_ADAPTERS earn local classification. "openai" is not one
         # of them, so this single wrong word made `classification_of()` return
         # "cloud" for a model running on 127.0.0.1 in a process we own, and
-        # `local_bypass` came out False. Two consequences, both measured
-        # 2026-08-16 in Stephen's activity ledger:
+        # `local_bypass` came out False. Two consequences, both visible in
+        # the activity ledger:
         #
         #   * the egress gate SEALED payloads on their way to Friday's own
         #     local seat — vault-tier spans redacted before reaching a model
@@ -377,7 +378,7 @@ def ollama_engine_path() -> Path:
 # a model that upstream cannot parse does not pay a failed load on every boot.
 _ENGINE_MEMO: dict = {}
 
-# Models we deliberately leave on the Ollama daemon. EMPTY as of 2026-08-15.
+# Models we deliberately leave on the Ollama daemon. Currently EMPTY.
 #
 # It briefly held gemma4:e2b and e4b. Those models emit tool calls in a channel
 # format --  <|tool_call>call:get_weather{city:Oslo}<tool_call|>  -- which only
@@ -399,7 +400,7 @@ DAEMON_SERVED: dict = {}
 #
 # `procs` lives in memory, so a restart forgets every llama-server it started
 # while the processes themselves keep running and keep their VRAM. Measured
-# 2026-08-18: EIGHT of them, 12:06 to 22:36, one per restart that day, holding
+# on the reference machine: EIGHT of them, one per restart that day, holding
 # ~4.1 GB between them, none known to the Arbiter that had just booted. That
 # is the same defect as a daemon seating a model behind our back -- the rule
 # is that nothing occupies that GPU without the Arbiter knowing, and it does
@@ -488,10 +489,9 @@ def _llama_server_pids() -> set:
     directions.
 
     Ours load from `~/.friday/runtime/models`; the daemon's load from
-    `~/.ollama/models/blobs`. Measured 2026-08-18, the first version of this
-    matched on the binary name and reaped Ollama's live runner (pid 17104,
-    port 56662) along with the real orphans, forcing the daemon to reload a
-    model mid-session. Killing another scheduler's process is exactly the
+    `~/.ollama/models/blobs`. Matching on the binary name alone reaps
+    Ollama's live runner along with the real orphans, forcing the daemon to
+    reload a model mid-session. Killing another scheduler's process is exactly the
     discourtesy this module exists to stop, and it does not stop being one
     when we are the ones doing it.
     """
@@ -562,11 +562,11 @@ class LlamaServerBackend:
 
         done_getting_tensors: wrong number of tensors; expected 2012, got 601
 
-    That error was read for a day as "Ollama shards its models and llama.cpp
-    cannot reassemble them". It is not. The manifest has exactly one model
+    That error reads like "Ollama shards its models and llama.cpp cannot
+    reassemble them". It is not. The manifest has exactly one model
     layer, the extracted file passes the GGUF magic check, and **Ollama's own
-    engine binary loads that same file and generates from it** — verified
-    2026-08-15, "ready." in 0.90 s. The gemma4 e-series tensor layout simply
+    engine binary loads that same file and generates from it** — verified,
+    "ready." in 0.90 s. The gemma4 e-series tensor layout simply
     is not what upstream's gemma3n reader expects.
 
     So we try upstream first and fall back to the engine that ships with
@@ -620,10 +620,9 @@ class LlamaServerBackend:
     # GPU on ONE request. At 262144 -- the model's architectural maximum, which
     # is what `models.json` reports and what a seat gets when nothing clamps it
     # -- boot alone left 448 MiB free, under the 1024 MiB display reserve, in
-    # the exact state that has already dropped Stephen's second monitor twice
-    # today. The daemon was blamed for it the first time.
+    # the exact state that drops a second monitor.
     #
-    # MEASURED ON THIS CARD, 2026-08-19, and the answer was not the expected
+    # MEASURED ON THIS CARD, and the answer was not the expected
     # one. The roles contract (docs/reference/roles-and-model-identity.md
     # 6a) sets TOOL_SEAT_NUM_CTX to 65,536 on the reasoning that over-
     # reserving is nearly free because the KV curve is flat -- about 32 MiB --
@@ -635,7 +634,7 @@ class LlamaServerBackend:
     #
     # A 1,385 MiB difference, not 32. The compute buffer scales with context
     # and dwarfs the KV cache at long windows, which is the same effect
-    # already recorded on the batch-size flag below. 65,536 costs Stephen his
+    # already recorded on the batch-size flag below. 65,536 costs the user a
     # second monitor on this hardware.
     #
     # The silent-truncation worry also does not apply to these seats:
@@ -668,7 +667,7 @@ class LlamaServerBackend:
     # at f16; q8_0 halves that (8 bits plus a 2-byte scale per 32 elements =
     # 1.0625 bytes/element against 2).
     #
-    # Computed from gemma4-12b.gguf's own metadata on 2026-08-24, at the
+    # Computed from gemma4-12b.gguf's own metadata, at the
     # -c 32768 this seat actually runs:
     #
     #     f16   832 MiB      q8_0   442 MiB      saved 390 MiB (47%)
@@ -788,7 +787,7 @@ class LlamaServerBackend:
         # answered llama.cpp's own
         #   "image input is not supported - hint: ... you may need to provide
         #    the mmproj"
-        # to every image (measured 2026-08-23, two images, two colours).
+        # to every image (measured on the reference machine, two images, two colours).
         #
         # That is the same misdiagnosis in a new costume: a model that CAN see
         # looking like a model that cannot, because a file next to it was never
@@ -940,11 +939,11 @@ class LlamaServerBackend:
         # UNCONDITIONALLY, and the condition it replaces is the bug. This used
         # to publish only `if report["adopted"] or report["reaped"]`, so the
         # one case that most needs the file rewritten -- nothing running at all
-        # -- was the one case that left it untouched. Observed 2026-08-24: the
-        # pinned gemma4:12b seat died with the 11:49 restart, the survey came
-        # back empty, nothing was adopted or reaped, and endpoints.json went on
-        # naming :8090 for the rest of the day, hours after the last process
-        # listening there had exited. `_serves` caught it at every call, so
+        # -- was the one case that left it untouched. When a pinned seat dies
+        # with a restart, the survey comes back empty, nothing is adopted or
+        # reaped, and endpoints.json goes on naming its port for hours after
+        # the last process listening there has exited. `_serves` catches it at
+        # every call, so
         # nothing was misrouted -- but a record that is wrong and merely
         # disbelieved is still wrong, it is the first artefact anyone debugging
         # this reads, and every reader paid a failing probe for it. Publishing
@@ -1075,8 +1074,8 @@ class Arbiter:
         `self.plan` is computed once at boot and then only on an explicit
         replan or a seat change. Settings -> Intelligence rendered that snapshot
         under the heading "WHAT WILL NOT FIT RIGHT NOW", which was false in the
-        way that matters: measured 2026-08-23, the panel showed refusals
-        computed at 15:45 against a card with ~10 GB free, while the card had
+        way that matters: measured on the reference machine, the panel showed
+        refusals computed at boot against a card with ~10 GB free, while the card had
         1 GB free and the settings the refusals referred to had since been
         rewritten by seat_binding.apply(). One payload, two moments -- the roles
         section read current settings, the refusal section read a plan from
@@ -1122,9 +1121,9 @@ class Arbiter:
 
         The desktop's VRAM draw is the same kind of moving number and was being
         treated as a constant. It is sampled here for the same reason: a plan
-        is only as good as the machine it was planned against, and on
-        2026-08-17 the gap between a 542 MiB cached floor and a 2,778 MiB
-        compositor took a monitor off the desktop. Sampling stays out here in
+        is only as good as the machine it was planned against, and the gap
+        between a 542 MiB cached floor and a 2,778 MiB compositor is enough
+        to take a monitor off the desktop. Sampling stays out here in
         the arbiter so `rp.plan` remains a pure function of the profile and its
         golden fixtures keep meaning something.
         """
@@ -1226,9 +1225,9 @@ class Arbiter:
         """Nothing occupies that GPU without the Arbiter knowing.
 
         The rule does not care who started it. Ollama's daemon has its own
-        scheduler, and on 2026-08-18 it seated a model at 262k context behind
-        the Arbiter's back, took the card, and dropped Stephen's second
-        monitor. The Arbiter had no idea, because it had never once looked.
+        scheduler, and it can seat a model at 262k context behind the
+        Arbiter's back, take the card, and drop a second monitor -- with the
+        Arbiter none the wiser unless it looks.
 
         HONEST LIMIT, and it matters: Ollama exposes observation (`/api/ps`)
         and eviction (`keep_alive: 0`), but NO admission hook. Friday cannot
@@ -1333,15 +1332,15 @@ class Arbiter:
                 return {"ok": False, "error": "arbiter is %s" % self.state}
             # DISPLAY HEADROOM, checked against the LIVE card before committing.
             #
-            # 2026-08-17: the plan did its arithmetic against a floor measured
-            # once at Arbiter boot (542 MiB here, against a documented ~1 GB
-            # Windows compositor cost) and nothing ever asked the GPU what was
-            # actually free. The card reached 322 MiB free after a heartbeat
-            # loaded a 9.6 GB model, and four minutes later an indirect display
-            # driver crashed and Windows lost Stephen's second monitor.
+            # The plan does its arithmetic against a floor measured once at
+            # Arbiter boot (542 MiB on the reference machine, against a
+            # documented ~1 GB Windows compositor cost); without this check
+            # nothing ever asks the GPU what is actually free. A card at 322
+            # MiB free after a heartbeat loads a 9.6 GB model is where an
+            # indirect display driver crashes and Windows loses a monitor.
             #
-            # A refusal here is a sentence he can read. A driver reset is him
-            # waving a mouse at a dead screen wondering what happened.
+            # A refusal here is a sentence the user can read. A driver reset
+            # is them waving a mouse at a dead screen wondering what happened.
             try:
                 from agent_friday.services.hardware_profile import vram_headroom
                 from agent_friday.services.headroom_contract import (
@@ -1354,7 +1353,7 @@ class Arbiter:
                         "not enough VRAM left for the desktop: %d MiB free "
                         "against a %d MiB display reserve (short by %d). "
                         "Loading now risks the display driver, which is how "
-                        "the second monitor was lost on 2026-08-17. Free the "
+                        "a second monitor gets dropped. Free the "
                         "card or close a display-heavy app first."
                         % (_hd.get("free_mib", 0),
                            _hd.get("display_reserve_mib", 0),
@@ -1368,8 +1367,8 @@ class Arbiter:
             # lives on; this is the separate HR5 gap `machine_monitor`
             # closes -- the volume Windows itself is installed on, where
             # the pagefile and `~/.friday` live no matter what
-            # `OLLAMA_MODELS` points at, and the one the 2026-09-04
-            # `friday_test_home_*` leak actually filled to 0 bytes. Uses
+            # `OLLAMA_MODELS` points at, and the one a stray temp-directory
+            # leak can fill to 0 bytes. Uses
             # the SAME `DISK_FLOOR_MIB` (10 GiB, R8) rather than a new
             # number -- not D1-gated.
             try:
@@ -1638,8 +1637,8 @@ class Arbiter:
     #: Debounce for the thrash log/record, matching `machine_monitor.
     #: _LOG_INTERVAL_S`'s own reasoning: a sustained breach fires on every
     #: 5s tick for as long as it lasts, and re-recording (and re-printing)
-    #: the same mark every 5s would drown the log the way the 2026-09-01
-    #: uncapped rejection line already did once.
+    #: the same mark every 5s would drown the log the way an uncapped
+    #: rejection line does.
     _THRASH_MARK_INTERVAL_S = 300.0
 
     def respond_to_monitor(self, sample_: dict, verdict: dict) -> dict | None:
@@ -1700,8 +1699,8 @@ class Arbiter:
         """§7 — "display reserve breached | anything": cancel any in-flight
         render, release every lease, evict leased seats. Keep the retained
         sidekick (R10) only if it still fits the reserve once the lease's
-        own draw is gone; otherwise it goes too. This is the 2026-08-17
-        monitor-loss case, answered for real this phase.
+        own draw is gone; otherwise it goes too. This is the monitor-loss
+        case, answered for real.
         """
         why = display_verdict.get("explanation", "")
         cancelled = self._cancel_inflight_render()
@@ -1883,10 +1882,10 @@ class Arbiter:
     def _evict_pinned(self):
         """Stand down the seats a lease may take. R10 says which it may not.
 
-        The sidekick stays. Before 2026-08-15 a lease evicted the whole pinned
-        set, so asking for depth made Friday mute for the duration — from the
-        outside the machine looked hung rather than busy. Stephen's call:
-        "keep e2b awake so Friday is always alive."
+        The sidekick stays. A lease that evicts the whole pinned set makes
+        Friday mute for the duration — from the outside the machine looks
+        hung rather than busy. The maintainer's ruling: "keep e2b awake so
+        Friday is always alive."
         """
         displaced = []
         for role in ("interactive_brain", "sidekick", "embedder"):

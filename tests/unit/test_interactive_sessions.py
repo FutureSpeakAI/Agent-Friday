@@ -1,7 +1,7 @@
 """interactive_sessions — spawn_interactive_session / send_to_session /
 read_session_output.
 
-Focus: the adversarial cases Stephen asked to see proved, not just the happy
+Focus: the adversarial cases the maintainer asked to see proved, not just the happy
 path — a Ring-3 denial is legible (never silent, never runs the handler), a
 buffer overflow truncates visibly (never silently drops data unremarked), a
 session that outlives its parent process gets reaped on the next boot (never

@@ -70,8 +70,7 @@ _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
 # large Python string before anything else runs. `_stderr_tail`'s
 # deque(maxlen=40) only bounds how many COMPLETED lines are retained; it
 # does nothing for the one line currently being assembled. 16 MiB is
-# generously larger than any real JSON-RPC message this protocol sends
-# (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+# generously larger than any real JSON-RPC message this protocol sends.
 _MAX_LINE_CHARS = 16 * 1024 * 1024
 
 
@@ -389,9 +388,8 @@ class MCPServerProcess:
         # a real, named control surface (GET /api/security/mcp-audit and
         # /trust-levels read as if it's active) that validate_tool_input/
         # validate_tool_output/audit_tool_call existed to satisfy but were
-        # never called from either MCP transport's real call site (docs/
-        # audits/gauntlet-2026-09-03/findings.jsonl) -- the same shape as
-        # F32's env leak, on the tool-call path instead of the spawn path.
+        # never called from either MCP transport's real call site -- the
+        # same shape as the spawn-path env leak, on the tool-call path.
         # Without this, a sandboxed/untrusted server's output reaches the
         # agent's context with invisible/control Unicode intact (the exact
         # steganographic injection vector sanitize_unicode names), and the
@@ -877,7 +875,7 @@ class MCPManager:
             # extension_security.gate_mcp_config() blocked at boot; restart()
             # did not, so the single most natural remediation an operator
             # reaches for after seeing a blocked connector's status actually
-            # started it for real (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+            # started it for real.
             return False
         sp.stop()
         ok = sp.start()

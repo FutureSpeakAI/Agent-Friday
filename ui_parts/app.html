@@ -2090,9 +2090,9 @@ function GeneratePanel({onCreated}){
   useEffect(()=>{if(!imgModel&&imageModels.length)setImgModel(imageModels[0].id);if(!vidModel&&videoModels.length)setVidModel(videoModels[0].id);},[mc.loaded]);
   /* Refreshes, rather than fetching once on mount. Workspaces stay mounted
      and are shown/hidden, so "I just opened the Studio" does not remount the
-     panel — Stephen generated an image and the gallery kept showing whatever
-     it had loaded earlier ("her first audience"). The file was on disk and
-     first in /api/creations the whole time. */
+     panel — otherwise a freshly generated image is on disk and first in
+     /api/creations while the gallery keeps showing whatever it loaded
+     earlier. */
   useEffect(()=>{const load=()=>fetch('/api/creations').then(r=>r.json()).then(d=>{setSeedFiles((d.files||[]).filter(x=>['png','jpg','jpeg','webp'].includes((x.name||'').split('.').pop().toLowerCase())))}).catch(()=>{});load();const iv=setInterval(load,10000);return()=>clearInterval(iv)},[]);
   const go=async()=>{
     if(!prompt.trim()||busy)return;
@@ -2629,12 +2629,11 @@ function StudioWS(){
     }
   });
   /* NEWEST FIRST, and never the bookkeeping files.
-     2026-08-17, Stephen: "I did not see any of these creations appear in the
-     studio." They were there — all nine of them — rendered 7,000 pixels down a
-     7,880-pixel page, below every older creation, with loading="lazy" so the
-     browser never even fetched them. Measured in the live DOM: his newest
-     image sat at offsetTop 7880 with naturalWidth 0. A gallery that puts the
-     thing you just made at the bottom has not shown it to you.
+     Oldest-first rendering puts new creations thousands of pixels down the
+     page, below every older creation, with loading="lazy" so the browser
+     never even fetches them — the user reports "I did not see any of these
+     creations appear" while they are there. A gallery that puts the thing
+     you just made at the bottom has not shown it to you.
      The manifest is a record OF the gallery, not an item in it. */
   const _hidden=new Set(['jsonl','log']);
   const _sorted=[...creations]
@@ -3583,12 +3582,12 @@ function WorkflowsWS(){
   const[sdraft,setSdraft]=useState({name:'',trigger:'daily',hour:9,minute:0,weekday:6,every:60,at:'',prompt:''});
   const loadChains=()=>{fetch('/api/workflows/chains').then(r=>r.json()).then(d=>{setChains(d.chains||[]);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})};
   const loadSchedules=()=>{fetch('/api/schedules').then(r=>r.json()).then(d=>{setSchedules(d.schedules||[])}).catch(()=>{})};
-  // 2026-09-06: this panel only reflects a chain's OWN run status (fetched
-  // on demand via "Status") — it has no idea whether anything ELSE is
-  // running. Stephen saw generate_video executing while all 5 saved
-  // workflows showed idle/pending, which was technically correct (none had
-  // been run) but read as "Friday is doing nothing" next to visible proof
-  // she is. Polls the same task registry the Task Tray uses for anything
+  // This panel only reflects a chain's OWN run status (fetched on demand
+  // via "Status") — it has no idea whether anything ELSE is running. A
+  // generate_video task can be executing while every saved workflow shows
+  // idle/pending, which is technically correct (none has been run) but
+  // reads as "Friday is doing nothing" next to visible proof she is. Polls
+  // the same task registry the Task Tray uses for anything
   // active that isn't one of this panel's own chain runs.
   const[otherActivity,setOtherActivity]=useState([]);
   useEffect(()=>{let alive=true;const tick=()=>{fetch('/api/tasks').then(r=>r.json()).then(d=>{if(!alive)return;setOtherActivity((d.tasks||d||[]).filter(t=>t.status==='running'&&!t.chain))}).catch(()=>{})};tick();const t=setInterval(tick,5000);return()=>{alive=false;clearInterval(t)}},[]);
@@ -3753,10 +3752,10 @@ function SystemWS(){
       if((seen&&!active)||(!seen&&tries>=6)||tries>150){clearInterval(poll);await refreshSelfImp();setSiBusy(false)}
     },2000);
   };
-  // ── Approvals (V6 P5 / A3): the human-gate queue. Until 2026-09-06 a pending
-  // card had NO surface anywhere: the notification's "Review" pointed at
-  // {workspace:'system',tab:'approvals'} and nothing handled that tab, so every
-  // gated action (Google connect, gated goal steps) waited until it expired. ──
+  // ── Approvals (V6 P5 / A3): the human-gate queue. A pending card needs a
+  // surface: the notification's "Review" points at
+  // {workspace:'system',tab:'approvals'}, and if nothing handles that tab every
+  // gated action (Google connect, gated goal steps) waits until it expires. ──
   const [approvals,setApprovals]=useState([]);
   const [apBusy,setApBusy]=useState('');
   const apRef=useRef(null);
@@ -5818,7 +5817,7 @@ function useModelCatalog(){
 }
 
 /* ── ModelSearchPicker ─────────────────────────────────────────────────────
-   Stephen, 2026-08-16: "This should show a dropdown with a selector and a typed
+   Maintainer ruling: "This should show a dropdown with a selector and a typed
    search input field so any model we have access to, or any model that's
    installed, can operate within Agent Friday."
 
@@ -5830,7 +5829,7 @@ function useModelCatalog(){
 
    So: no cap, no curation, and no gating. A model that is not ready is shown
    with what it needs and is STILL selectable — the standing rule is that a bad
-   diagnostic is information, never a veto, and "never gate a model Stephen
+   diagnostic is information, never a veto, and "never gate a model the user
    selected" applies to the UI as much as to the router. */
 function ModelSearchPicker({catalog,value,onPick,autoFocus,placeholder}){
   const[q,setQ]=useState('');
@@ -7283,7 +7282,7 @@ const WIZARD_STEPS=[
 // download so "works with zero keys" is actually true on first run.
 //
 // The floor model comes from the backend rather than a literal here — defect
-// H3 was fixed at five Python sites on 2026-08-26 (model_plan.FLOOR_MODEL)
+// H3 is fixed at the Python sites via model_plan.FLOOR_MODEL,
 // but this wizard kept its own hard-coded literal, the one row in the ladder
 // that cannot call tools. Do not reintroduce a literal model id here.
 //
@@ -7733,15 +7732,15 @@ function SettingsTabGeneral({s,save}){
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
 //
-// Stephen, 2026-08-15: "The user decides when a task is heavy; perhaps Friday
+// Maintainer ruling: "The user decides when a task is heavy; perhaps Friday
 // should present a custom workflow UI with a representation of the tasks it
 // will execute, and a series of config options for the workflow, so the user
 // can choose or select 'choose for me' as an option as well."
 //
-// So: Friday proposes, Stephen disposes. Three executions, and an option that
+// So: Friday proposes, the user disposes. Three executions, and an option that
 // is unavailable is shown DISABLED WITH ITS REASON rather than hidden — a
-// missing button teaches nothing, and the reason here is always something he
-// would want to know (this work reads your vault).
+// missing button teaches nothing, and the reason here is always something the
+// user would want to know (this work reads your vault).
 const EXEC_META={
   when_away:{label:'While I’m away',ico:'\u{1F319}',
              hint:'Parked. Runs under one lease when the machine goes quiet — the model wakes once for the whole batch.'},
@@ -7960,8 +7959,9 @@ function SettingsTabModels({s,save}){
       </div>
     </StRow>;
     /* Orchestrator and subagent get the SEARCHABLE picker over the whole
-       catalog. They are the two Stephen names most often and the two that were
-       stuck showing five Claude models. Creative and voice keep the curated
+       catalog. They are the two the user names most often and the two that
+       would otherwise be stuck showing a capped provider-ordered list.
+       Creative and voice keep the curated
        select: those lists are short, deliberately shaped, and tied to hardware
        setup flows. */
     if(role==='orchestrator'||role==='subagent'){
@@ -8749,7 +8749,7 @@ function SettingsTabAbout(){
 }
 function SettingsTabKnowledge({s,save}){
   const kg0=s.knowledge_graph||{};
-  // Defensive normalization: settings.json can still carry the pre-2026-09-03
+  // Defensive normalization: settings.json can still carry the legacy
   // values ("local_only"/"gated_cloud") until this specific key is next saved
   // — the backend migrates them on every read (kg_settings()), but this GET
   // /api/settings response is the raw file, so the dropdown does the same
@@ -8967,9 +8967,9 @@ function App(){
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
   // Real connection-health for the top-bar dot. Polled every 15s.
   const[connHealth,setConnHealth]=useState('unknown'); // 'ok' | 'degraded' | 'down' | 'unknown'
-  // 2026-08-14: per-provider inference liveness from Phase A's real probe —
-  // the seat pill was showing the CONFIGURED model all morning while its
-  // provider (llama-server) was down and tool turns silently fell back.
+  // Per-provider inference liveness from a real probe — otherwise the seat
+  // pill shows the CONFIGURED model while its provider (llama-server) is
+  // down and tool turns silently fall back.
   const[seatHealth,setSeatHealth]=useState({}); // provider -> {status,proved_inference,detail,model}
   useEffect(()=>{
     let cancelled=false;
@@ -9379,10 +9379,10 @@ function App(){
   // Sonnet → Opus, Gemini, local Gemma), then fill remaining slots in catalog
   // order (available-first, provider-declared).
   /* WHAT ACTUALLY SERVED THE LAST TURN — not what settings say is bound.
-     2026-08-17: Stephen swapped his seat, the save succeeded, and every turn
-     kept being served by the old model. The pill showed his SELECTION the
-     whole time, so the app agreed with him for eleven minutes while doing
-     something else. A selection that has not taken effect has to be visible
+     If the user swaps a seat, the save succeeds, and every turn keeps being
+     served by the old model, a pill that shows the SELECTION agrees with the
+     user while the app does something else. A selection that has not taken
+     effect has to be visible
      immediately, and the only honest source is the model that generated the
      last reply — the same field the per-message badge reads. */
   const lastServed=(()=>{
@@ -9445,7 +9445,7 @@ function App(){
     saveAgentSettings({model_routing:{...cur,local_model:name}});
   };
   // ── Seat-gate status: DIAGNOSTIC ONLY. Nothing here gates a binding.
-  // 2026-08-15: the gate was removed. Any installed model can be assigned to
+  // The gate is removed. Any installed model can be assigned to
   // any seat and will actually serve. The chip reports whether the structural
   // tool-call check has been run and what it said — it never blocks a choice,
   // and a red/ungated model is fully selectable.
@@ -9646,11 +9646,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 `;
     try{
       // Pin the context to Gemini's 24kHz output rate. (A device-native-rate
-      // experiment on 2026-07-08 — worklet resampling 24k→48k — was reverted
-      // hours before the demo: it coincided with heavy response latency, and
-      // the pinned path is the long-proven snappy configuration. Latency wins.
-      // If long-session timbre drift returns, re-run that experiment POST-demo
-      // with ear-verified A/B — see the session notes.)
+      // experiment — worklet resampling 24k→48k — coincided with heavy
+      // response latency, and the pinned path is the long-proven snappy
+      // configuration. Latency wins. If long-session timbre drift returns,
+      // re-run that experiment with ear-verified A/B.)
       try{v.audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:PCM_OUT_RATE});}
       catch(e){console.warn('[voice] AudioContext({sampleRate:'+PCM_OUT_RATE+'}) was rejected — falling back to default-rate context; the worklet resamples:',e);v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
       window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: AudioContext created sampleRate='+v.audioCtx.sampleRate+' (requested '+PCM_OUT_RATE+', pinned='+(v.audioCtx.sampleRate===PCM_OUT_RATE)+', state='+v.audioCtx.state+')');
@@ -10549,8 +10548,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const _notifPost=(url,id)=>{if(!id)return;try{fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).catch(()=>{})}catch(_){}};
   /* In-flight work, shown in the tray ABOVE the finished notifications.
      Same object at two moments of its life: a process while it runs, a
-     conclusion when it ends. Stephen asked for a progress bar in the tray, and
-     this is where it belongs — one place that answers both "what is happening"
+     conclusion when it ends. The tray's progress bar belongs here — one
+     place that answers both "what is happening"
      and "what finished". */
   const[liveProcs,setLiveProcs]=useState([]);
   const[failedProcs,setFailedProcs]=useState([]);
@@ -10591,12 +10590,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   useEffect(()=>{fetch('/api/evolution').then(r=>r.json()).then(d=>{if(typeof d.structure_index==='number')setTimeout(()=>window.fridayVibe?.setStructure(d.structure_index),600)}).catch(()=>{})},[]);
   useEffect(()=>{if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.chatLoad=chatLoad||qdLoading;},[chatLoad,qdLoading]);
 
-  // 2026-09-06: the chat "Task complete" bubble below cut task results at a
-  // flat .substring(0, 400) with no ellipsis and no marker — a summary that
-  // stopped mid-word and looked finished. The backend never truncates
-  // (_task_set/_task_snapshot store and return the full text), so nothing
-  // was ever lost from the record — display-only. Raised the cap and, when
-  // a result genuinely is longer, cuts at a word boundary and says so,
+  // The chat "Task complete" bubble below must not cut task results at a
+  // flat substring with no ellipsis and no marker — a summary that stops
+  // mid-word looks finished. The backend never truncates (_task_set/
+  // _task_snapshot store and return the full text), so nothing is lost
+  // from the record — display-only. The cap is bounded and, when a result
+  // genuinely is longer, cuts at a word boundary and says so,
   // pointing at the Task Tray's "View Results" modal (viewBgTaskResult
   // below), which already renders the complete text.
   const CHAT_RESULT_CAP=4000;
@@ -10820,14 +10819,14 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 
   // ── Never go quiet without saying so first ───────────────────────────────
   //
-  // Stephen, 2026-08-15: "Friday should always warn the user when local
+  // Maintainer ruling: "Friday should always warn the user when local
   // inference will (or might) cause her to go silent for any amount of time so
   // they can decide if cloud or scheduling for idle time would be better."
   //
   // The failure is not the pause, it is the UNANNOUNCED pause: the machine
   // looks hung, and you find out afterwards that the cloud would have taken
-  // four seconds. So the message is HELD, not sent, until he picks — a warning
-  // he cannot act on is a notification, and notifications get ignored.
+  // four seconds. So the message is HELD, not sent, until the user picks — a
+  // warning they cannot act on is a notification, and notifications get ignored.
   const[pausePending,setPausePending]=useState(null);   // {forecast, message}
   const sendChat=async(overrideMsg,opts)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;
     opts=opts||{};
@@ -10872,7 +10871,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       // reply — a routing flip is never silent again.
       if(d.seat_events&&d.seat_events.length)setChatMsgs(p=>[...p,...d.seat_events.map(ev=>({role:'system',kind:'seat_change',text:'⚙ '+ev.text,time:new Date().toLocaleTimeString()}))]);
       // B1: every reply carries its model + seat class — the ACTUAL
-      // generator after any fallback (2026-08-14), plus the fallback chain.
+      // generator after any fallback, plus the fallback chain.
       setChatMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],offer_cloud_switch:!!d.offer_cloud_switch,time:new Date().toLocaleTimeString()}]);
       // Execute any structured actions Friday returned (navigate, open_path…).
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
@@ -10985,9 +10984,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid '+(routingMode!=='cloud_only'?'rgba(245,158,11,0.35)':'rgba(255,255,255,0.18)'),borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s'}}
             title="Model selection & routing"
             aria-label="Model selection">
-            {/* Seat liveness (2026-08-14): the label alone read as "I'm
-                speaking to Qwen" while llama-server was down all morning and
-                tool turns silently fell back. Green = provider proved a real
+            {/* Seat liveness: the label alone reads as "I'm speaking to
+                <model>" while llama-server is down and tool turns silently
+                fall back. Green = provider proved a real
                 generation; red = down/unreachable (llama-server down or
                 still loading its weights); amber = not probed yet. */}
             {(()=>{
@@ -11184,15 +11183,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             })()}
             {/* The "🏠 Local Models" panel used to live here, and it was the
                 single most misleading control in the app.
-                2026-08-17: it looked like the local seat selector. It wrote
+                It looked like the local seat selector. It wrote
                 `model_routing.local_model`, which the entire codebase consumes
-                in ONE guarded branch (chat.py:543) that only fires when there
+                in ONE guarded branch (chat.py) that only fires when there
                 is no Anthropic key and Ollama is healthy — an emergency
-                fallback, not a seat. Stephen swapped his seat here, the save
-                succeeded, the badge changed for exactly one turn that happened
-                to take that fallback path, and every other turn kept going to
-                `capability_routing.reasoning`. He spent eleven minutes
-                concluding the seat had "changed back". It never changed.
+                fallback, not a seat. Swapping a seat there saved fine, changed
+                the badge for exactly one turn that happened to take that
+                fallback path, and left every other turn going to
+                `capability_routing.reasoning` — so the seat appeared to
+                "change back". It never changed.
                 The searchable picker above writes `orchestrator_model`, which
                 _sync_capability_routing mirrors to capability_routing.reasoning
                 — the key dispatch actually reads. One control, one key. */}
@@ -11211,7 +11210,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             The numerator was a BOOLEAN drawn as a circle — filled if any local
             request had ever happened, hollow otherwise — over a static config
             constant. It could never read 1/3 or 2/3; it was permanently ○/3 or
-            ●/3 and told you nothing about what was running. Stephen read it as
+            ●/3 and told you nothing about what was running. It read as
             "0/3", which is exactly what it looked like. Nothing to fold into
             the picker: there was no signal in it. */}
       </div>
@@ -11402,7 +11401,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           </div>
           {/* local_only refused (no local seat available) rather than
              silently answering from the cloud — offer the explicit choice
-             to switch instead of a dead end (findings.jsonl Q19). */}
+             to switch instead of a dead end. */}
           {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
             onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Intelligence directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
           <div style={{fontSize:11,color:'#888',marginTop:1}}>

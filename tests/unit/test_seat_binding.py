@@ -120,7 +120,7 @@ def test_the_image_seat_binds_the_local_provider(all_green):
 def test_an_ungated_local_model_is_bound_anyway(monkeypatch):
     """No gate. 2026-08-15: a seat used to require both battery axes green,
     which left heavy_hitter, local and subagent permanently unbound on
-    Stephen's machine — the plan computed them and then refused to apply them.
+    the maintainer's machine — the plan computed them and then refused to apply them.
     Any installed model binds to any seat."""
     monkeypatch.setattr(
         "agent_friday.services.model_seat_gate.axis_status",

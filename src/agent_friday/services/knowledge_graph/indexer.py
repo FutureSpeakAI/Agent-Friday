@@ -6,11 +6,10 @@ prompt pipeline (vendored verbatim from graphrag-workbench under prompts/),
 merges duplicate entities, detects communities (reusing Tier A's detector),
 writes LLM community reports, and embeds entity text locally.
 
-Routing rules, revised 2026-09-03 (superseding the original spec §5.4
-tier-based sovereignty rule, which pinned TIER_2/3 chunks local no matter
-what the user chose for this — that was a per-tier override of a per-user
-choice, and it is gone: "he is not asking for a system that decides for
-people, he's asking for one that does what the person picked"):
+Routing rules (superseding the original spec §5.4 tier-based sovereignty
+rule, which pinned TIER_2/3 chunks local no matter what the user chose for
+this — a per-tier override of a per-user choice; the maintainer's ruling is
+that the system does what the person picked rather than deciding for them):
   * The indexer NEVER opens a socket. Every LLM call goes through
     model_router._generate_text, which seals cloud payloads via
     egress_gate.seal_outbound (or, when the user has separately chosen
@@ -65,10 +64,10 @@ MAX_REPORT_COMMUNITIES = 24        # cap LLM cost per index pass
 # When the routed cheap/free provider goes unhealthy, model_router's own
 # cross-provider circuit breaker (correct for chat: never leave the user
 # without an answer) reroutes every remaining chunk straight to the paid
-# frontier default -- a live incident (2026-09-04) ran a single Tier B pass
-# for 7+ hours straight through the night, unattended, at ~$10/hour, because
-# nothing here would ever stop asking. A corpus bigger than this cap is
-# retried on the next delta pass instead of billed to the end tonight.
+# frontier default -- without a ceiling a single unattended Tier B pass can
+# run for hours at frontier prices, because nothing here would ever stop
+# asking. A corpus bigger than this cap is retried on the next delta pass
+# instead of billed to the end in one pass.
 MAX_CLOUD_EXTRACT_CALLS = 200       # cap real-money LLM calls per index pass
 
 
@@ -277,13 +276,12 @@ def _available_local_model() -> Optional[str]:
     """The local model Tier B will actually use, or None if nothing
     installed can do the job.
 
-    2026-09-03, item #1 of the "default is broken for everyone" instruction:
     `_local_model()` names a model with no check that it is INSTALLED. On a
     fresh install where the user picked Claude-only (no local model ever
     downloaded) or a different rung of the ladder, every extraction call
-    failed against a model that was never on the machine — one call at a
-    time, 348 times on the reference machine, before anyone found out. This
-    asks Ollama what is actually there.
+    would otherwise fail against a model that was never on the machine —
+    one call at a time, once per chunk. This asks Ollama what is actually
+    there.
 
     Preference order: the configured/floor preference (`_local_model()`), if
     it is installed and tool-capable; otherwise the smallest installed
@@ -315,11 +313,10 @@ def _available_local_model() -> Optional[str]:
 def _resolve_model(sensitivity: int, mode: str) -> tuple[Optional[str], bool]:
     """Return (model, is_local_pin) for a chunk.
 
-    A strict PER-USER CHOICE (2026-09-03), not a per-tier override: earlier
-    versions of this function pinned "sensitive" chunks local even when the
-    user had chosen "cloud" for this. "He is not asking for a system that
-    decides for people, he's asking for one that does what the person
-    picked" — so that second-guessing is gone. `sensitivity` stays a
+    A strict PER-USER CHOICE, not a per-tier override: this function does
+    not pin "sensitive" chunks local when the user has chosen "cloud" for
+    this. The maintainer's ruling is that the system does what the person
+    picked rather than deciding for them. `sensitivity` stays a
     parameter for call-site compatibility; it no longer changes the
     decision here. What content is actually safe to send is the egress
     gate's job, the same as every other cloud call in the app: tier-based
@@ -370,8 +367,8 @@ def _llm(messages, system: Optional[str], sensitivity: int, mode: str,
         # this module's docstring) was false the moment a user picked a
         # cloud model as their reasoning seat -- an ordinary, UI-encouraged
         # action -- because a "pinned" chunk still rode the general router.
-        # Calling the local primitive directly, the same pattern already
-        # established for voice (F16), is the only way the pin is real.
+        # Calling the local primitive directly, the same pattern the voice
+        # path uses, is the only way the pin is real.
         from agent_friday.services.model_router import _call_ollama
         text, _trace = _call_ollama(messages, system=system, model=model,
                                     max_tokens=4096, orb_label=orb_label)
@@ -446,12 +443,10 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     chunks = gather_chunks()
     say(f"corpus: {len(chunks)} chunks")
 
-    # Fail FAST, not 348 times. Item #1 of the 2026-09-03 instruction: on a
-    # machine with no usable local model, the old code discovered that one
-    # doomed extraction call at a time, every single chunk, before ever
-    # saying so — the same shape of silent failure as the conversation-
-    # source bug fixed the same day, one layer up. Checked once, here,
-    # before any chunk is attempted.
+    # Fail FAST, not once per chunk: on a machine with no usable local
+    # model, discovering that one doomed extraction call at a time, every
+    # single chunk, before ever saying so is a silent failure. Checked once,
+    # here, before any chunk is attempted.
     #
     # Gated on `call is _llm`: an injected `llm` (tests, or a caller
     # bringing its own extraction function) owns its own backend and does

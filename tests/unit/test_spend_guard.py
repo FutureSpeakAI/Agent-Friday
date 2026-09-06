@@ -2,7 +2,7 @@
 recorded spend past the threshold through cost_meter's own DB and asserting
 the real cloud choke points refuse the next call.
 
-Stephen (2026-09-06): "A spending limit that reports itself as set and
+The maintainer (2026-09-06): "A spending limit that reports itself as set and
 doesn't stop anything is the worst instance of the placebo pattern in the
 product ... The test has to prove the stop actually stops -- drive real
 spend past the threshold and assert the work halts, not merely that a flag

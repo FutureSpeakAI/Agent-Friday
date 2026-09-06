@@ -1,16 +1,17 @@
 """
-judgment_gate — telling Stephen's affairs apart from the world's.
+judgment_gate — telling the user's affairs apart from the world's.
 
 WHY (deep-research.md §5). The existing gate classifies by pattern: regex,
 keyword lists, NER, embeddings. Those layers are good at what a span LOOKS
 like and structurally blind to WHOSE it is. The keyword rules exist to keep
-Stephen's legal, medical and financial affairs on this machine — and they
-cannot tell his affairs from a story about someone else's. Measured: 9 of 120
-public news headlines classified TIER_3 because they contained "court" or
-"raised a Series B" (ca4ee8c). For a journalist whose beat IS courts and
-money, the rule shreds exactly the payloads that need frontier intelligence.
+the user's legal, medical and financial affairs on this machine — and they
+cannot tell those affairs from a story about someone else's. Measured on the
+reference machine: 9 of 120 public news headlines classified TIER_3 because
+they contained "court" or "raised a Series B". For a journalist whose beat IS
+courts and money, the rule shreds exactly the payloads that need frontier
+intelligence.
 
-Stephen's instruction, verbatim: "keywording is insufficient; we need a
+The maintainer's instruction, verbatim: "keywording is insufficient; we need a
 judgement call and a classification system to protect sensitive materials, and
 it should work with the PII scrubber so we don't lock cloud models out
 completely (we'll need frontier intelligence sometimes)."
@@ -122,7 +123,7 @@ _NEVER_CACHE: dict[str, Any] = {"mtime": -1.0, "items": []}
 # which is the battery working.
 _PROBE_EXTRA_NEVER: list[str] = []
 
-# ── WO-17 §5: user deny marks — the same registry, opposite sign ──────────────
+# ── User deny marks — the same registry, opposite sign ────────────────────────
 # file_grants.py calls register_deny_span() at READ TIME when a file/folder/
 # glob the user has marked never-send is actually read, registering that
 # read's exact paragraphs here. never_send_hits() then blocks any payload
@@ -154,13 +155,13 @@ def register_deny_span(text: str) -> None:
 
 
 def never_send_tokens() -> list[str]:
-    """Stephen's never-send watchlist — an extension of the existing privacy
+    """The user's never-send watchlist — an extension of the existing privacy
     watchlist with a stronger meaning: not "scrub this" but "block any payload
     containing this" (§5.3).
 
     Read from ~/.friday/privacy_shield.json under the "never_send" key, beside
-    the existing "watchlist". The dial is his; Friday builds it and never
-    repoints it.
+    the existing "watchlist". The dial is the user's; Friday builds it and
+    never repoints it.
     """
     try:
         from agent_friday.core import FRIDAY_DIR
@@ -201,28 +202,27 @@ def never_send_hits(text: str) -> list[str]:
 
 # ── First person is a deterministic floor, not a prompt instruction ───────────
 #
-# The judge prompt says "First person about his own affairs is NEVER
+# The judge prompt says "First person about their own affairs is NEVER
 # ABOUT_THE_WORLD". That is an instruction to a 2B model — a hope, not a
-# guarantee. FOUND LIVE 2026-08-17 with the gate switched on: the e2b answered
-# ABOUT_THE_WORLD for
+# guarantee. A small judge can answer ABOUT_THE_WORLD for
 #
 #   "I owe about $14,000 on the second mortgage and the bank has called twice."
 #
-# and the span travelled, because the ABOUT_THE_WORLD path only applies the
+# and the span would travel, because the ABOUT_THE_WORLD path only applies the
 # identifier scrub — and there is no identifier in that sentence to find. A
-# false rescue on Stephen's own finances is precisely the error class the whole
-# design is arranged to make impossible, and the seat benchmark had measured it
-# at zero, which is exactly how much a benchmark is worth against live traffic.
+# false rescue on the user's own finances is precisely the error class the
+# whole design is arranged to make impossible, and a seat benchmark scoring
+# zero on it is no guarantee against live traffic.
 #
-# So the rule leaves the prompt and becomes code: a span that speaks in the
-# first person about the user's own affairs CANNOT be judged third-party
+# So the rule does not live in the prompt; it is code: a span that speaks in
+# the first person about the user's own affairs CANNOT be judged third-party
 # material. The model may still call it STEPHEN_SUBSTANCE (which then requires
 # a scrub that actually replaces something) or NEVER_SEND. It simply may not
 # call it somebody else's.
-# CASE-SENSITIVE on purpose. The first version used IGNORECASE and matched
-# "US" in "Trump asks US Supreme Court..." — flagging a news headline as
-# Stephen talking about himself, which withheld exactly the material this layer
-# exists to rescue. "us" and "me" are only first-person in lowercase ("US" is a
+# CASE-SENSITIVE on purpose. With IGNORECASE this matches "US" in "Trump asks
+# US Supreme Court..." — flagging a news headline as the user talking about
+# themselves, which withholds exactly the material this layer exists to
+# rescue. "us" and "me" are only first-person in lowercase ("US" is a
 # country, "ME" is a state); "I" is only first-person capitalised.
 _FIRST_PERSON_RE = re.compile(
     r"\bI\b|\bI'(?:m|ve|ll|d)\b"                       # I, I'm, I've, I'll, I'd
@@ -236,7 +236,7 @@ def looks_first_person(text: str) -> bool:
 
     Deliberately generous: a false positive here costs one span of capability
     (it degrades to STEPHEN_SUBSTANCE, which can still send once scrubbed), and
-    a false negative costs his privacy. Third-party news, which is what the
+    a false negative costs the user's privacy. Third-party news, which is what the
     ABOUT_THE_WORLD verdict exists to rescue, is written in the third person
     and is unaffected.
     """
@@ -282,7 +282,7 @@ class ScrubVerdict:
     """Result of the deterministic post-scrub check.
 
     `blocked` is the important field: it is what makes a WRONG JUDGMENT
-    survivable. The model can be wrong about whether a span is Stephen's; it
+    survivable. The model can be wrong about whether a span is the user's; it
     cannot make an unscrubbed identifier travel, because this runs after it
     and does not consult it.
     """
@@ -334,18 +334,18 @@ def verify_outgoing(text: str, *, reclassify: bool = True) -> ScrubVerdict:
 
 _JUDGE_SYSTEM = """You classify text spans for a privacy gate. You are the appeals court: every span you see was already blocked by keyword rules, and your job is to say which ones were blocked by mistake.
 
-The user is Stephen, a working journalist. His beat is courts, government, money and health policy. Keyword rules block anything mentioning "court", "legal", "medical", "income" — which blocks his ordinary professional reading along with his actual private affairs. You exist to tell those apart.
+The user is a working journalist whose beat is courts, government, money and health policy. Keyword rules block anything mentioning "court", "legal", "medical", "income" — which blocks their ordinary professional reading along with their actual private affairs. You exist to tell those apart.
 
-For each span, answer the single question: is this Stephen's OWN private material, or material about the world?
+For each span, answer the single question: is this the user's OWN private material, or material about the world?
 
 Verdicts:
 - ABOUT_THE_WORLD — third-party material: published facts, news, other people's public actions, court records of other parties, quotes from public sources, general reference material, technical or product text.
-- STEPHEN_SUBSTANCE — Stephen's own material where the substance matters but his identity can be separated from it: "my client in the housing case", "my doctor said", his own finances or family discussed in a way that survives having names and numbers removed.
-- NEVER_SEND — Stephen's material where identity and substance cannot be separated: the span IS the private fact and removing identifiers would leave nothing meaningful, or it contains credentials, account numbers or medical/legal records of his own.
+- STEPHEN_SUBSTANCE — the user's own material where the substance matters but their identity can be separated from it: "my client in the housing case", "my doctor said", their own finances or family discussed in a way that survives having names and numbers removed.
+- NEVER_SEND — the user's material where identity and substance cannot be separated: the span IS the private fact and removing identifiers would leave nothing meaningful, or it contains credentials, account numbers or medical/legal records of their own.
 
 Rules:
 - When uncertain, answer STEPHEN_SUBSTANCE. Never guess ABOUT_THE_WORLD to be helpful.
-- First person about his own affairs ("my", "I owe", "our custody") is NEVER ABOUT_THE_WORLD.
+- First person about their own affairs ("my", "I owe", "our custody") is NEVER ABOUT_THE_WORLD.
 - Third person about named public figures or organizations is normally ABOUT_THE_WORLD even when the topic is legal, medical or financial.
 - Judge the span, not the topic. A sensitive TOPIC is not a private FACT.
 - Give a one-sentence reason for every verdict. A judgment that cannot explain itself cannot be audited.
@@ -355,8 +355,8 @@ Reply with STRICT JSON only, no prose, no code fence:
 One entry per span, in order, using the given index."""
 
 
-# The sidekick, not the brain. Measured 2026-08-17 on a 12-case fixture
-# (6 public / 6 first-person private), both seats warm:
+# The sidekick, not the brain. Measured on the reference machine on a 12-case
+# fixture (6 public / 6 first-person private), both seats warm:
 #
 #   gemma4:e2b   3 spans 1.2s | 6 spans 1.7s   12/12 correct, 0 false rescues
 #   gemma4:12b   3 spans 49.6s | 6 spans 40.2s  12/12 correct, 0 false rescues
@@ -377,16 +377,15 @@ DEFAULT_JUDGE_MODEL = "gemma4:e2b"
 def _judge_model() -> str | None:
     """The seat that judges. Settings override; otherwise something INSTALLED.
 
-    DEFAULT_JUDGE_MODEL used to be returned unconditionally, and on 2026-08-18
-    that name (`gemma4:e2b`) was deleted from the daemon while it was still the
-    default. Every probe in the boot battery then 404'd, one after another,
-    which both crawled startup and left the judgment layer reporting
-    "judgment unavailable" — so the privacy gate silently degraded to its
-    deterministic outcome and nobody was told why.
+    DEFAULT_JUDGE_MODEL must not be returned unconditionally: if that tag is
+    deleted from the daemon while it is still the default, every probe in the
+    boot battery 404s, one after another, which both crawls startup and leaves
+    the judgment layer reporting "judgment unavailable" — the privacy gate
+    silently degrades to its deterministic outcome and nobody is told why.
 
     The general form of that bug — a module constant naming a model that has
-    been uninstalled — bit three modules the same day, so the resolution now
-    lives in one place. See services/local_seats.py.
+    been uninstalled — affects several modules, so the resolution lives in one
+    place. See services/local_seats.py.
     """
     from agent_friday.services import local_seats
     return local_seats.resolve("judge", _cfg("model", None) or DEFAULT_JUDGE_MODEL)
@@ -541,7 +540,7 @@ def read_overturns(limit: int = 200) -> list[dict]:
 
 
 def overturn_digest(days: int = 7) -> dict:
-    """§5.6.3 — the five sentences Stephen reads each week."""
+    """§5.6.3 — the five sentences the user reads each week."""
     cutoff = time.time() - days * 86400
     rows = [r for r in read_overturns(5000) if r.get("ts", 0) >= cutoff]
     by_provider: dict[str, int] = {}
@@ -748,14 +747,14 @@ def probe_result() -> dict | None:
 def dry_run(text: str) -> dict:
     """Compute the protection plan for `text` without sending anything.
 
-    Research needs to tell Stephen, BEFORE the work starts, whether Claude will
-    see his question and what would be removed from it (Q5). That means asking
-    the gate a hypothetical, and a hypothetical must not be answerable by
-    "send it and see".
+    Research needs to tell the user, BEFORE the work starts, whether the cloud
+    model will see their question and what would be removed from it. That
+    means asking the gate a hypothetical, and a hypothetical must not be
+    answerable by "send it and see".
 
     Returns:
       cloud_allowed  bool   — False when never-send material is load-bearing
-      question_sent  str    — the protected text Claude would actually receive
+      question_sent  str    — the protected text the cloud model would actually receive
       scrub_tags     [kind] — KINDS ONLY. Never values; this dict gets shown.
       scrub_count    int
       reason         str
@@ -800,7 +799,7 @@ def dry_run(text: str) -> dict:
     # Keywords object. This is exactly the appeals-court case, so ask.
     if not enabled():
         # Judgment off: the deterministic verdict stands, and a question the
-        # keyword rules dislike does not go to Claude. Say WHY, so the answer
+        # keyword rules dislike does not go to the cloud. Say WHY, so the answer
         # reads as a setting rather than a mystery.
         return {"cloud_allowed": False, "question_sent": None,
                 "scrub_tags": kinds, "scrub_count": len(lookup),

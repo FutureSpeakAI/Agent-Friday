@@ -342,15 +342,12 @@ def provider_key_status(provider: str) -> str:
     a vault passphrase change, disk corruption); 'missing' if no key file
     exists at all.
 
-    CORRECTION (F68, external review commissioned by Stephen, ruled on
-    2026-09-04): this used to report 'connected' from _provider_key_path(...)
-    .exists() alone, never attempting the decrypt read_secret() itself does.
-    Stephen's own 3 provider keys were reported 'connected' for a real
-    stretch of time while actually undecryptable -- a status display that
-    lied, and the reason nobody noticed sooner. 'Present but unreadable' is
-    reachable and real, not hypothetical: a key written on one machine (or
-    before a DPAPI/keychain-backing key rotated) does not necessarily
-    decrypt on another, or after.
+    Existence of the key file is not enough: reporting 'connected' from
+    _provider_key_path(...).exists() alone, without attempting the decrypt
+    read_secret() itself does, produces a status display that lies about
+    undecryptable keys. 'Present but unreadable' is reachable and real, not
+    hypothetical: a key written on one machine (or before a DPAPI/keychain-
+    backing key rotated) does not necessarily decrypt on another, or after.
     """
     path = _provider_key_path(provider)
     if not path.exists():
@@ -381,7 +378,7 @@ def list_provider_keys() -> list:
     return [p.stem for p in _PROVIDER_KEYS_DIR.glob("*.key")]
 
 
-# ── Stale-vault-key recovery (2026-09-03) ───────────────────────────────────
+# ── Stale-vault-key recovery ────────────────────────────────────────────────
 #
 # THE FAILURE THIS EXISTS FOR: the vault passphrase's durable homes
 # (services/vault_passphrase.py — the OS keychain, keyed by the FIXED,
@@ -389,7 +386,7 @@ def list_provider_keys() -> list:
 # particular install or HOME) can be overwritten by anything that calls
 # vault_passphrase.store() with a different value -- most often a rehearsal
 # or test run against a redirected HOME, which isolates ~/.friday but NOT the
-# keychain (see the 2026-08-30 incident this reproduces). When that happens,
+# keychain. When that happens,
 # every process derives a NEW vault key from then on, and any secret
 # encrypted under the OLD one becomes permanently unreadable to every FUTURE
 # process — except the one process, if any, that resolved the OLD passphrase
@@ -401,10 +398,8 @@ def list_provider_keys() -> list:
 # has already stopped. That is unrecoverable by construction — the same
 # design that guarantees a stored key can never be extracted through this
 # app's own API is exactly what makes it unextractable here too, once the
-# one process that held it is gone. This module was built AFTER exactly that
-# window closed on three real keys (2026-09-03); it could not have saved
-# them, and will not save the next three unless it is used from the process
-# that is still running.
+# one process that held it is gone. This only helps when it is used from the
+# process that is still running.
 #
 # WHAT THIS DOES: give a currently-running process a way to save whatever it
 # CAN still decrypt, under whatever a brand-new process would derive right
@@ -654,18 +649,17 @@ def bootstrap_provider_env() -> int:
     then the next launch put the dead one back in front of it with the panel
     still reporting "connected".
 
-    `provider_api_key()` was fixed on 2026-08-26 to read the store first, which
-    covered the probe and the openai-compatible dispatch and NOT
-    `core.get_anthropic_client()` -- which reads os.environ and settings.json
-    and has never consulted the store at all. This is the half that reaches the
-    reader that matters.
+    `provider_api_key()` reads the store first, which covers the probe and the
+    openai-compatible dispatch but NOT `core.get_anthropic_client()` -- which
+    reads os.environ and settings.json and does not consult the store at all.
+    This is the half that reaches the reader that matters.
 
     A genuine system environment variable still wins. Someone who sets
     ANTHROPIC_API_KEY in Windows has done a deliberate thing and knows what it
     means; only the value we ourselves loaded out of a .bat file gives way.
 
     Kept as an int-returning wrapper around bootstrap_provider_env_detail()
-    (F68) so existing callers/tests keep their exact contract -- server.py's
+    so existing callers/tests keep their exact contract -- server.py's
     boot log uses the detailed version directly instead.
     """
     return bootstrap_provider_env_detail()["loaded"]
@@ -678,14 +672,11 @@ def bootstrap_provider_env_detail() -> dict:
     decrypted into the environment ('loaded'), and which provider names
     exist but failed to decrypt ('unreadable').
 
-    CORRECTION (F68, external review commissioned by Stephen, ruled on
-    2026-09-04): bootstrap_provider_env()'s own 'loaded' count already only
-    counted real decrypt successes, but the boot log printed that ONE bare
-    number with no denominator -- if 3 of 5 stored keys failed to decrypt,
-    the log said "loaded 2 from encrypted store" with nothing indicating 3
-    more even exist, let alone that they're broken. A user watching boot
-    logs had no way to notice unless they already suspected something was
-    wrong and counted by hand.
+    bootstrap_provider_env()'s 'loaded' count only counts real decrypt
+    successes, and a boot log printing that ONE bare number has no
+    denominator -- if 3 of 5 stored keys fail to decrypt, "loaded 2 from
+    encrypted store" says nothing about the 3 that exist but are broken. The
+    denominator and the unreadable names are what make the failure visible.
     """
     loaded = 0
     candidates = 0

@@ -11,14 +11,14 @@ because the mistake it warns about is the one Settings was making:
     authenticates perfectly well - it fails when you ask it to think, which
     is the case worth catching.
 
-`/api/providers/<name>/test` probed Anthropic with `GET /v1/models` and
-Google with `GET /v1beta/models` -- metadata endpoints a broke key passes
-cheerfully -- and gated its one-token ping to openai-compatible providers.
-So the two providers Friday ships with by default were the two she could not
-tell the truth about.
+`/api/providers/<name>/test` must not probe Anthropic with `GET /v1/models`
+or Google with `GET /v1beta/models` -- metadata endpoints a broke key passes
+cheerfully -- while reserving the one-token ping for openai-compatible
+providers; that would leave the two default providers as the two Friday
+cannot tell the truth about.
 
-Stephen, 2026-08-26: this "would turn 'Friday isn't working' into 'this key
-was rejected', which is the difference between a user who fixes it and a
+The maintainer's ruling: this "would turn 'Friday isn't working' into 'this
+key was rejected', which is the difference between a user who fixes it and a
 user who gives up." A key that never worked and a key that stopped working
 look identical from the outside; only a real round-trip separates them.
 

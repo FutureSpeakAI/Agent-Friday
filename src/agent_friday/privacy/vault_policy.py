@@ -2,9 +2,9 @@
 
 Why this module exists
 ----------------------
-On 2026-09-01 two sessions probing the same running server reached opposite
-conclusions about whether Stephen's vault was protecting anything. Both were
-right, because there were two enforcement points reading two different things:
+Two observers probing the same running server could reach opposite
+conclusions about whether the vault was protecting anything, and both be
+right, when two enforcement points read two different things:
 
   * ``routing/model_router.py::_route_vault`` force-routed a vault-touching
     question to a local model and **never read ``vault_local_only`` at all**.
@@ -75,7 +75,7 @@ from typing import Any, NamedTuple
 _log = logging.getLogger("friday.vault")
 
 #: Protective defaults. A key absent from settings resolves to these, so a thin
-#: `model_routing` block (Stephen's carries 2 of 15 keys) is gated, not open.
+#: `model_routing` block (a real one may carry 2 of 15 keys) is gated, not open.
 DEFAULT_LOCAL_ONLY = True
 DEFAULT_CLOUD_FALLBACK = "redact"
 

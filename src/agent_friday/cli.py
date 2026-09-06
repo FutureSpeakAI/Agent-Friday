@@ -814,10 +814,9 @@ def _has_model(models, name: str) -> bool:
     "is any tag of this family installed?" while the caller asked "is THIS tag
     installed?". With only `gemma4:12b` present it returned True for
     `gemma4:e2b`, `gemma4:26b` and every other gemma4 tag — so `friday doctor`
-    reported a model as ready and the next call to it 404'd. Fixed 2026-08-21;
-    it is the same defect as the harness that resolved `embeddinggemma` to a
-    tag that did not exist, and the same family as every other name-shape bug
-    found this week: comparing the SHAPE of an identifier instead of resolving
+    reported a model as ready and the next call to it 404'd. It is the same
+    defect as a harness that resolves `embeddinggemma` to a tag that does
+    not exist: comparing the SHAPE of an identifier instead of resolving
     what it points at.
 
     A BARE family name still matches any installed tag of that family, because

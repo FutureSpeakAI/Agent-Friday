@@ -1,6 +1,6 @@
 """WO-14 / WO-16 Stage A — search_files: local file discovery.
 
-THE REPORTED FAILURE (voice session 2026-08-25, 09:18): Stephen asked Friday
+THE REPORTED FAILURE (voice session 2026-08-25, 09:18): the maintainer asked Friday
 to find his resume in Downloads. She guessed `resume.pdf`, it did not exist,
 and she asked him for the exact name — there was no discovery verb anywhere
 in the registry, only read-by-exact-path. Every test here is written against
@@ -58,7 +58,7 @@ class TestNameSearch:
         assert real.name in names
 
     def test_blank_query_lists_the_newest_file_without_a_name(self, roots):
-        """The other half of the 09:18 failure: Stephen should not have had
+        """The other half of the 09:18 failure: the maintainer should not have had
         to know ANY part of the filename — 'the latest thing in Downloads'
         must work with no query at all."""
         real = roots["downloads"] / "Example_User_CV_cyanotype_magenta_v2.pdf"

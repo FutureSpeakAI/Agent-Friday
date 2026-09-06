@@ -1,5 +1,5 @@
 """API-level test for the Google OAuth redirect_uri pin (docs:
-toolcall-integrity-v5, 2026-08-13) — Stephen's exact reported scenario: a
+toolcall-integrity-v5, 2026-08-13) — the maintainer's exact reported scenario: a
 request arriving with Host: agent.friday (his hosts-file alias) must still
 produce the pinned http://localhost:3000/... redirect_uri, never a
 Host-derived one, since Google's secure-response-handling policy rejects any

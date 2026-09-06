@@ -74,10 +74,10 @@ class OllamaManager:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             # Ollama says WHY in the body; urllib's str() is only
-            # "HTTP Error 400: Bad Request". On 2026-08-18 that cost hours:
-            # local turns were 400ing, the router logged the bare status and
-            # silently fell back to Anthropic, so the visible symptom was
-            # "my local model answers as Claude" with no stated cause.
+            # "HTTP Error 400: Bad Request". With only the bare status, a
+            # local turn that 400s falls back to the cloud with the visible
+            # symptom "my local model answers as the cloud model" and no
+            # stated cause.
             # An error that does not carry its reason is a defect of its own.
             try:
                 detail = e.read().decode("utf-8", "replace")[:600]
@@ -261,8 +261,8 @@ class OllamaManager:
 
     #: Presentation strings for `recommend_models()`. Deliberately NOT part of
     #: `model_plan.BRAIN_MODELS` — that table is the family/hardware decision
-    #: (single source of truth, per the 2026-09-03 "keep the family selection
-    #: in one place" instruction); this is just how each rung's TASK is
+    #: (single source of truth, per the maintainer's "keep the family
+    #: selection in one place" instruction); this is just how each rung's TASK is
     #: described in a picker UI (short, written for an end user — BRAIN_MODELS'
     #: own `note` is written for an audit trail, not a picker). `tier` is NOT
     #: duplicated here — it is computed by rank in `recommend_models()` itself,
@@ -279,20 +279,12 @@ class OllamaManager:
     def recommend_models(self, hardware=None):
         """A thin reader over `model_plan.BRAIN_MODELS` — headroom.md HR15.
 
-        THIS USED TO BE A SECOND LADDER. Until 2026-09-04 the four rows below
-        (name, VRAM/RAM threshold, task blurb) were hand-typed here, separate
-        from `model_plan.BRAIN_MODELS` — the "one place the arithmetic lives"
-        the comment removed by this edit used to say, while still retyping
-        every name and threshold as a literal. The VRAM thresholds had
-        already been corrected once (2026-08-26, CHANGELOG) to match
-        BRAIN_MODELS' own footprints by hand; the names were not, so the
-        moment BRAIN_MODELS gained a row this table did not know about (it
-        never has: `gemma4:12b` sits between qwen3:8b and qwen3:14b in
-        BRAIN_MODELS by footprint and was never offered here at all), this
-        function silently disagreed with the planner about what the machine
-        can actually run — the exact "two ladders" defect headroom.md §2.9
-        found in `install.ps1`'s own hand-maintained `$brainLadder`, here a
-        second time.
+        THIS MUST NOT BECOME A SECOND LADDER. Hand-typing rows here (name,
+        VRAM/RAM threshold, task blurb) separate from `model_plan.BRAIN_MODELS`
+        means the moment BRAIN_MODELS gains a row this table does not know
+        about, this function silently disagrees with the planner about what
+        the machine can actually run — the "two ladders" defect headroom.md
+        §2.9 describes for `install.ps1`'s own hand-maintained `$brainLadder`.
 
         Now: every tool-capable row in `BRAIN_MODELS` (`_pickable`'s own
         filter — a model that cannot call tools is never suggested as
@@ -323,11 +315,10 @@ class OllamaManager:
         ram = hw.get("ram_gb", 0) or 0
         # THE MODELS AND THEIR VRAM/RAM COSTS COME FROM
         # services/model_plan.BRAIN_MODELS — the one place that arithmetic and
-        # that family choice live (2026-09-03: Qwen removed everywhere, Gemma
-        # 4 only — e2b/e4b/12b/26b — per product decision; this function used
-        # to hardcode its own qwen3:* names independently of that table, which
-        # is exactly the "scattered choice" that made the KG indexer's default
-        # drift out of sync with everyone else's).
+        # that family choice live (Gemma 4 only — e2b/e4b/12b/26b — per
+        # product decision; hardcoding model names here independently of
+        # that table is exactly the "scattered choice" that lets one
+        # module's default drift out of sync with everyone else's).
         #
         # Card size needed is the model's own footprint (weights + measured
         # runtime overhead) plus the display reserve, rounded UP to a whole
@@ -437,13 +428,13 @@ class OllamaManager:
         # (measured: 79% CPU at the default, 51% at 16384) — which is what made
         # 120s gate calls time out and score a healthy model 1/10.
         #
-        # `None` used to mean "let the daemon decide", and on 2026-08-17 that
-        # cost a monitor: the top-bar dropdown seats `model_routing.local_model`
-        # through here without a context, the request fell to /v1 (below), and
-        # Ollama seated a 12B at its declared 262144 maximum — 9.9 GB resident,
-        # 4.2 GB of it spilled back to system RAM, while the compositor was
-        # starved for the memory it needed to drive two displays. The default
-        # is now bounded. A caller that knows its planned context still passes
+        # `None` must not mean "let the daemon decide": the top-bar dropdown
+        # seats `model_routing.local_model` through here without a context,
+        # and an unbounded default lets Ollama seat a 12B at its declared
+        # 262144 maximum — ~10 GB resident, several GB spilled back to system
+        # RAM, while the compositor is starved of the memory it needs to
+        # drive the displays. The default is bounded. A caller that knows its
+        # planned context still passes
         # one; a caller that does not gets a seat that fits rather than a seat
         # sized by whatever the artifact happens to declare.
         num_ctx = num_ctx or DEFAULT_NUM_CTX
@@ -458,7 +449,7 @@ class OllamaManager:
             body["tools"] = tools
 
         # `options` is an OLLAMA-NATIVE field. The OpenAI-compatible endpoint
-        # accepts the request and silently discards it — VERIFIED 2026-08-15:
+        # accepts the request and silently discards it — verified:
         #
         #   /v1/chat/completions  options.num_ctx=8192 -> ollama ps says 131072
         #   /api/chat             options.num_ctx=8192 -> ollama ps says 8192
@@ -503,7 +494,7 @@ class OllamaManager:
         # ordinary chat turn pinned ~8 GB for the full keep_alive and left the
         # card at 493 MiB free — under the display reserve, in the state that
         # already cost a monitor — for five minutes after the answer arrived
-        # (measured 2026-08-18: 9188 -> 493 -> 493 -> 493 across three turns).
+        # (measured: 9188 -> 493 -> 493 -> 493 MiB free across three turns).
         #
         # The dip while generating is the price of using the model at all; the
         # five pinned minutes afterwards are not. If the card is under the

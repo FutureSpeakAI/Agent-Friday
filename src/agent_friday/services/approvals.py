@@ -492,11 +492,11 @@ def _notify_pending(record: Dict[str, Any]) -> None:
             # actually navigates on (index.html: `n.target.workspace`); the
             # legacy `actions[0].workspace` fallback there drops `tab`. Both
             # are sent so older queued clients still land somewhere. The
-            # tab named here MUST exist -- until 2026-09-06 it did not, and a
-            # pending card's only "Review" affordance pointed at nothing, so
-            # every gated action waited in silence until it expired into
-            # denied (tests/unit/test_approvals_review_surface.py pins the
-            # UI handler to this exact target).
+            # tab named here MUST exist -- if it does not, a pending card's
+            # only "Review" affordance points at nothing, and every gated
+            # action waits in silence until it expires into denied
+            # (tests/unit/test_approvals_review_surface.py pins the UI
+            # handler to this exact target).
             target={"workspace": "system", "tab": "approvals"},
             actions=[{"type": "navigate", "label": "Review",
                       "workspace": "system", "tab": "approvals"}],

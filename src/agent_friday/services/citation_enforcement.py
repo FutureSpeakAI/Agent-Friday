@@ -41,8 +41,7 @@ If this ever needs to be right rather than roughly right, the answer is a model
 call, not a longer regex — and that is a design decision with its own latency
 cost, not a tweak to this file.
 
-STATUS, 2026-08-24 (second pass): the heuristic is now the FALLBACK, not the
-trigger. `judge_claims()` asks a model the one question the regex cannot
+CURRENT ROLE: the heuristic is the FALLBACK, not the trigger. `judge_claims()` asks a model the one question the regex cannot
 answer, and `routes/chat.py` enforces on its verdict; the regex decides only
 when no model could answer. A judge that fails never reads as "clean" — the
 caller falls through to the regex rather than to silence, because a silent pass

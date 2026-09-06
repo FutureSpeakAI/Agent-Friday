@@ -452,7 +452,7 @@ def test_a_model_whose_own_window_is_below_the_floor_says_so():
 
 # ── R10 — the sidekick survives every lease ──────────────────────────────────
 #
-# Stephen, 2026-08-15: "keep e2b awake so Friday is always alive." Before this,
+# The maintainer, 2026-08-15: "keep e2b awake so Friday is always alive." Before this,
 # a lease stood down the whole pinned set, so asking for depth made Friday mute
 # for the duration and the machine looked hung rather than busy.
 
@@ -506,7 +506,7 @@ def test_a_budget_below_the_whole_sweep_says_it_is_extrapolating():
 # ── R11: one model, several roles, charged once ──────────────────────────────
 #
 # Every golden above plans with NO overrides, so `_apply_overrides` — the whole
-# path Stephen's settings travel through — was uncovered. That is not incidental
+# path the maintainer's settings travel through — was uncovered. That is not incidental
 # to the bug these tests pin: R11's second sentence ("One model may hold several
 # roles and is counted ONCE against the budget") was documented from the start
 # and never implemented, and nothing failed, because nothing ever supplied an

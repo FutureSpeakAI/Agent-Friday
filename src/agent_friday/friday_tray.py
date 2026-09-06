@@ -106,15 +106,13 @@ class FridayTray:
         self.running = False
         self.icon: pystray.Icon | None = None
         self._lock = threading.Lock()
-        # Debounce guard (toolcall-integrity-v5, 2026-08-13 double-launch
-        # incident audit): read through start_server()'s existing self._lock
-        # and could not find an in-process race it fails to serialize — two
-        # concurrent restart_server() calls should already collapse to one
-        # spawn. The most likely explanation for two server processes born
-        # the same second is a SEPARATE, externally-launched process (a
-        # second start.bat / manual `python server.py`), which no in-tray
-        # lock can see — that's what server.py's own single-instance lock
-        # (_acquire_single_instance_lock) now guards against directly. This
+        # Debounce guard. start_server()'s existing self._lock already
+        # serializes in-process restarts — two concurrent restart_server()
+        # calls collapse to one spawn. Two server processes born the same
+        # second come from a SEPARATE, externally-launched process (a second
+        # start.bat / manual `python server.py`), which no in-tray lock can
+        # see — that is what server.py's own single-instance lock
+        # (_acquire_single_instance_lock) guards against directly. This
         # debounce is defense-in-depth for a double-click regardless: cheap,
         # removes any doubt, costs nothing when idle.
         self._restart_in_flight = threading.Lock()
@@ -244,20 +242,18 @@ class FridayTray:
     def _watchdog(self) -> None:
         """Poll every 5s and react to the server dying.
 
-        2026-09-04: this correctly detected a real crash (a stack overflow
-        that killed server.py outright — see KNOWN_ISSUES.md) within its
-        normal 5s cadence, and the only thing it did about it was relabel
-        its own tray menu. The server was down for 26 minutes before anyone
-        noticed, because nobody was looking at that menu — an hourly,
-        unrelated port check outside this app is what actually caught it.
+        Detecting a crash within the 5s cadence is not enough if the only
+        reaction is relabeling the tray menu: nobody is looking at that
+        menu, and the server can stay down for a long time before anyone
+        notices. Hence the notification below.
         `self.running == True and alive == False` is specifically the
         crash shape: a deliberate stop (Quit / Restart) already sets
         `self.running = False` synchronously in `stop_server()` before this
         loop's next poll, so this branch does not fire for those. No
         auto-restart here on purpose — resurrecting a crashed process on a
         loop can mask a repeating fault, and whether Friday restarts
-        herself is Stephen's call, not this watchdog's. A notification is
-        not that call; it's just telling him.
+        herself is the user's call, not this watchdog's. A notification is
+        not that call; it's just telling them.
         """
         while True:
             time.sleep(5)

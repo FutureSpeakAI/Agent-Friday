@@ -1,6 +1,6 @@
 """A harness failure is not a verdict about a model.
 
-On 2026-08-15 Stephen gated four models at once. They evicted each other from
+On 2026-08-15 the maintainer gated four models at once. They evicted each other from
 VRAM, every case paid a cold reload against a flat 120s budget, and the store
 recorded:
 

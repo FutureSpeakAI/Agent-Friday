@@ -461,7 +461,7 @@ def test_scoper_accepts_sub_questions_as_bare_strings():
 
 @pytest.mark.parametrize("text,expected", [
     # The regex bug: IGNORECASE \bus\b matched "US Supreme Court", so a news
-    # headline was treated as Stephen speaking about himself and withheld —
+    # headline was treated as the maintainer speaking about himself and withheld —
     # destroying exactly the value this layer exists to recover.
     ("Trump asks US Supreme Court to allow ballroom work to continue", False),
     ("The FDA approved a new diabetes medication after a trial", False),
@@ -484,7 +484,7 @@ def test_stephen_substance_requires_the_scrub_to_actually_separate(judging,
     "My custody hearing is on the 14th..." — and the scrubber found NOTHING to
     replace, because the sentence has no name, number or address. It is pure
     first-person substance. verify_outgoing passed it (it blocks at SENSITIVE;
-    this is PRIVATE), so a span the judge had just called Stephen's own private
+    this is PRIVATE), so a span the judge had just called the maintainer's own private
     material travelled verbatim.
 
     A scrub that replaced nothing did not separate identity from substance."""
@@ -520,7 +520,7 @@ def test_classifier_recall_gap_is_not_something_judgment_fixes():
     protection it does not provide.
 
     Found while verifying the gate live: these first-person sentences about
-    Stephen's own money and clients are rated PUBLIC by the deterministic
+    the maintainer's own money and clients are rated PUBLIC by the deterministic
     classifier, so they are sent WITHOUT ever being appealed. That is the
     keyword/embedding layer's recall, not a judgment failure — and it was true
     before the judgment gate existed. Judgment can only rescue; it never sees

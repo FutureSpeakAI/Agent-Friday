@@ -263,7 +263,7 @@ def test_voice_reply_cap_honors_setting_but_clamps():
 
 
 # ── the voice path must carry an authenticated session ────────────────────────
-# Regression for 2026-08-25: Stephen asked local voice for the news and was told
+# Regression for 2026-08-25: the maintainer asked local voice for the news and was told
 # it was prohibited "even though we were using local". The VAULT allowed it and
 # logged so (`[VAULT] ALLOW provider=cloud tier=TIER_1 check_action:search_news`).
 # What actually refused was governance ring policy: ring 2 is every network tool,

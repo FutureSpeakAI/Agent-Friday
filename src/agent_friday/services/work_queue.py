@@ -21,8 +21,8 @@ So: work is classed, parked, and drained in batches under one lease. The drain
 records both the batched cost and what the same items would have cost one at a
 time, because a saving that is claimed rather than measured is not a saving.
 
-Nothing here decides that work is heavy. That is Stephen's call — see
-`workflow_plan.py`, which asks him. This module only holds what he decided.
+Nothing here decides that work is heavy. That is the user's call — see
+`workflow_plan.py`, which asks them. This module only holds what they decided.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 CLASS_LEASE = {"heavy": "heavy_turn", "image": "image_job",
                "background": None, "interactive": None, "reflex": None}
 
-# What Stephen chose for a piece of work. Exactly the three options he named.
+# What the user chose for a piece of work. Exactly the three options offered.
 DISPOSITIONS = ("when_away", "now_local", "now_cloud")
 
 STATUSES = ("queued", "running", "done", "failed", "cancelled")

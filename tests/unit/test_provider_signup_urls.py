@@ -1,6 +1,6 @@
 """Every provider that asks for a key must say where to get one.
 
-Stephen, after setting Friday up on a second user's laptop 2026-08-26:
+The maintainer, after setting Friday up on a second user's laptop 2026-08-26:
 
     "The UI must also include clickable buttons that open the sign up pages
      for various API/MCP services Friday can use."

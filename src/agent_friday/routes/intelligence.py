@@ -32,7 +32,7 @@ intelligence_bp = Blueprint("intelligence", __name__)
 # it, so it is shown as unsuitable-for-this-job with the reason stated rather
 # than being silently absent.
 #
-# The labels are the words Stephen uses for these jobs, not the internal keys.
+# The labels are the words a user uses for these jobs, not the internal keys.
 
 ROLE_SPEC = [
     # (key, label, catalogue role, required modality, help)
@@ -75,7 +75,7 @@ ROLE_SPEC = [
      "Turns text into vectors so Friday can recall it later."),
 
     # THE WORKING ROLES (roles contract 1). Rule R11: these are chosen by
-    # Stephen, never inferred, and an unassigned one is an empty seat awaiting
+    # the user, never inferred, and an unassigned one is an empty seat awaiting
     # a choice -- not an error. They were unassignable until seat_binding got
     # capability keys for them, so "chosen by the user" described a choice the
     # UI offered no way to make.
@@ -351,7 +351,7 @@ def _costs_rollup():
 #: timer, so this is short enough to feel live and long enough to stop the poll
 #: paying for the same answer.
 _OLLAMA_OK_TTL_S = 25.0
-#: How long a refusal is remembered. MEASURED on Windows 2026-08-28: connecting
+#: How long a refusal is remembered. Measured on Windows: connecting
 #: to a closed localhost port costs ~2,005 ms (the stack retries the SYN before
 #: giving up) and a black-holed address costs the full 3,000 ms timeout. Not the
 #: microseconds loopback suggests. With the panel polling and no memory of the
@@ -531,13 +531,13 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
                 li.is_installed(mid), licence=spec.get("licence"))
              for mid, spec in li.MODELS.items()]
 
-    # 2026-09-05: D8's "one sentence, no rows" resolution (video_note below)
-    # predates local_video.py -- at the time, nothing on this machine could
-    # actually serve a video job, so a row would have been the exact
-    # seat-that-serves-nothing defect the comment names. Local video generation
-    # now exists (3 real, earned-availability Wan/CogVideoX models, same
-    # is_installed discipline as image), so it earns the same row treatment
-    # image gets rather than staying lumped into one static sentence.
+    # D8's "one sentence, no rows" resolution (video_note below) predates
+    # local_video.py -- with nothing able to serve a video job, a row would
+    # have been the exact seat-that-serves-nothing defect the comment names.
+    # Local video generation now exists (earned-availability Wan/CogVideoX
+    # models, same is_installed discipline as image), so it earns the same
+    # row treatment image gets rather than staying lumped into one static
+    # sentence.
     video = [row(mid, "video", spec.get("label") or spec.get("short"),
                 lvi.is_installed(mid), licence=spec.get("licence"))
             for mid, spec in lvi.MODELS.items()]

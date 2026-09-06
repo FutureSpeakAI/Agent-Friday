@@ -5,8 +5,8 @@ WHAT THIS FILE IS. `docs/design/implemented/headroom.md` §4.2 specifies a full 
 Headroom Contract: `working` / `away` / `yield`, each with a VRAM-slack floor
 and a RAM-available floor, on top of the display reserve. That full contract
 is **D1** (spec §13) — the default posture, and the exact slack/RAM numbers,
-are a trade between Friday's quality and the user's machine that only Stephen
-makes. **D1 is not decided, and this file does not build the Contract.**
+are a trade between Friday's quality and the user's machine that only the
+maintainer makes. **D1 is not decided, and this file does not build the Contract.**
 
 What this file DOES build is the one piece of §4.2 that needs no new number
 and is not blocked on D1: the **display reserve** alone. §2.2 of the spec
@@ -35,9 +35,9 @@ against `effective_baseline_mib()`, which DOES fold in the clamp (by way of
 `live_display_mib()`'s own `max(val, MIN_DISPLAY_RESERVE_MIB[...])`) once a
 live sample has been written into the profile. So the number the gate
 actually enforces (256) and the number the planner assumes (>= 2,560) have
-disagreed since the day both were written. The 2026-08-17 monitor loss
-happened at 322 MiB free; the gate as written today would still pass at that
-level.
+disagreed since the day both were written. A display was lost on the
+reference machine at 322 MiB free; the unclamped gate would still pass at
+that level.
 
 `resolve_display_reserve()` below is that reconciliation, and nothing more:
 it takes the SAME formula `hardware_profile.display_reserve_mib()` already

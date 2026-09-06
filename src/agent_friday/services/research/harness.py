@@ -27,16 +27,16 @@ from agent_friday.services.research.objects import (
 
 _log = logging.getLogger("friday.research")
 
-# These four are DEFAULTS, not addresses. They were measured on the inventory
-# of 2026-08-17 and every one of them was uninstalled the next day; the grind
-# then failed with "no usable JSON from gemma4:12b", which reads like a model
+# These four are DEFAULTS, not addresses. They reflect one measured inventory,
+# and an inventory changes; when a default is no longer installed the grind
+# fails with "no usable JSON from gemma4:12b", which reads like a model
 # refusing to comply rather than a model that is not there. `refresh_seats()`
 # rebinds them to what the daemon actually serves, and is called at the top of
 # every commission — not at import, because the daemon is often not up yet
 # when this module first loads.
 BRAIN = "gemma4:12b"        # judgment: reformulate, converse, done_when
 SIDEKICK = "gemma4:e2b"     # cheap structured work
-# Extraction seat, MEASURED 2026-08-17 on a 24,000-char page:
+# Extraction seat, measured on the reference machine on a 24,000-char page:
 #   gemma4:e4b   33.1s  no usable JSON at all
 #   gemma4:e2b   26.3s  6 passages
 #   gemma4:12b  192.6s  2 passages
@@ -99,11 +99,11 @@ def _extract_json(raw: str) -> dict | None:
 
 # ── Reading local-model output defensively ────────────────────────────────────
 #
-# THE GENERAL LESSON, learned the expensive way on 2026-08-17. A commission
-# produced 9 verified, correctly-cited findings and then failed at the last
-# step because the outline model returned `sections` as a list of heading
-# STRINGS rather than objects. Constrained JSON decoding guarantees valid JSON,
-# not the shape the prompt asked for.
+# THE GENERAL RULE. A commission can produce a full set of verified,
+# correctly-cited findings and then fail at the last step because the outline
+# model returned `sections` as a list of heading STRINGS rather than objects.
+# Constrained JSON decoding guarantees valid JSON, not the shape the prompt
+# asked for.
 #
 # The inversion worth naming: this codebase writes careful defensive readers at
 # the NETWORK boundary — see firecrawl._results_of, which handles `data` being
@@ -115,8 +115,7 @@ def _extract_json(raw: str) -> dict | None:
 # wrong way round.
 #
 # So every structural read of model output in this module goes through these.
-# The specific failures they prevent, each real and each present in the code
-# before this was written:
+# The specific failures they prevent:
 #   * a STRING where a list belonged -> iterating it yields CHARACTERS, so a
 #     query list becomes single-letter searches and a passage list becomes
 #     one-character "verbatim quotes" that then fail verification
@@ -504,20 +503,19 @@ def synthesize(c: Commission) -> dict | None:
 def _outline_sections(outline: dict, by_id: dict) -> list[dict]:
     """Normalize whatever the outline model returned into section dicts.
 
-    MEASURED FAILURE 2026-08-17: a run that produced 9 good, fully-verified
-    findings still FAILED, on
+    A run that has produced a full set of verified findings can still fail
+    here, on
 
         AttributeError: 'str' object has no attribute 'get'
 
-    because the model returned `sections` as a list of heading STRINGS rather
+    when the model returns `sections` as a list of heading STRINGS rather
     than the {heading, finding_ids} objects the prompt asked for. Constrained
     JSON decoding guarantees valid JSON, not the shape you wanted.
 
-    The irony worth recording: this module already guards exactly this in
-    _results_of() for Firecrawl's response, with a comment about how a shape
-    change would look like "the web returned nothing". The external API got the
-    defensive read and our own model output did not — and small local models
-    are far likelier to wander off a schema than a maintained API is.
+    The Firecrawl response already gets this defensive read in _results_of()
+    (a shape change there would look like "the web returned nothing"); model
+    output needs it at least as much, since small local models are far
+    likelier to wander off a schema than a maintained API is.
 
     A bare-string section keeps its heading and inherits every finding not yet
     claimed by a previous section, so the work survives a shape the model got
@@ -555,8 +553,8 @@ def _outline_sections(outline: dict, by_id: dict) -> list[dict]:
 def _pick_synthesis_seat(c: Commission, n_findings: int) -> tuple[str, str]:
     """Which seat writes — and does the desktop have room for it?
 
-    The heavy seat evicts the brain and wants several GB. Stephen lost a
-    monitor to VRAM pressure today, so the headroom check is a precondition
+    The heavy seat evicts the brain and wants several GB. VRAM pressure can
+    take down the user's display, so the headroom check is a precondition
     here, not a nicety: if the card cannot spare the memory with the display's
     reserve held back, synthesis runs on the resident brain instead and the
     colophon says why.
@@ -582,8 +580,8 @@ _MD_IMG = re.compile(r"!\[([^\]]*)\]\([^)]*\)")     # ![alt](url) -> alt
 def _norm(s: str) -> str:
     """Normalize for receipt matching: content, not markup.
 
-    MEASURED DEFECT, 2026-08-17. Extraction returns quotes with markdown
-    stripped — the 12b returned
+    Extraction returns quotes with markdown stripped — the 12b returns, for
+    example,
 
         "Launch date | April 1, 2026, 22:35:12 UTC (6:35:12p.m. EDT)"
 
@@ -592,10 +590,10 @@ def _norm(s: str) -> str:
         "Launch date | April 1, 2026, 22:35:12 [UTC](https://...) (6:35:12p.m. [EDT](https://...))"
 
     Removing link syntax is a REASONABLE thing for a model to do, and a raw
-    string comparison called the result fabricated. So verification was
-    striking TRUE, correctly-sourced claims over markup — a false positive in
-    the one mechanism whose value depends on being believed. A kill count
-    inflated by punctuation teaches the reader to ignore kill counts.
+    string comparison would call the result fabricated — striking TRUE,
+    correctly-sourced claims over markup, a false positive in the one
+    mechanism whose value depends on being believed. A kill count inflated by
+    punctuation teaches the reader to ignore kill counts.
 
     What is normalized: markdown link and image syntax (the destination is
     dropped, the visible text kept), emphasis markers, table pipes, and
@@ -678,11 +676,10 @@ def _pseudo_toolcall_check(draft: dict) -> bool:
     Reuses the Source Dossier's existing integrity check rather than inventing
     a second one with different rules.
 
-    find_pseudo_toolcalls() takes a REQUIRED tool_names argument (gauntlet-
-    2026-09-03 F57: this call site omitted it, which raised TypeError on
-    every invocation, silently caught below and returned as "cannot check,
-    assume it's fine" -- the check never actually ran, at all, for any
-    draft, since this function was written). Uses the same global registry
+    find_pseudo_toolcalls() takes a REQUIRED tool_names argument; omitting
+    it raises TypeError, which the except below would swallow as "cannot
+    check, assume it's fine" -- so the argument must always be passed or the
+    check silently never runs. Uses the same global registry
     routes/chat.py's own dossier check uses for the identical concern (a
     generated document narrating tool calls that didn't happen) -- this
     module calls web_fetch/web_search directly rather than through the

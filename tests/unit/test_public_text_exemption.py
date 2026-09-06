@@ -1,4 +1,4 @@
-"""Third-party published news is not Stephen's private material.
+"""Third-party published news is not the maintainer's private material.
 
 The defect: 9 of 120 public headlines classified TIER_3 on the legal and
 financial keyword rules — "Trump asks US Supreme Court to allow ballroom work
@@ -7,7 +7,7 @@ paragraph made the whole weekly story block sensitive, the gate withheld it,
 and Friday received a folder of redaction notices and honestly refused to write
 an editorial from them.
 
-Those rules exist to keep Stephen's legal and financial affairs on the machine.
+Those rules exist to keep the maintainer's legal and financial affairs on the machine.
 A headline the BBC published is neither.
 
 This exemption loosens a gate, so these tests are mostly about what it does

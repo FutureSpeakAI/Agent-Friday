@@ -1,6 +1,6 @@
-"""The workflow proposal — Friday proposes, Stephen disposes.
+"""The workflow proposal — Friday proposes, the maintainer disposes.
 
-Stephen, 2026-08-15: "The user decides when a task is heavy." These pin that
+The maintainer, 2026-08-15: "The user decides when a task is heavy." These pin that
 Friday's judgement only ever raises the question, that the three executions he
 named are the menu, that the vault constrains the MENU rather than being
 applied silently afterwards, and that "choose for me" says what it chose.
@@ -69,7 +69,7 @@ def test_a_per_task_cloud_choice_on_vault_work_is_refused_not_downgraded():
 # ── choose for me ────────────────────────────────────────────────────────────
 
 def test_choose_for_me_records_that_friday_chose_and_why():
-    """"Friday chose" is not something Stephen can disagree with. "Friday chose
+    """"Friday chose" is not something the maintainer can disagree with. "Friday chose
     local because two steps read your vault" is."""
     p = wp.build("thing", _tasks(vault=True))
     out = wp.decide(p["id"], choose_for_me=True)
@@ -136,4 +136,4 @@ def test_heaviness_only_ever_raises_the_question():
     assert wp.looks_heavy("refactor every call site") is True
     assert wp.looks_heavy("what time is it") is False
     # And nothing in this module acts on it — build() takes the classes it is
-    # given. The signal reaches Stephen, not the scheduler.
+    # given. The signal reaches the maintainer, not the scheduler.

@@ -25,15 +25,11 @@ if TYPE_CHECKING:
 _JOBS: Dict[str, dict] = {}
 _JOBS_LOCK = threading.RLock()
 
-# gauntlet-2026-09-03 F71: _run() below created a fresh tempdir per worker
-# job and never removed it -- no cleanup on success, failure, timeout, or
-# exception, ever. Found via directory-count investigation of a temp-home
-# leak this audit had (three times, F47/F51/F65) mis-attributed entirely
-# to test infrastructure: this ONE unconditional leak in production code
-# accounted for 1,533 of ~1,569 leaked friday_*-prefixed directories in
-# %TEMP%, versus 4 for the test-isolation pattern all three prior fixes
-# targeted. Small in total bytes (under 1MB observed) but unconditional
-# and unbounded in count, in code that also runs outside any test.
+# _run() below creates a fresh tempdir per worker job. Without a sweep,
+# nothing removes it -- on success, failure, timeout, or exception -- and
+# the count of leaked friday_*-prefixed directories in %TEMP% grows without
+# bound in code that also runs outside any test (small in bytes, unbounded
+# in count; see the 2026-09 gauntlet audit in docs/history/audits/).
 #
 # Not deleted immediately after each run: a completed job's `artifacts`
 # are file PATHS inside this directory, surfaced to callers (orchestrator.
@@ -46,9 +42,9 @@ _JOBS_LOCK = threading.RLock()
 # production code rather than test isolation.
 _WORKDIR_RETENTION_S = 3600  # 1 hour -- ample time for a caller to read artifacts
 
-# Environment a worker script receives. 2026-09-06: this adapter spawned
-# with a copy of the whole os.environ -- the FULL server environment, every provider
-# key start.bat exported and FRIDAY_PASSWORD with it -- to a script whose
+# Environment a worker script receives. A worker must never inherit a copy
+# of the whole os.environ -- the FULL server environment, every provider
+# key start.bat exported and FRIDAY_PASSWORD with it -- because the script's
 # source is the caller's own `prompt` field. Two callers reach it:
 # POST /api/orchestrator/delegate (adapter_type=PYTHON_SCRIPT) and the
 # federation compute route's `analysis.run` capability, whose only trust

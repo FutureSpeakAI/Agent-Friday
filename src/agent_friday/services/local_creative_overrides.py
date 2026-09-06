@@ -4,7 +4,7 @@ Agent Friday — per-machine local creative model overrides.
 Some on-device generation models cannot ship in provider_registry.py, which is
 identical on every install: FLUX.1 [dev]'s licence forbids commercial use of
 the MODEL itself (its OUTPUTS are unrestricted — the model is not), and that
-restriction is Stephen's alone to accept for his own machine. Baking it into
+restriction is the operator's alone to accept for their own machine. Baking it into
 the shipped catalog would mean every install inherits a commitment it never
 agreed to.
 
@@ -128,7 +128,7 @@ if __name__ == "__main__":
         "licence": "FLUX.1 [dev] Non-Commercial License v1.1.1",
         "licence_note": "Outputs may be used for any purpose including sale. "
                         "The MODEL itself may not be used commercially — this "
-                        "is registered for Stephen's personal use only and "
+                        "is registered for the operator's personal use only and "
                         "must never be added to provider_registry.py or any "
                         "shipped default catalog.",
     })

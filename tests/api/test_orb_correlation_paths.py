@@ -1,7 +1,7 @@
 """2026-08-14 defect #5 — orb/trace correlation through NON-interactive
 spawn paths.
 
-Stephen saw gemma4:e4b process orbs whose thread views were empty. The B3
+The maintainer saw gemma4:e4b process orbs whose thread views were empty. The B3
 enrichment (task_id on orbs, lifecycle + tool log lines, /api/tasks join)
 must hold on the scheduler spawn path and the seat-fallback path — not just
 interactive chat spawns. These tests pin each hop of the chain.

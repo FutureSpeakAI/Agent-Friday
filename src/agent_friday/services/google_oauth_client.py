@@ -1,6 +1,6 @@
 """Which Google OAuth client Friday uses, and what to tell the user about it.
 
-Two paths, both first-class (Stephen's decision, 2026-08-26: "accept the
+Two paths, both first-class (the maintainer's ruling: "accept the
 unverified app warning AND bring your own with a walkthru. Let's do both.")
 
   * BUNDLED — ships with Friday. One click. Shows Google's unverified-app
@@ -27,7 +27,7 @@ What it is NOT is a key to anyone's data. It identifies the APPLICATION, not a
 user. Possessing it lets someone construct a consent screen that says "Agent
 Friday" — it does not read a single mailbox. Every actual grant still requires
 that user's interactive Google sign-in, and the resulting token is encrypted
-on their own machine and never transits anything Stephen runs.
+on their own machine and never transits anything the maintainer runs.
 
 The real exposure is reputational and quota-shaped, not confidential: someone
 could impersonate Friday's consent screen, or burn the project's user cap.
@@ -43,8 +43,9 @@ THE CREDENTIAL IS NOT FILLED IN HERE
 ------------------------------------
 The constants below are EMPTY, and everything in this module treats empty as
 "there is no bundled client" — Friday falls through to BYO exactly as it did
-before. Only Stephen can mint the real values: they belong to his Google Cloud
-project and name him as the publisher on the consent screen. The steps are in
+before. Only the maintainer can mint the real values: they belong to the
+project's Google Cloud project and name the maintainer as the publisher on
+the consent screen. The steps are in
 docs/design/active/google-oauth-verification-checklist.md.
 
 Half a client is no client. An id with no secret cannot complete a flow, so
@@ -139,9 +140,9 @@ def classify_error(error: str | None, description: str | None = None) -> str:
 def explain_error(code: str) -> str:
     """The classification as something a person can act on.
 
-    Never names a file or a directory. That sentence — "place a Desktop OAuth
-    client JSON at ~/.friday/credentials.json" — is the wall the second user hit on
-    2026-08-26 and the reason this whole module exists.
+    Never names a file or a directory. A sentence like "place a Desktop OAuth
+    client JSON at ~/.friday/credentials.json" is a wall for a non-technical
+    user, and avoiding it is the reason this module exists.
     """
     if code == CAP_REACHED:
         return (
@@ -377,9 +378,9 @@ def active_client(discover=None):
     Order, and every step of it is deliberate:
 
       1. a client the user PASTED through the walkthrough
-      2. a client already on disk or in the environment (existing installs --
-         Stephen has a client_secret*.json today, and adding a new storage
-         location must not strand it)
+      2. a client already on disk or in the environment (existing installs
+         may carry a client_secret*.json, and adding a new storage location
+         must not strand it)
       3. the BUNDLED client
       4. nothing
 

@@ -20,20 +20,14 @@ AUDIT_LOG = AUDIT_DIR / "mcp_audit.log"
 ALLOWLIST_FILE = AUDIT_DIR / "extension_allowlist.json"
 AUDIT_FILE = AUDIT_DIR / "extension_audit.jsonl"
 
-# CORRECTION (F67, external review commissioned by Stephen, ruled on
-# 2026-09-04): this used to be ENV_BLOCKLIST, a denylist of named secrets
-# stripped from the FULL inherited environment before spawning a
-# sandboxed/untrusted stdio MCP server. That shape failed three times in
-# one audit cycle for the same structural reason each time -- F32 built
-# it, F44 "fixed" it by naming two env vars (FRIDAY_VAULT_KEY,
-# FRIDAY_HMAC_SECRET) that don't exist anywhere in this codebase while the
-# real one (FRIDAY_VAULT_PASSPHRASE) stayed unlisted, and F67 then found
-# six more live, real provider-key env vars (MISTRAL_API_KEY,
-# DEEPSEEK_API_KEY, XAI_API_KEY, FIREWORKS_API_KEY, PERPLEXITY_API_KEY,
-# COHERE_API_KEY) that had never been added at all
-# (docs/history/audits/gauntlet-2026-09-03/findings.jsonl). A denylist has to name
-# every secret that will ever exist; every new provider this codebase
-# adds is a fresh chance to forget one. Stephen's ruling: invert it.
+# This is an ALLOWLIST, not a denylist of named secrets stripped from the
+# FULL inherited environment before spawning a sandboxed/untrusted stdio MCP
+# server. A denylist has to name every secret that will ever exist, and it
+# fails structurally: names drift from the real variables (e.g. listing
+# FRIDAY_VAULT_KEY while the real one is FRIDAY_VAULT_PASSPHRASE), and every
+# new provider key this codebase adds is a fresh chance to forget one (see
+# the 2026-09 gauntlet audit in docs/history/audits/). The maintainer's
+# ruling: invert it.
 #
 # SANDBOXED_ENV_ALLOWLIST names every environment variable a sandboxed
 # subprocess is given -- everything else in the parent process's
@@ -297,18 +291,18 @@ def assess_config(cfg: dict) -> dict:
     return {"servers": results, "summary": summary}
 
 
-# F9: gate_mcp_config's security_note used to be attached only to the
-# in-memory deepcopy handed to MCPManager.load_config() -- MCPServerProcess /
-# MCPServerHTTP never store it, and the on-disk mcp_servers.json is
-# deliberately left untouched (so a later fix to the command doesn't require
-# a manual config edit to re-enable). With nowhere durable to read it back,
-# both status surfaces (services/connectors.py's _status_for_mcp and
-# routes/core_routes.py's /api/mcp/status) saw only the live handshake status
-# 'disabled', which matches none of their explicit branches, and fell into a
-# generic "failed to start" / bare "disabled" catch-all -- the real reason was
-# computed and then thrown away. This name-keyed registry is (re)populated by
-# every gate_mcp_config() call (each boot/reload) and is the durable lookup
-# both resolvers now consult.
+# gate_mcp_config's security_note is attached only to the in-memory deepcopy
+# handed to MCPManager.load_config() -- MCPServerProcess / MCPServerHTTP never
+# store it, and the on-disk mcp_servers.json is deliberately left untouched
+# (so a later fix to the command doesn't require a manual config edit to
+# re-enable). Without somewhere durable to read it back, both status surfaces
+# (services/connectors.py's _status_for_mcp and routes/core_routes.py's
+# /api/mcp/status) would see only the live handshake status 'disabled', which
+# matches none of their explicit branches, and fall into a generic "failed to
+# start" / bare "disabled" catch-all -- the real reason computed and then
+# thrown away. This name-keyed registry is (re)populated by every
+# gate_mcp_config() call (each boot/reload) and is the durable lookup both
+# resolvers consult.
 _BLOCKED_REGISTRY: dict[str, str] = {}
 
 
@@ -330,7 +324,7 @@ def gate_mcp_config(cfg: dict) -> dict:
     down — callers wrap this in try/except. Also (re)populates
     _BLOCKED_REGISTRY (see get_blocked_reason/blocked_servers) so a security
     block is legible to /api/connectors and /api/mcp/status, not just to the
-    in-memory config this function returns (F9).
+    in-memory config this function returns.
     """
     import copy
     if not isinstance(cfg, dict):
@@ -359,16 +353,16 @@ def gate_mcp_config(cfg: dict) -> dict:
 
 
 # ── Allowlist ─────────────────────────────────────────────────────────────────
-# Q22: is_allowlisted()/add_to_allowlist() used to key approval purely by
-# server NAME. assess_server() promotes any future "warn"-level verdict for an
+# is_allowlisted()/add_to_allowlist() must not key approval purely by server
+# NAME. assess_server() promotes any future "warn"-level verdict for an
 # allowlisted name straight to "allow" -- so editing an already-approved
 # server's launch command to something materially different (still
 # warn-tier only; a block-tier finding is never bypassed by the allowlist)
-# silently inherited the old approval with zero re-review. The allowlist is
-# now keyed by a fingerprint of the approved command/args (or url, for a
-# remote server) alongside the name: a name is only "still allowlisted" while
-# its current launch spec hashes to what was actually approved. Editing the
-# command drops it back to normal warn-tier handling until it's re-approved.
+# would silently inherit the old approval with zero re-review. The allowlist
+# is therefore keyed by a fingerprint of the approved command/args (or url,
+# for a remote server) alongside the name: a name is only "still allowlisted"
+# while its current launch spec hashes to what was actually approved. Editing
+# the command drops it back to normal warn-tier handling until it's re-approved.
 
 def _normalize_command(spec: dict) -> str:
     """A stable string form of a server's launch spec, for fingerprinting."""
@@ -411,15 +405,15 @@ def get_allowlist() -> dict:
     reachable via a direct add_to_allowlist(name) call for a name with no
     matching entry in mcp_servers.json — e.g. a caller/test working entirely
     off explicit specs rather than the on-disk config) and is treated as
-    still-trusted-by-name, matching the pre-fix behavior for that narrow case
-    rather than permanently locking such a name out."""
+    still-trusted-by-name for that narrow case rather than permanently
+    locking such a name out."""
     try:
         if ALLOWLIST_FILE.exists():
             data = json.loads(ALLOWLIST_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return {str(k): (v if v is None else str(v)) for k, v in data.items()}
             if isinstance(data, list):
-                # Legacy (pre-Q22-fix) format: names only, no fingerprint was
+                # Legacy format: names only, no fingerprint was
                 # ever recorded. Nothing to match against, so these fall
                 # through to normal (unapproved) handling until re-approved --
                 # the correct outcome here, not a silent grandfather-in of an
@@ -432,7 +426,7 @@ def get_allowlist() -> dict:
 
 def is_allowlisted(name: str, spec: dict = None) -> bool:
     """True only if *name* is approved AND its current launch command still
-    matches the fingerprint that was approved (Q22). A name-only match with a
+    matches the fingerprint that was approved. A name-only match with a
     changed command is treated as NOT allowlisted."""
     if not name:
         return False

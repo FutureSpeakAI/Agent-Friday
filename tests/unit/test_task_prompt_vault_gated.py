@@ -22,8 +22,8 @@ INJECTION POINT: this uses the vault's "== ACTIVE TASKS ==" section
 (`_build_context_prompt`, model_router.py — hard-tagged TIER_2, unconditional)
 rather than SELF.md/self-knowledge. WO-1 (2026-08-25, same session) made
 self-knowledge always gate-exempt by design — it is Friday's own
-self-description, not Stephen's personal data — so it is no longer a valid
-TIER_2 probe. Active tasks are genuinely Stephen's data and remain
+self-description, not the maintainer's personal data — so it is no longer a valid
+TIER_2 probe. Active tasks are genuinely the maintainer's data and remain
 tier-gated exactly as before.
 """
 from __future__ import annotations

@@ -66,12 +66,11 @@ def profile_fingerprint(profile: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Seed measurements — taken 2026-08-14 on the reference instance
+#  Seed measurements — taken on the reference instance
 #
 #  Medians of 5 warm runs after a separate cold load; VRAM read from the
 #  daemon's own /api/ps (size_vram / size), not inferred from nvidia-smi deltas.
-#  None of these models had ever been measured: 12b, 26b and e2b were pulled
-#  hours before, after every prior audit document was written.
+#  Each row's `measured_at` records the date of that measurement.
 # ─────────────────────────────────────────────────────────────────────────────
 
 P1_FINGERPRINT = "NVIDIA GeForce RTX 4070|12282|32620"
@@ -140,8 +139,8 @@ SEED_MEASUREMENTS: dict = {
              "pct_gpu": 100, "cold_load_s": 3.0,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
         ],
-        # Image footprints, headroom.md §12 Phase 2.3 -- [Stephen / GPU],
-        # measured 2026-09-04 under the Arbiter's own `image_job` lease
+        # Image footprints, headroom.md §12 Phase 2.3, measured on the
+        # reference machine under the Arbiter's own `image_job` lease
         # (`friday measure <model_id>`, `footprint_measure.measure_image_model`).
         # These rows are written as plain dicts rather than through
         # `make_footprint()` because SEED_MEASUREMENTS (this dict) is defined
@@ -838,8 +837,8 @@ def store_entry(model_id: str, rec: dict, profile: dict) -> dict:
 # The same weights can arrive twice under two names -- once when Ollama pulls
 # them and once when they are copied into Friday's own store -- and then the
 # picker offers two rows that are the same model and the budget charges it
-# twice. Found 2026-08-18: `qwen3-embed:0.6b-q8` (store, 639,150,592 bytes) and
-# `qwen3-embedding:0.6b` (daemon, 644,245,094 bytes) were one 0.6B embedder
+# twice. Example: `qwen3-embed:0.6b-q8` (store, 639,150,592 bytes) and
+# `qwen3-embedding:0.6b` (daemon, 644,245,094 bytes) are one 0.6B embedder
 # wearing two labels.
 #
 # `installed_entries` already dedupes, but only on an exact id match, which is
@@ -848,7 +847,7 @@ def store_entry(model_id: str, rec: dict, profile: dict) -> dict:
 #
 # Canonical form is the UPSTREAM name -- what `ollama list` shows and what
 # someone would search for -- because that is the name the rest of the world
-# uses and the one his settings already contain.
+# uses and the one the user's settings already contain.
 MODEL_ALIASES = {
     "qwen3-embed:0.6b-q8": "qwen3-embedding:0.6b",
     "qwen3-embed:0.6b": "qwen3-embedding:0.6b",
@@ -911,7 +910,7 @@ def duplicate_candidates(entries):
     """Ids that look like the same artifact under different names.
 
     An alias table only knows the duplicates someone has already met. This is
-    the standing check for the ones nobody has met yet -- and Stephen's
+    the standing check for the ones nobody has met yet -- and a user's
     inventory churns constantly, so there will be more.
 
     Deliberately advisory: it reports suspicion, it does not merge anything.

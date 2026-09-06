@@ -1,7 +1,7 @@
 """
-Agent Friday — the workflow proposal: Friday proposes, Stephen disposes.
+Agent Friday — the workflow proposal: Friday proposes, the user disposes.
 
-Stephen, 2026-08-15, on who decides a task is heavy:
+The maintainer's ruling on who decides a task is heavy:
 
     "The user decides when a task is heavy; perhaps Friday should present a
      custom workflow UI with a representation of the tasks it will execute,
@@ -9,7 +9,7 @@ Stephen, 2026-08-15, on who decides a task is heavy:
      or select 'choose for me' as an option as well."
 
 So heaviness is a QUESTION Friday raises, never a decision she makes. This
-module builds the thing she puts in front of him: the tasks she intends to
+module builds the thing she puts in front of the user: the tasks she intends to
 run, what each would cost, and the three ways it could go.
 
     when_away   parked, drained under one lease while the machine is idle
@@ -25,8 +25,8 @@ therefore CANNOT run in the cloud — so `now_cloud` is not offered for it, and
 the reason is shown on the disabled option. Offering a choice the router would
 overrule would be a lie in the interface.
 
-**No silent default.** If Friday thinks work might be heavy, she asks. If he
-does not want to think about it, "choose for me" picks — and then SAYS what it
+**No silent default.** If Friday thinks work might be heavy, she asks. If the
+user does not want to think about it, "choose for me" picks — and then SAYS what it
 picked and why, so a handed-back decision is still legible.
 """
 from __future__ import annotations
@@ -81,7 +81,7 @@ def estimate_task(detail: str, cls: str, seat_hint: str | None = None,
     """(seconds local, seconds cloud) for one task, and how it was reached.
 
     An estimate, and labelled as one. The point is not precision — it is giving
-    Stephen a basis for choosing between "wait for this" and "pay for this".
+    the user a basis for choosing between "wait for this" and "pay for this".
     """
     tokens = est_tokens or max(256, min(4096, len(detail or "") // 2))
     tok_s = SEAT_TOK_S.get(seat_hint or "", None)
@@ -109,7 +109,7 @@ def looks_heavy(text: str) -> bool:
 
 def build(title: str, tasks: list, *, summary: str = "",
           workflow_id: str | None = None) -> dict:
-    """Turn a list of intended tasks into the object Stephen decides on.
+    """Turn a list of intended tasks into the object the user decides on.
 
     Each incoming task is a dict with at least `title` and `detail`, and
     optionally `cls`, `seat_hint`, `tools`, `touches_vault`, `est_tokens`,
@@ -182,7 +182,7 @@ def recommend(prop: dict) -> dict:
     """What "choose for me" picks, and — always — why it picked it.
 
     A handed-back decision still has to be legible. "Friday chose" is not an
-    answer Stephen can disagree with; "Friday chose local because two of these
+    answer the user can disagree with; "Friday chose local because two of these
     steps read your vault" is.
     """
     blocked = {b["option"] for b in prop.get("blocked") or []}
@@ -229,12 +229,12 @@ def _dur(seconds: float) -> str:
 def decide(proposal_id: str, execution: str | None = None, *,
            choose_for_me: bool = False,
            per_task: dict | None = None) -> dict:
-    """Record Stephen's choice and enqueue the work accordingly.
+    """Record the user's choice and enqueue the work accordingly.
 
     `per_task` maps task id -> execution, for when one step of a workflow wants
     different treatment from the rest. A per-task choice that the vault rule
-    forbids is refused with its reason rather than quietly downgraded: he asked
-    for something specific and is owed either that or an explanation.
+    forbids is refused with its reason rather than quietly downgraded: the user
+    asked for something specific and is owed either that or an explanation.
     """
     prop = load(proposal_id)
     if prop is None:

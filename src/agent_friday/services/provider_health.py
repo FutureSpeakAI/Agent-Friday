@@ -172,7 +172,7 @@ def _provider(name):
 def _key_state(prov) -> str:
     """'ok' (a usable key exists, env var or decryptable store entry),
     'unreadable' (a key is stored but does not decrypt), or 'missing' (no
-    key anywhere). F68: distinguishes "never configured" from "configured
+    key anywhere). Distinguishes "never configured" from "configured
     but broken" so _check()'s detail message can say which one is true,
     instead of both collapsing into the same generic "no API key"."""
     auth = (prov or {}).get("auth") or {}
@@ -246,8 +246,8 @@ def _check(name, deep=False) -> dict:
 
     if ptype == "comfyui":
         # auth:{"type":"none"} means _has_key() below would short-circuit to
-        # True unconditionally and never actually check anything (F2) — a
-        # ComfyUI server that isn't running reported "ok" forever.
+        # True unconditionally and never actually check anything — a
+        # ComfyUI server that isn't running would report "ok" forever.
         try:
             from agent_friday.services.local_image import is_reachable
             ok = is_reachable()
@@ -260,8 +260,8 @@ def _check(name, deep=False) -> dict:
     if ptype == "higgsfield":
         # Same auth:{"type":"none"} shape as comfyui, but a correct liveness
         # check already exists — provider_registry.is_provider_available()
-        # checks the MCP connector's actual OAuth/reachability state. This
-        # module just never called it (F2).
+        # checks the MCP connector's actual OAuth/reachability state, so
+        # this module must call it rather than trusting the auth shape.
         try:
             from agent_friday.services.provider_registry import get_provider_registry
             ok = get_provider_registry().is_provider_available(name)
@@ -273,16 +273,15 @@ def _check(name, deep=False) -> dict:
 
     _ks = _key_state(prov)
     if _ks != "ok":
-        # F68: before provider_key_status() was fixed to actually attempt a
-        # decrypt, _has_key() read its old file-existence-only "connected"
-        # for an undecryptable key and this whole branch was skipped --
-        # such a provider fell through to the shallow-path "ok"/"key
-        # present" return further below, reporting a BROKEN key as
-        # healthy. Now that _key_state() can say "unreadable", give it its
-        # own accurate detail instead of collapsing back into the generic
-        # "no API key" a never-configured provider gets -- the two are not
-        # the same fact and Stephen's own situation (3 stored keys, all
-        # undecryptable) needed to be visibly distinct from "not set up".
+        # provider_key_status() must actually attempt a decrypt: a
+        # file-existence-only "connected" for an undecryptable key would
+        # skip this branch and fall through to the shallow-path "ok"/"key
+        # present" return further below, reporting a BROKEN key as healthy.
+        # An "unreadable" key gets its own accurate detail instead of
+        # collapsing into the generic "no API key" a never-configured
+        # provider gets -- the two are not the same fact, and a user whose
+        # stored keys no longer decrypt must see something visibly distinct
+        # from "not set up".
         detail = ("stored key present but could not be decrypted -- "
                   "reconnect this provider in Settings") if _ks == "unreadable" \
                  else "no API key"
@@ -321,10 +320,9 @@ def _check(name, deep=False) -> dict:
         # billed async task, so "probe with a 1-token completion" does not
         # exist here. Its one free, authoritative round trip is the account
         # credit balance (GET /chat/credit): it requires a valid key, costs
-        # nothing, and creates no task. Measured live 2026-09-06: a kie.ai key
-        # that decrypts fine (config: ok) was being reported "down" by the
-        # generic /models fallback below, which 404s for kie.ai every time —
-        # this is that fix.
+        # nothing, and creates no task. Without this branch a kie.ai key that
+        # decrypts fine (config: ok) is reported "down" by the generic /models
+        # fallback below, which 404s for kie.ai every time.
         try:
             from agent_friday.services import kie_generate as _kie
             return _kie.check_credentials(name)
@@ -346,17 +344,16 @@ def _check(name, deep=False) -> dict:
 _PROBE_TTL_S = 60.0        # probes cost tokens; /api/health is polled often
 _PROBE_CACHE: dict = {}    # provider -> (ts, result)
 _PROBE_PROMPT = "hi"
-# A ONE-token budget cannot reliably prove inference works. VERIFIED live
-# 2026-08-15: /api/health reported `anthropic: down — empty completion` while
-# Anthropic was serving chat perfectly well, because a 1-token completion can
-# stop before any text block is emitted. Same failure shape as the thinking
-# models, which spend a small budget reasoning and return content=''.
+# A ONE-token budget cannot reliably prove inference works: /api/health can
+# report `anthropic: down — empty completion` while Anthropic is serving chat
+# perfectly well, because a 1-token completion can stop before any text block
+# is emitted. Same failure shape as the thinking models, which spend a small
+# budget reasoning and return content=''.
 #
 # 16 tokens is still a trivial spend (this is cached for _PROBE_TTL_S) and is
 # enough for every provider to actually say something. A health check that
 # reports down on a healthy system destroys trust in the signal just as surely
-# as one that reports ok on a broken one — and this one was doing it to BOTH
-# providers at once.
+# as one that reports ok on a broken one.
 _PROBE_MAX_TOKENS = 16
 
 
@@ -394,22 +391,20 @@ def resident_model_for(prov) -> str | None:
     whichever role names this provider — the two are no longer split apart:
     Anthropic keeps ONE extra fallback (the legacy flat `orchestrator_model`
     field, pre-dating `capability_routing`, with its own id-format guard —
-    see the 2026-08-14 note below) that nothing else has a reason to share.
+    see the note below) that nothing else has a reason to share.
 
-    2026-09-03: before `_capability_routing_model_for` existed, every
-    provider type that was not `ollama` or `anthropic` fell straight through
-    to `(prov.get("models") or [None])[0]` — the provider descriptor's own
+    Why `_capability_routing_model_for` is generic: a provider type that is
+    not `ollama` or `anthropic` would otherwise fall straight through to
+    `(prov.get("models") or [None])[0]` — the provider descriptor's own
     STATIC model list. That list is empty by design for a discovery-based
     aggregator (OpenRouter, HuggingFace, Groq: their whole point is looking
-    models up live, not hardcoding one), so `resident_model_for` silently
-    returned None for every one of them and the health probe reported
-    "down — no base_url or model" regardless of whether the provider,
-    the key, or the user's chosen model were fine. OpenRouter carried that
-    for three weeks (`capability_routing.orchestrator` pointed at it with a
-    real, working model the whole time) before anyone noticed, because
-    Anthropic silently absorbed the actual traffic — see
+    models up live, not hardcoding one), so `resident_model_for` would
+    silently return None for every one of them and the health probe would
+    report "down — no base_url or model" regardless of whether the provider,
+    the key, or the user's chosen model were fine — while Anthropic silently
+    absorbs the actual traffic (see
     `docs/audits/orchestrator-fallback-cost-2026-09-03.md` for what that
-    fallback cost. A per-provider-type elif is exactly the shape that bug
+    fallback costs). A per-provider-type elif is exactly the shape that bug
     keeps recurring in, so this reads the user's actual configuration
     instead of adding a third (or fourth, or fifth) name to a list.
     """
@@ -431,17 +426,16 @@ def resident_model_for(prov) -> str | None:
             installed = None
         if installed:
             names = {m.get("name") for m in installed}
-            # 2026-08-14: local_model pointed at DELETED gemma4:latest, so
-            # the probe reported the healthy daemon as down ("no output").
-            # Probe a model that actually exists — the configured one when
-            # installed, else the smallest installed.
+            # local_model can point at a DELETED tag, which would make the
+            # probe report the healthy daemon as down ("no output"). Probe a
+            # model that actually exists — the configured one when installed,
+            # else the smallest installed.
             #
-            # 2026-08-14 (second defect, same line): "smallest installed" is
-            # how the probe ended up sending qwen3-embedding:0.6b — a 639 MB
-            # EMBEDDING model — to /api/generate. An embedding model cannot
-            # produce text, so that probe returns empty forever and the entire
-            # local provider reports `down` while the daemon is healthy.
-            # Exclude anything that cannot generate before choosing.
+            # Second constraint on the same line: "smallest installed" can be
+            # an EMBEDDING model (e.g. a 639 MB qwen3-embedding:0.6b), which
+            # cannot produce text, so that probe returns empty forever and the
+            # entire local provider reports `down` while the daemon is
+            # healthy. Exclude anything that cannot generate before choosing.
             def _gen(name):
                 try:
                     from agent_friday.services.residency_catalog import (
@@ -462,9 +456,9 @@ def resident_model_for(prov) -> str | None:
     if configured:
         return configured
     if ptype == "anthropic":
-        # 2026-08-14: orchestrator_model held the llama.cpp brain's alias,
-        # and the probe sent it to Anthropic → 404 'model: qwen3.6-…' → the
-        # anthropic provider shown DOWN while perfectly healthy. Same law as
+        # orchestrator_model can hold the llama.cpp brain's alias; sending
+        # that to Anthropic → 404 'model: …' → the anthropic provider shown
+        # DOWN while perfectly healthy. Same law as
         # the dispatch ladder: never send a foreign id to Anthropic. This is
         # a fallback for settings.json written before `capability_routing`
         # existed — the check above already wins when that system names
@@ -620,15 +614,12 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             # one. claude-sonnet-5 emits a `thinking` block first, so a modest
             # budget can produce a response whose only block is thinking. That
             # is a model that demonstrably generated, and calling it `down`
-            # reported a provider that was serving chat as dead (VERIFIED live
-            # 2026-08-15, intermittently: the same probe returned ok in 1614ms
-            # and `empty completion` minutes later, purely on whether thinking
-            # consumed the budget).
+            # reports a provider that is serving chat as dead — intermittently,
+            # purely on whether thinking consumed the budget.
             #
-            # Third instance of one pattern — Ollama thinking models, the
-            # 1-token budget, and now Claude's thinking block. The lesson is
-            # the same each time: prove that generation HAPPENED; do not
-            # demand a particular shape of output to prove it.
+            # Same pattern as Ollama thinking models and the 1-token budget:
+            # prove that generation HAPPENED; do not demand a particular
+            # shape of output to prove it.
             blocks = list(getattr(resp, "content", None) or [])
             kinds = [getattr(b, "type", None) for b in blocks]
             got = bool(blocks)
@@ -639,11 +630,10 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
                            detail if got else "empty completion", bool(got))
 
         if ptype == "google":
-            # Mirrors the anthropic branch above (F2): a present GEMINI_API_KEY
-            # used to report "ok" on every health surface even when the key
-            # was revoked or rate-limited, because deep=1 fell through to the
-            # shallow "key present" response — inference_probe() had no
-            # google branch and probe_types (inference_health) omitted it.
+            # Mirrors the anthropic branch above: without a google branch
+            # here, a present GEMINI_API_KEY reports "ok" on every health
+            # surface even when the key is revoked or rate-limited, because
+            # deep=1 falls through to the shallow "key present" response.
             from agent_friday.core import get_genai_client
             client = get_genai_client()
             if client is None:

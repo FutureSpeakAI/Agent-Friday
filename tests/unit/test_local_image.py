@@ -292,7 +292,7 @@ def test_the_wait_honours_the_cancel_flag_and_interrupts_comfyui(monkeypatch):
     assert interrupted["n"] == 1, "stopping the wait must also stop the sampler"
 
 
-# ── Friday's own output is not Stephen's ─────────────────────────────────────
+# ── Friday's own output is not the maintainer's ─────────────────────────────────────
 
 def test_system_generations_stay_out_of_the_creations_gallery(installed,
                                                               monkeypatch):

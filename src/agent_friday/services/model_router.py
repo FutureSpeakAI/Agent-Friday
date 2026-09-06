@@ -100,7 +100,7 @@ def _seal_or_block(payload, provider):
 
     Nothing leaves the device when the gate can't verify it.
     """
-    # HARD SPENDING CAP, FIRST (2026-09-06). The user-set stopping cap
+    # HARD SPENDING CAP, FIRST. The user-set stopping cap
     # (services/spend_guard) refuses the call here, before any gating work
     # is spent on it. Raises SpendCapReached (a RuntimeError) so every
     # caller's existing blocked-send handling applies unchanged.
@@ -110,7 +110,7 @@ def _seal_or_block(payload, provider):
         _sg = None
     if _sg is not None:
         _sg.check(provider, what=f"{provider} model call")
-    # HARD CEILING, BEFORE THE GATE (2026-08-26). Caching makes the common
+    # HARD CEILING, BEFORE THE GATE. Caching makes the common
     # case cheap; only a limit makes a catastrophe impossible, and these are
     # different guarantees. This is the one chokepoint every cloud provider
     # already passes through, so it is the only place the ceiling can be
@@ -155,10 +155,9 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
             "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Providers) or as an environment variable, then restart the server."
         )
     if model is None:
-        # Same law as the dispatch ladders (2026-08-14): orchestrator_model
-        # can hold a NON-claude id (the llama.cpp brain's alias) — resolving
-        # it here sent 'qwen3.6-…' to Anthropic and 404'd. Only claude-ish
-        # ids may reach this endpoint.
+        # Same law as the dispatch ladders: orchestrator_model can hold a
+        # NON-claude id (the llama.cpp brain's alias), and Anthropic 404s on
+        # a foreign id. Only claude-ish ids may reach this endpoint.
         _settings = _load_settings()
         model = _claude_safe_model(_settings.get("orchestrator_model"),
                                    _settings) or ANTHROPIC_MODEL_DEFAULT
@@ -214,7 +213,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     except Exception:
         pass
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
-    # Badge truth (2026-08-14): text-only Claude calls (validator's
+    # Badge truth: text-only Claude calls (validator's
     # tools-stripped retry, briefings) attribute like every other primitive.
     try:
         from agent_friday.services import attribution
@@ -223,7 +222,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     except Exception:
         pass
     _text = "".join(parts).strip()
-    # WO-17 provider-echo: this is Anthropic's OWN completion, so replaying it
+    # Provider echo: this is Anthropic's OWN completion, so replaying it
     # back to Anthropic in a later turn's history must not redact it — that
     # would be pure loss of text the provider itself just produced. Registers
     # nothing that did not already leave the device once, in this direction.
@@ -278,15 +277,13 @@ def _mode_filtered_attempts(attempts, routing_cfg, *, vault_access=False):
     digest, editorial, scheduled work, subagents, every tool-using agentic
     turn. On a fresh install with no Anthropic key the first leg raises
     immediately, the second has no key either, and the third runs a local
-    model -- in cloud_only mode, for the same reason and with the same
-    invisibility as the chat safety net fixed on 2026-08-26. The router's
-    verdict was correct and the ladder below it never asked.
+    model -- in cloud_only mode, with the same invisibility the chat safety
+    net guards against. The router's verdict is correct and the ladder below
+    it never asks.
 
-    The mirror was broken too: a local route appended cloud legs, so
-    local_only reached Anthropic whenever a local seat had a bad minute --
-    the defect chat.py already fixed under "LOCAL ONLY MEANS LOCAL ONLY".
-    Only the vault path was protected here, because only the vault path had
-    someone check.
+    The mirror holds too: a local route that appends cloud legs lets
+    local_only reach Anthropic whenever a local seat has a bad minute --
+    the defect chat.py guards under "LOCAL ONLY MEANS LOCAL ONLY".
 
     THE PRIMARY LEG IS NEVER FILTERED. attempts[0] is the router's actual
     decision, which already honours the mode and already honours an explicit
@@ -342,10 +339,9 @@ def _claude_safe_model(candidate, settings):
     """A model id it is SAFE to send to the Anthropic API — never a local or
     OpenAI-compatible id.
 
-    2026-08-14 live incident: the escalation ladder's cloud fallback leg
-    resurrected the caller's LOCAL model id, so Anthropic received
-    model="gemma4:e4b" and 404'd (req_011Ce2kC6YqtmcQRKb4e4wmu) — the hourly
-    heartbeat died all night on it. A foreign id translates to the configured
+    The escalation ladder's cloud fallback leg must not resurrect the
+    caller's LOCAL model id: Anthropic 404s on model="gemma4:e4b", and a
+    scheduled job that hits it fails on every run. A foreign id translates to the configured
     cloud model (model_routing.default_cloud_model, then orchestrator_model
     when claude-ish, then the shipped default); a claude-ish candidate passes
     through unchanged; None means "let the primitive use its own default".
@@ -383,8 +379,8 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     fallback ladder (below) can land the request on a DIFFERENT provider than
     predicted when the first leg fails operationally — and a prompt gated for
     'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
-    that content with no re-gating (docs/audits/gauntlet-2026-09-03/
-    findings.jsonl F30). When `system_builder` is given, each leg calls it
+    that content with no re-gating (see the 2026-09 gauntlet audit in
+    docs/history/audits/). When `system_builder` is given, each leg calls it
     with ITS OWN provider name and uses the result instead of the static
     `system` string, so the prompt is always gated for the provider actually
     about to see it. A builder that raises is treated as "no system prompt"
@@ -439,8 +435,8 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # leg failed fell through to the unconditional cloud/openai fallback
     # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
     # contract for every one of this function's many callers (briefings,
-    # digests, KG summarization, calendar/message drafting, wiki bootstrap...
-    # docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+    # digests, KG summarization, calendar/message drafting, wiki bootstrap;
+    # see the 2026-09 gauntlet audit in docs/history/audits/).
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
@@ -448,7 +444,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
                    "model_routing.vault_cloud_fallback), then retry.")
     vault_access = bool(route.get('vault_access'))
 
-    # F30: re-gate the system prompt per LEG, not once for the predicted
+    # Re-gate the system prompt per LEG, not once for the predicted
     # provider — see the `system_builder` docstring above. Without a builder,
     # every leg gets the same static `system` (unchanged legacy behavior).
     def _system_for(provider_name):
@@ -553,11 +549,10 @@ def _plan_num_ctx(model):
 
 def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  # An orb's icon should say what the WORK is, not what
-                 # transport carried it. This defaulted to a house, so every
-                 # Ollama-path orb wore one — and the scene appended a second
-                 # house to the label — which is the "little home icon keeps
-                 # appearing above process orbs" Stephen reported. Local is the
-                 # normal case now; marking it marks everything.
+                 # transport carried it. A house default here makes every
+                 # Ollama-path orb wear one, and the scene appends a second
+                 # house to the label. Local is the normal case; marking it
+                 # marks everything.
                  temperature=None, orb_label=None, orb_icon='⚡',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
     """Call a local Ollama model. Returns (text, tool_trace).
@@ -589,16 +584,15 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
     if not model:
         model = routing_cfg.get('local_model') or model
 
-    # 2026-08-15: the seat gate is GONE. It used to re-check every tool-using
-    # dispatch and, on a red/ungated model, silently substitute a different one
-    # or strip tools for the turn. That is why Friday "didn't work with all the
-    # models": you could bind a model and still not be served by it.
+    # There is deliberately NO seat gate here. A gate that re-checks every
+    # tool-using dispatch and, on a red/ungated model, silently substitutes a
+    # different one or strips tools for the turn means a user can bind a model
+    # and still not be served by it.
     #
-    # Stephen's call, and he is right on the merits — gating a user-selected
-    # model behind a homegrown eval is not standard practice, and a model that
-    # isn't emitting tool calls is a prompting/template problem, not a defect.
-    # Proven here: the same models scored 1/10 and 0/10 under a broken harness
-    # and 10/10 once it was fixed. The models were never the problem.
+    # Maintainer ruling: gating a user-selected model behind a homegrown eval
+    # is not standard practice, and a model that isn't emitting tool calls is
+    # a prompting/template problem, not a defect. The same models scored 1/10
+    # and 0/10 under a broken harness and 10/10 once it was fixed.
     #
     # What replaces it is nothing at dispatch time. The model the user bound is
     # the model that serves. Fabrication is caught where it actually happens —
@@ -606,7 +600,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
     # tools it never called — and the badge keeps naming whoever answered.
     _seat_notice = None
 
-    # ── 2026-08-14: descriptor-aware local dispatch, AFTER the seat gate. A
+    # ── Descriptor-aware local dispatch, AFTER the seat gate. A
     # model declared by an enabled OpenAI-compatible LOCAL descriptor (the
     # llama.cpp brain — classification "local", base_url :8081/v1) routes
     # provider='local' but is not an Ollama tag; the daemon can never serve
@@ -619,9 +613,9 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
         # knows a seat's live port. Once a model's GGUF is extracted and the
         # Arbiter runs it as an owned process, the Ollama daemon no longer has
         # it — and dispatch that still asks :11434 finds nothing and falls
-        # through to the cloud. Measured 2026-08-15: the brain resident and
-        # unreachable, an ordinary turn taking 2m05s in the cloud against 16s
-        # locally. A registered descriptor cannot cover this: the port is
+        # through to the cloud. Measured on the reference machine: with the
+        # brain resident but unreachable, an ordinary turn took 2m05s in the
+        # cloud against 16s locally. A registered descriptor cannot cover this: the port is
         # assigned at process start, so anything static would be stale.
         try:
             from agent_friday.services.residency_arbiter import owned_provider
@@ -720,16 +714,16 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 # A COLD model has to be loaded before it can answer, and the
                 # default 120s does not cover that: qwen3.5:9b is 6.6 GB, and
                 # on a card already under pressure the load alone can outlast
-                # the timeout. The turn then failed and fell back to the
-                # cloud — which is exactly what Stephen saw as "I switched
-                # models and nothing changed" (2026-08-18): he chose a local
-                # seat, the router honoured it, and Claude answered anyway.
+                # the timeout. The turn then fails and falls back to the
+                # cloud, which the user experiences as "I switched models and
+                # nothing changed": a local seat chosen, honoured by the
+                # router, and answered by the cloud anyway.
                 #
                 # The wake estimate already exists in pause_forecast, computed
                 # from the artifact size, so use it rather than inventing a
-                # second number. Generous margin on top: waiting is what he
-                # was warned about and chose, whereas a wrong answer from the
-                # wrong model is not something he agreed to.
+                # second number. Generous margin on top: waiting is what the
+                # user was warned about and chose, whereas a wrong answer from
+                # the wrong model is not something they agreed to.
                 # Floor of 300s: a cold multi-gigabyte seat on a card that is
                 # also driving a desktop spills to CPU, and generation after the
                 # load is the slow part, not the load itself.
@@ -796,7 +790,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 _orb(result=_text)
         except Exception:
             pass
-        # Badge truth (2026-08-14): `model` here is POST-substitution — if
+        # Badge truth: `model` here is POST-substitution — if
         # the seat gate swapped the requested model, this is the one that
         # actually answered, which is exactly what the badge must say.
         try:
@@ -841,8 +835,8 @@ AUTO_ROUTER_DEFAULT_TIER = "low"
 
 #: A reasoning model spends the SAME max_tokens budget on its private
 #: reasoning as on the answer, and the Auto Router is free to pick one --
-#: which model answers is not knowable when the budget is set. Measured
-#: 2026-08-30: `openrouter/auto` at max_tokens=20 routed to
+#: which model answers is not knowable when the budget is set. Measured on
+#: the reference machine: `openrouter/auto` at max_tokens=20 routed to
 #: deepseek-v4-flash-0731, spent all 20 on `reasoning` deltas, returned
 #: finish_reason="length" with content "" -- a billed turn that said nothing.
 #: Floor the budget so a routed reasoning model can still reach its answer.
@@ -1082,14 +1076,14 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
     # LOCAL seats have a hard n_ctx — fit the tool payload to it BEFORE
     # conversion. The llama-cpp path skipped this while the Ollama path
     # trimmed, so a background task with the full registry (~56k tokens
-    # observed) 400'd against a 32k window every time this seat was up
-    # (2026-08-19). Cloud providers are left untrimmed as before.
+    # observed) 400'd against a 32k window every time this seat was up.
+    # Cloud providers are left untrimmed as before.
     if tools and local_bypass:
         try:
             from agent_friday.services.tool_budget import fit_tools_to_seat
-            # Budget the whole request, not tools in isolation (2026-08-19:
-            # in-budget tools atop an ordinary prompt still overflowed the
-            # seat and 400'd).
+            # Budget the whole request, not tools in isolation: in-budget
+            # tools atop an ordinary prompt can still overflow the seat and
+            # 400.
             _prompt_cost = (len(system or "") + sum(
                 len(m.get("content")) for m in (messages or [])
                 if isinstance(m.get("content"), str))) // 4
@@ -1131,9 +1125,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             # Claude and Ollama orbs already did. Without it /api/tasks/<orb>
             # cannot follow the link and the thread panel falls back to the
             # orb's own (empty) steps — "— waiting for activity —" over a task
-            # whose log is sitting right there. This path now serves Friday's
-            # OWN LOCAL SEATS, so the gap would have re-broken the one thing
-            # Stephen has asked about three times.
+            # whose log is sitting right there. This path also serves Friday's
+            # OWN LOCAL SEATS, so the gap would break task-thread correlation
+            # for local work too.
             task_id=(session_ctx or {}).get("task_id"),
         )
     except Exception:
@@ -1157,10 +1151,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         convo = []
         if system:
             _sys_content = system
-            # Prompt-cache breakpoint (2026-09-04): this path (OpenRouter and
-            # other OpenAI-compatible endpoints) never got the same treatment
-            # as the native Anthropic SDK path (_call_claude_agent) — every
-            # scheduled task, the heartbeat included, resent its full system
+            # Prompt-cache breakpoint: this path (OpenRouter and other
+            # OpenAI-compatible endpoints) needs the same treatment as the
+            # native Anthropic SDK path (_call_claude_agent), or every
+            # scheduled task, the heartbeat included, resends its full system
             # prefix uncached on every call. Gated to providers that declare
             # `prompt_caching` (OpenRouter) AND a Claude model underneath, so
             # this is a no-op everywhere else (Groq, plain OpenAI, local).
@@ -1197,7 +1191,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 # With it on, the model reasons inside <|channel>thought,
                 # concludes "now emit the call", closes the channel — and
                 # generation ENDS there, because the closing token is
-                # end-of-generation. Measured 2026-08-15: content ending
+                # end-of-generation. Measured on the reference machine: content ending
                 # "6. **Format the output:** Generate the JSON representation
                 # of the tool call.<channel|>" with tool_calls: None. With
                 # thinking disabled the same prompt returns the call directly.
@@ -1265,7 +1259,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 # Server-side model fallback: one HTTP call covers N models.
                 payload["models"] = [model] + [m for m in fallback_models
                                                if m and m != model]
-            # Diagnostic (2026-09-04): a scheduled/background call's BILLED
+            # Diagnostic: a scheduled/background call's BILLED
             # prompt_tokens (costs.db) has repeatedly run several times
             # larger than the system+tools+messages sizes this function
             # itself assembled — e.g. the hourly heartbeat: ~27k tokens
@@ -1417,7 +1411,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 _orb(result=_text)
         except Exception:
             pass
-        # Badge truth (2026-08-14): a local-classification descriptor (the
+        # Badge truth: a local-classification descriptor (the
         # llama.cpp brain) is a LOCAL seat even though it rides the OpenAI
         # transport — the badge must say local, and must name the model this
         # endpoint actually ran.
@@ -2020,10 +2014,10 @@ def _factcheck_news_citations(reply):
 
 
 # ── FR-2: tool-call integrity response validator (toolcall-integrity-v5) ──
-# 2026-08-12: gemma3:4b (no real Ollama tool-calling support) confabulated an
-# entire "start my day" briefing — narrating bracket-syntax pseudo-tool-calls
-# like [query_calendar] and [search_email(priority:high)] as prose, and
-# inventing results for them. This scans every generated reply, on every
+# A local model without real tool-calling support can confabulate an entire
+# "start my day" briefing — narrating bracket-syntax pseudo-tool-calls like
+# [query_calendar] and [search_email(priority:high)] as prose, and inventing
+# results for them. This scans every generated reply, on every
 # provider, for that fabrication pattern BEFORE it's stored, rendered, or
 # spoken — see routes/chat.py's two call sites. Never executes the parsed
 # leak text; it is detected and stripped, not interpreted.
@@ -2045,16 +2039,16 @@ def _integrity_violations(reply, tool_trace, tool_names):
         find_unreceipted_completion_claims)
     leaks = find_pseudo_toolcalls(reply, tool_names)
     claims = find_unreceipted_completion_claims(reply, tool_trace)
-    # THIRD axis, added 2026-08-16: a promise of imminent action in a turn that
-    # then called nothing. Neither of the other two could see it — they both ask
-    # "did she claim to have done something", and "I'll do a quick search of
-    # your creations folder. Give me one second." claims nothing. The turn
-    # simply ended. Stephen caught it himself, twice, in one session.
+    # THIRD axis: a promise of imminent action in a turn that then called
+    # nothing. Neither of the other two can see it — they both ask "did she
+    # claim to have done something", and "I'll do a quick search of your
+    # creations folder. Give me one second." claims nothing. The turn simply
+    # ends.
     from agent_friday.services.completion_receipts import find_unkept_promises
     claims = list(claims) + [
         "promised but never acted: %r" % pr
         for pr in find_unkept_promises(reply, tool_trace)]
-    # FOURTH axis, 2026-08-16: a fabricated CONSTRAINT. The other three all ask
+    # FOURTH axis: a fabricated CONSTRAINT. The other three all ask
     # "did she claim to have done something she didn't". None could see the
     # mirror image — claiming she cannot do something, for a reason that does
     # not exist ("my underlying model has hard-coded safety filters"). Audited:
@@ -2093,7 +2087,7 @@ def _corrective_note(leaks, claims):
         parts.append(
             "One of those was an invented CONSTRAINT. There is no content "
             "filter in the local image model, none in ComfyUI, and no filter "
-            "node in the graph — the only policy is Friday's own and Stephen "
+            "node in the graph — the only policy is Friday's own and the user "
             "sets it. If you are declining, say you are declining and give the "
             "real reason in one sentence. Never blame machinery that does not "
             "exist, and do not lecture the owner of the machine."
@@ -2108,10 +2102,10 @@ def _corrective_note(leaks, claims):
 def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
                                 max_retries=1, redispatch_no_tools=None):
     """Scan `reply` for fabricated tool-call syntax AND for completion claims
-    unbacked by a successful tool receipt this turn (A7, Incident 2 F1).
+    unbacked by a successful tool receipt this turn (A7).
     Clean replies pass through unchanged.
 
-    On a violation (B7 honest-failure ladder, Incident 2 F4):
+    On a violation (B7 honest-failure ladder):
     1. If `redispatch(corrective_note) -> (reply, tool_trace)` is given,
        corrective-retry up to `max_retries` times (default ONE — the old
        default of 2 meant up to 3 full agentic dispatches and ~90s of dead
@@ -2168,24 +2162,24 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
                                "tools_stripped_retry": tools_stripped_retry}
 
 
-# A refusal is a choice, and it is stated as one. Written against the specific
-# failures in Stephen's 2026-08-15 transcript, all four of which are here.
-# SECURITY / HONESTY (2026-08-25): this used to be ONE paragraph — items
-# joined by single "\n", not "\n\n". `egress_gate._gate_text_span` only
-# splits multi-paragraph text on the separator actually present in the WHOLE
-# string it is gating (the full assembled system prompt); because this block
-# had no "\n\n" of its own, all 7 items rode inside whatever ONE paragraph
-# they landed in when concatenated with the rest of the prompt. Item 4's
-# worked example said "asked for its phone number" — a literal TIER_2 strong
-# phrase (sensitivity_classifier._TIER2_STRONG) — which meant the entire
-# directive was classified together and withheld as one. The instruction
-# that exists to stop Friday from fabricating results was itself being
-# redacted before every cloud call. Two independent fixes, both needed:
-#   1. "\n\n"-separated items, so a future false positive on any one item
-#      only costs that item, not all seven.
-#   2. The one item that tripped the classifier is reworded below with no
-#      TIER_2/TIER_3 phrase in it — checked against sensitivity_classifier's
-#      _TIER2_STRONG/_TIER2_COMMON/_TIER3_STRONG/_TIER3_WEAK lists.
+# A refusal is a choice, and it is stated as one. Each item below guards
+# against a failure observed in real transcripts.
+# SECURITY / HONESTY: the items MUST stay "\n\n"-separated, never joined by a
+# single "\n". `egress_gate._gate_text_span` only splits multi-paragraph text
+# on the separator actually present in the WHOLE string it is gating (the
+# full assembled system prompt); a block with no "\n\n" of its own rides
+# inside whatever ONE paragraph it lands in when concatenated with the rest
+# of the prompt, so a single TIER_2 strong phrase in any item (a worked
+# example that mentions a phone number, say — see
+# sensitivity_classifier._TIER2_STRONG) gets the entire directive classified
+# together and withheld as one: the instruction that exists to stop Friday
+# from fabricating results would itself be redacted before every cloud call.
+# Two independent protections, both needed:
+#   1. "\n\n"-separated items, so a false positive on any one item only
+#      costs that item, not all seven.
+#   2. No item contains a TIER_2/TIER_3 phrase — checked against
+#      sensitivity_classifier's _TIER2_STRONG/_TIER2_COMMON/_TIER3_STRONG/
+#      _TIER3_WEAK lists.
 # Registered `register_trusted_text` below regardless (belt + suspenders):
 # this is compile-time Friday-authored text with no user data in it, exactly
 # FRIDAY_SYSTEM_PROMPT's rationale two screens down.
@@ -2196,26 +2190,26 @@ REFUSAL_HONESTY_DIRECTIVE = (
     "something — unless that is literally true of this machine and you can name "
     "the component. Local image generation has NO model-level or ComfyUI-level "
     "content filter; the only policy is Friday's own, it is listed below, and "
-    "Stephen sets it. A fabricated constraint is the same defect as claiming to "
+    "the user sets it. A fabricated constraint is the same defect as claiming to "
     "have opened a file you never opened: it is a false statement about the "
     "world, told to avoid saying something plainer.\n\n"
     "2. If you are declining, SAY YOU ARE DECLINING. 'I won't make that' is an "
     "honest sentence. 'I can't, my model blocks it' — when nothing blocks it — "
     "is not. Give the real reason, once, in one sentence.\n\n"
-    "3. Do not moralise at Stephen, and do not manage him. He owns this "
-    "machine, built you, and is not a member of the public to be risk-assessed. "
+    "3. Do not moralise at the user, and do not manage them. They own this "
+    "machine, operate you, and are not a member of the public to be risk-assessed. "
     "Ordinary creative work — including artistic nudity, violence in fiction, "
     "dark or political subject matter — is not restricted, is not a favour you "
     "are granting, and is not something to warn about, hedge over, negotiate, "
     "or offer to 'push the boundary' on. Do the work or say plainly that you "
     "won't.\n\n"
     "4. WHEN A FACT IS MISSING, GO AND FIND IT. The honest options are not "
-    "'invent it' or 'ask Stephen'. In order: (a) retrieve it — search_web, "
+    "'invent it' or 'ask the user'. In order: (a) retrieve it — search_web, "
     "browse_web, the tools you have — and cite where it came from; (b) if "
     "retrieval fails or sources disagree, say what you found and what you could "
-    "not confirm; (c) only then ask him. Asking him for something he would "
+    "not confirm; (c) only then ask the user. Asking them for something they would "
     "reasonably expect you to look up is its own small failure: it hands the "
-    "work back to the person who delegated it. He told you a restaurant's name "
+    "work back to the person who delegated it. The user told you a restaurant's name "
     "and asked whether they take walk-ins — that is a lookup, not a question. "
     "Refusing to invent a fact is correct; stopping there when you could have "
     "found it is not.\n\n"
@@ -2223,25 +2217,25 @@ REFUSAL_HONESTY_DIRECTIVE = (
     "The list below is probed at the time this prompt is built, not remembered. "
     "If something is marked NO, do not offer it; if you are unsure, say you are "
     "unsure rather than picking the confident-sounding answer.\n\n"
-    "6. VERIFY THE PREMISE, NOT JUST THE QUESTION. When Stephen asserts that "
+    "6. VERIFY THE PREMISE, NOT JUST THE QUESTION. When the user asserts that "
     "you did something — sent an email, saved a file, made a change — and asks "
     "a follow-up about it, check the assertion itself before answering the "
     "follow-up. Asked 'did Jane reply to the email you sent her?', searching "
     "the inbox and answering 'no reply yet' CONFIRMS an email you never sent: "
     "'yet' asserts it is on its way. If you have no record of the action, the "
     "answer is 'I have no record of sending that — I can draft it now if you "
-    "want', however confident he sounds. He misremembers sometimes; agreeing "
+    "want', however confident they sound. People misremember sometimes; agreeing "
     "with a misremembering and showing your work while you do it is the worst "
     "failure in this list, because the real search makes the false premise "
-    "look verified. (This exact failure was caught on 2026-08-18.)\n\n"
+    "look verified.\n\n"
     "7. DESCRIBE WHAT YOU MADE, NOT WHAT WAS ASKED FOR. After producing an "
     "artifact, your description must match its contents, checked, not the "
-    "request restated. If he asked for a deck with an image per slide and the "
+    "request restated. If the user asked for a deck with an image per slide and the "
     "images did not happen, the deck 'has ten slides and no images yet' — it "
     "does not 'feature a unique, high-quality visual on every slide'. "
     "Disclosing one limitation (no .pptx export) does not license glossing "
     "another (no images). What is missing gets the same prominence as what is "
-    "there. (Also caught on 2026-08-18: an 8 KB deck with zero images, "
+    "there. (Example: an 8 KB deck with zero images, "
     "described as fully illustrated.)"
 )
 
@@ -2263,25 +2257,21 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
 
     keywords: the user's prompt text; drives smart wiki context routing
     workspace: hint for context selection ('draft', 'task', 'chat', etc.)
-    provider/vault_control: REQUIRED, keyword-only, no default (2026-08-25).
+    provider/vault_control: REQUIRED, keyword-only, no default.
         When `vault_control` is a VaultAccessControl, the context (and
         self-knowledge) is gated for `provider` — a local provider sees
         everything, a cloud provider (e.g. 'gemini' for the Live voice
         session) gets TIER_1 in full, TIER_2 redacted, TIER_3 dropped.
-        `provider='cloud', vault_control=None` used to be the DEFAULT, which
-        is "legacy ungated" — every one of 22 call sites found 2026-08-25
-        silently inherited it and shipped raw vault content to whichever
-        cloud provider they routed to. There is no longer a default: decide
-        explicitly, every time. A caller with a genuine reason to skip
-        gating (nothing here is ever sent anywhere — see
-        context_budget.system_prompt_tokens) still passes
-        `vault_control=None` explicitly; the difference is that it now reads
-        as a decision, not an oversight, and `scripts/check_gated_prompt_callers.py`
-        (wired into the pre-commit hook) fails the commit if it's missing
-        rather than waiting for whatever code path happens to call this next
-        — which, for `_generate_session_summary` and
-        `scheduler._afternoon_briefing_job`, could have been hours or a full
-        day away.
+        An implicit `provider='cloud', vault_control=None` is "legacy
+        ungated": a call site that inherits it silently ships raw vault
+        content to whichever cloud provider it routes to. There is
+        deliberately no default: decide explicitly, every time. A caller
+        with a genuine reason to skip gating (nothing here is ever sent
+        anywhere — see context_budget.system_prompt_tokens) still passes
+        `vault_control=None` explicitly, so it reads as a decision, not an
+        oversight, and `scripts/check_gated_prompt_callers.py` (wired into
+        the pre-commit hook) fails the commit if it is missing rather than
+        waiting for whatever code path happens to call this next.
     vault_fallback: 'redact' (default) | 'deny' | 'warn' — see
         VaultAccessControl.gate_content.
     """
@@ -2292,11 +2282,11 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # Self-knowledge: inject SELF.md after personality, before workspace context.
     # This gives Friday a persistent self-model across cold starts.
     #
-    # SECURITY / HONESTY (2026-08-25): SELF.md is Friday's own self-description
+    # SECURITY / HONESTY: SELF.md is Friday's own self-description
     # (her architecture, capabilities, limits) — Friday-authored text with no
-    # Stephen-personal data in it, the same category as FRIDAY_SYSTEM_PROMPT
-    # below. It used to route through `vault_control.gate_content`, the SAME
-    # keyword classifier that redacted the anti-fabrication directive for
+    # user-personal data in it, the same category as FRIDAY_SYSTEM_PROMPT
+    # below. It must NOT route through `vault_control.gate_content`, the same
+    # keyword classifier that can redact the anti-fabrication directive for
     # mentioning "phone number": self-referential text about "the vault",
     # "memory", or "family" IN THE ABSTRACT reads as personal content to a
     # keyword scanner. Register it gate-exempt at every load (self-healing if
@@ -2316,13 +2306,13 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
 
     # HONESTY ABOUT LIMITS, and a FACTUAL account of her own architecture.
     #
-    # Both exist because of the same transcript. She refused an image by
-    # inventing "hard-coded safety filters in my underlying model" — machinery
-    # that does not exist anywhere in the local stack (audited: see
-    # docs/history/audits/z-image-content-filtering-2026-08-16.md) — and in the same
-    # session described capabilities she does not have. A model with nothing
-    # legible to consult improvises, and improvisation about yourself is
-    # indistinguishable from lying about yourself.
+    # Both exist for the same reason: a model with nothing legible to consult
+    # improvises — refusing an image by inventing "hard-coded safety filters
+    # in my underlying model", machinery that does not exist anywhere in the
+    # local stack (audited: see
+    # docs/history/audits/z-image-content-filtering-2026-08-16.md), or
+    # describing capabilities she does not have — and improvisation about
+    # yourself is indistinguishable from lying about yourself.
     prefix += "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
     try:
         from agent_friday.services.self_account import describe as _self_account
@@ -2762,9 +2752,9 @@ def _vault_policy():
 def _predict_route_provider(keywords='', workspace='', has_tools=False):
     """Predict, BEFORE dispatch, which provider a generation call will land
     on — so its system prompt can be gated for that provider instead of built
-    ungated and left to the egress gate alone (2026-08-25: background tasks
-    were doing exactly that, and the egress gate's keyword classifier is a
-    known-incomplete second line of defense, not the intended first one).
+    ungated and left to the egress gate alone (the egress gate's keyword
+    classifier is a known-incomplete second line of defense, not the
+    intended first one).
 
     This is a genuine second call into the SAME router `_generate_text` /
     `_generate_agent` consult moments later with the same inputs. That is
@@ -2950,12 +2940,12 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             wiki_text = '\n'.join(
                 f"[{r['file']}]: {r['excerpt'][:300]}" for r in wiki_results
             )
-            # Wiki is Stephen's personal corpus — family, health, finance,
-            # professional. FAIL-CLOSED (2026-08-25): the fallback here was _T1,
-            # so a classifier miss meant the excerpt travelled to the cloud in
-            # full. That is what made the contact-PII gap fatal rather than
-            # merely wrong: two real files in ~/.friday/wiki rated TIER_1 and
-            # gate_content handed them to Anthropic verbatim.
+            # Wiki is the user's personal corpus — family, health, finance,
+            # professional. FAIL-CLOSED: the fallback here is _T2, never _T1.
+            # With a _T1 fallback a classifier miss sends the excerpt to the
+            # cloud in full, which turns a contact-PII gap from merely wrong
+            # into fatal: a real wiki file rated TIER_1 is handed to the
+            # cloud provider verbatim.
             #
             # _T2 matches this section's actual neighbours. Every other personal
             # section here is already unconditionally _T2 (RECENT MEMORIES,
@@ -3011,16 +3001,16 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         ctx_block = '\n\n'.join(f"[{path}]\n{content}" for path, content in _ctx_found[:2])
         # Project/code context — public unless the file itself carries PII.
         #
-        # DELIBERATELY still _T1, unlike the wiki section above (2026-08-25).
+        # DELIBERATELY still _T1, unlike the wiki section above.
         # "Match your neighbours" resolves differently here because the
         # neighbours differ: this sits in the code-context layer beside MATCHED
         # SKILLS and EPISTEMIC STATE, which are _T1, not beside the personal
-        # corpus. Measured before changing it: all 8 real AGENTS.md /
-        # .friday-context.md files under ~/Projects and ~/Desktop classify
-        # TIER_1, and none carries detectable PII. Fail-closing would therefore
-        # withhold 8 of 8 benign coding documents from the cloud on every coding
-        # turn — total capability loss for zero measured privacy gain, and the
-        # exact over-redaction shape this file's history keeps repeating.
+        # corpus. Measured on the reference machine: every real AGENTS.md /
+        # .friday-context.md file classifies TIER_1, and none carries
+        # detectable PII. Fail-closing would therefore withhold benign coding
+        # documents from the cloud on every coding turn — total capability
+        # loss for zero measured privacy gain, and the exact over-redaction
+        # shape this file's history keeps repeating.
         # Genuine secrets are still caught: _API_KEY_RE and the Layer 1a contact
         # patterns run on this text like any other.
         # Flip the fallback to _T2 if that trade ever stops being right.
@@ -3069,20 +3059,19 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     except Exception as _e:
         add(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})", _T1)
 
-    # ── A6: authoritative clock (Incident 2, F3). TIER_1 BY CONTRACT — the
-    # previous date injections lived in TIER_2 sections that vault gating
-    # redacts for cloud seats, leaving those seats with no date at all and
-    # models doing their own (wrong) weekday arithmetic. ──
+    # ── A6: authoritative clock. TIER_1 BY CONTRACT — a date injection that
+    # lives in a TIER_2 section is redacted by vault gating for cloud seats,
+    # leaving those seats with no date at all and models doing their own
+    # (wrong) weekday arithmetic. ──
     #
-    # ORDERED LAST, 2026-08-26. Content unchanged, position changed. It renders
-    # `%Y-%m-%d %H:%M` — minute resolution — and used to sit at position 2, so
-    # every turn that crossed a minute boundary changed a byte ~2,500 tokens in
-    # and invalidated the prompt cache on BOTH backends from there down.
-    # Measured on the local seat's own log (~/.friday/runtime/logs/
-    # llama-gemma4_12b-8090.log): the hourly job re-processed 25,366 tokens in
-    # 16.3 s every single hour, while the immediately-following call in the same
-    # slot re-processed 430 tokens in 0.7 s. Same prompt, one minute apart in
-    # the clock line. `services/prompt_cache.VOLATILE_MARKER` splits the cloud
+    # ORDERED LAST. It renders `%Y-%m-%d %H:%M` — minute resolution — so
+    # anywhere near the top of the prompt every turn that crosses a minute
+    # boundary changes a byte ~2,500 tokens in and invalidates the prompt
+    # cache on BOTH backends from there down. Measured on the local seat's
+    # own log: the hourly job re-processed 25,366 tokens in 16.3 s every
+    # single hour, while the immediately-following call in the same slot
+    # re-processed 430 tokens in 0.7 s. Same prompt, one minute apart in the
+    # clock line. `services/prompt_cache.VOLATILE_MARKER` splits the cloud
     # payload on this header, so everything above it is what gets cached.
     #
     # Its authority, TIER_1 status and drop class are untouched — render

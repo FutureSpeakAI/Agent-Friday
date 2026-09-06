@@ -1,7 +1,7 @@
 """Multi-account Google read path for the chat-facing built-in tools (docs:
 fix/toolcall-integrity-v5, 2026-08-13).
 
-Both of Stephen's accounts landed correctly in the multi-account store
+Both of the maintainer's accounts landed correctly in the multi-account store
 (verified live against production data: accounts.json lists both,
 credentials_for() returns valid credentials for both). But
 _tool_query_calendar / _tool_search_email / connectors._status_for_google

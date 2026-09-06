@@ -1,17 +1,15 @@
 """
 Agent Friday — never go quiet without saying so first.
 
-Stephen, 2026-08-15:
-
-    "Friday should always warn the user when local inference will (or might)
-     cause her to go silent for any amount of time so they can decide if cloud
-     or scheduling for idle time would be better."
+The maintainer's ruling: "Friday should always warn the user when local
+inference will (or might) cause her to go silent for any amount of time so
+they can decide if cloud or scheduling for idle time would be better."
 
 The failure mode is not the pause. A 53-second wait for the heavy model is
 fine when you asked for depth and know what you are waiting on. The failure is
 **unannounced** silence: the machine looks hung, you cannot tell whether it is
 working or broken, and you had no chance to say "just use the cloud, I'm in a
-hurry". Measured examples from this week, all of which read as a fault:
+hurry". Measured examples on the reference machine, all of which read as a fault:
 
   * first message of a session: ~13 s of model loading before a single token
   * asking for the heavy seat: 53.5 s cold load, then the brain is gone too
@@ -20,7 +18,7 @@ hurry". Measured examples from this week, all of which read as a fault:
 
 This module answers one question — *"if I do this now, will Friday go quiet,
 for how long, and how sure are we?"* — and it answers in the three-way shape
-Stephen already approved for heavy work: run it now locally, send it to the
+the maintainer approved for heavy work: run it now locally, send it to the
 cloud instead, or schedule it for when the machine is idle.
 
 Two rules it holds itself to.
@@ -60,7 +58,7 @@ RECORDED_COLD_LOAD_S = {
     "gemma4:12b": 20.5, "gemma4:26b": 53.5,
 }
 RECORDED_IMAGE_START_S = 93.0      # warm; ~180 s from a cold ComfyUI
-RECORDED_IMAGE_RENDER_S = 93.0     # 1024x1024, measured 2026-08-15
+RECORDED_IMAGE_RENDER_S = 93.0     # 1024x1024, measured on the reference machine
 
 
 def _plural(seconds: float) -> str:
@@ -113,12 +111,12 @@ def _residency():
 def _served_recently(model_id: str, within_s: float = 900.0):
     """(bool, seconds_ago) — has this model actually answered a turn lately?
 
-    The residency layer only knows about seats it planned. On 2026-08-18
-    Stephen switched his chat seat in the UI; the SETTING changed, the
-    residency plan did not, and his chosen model appeared in no seat and no
-    resident set. The forecaster therefore looked it up, found nothing, and
-    announced "not loaded — about 30 seconds" before EVERY message, while that
-    same model was in fact answering him in normal time.
+    The residency layer only knows about seats it planned. When the user
+    switches the chat seat in the UI, the SETTING changes, the residency plan
+    does not, and the chosen model appears in no seat and no resident set.
+    A forecaster that only consults the plan then announces "not loaded —
+    about 30 seconds" before EVERY message, while that same model is in fact
+    answering in normal time.
 
     A model that served a turn a minute ago is not cold, whatever the plan
     says. The cost ledger is the honest record of what actually ran, so it is
@@ -181,7 +179,7 @@ def _load_estimate(model_id: str, arb) -> tuple[float, str]:
 
 def _options(seconds: float, *, vault: bool = False,
              cloud_ok: bool = True) -> list:
-    """The same three-way choice Stephen approved, with anything unavailable
+    """The same three-way choice the maintainer approved, with anything unavailable
     left visible and explained rather than dropped."""
     out = [{"id": "now_local", "label": "Wait for it",
             "detail": "Runs here. %s of quiet." % _plural(seconds).capitalize()}]
@@ -212,10 +210,10 @@ def _content_heavy_ask(model_id: str | None, *, vault: bool = False,
     """The load-time signal said no pause, but the request itself smells like
     depth. Ask anyway.
 
-    See Q18 in docs/history/audits/gauntlet-2026-09-03/findings.jsonl:
     `services.workflow_plan.looks_heavy()` was purpose-built for exactly this
-    -- its own docstring says "Only ever decides whether to ASK" -- and had
-    never been wired to anything. A warm seat and a heavy job are independent
+    -- its own docstring says "Only ever decides whether to ASK" -- and this
+    is its wiring (see the 2026-09 gauntlet audit in docs/history/audits/).
+    A warm seat and a heavy job are independent
     facts; the load-time forecast above only ever sees the first. This is the
     second signal, OR'd in rather than replacing the first, so neither a
     slow-loading trivial request nor a fast-loading heavy one goes unannounced.
@@ -252,8 +250,8 @@ def _looks_local(model_id: str, arb) -> bool:
     entry, no recorded load and no Ollama tag, so it fell through to the flat
     30-second guess and put "openrouter/auto is not loaded, so the first reply
     has to wait for it - about 30 seconds before any text appears" in front of
-    a cloud call that answers in one. Observed 2026-08-30 with the Auto Router
-    seated as the everyday model.
+    a cloud call that answers in one, whenever a hosted router is seated as
+    the everyday model.
 
     The rule this restores is the module's own: a warning with no evidence
     under it is noise, and noise is how the warning gets clicked through on
@@ -529,9 +527,8 @@ def forecast(kind: str, **kw) -> dict:
     sent. It is an ADDITIONAL trigger, OR'd against the kind's own load-time
     signal rather than replacing it: if the load-time estimate did not already
     justify asking, but the text itself looks heavy per
-    `services.workflow_plan.looks_heavy()`, ask anyway. See Q18 -- looks_heavy
-    was written for exactly this and, before this wiring, was never called by
-    anything.
+    `services.workflow_plan.looks_heavy()`, ask anyway. looks_heavy was
+    written for exactly this, and this is its only wiring.
     """
     text = kw.pop("text", None)
     fn = {"local_turn": before_local_turn, "heavy_lease": before_heavy_lease,

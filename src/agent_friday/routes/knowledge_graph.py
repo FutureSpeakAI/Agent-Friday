@@ -213,8 +213,8 @@ def kg_reindex():
             # /api/knowledge-graph/reindex/status -- previously `running` was
             # the entire signal, so a caller polling it saw running:true
             # identically whether the job started 30 seconds or 7 hours ago
-            # (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q21, the same
-            # blind spot that let F31 run undetected for 7+ hours).
+            # (the same blind spot that lets a stuck run go undetected for
+            # hours).
             _TIER_B_STATE["started_at"] = time.time()
             try:
                 from agent_friday.services.knowledge_graph import indexer

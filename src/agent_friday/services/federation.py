@@ -392,11 +392,10 @@ _FED_PREFS = ("ask", "allow", "block")
 def set_peer_pref(agent_id: str, pref: str) -> Optional[Dict[str, Any]]:
     """Set a known peer's federation trust preference (ask/allow/block).
 
-    This is the write side of the Federation panel's per-peer control
-    (gauntlet-2026-09-03 F40) -- the `fed_pref` column already existed and
-    was already read by get_peers()/get_peer() (so the UI dropdown rendered
-    correctly), but nothing ever wrote it: /api/federation/peers/<id>/pref
-    didn't exist as a route at all. Returns the updated peer record, or
+    This is the write side of the Federation panel's per-peer control. The
+    `fed_pref` column is read by get_peers()/get_peer() (so the UI dropdown
+    renders it); this function, behind /api/federation/peers/<id>/pref, is
+    the only thing that writes it. Returns the updated peer record, or
     None if the peer doesn't exist or *pref* isn't one of the three known
     values.
     """

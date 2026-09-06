@@ -283,7 +283,7 @@ def _has_required_tokens(defn: dict, server_cfg: dict | None) -> bool:
 #   blocked_by_policy— disabled by extension security, not a runtime failure
 #                      (orange — distinct from "error" so the real cause,
 #                      carried in `detail`, is legible rather than reading as
-#                      a generic "failed to start") (F9)
+#                      a generic "failed to start")
 _STATUS_COLORS = {
     "connected": "#00ff80",
     "connecting": "#f59e0b",
@@ -296,12 +296,12 @@ _STATUS_COLORS = {
 
 
 def _status_for_google(defn: dict) -> dict:
-    """2026-08-13: per-account status from the multi-account store
-    (services.google_accounts) — the old single boolean here only ever
-    reflected ONE (the primary) account, and via the legacy
-    _google_credentials() bridge; a second connected account, or an account
-    that needs re-auth while another is fine, was invisible. Names which
-    store was checked so this never reads as ambiguous again."""
+    """Per-account status from the multi-account store
+    (services.google_accounts). A single boolean via the legacy
+    _google_credentials() bridge only ever reflects ONE (the primary) account;
+    a second connected account, or an account that needs re-auth while
+    another is fine, would be invisible. Names which store was checked so the
+    result never reads as ambiguous."""
     accounts_status = []
     any_connected = False
     try:
@@ -348,7 +348,7 @@ def _status_for_google(defn: dict) -> dict:
 
 
 def _blocked_reason(server_name: str) -> str | None:
-    """F9: gate_mcp_config's security_note, if extension security blocked
+    """gate_mcp_config's security_note, if extension security blocked
     *server_name* this run. Checked before anything else in _status_for_mcp
     so a security block is reported as what it is, not misread as a runtime
     failure — the on-disk config is deliberately left with enabled:true (so

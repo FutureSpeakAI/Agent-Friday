@@ -2,15 +2,15 @@
 local_call — a minimal, tool-free call to a local seat.
 
 WHY NOT `model_router._call_ollama`. That helper is the chat path: it resolves
-seats, handles descriptors, and runs a full agentic tool loop. Measured
-2026-08-17: asking it to classify three spans with a purpose-built prompt and
-no `tools` argument still ran the loop and came back after 48.9s with
+seats, handles descriptors, and runs a full agentic tool loop. Measured on the
+reference machine: asking it to classify three spans with a purpose-built
+prompt and no `tools` argument still runs the loop and can come back after
+48.9s with
 
     [Agent hit max tool iterations without completing.]
 
-A single span happened to escape it, which is why the judgment layer's earlier
-single-span tests passed and the first batched call failed — a whole code path
-that had never been exercised.
+A single span may escape it while a batched call does not, so single-span
+tests do not prove the path safe.
 
 That machinery is wrong for this job on three counts:
   * it is the 20,000-token ceremony the design explicitly refuses to pay per
@@ -32,12 +32,12 @@ import time as _time
 
 _log = logging.getLogger("friday.local_call")
 
-# MEASURED 2026-08-17, and the old 120s was wrong in both directions of harm:
-# extraction on a large page ran 121s and the 12b's conversation step 192.6s,
-# so real work was being killed by the clock — and the timeout surfaced as
-# "returned nothing usable", which the research pipeline then delivered as a
-# finding-of-absence report. A model that timed out is not a web that had no
-# answer. 300s is above every step measured, with headroom.
+# Measured on the reference machine: extraction on a large page runs 121s and
+# the 12b's conversation step 192.6s, so a 120s timeout kills real work — and
+# the timeout surfaces as "returned nothing usable", which the research
+# pipeline then delivers as a finding-of-absence report. A model that timed
+# out is not a web that had no answer. 300s is above every step measured,
+# with headroom.
 DEFAULT_TIMEOUT_S = 300
 
 
@@ -61,8 +61,8 @@ def _serves(url: str, model: str) -> bool:
     """Does the server at `url` actually hold `model` right now?
 
     endpoints.json is a record of intent written by whoever spawned the seat,
-    and it goes stale: measured 2026-08-18, the file claimed `gemma4:e4b` was
-    on :8090 while :8090 was serving `gemma4:12b`. Trusting it unverified
+    and it goes stale: the file can claim `gemma4:e4b` is on :8090 while
+    :8090 is serving `gemma4:12b`. Trusting it unverified
     would answer as a model the caller did not ask for -- the silent
     substitution this whole layer exists to prevent -- so the file is a HINT
     and the server itself is the authority.
@@ -166,11 +166,10 @@ def describe_dispatch(model: str, daemon_tags: set | None = None) -> dict:
 
     `call()` picks between two destinations and says nothing about which, so a
     seat that quietly died reads exactly like a seat that is working: the same
-    function, the same model name, an answer either way. Measured on this
-    machine 2026-08-24 — the pinned `gemma4:12b` seat on :8090 died with the
-    11:49 restart and was never respawned, `endpoints.json` went on naming
-    :8090 for the rest of the day, and every local role silently resolved to an
-    Ollama tag instead. Nothing in the log said so, because nothing was asked to.
+    function, the same model name, an answer either way. A pinned seat that
+    dies with a restart and is never respawned leaves `endpoints.json` naming
+    its port indefinitely, and every local role silently resolves to an Ollama
+    tag instead. Nothing in the log says so unless something is asked to.
 
     Returns the same decision `call()` makes, as data:
       route     — "seat" | "daemon" | "unreachable"

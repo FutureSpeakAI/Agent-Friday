@@ -1,10 +1,9 @@
-"""A6 — authoritative clock (Incident 2, F3; seats-and-transparency).
+"""A6 — authoritative clock (seats-and-transparency).
 
-2026-08-13: the seated model labeled 8/14 a "Thursday" (it is a Friday) and
-defended the error when challenged. Root cause: there was no authoritative
-clock in context at all — the only date injections were date-only strings
-inside TIER_2 sections that vault gating REDACTS for cloud providers — so
-models did weekday arithmetic themselves, badly.
+Without an authoritative clock in context, models do weekday arithmetic
+themselves, badly, and defend the result when challenged. Date-only strings
+inside TIER_2 sections are not enough: vault gating REDACTS those for cloud
+providers, leaving the model with no date at all.
 
 Three rules, enforced here:
 1. The server injects the current datetime, weekday, and timezone into every

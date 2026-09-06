@@ -17,7 +17,7 @@ and invisible in Settings.
 
 Why the MCP and not the CLI
 ---------------------------
-Both surfaces enumerate, and they DISAGREE. Measured 2026-08-24:
+Both surfaces enumerate, and they DISAGREE. Measured on the reference machine:
 `higgsfield model list` (CLI @1.1.23) reports 67 job types and has no 3D type
 at all; `models_explore` over MCP reports those plus 17 3D models. The MCP is
 the superset, it is already connected inside Friday, and it is the same
@@ -111,13 +111,13 @@ def _explore(params: dict, timeout: float = 60.0) -> dict:
     except (TypeError, ValueError) as e:
         # mcp_client.py's MCPManager.call() joins multiple MCP content blocks
         # with "\n" (it does not assume a tool answers in exactly one block).
-        # Measured live 2026-09-06: models_explore answers image/video/audio
-        # requests with MORE than one block, so `text` is one or more complete
-        # JSON documents concatenated rather than a single one, and a bare
-        # json.loads raises exactly this "Extra data" at the second
-        # document's start — every refresh for those three types failed this
-        # way, which is why the catalog stayed empty despite the connector
-        # being reachable and authorized.
+        # models_explore answers image/video/audio requests with MORE than
+        # one block, so `text` is one or more complete JSON documents
+        # concatenated rather than a single one, and a bare json.loads raises
+        # exactly this "Extra data" at the second document's start. Without
+        # this recovery every refresh for those three types fails and the
+        # catalog stays empty despite the connector being reachable and
+        # authorized.
         #
         # Recover the FIRST complete document rather than fail the whole
         # enumeration. A second document is logged, never merged: guessing
@@ -154,7 +154,7 @@ def _is_edit_model(item: dict) -> bool:
 def _is_music(item: dict) -> bool:
     """True for music generation, as opposed to speech/TTS or sound effects.
 
-    Measured 2026-08-24: `sonilo_music` is the only model tagged `music` /
+    As enumerated: `sonilo_music` is the only model tagged `music` /
     `text-to-music`. Every other audio model is speech. This is a tag test
     rather than an id allowlist so a second music model surfaces the day
     Higgsfield adds one.

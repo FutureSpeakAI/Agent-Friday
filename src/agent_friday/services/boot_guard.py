@@ -1,6 +1,6 @@
 """The boot invariant: a failed self-edit must never leave Friday unable to start.
 
-Stephen, 2026-08-17, on self-modification: "especially when it comes to liquid
+The maintainer's ruling on self-modification: "especially when it comes to liquid
 UI... that needs to be easily rolled back." And the harder requirement underneath
 it — a Friday that cannot start cannot be asked to fix herself, so the recovery
 path must not depend on her running.
@@ -15,9 +15,9 @@ Three things, in the order they matter:
 
 2. **Validate before applying.** A UI patch that will not parse, or a self-edit
    that breaks an import, is caught before it is written rather than after.
-   Today's near-miss is the reference case: a stray closing tag sent the whole
-   bundle to in-browser Babel fallback, which is the documented way to render
-   this UI blank. The build printed it and nothing checked.
+   The reference case: a stray closing tag sends the whole bundle to the
+   in-browser Babel fallback, which is the documented way to render this UI
+   blank. The build prints the error and nothing checks it.
 
 3. **Auto-revert on a failed start.** If the process died during boot on the last
    two attempts, restore the last proven-bootable state before trying again, and
@@ -171,9 +171,9 @@ def wait_for_health(url: str, attempts: int = 6, initial_delay: float = 2.0,
     headline claim (see the module docstring) -- extracted from server.py's
     boot-confirmation thread so the retry/backoff behavior itself has a real
     test, rather than only living inside a thread nested in the startup
-    function (gauntlet-2026-09-03 F55: before this existed, the caller
-    skipped this check entirely and promoted every boot to known-good after
-    a fixed sleep, regardless of whether anything was actually being served).
+    function. Without this check a caller could promote every boot to
+    known-good after a fixed sleep, regardless of whether anything was
+    actually being served.
     """
     import urllib.request as _ureq
     import urllib.error as _uerr
@@ -194,17 +194,13 @@ def confirm_boot_health(health_url: str, attempts: int = 6,
     """The actual gate: only promote this boot to known-good if it answered
     its own health check. Returns whether it did.
 
-    CORRECTION (F55, weak-probe audit, 2026-09-05): server.py's
-    _confirm_boot() used to inline this decision directly inside its own
-    closure -- wait_for_health() got a real test, but the GATING itself
-    (mark_boot_succeeded()/snapshot_known_good() only running when
-    wait_for_health() returns True) did not, because there was no
-    standalone thing to call. A probe against wait_for_health() alone
-    cannot fail if that gating is later removed from server.py while
-    wait_for_health() itself stays intact and correct -- exactly the shape
-    of regression this finding exists to prevent. Extracted so the gate
-    has its own callable, testable identity: server.py's _confirm_boot()
-    now calls this instead of inlining the decision.
+    The gating itself (mark_boot_succeeded()/snapshot_known_good() only
+    running when wait_for_health() returns True) lives here rather than
+    inline in server.py's _confirm_boot() so it has its own callable,
+    testable identity: a test against wait_for_health() alone cannot fail
+    if the gating is removed from the caller while wait_for_health() stays
+    intact. server.py's _confirm_boot() calls this instead of inlining the
+    decision.
     """
     if not wait_for_health(health_url, attempts=attempts,
                            initial_delay=initial_delay, timeout=timeout):
@@ -220,23 +216,22 @@ def failing_to_boot() -> bool:
 
 # ── known-good snapshots: what is covered, and how it is keyed ──────────────
 #
-# 2026-09-03. Until this change the covered set was `~/.friday/workspace_studio`
-# and `~/.friday/settings.json` and nothing else, while the module's headline
-# claim was that a failed self-edit must never leave Friday unable to start.
-# Neither of those paths can break a boot, so the auto-revert restored things
-# that cannot cause the failure it exists to cure. The set below is the app's
-# own importable source and the UI entry — the things that CAN stop a start —
-# plus the two it always had.
+# The module's headline claim is that a failed self-edit must never leave
+# Friday unable to start, so the covered set must include the things that CAN
+# stop a start: the app's own importable source and the UI entry, plus
+# `~/.friday/workspace_studio` and `~/.friday/settings.json`. Covering only the
+# latter two would restore things that cannot cause the failure the auto-revert
+# exists to cure.
 #
-# Two consequences of widening it, both handled rather than hoped about:
+# Two consequences of covering the source tree, both handled:
 #
-#  * a partial snapshot used to be harmless and is now catastrophic, because
-#    `restore_known_good` replaces whole directories. Snapshots are therefore
-#    staged and swapped atomically, carry a per-entry integrity record, and are
-#    refused at restore time if they do not verify.
-#  * the live state being replaced used to be discarded. It is now MOVED to
-#    STATE_DIR/failed/<timestamp>/, which is where `note()` has always told the
-#    user to look and where, until today, nothing was ever written.
+#  * a partial snapshot is catastrophic, because `restore_known_good` replaces
+#    whole directories. Snapshots are therefore staged and swapped atomically,
+#    carry a per-entry integrity record, and are refused at restore time if
+#    they do not verify.
+#  * the live state being replaced is not discarded. It is MOVED to
+#    STATE_DIR/failed/<timestamp>/, which is where `note()` tells the user to
+#    look.
 
 _SNAPSHOT_IGNORE = shutil.ignore_patterns(
     "__pycache__", "*.pyc", "*.pyo", "*.pyd", ".git", "*.log", "*.tmp")
@@ -360,7 +355,7 @@ def snapshot_known_good(paths=None) -> dict:
     Skips the copy entirely when nothing covered has changed since the last
     snapshot, because this runs after every successful start.
 
-    MEASURED 2026-09-03 on the reference machine: 309 files, 7.4 MB, 0.31 s for
+    Measured on the reference machine: 309 files, 7.4 MB, 0.31 s for
     a full copy and 0.05 s when unchanged. (`du` reports the package tree at
     25 MB; the difference is `__pycache__`, which `_SNAPSHOT_IGNORE` drops.)
     """

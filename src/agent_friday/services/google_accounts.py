@@ -47,24 +47,18 @@ from agent_friday.services.calendar_engine import (
 # was actually granted, so a write (or a not-yet-consented read) is only
 # attempted on accounts that granted it.
 #
-# 2026-08-13: Docs/Sheets/Tasks/Contacts added on top of the already-shipped
-# Gmail/Calendar/Drive set. EXISTING connected accounts were consented
-# BEFORE these scopes existed, so they do not have them yet — their tokens
-# still work for everything already granted, but a Docs/Tasks/Contacts call
-# against an old token fails with a normal Google 403 (insufficient scope),
-# surfaced per-account like any other live API error, never silently. Each
-# account must be reconnected (Settings -> Connectors -> Google -> the same
-# Add Account flow) to pick up the new scopes.
+# Scope growth rule: accounts consented BEFORE a scope was added to this set
+# do not hold it. Their tokens still work for everything already granted,
+# but a call needing the newer scope fails with a normal Google 403
+# (insufficient scope), surfaced per-account like any other live API error,
+# never silently. Each account must be reconnected (Settings -> Connectors ->
+# Google -> the same Add Account flow) to pick up new scopes.
 #
-# 2026-08-26: Tasks upgraded from read-only to read/write (TASKS_RW replaces
-# TASKS_READ in the requested set) so complete_task/create_task/update_task/
-# delete_task have something to call. Same reconnection rule as above applies
-# — checked live against accounts.json on this machine before this line
-# landed: every currently-connected account holds only tasks.readonly, so
-# every task-writing tool call will 403 with a clear per-account error until
-# each account is reconnected. TASKS_READ is kept below only so old tokens
-# are still recognized/loadable; it is no longer requested for new
-# connections.
+# Tasks is requested read/write (TASKS_RW) so complete_task/create_task/
+# update_task/delete_task have something to call; an account that only
+# granted tasks.readonly 403s with a clear per-account error until it is
+# reconnected. TASKS_READ is kept below only so old tokens are still
+# recognized/loadable; it is no longer requested for new connections.
 GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly"
 CALENDAR_RW = "https://www.googleapis.com/auth/calendar"
 DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
@@ -433,13 +427,12 @@ def _accounts_with(service: str) -> list:
 
 # HOW FAR BACK "recent" REACHES, in days.
 #
-# This was hardcoded to 1 inside the query string, which made `limit` a lie:
-# asking for 50 messages from an account that had received 6 in the last 24
+# A window hardcoded to 1 day inside the query string makes `limit` a lie:
+# asking for 50 messages from an account that received 6 in the last 24
 # hours returns 6, and the inbox then reports that as the account's whole
-# state. The reported symptom (2026-08-24) was the Work account looking far
-# emptier than it is -- consistent with steadier traffic spread over a week
-# rather than arriving in daily bursts, though the window is the defect either
-# way: a 24-hour cap that no caller asked for and none could change.
+# state -- an account with steady traffic spread over a week looks far
+# emptier than it is. A cap no caller asked for and none could change is the
+# defect either way.
 #
 # Settable rather than merely widened: the right window depends on how much
 # mail an account gets, which is not a thing this module can know.
@@ -983,18 +976,18 @@ MULTI_DESKTOP_REDIRECT_URI = f"http://localhost:3000{MULTI_CALLBACK_PATH}"
 def multi_redirect_uri(cfg, client_type=None):
     """Redirect URI for the multi-account callback.
 
-    2026-08-13: previously derived from request.host_url for a "web" client
-    config, which broke consent for anyone reaching Friday via a non-loopback
-    Host header (a hosts-file alias like http://agent.friday/, a tunnel, a
-    LAN IP) — Google's secure-response-handling policy rejects any plain-HTTP
-    non-loopback redirect_uri outright, checked against the literal URI, not
-    something DNS/propagation ever fixes. Pinned to loopback regardless of
-    the request Host now; an advanced settings override exists for a genuine
-    HTTPS-terminated reverse-proxy setup (DEFAULT_SETTINGS.google_oauth).
+    Never derived from request.host_url: that breaks consent for anyone
+    reaching Friday via a non-loopback Host header (a hosts-file alias like
+    http://agent.friday/, a tunnel, a LAN IP) — Google's
+    secure-response-handling policy rejects any plain-HTTP non-loopback
+    redirect_uri outright, checked against the literal URI, not something
+    DNS/propagation ever fixes. Pinned to loopback regardless of the request
+    Host; an advanced settings override exists for a genuine HTTPS-terminated
+    reverse-proxy setup (DEFAULT_SETTINGS.google_oauth).
 
-    2026-08-13 (A6 / decision D10): the HOST stays loopback for the reasons
-    above; only the PORT now follows the server's actual bind. A literal
-    ":3000" broke consent whenever _resolve_bind_port fell back to 3001+.
+    A6 / decision D10: the HOST stays loopback for the reasons above; only
+    the PORT follows the server's actual bind. A literal ":3000" breaks
+    consent whenever _resolve_bind_port falls back to 3001+.
     """
     override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')
     if override:
@@ -1028,10 +1021,10 @@ def build_auth_flow(state: str | None = None):
     from agent_friday.services import google_oauth_client as goc
     cfg, _src, _kind = goc.active_client(discover=_google_client_config)
     if not cfg:
-        # NOT a file path. The message this replaced ("Place a Desktop OAuth
-        # client JSON at ~/.friday/credentials.json") is the wall the second user hit on
-        # 2026-08-26, and it asked a person who wanted her mail summarised to
-        # know what an OAuth client is and where ~/.friday lives on Windows.
+        # NOT a file path. A message like "Place a Desktop OAuth client JSON
+        # at ~/.friday/credentials.json" asks a person who only wants their
+        # mail summarised to know what an OAuth client is and where ~/.friday
+        # lives on Windows; that is a wall, not an instruction.
         raise RuntimeError(
             "Friday has no Google sign-in configured yet. Open Settings -> "
             "Connectors -> Google and choose \"Use my own Google sign-in\" "

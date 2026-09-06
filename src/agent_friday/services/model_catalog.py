@@ -283,13 +283,11 @@ def _model_entries_for(provider: dict, registry) -> list:
         elif live is None:
             # Daemon down → it has NO models, and saying otherwise is invention.
             #
-            # This used to fall back to the static list, which is how a stopped
-            # daemon kept advertising "gemma4:latest" and "llama3.1:8b" —
-            # neither installed, one not even a real tag. Stephen saw gemma4
-            # listed as an Ollama model while the daemon was retired and the
-            # real seat was answering two ports away. The provider row still
-            # appears with the hint; it just stops naming models it does not
-            # have.
+            # Falling back to the static list here would let a stopped daemon
+            # keep advertising tags that are not installed (or not even real)
+            # while the real seat is answering on another port. The provider
+            # row still appears with the hint; it just stops naming models it
+            # does not have.
             ids = []
             available = False
             hint = "Ollama not running — start Ollama to use its models"
@@ -384,12 +382,10 @@ def _model_entries_for(provider: dict, registry) -> list:
             "hint": hint,
             "cost_per_1k": costs.get(mid),
             "curated": mid in curated_ids,
-            # Descriptor-declared presentation the UI never had a way to show
-            # (regression noticed 2026-09-04 building the video/image model
-            # expansion: sd3.5-medium-fp8's model_meta has carried a `licence`
-            # since it shipped, and it was DROPPED here — the picker had no
-            # way to say "commercial use needs $1M+ revenue" because the field
-            # never left this function). `note` may be overwritten below by a
+            # Descriptor-declared presentation must reach the UI: e.g.
+            # sd3.5-medium-fp8's model_meta carries a `licence`, and the picker
+            # can only say "commercial use needs $1M+ revenue" if that field
+            # leaves this function. `note` may be overwritten below by a
             # DISCOVERY-sourced one only when the descriptor didn't set one
             # (see the `disc.get(extra) is not None and entry.get(extra) is
             # None` guard a few lines down) — declared metadata wins.
@@ -492,7 +488,7 @@ def _arbiter_seat_entries() -> list:
     if not seats:
         # No in-process Arbiter — read the seat map off disk instead of
         # returning nothing. Suppressing the dead Ollama daemon's invented list
-        # is right, but it must not cost Stephen every local model in the
+        # is right, but it must not cost the user every local model in the
         # picker when the Arbiter simply isn't governing THIS process. The
         # endpoints file is written by the Arbiter that is, and health-checked
         # before it is trusted.
@@ -557,14 +553,13 @@ def _friday_store_entries(exclude: set | None = None) -> list:
     """Every model Friday HOLDS, whether or not it is seated right now.
 
     `_arbiter_seat_entries` reports the residency PLAN, which is a statement
-    about what should be hot -- not about what exists. Stephen's store holds
-    gemma4:e2b, :12b, :e4b and :26b; the plan pins two of them; so two of his
-    own models were absent from his own picker. One of the absent pair was
-    serving a live seat on 127.0.0.1:8090 while he was looking at a list that
-    did not mention it, which is the screenshot he sent.
+    about what should be hot -- not about what exists. A store holding
+    gemma4:e2b, :12b, :e4b and :26b with a plan that pins two of them would
+    otherwise leave two of the user's own models absent from the picker, even
+    while one of them is serving a live seat on 127.0.0.1:8090.
 
-    A model on disk with a template beside it is a model he can pick. Whether
-    it is loaded is a `resident` flag, not a reason to hide it.
+    A model on disk with a template beside it is a model the user can pick.
+    Whether it is loaded is a `resident` flag, not a reason to hide it.
     """
     exclude = exclude or set()
     out = []
@@ -661,13 +656,12 @@ def build_catalog() -> dict:
     flat, seen = [], set()
     # The seats Friday ACTUALLY serves go in FIRST, so they win the dedupe.
     #
-    # 2026-08-16, Stephen: "listing Gemma4 as a cloud model, and as an Ollama
-    # model (it is neither)". Both entries came from the retired `ollama-local`
-    # provider, whose hardcoded fallback list still named gemma4 while the
-    # daemon it describes is stopped — and the models he is really running,
-    # served by llama-server processes the Arbiter owns, appeared nowhere at
-    # all. The picker was showing a dead daemon's guesses instead of the live
-    # residency plan.
+    # Otherwise a retired `ollama-local` provider's hardcoded fallback list can
+    # name a model as both a cloud model and an Ollama model (it is neither)
+    # while the daemon it describes is stopped — and the models really
+    # running, served by llama-server processes the Arbiter owns, appear
+    # nowhere at all. The picker must show the live residency plan, not a
+    # dead daemon's guesses.
     for e in _arbiter_seat_entries():
         seen.add((e["id"], e["provider"]))
         e["_ord"] = len(flat)

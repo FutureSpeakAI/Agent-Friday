@@ -610,7 +610,7 @@ def chat():
         # We ALWAYS consult the router now — even in cloud_only mode — so a
         # vault-touching request is force-routed local (or refused) and vault
         # data never reaches the cloud.
-        # Badge truth (2026-08-14): attribution is collected per-turn from
+        # Badge truth: attribution is collected per-turn from
         # the dispatch layer itself — reset before any primitive runs.
         try:
             from agent_friday.services import attribution as _attr
@@ -634,8 +634,8 @@ def chat():
             #
             # A binding to a missing model 404s and falls through to the cloud.
             # §3.8: a stated choice to rebind, never a silent substitution.
-            # Answering as Claude when he asked for a local model is the defect
-            # this whole day has been about.
+            # Answering from the cloud when the user asked for a local model
+            # is a silent substitution.
             #
             # "Gone" is asked of every place Friday can serve from, not just
             # the catalogue. The catalogue omitted `gemma4:e2b` while that seat
@@ -742,13 +742,13 @@ def chat():
         # Two distinct reasons share this one flag: a vault request that
         # cannot be served locally (deny/warn) — never send vault data to
         # the cloud, return the warning instead — and, separately,
-        # local_only mode with no local seat available (findings.jsonl
-        # Q19). Only the first is actually vault-related; `vault_blocked`
-        # stays scoped to that so callers checking it aren't misled by an
-        # unrelated local_only refusal. The local_only case additionally
-        # carries `offer_cloud_switch` — Stephen, 2026-09-04: "the system
-        # should fail to function and produce an error, then it should ask
-        # the user if it can go into cloud only mode" — a real, present
+        # local_only mode with no local seat available. Only the first is
+        # actually vault-related; `vault_blocked` stays scoped to that so
+        # callers checking it aren't misled by an unrelated local_only
+        # refusal. The local_only case additionally carries
+        # `offer_cloud_switch` — maintainer ruling: "the system should fail
+        # to function and produce an error, then it should ask the user if
+        # it can go into cloud only mode" — a real, present
         # choice for the frontend to render as an action, not just prose
         # the user has to act on by finding Settings themselves. This is a
         # standing transparency principle now, not a rule scoped to this
@@ -912,24 +912,24 @@ def chat():
         # with no setting able to switch it off, because this test never read
         # `mode`.
         #
-        # Measured on a second user's laptop 2026-08-26, the first install of Friday by
-        # someone who did not write her. She found the routing mode, set it to
-        # cloud only, and was still answered on-device. The router had already
-        # decided correctly one line above — both lines, same turn, in order:
+        # The failure this prevents, on a fresh install with no cloud key: the
+        # user sets the routing mode to cloud only and is still answered
+        # on-device, with the router having already decided correctly one
+        # line above — both lines, same turn, in order:
         #
         #   [ROUTER] chose cloud/claude-sonnet-5 | Routing mode is cloud_only
         #   [ROUTER] No Anthropic key; Ollama healthy — routing chat to local
         #            model gemma3:4b
         #
-        # The mirror image was fixed on 2026-08-18: a local seat that fails
-        # refuses the cloud rather than quietly crossing the line, and says so
-        # ("LOCAL ONLY MEANS LOCAL ONLY", below). Only the direction the author
-        # travels had been treated. This is the other direction, and it is the
-        # one a new user meets first.
+        # The mirror image is handled below ("LOCAL ONLY MEANS LOCAL ONLY"):
+        # a local seat that fails refuses the cloud rather than quietly
+        # crossing the line, and says so. This is the other direction, and it
+        # is the one a new user meets first.
         #
-        # Refusing costs her an answer she did not want: a turn she asked to
-        # keep off this machine, answered on it. Saying why — and where the key
-        # goes — is worth more than a reply from a model she declined.
+        # Refusing costs the user an answer they did not want: a turn they
+        # asked to keep off this machine, answered on it. Saying why — and
+        # where the key goes — is worth more than a reply from a model they
+        # declined.
         if (not _routed_local) and _provider == 'cloud' and get_anthropic_client() is None:
             _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
             if _mode == 'cloud_only':
@@ -1006,8 +1006,8 @@ def chat():
             # seat, the picker and the mode were all fine — the request could
             # not be built. See services/tool_budget.py.
             #
-            # The budget covers the WHOLE request: the 2026-08-19 400 was
-            # tools "within budget" landing on top of an ordinary prompt.
+            # The budget covers the WHOLE request: a 400 here is tools
+            # "within budget" landing on top of an ordinary prompt.
             _prompt_cost = (len(system_prompt or '') + sum(
                 len(m.get('content')) for m in messages
                 if isinstance(m.get('content'), str))) // 4
@@ -1036,14 +1036,13 @@ def chat():
                     raise
                 # LOCAL ONLY MEANS LOCAL ONLY.
                 #
-                # Stephen, 2026-08-18: "It took forever to reply then kicked
-                # back to Sonnet 4.6 again, which I do not want." The mode
-                # setting is exactly the control that should prevent this, and
-                # this fallback never consulted it — so "local only" still
-                # reached Anthropic whenever a local seat had a bad minute.
-                # Refusing is the honest outcome: he asked for on-device work,
-                # and a slow answer from the model he chose beats a fast one
-                # from a model he rejected.
+                # The mode setting is exactly the control that must prevent a
+                # slow local seat from kicking the turn back to the cloud; a
+                # fallback that does not consult it lets "local only" reach
+                # Anthropic whenever a local seat has a bad minute. Refusing
+                # is the honest outcome: the user asked for on-device work,
+                # and a slow answer from the model they chose beats a fast
+                # one from a model they rejected.
                 _mode = str((_routing_cfg or {}).get('mode') or 'smart').lower()
                 if _mode == 'local_only':
                     print(f"  [ROUTER] local inference failed and mode is "
@@ -1083,9 +1082,9 @@ def chat():
                 # which is precisely how this was reported.
                 #
                 # friday.log too, with the full error: the tray DEVNULLs
-                # stdout, so the print above vanishes — the 2026-08-19 400's
-                # body (which named the exact token count) survived in no log
-                # anywhere, and the diagnosis had to be rebuilt from replay.
+                # stdout, so the print above vanishes — without this, a 400
+                # body (which names the exact token count) survives in no
+                # log anywhere.
                 import logging as _logging
                 _logging.getLogger("friday.local_fallback").warning(
                     "local seat %s failed, falling back to cloud: %s",
@@ -1233,8 +1232,8 @@ def chat():
         # services/citation_enforcement and the note below; this is a decision
         # pending, not an oversight.
         #
-        # Measured live 2026-08-24 on "what changed in EU AI regulation during
-        # 2024?" with the mode on: five sentences, zero citations, and the
+        # Example, with the mode on, for "what changed in EU AI regulation
+        # during 2024?": five sentences, zero citations, and the
         # heuristic scored one claim-shaped sentence. The four it missed are
         # the ones that matter --
         #   "It shifted the regulatory focus toward a risk-based approach..."
@@ -1368,11 +1367,11 @@ def chat():
         # ── B1: model attribution on every assistant message, persisted so
         # it survives reloads. seat is the class ("local"/"cloud"/"openai"),
         # model is the exact id that generated this reply. ──
-        # ── Badge truth (2026-08-14): attribute the ACTUAL responding model,
-        # recorded by the primitive that generated the final text — never the
-        # router's intent. The morning's live failure: every reply badged
-        # 'qwen3.6-35b-a3b-iq4nl' while the brain never bound its port and
-        # gemma4:e4b (seat substitution) or Claude (ladder) actually answered.
+        # ── Badge truth: attribute the ACTUAL responding model, recorded by
+        # the primitive that generated the final text — never the router's
+        # intent. Otherwise every reply can badge a brain that never bound
+        # its port while a substituted seat or the cloud ladder actually
+        # answered.
         # Routing intent remains only as a last-resort fallback when no
         # primitive recorded (it always records on success). ──
         _gen = None
@@ -1633,7 +1632,7 @@ def chat_send():
         # local seat that IS entitled to see full vault content got a
         # degraded, silently-redacted answer with no indication why --
         # exactly the seam /api/chat's own _prep_for(provider) (chat.py:748)
-        # was written to close. Mirrors that pattern here (findings.jsonl F18).
+        # was written to close. Mirrors that pattern here.
         settings = _load_settings()
         _session_id = _current_session_id()
         _send_sources = []
@@ -1939,10 +1938,9 @@ def sources_dossier(session_id):
 
         # Vault-aware system prompt per the all-_call_claude-uses-vault rule.
         #
-        # SECURITY (2026-08-25, sweep followup): found while migrating every
-        # caller to the now-required provider/vault_control params — this one
-        # had neither, same bug class as the 22 other sites fixed the same
-        # day. Predicting on `dossier_prompt` (the real transcript-bearing
+        # SECURITY: every caller must pass the provider/vault_control params
+        # so vault content cannot be assembled into a cloud-bound prompt.
+        # Predicting on `dossier_prompt` (the real transcript-bearing
         # content), not the inert 'source dossier' keywords literal used only
         # for context-section selection, mirrors what the real dispatch call
         # below actually routes on.

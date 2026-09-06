@@ -91,8 +91,8 @@ def _vibe_terminal_processes() -> dict:
     Matches on the `title Friday-Vibe-<id>` marker actually present in the
     process's own command line — never on `Name='cmd.exe'` alone, which would
     just as happily catch a terminal window the user opened by hand. This is
-    the same discriminator lesson residency_arbiter._llama_server_pids
-    documents from 2026-08-18: matching by binary/process name instead of by
+    the same discriminator rule residency_arbiter._llama_server_pids
+    documents: matching by binary/process name instead of by
     what the process is actually running reaps something that was never ours
     to touch. Nobody types `title Friday-Vibe-<id>` themselves.
     """

@@ -4,7 +4,7 @@ reached SkillOpt's composite score, so a real chat turn Friday considered
 a total failure and a real chat turn she considered a full success scored
 IDENTICALLY.
 
-Two coupled claims from an outside review Stephen commissioned (it read
+Two coupled claims from an outside review the maintainer commissioned (it read
 the public v5.10.0 repo, both reproduced there by executing the scoring
 functions -- re-verified here against current code before trusting them):
 
@@ -37,9 +37,9 @@ user_satisfaction/completeness keys against three independently-derived
 signals -- skill_capture.py was simply not following the convention its
 own sibling caller uses correctly.
 
-CORRECTION (F75, Stephen's direct ruling, 2026-09-05): claim (b) itself
+CORRECTION (F75, the maintainer's direct ruling, 2026-09-05): claim (b) itself
 is now partially fixed too -- not with the real task-verification design
-work Stephen explicitly deferred (a genuine product decision about what
+work the maintainer explicitly deferred (a genuine product decision about what
 "success" should mean per skill/task type, specified as follow-up work
 in skill_capture.py itself, not decided here), but with the "minimum
 honest change" he did rule on: _success_score() no longer returns
@@ -140,7 +140,7 @@ class TestCaptureSuccessSignalReachesScore:
 
 
 class TestSuccessScoreNowReturnsUnverifiedNotSuccess:
-    """F75 (Stephen's direct ruling, 2026-09-05): replaces the old
+    """F75 (the maintainer's direct ruling, 2026-09-05): replaces the old
     TestSuccessScoreStillMeasuresReplyShapeOnly, which pinned the BUG
     (a plausible reply scoring a confirmed SUCCESS_SCORE with zero
     evidence) as accepted, current behavior. That bug is fixed -- a

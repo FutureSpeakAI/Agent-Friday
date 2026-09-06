@@ -22,7 +22,7 @@ time. So for two months the meter recorded every call correctly and delivered
 it to a panel that had been deleted, and the only spend a user could actually
 see was one "$3.50 today" line on the Anthropic row of the Providers tab.
 
-The cost of that silence, measured on Stephen's own install the day it was
+The cost of that silence, measured on the maintainer's own install the day it was
 found: $1,189.76 for the month against a $50 monthly budget whose alert was
 switched off -- switched off because the only UI that could ever have armed
 it was the one that had been deleted.
@@ -140,7 +140,7 @@ def test_the_panel_says_what_it_does_not_count():
 
 def test_the_panel_does_not_arm_budgets_on_the_users_behalf():
     """Both alerts being off is a consequence of the deletion, not a choice
-    Stephen made -- but the fix is to let him arm them, not to flip them on
+    the maintainer made -- but the fix is to let him arm them, not to flip them on
     for him. A UI default of `true` here would spend his attention without
     asking."""
     src = _src()

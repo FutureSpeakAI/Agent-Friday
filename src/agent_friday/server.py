@@ -270,9 +270,9 @@ def _residency_boot():
         # arbiter reports DEGRADED rather than the server refusing to start.
         print(f"  Residency: boot failed, seats still bound ({e})")
         # LOGGED as well as printed. Everything above goes to stdout, which the
-        # tray sends to DEVNULL, so a boot that failed has never left a trace
-        # anybody could find -- and on 2026-08-24 that cost an afternoon of every
-        # local call quietly going to Ollama instead of the pinned seat.
+        # tray sends to DEVNULL, so a boot that failed would otherwise leave
+        # no trace anybody could find while every local call quietly went to
+        # Ollama instead of the pinned seat.
         logging.getLogger("friday.residency").warning(
             "residency boot failed, seats still bound: %s", e)
 
@@ -297,10 +297,9 @@ def _residency_boot():
                      if s.get("status") in ("pinned", "resident")}
         rows = log_dispatch_table(wanted, expect_up=expect_up)
         # MODELS, not seats. `log_dispatch_table` dedupes by name, and roles
-        # share models heavily -- on 2026-08-25 twelve plan roles used four
-        # distinct local models. Calling the deduped count "seats" made a
-        # normal seat map look like it had halved, and cost a session chasing
-        # a regression that was only ever a label.
+        # share models heavily (a dozen plan roles can use four distinct
+        # local models). Calling the deduped count "seats" makes a normal
+        # seat map look like it has halved.
         reachable = sum(1 for r in rows if r["route"] in ("seat", "daemon"))
         blind = [r["model"] for r in rows
                  if r["route"] == "unreachable" and r["model"] in expect_up]
@@ -320,11 +319,10 @@ if not _TESTING:
     try:
         from agent_friday.services.credential_store import bootstrap_provider_env_detail
         _pk_detail = bootstrap_provider_env_detail()
-        # CORRECTION (F68, 2026-09-04): this used to print only the bare
-        # success count, gated on it being nonzero -- so a run where every
-        # stored key failed to decrypt (Stephen's own real situation, 3 for
-        # 3) printed NOTHING at all, the least visible way this could fail.
-        # Gate on candidates existing at all, not on the count that succeeded.
+        # Gate on candidates existing at all, not on the count that
+        # succeeded: printing only a nonzero success count means a run where
+        # every stored key fails to decrypt prints NOTHING, the least visible
+        # way this can fail.
         if _pk_detail["candidates"]:
             _msg = (f"  Provider keys: {_pk_detail['loaded']}/"
                     f"{_pk_detail['candidates']} decrypted from encrypted store")
@@ -481,8 +479,8 @@ def _fail_loud_and_exit(msg):
 # Deliberately placed HERE, after _fail_loud_and_exit is defined: the
 # discovery call near the top of this module runs long before that name
 # exists, so the enforcement cannot live inside the discovery function
-# without reintroducing exactly the module-level use-before-definition that
-# caused the 2026-08-19 outage.
+# without reintroducing a module-level use-before-definition (which takes
+# the whole server down at import time).
 def _enforce_blueprint_policy():
     """Make a failed blueprint cost something visible.
 
@@ -550,10 +548,10 @@ _enforce_blueprint_policy()
 def _acquire_single_instance_lock():
     """OS-level exclusive lock, held for this process's entire lifetime —
     the authoritative guard against a second production server ever running
-    (docs: toolcall-integrity-v5, 2026-08-13 double-launch incident: two
-    server processes born the same second; the loser sat alive at ~4MB/0%
-    CPU with NOTHING logged, because it never got far enough to log
-    anything). Checked here, before any heavy startup work (wiki indexing,
+    (without it, two server processes born the same second leave the loser
+    sitting alive at ~4MB/0% CPU with NOTHING logged, because it never gets
+    far enough to log anything). Checked here, before any heavy startup work
+    (wiki indexing,
     vault setup, model loading) — so a losing process fails in milliseconds,
     not after minutes of silent, invisible partial init.
 
@@ -752,7 +750,7 @@ if __name__ == '__main__':
     _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
     _ssl_context = None
     if bind_host not in _LOOPBACK_HOSTS:
-        # R1 (Fable 5 adversarial fixes): refuse to start a network-exposed
+        # Refuse to start a network-exposed
         # server with no remote auth key. The request-time guard already denies
         # keyless remote requests (fail-closed), but refusing to boot at all is
         # belt-and-suspenders — the operator finds out NOW, not via 403s later.
@@ -801,7 +799,7 @@ if __name__ == '__main__':
                 print("  FRIDAY_REQUIRE_TLS=1 — refusing to start without TLS.")
                 sys.exit(1)
 
-    # R2 (Fable 5 adversarial fixes): egress-gate startup self-test. Seal a
+    # Egress-gate startup self-test. Seal a
     # known-SENSITIVE probe once; if the gate cannot withhold it, cloud routing
     # is disabled (model_router._seal_or_block refuses every cloud send) until
     # the gate is fixed — the failure mode is caught at boot, not at first leak.
@@ -833,9 +831,8 @@ if __name__ == '__main__':
     except Exception:
         pass
 
-    # Hang watchdog (toolcall-integrity-v5, 2026-08-13): arm before app.run()
-    # so a hang during request serving — the scenario both silent-hang
-    # incidents matched — gets caught. auto_restart_after_dump self-exits
+    # Hang watchdog: arm before app.run() so a hang during request serving
+    # (the silent-hang scenario) gets caught. auto_restart_after_dump self-exits
     # after a dump so the tray relaunches; default off, so a dump alone
     # never changes behavior unless the user opts in.
     try:
@@ -901,14 +898,13 @@ if __name__ == '__main__':
         _bg.mark_boot_started()
 
         def _confirm_boot():
-            # gauntlet-2026-09-03 F55: this used to be a bare 20-second sleep,
-            # then mark_boot_succeeded() unconditionally -- a fixed timer
-            # racing app.run(), not a check that anything was ever served.
-            # A slow-starting or silently-broken process (every route 500s,
-            # startup work still running past 20s) got marked known-good
-            # anyway, contradicting this module's own stated bar: "a state
-            # that has actually completed a startup and then served a
-            # request." Now makes a real, local, self-directed request to
+            # A bare timer, then mark_boot_succeeded() unconditionally, would
+            # be a fixed delay racing app.run(), not a check that anything
+            # was ever served: a slow-starting or silently-broken process
+            # (every route 500s, startup work still running past 20s) would
+            # be marked known-good anyway, contradicting this module's own
+            # stated bar: "a state that has actually completed a startup and
+            # then served a request." So this makes a real, local, self-directed request to
             # its own /api/health (boot_guard.confirm_boot_health, with
             # retry/backoff) and only proceeds on a genuine 2xx -- loopback
             # is always auth-trusted (core.check_auth), so this needs no
@@ -916,7 +912,7 @@ if __name__ == '__main__':
             # so the GATE itself -- mark_boot_succeeded()/snapshot_known_good()
             # only running on a real 2xx -- is what this thread calls, not an
             # inlined if/else a probe against wait_for_health() alone cannot
-            # see (weak-probe audit, 2026-09-05).
+            # see.
             import time as _t
             _t.sleep(20)
             try:

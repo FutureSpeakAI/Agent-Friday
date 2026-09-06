@@ -1,6 +1,6 @@
 """What the Providers panel needs in order to let someone SWAP a key.
 
-Stephen, 2026-08-26: "we need to fix the installer so the Friday that ships
+The maintainer, 2026-08-26: "we need to fix the installer so the Friday that ships
 to users can swap API keys from the settings menu ... view which keys are
 set (masked), replace one, remove one, and ideally see whether it currently
 works."

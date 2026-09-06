@@ -438,11 +438,10 @@ def _source_trust_meta(domain, banned=None, boosted=None):
 _RSS_CACHE = {}
 _RSS_CACHE_TTL = 300  # seconds
 
-#: 2026-09-04: a real ceiling on one feed's connect+read. `feedparser.parse(url)`
-#: previously handed the fetch straight to urllib with no timeout at all, so a
-#: feed server that accepted the connection and then never sent (or trickled)
-#: data blocked that worker thread forever. See KNOWN_ISSUES.md for the
-#: incident this was found investigating.
+#: A real ceiling on one feed's connect+read. `feedparser.parse(url)` hands
+#: the fetch straight to urllib with no timeout at all, so a feed server that
+#: accepts the connection and then never sends (or trickles) data would block
+#: that worker thread forever. See KNOWN_ISSUES.md.
 _RSS_FETCH_TIMEOUT_S = 8.0
 _RSS_CACHE_LOCK = threading.Lock()
 
@@ -512,11 +511,11 @@ def _normalize_entry(entry):
 def _parse_feed(url, limit=12, timeout=None):
     """Fetch+parse one RSS feed into normalized entries, with TTL caching.
 
-    2026-09-04: fetches the bytes ourselves via `urllib.request.urlopen(...,
-    timeout=...)` rather than handing the bare URL to `feedparser.parse()`,
-    which has no timeout parameter of its own and previously blocked this
-    call -- and the pool worker running it -- on a feed server that accepted
-    the connection and then never finished sending. `timeout` defaults to
+    Fetches the bytes itself via `urllib.request.urlopen(..., timeout=...)`
+    rather than handing the bare URL to `feedparser.parse()`, which has no
+    timeout parameter of its own and would block this call -- and the pool
+    worker running it -- on a feed server that accepts the connection and
+    then never finishes sending. `timeout` defaults to
     `_RSS_FETCH_TIMEOUT_S`; overridable so a test can prove the bound is
     real without waiting out the production value. See KNOWN_ISSUES.md.
     """
@@ -554,16 +553,15 @@ def _rss_results(feeds, limit=12):
     are fetched in parallel with a bounded pool so a slow feed doesn't stall the
     whole category, and each feed fails soft to an empty list.
 
-    2026-09-04: the pool used to be a `with ThreadPoolExecutor(...) as pool:`
-    block. `as_completed(futures, timeout=20)` looked like a real ceiling but
-    was not one -- the `with` statement's own `__exit__` calls
+    The pool must NOT be a `with ThreadPoolExecutor(...) as pool:` block.
+    `as_completed(futures, timeout=20)` looks like a real ceiling but is not
+    one on its own -- the `with` statement's `__exit__` calls
     `pool.shutdown(wait=True)` unconditionally, an UNBOUNDED join that runs
-    regardless of whether the 20s timeout above already gave up. A single
-    feed fetch wedged past `_parse_feed`'s own timeout (itself unbounded
-    before the same date) blocked this function, and therefore whatever
-    called it, forever. The pool is now managed explicitly and shut down
-    with `wait=False`: a wedged worker thread is abandoned (Python cannot
-    force-kill a running thread), but the caller is no longer blocked by it.
+    regardless of whether the 20s timeout already gave up, so a single wedged
+    feed fetch would block this function, and whatever called it, forever.
+    The pool is managed explicitly and shut down with `wait=False`: a wedged
+    worker thread is abandoned (Python cannot force-kill a running thread),
+    but the caller is not blocked by it.
     """
     feeds = [f for f in (feeds or []) if f]
     if not feeds:
@@ -601,12 +599,9 @@ def _brave_results(query, limit=8):
     {title, snippet, url, source, ts} shape as _rss_results so callers can
     treat both uniformly. No key → empty list (RSS stays primary).
 
-    2026-08-17: the old docstring here promised a "free tier: ~2K
-    queries/month". That tier no longer exists — Brave now bills per request
-    ($5 per 1,000) with $5 of monthly credit. Verified there has never been a
-    key on this machine (empty provider store, nothing in env or any launch
-    script, and no Brave-sourced article in any news archive), so this fallback
-    has been inert since it was written and news has run on RSS alone.
+    Brave has no free tier: it bills per request ($5 per 1,000) with $5 of
+    monthly credit. Without a key this fallback is inert and news runs on RSS
+    alone, which is the expected state of a stock install.
 
     Key lookup is shared with web_search so ONE token serves both this news
     endpoint and the research pipeline's web endpoint — they differ only in
@@ -737,7 +732,7 @@ def _register_news_provenance(items):
     returns title AND snippet, and the classifier judged the snippet on its
     own words. News is wall-to-wall people, deaths, illnesses and money, so it
     reads as private -- CDC flu guidance classified TIER_3 and was dropped
-    outright. Those keyword rules exist to keep Stephen's health, legal and
+    outright. Those keyword rules exist to keep the user's health, legal and
     financial affairs on this machine. A CDC press release is none of them.
 
     Returns `items` so callers can wrap a return statement. Never raises:
@@ -1600,7 +1595,7 @@ def _front_page_story_titles(edition):
     financial keyword rules ("Trump asks US Supreme Court…", "raised a $136M
     Series B"), one tainted paragraph made the whole block sensitive, and the
     weekly digest reached the model as a folder of redaction notices. Those
-    rules exist to keep Stephen's legal and financial affairs on the machine.
+    rules exist to keep the user's legal and financial affairs on the machine.
     A headline the BBC published is neither.
     """
     out = []
@@ -2598,7 +2593,7 @@ def _wiki_title_index():
     # result made the empty case uncacheable, so a wiki with no matching pages
     # re-walked both trees with rglob("*") on every call instead of once every
     # two minutes. Gate on the timestamp — "we looked and found nothing" is an
-    # answer worth remembering for as long as any other. (2026-08-26)
+    # answer worth remembering for as long as any other.
     if cache["at"] and (now - cache["at"]) < _WIKI_INDEX_TTL:
         return cache["titles"]
     out, seen = [], set()

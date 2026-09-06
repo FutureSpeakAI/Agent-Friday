@@ -7,7 +7,7 @@ llama-server processes the Arbiter spawned, so all three came back None and were
 reported ORPHANED — "the plan says resident, nothing is serving it" — while
 every one of them was answering on :11434.
 
-That reads as "Stephen lost his memory manager and fast sidekick this
+That reads as "the maintainer lost his memory manager and fast sidekick this
 afternoon", and it nearly cost a session chasing seats that were never missing.
 The probe has to ask where calls actually land, not who owns the process.
 """

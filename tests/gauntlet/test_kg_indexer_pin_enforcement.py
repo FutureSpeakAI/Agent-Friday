@@ -16,7 +16,7 @@ test file, against this audit's own standing rule that new probes go only
 in tests/gauntlet/. Moved here unchanged (content identical, only the
 module-level imports/helpers below are inlined so this file is
 self-contained) to correct that rule violation, flagged directly by
-Stephen's independent cold re-verification pass.
+The maintainer's independent cold re-verification pass.
 """
 from __future__ import annotations
 

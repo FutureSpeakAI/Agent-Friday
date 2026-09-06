@@ -27,7 +27,7 @@ via apiFetch and only flashes "Saved" when the server echoes status:'ok'.
 the block and silently reset `enabled`/`psi_daily_cap` -- that half is
 backend-testable and is what TestContentSettingsDeepMerge below pins.
 
-CORRECTION (2026-09-04, flagged by Stephen's independent cold
+CORRECTION (2026-09-04, flagged by the maintainer's independent cold
 re-verification): this probe originally covered ONLY the backend
 deep-merge hardening above -- the docstring itself admitted "the JS side
 isn't unit-testable here, so it's covered by manual/visual review of the
@@ -108,6 +108,17 @@ class TestSaveGlobalsRequestShape:
 
 class TestContentSettingsDeepMerge:
     def test_partial_content_update_preserves_untouched_sibling_fields(self):
+        # This test persists content.enabled=False into the shared test home.
+        # The publisher honours that key as a kill switch, so restore the
+        # block afterwards or every later publisher test sees "disabled".
+        before = dict((core._load_settings_raw() or {}).get("content") or {})
+        yield_restore = lambda: core._save_settings({"content": before or dict(core.DEFAULT_SETTINGS["content"])})
+        try:
+            self._run(yield_restore)
+        finally:
+            yield_restore()
+
+    def _run(self, _restore):
         core._save_settings({"content": {
             "enabled": False,          # a value that differs from the default,
             "psi_daily_cap": 999,      # so a wholesale-replace would be visible

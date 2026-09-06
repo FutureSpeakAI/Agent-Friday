@@ -14,7 +14,7 @@ in tests/gauntlet/. Moved here unchanged (content identical; the shared
 RecordingLLM stub and wiki_home fixture are duplicated below rather than
 imported from the unit test module, so this file is self-contained per
 this codebase's established gauntlet-probe pattern) to correct that rule
-violation, flagged directly by Stephen's independent cold re-verification
+violation, flagged directly by the maintainer's independent cold re-verification
 pass.
 """
 from __future__ import annotations

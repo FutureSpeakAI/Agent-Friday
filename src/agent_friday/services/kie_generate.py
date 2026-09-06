@@ -18,7 +18,7 @@ the transport is a REAL DIFFERENCE, not a stylistic one:
     through services/egress_gate for the prompt.
   * kie.ai's task model is submit -> POLL (services/kie_generate._poll) or a
     webhook callback. This module polls only — a webhook needs a publicly
-    reachable callback URL, which is an exposure decision for Stephen, not
+    reachable callback URL, which is an exposure decision for the operator, not
     this integration (see the provider_registry.py comment on the "kie"
     entry).
   * kie.ai enforces "up to 20 new generation requests per 10 seconds" with a
@@ -34,10 +34,9 @@ the transport is a REAL DIFFERENCE, not a stylistic one:
   * kie.ai reports `creditsConsumed` on the completed task — real per-task
     spend, unlike Higgsfield which required a separate cost-preflight call.
     This module feeds that straight into services/cost_meter.record() so
-    kie.ai spend actually lands in the cost ledger, which — as of 2026-09-04
-    — NOTHING in services/creative_engine.py did for any creative provider,
-    Higgsfield included. That gap is still open for Higgsfield; this module
-    closes it for kie.ai only.
+    kie.ai spend actually lands in the cost ledger. Higgsfield dispatch in
+    services/creative_engine.py does not meter creative spend; this module
+    closes that gap for kie.ai only.
 """
 from __future__ import annotations
 
@@ -59,7 +58,7 @@ CREDIT_URL = f"{BASE_URL}/chat/credit"
 #: figure reported across third-party reviews as of 2026-09 (docs.kie.ai
 #: itself only says "view consumption at kie.ai/logs"). Treat this as an
 #: ESTIMATE for the cost ledger, not an invoice — kie.ai/logs is the
-#: authoritative source Stephen asked to be able to trust.
+#: authoritative source the user must be able to trust.
 CREDIT_USD_ESTIMATE = 0.005
 
 #: Vendor limit: "up to 20 new generation requests per 10 seconds" per

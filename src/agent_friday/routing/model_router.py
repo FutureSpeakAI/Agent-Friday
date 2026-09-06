@@ -75,9 +75,8 @@ CLOUD_MODEL_FALLBACK_CHAIN = (
 
 # Blended cost per 1K tokens (USD) — used for savings tracking. The midpoint
 # of cost_meter.PRICING's two directions, which is the same blend model_catalog
-# computes for discovered models. These carried Claude-3-Opus-era numbers until
-# 2026-08-28 (Opus at 0.075/1K, 15x its real input rate), which overstated how
-# much routing locally had saved. cost_meter.PRICING is the source of truth;
+# computes for discovered models. Stale generation-old rates here overstate how
+# much routing locally has saved. cost_meter.PRICING is the source of truth;
 # tests/unit/test_cost_meter.py pins these to it.
 CLOUD_COST_PER_1K = {
     "claude-fable-5": 0.030,
@@ -206,7 +205,7 @@ class ModelRouter:
         key (docs/user-guide/configuration.md) needs *some* caller to ever reach
         TaskType.VOICE at all; before this, nothing in the codebase ever
         produced it, and the three TaskType.VOICE branches in _route_basic
-        were unreachable dead code (gauntlet Q20).
+        were unreachable dead code.
         """
         if is_voice:
             return TaskType.VOICE
@@ -307,15 +306,15 @@ class ModelRouter:
         reads. Until now the ROUTER consulted it in exactly one branch —
         unattended tool work — so an interactive turn never looked at it.
 
-        That is why neither control appeared to work on 2026-08-18: the write
-        was correct, the setting persisted, the UI showed the new model, and
-        interactive dispatch went to the cloud regardless, because
-        `_route_basic` ended TOOL_USE with "Tool use requires cloud model".
-        Selecting gemma4:e4b and being answered by claude-sonnet-4-6 is not a
-        save that failed; it is a save nothing read.
+        Without this, neither control appears to work: the write is correct,
+        the setting persists, the UI shows the new model, and interactive
+        dispatch goes to the cloud regardless, because `_route_basic` ends
+        TOOL_USE with "Tool use requires cloud model". Selecting a local
+        model and being answered by a cloud one is not a save that failed;
+        it is a save nothing read.
 
         An explicit binding is an instruction, not a hint. The classifier
-        decides when he has expressed no preference.
+        decides when the user has expressed no preference.
         """
         seat = (ctx or {}).get("conversation_seat")
         if isinstance(seat, dict) and (seat.get("model") or "").strip():
@@ -333,12 +332,12 @@ class ModelRouter:
                 # expressed; an untouched default is the second case, and
                 # treating it as the first made `local_preferred` unreachable
                 # for interactive turns (settings ship with a cloud reasoning
-                # seat, so the seat always "won"). Stephen runs local_preferred.
+                # seat, so the seat always "won").
                 #
-                # Cost, stated plainly: if he explicitly picks the same model
-                # the factory ships, that choice is indistinguishable from
-                # never having chosen, and local_preferred will route local.
-                # The error runs toward keeping his turn on this machine.
+                # Cost, stated plainly: if the user explicitly picks the same
+                # model the factory ships, that choice is indistinguishable
+                # from never having chosen, and local_preferred will route
+                # local. The error runs toward keeping the turn on this machine.
                 if model and model != self._factory_reasoning_model():
                     return model, (entry.get("provider") or "").strip().lower()
         except Exception:
@@ -360,19 +359,19 @@ class ModelRouter:
                         "local-voice-lite", "arbiter-local", "nvidia-nemo"}
 
     def _route_chosen_seat(self, model_id, task_type, provider=None):
-        """Route to the seat he named.
+        """Route to the seat the user named.
 
         The candidate probe is ADVISORY, not decisive. `_local_candidates()`
-        asks the Ollama daemon over HTTP, and on 2026-08-18 that call timed out
-        while the daemon was busy loading the previous turn's model — so a seat
-        he had explicitly bound to qwen3.5:9b was declared unserveable and the
-        turn was answered by claude-sonnet-5 instead.
+        asks the Ollama daemon over HTTP, and that call can time out while the
+        daemon is busy loading the previous turn's model — which would declare
+        an explicitly bound local seat unserveable and answer the turn from
+        the cloud instead.
 
-        That is worse than an ignored preference. A transient local hiccup
-        silently moved his private conversation to Anthropic. When the binding
-        itself names a local provider, the seat is local, and a local failure
-        must surface as a local failure rather than as a quiet trip to the
-        cloud.
+        That is worse than an ignored preference: a transient local hiccup
+        silently moving a private conversation to a cloud provider. When the
+        binding itself names a local provider, the seat is local, and a local
+        failure must surface as a local failure rather than as a quiet trip
+        to the cloud.
         """
         if not model_id:
             return None
@@ -402,14 +401,13 @@ class ModelRouter:
                 "reason": "the model seat he chose (capability_routing.reasoning)",
             }
 
-        # He named a model nothing here can serve. Returning None used to drop
-        # through to the ordinary cloud branch, which is a SILENT SUBSTITUTION —
-        # the same defect being fixed, one layer down. On 2026-08-18 gemma4:12b
-        # and gemma4:e4b left the Ollama daemon mid-session (moved to
-        # llama-server), and a seat still pointing at them answered as Claude
-        # without a word. Route cloud, because refusing the turn helps nobody,
-        # but say plainly that this is not what he asked for; `reason` reaches
-        # the badge and the work log.
+        # The user named a model nothing here can serve. Dropping through to
+        # the ordinary cloud branch would be a SILENT SUBSTITUTION — the same
+        # defect being fixed, one layer down (a model that leaves the Ollama
+        # daemon mid-session, with a seat still pointing at it, must not
+        # answer from the cloud without a word). Route cloud, because refusing
+        # the turn helps nobody, but say plainly that this is not what was
+        # asked for; `reason` reaches the badge and the work log.
         return {
             "provider": "cloud",
             "model": None,
@@ -448,10 +446,9 @@ class ModelRouter:
                 # filters on `can_generate`; this one did not, so every
                 # embedding model the daemon had installed was offered as a
                 # chat candidate -- and the selector's last resort is "largest
-                # artifact wins". Measured 2026-09-01 on the reference box:
-                # restoring `vault_local_only` routed vault turns to
-                # `embeddinggemma:300m` (0.60 GB) over `functiongemma:270m`
-                # (0.30 GB), i.e. the one candidate that cannot answer.
+                # artifact wins", which routes vault turns to an embedding
+                # model (e.g. `embeddinggemma:300m` over `functiongemma:270m`),
+                # i.e. the one candidate that cannot answer.
                 # residency_catalog.can_generate reads the daemon's own
                 # capabilities and assumes generation when they are unknown,
                 # so this narrows nothing it cannot prove.
@@ -495,17 +492,17 @@ class ModelRouter:
         # not be defeated by asking the wrong component whether a local model
         # exists.
         #
-        # Verified 2026-08-16 with the daemon stopped: this route returned
-        # "Vault access required but no local model — cloud with redaction"
-        # while gemma4:12b and gemma4:e2b were resident and answering.
+        # With the daemon stopped, this route would otherwise return "Vault
+        # access required but no local model — cloud with redaction" while
+        # llama-server seats were resident and answering.
         # ── The single resolver ─────────────────────────────────────────────
         # This method used to force-route EVERY vault-touching turn to a local
         # model without ever reading `vault_local_only`, while the prompt-
         # assembly path read the same setting and honoured it. One flag, two
-        # enforcement points, two different answers -- and on 2026-09-01 two
-        # sessions probing the same server reached opposite conclusions about
-        # whether the vault protected anything. Both were right about the half
-        # they looked at. See privacy/vault_policy for the account.
+        # enforcement points, two different answers -- so two observers of the
+        # same server could reach opposite conclusions about whether the vault
+        # protected anything, each right about the half they looked at. See
+        # privacy/vault_policy for the single resolver.
         #
         # UNGATED MEANS UNGATED. When the owner sets `vault_local_only: false`
         # they are asking for the cloud to have full access, so a vault-touching
@@ -597,7 +594,7 @@ class ModelRouter:
         except Exception:
             pass
         # _route_basic can itself demand a refusal now (local_only mode with
-        # no local seat available, findings.jsonl Q19) -- without passing
+        # no local seat available) -- without passing
         # these through, _finalize below would silently overwrite them back
         # to refuse=False/warning=None (its own defaults), the same way a
         # bare `self._finalize(result, vault_access=False)` call already
@@ -817,8 +814,8 @@ class ModelRouter:
             # held for SCHEDULED/BACKGROUND work (the TOOL_USE branch below);
             # an ordinary interactive turn — the single most common case —
             # fell through this whole method with no mode check at all and
-            # went straight to cloud, empirically verified for every one of
-            # local_only/local_preferred/smart (findings.jsonl Q19). Mirrors
+            # went straight to cloud, for every one of
+            # local_only/local_preferred/smart. Mirrors
             # cloud_only's own block above: an explicit choice that conflicts
             # with the mode's absolute guarantee (a cloud task_override, or a
             # capability_routing.reasoning seat naming a cloud model) is
@@ -869,13 +866,13 @@ class ModelRouter:
             # No local seat available at all: fail closed and say so plainly
             # (never a silent cloud fallback — that would defeat the whole
             # point of the mode), THEN offer cloud-only as an explicit
-            # choice the user makes, rather than a dead end. Stephen,
-            # 2026-09-04, directly: "the system should fail to function and
-            # produce an error, then it should ask the user if it can go
-            # into cloud only mode. We should always prioritize the user
-            # knowing what is being done with their data, what model is in
-            # use" — a standing transparency principle, not a rule scoped
-            # to just this case. `offer_cloud_switch` is a structured
+            # choice the user makes, rather than a dead end. Maintainer
+            # ruling: "the system should fail to function and produce an
+            # error, then it should ask the user if it can go into cloud
+            # only mode. We should always prioritize the user knowing what
+            # is being done with their data, what model is in use" — a
+            # standing transparency principle, not a rule scoped to just
+            # this case. `offer_cloud_switch` is a structured
             # marker (not just prose in `warning`) so the chat pipeline can
             # render this as an actual actionable choice — see
             # routes/chat.py and index.html's handling of a refused result
@@ -927,39 +924,29 @@ class ModelRouter:
         if task_type == TaskType.TOOL_USE:
             # Unattended work prefers a local seat.
             #
-            # This rule is from 2026-06-27, when local tool calling did not
-            # work. It does now: 15/15 dependent five-call chains across e2b,
-            # e4b and 12b, and 6/6 with the Ollama daemon stopped entirely.
-            # Meanwhile every hourly heartbeat was spending ~42,654 input
-            # tokens on a cloud model to produce ~130 output tokens — about a
-            # million input tokens a day to read Stephen's own calendar and
-            # inbox, which is exactly the private material that should not be
+            # Local tool calling works (dependent multi-call chains pass on
+            # the e2b, e4b and 12b seats, with or without the Ollama daemon),
+            # and an hourly heartbeat on a cloud model spends on the order of
+            # a million input tokens a day to read the user's own calendar
+            # and inbox — exactly the private material that should not be
             # leaving the machine in the first place.
             #
-            # SUPERSEDED 2026-09-04 (findings.jsonl Q19): this was scoped to
-            # SCHEDULED and BACKGROUND work only on Stephen's 2026-08-16
-            # decision ("interactive chat keeps today's cloud behaviour...
-            # he did not ask for that trade"). Asked directly during this
-            # audit whether ordinary chat should also honor local_preferred/
-            # smart's own local-first promise, his answer: "ordinary chat
+            # This preference applies to EVERY TOOL_USE turn under
+            # local_preferred/smart, interactive or not; it is not scoped to
+            # scheduled/background work. Maintainer ruling: "ordinary chat
             # does need to respect local only in addition to Smart routing
-            # and cloud mode" -- the August decision was about a tradeoff he
-            # was making at the time, not a standing exemption from what
-            # these modes' own names and UI text promise. The
-            # is_background_task/scheduled gate is gone; local preference
-            # now applies to every TOOL_USE turn under local_preferred/smart
-            # (cloud_only and local_only both return earlier in this method
-            # and never reach here), interactive or not — "cloud only as
-            # fallback" now means fallback for every turn, not just the
-            # unattended ones.
+            # and cloud mode" -- the modes' own names and UI text promise
+            # local-first, and "cloud only as fallback" means fallback for
+            # every turn, not just the unattended ones. (cloud_only and
+            # local_only both return earlier in this method and never reach
+            # here.)
             local = self._local_candidates()
             if local:
-                # The BRAIN, not the fastest thing that fits. Stephen named
-                # the 12b ("Can't Gemma 4:12b handle that?") and he is right
-                # about the seat: a heartbeat reads a calendar and an inbox
-                # and has to decide what is worth telling him, which is
-                # judgement work, not reflex. _pick_local_model optimises
-                # for speed and chose the 2B sidekick.
+                # The BRAIN, not the fastest thing that fits: a heartbeat
+                # reads a calendar and an inbox and has to decide what is
+                # worth telling the user, which is judgement work, not
+                # reflex. _pick_local_model optimises for speed and would
+                # choose the small sidekick.
                 names = {m["name"] for m in local}
                 chosen = None
                 try:
@@ -981,8 +968,8 @@ class ModelRouter:
             # No local seat exists at all: this is the genuine "cloud only
             # as fallback" case local_preferred/smart's own names promise.
             # An explicit seat pick still wins here over the bare default,
-            # for the same reason the 2026-08-16 fix originally gave this
-            # its own branch: choosing a model in the picker IS asking for
+            # for the same reason this has its own branch: choosing a
+            # model in the picker IS asking for
             # it, and the whole point of the redesigned picker is that the
             # choice takes effect.
             _m, _p = self._chosen_seat(ctx)

@@ -17,7 +17,7 @@ user meets first:
   * "Settings -> API Keys" x6 -- there has never been such a tab. Two of them
     read "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings
     -> API Keys) or as an environment variable, then restart". That is
-    Stephen's complaint in message form.
+    the maintainer's complaint in message form.
   * "Settings -> Models" x4 -- including packaging/windows/install.ps1, which
     tells someone who has just declined a local model "To add a local model
     later: open Friday, then Settings -> Models". The exact sentence the second user

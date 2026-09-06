@@ -2,12 +2,12 @@
 
 docs/design/implemented/conversations-and-concurrency.md §2.5/§3.4 and build steps 7-8.
 
-Stephen's Q6 was "do background tasks survive a restart?" The honest answer
-tonight was: at STORAGE yes, at EXECUTION no. Commissions were written to disk
-faithfully and nothing ever picked them up again, so one sat frozen at the
-`grinding` stage while the app that started it had long since restarted. It was
-neither finished nor failed nor running — it simply stopped, silently, which is
-the exact shape of defect this codebase has spent a day removing.
+"Do background tasks survive a restart?" Without this module the honest
+answer is: at STORAGE yes, at EXECUTION no. Commissions are written to disk
+faithfully and nothing picks them up again, so one can sit frozen at the
+`grinding` stage while the app that started it has long since restarted —
+neither finished nor failed nor running, simply stopped, silently, which is
+the exact shape of defect this codebase works to remove.
 
 Two rules from the spec, and the distinction between them is the whole design:
 
@@ -164,7 +164,7 @@ def reconcile_tasks() -> dict:
     A task left `running` in the ledger by a process that no longer exists is
     not running. Marking it interrupted — and saying so in the conversation
     that started it — is the honest outcome. Silently leaving it `running`
-    produces exactly the stuck orbs he was looking at tonight.
+    produces stuck orbs in the UI.
     """
     touched = []
     try:

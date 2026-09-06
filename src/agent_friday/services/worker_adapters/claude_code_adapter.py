@@ -63,26 +63,25 @@ class ClaudeCodeAdapter(BaseAdapter):
                 "'Modified: <path>' on their own lines so the orchestrator can track them. "
                 "Return only code and brief explanations — no markdown headers.\n\n"
             )
-            # SECURITY (2026-08-25): `provider="auto"` used to be passed
-            # with no `vault_control` at all, so it did nothing —
-            # _build_context_prompt only tier-gates when vault_control is
-            # given (see model_router._get_friday_system_prompt's
-            # docstring: "Defaults keep the legacy ungated behavior").
-            # This is a background orchestration worker like
-            # agent._task_worker, so it gets the same treatment: predict
-            # the destination on the real task prompt (has_tools=True,
-            # this runs through _generate_agent's agentic loop) and gate
-            # for it.
+            # SECURITY: the system prompt must be built with an explicit
+            # `vault_control` — _build_context_prompt only tier-gates when
+            # vault_control is given (see model_router._get_friday_system_prompt's
+            # docstring: "Defaults keep the legacy ungated behavior"), so a
+            # bare `provider="auto"` call would put ungated vault content
+            # into the prompt. This is a background orchestration worker
+            # like agent._task_worker, so it gets the same treatment:
+            # predict the destination on the real task prompt
+            # (has_tools=True, this runs through _generate_agent's agentic
+            # loop) and gate for it.
             #
-            # F30: that prediction picks ONE provider and (previously) gated
-            # the prompt for it once — but _generate_agent's own fallback
-            # ladder can land on a DIFFERENT provider than predicted when the
-            # first leg fails operationally, reusing a prompt gated for the
-            # wrong destination (docs/audits/gauntlet-2026-09-03/
-            # findings.jsonl F30). `_sys_for` rebuilds the prompt for an
-            # EXPLICIT provider and is passed as `system_builder` so every
-            # ladder leg — first attempt and every fallback — is gated for
-            # the provider it actually calls.
+            # That prediction picks ONE provider, but _generate_agent's own
+            # fallback ladder can land on a DIFFERENT provider than predicted
+            # when the first leg fails operationally; a prompt gated once for
+            # the predicted provider would then be reused for the wrong
+            # destination. `_sys_for` rebuilds the prompt for an EXPLICIT
+            # provider and is passed as `system_builder` so every ladder leg
+            # — first attempt and every fallback — is gated for the provider
+            # it actually calls.
             def _sys_for(provider_name):
                 try:
                     return coding_system + _get_friday_system_prompt(

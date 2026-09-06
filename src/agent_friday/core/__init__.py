@@ -147,14 +147,14 @@ except ImportError:
 app = Flask(__name__, static_folder=None)
 
 
-# Resilient request-JSON parsing (2026-08-19). In the live pythonw process the
-# default provider's loads() raised ValueError for any request body containing
-# raw non-ASCII UTF-8 bytes (em-dash, é, …) — get_json(silent=True) swallowed
-# it, every such POST silently degraded to {}, and /api/chat then crashed on
-# the resulting empty message. The same bytes parse fine under the test
-# client, so the trigger is live-process state that hasn't been pinned down
-# yet; until it is, retry with an explicit utf-8 decode and log the original
-# failure (with the offending bytes) instead of losing both.
+# Resilient request-JSON parsing. In the live pythonw process the default
+# provider's loads() can raise ValueError for a request body containing raw
+# non-ASCII UTF-8 bytes (em-dash, é, …) — get_json(silent=True) swallows it,
+# the POST silently degrades to {}, and /api/chat then fails on the resulting
+# empty message. The same bytes parse fine under the test client, so the
+# trigger is live-process state that has not been pinned down; retry with an
+# explicit utf-8 decode and log the original failure (with the offending
+# bytes) instead of losing both.
 class _ResilientJSONProvider(_FlaskDefaultJSONProvider):
     def loads(self, s, **kwargs):
         try:
@@ -233,7 +233,7 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 if os.environ.get("FRIDAY_COOKIE_SECURE", "") not in ("", "0", "false", "False"):
     app.config["SESSION_COOKIE_SECURE"] = True
 
-# Request-size cap (Fable 5 adversarial fixes): bound incoming bodies on every
+# Request-size cap: bound incoming bodies on every
 # endpoint so an oversized POST can't exhaust memory. The default leaves
 # generous headroom for audio/image uploads; tune with FRIDAY_MAX_REQUEST_MB.
 try:
@@ -318,7 +318,7 @@ _HTTP_AUTH_KEY: str = (
 # automatically invalidated the next time the server is restarted.
 _API_SESSION_TOKEN: str = secrets.token_hex(32)
 
-# Token rotation (Fable 5 adversarial fixes): a token minted at startup used to
+# Token rotation: a token minted at startup used to
 # live for the entire — possibly weeks-long — process lifetime, so a captured
 # token stayed valid until the next restart. It now rotates every
 # FRIDAY_API_TOKEN_ROTATE_HOURS (default 24 h; 0 disables). Rotation is LAZY —
@@ -1284,22 +1284,16 @@ _RUN_COMMAND_BLOCKLIST = (
     "rm -", "rmdir -",
 )
 
-# 2026-09-06: this was matched with a bare `token in command.lower()` at all
-# three call sites below-and-elsewhere, which is a SUBSTRING test, not a
-# command-token test. "del " is a substring of "model " (m-o-D-E-L- ), so
-# `run_command("... ollama list model ...")` — a read-only request to list
-# installed models — was refused as "matches destructive blocklist token
-# 'del '". Every short token here (del, rd, rm, iex, ...) is one or two
-# letters from colliding with an ordinary word the same way. A regex with a
-# left AND right word-boundary fixes it without touching the list itself:
-# `del ` still matches after whitespace, a shell separator (;|&), or the
-# start of the string, and stops matching mid-word on either side — a bare
-# word token like "rmdir" no longer matches inside "rmdir-like" either. The
-# two entries that already contain `.*` ("wmic.*delete",
-# "get-childitem.*remove") were ALWAYS meant as regex fragments — a literal
-# `in` check could never match them (no real command contains the two
-# characters ".*"), so they were dead weight; compiled as regex here, they
-# actually fire for the first time.
+# The blocklist is matched as COMMAND TOKENS, never as substrings. A bare
+# `token in command.lower()` test would make "del " match inside "model ",
+# so a read-only `run_command("... ollama list model ...")` would be refused
+# as destructive; every short token here (del, rd, rm, iex, ...) is one or
+# two letters from colliding with an ordinary word the same way. Each token
+# is compiled with a left AND right word boundary: `del ` matches after
+# whitespace, a shell separator (;|&), or the start of the string, and stops
+# matching mid-word on either side. Entries that contain `.*`
+# ("wmic.*delete", "get-childitem.*remove") are regex fragments and are
+# compiled as such.
 _RUN_COMMAND_BLOCKLIST_PATTERNS = None
 
 
@@ -1584,10 +1578,9 @@ DEFAULT_SETTINGS = {
     # whitelist silently dropped it on every save. The dialog appeared to
     # remember the choice for the rest of that browser tab (optimistic
     # client-side state) and then nagged again on the next reload/restart,
-    # same defect class as knowledge_graph above (docs/audits/
-    # gauntlet-2026-09-03/findings.jsonl).
+    # same defect class as knowledge_graph above.
     "pause_warnings_off": False,
-    # Stephen, 2026-09-06: "always open files you create for me upon
+    # Maintainer ruling: "always open files you create for me upon
     # completing them." Default False — auto-launching an app the instant a
     # file lands is a real product decision (multiple generations in a row
     # would pop multiple viewers), not something to turn on for everyone by
@@ -1692,8 +1685,8 @@ DEFAULT_SETTINGS = {
     # drive budget-alert notifications: crossing 80% warns, 100% alerts. The
     # alert cap never blocks — Friday is never silently stopped by it.
     #
-    # hard_stop_* (2026-09-06, Stephen's ruling: "we do want a stopping cap
-    # available to the user") is the SECOND cap: when its enabled period's
+    # hard_stop_* (maintainer ruling: "we do want a stopping cap available
+    # to the user") is the SECOND cap: when its enabled period's
     # spend reaches the limit, services/spend_guard refuses every further
     # cloud call (local models keep working), loudly — ledger row +
     # notification naming what stopped and how to resume. Off by default;
@@ -1796,8 +1789,8 @@ DEFAULT_SETTINGS = {
     # gate denies the call and instructs the model to stop and wait for a yes.
     "confirm_before_opening": False,
     # ── Creative policy (services/creative_policy.py) ──
-    # What Friday refuses to generate, written down where Stephen can read and
-    # set it. Before this existed there was nothing legible for a seat to
+    # What Friday refuses to generate, written down where the user can read
+    # and set it. Before this existed there was nothing legible for a seat to
     # consult, so a 12B model improvised — and invented a "hard-coded model
     # filter" that does not exist rather than say it was declining.
     # The shipped value is exactly the behaviour that was already in force.
@@ -1870,19 +1863,17 @@ DEFAULT_SETTINGS = {
         # model_router._pick_local_model); if it isn't installed the picker
         # degrades to any installed model.
         #
-        # 2026-09-03: this is a Gemma 4 model (currently gemma4:e2b) — Qwen
-        # was removed from the ladder entirely, not just from this default,
-        # per the product decision above `model_plan._BRAINS`: nothing is
-        # shipped or suggested yet, and when the installer fetches a local
-        # model it fetches Gemma 4 only (Apache 2.0), a placeholder until
-        # FutureSpeak's own model replaces it. Users with more card can
-        # upgrade to gemma4:e4b, :12b, or :26b — whatever `friday models`
-        # offers for the hardware it detects. This comment used to recommend
-        # gemma3:12b / gemma3:27b; both were checked against the registry on
-        # 2026-08-26 and NEITHER can call tools, so that advice pointed users
-        # at a bigger version of the exact problem H3 was about.
+        # This is a Gemma 4 model (currently gemma4:e2b). Qwen is not on the
+        # ladder at all, per the product decision above `model_plan._BRAINS`:
+        # when the installer fetches a local model it fetches Gemma 4 only
+        # (Apache 2.0), a placeholder until FutureSpeak's own model replaces
+        # it. Users with more card can upgrade to gemma4:e4b, :12b, or :26b —
+        # whatever `friday models` offers for the hardware it detects. Do not
+        # recommend gemma3:12b / gemma3:27b here: neither can call tools, so
+        # that advice points users at a bigger version of the problem the
+        # tool-capable floor exists to avoid.
         "local_model": _FLOOR_MODEL,
-        # ── Explicit cloud-consent record (2026-09-06) ──
+        # ── Explicit cloud-consent record ──
         # {"answered": bool, "choice": "local_private"|"cloud_unrestricted"|None,
         #  "at": iso-str|None, "capability_snapshot": dict|None}. The ONLY thing
         # `privacy.cloud_consent.is_unrestricted_cloud()` reads to decide whether
@@ -1917,8 +1908,8 @@ DEFAULT_SETTINGS = {
         #   "warn"   = refuse and ask the user to enable a local model.
         "vault_local_only": True,
         "vault_cloud_fallback": "redact",
-        # ── Unrestricted cloud mode (superseded 2026-09-06 by cloud_consent) ──
-        # Historical flag from 2026-09-03: bypasses every gate in the codebase
+        # ── Unrestricted cloud mode (superseded by cloud_consent) ──
+        # Legacy flag: bypasses every gate in the codebase
         # for cloud sends (tier classification, redaction, the PII scrub, the
         # never-send list) when True. `is_unrestricted_cloud()` no longer reads
         # this live — it reads `cloud_consent` above instead, because this flag
@@ -1959,18 +1950,17 @@ DEFAULT_SETTINGS = {
         # hard turns. It MUST be declared here — `_sync_capability_routing`
         # rebuilds capability_routing from these keys alone, so a capability
         # missing from this table is silently dropped on every settings save.
-        # That is exactly what happened when the residency plan first bound it
-        # (2026-08-15): the binding wrote `heavy_hitter`, the next save deleted
-        # it, and the seat never appeared in settings or the UI.
+        # Otherwise a binding that writes `heavy_hitter` is deleted by the next
+        # save and the seat never appears in settings or the UI.
         "heavy_hitter":   {"provider": "ollama-local",  "model": ""},
         "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-5"},
         # The five working roles. Declared with an EMPTY model on purpose:
-        # rule R11 says nothing is assigned until Stephen says so, and an
+        # rule R11 says nothing is assigned until the user says so, and an
         # empty seat awaiting a choice is the normal state, not a failure.
         # They must appear here even so -- `_sync_capability_routing` rebuilds
         # capability_routing from these keys alone, so a capability missing
-        # from this table is silently dropped on every settings save. That is
-        # exactly what happened to `heavy_hitter` on 2026-08-15.
+        # from this table is silently dropped on every settings save (the
+        # `heavy_hitter` note above).
         "orchestrator":     {"provider": "ollama-local", "model": ""},
         "sidekick_fast":    {"provider": "ollama-local", "model": ""},
         "function_manager": {"provider": "ollama-local", "model": ""},
@@ -2009,11 +1999,11 @@ DEFAULT_SETTINGS = {
         "external_message": {"gated": True,  "expires_seconds": 86400},
         "internal":         {"gated": False, "expires_seconds": None},
     },
-    # ── Hang watchdog (toolcall-integrity-v5, 2026-08-13) ──
+    # ── Hang watchdog ──
     # services/hang_watchdog.py dumps every thread's stack to
     # ~/.friday/logs/hang-dump-*.log when the process goes unresponsive
-    # while still alive (friday.log went dark for hours on 08-12 and again
-    # 08-13 with zero trace of why). auto_restart_after_dump: when true, the
+    # while still alive (a silent stall otherwise leaves no trace in
+    # friday.log of why). auto_restart_after_dump: when true, the
     # server self-exits shortly after writing a dump so the tray's watchdog
     # relaunches it — OFF by default; a dump alone is diagnostic, opting
     # into an unattended restart is the user's call.
@@ -2023,7 +2013,7 @@ DEFAULT_SETTINGS = {
         "stall_threshold_s": 90,
         "auto_restart_after_dump": False,
     },
-    # ── Google OAuth redirect (toolcall-integrity-v5, 2026-08-13) ──
+    # ── Google OAuth redirect ──
     # Both Google connectors (services/calendar_engine.py legacy single-
     # account, services/google_accounts.py multi-account) pin their OAuth
     # redirect_uri to loopback (http://localhost:3000/...) regardless of the
@@ -2142,9 +2132,9 @@ def _sync_capability_routing(settings, changed=None):
     #
     # The flat key outranks capability_routing whenever routing was not
     # explicitly part of `changed`, so a stale `orchestrator_model` re-stamps
-    # itself over the canonical entry on EVERY write. Stephen's sat at
-    # `gemma4:e2b` for hours after he removed that model, which is why the
-    # model picker appeared not to stick no matter what the picker did.
+    # itself over the canonical entry on EVERY write. A removed model can
+    # therefore persist in the flat key indefinitely, which makes the model
+    # picker appear not to stick no matter what the picker does.
     # Healing here — at the single point both representations pass through —
     # is the only place the repair cannot be undone by the next writer.
     #
@@ -2194,10 +2184,9 @@ def _load_settings_raw():
         # except below turns that into a SILENT, TOTAL reversion to
         # DEFAULT_SETTINGS: every seat, every routing mode, every stored key
         # replaced by the factory value, with nothing logged and no visible
-        # failure. Measured live 2026-08-24 12:47 — settings.json gained a BOM
-        # (PowerShell 5.1's Out-File/`>` writes UTF-8 WITH BOM by default, and
-        # a heal pass had just rewritten the file). The 83 keys on disk were
-        # perfectly intact and correct; the running process was reading none of
+        # failure. settings.json can gain a BOM at any time (PowerShell 5.1's
+        # Out-File/`>` writes UTF-8 WITH BOM by default). Every key on disk is
+        # then intact and correct while the running process reads none of
         # them. Observable symptoms, all downstream of those three bytes:
         #
         #   * model_routing.mode read as the factory `cloud_only` against the
@@ -2254,11 +2243,10 @@ def _load_settings():
 #: Settings blocks merged FIELD BY FIELD rather than replaced wholesale.
 #: Everything else in a delta overwrites its key, which is correct for scalars
 #: and lists and catastrophic for a config block a caller only partly edited.
-#: "content" joined 2026-09-04: the Content workspace's global-controls Save
+#: "content" is here because the Content workspace's global-controls Save
 #: button only ever sends {staging_base_url, conflict_window_hours} (the two
 #: fields it edits) — without deep-merge that wholesale-replaces the block,
-#: silently resetting `enabled` and `psi_daily_cap` to nothing every time
-#: (docs/history/audits/gauntlet-2026-09-03/findings.jsonl).
+#: silently resetting `enabled` and `psi_daily_cap` to nothing every time.
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
 
 
@@ -2288,10 +2276,9 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
     # Before-only was a race with a two-second blast radius: the cache is
     # cleared, the file is then read/merged/replaced, and any reader arriving in
     # that window re-populates the cache from the OLD file and serves it for the
-    # full TTL. On 2026-08-18 that made a model switch intermittently invisible
-    # — the seat was on disk, the read-back confirmed it, and a chat turn a
-    # moment later was still routed by the previous seat, so it answered from
-    # the cloud. Same code, same server: passed one run, failed the next.
+    # full TTL. That makes a model switch intermittently invisible: the seat
+    # is on disk, the read-back confirms it, and a chat turn a moment later
+    # is still routed by the previous seat, so it answers from the cloud.
     _invalidate_settings_cache()
     # Read existing file first to preserve any keys not in DEFAULT_SETTINGS
     #
@@ -2303,14 +2290,14 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
     # the atomic write at the bottom. An unreadable settings file did not
     # degrade the save; it CONVERTED the save into a factory reset.
     #
-    # That is how the 2026-08-24 BOM incident became permanent. The read side
-    # (_load_settings_raw, above) had the same utf-8-vs-utf-8-sig bug and
-    # merely made the running process ignore Stephen's 83 keys — recoverable,
-    # since the file was still correct. Then something called _save_settings,
-    # this read returned {}, and at 13:08:58 the defaults were persisted over
-    # the real configuration. The BOM was stripped by that same write, so the
-    # evidence of the cause disappeared in the act of causing the damage:
-    # afterwards the file looks clean and merely wrong.
+    # That is how a BOM on settings.json becomes a permanent reset. The read
+    # side (_load_settings_raw, above) with a utf-8-vs-utf-8-sig bug merely
+    # makes the running process ignore every key — recoverable, since the
+    # file is still correct. Then something calls _save_settings, this read
+    # returns {}, and the defaults are persisted over the real configuration.
+    # The BOM is stripped by that same write, so the evidence of the cause
+    # disappears in the act of causing the damage: afterwards the file looks
+    # clean and merely wrong.
     #
     # Note the second-order loss too. The capability_routing deep-merge below
     # is guarded on `isinstance(existing.get(k), dict)`; with `existing` empty
@@ -2348,11 +2335,11 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
             # sections send only the fields they edited) must not reset every
             # untouched sibling back to defaults.
             #
-            # `model_routing` joined `capability_routing` here on 2026-08-28.
-            # It had the identical defect and a worse blast radius: a UI that
-            # saved {"model_routing": {"vault_local_only": ...}} replaced the
-            # whole block, silently resetting `mode` — so changing a privacy
-            # switch could move every future turn to a different provider.
+            # `model_routing` is deep-merged for the same reason with a worse
+            # blast radius: a UI that saves {"model_routing":
+            # {"vault_local_only": ...}} would otherwise replace the whole
+            # block, silently resetting `mode` — so changing a privacy switch
+            # could move every future turn to a different provider.
             base = {ck: (dict(cv) if isinstance(cv, dict) else cv)
                     for ck, cv in existing[k].items()}
             base.update(v)
@@ -2793,7 +2780,7 @@ def prune_context_logs():
     prune older" (see its DEFAULT_SETTINGS comment) since it was added, with
     no code ever behind that claim -- the Retention Period setting in
     Settings > Privacy > Context Logging persisted and read back, but
-    nothing ever deleted an old entry (gauntlet-2026-09-03 F3/Q1). Each day
+    nothing ever deleted an old entry. Each day
     is one whole <YYYY-MM-DD>.jsonl file (see _context_log_files above), so
     pruning is file deletion, not row surgery.
     """

@@ -13,7 +13,7 @@ elsewhere (_log.warning/_log.error) and the codebase's broader
 must-not-fail-silently convention (server.py's _fail_loud_and_exit, which
 routes through logging for exactly this reason).
 
-CORRECTION (2026-09-04, flagged by Stephen's independent cold
+CORRECTION (2026-09-04, flagged by the maintainer's independent cold
 re-verification as a text pin): the original probe
 (test_scheduler_task_failure_uses_logger.py) only checked dispatch()'s
 SOURCE for "_log." and the absence of "traceback.print_exc" -- a text

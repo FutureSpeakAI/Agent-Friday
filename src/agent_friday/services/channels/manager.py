@@ -199,11 +199,12 @@ def _run_agent(text: str) -> str:
     can monkeypatch it without importing the heavy agent stack."""
     from agent_friday.services.agent import _generate_agent
 
-    # F30: `_system_prompt` predicts a provider and gates for it ONCE, then
-    # (previously) that single baked prompt was handed to _generate_agent's
-    # fallback ladder — which can land on a DIFFERENT provider than predicted
-    # when the first leg fails operationally, reusing a prompt gated for the
-    # wrong destination (docs/history/audits/gauntlet-2026-09-03/findings.jsonl F30).
+    # `_system_prompt` predicts a provider and gates for it ONCE. A single
+    # baked prompt must not be handed to _generate_agent's fallback ladder on
+    # its own — the ladder can land on a DIFFERENT provider than predicted
+    # when the first leg fails operationally, which would reuse a prompt
+    # gated for the wrong destination (see the 2026-09 gauntlet audit in
+    # docs/history/audits/).
     # `_gated_system_prompt(provider, ...)` builds it for an EXPLICIT
     # provider (no internal prediction) and is passed as `system_builder`, so
     # _generate_agent re-gates the prompt for whichever provider each leg —
@@ -235,7 +236,7 @@ def _system_prompt(keywords: str = "") -> str:
     """Predict the provider this message will route to and gate for it.
     Kept for the initial (pre-dispatch) prompt and backward compatibility;
     `_run_agent` also passes `_gated_system_prompt` as `system_builder` so
-    every ladder leg is re-gated for the provider it actually calls (F30)."""
+    every ladder leg is re-gated for the provider it actually calls."""
     try:
         from agent_friday.services.model_router import _predict_route_provider
         provider = _predict_route_provider(

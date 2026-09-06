@@ -4,9 +4,9 @@ FutureSpeak.AI · Asimov's Mind
 
 The dispatch half of the pipeline: one scheduler builtin (`content_publisher`,
 15-minute interval — deliberately loosened from the original D2 1-minute
-spec after it was found running 1,440 times a day unused, deleting the run
-history of every job that runs less often; see start()'s own comment.
-Corrected here to match, gauntlet-2026-09-03 F63) whose `tick()` claims due
+spec: at 1-minute cadence an unused publisher runs 1,440 times a day and its
+run records crowd out the history of every job that runs less often; see
+start()'s own comment) whose `tick()` claims due
 targets from the content
 store (mark-before-run, §7.2) and runs each through the §7.1 gate chain:
 
@@ -269,12 +269,12 @@ def start() -> Dict[str, Any]:
         # Every FIFTEEN minutes, not every one, and OFF until the pipeline is
         # actually used.
         #
-        # 2026-08-17, Stephen: "content publisher hasn't even been used so it
-        # should not be running." It ticked 1,440 times a day against an empty
-        # queue — every run claiming 0 posts — and its run records took 451 of
-        # the 500 slots in schedule_runs.jsonl, deleting the history of every
-        # job that runs less often. A maintenance job nobody asked for should
-        # not be the loudest thing in the log.
+        # Maintainer ruling: an unused content publisher should not be
+        # running. At 1-minute cadence it ticks 1,440 times a day against an
+        # empty queue — every run claiming 0 posts — and its run records take
+        # 451 of the 500 slots in schedule_runs.jsonl, deleting the history of
+        # every job that runs less often. A maintenance job nobody asked for
+        # should not be the loudest thing in the log.
         #
         # `default_enabled` seeds the schedule disabled; the moment a post is
         # scheduled the pipeline enables it (see _ensure_publisher_enabled),
@@ -319,13 +319,12 @@ def kick() -> Dict[str, Any]:
 def content_enabled() -> bool:
     """`settings.content.enabled` -- the pipeline's master switch.
 
-    2026-09-06: DEFAULT_SETTINGS declared this as "master switch for the
-    publish pipeline", the Settings UI wrote it, routes/content_pipeline.py
-    even READ it into a dict -- and nothing ever branched on it. The only
-    switch tick() honored was platforms.json's `pause_all`. So the control
-    showed "Saved" and disabled nothing. scripts/check_settings_readers.py
-    could not see this: its reader check is "the parent key appears as a
-    string literal somewhere under src/", which a read-and-echo satisfies
+    DEFAULT_SETTINGS declares this as "master switch for the publish
+    pipeline" and the Settings UI writes it, so tick() must actually branch
+    on it -- platforms.json's `pause_all` alone is not enough, or the control
+    shows "Saved" and disables nothing. scripts/check_settings_readers.py
+    cannot catch that regression: its reader check is "the parent key appears
+    as a string literal somewhere under src/", which a read-and-echo satisfies
     exactly as well as an enforcement does.
 
     Fails CLOSED: if settings cannot be read at all, a kill switch that

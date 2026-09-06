@@ -30,7 +30,7 @@ from agent_friday.services import machine_monitor as mm
 
 # ── nvidia-smi row fixtures, as CSV `_run` would return ─────────────────────
 
-# §3, REPORTED: the exact figures from Stephen's week. free_mib = 12282 -
+# §3, REPORTED: the exact figures from the maintainer's week. free_mib = 12282 -
 # 11928 = 354, the margin §3.2 calls "less than the KV cache of a small
 # context bump".
 REPORTED_ROW = ("0, NVIDIA GeForce RTX 4070, 12282, 11928, 354, "

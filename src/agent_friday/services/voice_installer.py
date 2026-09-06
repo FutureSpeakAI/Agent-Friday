@@ -33,7 +33,7 @@ _TORCH_CUDA_INDEX = os.environ.get(
 #: newest" or to two numbers that look tidy.
 #:
 #: The version numbers do not match, and that is correct. Checked against
-#: download.pytorch.org/whl/cu126 on 2026-08-24:
+#: download.pytorch.org/whl/cu126 at pin time:
 #:
 #:     torch      2.13.0, 2.12.1, 2.12.0, 2.11.0, ... 2.6.0
 #:     torchaudio             2.11.0, 2.10.0, ... 2.6.0     <- ends at 2.11
@@ -42,8 +42,7 @@ _TORCH_CUDA_INDEX = os.environ.get(
 #: on torch at all, which is precisely why `pip install --upgrade torch
 #: torchaudio` moved torch to 2.13 and left torchaudio behind without a
 #: resolver complaint. A "matched" 2.13/2.13 pin is not available and would
-#: fail to resolve — an earlier draft of this file pinned exactly that, and a
-#: dry run caught it before it ran.
+#: fail to resolve.
 #:
 #: So the pair is chosen and verified by hand. torch 2.13.0 + torchaudio 2.11.0
 #: import cleanly together with CUDA available, confirmed by loading them, not
@@ -51,10 +50,10 @@ _TORCH_CUDA_INDEX = os.environ.get(
 _TORCH_PIN = os.environ.get("FRIDAY_TORCH_PIN", "2.13.0+cu126")
 _TORCHAUDIO_PIN = os.environ.get("FRIDAY_TORCHAUDIO_PIN", "2.11.0+cu126")
 
-#: Every install writes here, append-only, and survives a restart. The job log
-#: used to live only in memory, last 60 lines, discarded on restart — so an
-#: install that half-failed left literally no record of what pip said. The only
-#: way to reconstruct 2026-08-24 was reading dist-info timestamps.
+#: Every install writes here, append-only, and survives a restart. An
+#: in-memory-only job log is discarded on restart, so an install that
+#: half-failed would leave no record of what pip said beyond dist-info
+#: timestamps.
 def _log_path():
     p = friday_home() / "voice-install.log"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -72,17 +71,16 @@ TARGETS = {
     "voice-local-gpu": {
         "label": "Tier-2 local voice (GPU): torch-CUDA + NVIDIA NeMo",
         "disk_gb": 12.0,
-        # ONE stage, and the pair is PINNED. Both of those are fixes for what
-        # happened on 2026-08-24, which is worth writing down because the
-        # failure was silent and the recovery was not obvious.
+        # ONE stage, and the pair is PINNED. Both guard against a silent
+        # failure whose recovery is not obvious.
         #
-        # It used to be two stages: `--upgrade torch torchaudio` first, then
-        # nemo_toolkit. Stage one succeeded at 10:31:58 and 10:32:37; stage two
-        # never landed, and the machine was left with a freshly upgraded torch,
-        # NO nemo package at all, and a UI that had said "Downloading NeMo
-        # voice models…". The mic meter still moved, because that is
-        # browser-side, and nothing ever came back, because the tier's models
-        # were never installed. Two separate faults made that possible:
+        # Split into two stages (`--upgrade torch torchaudio` first, then
+        # nemo_toolkit), stage one can succeed and stage two never land,
+        # leaving the machine with a freshly upgraded torch, NO nemo package
+        # at all, and a UI that said "Downloading NeMo voice models…". The
+        # mic meter still moves, because that is browser-side, and nothing
+        # ever comes back, because the tier's models were never installed.
+        # Two separate faults make that possible:
         #
         #   1. Splitting the install meant a shared, load-bearing dependency
         #      (torch — also under sentence-transformers, silero-vad and
@@ -96,11 +94,11 @@ TARGETS = {
         # Change the pin deliberately, together, after testing the trio.
         # [asr] ONLY, not [asr,tts]. The tts extra pulls `pyopenjtalk`, a
         # Japanese text-to-speech frontend that ships no Windows wheel, builds
-        # from source, and needs a C/C++ compiler. On this machine cmake 4.4.2
-        # is present and MSVC is not, so it dies with "CMAKE_C_COMPILER not
-        # set" — which is what actually killed the 2026-08-24 install. The tier
-        # was never installable on a stock Windows box, and the failure looked
-        # like an interrupted download rather than an impossible dependency.
+        # from source, and needs a C/C++ compiler. On a box with cmake but no
+        # MSVC it dies with "CMAKE_C_COMPILER not set". With the tts extra the
+        # tier is not installable on a stock Windows box, and the failure
+        # looks like an interrupted download rather than an impossible
+        # dependency.
         #
         # Nothing is lost: NeMo here is wanted for ASR (speech in). Speech OUT
         # is already served by the Tier-1 Piper path on CPU, and Japanese TTS
@@ -142,9 +140,8 @@ def _append_log(line: str):
         if len(_JOB["log"]) > 400:  # ring buffer — keep the tail
             del _JOB["log"][:200]
     # AND to disk, append-only. The ring buffer above is the live view; it is
-    # in memory and dies with the process, which is why the 2026-08-24
-    # half-install left no evidence of what pip actually said and had to be
-    # reconstructed from dist-info timestamps.
+    # in memory and dies with the process, so a half-install would otherwise
+    # leave no evidence of what pip actually said.
     try:
         with open(_log_path(), "a", encoding="utf-8") as f:
             f.write("%s  %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
@@ -209,16 +206,16 @@ def _run_pip_stage(args: list) -> int:
 def _verify_imports(modules: list) -> tuple[bool, str]:
     """Import each module IN A SUBPROCESS and report what actually loaded.
 
-    In a subprocess for two reasons, both learned the hard way. A half-written
+    In a subprocess for two reasons. A half-written
     native library raises a Windows entry-point error that can pop a modal
     dialog and, in-process, would take the server down with it — so the check
     runs somewhere expendable, with the error dialog suppressed. And importing
     torch into the server process would pin the very DLLs a later install needs
     to replace.
 
-    This is the difference between "pip exited 0" and "the feature works".
-    On 2026-08-24 pip's first stage exited 0, the installer announced
-    "✓ install complete", and the tier had no NeMo in it at all.
+    This is the difference between "pip exited 0" and "the feature works":
+    a first pip stage can exit 0, the installer announce "✓ install
+    complete", and the tier have no NeMo in it at all.
     """
     if not modules:
         return True, ""
@@ -253,8 +250,7 @@ def _torch_in_use() -> bool:
 
     Overwriting c10.dll / c10_cuda.dll while a process holds them open is the
     likeliest source of the "entry point ??0AcceleratorError@c10@@... could not
-    be located" dialog Stephen saw: both DLLs carry a timestamp between the two
-    pip stages, so something read them mid-replacement.
+    be located" dialog: a DLL read mid-replacement is a half-written DLL.
     """
     return "torch" in sys.modules
 

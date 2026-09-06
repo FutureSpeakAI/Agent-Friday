@@ -1,10 +1,10 @@
-"""Gauntlet finding (Stephen's direct instruction, 2026-09-04): investigate
+"""Gauntlet finding (the maintainer's direct instruction, 2026-09-04): investigate
 Settings > Appearance's "Scene" dropdown (writes `scene_name`, options
 nebula/matrix/void/aurora/cosmos/midnight/prism/circuit/ocean/ember,
 described as "Holographic background scene") and remove it if genuinely
 wired to nothing -- but leave it alone and report back if it touches the
 real holographic backgrounds at all, since those are developed work
-Stephen explicitly values.
+The maintainer explicitly values.
 
 Investigation confirmed `scene_name` is completely disconnected from the
 real holo-structure system: `preferred_scene_index` (an index into

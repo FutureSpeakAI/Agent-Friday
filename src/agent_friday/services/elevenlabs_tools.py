@@ -1,9 +1,8 @@
 """ElevenLabs text-to-speech for Friday's agent seat.
 
-Added 2026-08-19. The seat could already *listen* to audio (inspect_audio) and
-*save* a provider's output (save_output), but it could not produce speech: the
-storybook pipeline had narration as a hole in the middle of it. Two tools close
-that hole:
+The seat can *listen* to audio (inspect_audio) and *save* a provider's output
+(save_output); without a way to produce speech, the storybook pipeline has
+narration as a hole in the middle of it. Two tools close that hole:
 
   speak_text   — synthesise speech from text via ElevenLabs, verify the bytes
                  are really audio, and file them into the creations folder with
@@ -209,10 +208,9 @@ def _tool_speak_text(inp):
         return "speak_text failed: could not read audio body (%s)" % e
     elapsed = time.time() - started
 
-    # Cost metering (docs/history/audits/gauntlet-2026-09-03/findings.jsonl Q11a):
-    # this tool's own description says it "costs characters against the
-    # ElevenLabs quota", yet had zero cost_meter references. ElevenLabs bills
-    # per character, not per token — cost_meter.PRICING carries a matching
+    # Cost metering: this tool's own description says it "costs characters
+    # against the ElevenLabs quota", so the spend must land in the ledger.
+    # ElevenLabs bills per character, not per token — cost_meter.PRICING carries a matching
     # "USD per 1K characters" entry for common ElevenLabs model ids (see that
     # table's comment), so len(text) is passed as input_tokens deliberately.
     # A model id with no PRICING entry meters $0 rather than a guessed rate.

@@ -1,19 +1,19 @@
 """A tool registry that does not fit in the window is not a registry.
 
-Measured on Stephen's machine, 2026-08-18:
+Measured on the reference machine:
 
     request (46288 tokens) exceeds the available context size (32768 tokens)
 
-Every local turn returned HTTP 400 and the router fell back to Anthropic, so
-the symptom he reported was "it took forever to reply then kicked back to
-Sonnet 4.6 again, which I do not want". Nothing was wrong with the model, the
-seat, the picker or the routing mode — the request simply could not be built.
+Every local turn returns HTTP 400 and the router falls back to the cloud, so
+the visible symptom is "it took forever to reply then kicked back to the cloud
+model, which I do not want". Nothing is wrong with the model, the seat, the
+picker or the routing mode — the request simply cannot be built.
 
-The cause was arithmetic. Friday's own tools cost about 9.7k tokens. The
-Higgsfield connector registered 86 more and GitHub 26, and their schemas cost
-roughly 36k on top. Any seat with a 32k window was unreachable from the moment
-those connectors came up, and the seat's context had deliberately been set to
-32768 to keep the display alive on a 12 GB card — so raising it is not free.
+The cause is arithmetic. Friday's own tools cost about 9.7k tokens. The
+Higgsfield connector registers 86 more and GitHub 26, and their schemas cost
+roughly 36k on top. Any seat with a 32k window is unreachable from the moment
+those connectors come up, and the seat's context is deliberately set to 32768
+to keep the display alive on a 12 GB card — so raising it is not free.
 
 So the tool payload is fitted to the seat instead. Friday's own tools always
 travel: they are what she is. Connector tools are all-or-nothing per request,
@@ -65,13 +65,12 @@ def _served_ctx(model_id: str) -> int | None:
 
     The server is the authority — the same principle `local_call._serves`
     already states for model identity, applied to context size. The plan is a
-    record of intent and it drifts: measured 2026-08-19, the plan said
-    gemma4:e4b at 65,536 while `_spawn` had capped the actual llama-server to
-    32,768 ("to keep the display reserve") and nothing wrote the cap back.
-    Budgeting against the plan built a >32k request for a 32k seat, every
-    local turn 400'd with `exceed_context_size_error`, and the router fell
-    back to the cloud — the exact failure this module exists to prevent,
-    reintroduced one layer deeper.
+    record of intent and it drifts: the plan can say gemma4:e4b at 65,536
+    while `_spawn` has capped the actual llama-server to 32,768 ("to keep the
+    display reserve") without writing the cap back. Budgeting against the
+    plan builds a >32k request for a 32k seat, every local turn 400s with
+    `exceed_context_size_error`, and the router falls back to the cloud —
+    the exact failure this module exists to prevent, one layer deeper.
     """
     now = _time.time()
     hit = _SERVED_CACHE.get(model_id)
@@ -204,17 +203,18 @@ def _surface_override(kept: list, dropped: list) -> str:
     ("you can, and these tools are how"). That block is a COMPILE-TIME
     CONSTANT. It knows nothing about trimming and never has.
 
-    So a trimmed turn shipped a prompt naming tools the request did not carry.
-    A model in that position does the only thing left to it: it announces the
-    action and nothing happens. Measured on this machine 2026-08-24 against the
-    live registry — every local seat is served at 32,768 and the assembled
-    system prompt alone is ~13,550 tokens, so ~3.5k of transcript is enough to
-    start dropping core tools, and ~8k drops `spawn_task` itself.
+    So a trimmed turn would ship a prompt naming tools the request does not
+    carry. A model in that position does the only thing left to it: it
+    announces the action and nothing happens. Measured on the reference
+    machine against the live registry — every local seat is served at 32,768
+    and the assembled system prompt alone is ~13,550 tokens, so ~3.5k of
+    transcript is enough to start dropping core tools, and ~8k drops
+    `spawn_task` itself.
 
-    This is the same defect the LIVE VOICE path fixed the same day with
-    `_voice_tool_surface_note` — there the prompt advertised the ~30-tool text
-    toolbox while the Live API was handed nine. Same disease, different cause:
-    voice lost tools to an API shape, text loses them to arithmetic. The note
+    This is the same defect the LIVE VOICE path handles with
+    `_voice_tool_surface_note` — there the prompt advertises the ~30-tool text
+    toolbox while the Live API is handed nine. Same disease, different cause:
+    voice loses tools to an API shape, text loses them to arithmetic. The note
     is appended LAST by every caller, so it wins over the constant above it.
 
     Whichever list is shorter gets printed. Naming what is GONE and naming what
@@ -265,15 +265,15 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
 
     Returns (tools, note). `note` is None when everything fit; otherwise it is
     a plain sentence suitable for the model's system prompt AND for telling
-    Stephen, because a capability that quietly is not there is the failure
+    the user, because a capability that quietly is not there is the failure
     this module exists to prevent.
 
     `prompt_cost` is the estimated token cost of everything else in the
     request — system prompt plus transcript. The share cap alone cannot
     protect a seat: at share 0.4 of a doubled window, tools "within budget"
-    plus an ordinary prompt already exceeded what the seat could hold
-    (measured 2026-08-19: 26,214 allowed + 8,116 prompt against 32,768
-    served). The request is budgeted as a WHOLE or it is not budgeted.
+    plus an ordinary prompt already exceeds what the seat can hold
+    (measured on the reference machine: 26,214 allowed + 8,116 prompt against
+    32,768 served). The request is budgeted as a WHOLE or it is not budgeted.
     """
     tools = list(tools or [])
     if not model_id or not tools:
@@ -301,33 +301,23 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     core_cost = _tokens(core)
     conn_cost = _tokens(connectors)
 
-    # A TRIMMER THAT COULD NOT TRIM THE THING THAT WAS TOO BIG.
+    # CORE TOOLS MUST BE DROPPABLE TOO. A trimmer whose only lever is
+    # connectors cannot trim the thing that is too big.
     #
-    # This function used to return `tools, None` unchanged whenever there were
-    # no connector tools — no matter how far over budget the request was — and
-    # otherwise dropped connectors and kept every core tool regardless. So its
-    # only lever was connectors. Measured on this machine 2026-08-24 via
-    # /api/residency/status: tool_tokens 47,579 and system_prompt_tokens 13,626
-    # against a 32,768-token seat.
+    # Measured on the reference machine against the registry itself: the
+    # whole registry is ~47,579 tokens, of which Friday's own 67 tools are
+    # ~11,131 and the ~64 connectors are the other ~36,448. Friday's own tools
+    # DO fit a 32,768 window by themselves, comfortably.
     #
-    # CORRECTION, remeasured 2026-08-24 against the registry itself: that
-    # 47,579 is the WHOLE registry — Friday's own 67 tools are ~11,131 tokens
-    # of it and the ~64 connectors are the other ~36,448. Friday's own tools DO
-    # fit a 32,768 window by themselves, comfortably. The original sentence here
-    # read a combined number as a core-only one.
+    # The budget is the whole request, though. Core (11,131) + the assembled
+    # system prompt (13,550) + the generation reserve (4,608) is 29,289 of
+    # 32,768, so roughly 3.5k tokens of transcript — a few turns — is enough
+    # to put core over. It is not the tool definitions that push it there,
+    # but core still has to give: a briefing chain or a distill-to-wiki pass
+    # at ~38k tokens into 32,768 otherwise dies as a provider 400 with no
+    # explanation the user can act on.
     #
-    # The change it justified is still right, for the real reason: the budget is
-    # the whole request. Core (11,131) + the assembled system prompt (13,550)
-    # + the generation reserve (4,608) is 29,289 of 32,768, so roughly 3.5k
-    # tokens of transcript — a few turns — is enough to put core over. Core has
-    # to be droppable. It just is not the tool definitions that push it there.
-    #
-    # Three real failures came from this in one morning — 38,232 and 38,713
-    # tokens into 32,768, twice on a briefing chain and once on a
-    # distill-to-wiki pass. Each died as a provider 400 with no explanation the
-    # user could act on.
-    #
-    # Core tools are now droppable too, lowest value first, and the caller is
+    # So core tools are droppable, lowest value first, and the caller is
     # told plainly when even an empty tool list will not fit — because at that
     # point the prompt is the problem and no amount of tool trimming is the
     # answer.
@@ -339,10 +329,10 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
         # a tools problem and pretending otherwise sends the caller round a
         # loop that cannot terminate.
         #
-        # Name the RIGHT cause. With prompt_cost=0 this used to announce a
-        # request "about 0 tokens" that had somehow overflowed the seat — a
-        # sentence that is both false and unactionable. A zero-token prompt
-        # that leaves no budget means the WINDOW is too small, full stop.
+        # Name the RIGHT cause. With prompt_cost=0, announcing a request
+        # "about 0 tokens" that somehow overflowed the seat is both false and
+        # unactionable. A zero-token prompt that leaves no budget means the
+        # WINDOW is too small, full stop.
         if int(prompt_cost or 0) <= 0:
             why = ("No tools were loaded: %s's %s-token window has no room for "
                    "tool definitions once the generation reserve is set aside. "
@@ -352,7 +342,7 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
                    "against %s's %s-token window, before any tool definitions. "
                    "Shorten the input or use a larger-context seat."
                    % (f"{int(prompt_cost or 0):,}", model_id, f"{window:,}"))
-        # Say it to the MODEL too, not only to Stephen. An empty tool array
+        # Say it to the MODEL too, not only to the user. An empty tool array
         # under a prompt that still names thirty-five tools is the exact
         # condition that produces a confident announcement and no action.
         return [], why + _surface_override([], [t.get("name") for t in tools])
@@ -383,28 +373,26 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     if core_cost <= budget:
         return core, note
 
-    # Core alone still overflows. This used to send them anyway and let the
-    # seat 400 — "an honest 400 beats a silent trip to the cloud", which was
-    # right about the cloud and wrong about the 400: on a vault turn there IS
-    # no cloud to fall back to, so the honest 400 is simply the work not
-    # happening. Trim core too, essential-first, and keep what a turn cannot
-    # function without.
+    # Core alone still overflows. Sending them anyway and letting the seat
+    # 400 ("an honest 400 beats a silent trip to the cloud") is right about
+    # the cloud and wrong about the 400: on a vault turn there IS no cloud to
+    # fall back to, so the honest 400 is simply the work not happening. Trim
+    # core too, essential-first, and keep what a turn cannot function without.
     #
-    # WHAT WAS ACTUALLY DECIDING THIS. The sort below reads
-    # "(not essential, token cost)", so outside the essential set the ONLY
-    # criterion was schema size — cheapest survives. Nobody chose that; it is
-    # the same shape as the residency planner's "largest model on disk wins".
-    # Measured on the live registry: at a 20k prompt the eight tools dropped
-    # were exactly the eight most expensive schemas — content_create_post,
+    # WHY THE ESSENTIAL SET OUTRANKS SIZE. Outside the essential set the sort
+    # below reads "(not essential, token cost)", so the only remaining
+    # criterion is schema size — cheapest survives. On its own that is the
+    # same shape as "largest model on disk wins": at a 20k prompt the tools
+    # dropped are exactly the most expensive schemas — content_create_post,
     # generate_music, generate_image, compose_timeline, creative_project,
     # annotate_calendar_events, speak_text, generate_video — while
-    # get_career_pipeline (40 tokens) and type_text (60) survived to the end.
+    # get_career_pipeline (40 tokens) and type_text (60) survive to the end.
     # A job-search lookup outranking every creative tool and `spawn_task` is a
     # verdict on description length, not on usefulness.
     #
     # Size stays as the TIEBREAK — within one tier, cheaper first genuinely
-    # fits more tools — but it no longer outranks the essential set, which is
-    # now large enough to cover every capability the prompt promises by name.
+    # fits more tools — but it does not outrank the essential set, which is
+    # large enough to cover every capability the prompt promises by name.
     kept, kept_cost = [], 0
     for t in sorted(core, key=lambda x: (str(x.get("name")) not in _ESSENTIAL_TOOLS,
                                          _tokens([x]))):

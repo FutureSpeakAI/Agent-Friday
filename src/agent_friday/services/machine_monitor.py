@@ -27,7 +27,7 @@ out a second time.
 WHAT THIS FILE DOES NOT BUILD. §4.2 of the spec is a full three-level
 Headroom Contract — `working` / `away` / `yield`, each with a VRAM-slack
 floor and a RAM-available floor. Choosing those numbers, and which level is
-the shipped default, is **D1** — Stephen's decision, not made here (see
+the shipped default, is **D1** — the maintainer's decision, not made here (see
 `headroom_contract.py`'s own docstring, which carries the same line for the
 display-reserve half of §4.2). `verdict()` below reports two resources
 honestly instead of guessing at D1's numbers:
@@ -39,17 +39,16 @@ honestly instead of guessing at D1's numbers:
     EXISTING 10 GiB constant) applied to the volume holding `%SystemRoot%`
     rather than the model-store volume. This is not a new number; it is the
     gap named HR5 in the spec — none of R8, the Ollama-pull preflight, or
-    the vault-tier disk check watches the system volume, and the incident
-    that filled C: to 0 bytes and crashed the live app on 2026-09-04
-    (`friday_test_home_*` leaks, not a model) would not have been seen by
-    any of them.
+    the vault-tier disk check watches the system volume, so a non-model
+    writer (stray temp directories, say) can fill the system drive to zero
+    and crash the live app without any of them noticing.
   * **vram_slack**, **ram_available** — D1-gated. `basis: "unknown"`, never
     `ok`, never a guessed floor. HR1: a verdict with no basis is not a
     verdict.
 
 The thrash signature (§3.3, §4.3) needs neither number and is built in full:
 it is telemetry plus a signature validated against the REPORTED figures in
-§3, not a Stephen decision.
+§3, not a maintainer decision.
 """
 from __future__ import annotations
 
@@ -174,8 +173,8 @@ def _disk_system_free_mib() -> int | None:
     """Free space on the volume holding `%SystemRoot%` — HR5.
 
     Deliberately independent of `OLLAMA_MODELS` / `runtime_dir()`: the
-    2026-09-04 incident that filled C: to 0 bytes and crashed the live app
-    was `friday_test_home_*` leaks, not a model, and none of R8
+    system volume can be filled to zero by something other than a model
+    (stray temp directories, for instance), and none of R8
     (`residency_policy.check_disk_headroom`, the model-store volume), the
     Ollama pull preflight (`routes/skills.py`, 15 GB floor, model-store
     volume), or the vault-tier 2 GiB floor watches the system volume at all.
@@ -395,7 +394,7 @@ def thrash_signature(samples: list, *, latency_ratio: float | None = None) -> di
             "GPU utilisation and throughput look healthy" if status == "ok" else
             "utilisation is pegged while power draw stays low — consistent "
             "with the card thrashing against RAM rather than computing "
-            "(the shape measured 2026-09-04: 100% utilisation, 51 of 200W)"
+            "(the shape measured on the reference machine: 100% utilisation, 51 of 200W)"
             if util_power and not latency else
             "a served model's generation speed is %.1fx its measured "
             "baseline — consistent with paging" % (latency_ratio or 0)
@@ -490,9 +489,9 @@ def disk_system_verdict(sample_: dict) -> dict:
 
 
 # Rate-capped, per resource, the same pattern
-# `hardware_profile._log_rejection` uses (2026-09-01: 1,038 identical
-# rejection lines in one day from that sibling pattern before it was
-# capped) -- a repeated breached verdict must not drown the log.
+# `hardware_profile._log_rejection` uses (uncapped, that sibling pattern
+# produced over a thousand identical rejection lines in a single day)
+# -- a repeated breached verdict must not drown the log.
 _LOG_INTERVAL_S = 3600.0
 _verdict_log_state: dict = {}
 _verdict_log_lock = threading.Lock()
@@ -546,7 +545,7 @@ def verdict(sample_: dict, contract=None, *, profile: dict | None = None,
             "status": "unknown", "basis": "unknown",
             "explanation": "the VRAM-slack floor is part of the Headroom "
                            "Contract's working/away/yield levels -- D1, "
-                           "Stephen's decision, not made. Not reported as "
+                           "the maintainer's decision, not made. Not reported as "
                            "ok or breached.",
         },
         "ram_available": {

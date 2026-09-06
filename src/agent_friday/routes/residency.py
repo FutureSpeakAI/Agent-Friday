@@ -4,8 +4,8 @@ Residency API — look at the plan the machine is actually running.
 There was no way to ask. The Arbiter computed a plan at boot, printed a
 one-line summary to stdout and kept the rest to itself, so the only way to
 find out what a seat was sized at was to read `ollama ps` and infer. That
-failed exactly when it mattered: on 2026-08-15 the boot left one seat resident
-at the wrong context and the available evidence could not distinguish between
+fails exactly when it matters: when a boot leaves one seat resident at the
+wrong context, that evidence cannot distinguish between
 "the plan is wrong", "the plan is right and the boot failed" and "something
 reloaded the model afterwards".
 
@@ -239,7 +239,7 @@ def machine_level():
         "enforced": False,
         "level_requested": level,
         "message": "Noted, but nothing enforces machine levels yet -- "
-                   "working/away/yield is a decision Stephen has not made "
+                   "working/away/yield is a decision the maintainer has not made "
                    "(headroom.md D1). This click does not release or stand "
                    "anything down.",
     })
@@ -272,10 +272,11 @@ def replan():
 def preview():
     """Cost a proposed role->model selection WITHOUT committing it.
 
-    Stephen, 2026-08-18: "always advise the user when they're going to overflow
+    Maintainer ruling: "always advise the user when they're going to overflow
     the memory with their selections." This is that advice, and it is a preview
     rather than a gate: a selection that does not fit still comes back 200 with
-    `fits: false`, the overflow, and what would have to give. The choice is his.
+    `fits: false`, the overflow, and what would have to give. The choice is
+    the user's.
 
     Body: {"assignments": {"orchestrator": "gemma4:e4b", ...}}
     """

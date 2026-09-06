@@ -1,6 +1,6 @@
 """Hard spending cap — the stop that actually stops.
 
-Stephen's ruling (2026-09-06): "spending cap alerts. we do want a stopping
+The maintainer's ruling: "spending cap alerts. we do want a stopping
 cap available to the user though." Two caps, not one:
 
   * the ALERT cap (`cost_budget.daily/monthly`) is the default and is

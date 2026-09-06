@@ -41,8 +41,8 @@ def get_capabilities():
 def receive_job():
     """Receive a federated compute job from a peer.
 
-    security-boundary.md follow-up (2026-09-03): this route had no decorator
-    while 7 of its 10 siblings in this file do. `core.check_auth()` (the
+    security-boundary.md follow-up: every sibling route in this file
+    carries this decorator, and so does this one. `core.check_auth()` (the
     app-wide `@app.before_request` hook) already fail-closes any non-loopback
     caller with no `FRIDAY_REMOTE_KEY` for EVERY route, decorated or not —
     verified empirically (tests/api/test_compute_federation_auth.py): a
@@ -56,12 +56,12 @@ def receive_job():
     a decorator cannot fix: `accept_job()`'s only trust check is a
     caller-SELF-REPORTED `requester_trust_score`, and `capability:
     "analysis.run"` runs the caller's own `prompt` field as a Python script
-    (services/worker_adapters/python_script_adapter.py). 2026-09-06: that
-    script no longer inherits the server's environment -- it gets the
-    sandboxed allowlist (extension_security.SANDBOXED_ENV_ALLOWLIST) plus
+    (services/worker_adapters/python_script_adapter.py). That script does
+    not inherit the server's environment -- it gets the sandboxed allowlist
+    (extension_security.SANDBOXED_ENV_ALLOWLIST) plus
     python_script_adapter.WORKER_ENV_EXTRA, nothing else. Whether a
-    self-reported trust score should run a peer's code at all remains a
-    design question and Stephen's call, not mine — still flagged here.
+    self-reported trust score should run a peer's code at all remains an
+    open design question for the maintainer — flagged here.
     """
     data = request.get_json(silent=True) or {}
     accepted, reason = prov.accept_job(data)

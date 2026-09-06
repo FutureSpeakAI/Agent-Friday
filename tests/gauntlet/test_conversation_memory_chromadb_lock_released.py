@@ -1,4 +1,4 @@
-"""Gauntlet finding F65, actually closed (2026-09-04, Stephen's ruling):
+"""Gauntlet finding F65, actually closed (2026-09-04, the maintainer's ruling):
 "The temp leak is bounded, not closed -- 79 directories and 3.3 GB since
 the F71 fix, attributed to a ChromaDB lock residual. Either close it or
 state plainly in the finding what the bound is and why it can't be

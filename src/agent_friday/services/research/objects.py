@@ -49,7 +49,8 @@ def commission_dir(commission_id: str) -> Path:
 
 
 DEFAULT_BUDGET = {
-    # Sized to Q6 — match what Claude.ai's Research delivers (§3.3).
+    # Sized to match what Claude.ai's Research delivers
+    # (docs/design/active/deep-research.md §3.3, decision Q6).
     "sub_questions": 10,
     "queries_per_sq": 5,
     "fetches_per_sq": 8,
@@ -75,7 +76,8 @@ class ProtectionPlan:
     reason: str = ""
 
     def sentence(self) -> str:
-        """The line shown in the proposal, up front (Q5)."""
+        """The line shown in the proposal, up front
+        (docs/design/active/deep-research.md, decision Q5)."""
         if not self.cloud_allowed:
             return ("Claude will never see this question — it cannot be asked "
                     f"without material that stays here. {self.reason} "
@@ -217,11 +219,10 @@ class Commission:
                 commission_id=pd.get("commission_id", c.id),
                 perspectives=pd.get("perspectives") or [],
                 # Tolerate fields an older build wrote and this one dropped.
-                # A commission record is HIS WORK; refusing to load one
-                # because of an extra key means the run is unrecoverable and
-                # cannot even be reported. Seven of nine records on disk were
-                # unreadable this way (2026-08-18: `cloud_allowed`), including
-                # a commission frozen mid-grind.
+                # A commission record is the user's work; refusing to load
+                # one because of an extra key (e.g. a retired `cloud_allowed`)
+                # means the run is unrecoverable and cannot even be reported,
+                # including a commission frozen mid-grind.
                 sub_questions=[SubQuestion(**{k: v for k, v in s.items()
                                              if k in _SUBQ_FIELDS})
                                for s in pd.get("sub_questions") or []],

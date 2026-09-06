@@ -1,7 +1,7 @@
 """Google OAuth redirect_uri is pinned to loopback, not derived from the
 request Host header (docs: toolcall-integrity-v5, 2026-08-13).
 
-Stephen's consent attempt died with Error 400 invalid_request: he reaches
+The maintainer's consent attempt died with Error 400 invalid_request: he reaches
 Friday via a hosts-file alias (http://agent.friday/), and both Google
 connectors previously built their "web" client_type redirect_uri from
 request.host_url — Google's secure-response-handling policy rejects ANY

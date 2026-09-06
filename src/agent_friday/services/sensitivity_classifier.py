@@ -20,7 +20,7 @@ For the real answer at runtime:
   Layer 2 — Presidio:  Optional NER via presidio-analyzer. Catches names, dates,
                         medical/financial entities that regex misses. INSTALLED
                         BY THE WINDOWS INSTALLER BUT OBSERVE-ONLY: measured on
-                        2026-08-24 it escalated 6 of 12 benign prompts ("what is
+                        the reference machine it escalated 6 of 12 benign prompts ("what is
                         the weather going to be like tomorrow?") and scored
                         TIER_2 where the existing regex returns TIER_3. So it is
                         shadow-logged, not enforced, unless FRIDAY_PRESIDIO_ENFORCE=1
@@ -46,8 +46,8 @@ plain default-to-PRIVATE would still need Layer 3 to see anyway.
 `default` is a plain parameter any caller may override to whatever they
 need (this module's own callers outside egress do pass Tier.PRIVATE for
 their own reasons); it does not by itself make PRIVATE this classifier's
-built-in default. See docs/history/audits/gauntlet-2026-09-03/findings.jsonl for
-where this line previously said the opposite.
+built-in default (see the 2026-09 gauntlet audit in docs/history/audits/ for
+the history of this claim).
 
 Import example:
     from agent_friday.services.sensitivity_classifier import classify, Tier, TIER_3_KEYWORDS
@@ -86,28 +86,27 @@ _ROUTING_RE = re.compile(r'\b\d{9}\b')
 _API_KEY_RE = re.compile(r'\b(?:sk-ant-|sk-|AQ\.|AIza)[A-Za-z0-9_\-]{16,}\b')
 
 # ── Layer 1a (cont.): contact-shaped PII ──────────────────────────────────────
-# ADDED 2026-08-25 after a live leak. A phone number, a street address and a
-# masked account tail had NO detector at any layer that actually ships.
+# A phone number, a street address and a masked account tail need a detector
+# at a layer that actually ships.
 #
-# They were nominally covered by Layer 2 (Presidio PHONE_NUMBER / LOCATION),
-# which has never been installed in any environment, and by Layer 3 embeddings,
-# which AgentFriday.spec `excludes` from the frozen build AND which the vault
-# path switches off outright (vault_access.classify passes use_embeddings=False).
-# So in the shipped product the only thing standing between
-# "emergency contact: 555-1234" and Anthropic was the literal English words
-# "phone number" happening to appear nearby. They did not. Verified end to end:
-# vault_access.gate_content(raw, "anthropic") returned the string verbatim and
-# logged `[VAULT] ALLOW provider=anthropic tier=TIER_1`.
+# They are nominally covered by Layer 2 (Presidio PHONE_NUMBER / LOCATION),
+# which is not enforced in any environment, and by Layer 3 embeddings, which
+# AgentFriday.spec `excludes` from the frozen build AND which the vault path
+# switches off outright (vault_access.classify passes use_embeddings=False).
+# Without these patterns, the only thing standing between
+# "emergency contact: 555-1234" and a cloud provider is the literal English
+# words "phone number" happening to appear nearby — and
+# vault_access.gate_content(raw, "anthropic") returns the string verbatim.
 #
 # These belong in Layer 1a specifically because Layer 1a is mode-independent:
-# one fix covers the routing path and the egress path together. They are also
-# orthogonal to the keyword-frame matching that three separate over-redaction
-# incidents have been spent loosening — no pattern here can re-trigger on
+# one set of patterns covers the routing path and the egress path together.
+# They are also orthogonal to the keyword-frame matching that has repeatedly
+# needed loosening after over-redaction — no pattern here can re-trigger on
 # "courtesy", on "Sovereign Vault", or on CDC flu guidance, because none of
 # those contain a dialable number or a house number.
 
 # Toll-free area codes are never a personal contact. A news story printing a
-# hotline ("call 1-800-273-8255") must not be redacted as if it were Stephen's  # pragma: allowlist secret
+# hotline ("call 1-800-273-8255") must not be redacted as if it were the user's  # pragma: allowlist secret
 # address book — this is the deliberate over-correction guard for the pattern.
 _TOLLFREE_AREA = {"800", "833", "844", "855", "866", "877", "888"}
 _PHONE_RE = re.compile(
@@ -271,11 +270,12 @@ _ANALYZER      = _UNTRIED  # lazy-loaded AnalyzerEngine
 def _load_presidio():
     """Lazy-load the Presidio NER analyzer. Caches failure as well as success.
 
-    The failure path used to store None, which is also the "not yet attempted"
-    value - so a missing presidio-analyzer was re-imported on EVERY classify()
-    call, taking the lock and re-walking sys.path each time. Measured at 0.86 ms
-    per call on this machine, paid by every egress decision forever, for a layer
-    that was never going to load. The sentinel makes the miss cost once.
+    The failure path must not store None, which is also the "not yet attempted"
+    value - otherwise a missing presidio-analyzer is re-imported on EVERY
+    classify() call, taking the lock and re-walking sys.path each time
+    (measured at 0.86 ms per call on the reference machine), paid by every
+    egress decision forever, for a layer that is never going to load. The
+    sentinel makes the miss cost once.
     """
     global _ANALYZER
     if _ANALYZER is not _UNTRIED:
@@ -364,7 +364,7 @@ def _kw_re(keywords, exclude=frozenset()) -> "re.Pattern":
     return re.compile(r"\b(?:" + "|".join(re.escape(k) for k in kws) + r")\b")
 
 
-# TIER-2 strong/common split (2026-08-19). The common words below appear
+# TIER-2 strong/common split. The common words below appear
 # constantly in text that carries no personal data at all — a storybook prompt
 # reading "family picture-book aesthetic" or "nano banana family" was routed
 # as PRIVATE, vault-forced onto the local seat, and (with a full tool payload
@@ -504,21 +504,18 @@ def _embedding_tier(text: str) -> tuple[int, float]:
 def _llm_seat() -> str | None:
     """Which installed model adjudicates. None when nothing can.
 
-    This used to be the literal string ``"gemma4:latest"``, POSTed straight to
-    the daemon. That tag is not installed on the reference machine — checked
-    2026-08-26, it returns HTTP 404 — so every call failed, `r.ok` was False,
-    the function returned 0, and the surrounding `except: pass` ate the rest.
-    A hardcoded model name is a dangling pointer the moment someone runs
-    `ollama rm`, and this one had already dangled.
+    A hardcoded model name here (e.g. a literal ``"gemma4:latest"`` POSTed
+    straight to the daemon) is a dangling pointer the moment someone runs
+    `ollama rm`: the daemon returns HTTP 404, `r.ok` is False, the function
+    returns 0, and the surrounding `except: pass` eats the rest.
 
-    It is the same defect class as the `gemma3:4b` constants closed in 7da7798:
-    a model NAME written into a module that has no way to know whether the name
-    still resolves. So this resolves instead of naming.
+    That is the same defect class as any model NAME written into a module
+    that has no way to know whether the name still resolves. So this resolves
+    instead of naming.
 
-    But "resolve against the installed registry" is not by itself enough, and
-    the first version of this fix proved it — see the comment on `servable`
-    below. There are two local registries and only one of them serves this
-    request.
+    But "resolve against the installed registry" is not by itself enough —
+    see the comment on `servable` below. There are two local registries and
+    only one of them serves this request.
 
     The "judge" role is deliberate: adjudicating an ambiguous span is the same
     kind of work `judgment_gate` does, and it maps onto the `reasoning`
@@ -535,20 +532,20 @@ def _llm_seat() -> str | None:
     # WHICH INVENTORY. This is the whole subtlety, and getting it wrong looks
     # exactly like getting it right.
     #
-    # There are TWO local model registries on this machine and they do not hold
+    # There are TWO local model registries on a machine and they do not hold
     # the same things. `local_seats.installed()` deliberately MERGES them:
     # Ollama's tags, plus Friday's own llama-server runtime store
     # (~/.friday/runtime/models/models.json). Resolving against the merged view
-    # returned `gemma4:12b` — which is real, and is a llama-server seat, and is
-    # NOT something Ollama can serve. Measured 2026-08-26: the daemon answered
-    # `{"error":"model 'gemma4:12b' not found"}` with HTTP 404, in 0.0s, which
-    # this function then reported as "no verdict" — indistinguishable from the
+    # can return a llama-server seat (e.g. `gemma4:12b`) that is real and is
+    # NOT something Ollama can serve: the daemon answers
+    # `{"error":"model 'gemma4:12b' not found"}` with HTTP 404, which this
+    # function would then report as "no verdict" — indistinguishable from the
     # model having no opinion.
     #
-    # That is the SAME failure the hardcoded `gemma4:latest` produced, reached
-    # by a more sophisticated route. Asking a registry is only correct if it is
-    # the registry that will serve the request. This layer POSTs to Ollama, so
-    # it resolves against Ollama.
+    # That is the SAME failure a hardcoded name produces, reached by a more
+    # sophisticated route. Asking a registry is only correct if it is the
+    # registry that will serve the request. This layer POSTs to Ollama, so it
+    # resolves against Ollama.
     try:
         from agent_friday.routing.ollama_manager import get_manager
         servable = {m.get("name") for m in (get_manager().list_models() or ())}
@@ -623,17 +620,17 @@ def _local_llm_tier(text: str) -> int:
                   # REQUIRED, not an optimisation. Every current local seat is
                   # a thinking model: without this it spends the entire
                   # num_predict budget emitting "<|channel>thought ..." and
-                  # never reaches the verdict. Measured 2026-08-26 on
-                  # Gemma4-12B-QAT — with `think` unset the reply at
+                  # never reaches the verdict. Measured on the reference
+                  # machine on Gemma4-12B-QAT — with `think` unset the reply at
                   # num_predict=64 was still mid-reasoning; with it set the
                   # reply was the single word "PRIVATE".
                   "think": False,
                   "options": {"temperature": 0, "num_predict": 8}},
-            # A COLD LOAD DOMINATES THIS. Measured: 25.9 s for the first call
-            # (weights off disk) against ~1 s warm. An earlier 20 s ceiling
-            # here timed out on every cold start and returned 0 — which this
-            # layer reports as "no opinion", so a working model looked like a
-            # silent one. Generous enough to survive the load; the layer is
+            # A COLD LOAD DOMINATES THIS. Measured on the reference machine:
+            # 25.9 s for the first call (weights off disk) against ~1 s warm.
+            # A 20 s ceiling here times out on every cold start and returns
+            # 0 — which this layer reports as "no opinion", so a working model
+            # looks like a silent one. Generous enough to survive the load; the layer is
             # opt-in and reaches ~5% of content, so the worst case is rare.
             timeout=60,
         )
@@ -697,13 +694,13 @@ def classify(
         return Tier.SENSITIVE
 
     # Layer 2: Presidio NER.
-    # SHADOW BY DEFAULT. Measured on this machine (2026-08-24), Presidio
+    # SHADOW BY DEFAULT. Measured on the reference machine, Presidio
     # escalated 6 of 12 entirely benign prompts to TIER_2 - "What is the weather
     # going to be like tomorrow?" and "Remind me to buy milk on Friday" among
     # them - because DATE_TIME and LOCATION fire on ordinary conversational
-    # prose. Enforcing that would withhold half of normal chat from the cloud
-    # and would be the fourth over-broad-classification scar in this file's
-    # history. So unless FRIDAY_PRESIDIO_ENFORCE=1 is explicitly set, Presidio
+    # prose. Enforcing that would withhold half of normal chat from the cloud,
+    # another over-broad classification of the kind this file guards against.
+    # So unless FRIDAY_PRESIDIO_ENFORCE=1 is explicitly set, Presidio
     # only OBSERVES: presidio_shadow.observe() queues the text to a background
     # thread, logs what it WOULD have escalated, and returns None.
     presidio = 0

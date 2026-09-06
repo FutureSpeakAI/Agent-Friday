@@ -43,11 +43,10 @@ _log = logging.getLogger("friday.local_video")
 WAN_5B_ID = "wan2.2-ti2v-5b"
 WAN_14B_ID = "wan2.2-14b-a14b-gguf"
 COGVIDEOX_ID = "cogvideox-2b"
-# 14B, not 5B: real testing on this hardware (2026-09-04) found the 5B's
-# sampling reliable but its VAE decode hung for 15+ minutes with no result,
-# in two separate tests at two different clip lengths (81 and 29 frames) —
-# length-independent, not just slow. 14B completed cleanly. Revisit once the
-# 5B's decode issue is root-caused.
+# 14B, not 5B: on the reference 12GB card the 5B's sampling is reliable but
+# its VAE decode hangs for 15+ minutes with no result, at two different clip
+# lengths (81 and 29 frames) — length-independent, not just slow. 14B
+# completes cleanly. Revisit once the 5B's decode issue is root-caused.
 DEFAULT_MODEL_ID = WAN_14B_ID
 
 # ── The installed video models ─────────────────────────────────────────────
@@ -125,9 +124,9 @@ MODELS: dict = {
     # "encoderonly" (`t5\google_t5-v1_1-xxl_encoderonly-fp8_e4m3fn.safetensors`)
     # via CLIPLoader type=sd3. This entry instead reuses the T5-XXL fp8
     # encoder already on disk for FLUX (comfyanonymous/flux_text_encoders) —
-    # confirmed working on the first real generation (2026-09-04, 143.8s for
-    # a short clip, ~5GB VRAM peak), so the state dict keys do match; no need
-    # for a second T5 download.
+    # confirmed working on a real generation (measured on the reference
+    # machine: 143.8s for a short clip, ~5GB VRAM peak), so the state dict
+    # keys do match; no need for a second T5 download.
     COGVIDEOX_ID: {
         "label": "CogVideoX 2B (local video)",
         "short": "CogVideoX 2B",

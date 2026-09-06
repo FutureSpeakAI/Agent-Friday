@@ -1,9 +1,9 @@
 """FR-3 — provenance: only executed-tool-result URLs are clickable
 (toolcall-integrity-v5).
 
-2026-08-12: the "start my day" confabulation minted a fake Google Calendar
-URL and the client rendered it as a normal clickable [web:...] link —
-indistinguishable from a real one. `fridayCitationize` (ui_parts/app.html,
+A confabulated briefing can mint a fake Google Calendar URL that the client
+renders as a normal clickable [web:...] link — indistinguishable from a real
+one. `fridayCitationize` (ui_parts/app.html,
 index.html) linkifies ANY [web:URL] token in a reply with no cross-check
 against what the turn's tools actually touched. This module is the
 server-side ground-truth check: a [web:URL] citation is only left clickable
@@ -89,7 +89,7 @@ def warn_if_ungrounded_claim(reply: str, tool_trace) -> bool:
 
     This is a precise, low-noise signal (a real citation token, not fuzzy
     keyword matching) for exactly the "asserts calendar/email/search facts
-    with zero executed tools" pattern from the 2026-08-12 confabulation.
+    with zero executed tools" confabulation pattern.
     """
     if tool_trace:
         return False

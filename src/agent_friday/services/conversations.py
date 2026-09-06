@@ -1,11 +1,10 @@
 """Conversations — many working threads, one memory.
 
-Friday had exactly one transcript. "+ New Chat" cleared it, so there was no
-such thing as going back to an earlier conversation: the previous one was
-deleted. Stephen, 2026-08-18: "I want to trigger background tasks, go to a new
-chat, talk with a different model, then go back to the other chat to get an
-update from the other model while the other other model does something in the
-background too."
+A single transcript that "+ New Chat" clears means there is no such thing as
+going back to an earlier conversation. The maintainer's requirement: "I want
+to trigger background tasks, go to a new chat, talk with a different model,
+then go back to the other chat to get an update from the other model while
+the other other model does something in the background too."
 
 This is the store that makes a conversation a real object, per
 docs/design/implemented/conversations-and-concurrency.md §3.1. Two rules from that spec are
@@ -282,10 +281,10 @@ def _migrate_legacy_history(conv: dict) -> int:
         rows = json.loads(legacy.read_text(encoding="utf-8"))
     except Exception as e:
         # Do NOT mark this migrated. A one-shot import that marks itself done
-        # after failing has silently eaten the transcript: on 2026-08-18
-        # conv-main came up holding 6 messages while chat_history.json still
-        # held 51, and the flag meant it would never look again. An import
-        # that did not import has not run.
+        # after failing silently eats the transcript: the new conversation
+        # comes up holding a fraction of what chat_history.json still holds,
+        # and the flag means it will never look again. An import that did not
+        # import has not run.
         print(f"  [conversations] legacy history unreadable, NOT marking "
               f"migrated: {e}")
         return 0

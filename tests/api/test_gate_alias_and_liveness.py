@@ -71,7 +71,7 @@ class TestNothingRefusesASeat:
     qwen3.6-35b-a3b-iq4nl) WITHOUT acting on it — because a gate score does not
     transfer between two ids that merely look alike.
 
-    There is no refusal path left to get the wording right. Stephen removed the
+    There is no refusal path left to get the wording right. The maintainer removed the
     gate on 2026-08-15: "I absolutely want the user to be able to set any model
     they wish at any seat they wish, so this is non-negotiable." What is worth
     pinning now is that the id under which a model is seated is simply the id
