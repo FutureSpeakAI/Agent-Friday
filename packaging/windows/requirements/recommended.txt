@@ -11,7 +11,7 @@
 
 # --- Tier-1 local voice: her ears and her mouth, CPU only, no torch --------
 faster-whisper>=1.0
-piper-tts>=1.2
+piper-tts>=1.7.0
 onnxruntime>=1.17
 
 # --- Last-resort offline TTS (Windows SAPI5), bottom of the voice chain ----
