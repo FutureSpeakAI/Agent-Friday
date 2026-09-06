@@ -25,7 +25,7 @@ rich>=13.0
 colorama>=0.4
 cryptography>=44
 psutil>=5.9
-anthropic>=0.40
+anthropic>=1.3.0
 google-genai>=1.0
 
 # Gmail / Calendar / Drive reads. Core rather than optional because the
