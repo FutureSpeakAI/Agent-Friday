@@ -57,6 +57,16 @@ voice-local-lite = [
 # version-fragile â€” opt-in ONLY, NEVER in [all]. torch+CUDA must be installed via
 # a dedicated installer step with the correct CUDA index URL, not a blind pip dep.
 voice-local-gpu = [
+    # NOTE (2026-09-01): nemo_toolkit 3.0.0 caps hydra-core at <=1.3.2 in every
+    # extra we use, and hydra-core 1.3.2 carries CVE-2026-68508 (GHSA-2cp2-2r3c-7p7r,
+    # code execution via `hydra.utils.instantiate()` on untrusted config). The fix
+    # is 1.3.4+, which NeMo's cap makes unresolvable: adding "hydra-core>=1.3.4"
+    # here does not upgrade anything, it makes this extra refuse to install.
+    # It is left alone deliberately. NeMo applies its own target allow-list when
+    # loading .nemo configs, this extra is opt-in and never in [all] or the
+    # Windows installer, and the models we configure are pinned NVIDIA repos.
+    # Re-check on the next nemo_toolkit release.
+    # See docs/audits/dependency-security-2026-09-01.md.
     "nemo_toolkit[asr,tts]>=2.6",
     # FastPitch's English g2p (EnglishG2p) imports nltk, and nemo_toolkit's
     # tts extra does NOT pull it in. Without it NeMo's config allow-list fails
