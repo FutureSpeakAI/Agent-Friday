@@ -299,8 +299,14 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
     try:
         from agent_friday.services import egress_gate as _eg
         gated_prompt = _eg.gate_text(prompt or "", PROVIDER, f"{kind}.prompt")
-    except Exception:
-        gated_prompt = prompt
+    except Exception as gate_err:
+        # Fail CLOSED. This used to fall back to the raw prompt, so a
+        # classifier crash or a never-send hit (which raises) sent the
+        # ungated text to kie.ai — the opposite of what the gate is for
+        # (2026-09-06 boundary audit).
+        return {"status": "blocked", "provider": PROVIDER, "model": model,
+                "reason": f"the egress gate could not clear the prompt ({gate_err}); "
+                          "nothing was submitted"}
     if prompt and not gated_prompt:
         # gate_text returns "" for content classified SENSITIVE — dropped
         # rather than sent. Nothing was submitted, nothing was charged.

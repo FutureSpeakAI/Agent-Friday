@@ -136,6 +136,38 @@ def federation_inbox():
     return jsonify({"ok": True, "msg_type": msg_type, "response": response_payload})
 
 
+def _gate_outbound_strings(obj, field: str):
+    """Classify every string in a payload before it leaves for a peer.
+
+    A peer is another machine, so this is cloud egress under the threat
+    model's guarantee (docs/security/threat-model.md:42). Both outbound
+    federation routes below sent caller/user text with no gate (2026-09-06
+    boundary audit). Refuse-on-change, never partial: returns
+    (True, None) when every string clears unchanged, else (False, path)
+    naming the first field the gate would have altered or withheld."""
+    from agent_friday.services import egress_gate as _eg
+
+    def walk(node, path):
+        if isinstance(node, str):
+            if node.strip() and _eg.gate_text(node, "federation", path) != node:
+                return path
+            return None
+        if isinstance(node, dict):
+            for k, v in node.items():
+                hit = walk(v, f"{path}.{k}")
+                if hit:
+                    return hit
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                hit = walk(v, f"{path}[{i}]")
+                if hit:
+                    return hit
+        return None
+
+    hit = walk(obj, field)
+    return (hit is None), hit
+
+
 @federation_bp.route("/api/federation/settings/sync", methods=["POST"])
 @login_required
 def federation_settings_sync():
@@ -167,6 +199,13 @@ def federation_settings_sync():
     delta = {k: v for k, v in settings.items() if k in key_subset}
     if not delta:
         return jsonify({"ok": True, "sent": 0, "results": []})
+    # agent_name, communication_style and voice_style_prompt are free text the
+    # user wrote; nothing here may leave unclassified.
+    clear, field = _gate_outbound_strings(delta, "settings_sync")
+    if not clear:
+        return jsonify({"error": "withheld by the egress gate", "field": field,
+                        "detail": "a setting value did not clear the privacy gate; "
+                                  "nothing was sent to any peer"}), 403
 
     peers = fed.get_peers()
     if peer_id_filter:
@@ -210,6 +249,12 @@ def send_federation_message():
 
     if not (peer_endpoint and recipient_pubkey and msg_type):
         return jsonify({"error": "endpoint, recipient_pubkey, and msg_type required"}), 400
+
+    clear, field = _gate_outbound_strings(payload, f"federation.{msg_type}")
+    if not clear:
+        return jsonify({"error": "withheld by the egress gate", "field": field,
+                        "detail": "the payload did not clear the privacy gate; "
+                                  "nothing was sent"}), 403
 
     envelope = transport.build_message(msg_type, payload, recipient_pubkey)
     if not envelope:

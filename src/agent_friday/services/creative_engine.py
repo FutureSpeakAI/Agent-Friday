@@ -993,6 +993,16 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
 
     mode = "image-to-video" if seed_bytes else "text-to-video"
 
+    # Cloud egress: from here the prompt (user text plus Series-Bible /
+    # scene-DNA context) goes to Google, as a Veo long-running operation or an
+    # Omni interaction. generate_image gates its prompt at this same point;
+    # the video path did not (2026-09-06 boundary audit).
+    from agent_friday.services import egress_gate as _eg
+    prompt = _eg.gate_text(prompt, "gemini", "video.prompt")
+    if not prompt:
+        return {"status": "blocked",
+                "reason": "the video prompt was withheld by the egress gate"}
+
     # Gemini Omni Flash renders synchronously over the Interactions API —
     # an entirely different call shape from Veo’s long-running operation.
     if _is_omni_model(api_model):

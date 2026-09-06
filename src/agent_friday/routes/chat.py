@@ -1601,22 +1601,49 @@ def chat_send():
         # (legacy) or `image` (Camera Mode frames).
         screenshot_b64 = data.get('image') or data.get('screenshot') or None
         if screenshot_b64 and (include_vision or data.get('image') is not None):
+            # Same contract as /api/chat (above): Local only means the image
+            # does not leave, and every image that does leave is a ledger
+            # row. This route had neither (2026-09-06 boundary audit).
+            _routing_mode = str(((_load_settings().get('model_routing') or {})
+                                 .get('mode') or 'smart')).lower()
             try:
-                from google import genai
-                from google.genai import types
-                gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-                img_bytes = base64.b64decode(screenshot_b64)
-                mime = 'image/jpeg' if data.get('image') else 'image/png'
-                vision_resp = gclient.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[
-                        _gate_vision_prompt(VISION_SCREEN_PROMPT),
-                        types.Part.from_bytes(data=img_bytes, mime_type=mime),
-                    ],
-                )
-                vision_description = vision_resp.text
-            except Exception as ve:
-                vision_description = f"[Vision unavailable: {ve}]"
+                _img_len = len(base64.b64decode(screenshot_b64))
+            except Exception:
+                _img_len = 0
+
+            def _record_send(action, reason):
+                try:
+                    from agent_friday.services.egress_gate import record_binary_egress
+                    record_binary_egress('gemini', 'vision_image', action=action,
+                                         reason=reason, byte_len=_img_len)
+                except Exception as _ee:
+                    print(f"  [VISION] egress record failed: {_ee}")
+
+            if _routing_mode == 'local_only':
+                vision_description = (
+                    "[I could not look at that image without leaving the "
+                    "machine, and you have chosen Local only, so I did not "
+                    "send it.]")
+                _record_send('block', 'local_only: image withheld from the cloud (/api/chat/send)')
+            else:
+                try:
+                    from google import genai
+                    from google.genai import types
+                    gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
+                    img_bytes = base64.b64decode(screenshot_b64)
+                    mime = 'image/jpeg' if data.get('image') else 'image/png'
+                    vision_resp = gclient.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=[
+                            _gate_vision_prompt(VISION_SCREEN_PROMPT),
+                            types.Part.from_bytes(data=img_bytes, mime_type=mime),
+                        ],
+                    )
+                    vision_description = vision_resp.text
+                    _record_send('allow', 'routing mode %s permits cloud vision' % _routing_mode)
+                except Exception as ve:
+                    vision_description = f"[Vision unavailable: {ve}]"
+                    _record_send('error', f'cloud vision failed: {ve}')
 
         # Build context-enriched system prompt, gated for whichever provider
         # actually ends up serving this turn.
