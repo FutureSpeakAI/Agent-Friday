@@ -75,7 +75,7 @@ def _res_file(name):
     alt = _RES_DIR.parent.parent / name
     return alt if alt.exists() else p
 
-from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response, stream_with_context
+from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response, stream_with_context, g
 from flask.json.provider import DefaultJSONProvider as _FlaskDefaultJSONProvider
 from functools import wraps
 
@@ -2731,6 +2731,32 @@ def _settings_system_prefix(settings, personality):
 
 @app.before_request
 def check_auth():
+    # Observer credential (services/observer_access; task-visibility.md §4.5):
+    # a request presenting X-Friday-Observer is READ-ONLY for the whole
+    # request, decided here BEFORE loopback trust so the header can only
+    # demote. Only GET on the allowlisted read routes passes; steer, cancel,
+    # delete, settings, spawning and minting are refused whatever the caller's
+    # address. An invalid token is refused outright.
+    try:
+        from agent_friday.services import observer_access as _obs
+        _obs_token = _obs.presented(request.headers)
+    except Exception:
+        _obs_token = None
+    if _obs_token is not None:
+        try:
+            g.friday_principal = "observer"
+        except Exception:
+            pass
+        if not _obs.verify(_obs_token):
+            return jsonify({"error": "observer credential not recognised"}), 401
+        if not _obs.is_read_allowed(request.method, request.path):
+            return jsonify({"error": "observer credential is read-only: this route is not available to it",
+                            "principal": "observer"}), 403
+        return None
+    try:
+        g.friday_principal = "user"
+    except Exception:
+        pass
     # Loopback / same-machine access is always trusted — auto-authenticate the
     # session so the user never sees a login screen on their own device.
     # Remote access (e.g. via Cloudflare Tunnel) still goes through the
