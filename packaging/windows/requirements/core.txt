@@ -40,7 +40,7 @@ keyring>=24.0
 # Tray icon - the normal Windows launch path. friday_tray.py dies on import
 # without pystray, so for this installer it is core, not optional.
 pystray>=0.19
-pillow>=10.0
+pillow>=12.3.0
 
 # Global Ctrl+Shift+Q kill-switch for Computer Control.
 pynput>=1.7
