@@ -64,9 +64,9 @@ expected. The reasoning is in the
 [threat model](../security/threat-model.md).
 
 Nothing downloads a model behind your back: Presidio's spaCy model is only
-fetched under `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`, and
-the embedding model (`all-MiniLM-L6-v2`) arrives on first use after the
-installer has warned about the memory tier.
+fetched under `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`.
+The embedding model is lazy and announced: `all-MiniLM-L6-v2` arrives on first
+use, after the installer has warned about the memory tier and let you skip it.
 
 The steps that follow are the from-source path.
 
