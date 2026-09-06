@@ -316,6 +316,31 @@ def kick() -> Dict[str, Any]:
 #  The tick (§6.2 / §7.1)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def content_enabled() -> bool:
+    """`settings.content.enabled` -- the pipeline's master switch.
+
+    2026-09-06: DEFAULT_SETTINGS declared this as "master switch for the
+    publish pipeline", the Settings UI wrote it, routes/content_pipeline.py
+    even READ it into a dict -- and nothing ever branched on it. The only
+    switch tick() honored was platforms.json's `pause_all`. So the control
+    showed "Saved" and disabled nothing. scripts/check_settings_readers.py
+    could not see this: its reader check is "the parent key appears as a
+    string literal somewhere under src/", which a read-and-echo satisfies
+    exactly as well as an enforcement does.
+
+    Fails CLOSED: if settings cannot be read at all, a kill switch that
+    might be off wins over a publish that might be unwanted.
+    """
+    try:
+        from agent_friday import core
+        c = (core._load_settings() or {}).get("content") or {}
+        return bool(c.get("enabled", True))
+    except Exception:
+        _log.warning("content.enabled unreadable -- treating the publish "
+                     "pipeline as disabled", exc_info=True)
+        return False
+
+
 def tick(now=None) -> Dict[str, Any]:
     """One publisher pass: expire stale holds, recover crashed claims, claim
     due targets, dispatch each through the gate chain. Returns a summary
@@ -323,6 +348,8 @@ def tick(now=None) -> Dict[str, Any]:
     if not _TICK_LOCK.acquire(blocking=False):
         return {"ok": True, "skipped": "tick already running"}
     try:
+        if not content_enabled():
+            return {"ok": True, "disabled": True, "claimed": 0}
         if platform_registry.publishing_paused():
             return {"ok": True, "paused": True, "claimed": 0}
         store.expire_stale_holds(now)                     # §3.2 7-day rail
