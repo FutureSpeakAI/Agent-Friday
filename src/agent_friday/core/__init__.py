@@ -1701,6 +1701,21 @@ DEFAULT_SETTINGS = {
         "hard_stop_daily_enabled": False,
         "hard_stop_monthly_enabled": False,
     },
+    # ── Task journal (docs/design/active/task-visibility.md) ──
+    # Every background task writes an append-only journal and a state
+    # snapshot under ~/.friday/tasks/ as it runs, so a restart marks work as
+    # interrupted instead of erasing it. Each key below is a maintainer
+    # ruling made reversible: retention_days 0 keeps everything (nothing is
+    # ever deleted at an invented threshold); capture_reasoning is on because
+    # "what is it reasoning" was the question that produced this system, and
+    # it costs tokens on providers that bill for thinking and stores the most
+    # sensitive text a task handles; encrypt_at_rest uses the vault key (then
+    # DPAPI) because a journal holds prompts and results.
+    "task_journal": {
+        "retention_days": 0,
+        "capture_reasoning": True,
+        "encrypt_at_rest": True,
+    },
     # ── Auto-compaction (Part C) ──
     # When the assembled transcript exceeds trigger_ratio × the model's context
     # window, the middle turns are summarized into a single "[Context Summary]"

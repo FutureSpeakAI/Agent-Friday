@@ -2294,6 +2294,33 @@ _FOLLOW_UP_QUEUES: dict = {}
 _FOLLOW_UP_LOCK = threading.Lock()
 
 
+# The in-memory registry is a CACHE of the durable task journal
+# (services/task_journal.py; docs/design/active/task-visibility.md TV1/TV2).
+# Every mutation below is written to disk before it returns, so a restart can
+# rebuild this dict and mark whatever was running as interrupted instead of
+# forgetting it. Journal writes never raise into the worker (TV12).
+def _is_terminal_status(status):
+    from agent_friday.services.task_journal import is_terminal
+    return is_terminal(status)
+
+
+def _journal():
+    from agent_friday.services import task_journal as _tj
+    return _tj
+
+
+def _journal_state(task_id):
+    """Persist the current in-memory record as the task's state snapshot."""
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        snap = dict(t) if t else None
+    if snap is not None:
+        try:
+            _journal().write_state(task_id, snap)
+        except Exception:
+            pass
+
+
 def _task_log(task_id, line):
     with TASKS_LOCK:
         t = TASKS.get(task_id)
@@ -2303,6 +2330,13 @@ def _task_log(task_id, line):
         # Cap log length to keep payloads small
         if len(t['log']) > 200:
             t['log'] = t['log'][-200:]
+    # Every log line is a checkpoint: the "now:" a reader sees mid-flight and
+    # the last thing a crash record can point at.
+    try:
+        _journal().append(task_id, "checkpoint", summary=str(line)[:200])
+    except Exception:
+        pass
+    _journal_state(task_id)
 
 
 def _task_set(task_id, **fields):
@@ -2310,7 +2344,36 @@ def _task_set(task_id, **fields):
         t = TASKS.get(task_id)
         if not t:
             return
+        prev_status = t.get('status')
         t.update(fields)
+        new_status = t.get('status')
+        name = t.get('name')
+        created = t.get('created')
+        ended = t.get('ended')
+        snap = dict(t)
+    # Status transitions are journaled as their own events so the record
+    # says when work started, stopped and why — not only that fields changed.
+    try:
+        tj = _journal()
+        if new_status != prev_status:
+            if new_status == 'running':
+                tj.append(task_id, "started", model=snap.get('model'),
+                          seat=snap.get('seat'), provider=snap.get('provider'))
+            elif new_status == 'cancelled':
+                tj.append(task_id, "halt", cause="cancelled",
+                          detail=str(snap.get('result') or '')[:300])
+            elif _is_terminal_status(new_status):
+                tj.append(task_id, "ended", status=new_status,
+                          result=str(snap.get('result') or ''),
+                          verified=snap.get('verified'),
+                          duration_s=(int(ended - snap['started'])
+                                      if ended and snap.get('started') else None))
+            if _is_terminal_status(new_status) or new_status == 'running':
+                tj.index_put(task_id, name or '', new_status, created,
+                             ended if _is_terminal_status(new_status) else None)
+        tj.write_state(task_id, snap)
+    except Exception:
+        pass
 
 
 def _task_snapshot(task_id=None):
@@ -2333,6 +2396,48 @@ def _task_snapshot(task_id=None):
                 row['elapsed'] = int(end - row['started'])
             out.append(row)
         return out
+
+
+def _restore_tasks_from_journal(announce=True, limit=200):
+    """Rebuild the TASKS cache from disk at boot and mark whatever the previous
+    process left running as interrupted (docs/design/active/task-visibility.md
+    TV8). Never resumes anything. Returns the reconciliation summary."""
+    try:
+        tj = _journal()
+        summary = tj.reconcile_on_boot()
+        rows = sorted(tj.index_read().values(),
+                      key=lambda r: float(r.get('created') or 0), reverse=True)
+        loaded = 0
+        with TASKS_LOCK:
+            for row in rows:
+                if loaded >= limit or row.get('status') == 'deleted':
+                    continue
+                tid = row.get('task_id')
+                if not tid or tid in TASKS:
+                    continue
+                st = tj.read_state(tid)
+                if not st:
+                    continue
+                st.pop('on_complete', None)
+                TASKS[tid] = st
+                loaded += 1
+        summary['loaded'] = loaded
+        if announce:
+            tj.announce_interrupted(summary.get('interrupted') or [])
+        try:
+            removed = tj.apply_retention()
+            if removed:
+                summary['retention_deleted'] = removed
+                with TASKS_LOCK:
+                    for tid in removed:
+                        TASKS.pop(tid, None)
+        except Exception:
+            pass
+        return summary
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).error("task journal restore failed: %s", e)
+        return {"interrupted": [], "restored": [], "loaded": 0, "error": str(e)}
 
 
 def _evaluate_output(task_id, goal, output, *, local_only=False):
@@ -2839,6 +2944,18 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'chain_step': chain_step,
             'model': model,
         }
+    # Durable from the first instant (TV2): the created event, the state
+    # snapshot and the index row exist before the worker thread starts, so
+    # a crash one millisecond later still leaves a record.
+    try:
+        _tj = _journal()
+        _tj.append(task_id, "created", name=name, description=description,
+                   prompt=(prompt or '')[:4000], chain=chain, chain_step=chain_step,
+                   model=model)
+        _tj.index_put(task_id, name, 'queued', TASKS[task_id]['created'])
+        _journal_state(task_id)
+    except Exception:
+        pass
     _log_context("task_spawn", {
         "task_id": task_id,
         "name": name,
