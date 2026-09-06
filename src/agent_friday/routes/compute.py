@@ -56,10 +56,12 @@ def receive_job():
     a decorator cannot fix: `accept_job()`'s only trust check is a
     caller-SELF-REPORTED `requester_trust_score`, and `capability:
     "analysis.run"` runs the caller's own `prompt` field as a Python script
-    with the full process environment (services/worker_adapters/
-    python_script_adapter.py). That is a real design question about what
-    "trusting a federation peer" should mean, and it is Stephen's call, not
-    mine — flagged, not fixed, here.
+    (services/worker_adapters/python_script_adapter.py). 2026-09-06: that
+    script no longer inherits the server's environment -- it gets the
+    sandboxed allowlist (extension_security.SANDBOXED_ENV_ALLOWLIST) plus
+    python_script_adapter.WORKER_ENV_EXTRA, nothing else. Whether a
+    self-reported trust score should run a peer's code at all remains a
+    design question and Stephen's call, not mine — still flagged here.
     """
     data = request.get_json(silent=True) or {}
     accepted, reason = prov.accept_job(data)
