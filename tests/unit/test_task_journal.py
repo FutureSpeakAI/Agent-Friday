@@ -40,20 +40,44 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(ag, "_report_task_completion", lambda *a, **k: None)
     with ag.TASKS_LOCK:
         saved = dict(ag.TASKS); ag.TASKS.clear()
+        ag.TASK_THREADS.clear()
     yield pushed
+    # No worker may outlive its test. A worker keeps writing after the task's
+    # status turns terminal (wrap-up log lines, evaluator verdict, completion
+    # report); on a slow Windows CI runner one such tail write landed inside
+    # the NEXT test's patched `open` and produced a second, correct,
+    # "unrecorded" announcement for a different task (run 34060387058 at
+    # 9d329fe). Join everything this test spawned and fail loudly if a
+    # worker is still alive, so the leak is a hard failure everywhere rather
+    # than a race that only a cold runner loses.
     with ag.TASKS_LOCK:
-        ag.TASKS.clear(); ag.TASKS.update(saved)
+        threads = list(ag.TASK_THREADS.values())
+    for th in threads:
+        th.join(timeout=20)
+    still = [th.name for th in threads if th.is_alive()]
+    with ag.TASKS_LOCK:
+        ag.TASKS.clear()
+        ag.TASKS.update(saved)
+        ag.TASK_THREADS.clear()
+    assert not still, f"worker thread(s) outlived the test: {still}"
+
+
+def _join_worker(tid, timeout=20):
+    with ag.TASKS_LOCK:
+        th = ag.TASK_THREADS.get(tid)
+    if th is not None:
+        th.join(timeout=timeout)
+        assert not th.is_alive(), f"worker for {tid} did not finish"
 
 
 def _run_to_completion(name="Journal test", prompt="say hello"):
+    """Spawn a real task and wait for the WORKER THREAD to exit, not merely
+    for the status to turn terminal — the worker writes after that."""
     tid = ag._spawn_task(name, prompt)
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        snap = ag._task_snapshot(tid) or {}
-        if tj.is_terminal(snap.get("status")):
-            return tid, snap
-        time.sleep(0.05)
-    raise AssertionError(f"task did not finish: {ag._task_snapshot(tid)}")
+    _join_worker(tid)
+    snap = ag._task_snapshot(tid) or {}
+    assert tj.is_terminal(snap.get("status")), f"task did not finish: {snap}"
+    return tid, snap
 
 
 # ── TV1/TV2: the record exists on disk from the first instant ────────────────

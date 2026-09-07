@@ -2309,6 +2309,10 @@ def _tool_get_briefing(_inp):
 # from the worker thread, so callers should always copy before returning.
 TASKS = {}
 TASKS_LOCK = threading.Lock()
+# task_id -> the worker thread _spawn_task started for it. Dead entries are
+# pruned on the next spawn. Exists so a caller can wait for the WORKER to
+# finish, which is later than the task's status turning terminal.
+TASK_THREADS = {}
 
 # Per-task follow-up queue for dual-loop steering (POST /api/agent/steer)
 _FOLLOW_UP_QUEUES: dict = {}
@@ -3036,7 +3040,16 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                           args=(task_id, name, prompt, description),
                           kwargs={'orb_icon': orb_icon, 'model': model,
                                   'tools': tools},
-                          daemon=True)
+                          daemon=True, name=f"task-{task_id[:8]}")
+    # The worker keeps writing after the task's status turns terminal (the
+    # wrap-up log lines, the evaluator's verdict, the completion report), so
+    # "status is terminal" is not "the worker is done". Anything that needs
+    # the latter — tests above all, on a slow Windows runner where a previous
+    # task's tail writes landed inside the next test — joins the thread.
+    with TASKS_LOCK:
+        for _dead in [k for k, v in TASK_THREADS.items() if not v.is_alive()]:
+            TASK_THREADS.pop(_dead, None)
+        TASK_THREADS[task_id] = th
     th.start()
     return task_id
 
