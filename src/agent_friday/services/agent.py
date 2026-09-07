@@ -2370,12 +2370,19 @@ def _task_set(task_id, **fields):
         if not t:
             return
         prev_status = t.get('status')
-        t.update(fields)
-        new_status = t.get('status')
-        name = t.get('name')
-        created = t.get('created')
-        ended = t.get('ended')
         snap = dict(t)
+        snap.update(fields)
+        new_status = snap.get('status')
+        name = snap.get('name')
+        created = snap.get('created')
+        ended = snap.get('ended')
+    # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
+    # its cache). This used to update TASKS first and write afterwards, so a
+    # reader polling /api/tasks could see a terminal status that state.json
+    # did not yet hold — CI on a slow Windows runner did exactly that (run
+    # 34060387058: state.json said running, the API said completed). The
+    # writes cannot run under TASKS_LOCK because a write failure takes that
+    # lock to mark the task unrecorded, so the order is: write, then commit.
     # Status transitions are journaled as their own events so the record
     # says when work started, stopped and why — not only that fields changed.
     try:
@@ -2399,6 +2406,10 @@ def _task_set(task_id, **fields):
         tj.write_state(task_id, snap)
     except Exception:
         pass
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if t is not None:
+            t.update(fields)
 
 
 def _task_snapshot(task_id=None):

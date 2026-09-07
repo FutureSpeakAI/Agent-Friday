@@ -289,3 +289,27 @@ def test_user_delete_removes_the_journal_of_a_finished_task():
     assert not tj.task_dir(tid).exists() and tj.read(tid) == []
     assert tj.index_read()[tid]["status"] == "deleted"
     assert tj.delete(tid) is False
+
+
+def test_state_reaches_disk_before_the_api_can_show_it(monkeypatch):
+    """TV1: the journal is the source of truth and TASKS its cache. A reader
+    that sees a terminal status through the API must find the same status in
+    state.json. CI run 34060387058 observed the opposite (memory terminal,
+    disk still running) because _task_set updated memory first."""
+    seen = []
+    real = tj.write_state
+
+    def spy(tid, st):
+        with ag.TASKS_LOCK:
+            in_memory = (ag.TASKS.get(tid) or {}).get("status")
+        seen.append((st.get("status"), in_memory))
+        return real(tid, st)
+    monkeypatch.setattr(tj, "write_state", spy)
+    _run_to_completion("Disk first")
+    terminal_writes = [(disk, mem) for disk, mem in seen if tj.is_terminal(disk)]
+    assert terminal_writes, seen
+    for disk, mem in terminal_writes:
+        assert not tj.is_terminal(mem) or mem == disk, \
+            f"memory showed {mem!r} before state.json held it (disk write carried {disk!r})"
+    # and the very first terminal write happened while memory still said running
+    assert terminal_writes[0][1] == "running", terminal_writes
