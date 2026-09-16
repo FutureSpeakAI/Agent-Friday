@@ -881,11 +881,23 @@ def _voice_context_reach(engine, tool_names=None):
         names = [str(n) for n in names]
         kg = any(n in names for n in _KG_TOOL_NAMES)
         mem = any(n in names for n in _MEMORY_TOOL_NAMES)
-        full = bool(names) and kg and mem
+        # Clean-sheet §4.5 (D7): `ask_friday` reaches the knowledge graph and
+        # memory THROUGH the local model. That is real reach, said honestly:
+        # the line names the relay rather than claiming the tools directly.
+        relay = "ask_friday" in names
+        full = bool(names) and ((kg and mem) or relay)
         if not names:
             notice = ("Cloud voice (Gemini Live) is running with NO tools this "
                       "session: it can talk, but cannot check email, search, or "
                       "reach your knowledge graph or memory.")
+        elif relay and not (kg and mem):
+            notice = ""
+            return {"engine": "gemini", "tool_capable": True,
+                    "tools": len(names), "knowledge_graph": True, "memory": True,
+                    "full_context": True, "via_local": True,
+                    "line": (f"{len(names) - 1} native tools + ask_friday → your "
+                             "context is reached through Friday's local model"),
+                    "notice": notice}
         elif not full:
             missing = [w for w, ok in (("knowledge graph", kg), ("memory", mem)) if not ok]
             notice = (f"Cloud voice (Gemini Live) runs with {len(names)} fixed "
@@ -1650,327 +1662,143 @@ if sock is not None:
             except Exception:
                 return False
 
-        engine = get_local_voice_engine()
-        if not engine.available():
-            # Deps not installed — degrade to text with an actionable message so
-            # the client can fall back instead of hanging on a dead socket.
+        # ── Clean-sheet Phase 2: the route is thin. Everything about the turn
+        # lives in services/voice_session.VoiceSession; this handler does auth
+        # (above), picks the PROVEN engines the manifest holds, binds the mind
+        # to the prefix-stable prompt, and pumps frames. ──
+        from agent_friday.services import voice_workers as _vw
+        from agent_friday.services.voice_session import VoiceSession
+        from agent_friday.services.voice_receipt import TurnReceipt, log_route
+
+        settings = _load_settings() or {}
+        _manifest = _vm.get_manifest()
+        _manifest.refresh_selection(settings)
+        _msnap = _manifest.snapshot()
+        # A stage the manifest has PROVEN to fail refuses the session with the
+        # taxonomy's message and action (§7); an unproven stage is loaded now
+        # with visible progress (arming before the click is the client's job).
+        _refused = [k for k, st in (_msnap.get("stages") or {}).items()
+                    if (st.get("proof") or {}).get("state") == "refused"]
+        if _refused:
+            _k = _refused[0]
+            _st = _msnap["stages"][_k]
+            _send({"type": "manifest", **_msnap})
             _send({"type": "error",
-                   "error": "local_voice_unavailable",
-                   "detail": "Local voice needs the Tier-1 deps. Install with "
-                             "`pip install -e .[voice-local-lite]`, then reload."})
+                   "error": (_st.get("proof") or {}).get("code") or "voice_stage_unproven",
+                   "detail": _st.get("reason") or
+                   f"Friday couldn't prove her {_vm.VoiceManifest._noun(_k)} works right now.",
+                   "action": _st.get("action")})
             return
 
-        # Resolve + select the tier for this session (cpu Tier-1 / gpu Tier-2).
-        # Hot-swaps backends without a server restart; a gpu pick that can't run
-        # gracefully degrades to cpu inside ensure_ready below.
-        tier = engine.select_tier_from_settings()
-        # THE ROUTING RECEIPT. Emitted at the moment of selection, naming what
-        # was asked for and what was chosen — the PREFERRED(t) -> ACTIVE(t')
-        # pair. Before this, a session that quietly ran CPU left nothing behind
-        # to distinguish "he chose CPU" from "he chose GPU and did not get it".
         _vsession = uuid.uuid4().hex[:8]
+        _sel = _vm.read_selection(settings)
+        _prog = lambda m: _send({"type": "status", "text": str(m)})  # noqa: E731
         try:
-            from agent_friday.services.voice_receipt import log_route
+            _send({"type": "status", "text": "starting local voice"})
+            ear = _vw.held("ear") or _vw.build_ear(_sel["ear"], progress=_prog)
+            mouth = _vw.held("mouth") or _vw.build_mouth(_sel["mouth"], progress=_prog)
+        except _vw.GpuRefused as _ge:
+            _send({"type": "error", "error": _ge.code, "detail": _ge.message})
+            return
+        except Exception as _le:
+            _vlog.error("session aborted: engine load failed: %s: %s",
+                        type(_le).__name__, _le)
+            _send({"type": "error", "error": "local_voice_load_failed",
+                   "detail": f"Could not load the local voice engines "
+                             f"({type(_le).__name__}: {str(_le)[:160]}). Check "
+                             f"Settings → Voice → Voice Stack for the refused row."})
+            return
+        # The clause-fallback floor (§4.3): Piper speaks any clause the primary
+        # mouth fails on. Loaded lazily on first failure so a Kokoro session
+        # does not pay for it up front.
+        _fallback = None
+        if getattr(mouth, "name", "") != "piper":
+            try:
+                _fallback = _vw.PiperMouth(settings.get("local_voice_tts_voice")
+                                           or "en_US-amy-medium")
+            except Exception:
+                _fallback = None
+        # Admission / eviction notices raised while building (one each).
+        for _n in list(_vw.NOTICES):
+            _send({"type": "error-nonfatal", "code": _n.get("code"),
+                   "message": _n.get("message"), "action": None})
+        del _vw.NOTICES[:]
+        try:
             log_route(_vsession,
-                      requested=(_load_settings() or {}).get("voice_engine") or "local",
-                      selected=tier,
-                      reason=getattr(engine, "last_downgrade", ""))
+                      requested=settings.get("voice_engine") or "local",
+                      selected=f"ear={ear.describe().get('device')} "
+                               f"mouth={mouth.describe().get('engine')}/"
+                               f"{mouth.describe().get('device')}",
+                      reason="; ".join(st.get("reason", "") for st in
+                                       (_msnap.get("stages") or {}).values()
+                                       if st.get("reason")))
         except Exception:
             pass
-        if getattr(engine, "last_downgrade", ""):
-            # The user explicitly picked the GPU tier and is getting CPU —
-            # announce the downgrade with the reason instead of running silent.
-            _send({"type": "status", "text": engine.last_downgrade})
-        _send({"type": "status",
-               "text": ("starting local GPU voice (NeMo)" if tier == "gpu"
-                        else "starting local voice")})
-        # A GPU tier that RUNS but displaces the resident brain is not a
-        # downgrade, so the block above stays silent for it -- and the user
-        # would otherwise meet the cost as "why did Friday get slow?" (holding
-        # the ASR working set can take local replies from ~0.3s to ~3s). Say
-        # it at the point of use, once per session.
-        if tier == "gpu":
-            try:
-                from agent_friday.services.nemo_voice import gpu_status
-                _g = gpu_status()
-                if _g.get("contended"):
-                    _send({"type": "status", "text": _g.get("contention_detail") or
-                           "GPU voice is sharing VRAM with the loaded model; "
-                           "replies may be slower while voice is active."})
-            except Exception:
-                pass
 
-        # Lazy, one-time model download/load with a visible progress orb.
-        #
-        # The GPU branch used to announce a 1.5GB download UNCONDITIONALLY,
-        # without ever asking whether the checkpoints were already on disk —
-        # while the CPU branch immediately below it does ask. So every GPU
-        # voice session opened with "Downloading NeMo voice models…" even
-        # against a fully populated cache, which reads as Friday re-downloading
-        # and re-installing NeMo on every use. `nemo_models_ready()` is the
-        # same check the CPU branch's `models_ready()` is, and it already
-        # handles the HF-hub cache layout the checkpoints actually land in.
-        if tier == "gpu":
-            try:
-                from agent_friday.services.nemo_voice import nemo_models_ready
-                _nemo_cached = nemo_models_ready()
-            except Exception:
-                _nemo_cached = False
-            if not _nemo_cached:
-                _send({"type": "status",
-                       "text": "Downloading NeMo voice models… (one-time setup, ~1.5GB)"})
-        elif not engine.models_ready():
-            _send({"type": "status", "text": "Downloading voice models… (one-time setup)"})
-        if not engine.ensure_ready(progress=lambda m: _send({"type": "status", "text": m})):
-            _cause = getattr(engine, "last_error", "") or "unknown error"
-            _code = getattr(engine, "last_error_code", "") or ""
-            _vlog.error("session aborted: ensure_ready false tier=%s code=%s cause=%s",
-                        engine.active_tier(), _code or "-", _cause)
-            if _code:
-                # A refusal that explained itself (Kokoro with no GPU) keeps its
-                # own reason and its own offer. Wrapping it in "check your
-                # network/disk" would send the user to look for a problem that
-                # is not there.
-                _send({"type": "error", "error": _code, "detail": _cause})
-            else:
-                _send({"type": "error", "error": "local_voice_load_failed",
-                       "detail": f"Could not load the local voice models ({_cause}). "
-                                 f"Check your network/disk and retry, or reset the "
-                                 f"voice settings in Settings → Voice."})
-            return
-        # The tier may have changed (gpu → cpu fallback) during ensure_ready.
-        _send({"type": "status",
-               "text": ("live (GPU/NeMo)" if engine.active_tier() == "gpu" else "live")})
-        # F3: say what this loop can reach. Local: everything (the same
-        # agentic pipeline a typed turn uses, knowledge graph included).
-        _send({"type": "context_reach", **_voice_context_reach("local")})
-        # Clean-sheet D1/D3: the manifest snapshot and the capability contract
-        # are sent at session start from the ONE object every surface reads.
-        # A stage the manifest has PROVEN to fail refuses the session here
-        # with the taxonomy's message; an unproven stage does not (arming is
-        # the client's job before the socket opens, and this handler still
-        # loads the engines itself in this phase).
-        settings = _load_settings() or {}
-        try:
-            _manifest = _vm.get_manifest()
-            _manifest.refresh_selection(settings)
-            _msnap = _manifest.snapshot()
-            _send({"type": "manifest", **_msnap})
-            _send({"type": "contract", **(_msnap.get("contract") or {}),
-                   "engine": "local"})
-            _refused = [k for k, st in (_msnap.get("stages") or {}).items()
-                        if (st.get("proof") or {}).get("state") == "refused"]
-            if _refused:
-                _k = _refused[0]
-                _st = _msnap["stages"][_k]
-                _send({"type": "error",
-                       "error": (_st.get("proof") or {}).get("code") or "voice_stage_unproven",
-                       "detail": _st.get("reason") or
-                       f"Friday couldn't prove her {_vm.VoiceManifest._noun(_k)} works right now.",
-                       "action": _st.get("action")})
-                return
-        except Exception as _me:
-            _vlog.warning("manifest frames not sent: %s", _me)
-
-        # ── Brain wiring: build the spoken-style system prompt once, from
-        # the shared builder (its first paragraph is the manifest's
-        # describe_for_model(); vault gating follows the brain's provider). ──
+        # ── Mind: the agentic pipeline on the resident seat, streamed, under
+        # the prefix-stable prompt (§4.4). ──
         system_prompt, _pmeta = _build_voice_system_prompt(settings)
-        _is_local_brain = _pmeta["is_local_brain"]
         _prov = _pmeta["provider"]
+        _brain = None
+        try:
+            from agent_friday.services import local_seats as _seats
+            _brain = _seats.resolve("brain")
+        except Exception:
+            pass
+        _timings = {}
 
-        vad = VADEndpointer(silence_ms=int(settings.get("voice_silence_ms") or 800))
-        turn_log = []
-        _turn_lock = threading.Lock()
-        # ── Barge-in on the LOCAL path ──────────────────────────────────────
-        # The client sends {"type":"barge"} when the user hits Escape or talks
-        # over her; /ws/live acts on it, and this handler must too. If
-        # _handle_turn ran INLINE in the receive loop, nothing would call
-        # ws.receive() for the whole think-and-speak window (20s+ on a local
-        # seat) and local voice would be structurally uninterruptible — which
-        # reads as droning next to Gemini, whose prompt actually asks for
-        # LONGER answers.
-        #
-        # Two pieces, both needed: this flag, which _speak checks between
-        # sentences, and running each turn on its own thread (below) so the loop
-        # stays free to receive the barge that sets it.
-        _barge = threading.Event()
-
-        def _speak(text, receipt=None):
-            """Synthesize `text` sentence-by-sentence → 24 kHz PCM16 → audio frames.
-
-            Per-sentence so Friday starts speaking the first sentence while later
-            ones are still being synthesized (the key latency mitigation). The
-            per-sentence boundary is also the barge-in checkpoint: one sentence
-            is the worst-case delay between the user interrupting and silence."""
-            for sentence in split_sentences(text):
-                if done.is_set() or _barge.is_set():
-                    return
-                try:
-                    pcm = engine.synthesize(sentence)
-                except Exception as e:
-                    _vlog.error("TTS failed tier=%s: %s: %s",
-                                engine.active_tier(), type(e).__name__, e)
-                    if receipt is not None:
-                        receipt.set(tts_error=True)
-                    continue
-                if not pcm:
-                    # A synthesizer that returns success and no bytes is the
-                    # quietest way this pipeline fails. Record it per sentence;
-                    # the turn receipt's `silent` outcome catches the whole-turn
-                    # case.
-                    _vlog.warning("TTS produced no audio for a sentence "
-                                  "(len=%d chars, tier=%s)", len(sentence),
-                                  engine.active_tier())
-                    continue
-                # Chunk to keep frames small (the worklet ring buffer absorbs bursts).
-                step = PLAYBACK_CHUNK_BYTES
-                for off in range(0, len(pcm), step):
-                    if done.is_set():
-                        return
-                    _send({"type": "audio",
-                           "data": base64.b64encode(pcm[off:off + step]).decode("ascii")})
-                    if receipt is not None:
-                        receipt.mark("first_audio_out")
-                        receipt.count_audio_out(len(pcm[off:off + step]))
-
-        def _handle_turn(user_text, receipt=None):
-            user_text = (user_text or "").strip()
-            if not user_text or done.is_set():
-                if receipt is not None:
-                    receipt.done(outcome="aborted",
-                                 detail="empty transcript or socket closed")
-                return
-            # A new turn clears the previous turn's barge. Without this the
-            # first interruption would mute every reply that followed it.
-            _barge.clear()
-            with _turn_lock:
-                _send({"type": "input_transcript", "text": user_text})
-                _send({"type": "status", "text": "thinking"})
-                # The brain — same agentic dispatcher as text chat. Blocking call
-                # in this worker thread; no fake amplitude is emitted during the
-                # gap, so the cube color-shifts (processing) without motion.
-                try:
-                    # Pin the brain to a seat that is ACTUALLY RESIDENT.
-                    #
-                    # This call used to pass no model at all, so the router
-                    # picked — and picked a seat that was not loaded. The turn
-                    # transcribed, emitted status:thinking, 404'd inside the
-                    # router, and never spoke. Whisper and Piper both worked
-                    # perfectly, which is why this read as a voice bug for
-                    # weeks: the two ends of the cascade were fine and the
-                    # middle was absent. Same defect as the wiki distillation
-                    # loss and the `friday doctor` model check — resolving a
-                    # NAME instead of asking what is loaded.
-                    #
-                    # local_seats.resolve() returns only installed seats and
-                    # returns the caller's preference unchanged when the daemon
-                    # is unreachable, so a transient blip cannot silently
-                    # rewrite which model answers.
-                    _brain = None
-                    try:
-                        from agent_friday.services import local_seats as _seats
-                        # Same fix as _local_brain_ready() above: "brain" is
-                        # the role token, not "reasoning" (the capability it
-                        # maps to) -- the wrong token silently fell through
-                        # to the smallest installed model instead of the
-                        # user's configured orchestrator model.
-                        _brain = _seats.resolve("brain")
-                    except Exception:
-                        pass
-                    if receipt is not None:
-                        receipt.set(brain_seat=_brain or "unresolved")
-                    reply, _trace = _generate_agent(
-                        [{"role": "user", "content": user_text}],
-                        system=system_prompt,
-                        model=_brain,
-                        max_tokens=_voice_reply_cap(settings),
-                        temperature=settings.get("temperature"),
-                        session_ctx={"authenticated": _ws_authenticated,
-                                     "provider": _prov,
-                                     # Lets classify_task() reach TaskType.VOICE
-                                     # so a user's task_overrides.voice config
-                                     # actually takes effect.
-                                     "is_voice": True},
-                        workspace=settings.get("active_workspace") or "",
-                    )
-                    # _generate_agent is a blocking, non-streaming call, so the
-                    # honest name for this stamp is "brain returned", not
-                    # "first token". It is recorded in the first-token slot
-                    # because that is the slot the latency question is asked
-                    # about; when a streaming local path lands, this moves
-                    # earlier and the field keeps meaning what it says.
-                    if receipt is not None:
-                        receipt.mark("first_brain_token")
-                except Exception as e:
-                    reply = f"Sorry, I hit an error thinking that through: {e}"
-                    _vlog.error("brain call failed: %s: %s", type(e).__name__, e)
-                    if receipt is not None:
-                        receipt.set(brain_failed=True)
-                reply = (reply or "").strip()
-                if reply:
-                    _send({"type": "text", "text": reply})
-                    if receipt is not None:
-                        receipt.count_text_out(len(reply))
-                    _speak(reply, receipt=receipt)
-                if receipt is not None:
-                    # Outcome is INFERRED, not asserted: `served` when audio
-                    # bytes actually left, `silent` when they did not. A turn
-                    # that thought, replied in text and never made a sound now
-                    # leaves a record saying exactly that — the failure mode
-                    # audio cannot express, finally written down.
-                    receipt.done()
-                _send({"type": "turn_end"})
-                _send({"type": "voice_turn_done",
-                       "user_text": user_text, "agent_text": reply})
-                turn_log.append((user_text, reply))
-                try:
-                    _persist_voice_turn(user_text, reply,
-                                        conversation_id=_open_cid[0])
-                except Exception:
-                    pass
-                # Deterministic voice actions (open/navigate), same as the Gemini path.
-                try:
-                    _vacts = _voice_actions_for(user_text)
-                    if _vacts:
-                        _send({"type": "action", "actions": _vacts})
-                except Exception:
-                    pass
-
-        def _new_receipt():
-            """One receipt per turn, stamped with what will actually run.
-
-            Model identifiers come from the live engine rather than settings so
-            the receipt records what SERVED, not what was configured — the same
-            distinction the provider indicator makes.
-            """
+        def _generate(user_text, on_delta, cancel):
+            from agent_friday.services.model_router import TIMINGS_SINK
+            _timings.clear()
+            _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
             try:
-                from agent_friday.services.voice_receipt import TurnReceipt
-                _asr = getattr(getattr(engine, "_asr", None), "model_size", None)
-                _tts = getattr(getattr(engine, "_tts", None), "voice", None)
-                return TurnReceipt(session_id=_vsession, tier=engine.active_tier(),
-                                   asr_model=_asr, tts_voice=_tts)
+                reply, _trace = _generate_agent(
+                    [{"role": "user", "content": user_text}],
+                    system=system_prompt,
+                    model=_brain,
+                    max_tokens=_voice_reply_cap(settings),
+                    temperature=settings.get("temperature"),
+                    session_ctx={"authenticated": _ws_authenticated,
+                                 "provider": _prov,
+                                 "is_voice": True},
+                    workspace=settings.get("active_workspace") or "",
+                    on_text_delta=on_delta,
+                )
+            finally:
+                TIMINGS_SINK.reset(_tok)
+            return reply
+
+        def _receipt():
+            try:
+                return TurnReceipt(session_id=_vsession,
+                                   tier=("gpu" if ear.describe().get("device") == "cuda" else "cpu"),
+                                   asr_model=ear.describe().get("model"),
+                                   tts_voice=mouth.describe().get("voice"),
+                                   brain_seat=_brain or "unresolved")
             except Exception:
                 return None
 
-        def _spawn_turn(user_text, receipt=None):
-            """Run a turn OFF the receive loop so the socket stays readable.
-
-            Calling _handle_turn inline blocked ws.receive() for the entire
-            think-and-speak window, so a barge sent while she was talking was
-            not merely ignored — it could not be delivered until she had already
-            finished. _turn_lock still serialises turns, so this changes the
-            ordering of nothing; it only stops the loop from going deaf.
-            """
-            threading.Thread(target=_handle_turn, args=(user_text, receipt),
-                             daemon=True).start()
+        hooks = {
+            "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid),
+            "distill": _spawn_voice_distill,
+            "actions": _voice_actions_for,
+            "receipt": _receipt,
+            "timings": lambda: dict(_timings),
+        }
+        vad = VADEndpointer(silence_ms=int(settings.get("voice_silence_ms") or 800))
+        sess = VoiceSession(_send, ear=ear, mouth=mouth, fallback_mouth=_fallback,
+                            vad=vad, generate=_generate, hooks=hooks,
+                            manifest_snapshot=_msnap,
+                            contract=_msnap.get("contract") or {},
+                            gpu_queue=_vw.gpu_queue(), session_id=_vsession)
+        sess.conversation_id = _open_cid[0]
+        _sub = lambda snap: _send({"type": "manifest", **snap})  # noqa: E731
+        _manifest.subscribe(_sub)
+        sess.start()
 
         _last_hb = _time.time()
         try:
-            while not done.is_set():
-                # Heartbeat: same contract as /ws/live. Lets the client's stall
-                # watchdog detect a half-open socket on the LOCAL path too, and
-                # surfaces a dead browser socket here via the failed send.
+            while not done.is_set() and not sess.done.is_set():
                 if _time.time() - _last_hb >= 15.0:
                     _last_hb = _time.time()
                     _send({"type": "hb", "ts": int(_last_hb)})
@@ -1991,100 +1819,24 @@ if sock is not None:
                     msg = json.loads(raw)
                 except Exception:
                     continue
-                t = msg.get("type")
-                if t == "audio" and msg.get("data"):
-                    try:
-                        pcm = base64.b64decode(msg["data"])
-                    except Exception:
-                        continue
-                    utterance = vad.feed(pcm)
-                    if utterance:
-                        # The turn begins at the VAD endpoint. Both stamps are
-                        # taken here because the endpointer reports the close
-                        # retrospectively — the open is inferred from the
-                        # utterance's own length rather than invented.
-                        _r = _new_receipt()
-                        _audio_ms = (len(utterance) / 2) / ASR_RATE * 1000.0
-                        if _r is not None:
-                            _r.mark("vad_open")
-                            _r.mark("vad_close")
-                        text = ""
-                        try:
-                            text = engine.transcribe(utterance)
-                        except Exception as e:
-                            _vlog.error("ASR failed tier=%s: %s: %s",
-                                        engine.active_tier(), type(e).__name__, e)
-                            if _r is not None:
-                                _r.done(outcome="error",
-                                        code="local_voice_asr_failed",
-                                        detail=f"{type(e).__name__}: {e}")
-                                _r = None
-                        if _r is not None:
-                            _r.mark("input_complete", audio_ms=_audio_ms)
-                        if text:
-                            _spawn_turn(text, receipt=_r)
-                        elif _r is not None:
-                            # Speech was detected and endpointed but decoded to
-                            # nothing. Previously this vanished without trace
-                            # and presented to the user as Friday ignoring them.
-                            _r.done(outcome="silent",
-                                    code="local_voice_empty_transcript",
-                                    detail="VAD endpointed an utterance; ASR returned no text")
-                elif t == "barge":
-                    # Escape, or talking over her. The client has always sent
-                    # this; this path never listened for it. Stop speaking at
-                    # the next sentence boundary and tell the client, using the
-                    # SAME {"type":"interrupted"} frame /ws/live sends, because
-                    # that is what re-opens the browser's playback gate. Sending
-                    # anything else here leaves the gate shut and the next reply
-                    # inaudible.
-                    _barge.set()
-                    _send({"type": "interrupted"})
-                    _send({"type": "status", "text": "listening"})
-                elif t == "conversation":
-                    # He switched threads while the mic was live. Voice follows
-                    # the conversation on screen, so retarget from here on.
-                    _open_cid[0] = (msg.get("id") or "").strip() or None
-                elif t == "text" and msg.get("text"):
-                    # Typed/queued turn (e.g. News Anchor "read me the Front Page").
-                    _spawn_turn(msg["text"])
-                elif t == "end":
-                    # Flush any buffered speech, then close.
-                    utterance = vad.flush()
-                    if utterance:
-                        _r = _new_receipt()
-                        if _r is not None:
-                            _r.mark("vad_open")
-                            _r.mark("vad_close")
-                            _r.mark("input_complete",
-                                    audio_ms=(len(utterance) / 2) / ASR_RATE * 1000.0)
-                        try:
-                            text = engine.transcribe(utterance)
-                            if text:
-                                _handle_turn(text, receipt=_r)
-                            elif _r is not None:
-                                _r.done(outcome="silent",
-                                        code="local_voice_empty_transcript",
-                                        detail="final flush decoded to no text")
-                        except Exception as e:
-                            _vlog.error("ASR failed on final flush: %s: %s",
-                                        type(e).__name__, e)
-                            if _r is not None:
-                                _r.done(outcome="error",
-                                        code="local_voice_asr_failed")
-                    done.set()
-                    break
+                try:
+                    sess.handle(msg)
+                except Exception as _he:
+                    _vlog.error("voice frame failed: %s: %s", type(_he).__name__, _he)
         finally:
             done.set()
-            if turn_log:
-                try:
-                    _spawn_voice_distill(turn_log)
-                except Exception:
-                    pass
+            _manifest.unsubscribe(_sub)
+            sess.close()
             try:
                 ws.close()
             except Exception:
                 pass
+
+    @sock.route('/ws/voice')
+    def ws_voice(ws):
+        """Clean-sheet §6.3: `/ws/voice` is the local route; `/ws/voice-local`
+        is kept as an alias for one release."""
+        return ws_voice_local(ws)
 
     @sock.route('/ws/live')
     def ws_live(ws):
@@ -2248,9 +2000,22 @@ if sock is not None:
             _vlog(f'voice memory/tone context skipped: {_mc_err}')
         if _vault_control is not None:
             _vlog('voice system prompt gated for cloud provider=gemini (vault local-only)')
+        # Clean-sheet §3.1 rule 3 / §4.5: the first paragraph is the manifest's
+        # self-description for the CLOUD path -- "You are Gemini Live; the
+        # microphone audio is sent to Google. Questions about Stephen's own
+        # context are answered by his local model through `ask_friday`" (or,
+        # with no resident seat, that there is NO such path). Gemini has no
+        # other source for what it is.
+        try:
+            _cm = _vm.get_manifest()
+            _cm.refresh_selection(_load_settings() or {})
+            _cloud_self = _cm.describe_for_model() if _cm.mode == "gemini" else ""
+        except Exception:
+            _cloud_self = ""
         voice_prefix = (
             "You are Agent Friday, a sovereign personal AI assistant.\n"
-            "You are having a LIVE VOICE conversation — be natural and speak like a person.\n"
+            + (_cloud_self + "\n" if _cloud_self else "")
+            + "You are having a LIVE VOICE conversation — be natural and speak like a person.\n"
             "CRITICAL LENGTH RULE: When the user asks you to explain something in detail, "
             "go deep. Give thorough, multi-paragraph spoken responses. Do not cut yourself "
             "short. The user will tell you when they've heard enough. Default to comprehensive "
@@ -2484,8 +2249,27 @@ if sock is not None:
         except Exception:
             _reach_names = []
         try:
-            ws.send(json.dumps({"type": "context_reach",
-                                **_voice_context_reach("gemini", _reach_names)}))
+            _reach = _voice_context_reach("gemini", _reach_names)
+            ws.send(json.dumps({"type": "context_reach", **_reach}))
+            # Clean-sheet §6.2/§7: the `contract` frame for a cloud session and
+            # the persistent `cloud_voice_context_via_local` line. Neither is
+            # a transient status; the client keeps both on screen.
+            ws.send(json.dumps({"type": "contract", "engine": "gemini",
+                                "tools": list(_reach_names),
+                                "native_tools": len([n for n in _reach_names
+                                                     if n != "ask_friday"]),
+                                "ask_friday": "ask_friday" in _reach_names,
+                                "knowledge_graph": bool(_reach.get("knowledge_graph")),
+                                "memory": bool(_reach.get("memory")),
+                                "line": _reach.get("line") or
+                                (f"{len(_reach_names)} native tools; no path to your context")}))
+            if "ask_friday" in _reach_names:
+                ws.send(json.dumps({
+                    "type": "error-nonfatal", "code": "cloud_voice_context_via_local",
+                    "message": ("Gemini Live is speaking; questions about your own "
+                                "context are answered by Friday's local model and "
+                                "relayed after the privacy gate."),
+                    "action": None}))
         except Exception:
             pass
         # F6: a new session's byte total starts at zero here; the legs that

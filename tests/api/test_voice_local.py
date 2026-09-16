@@ -68,7 +68,8 @@ def test_capabilities_route_includes_asr_tts(client):
 
 def test_ws_voice_local_route_registered(app):
     rules = {r.rule for r in app.url_map.iter_rules()}
-    assert "/ws/voice-local" in rules
+    assert "/ws/voice-local" in rules   # alias kept for one release (clean-sheet §6.3)
+    assert "/ws/voice" in rules         # the local route
     assert "/ws/live" in rules  # cloud path still present (opt-in)
 
 
