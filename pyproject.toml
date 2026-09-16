@@ -139,4 +139,4 @@ where = ["src"]
 # is only for the non-code files (config.yaml, SKILL.md) that packages.find
 # does not pick up on its own. See agent_friday/seed/__init__.py.
 [tool.setuptools.package-data]
-agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md"]
+agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md", "resources/*.wav"]
