@@ -112,16 +112,28 @@ def test_session_info_cloud_opt_in(client, monkeypatch):
     assert body["ws_url"] == "/ws/live"
 
 
-def test_session_info_falls_back_to_cloud_when_local_missing(client, monkeypatch):
+def test_session_info_local_terminates_when_local_missing(client, monkeypatch):
+    """`local` TERMINATES; it never falls through to the cloud.
+
+    Settled 2026-09-09 (local-voice-repair-and-native-audio.md R4.1;
+    cloud-voice-providers.md §6.3) and restated by voice-system-clean-sheet.md
+    §1.3. This test used to assert the opposite -- that a user who picked the
+    mode named "local", with the deps missing and a Gemini key present, was
+    routed to Gemini Live. That is the silent cloud promotion C1/C2 forbid.
+    """
     import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: _FakeEngine(False, False))
     monkeypatch.setattr(rv, "_load_settings", lambda: {"voice_engine": "local"})
     monkeypatch.setattr(core, "GEMINI_API_KEY", "AQ.fake-key-for-test")  # pragma: allowlist secret
     monkeypatch.setattr(rv, "_network_status", lambda: {"offline": False})
+    monkeypatch.setattr(rv, "resolve_gemini_key", lambda: {"valid": True})
     r = client.get("/api/voice/session-info")
     body = r.get_json()
-    # Local deps absent but a cloud key is present → graceful fall-through.
-    assert body["engine"] == "gemini"
+    assert body["engine"] == "demo"
+    assert body["ws_url"] is None
+    # The failure surfaces with its reason and OFFERS cloud; it does not take it.
+    assert "will not send your voice to the cloud" in body["reason"]
+    assert "voice-local-lite" in body["reason"]
 
 
 def test_session_info_demo_when_nothing_available(client, monkeypatch):

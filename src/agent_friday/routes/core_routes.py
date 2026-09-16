@@ -381,6 +381,7 @@ def list_models():
             "models": cat["models"],
             "providers": cat["providers"],
             "voice_engines": cat.get("voice_engines", []),
+            "tts_engines": cat.get("tts_engines", []),
             "catalog_meta": cat_meta,
             "selected": {
                 "orchestrator_model": settings.get("orchestrator_model"),
@@ -393,6 +394,7 @@ def list_models():
                                          or {}).get("model"),
                 "voice_model": settings.get("voice_model"),
                 "voice_engine": settings.get("voice_engine"),
+                "local_voice_tts_engine": settings.get("local_voice_tts_engine"),
             },
         })
     except Exception as e:
@@ -789,6 +791,40 @@ def api_setup_complete():
 
 
 # ── Agent Settings endpoints ──────────────────────────────────
+#: Settings whose value must come from a fixed set, with the set. An
+#: out-of-range value here is not a harmless typo: `voice_engine` and
+#: `local_voice_tts_engine` are both read with `or <default>` fallbacks at the
+#: consumption site, so an unrecognised string silently resolves to something
+#: other than what was written -- a control that reports success and does
+#: something else. Rejecting the write is how the setting keeps its meaning.
+_VOICE_ENUMS = {
+    "voice_engine": ("local", "local-gpu", "gemini", "auto"),
+    "local_voice_tts_engine": ("piper", "kokoro"),
+    # Clean-sheet §8.1: per-stage GPU policy, read by voice_manifest.
+    "voice_ear_gpu": ("never", "if_free", "required"),
+    "voice_mouth_gpu": ("never", "if_free", "required"),
+}
+
+
+def _check_voice_enums(new_settings):
+    """Return an error dict when a voice enum is written out of range, else None.
+
+    Availability is deliberately NOT checked here. A user may select an engine
+    that cannot run right now; the settings UI greys it with a reason and the
+    engine refuses at load with an actionable code. Refusing the *write* would
+    stop someone configuring a machine before installing on it.
+    """
+    for key, allowed in _VOICE_ENUMS.items():
+        if key not in new_settings:
+            continue
+        val = new_settings.get(key)
+        if not isinstance(val, str) or val.strip().lower() not in allowed:
+            return {"status": "error",
+                    "message": ("%s must be one of: %s (got %r)"
+                                % (key, ", ".join(allowed), val))}
+    return None
+
+
 def _check_local_model_seat_gate(new_settings):
     """No-op. The seat gate is REMOVED (maintainer decision).
 
@@ -839,6 +875,10 @@ def api_settings():
         seat_error = _check_local_model_seat_gate(new_settings)
         if seat_error is not None:
             return jsonify(seat_error), 400
+
+        enum_error = _check_voice_enums(new_settings)
+        if enum_error is not None:
+            return jsonify(enum_error), 400
 
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting

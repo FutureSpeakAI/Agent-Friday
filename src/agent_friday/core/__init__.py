@@ -1,4 +1,4 @@
-﻿"""
+"""
 FRIDAY Desktop v4.4 — Phase B OS Backend
 Flask server with live data endpoints + Gemini creative API integration.
 Powered by FutureSpeak.AI
@@ -1011,6 +1011,13 @@ def get_genai_client():
 # shape as get_genai_client()/get_anthropic_client() re-checking on first use.
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")  # pragma: allowlist secret
 
+# -- Inworld (cloud voice, Tier-3 sibling) ---------------------------
+# Same lazy shape as ELEVENLABS_API_KEY above: env only at module scope, with
+# the settings.json fallback happening in services/cloud_voice.py:_api_key().
+# Whether Inworld has an ElevenLabs-style key-id trap is UNVERIFIED (spec Q5),
+# so no format assertion is made about this value anywhere.
+INWORLD_API_KEY = os.environ.get("INWORLD_API_KEY", "")  # pragma: allowlist secret
+
 
 # ── Anthropic Claude (text reasoning + chat) ───────────────────
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1621,15 +1628,63 @@ DEFAULT_SETTINGS = {
     "voice_engine": "local",
     "local_voice_asr_model": "small",      # Tier-1 faster-whisper size: tiny|base|small|medium
     "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
+    # Which synthesizer the Tier-1 (CPU) path uses. Piper is the default and
+    # stays the default: it is the only local synthesizer that runs acceptably
+    # without a GPU. Kokoro is an ADDITION, selected explicitly, and refuses
+    # rather than silently degrading when it cannot run (see kokoro_voice.py).
+    #   "piper"  — faster-whisper's companion; CPU-capable; GPL-3.0 since Oct 2025
+    #   "kokoro" — Kokoro-82M (Apache-2.0); needs CUDA; higher quality
+    # These three MUST live here. `_load_settings_raw()` drops any persisted key
+    # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
+    # dict does not declare is a control that saves, reports success, and
+    # reverts on the next read — the failure mode recorded in
+    # docs/history/audits/2026-09-04-five-dead-settings.md.
+    "local_voice_tts_engine": "piper",
+    "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
+    "local_voice_kokoro_allow_cpu": False,    # let Kokoro run on CPU (slow; off by design)
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
     # tier. Override the ASR id to a sibling (e.g. the English-only streaming
     # model) if desired; the TTS pair (FastPitch+HiFi-GAN) is fixed for v1.
     "local_voice_gpu_asr_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
     "local_voice_gpu_tts": "fastpitch-hifigan",
     "voice_silence_ms": 800,               # trailing silence (ms) that ends a local-voice turn
+    # Clean-sheet voice (docs/design/active/voice-system-clean-sheet.md §8.1):
+    # per-stage GPU policy read by services/voice_manifest.read_selection()
+    # and enforced by its proofs ("required" refuses a CPU engine); idle
+    # unload read by the voice workers' lease TTL. Declared here so they
+    # survive a reload (the dead-settings rule).
+    "voice_ear_gpu": "if_free",            # never | if_free | required
+    "voice_mouth_gpu": "if_free",          # never | if_free | required
+    "voice_idle_unload_s": 600,            # GPU voice worker idle unload (s)
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".
+    # -- Cloud voice providers (docs/design/active/cloud-voice-providers.md) --
+    # Tier-3 SIBLINGS, never a default. `voice_engine` gains the values
+    # "elevenlabs" and "inworld" (also accepted as "cloud:<name>"), read by
+    # services/cloud_voice.py:resolve_provider(). Every key below has a real
+    # enforcement point in that module or in routes/cloud_voice_routes.py --
+    # none is a prop. They MUST be declared here: _load_settings_raw()
+    # whitelists against this dict, so a key the service layer reads but this
+    # dict does not declare saves, reports success, and reverts on the next
+    # read (docs/decisions/2026-09-04-five-dead-settings.md).
+    #
+    # NOTE: `elevenlabs_api_key`, `elevenlabs_model` and `elevenlabs_voice_id`
+    # were ALREADY read by services/elevenlabs_tools.py and were NOT declared
+    # here -- live instances of that same defect, found while implementing this
+    # spec and fixed below. See the report accompanying this change.
+    "elevenlabs_api_key": "",   # key material, never committed; env wins over this
+    "elevenlabs_model": "eleven_flash_v2_5",       # cloud_voice.selected_model()
+    "elevenlabs_voice_id": "",  # "" = provider default; cloud_voice.selected_voice()
+    "inworld_api_key": "",
+    "inworld_model": "inworld-tts-2-flash",
+    "inworld_voice_id": "",
+    # Q4: Inworld's rate is tier-dependent while ElevenLabs' is flat, so a
+    # single PRICING row over-reports for anyone off On-Demand. Making the tier
+    # an input is the spec's own second option: any value but "on_demand"
+    # meters under an UNPRICED id and renders "not priced" rather than a wrong
+    # number. Enforced in cloud_voice.meter_model_id().
+    "inworld_plan_tier": "on_demand",      # on_demand | growth | enterprise
     "voice_tools": True,                   # let live voice sessions call Friday's tools
     "audio_input_device_id": "",           # preferred mic (browser deviceId); "" = system default
     "audio_output_device_id": "",          # preferred speaker (browser deviceId); "" = system default
