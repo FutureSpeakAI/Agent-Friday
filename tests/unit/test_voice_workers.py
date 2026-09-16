@@ -217,6 +217,9 @@ def test_gpu_queue_barge_cancels_turn_jobs():
     q.clear_turn("turn-1")
     ok = q.submit("turn-1", clause("after"))
     assert ok.wait(2.0) and ok.result == "after"
+    q.stop()
+    q._thread.join(2.0)
+    assert not q._thread.is_alive()                  # no leaked daemon thread
 
 
 # ── admission (§3.2 rule 3) ──────────────────────────────────────────────────

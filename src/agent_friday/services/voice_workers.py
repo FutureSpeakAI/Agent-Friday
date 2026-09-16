@@ -484,12 +484,26 @@ class GpuQueue:
             return len(self._q) + (1 if self._running_turn is not None else 0)
 
     _running_cancel = None
+    _stopped = False
+
+    def stop(self) -> None:
+        """End the queue thread (tests; process shutdown). Queued jobs are
+        dropped as cancelled."""
+        with self._cv:
+            self._stopped = True
+            for item in self._q:
+                item[2].cancelled = True
+                item[2].set()
+            self._q = []
+            self._cv.notify_all()
 
     def _run(self):
         while True:
             with self._cv:
-                while not self._q:
+                while not self._q and not self._stopped:
                     self._cv.wait()
+                if self._stopped:
+                    return
                 turn_id, fn, done = self._q.pop(0)
                 self._running_turn = turn_id
                 self._running_cancel = threading.Event()

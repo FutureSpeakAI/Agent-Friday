@@ -561,6 +561,36 @@ def _plan_num_ctx(model):
         return None
 
 
+def _trace_outgoing(where, pname, model, payload, extra=None):
+    """Write the SHAPE of an outgoing request to a file, once per call.
+
+    Friday's stdout goes to DEVNULL under the tray, so a `print` here is a
+    diagnosis nobody can make. This is the only way to answer "did that turn
+    actually carry tools" by observation instead of by reading the code.
+    """
+    try:
+        import json as _j, os as _os, time as _t
+        d = _os.path.expanduser("~/.friday/runtime")
+        _os.makedirs(d, exist_ok=True)
+        row = {
+            "ts": _t.time(), "where": where, "provider": pname, "model": model,
+            "n_tools": len(payload.get("tools") or []),
+            "tool_choice": payload.get("tool_choice"),
+            "n_messages": len(payload.get("messages") or []),
+            "prompt_chars": sum(len(m.get("content") or "")
+                                for m in (payload.get("messages") or [])
+                                if isinstance(m.get("content"), str)),
+            "keys": sorted(payload.keys()),
+        }
+        if extra:
+            row.update(extra)
+        with io.open(_os.path.join(d, "payload_trace.jsonl"), "a",
+                     encoding="utf-8") as f:
+            f.write(_j.dumps(row) + "\n")
+    except Exception:
+        pass
+
+
 def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  # An orb's icon should say what the WORK is, not what
                  # transport carried it. A house default here makes every
@@ -839,6 +869,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
 #: the transport publishes to it, and chat() is not modified at all.
 DELTA_SINK = _contextvars.ContextVar("friday_delta_sink", default=None)
 
+#: Where a completion's `timings` go (llama-server's per-request
+#: `prompt_n` / `predicted_n` / per-token ms), same mechanism as DELTA_SINK.
+#: The voice session sets it to record `prefill_tokens` in the turn receipt
+#: (voice-system-clean-sheet.md §4.4): prompt_n < 2,000 on turn 2 is the
+#: prefix-cache acceptance, and it is measured, not assumed.
+TIMINGS_SINK = _contextvars.ContextVar("friday_timings_sink", default=None)
+
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
 #: The cost-priority knob, in OpenRouter's own vocabulary. Their default is
@@ -914,6 +951,7 @@ def _consume_sse_completion(resp, on_delta=None):
     finish_reason = None
     served_model = None
     usage = None
+    timings = None           # llama-server puts them on the last chunk
 
     for raw in resp.iter_lines(decode_unicode=True):
         if not raw:
@@ -936,6 +974,8 @@ def _consume_sse_completion(resp, on_delta=None):
             served_model = chunk["model"]
         if chunk.get("usage"):
             usage = chunk["usage"]
+        if chunk.get("timings"):
+            timings = chunk["timings"]
         for choice in chunk.get("choices") or []:
             if choice.get("finish_reason"):
                 finish_reason = choice["finish_reason"]
@@ -972,6 +1012,8 @@ def _consume_sse_completion(resp, on_delta=None):
         out["model"] = served_model
     if usage:
         out["usage"] = usage
+    if timings:
+        out["timings"] = timings
     return out
 
 
@@ -1217,6 +1259,10 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                                 "enable_thinking": False}
                     except Exception:
                         pass
+            _trace_outgoing("_call_openai", pname, model, payload,
+                            {"local_bypass": bool(local_bypass),
+                             "tools_in": len(tools or []),
+                             "oai_tools": len(oai_tools or [])})
             # Auto Router: "let Friday decide". The cost tier is nested in a
             # `plugins` entry -- a top-level `cost_tier` is accepted by the
             # API and silently ignored, which would present as the router
@@ -1388,6 +1434,14 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 _want_stream = False
             resp = (_consume_sse_completion(r, on_delta=on_delta or DELTA_SINK.get())
                     if _want_stream else r.json())
+            # Publish the seat's timings (llama-server) to whoever asked for
+            # them -- the voice session records `prompt_n` as prefill_tokens.
+            _tsink = TIMINGS_SINK.get()
+            if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
+                try:
+                    _tsink(resp["timings"])
+                except Exception:
+                    pass
             # Attribute cost to the model the provider ACTUALLY served (an
             # OpenRouter fallback may answer with a different model than asked).
             served = resp.get('model')
@@ -1414,6 +1468,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             pass
         _resp = _oai_agentic_loop(
             convo, oai_tools, _send, provider='openai', model=model,
+            # A loopback seat we serve ourselves is LOCAL, whatever dialect it
+            # speaks. Without this the ledger files it as cloud.
+            seat=('local' if local_bypass else 'openai'),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
             meter_provider=pname,
@@ -1919,11 +1976,21 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
     it to the system prompt (and it is PII-scrubbed for cloud like the rest).
     """
     try:
+        # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY.
+        # A question about what is true RIGHT NOW ("are my Google accounts
+        # connected?") is read from a live source here and recall's licence to
+        # answer it is explicitly withdrawn, because a recalled turn reports
+        # what was true when it was written -- a different question wearing the
+        # same words. See services/live_state.py for the rule and how to
+        # register a new status question.
+        from agent_friday.services import live_state as _live
+        live_block = _live.live_state_block(message)
+
         if not _load_settings().get('memory_recall_enabled', True):
-            return ""
+            return live_block
         mem = _get_conversation_memory()
         if not mem.available():
-            return ""
+            return live_block
         hits = mem.search(message, n=n)
         kept = []
         for h in hits:
@@ -1935,7 +2002,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 continue
             kept.append(h)
         if not kept:
-            return ""
+            return live_block
         lines = [
             "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
             "These are real excerpts from earlier conversations with this user. "
@@ -1954,7 +2021,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 break
             lines.append(entry)
             used += len(entry)
-        return "\n".join(lines) + "\n"
+        return live_block + "\n".join(lines) + "\n"
     except Exception as _e:
         return ""
 

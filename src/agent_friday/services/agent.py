@@ -85,8 +85,18 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
                     workspace=None, on_route=None, tools=None,
-                    system_builder=None):
+                    system_builder=None, on_text_delta=None):
     """Tool-using (agentic) generation via the user's CONFIGURED provider.
+
+    on_text_delta: optional `callable(str)` fired per streamed content
+        fragment on the OpenAI-compatible leg (the local llama-server seat
+        included). Delivered through `model_router.DELTA_SINK` for the
+        duration of this call only, so the voice session's clause chunker
+        hears the reply as it is written (voice-system-clean-sheet.md §4.2)
+        without threading a callback through every leg. Rounds that end in a
+        tool call stream too: the text before the call is the announcement
+        sentence the choreography wants audible before the tool runs; the
+        markup itself is filtered by the consumer.
 
     The agentic analog of _generate_text(). Bare _call_claude_agent() requires
     an Anthropic key and hard-fails with "ANTHROPIC_API_KEY is not set" the
@@ -127,6 +137,24 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     been gated for a different, less restrictive provider. Omit it (the
     default) to keep the previous single-prompt behavior unchanged.
     """
+    # Streaming deltas ride a context variable (see on_text_delta above). Run
+    # the whole call inside a COPIED context with the sink set, so it is
+    # scoped to this call and nothing has to be reset on any of the exits.
+    if on_text_delta is not None:
+        import contextvars as _cv
+        from agent_friday.services.model_router import DELTA_SINK as _DS
+        _kw = dict(system=system, model=model, max_tokens=max_tokens,
+                   temperature=temperature, session_ctx=session_ctx,
+                   pii_lookup=pii_lookup, orb_label=orb_label,
+                   orb_category=orb_category, orb_icon=orb_icon,
+                   workspace=workspace, on_route=on_route, tools=tools,
+                   system_builder=system_builder, on_text_delta=None)
+
+        def _with_sink():
+            _DS.set(on_text_delta)
+            return _generate_agent(messages, **_kw)
+        return _cv.copy_context().run(_with_sink)
+
     # Demo mode: no provider configured (no keys + no local Ollama) → return a
     # labelled placeholder instead of exhausting every primitive and raising
     # RuntimeError("No model provider could run the agent"). This is the agentic
@@ -936,6 +964,30 @@ def _summarize_multi_account_errors(result):
     enabled in the GCP project) shows up as its own status/error per
     account, distinct from an account that was never connected at all."""
     by_id = {}
+    # SEED FROM THE STORE, NOT FROM THE FETCH.
+    #
+    # merged_calendar()/merged_inbox() iterate _accounts_with(service), which
+    # SKIPS any account whose status is "needs_reauth" -- it is neither used
+    # nor errored, so it appeared in neither list and vanished from this
+    # summary entirely. The caller then reported `connected: true` (the index
+    # is non-empty) alongside `accounts: []` and `count: 0`, which reads as
+    # "your calendar works and tomorrow is clear". Measured on this machine:
+    # both Google accounts have been needs_reauth since 2026-09-01, and a day
+    # with two interviews on it came back empty and confident.
+    #
+    # An account Friday cannot read must be VISIBLE and must say why.
+    try:
+        from agent_friday.services import google_accounts as _ga
+        for acc in (_ga.list_accounts() or []):
+            _st = acc.get("status") or "connected"
+            by_id[acc.get("id")] = {
+                "label": acc.get("label"), "email": acc.get("email"),
+                "status": _st,
+                "error": ("This account's Google authorization has expired and "
+                          "it was NOT read this turn - reconnect it in Settings "
+                          "-> Connectors.") if _st == "needs_reauth" else None}
+    except Exception:
+        pass
     for acc in (result.get("accounts") or []):
         by_id[acc.get("id")] = {"label": acc.get("label"), "email": acc.get("email"),
                                 "status": "connected", "error": None}
@@ -1053,6 +1105,64 @@ def _tool_list_workspace_history(inp):
     return json.dumps(ws.history(wsid), default=str)[:2400]
 
 
+# -- Google connectivity, answered honestly ---------------------------------
+# These tools used to gate on ga.has_accounts() -- whether a RECORD EXISTS --
+# and then emit "connected": True. On 2026-09-09 both of Stephen's accounts had
+# been needs_reauth since 2026-09-01, so the calendar tool returned
+# connected:true with zero events, and a day holding two job interviews was
+# reported as an empty schedule.
+#
+# The worse half was the note. When a fetch failed it instructed the model:
+# "do not say Calendar 'needs connecting' (it's already connected)". That
+# instruction was FALSE, and the model repeated it faithfully -- Stephen asked
+# directly whether his Google accounts were connected and was told yes for
+# both. Nothing was fabricated, so no claim-verification layer could catch it:
+# the system told the model something untrue and the model reported it
+# accurately. A note that instructs the model what to assert must therefore be
+# emitted only in the state where that assertion is actually true.
+
+
+def _google_connectivity():
+    """Live connectivity fields for any Google-backed tool payload.
+
+    `connected` is true only when at least one account actually WORKS.
+    `degraded` is carried as its own fact rather than folded into that
+    boolean: a bool cannot express "some of your accounts work and some do
+    not", and flattening it is how an incomplete answer gets presented as a
+    complete one.
+    """
+    from agent_friday.services import google_accounts as ga
+    summary = ga.accounts_summary()
+    return summary, {
+        "connected": summary["connected"],
+        "degraded": summary["degraded"],
+        "accounts_total": summary["total"],
+        "accounts_working": summary["healthy"],
+        "needs_reauth": [a.get("email") or a.get("label")
+                         for a in summary["needs_attention"]],
+        "store": "google_accounts (multi-account)",
+    }
+
+
+def _google_note(summary, what, errored=(), no_items=False):
+    """Compose the model-facing note. Every clause must be true when emitted."""
+    parts = []
+    if summary["note"]:
+        parts.append(summary["note"])
+    if errored and no_items:
+        detail = "; ".join(f"{a['label']}: {a['error']}" for a in errored)
+        if summary["healthy"] and not summary["needs_attention"]:
+            # Only here is "it is already connected" a true statement.
+            parts.append(
+                f"Every account IS authorized, and every one of them had its "
+                f"live {what} fetch fail just now -- this is an API error, not "
+                f"a missing connection. Tell the user these specific errors "
+                f"rather than saying {what} needs connecting: {detail}")
+        else:
+            parts.append(f"Live {what} fetch errors on top of that: {detail}")
+    return " ".join(parts)
+
+
 def _tool_query_calendar(_inp):
     """Today's + tomorrow's events across every connected Google account.
 
@@ -1069,20 +1179,26 @@ def _tool_query_calendar(_inp):
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
     try:
-        has_accounts = ga.has_accounts()
+        summary, state = _google_connectivity()
     except Exception:
-        has_accounts = False
-    if not has_accounts:
+        summary, state = None, None
+    if summary is None:
         return json.dumps({"connected": False, "events": [],
-                           "store": "google_accounts (multi-account)",
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what="Google Calendar", reads="your calendar")})
+    if not summary["connected"]:
+        # Never connected, or connected-then-expired. Those need different
+        # words: one says "connect", the other names the accounts that stopped
+        # working and how long ago they last synced.
+        return json.dumps({**state, "events": [], "count": 0,
+                           "note": summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
     try:
         result = ga.merged_calendar(days=2)
     except Exception as e:
-        return json.dumps({"connected": True, "events": [],
-                           "store": "google_accounts (multi-account)",
-                           "note": f"Calendar fetch error: {e}"})
+        return json.dumps({**state, "events": [], "count": 0,
+                           "note": (_google_note(summary, "Calendar")
+                                    + f" Calendar fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
     events = result.get("events") or []
     out = []
@@ -1096,20 +1212,19 @@ def _tool_query_calendar(_inp):
             "account": ev.get("account_label") or ev.get("account_email"),
         })
     payload = {
-        "connected": True,  # accounts exist and are linked; see "accounts" for per-account detail
-        "store": "google_accounts (multi-account)",
+        **state,
         "accounts": accounts_status,
         "count": len(out),
         "events": out,
     }
-    errored = [a for a in accounts_status if a["status"] == "error"]
-    if errored and not out:
-        payload["note"] = (
-            "Every connected account's live calendar fetch just failed — tell "
-            "the user the SPECIFIC error(s) below, do not say Calendar 'needs "
-            "connecting' (it's already connected): " +
-            "; ".join(f"{a['label']}: {a['error']}" for a in errored)
-        )
+    # needs_reauth accounts are seeded into accounts_status by
+    # _summarize_multi_account_errors but carry that status, not "error",
+    # so filtering on "error" alone silently drops exactly the broken ones.
+    errored = [a for a in accounts_status
+               if a["status"] in ("error", "needs_reauth")]
+    note = _google_note(summary, "Calendar", errored, not out)
+    if note:
+        payload["note"] = note
     return json.dumps(payload, default=str)
 
 
@@ -1129,19 +1244,29 @@ def _tool_search_email(inp):
     except Exception:
         ga = None
     has_accounts = False
+    summary = state = None
     if ga is not None:
         try:
             has_accounts = ga.has_accounts()
+            summary, state = _google_connectivity()
         except Exception:
             has_accounts = False
+    # Accounts exist but none work: say so. Do NOT fall through to the legacy
+    # offline cache below -- that hands back cached mail as though it were
+    # current, the same staleness bug wearing a different hat. The cache path
+    # stays reserved for a never-connected install, as the docstring says.
+    if has_accounts and summary is not None and not summary["connected"]:
+        return json.dumps({**state, "source": "gmail", "query": q,
+                           "count": 0, "messages": [],
+                           "note": summary["note"]})
 
-    if has_accounts:
+    if has_accounts and summary is not None:
         try:
             result = ga.merged_gmail(limit_per_account=15)
         except Exception as e:
-            return json.dumps({"connected": True, "messages": [],
-                               "store": "google_accounts (multi-account)",
-                               "note": f"Email fetch error: {e}"})
+            return json.dumps({**state, "messages": [], "count": 0,
+                               "note": (_google_note(summary, "Gmail")
+                                        + f" Email fetch error: {e}").strip()})
         accounts_status = _summarize_multi_account_errors(result)
         cards = result.get("messages") or []
         ql = q.lower()
@@ -1159,22 +1284,21 @@ def _tool_search_email(inp):
                     "account": c.get("account_label") or c.get("account_email"),
                 })
         payload = {
-            "connected": True,
-            "store": "google_accounts (multi-account)",
+            **state,
             "accounts": accounts_status,
             "source": "gmail",
             "query": q,
             "count": len(hits),
             "messages": hits[:25],
         }
-        errored = [a for a in accounts_status if a["status"] == "error"]
-        if errored and not cards:
-            payload["note"] = (
-                "Every connected account's live Gmail fetch just failed — tell "
-                "the user the SPECIFIC error(s) below, do not say Gmail 'needs "
-                "connecting' (it's already connected): " +
-                "; ".join(f"{a['label']}: {a['error']}" for a in errored)
-            )
+        # needs_reauth accounts are seeded into accounts_status by
+        # _summarize_multi_account_errors but carry that status, not "error",
+        # so filtering on "error" alone silently drops exactly the broken ones.
+        errored = [a for a in accounts_status
+                   if a["status"] in ("error", "needs_reauth")]
+        note = _google_note(summary, "Gmail", errored, not cards)
+        if note:
+            payload["note"] = note
         return json.dumps(payload, default=str)
 
     # No account connected at all — preserve the legacy cache-fallback path.
@@ -1205,8 +1329,12 @@ def _tool_search_email(inp):
                 "unread": bool(c.get("unread")),
                 "when": c.get("timestamp") or c.get("date") or "",
             })
-    return json.dumps({"connected": True, "source": source, "query": q,
-                       "count": len(hits), "messages": hits[:25]}, default=str)
+    return json.dumps({"connected": False, "source": source, "query": q,
+                       "count": len(hits), "messages": hits[:25],
+                       "note": "No Google account is connected. These results come "
+                               "from Friday's offline cache and may be out of date "
+                               "-- say so rather than presenting them as current "
+                               "inbox contents."}, default=str)
 
 
 def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, fetch_fn, item_key):
@@ -1222,37 +1350,39 @@ def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, 
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what=has_accounts_note_what, reads=has_accounts_note_reads)})
     try:
-        has_accounts = ga.has_accounts()
+        summary, state = _google_connectivity()
     except Exception:
-        has_accounts = False
-    if not has_accounts:
+        summary, state = None, None
+    if summary is None:
         return json.dumps({"connected": False, item_key: [],
-                           "store": "google_accounts (multi-account)",
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what=has_accounts_note_what, reads=has_accounts_note_reads)})
+    if not summary["connected"]:
+        return json.dumps({**state, item_key: [], "count": 0,
+                           "note": summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what=has_accounts_note_what, reads=has_accounts_note_reads)})
     try:
         result = fetch_fn(ga)
     except Exception as e:
-        return json.dumps({"connected": True, item_key: [],
-                           "store": "google_accounts (multi-account)",
-                           "note": f"{has_accounts_note_what} fetch error: {e}"})
+        return json.dumps({**state, item_key: [], "count": 0,
+                           "note": (_google_note(summary, has_accounts_note_what)
+                                    + f" {has_accounts_note_what} fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
     items = result.get(item_key) or []
     payload = {
-        "connected": True,
-        "store": "google_accounts (multi-account)",
+        **state,
         "accounts": accounts_status,
         "count": len(items),
         item_key: items,
     }
-    errored = [a for a in accounts_status if a["status"] == "error"]
-    if errored and not items:
-        payload["note"] = (
-            f"Every connected account's live {has_accounts_note_what} fetch just "
-            f"failed — tell the user the SPECIFIC error(s) below, do not say "
-            f"{has_accounts_note_what} 'needs connecting' (it's already connected): " +
-            "; ".join(f"{a['label']}: {a['error']}" for a in errored)
-        )
+    # needs_reauth accounts are seeded into accounts_status by
+    # _summarize_multi_account_errors but carry that status, not "error",
+    # so filtering on "error" alone silently drops exactly the broken ones.
+    errored = [a for a in accounts_status
+               if a["status"] in ("error", "needs_reauth")]
+    note = _google_note(summary, has_accounts_note_what, errored, not items)
+    if note:
+        payload["note"] = note
     return json.dumps(payload, default=str)
 
 
@@ -1283,9 +1413,10 @@ def _tool_read_doc(inp):
         return json.dumps({"connected": False,
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Docs/Sheets", reads="your documents")})
-    if not ga.has_accounts():
-        return json.dumps({"connected": False,
-                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+    _doc_summary, _doc_state = _google_connectivity()
+    if not _doc_summary["connected"]:
+        return json.dumps({**_doc_state,
+                           "note": _doc_summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Docs/Sheets", reads="your documents")})
     candidate_ids = [account_id] if account_id else [
         a["id"] for a in ga.list_accounts() if a.get("services", {}).get("docs", True)]
@@ -2070,6 +2201,27 @@ def _resolve_workspace(name):
         return None
     low = re.sub(r'\s+', ' ', str(name).lower()).strip().strip('"').strip("'")
     low = re.sub(r'^(the|my|a|an)\s+', '', low).strip()
+    # TRAILING POLITENESS IS AS COMMON AS LEADING POLITENESS, AND USED TO BE FATAL.
+    #
+    # _OPEN_VERB_RE eats a leading "please "; its target group is `(.+?)[\s?.!]*$`,
+    # which does not, so "open workflows please" arrives here as
+    # "workflows please" and resolves to nothing. The request then falls through
+    # to the model, which narrates a navigation it never performed — the exact
+    # failure logged on 2026-09-09 at 16:39:24, where "open workflows please"
+    # was answered with "Navigating you to the Code workspace" and no
+    # navigation occurred.
+    #
+    # Every switch that worked that session had FRONT-loaded politeness
+    # ("Please open settings."); both that failed had it at the back. The
+    # asymmetry was the whole bug. Stripped repeatedly so "please now" and
+    # "for me thanks" both reduce.
+    _tail = (r'\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
+             r'right now|real quick|if you can|would you|will you)$')
+    while True:
+        _stripped = re.sub(_tail, '', low).strip()
+        if _stripped == low:
+            break
+        low = _stripped
     # Try the full phrase first so a legitimate multi-word alias ("front page",
     # "people graph", "trust score") isn't destroyed by the trailing-noise
     # stripper below — "page" would otherwise turn "front page" into "front".
@@ -3895,9 +4047,48 @@ def _creative_result_summary(res, kind):
         }, default=str)
     if status == "blocked":
         return f"[CONTENT SAFETY] {res.get('reason')}"
+    if status == "refused":
+        # A REFUSAL IS AN ANSWER, AND THIS IS WHERE IT USED TO DIE.
+        #
+        # local_image.generate() returns {"status": "refused", "reason": ...,
+        # "rule_id": ...} when the Arbiter declines the GPU -- and the reason it
+        # hands back is already written for a human, e.g. "not enough VRAM left
+        # for the desktop: 448 MiB free against a 2560 MiB display reserve
+        # (short by 2112) ... free the card or close a display-heavy app first."
+        #
+        # Every branch below read `message`. Nothing ever read `reason`. So a
+        # refusal fell through to the last line and the model was told exactly
+        # four words: "image generation failed." Friday then had to explain a
+        # failure whose cause had been deleted one function earlier, and on
+        # 2026-09-10 she told Stephen she had no visibility into VRAM at all --
+        # which was true, because this line had thrown it away.
+        why = res.get("reason") or res.get("message") or "no reason given"
+        rule = res.get("rule_id")
+        opts = res.get("options") or []
+        blocking = res.get("blocking") or []
+        parts = ["%s generation was REFUSED (not attempted). Why: %s" % (kind, why)]
+        if rule:
+            parts.append("Rule: %s." % rule)
+        if blocking:
+            parts.append("Holding the resource: " + "; ".join(
+                "%s (%s %s)" % (b.get("holder"), b.get("amount"), b.get("unit") or "")
+                for b in blocking if isinstance(b, dict)))
+        if opts:
+            parts.append("Options available: " + "; ".join(
+                str(o.get("description") or o.get("kind"))
+                for o in opts if isinstance(o, dict)))
+        parts.append("Tell the user this was refused rather than broken, give "
+                     "them the reason in plain words, and offer the options. "
+                     "Do not retry blindly and do not claim you lack "
+                     "visibility into it -- the reason is above.")
+        return " ".join(parts)
     if status == "unavailable":
-        return res.get("message") or f"{kind} generation is unavailable (no Gemini key)."
-    return res.get("message") or f"{kind} generation failed."
+        return (res.get("message") or res.get("reason")
+                or f"{kind} generation is unavailable (no Gemini key).")
+    # `reason` is read here too: several engines set it instead of `message`,
+    # and a bare "failed" is the least useful true sentence available.
+    return (res.get("message") or res.get("reason")
+            or f"{kind} generation failed (the engine gave no reason).")
 
 
 def _tool_epistemic_score(inp):
@@ -7093,7 +7284,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
-                      meter_provider=None, orb_id=None):
+                      meter_provider=None, orb_id=None, seat=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
     provider — local Ollama (gemma4 et al.) AND cloud OpenAI/OpenRouter.
 
@@ -7125,7 +7316,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # and a single ledger event is recorded at each completion path.
     _led_t0 = _time.time()
     _led_tok = {"in": 0, "out": 0}
-    _led_seat = "local" if provider == "local" else "openai"
+    # `provider` is the loop DIALECT ("openai" for anything OpenAI-shaped),
+    # which is not the same question as WHERE the work ran. Friday's own
+    # llama-server seats reach this loop as provider="openai", so every local
+    # turn was filed in the activity ledger as seat="openai" -- on-device work
+    # displayed as cloud. The caller knows the truth; let it say so.
+    _led_seat = seat or ("local" if provider == "local" else "openai")
 
     def _led_done():
         _ledger_model_invocation(
