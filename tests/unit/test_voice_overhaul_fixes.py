@@ -154,4 +154,7 @@ class TestVoiceInstaller:
 
     def test_targets_are_fixed_allowlist(self):
         from agent_friday.services import voice_installer as vi
-        assert set(vi.TARGETS) == {"voice-local-lite", "voice-local-gpu", "tier1-models"}
+        # Still a FIXED allowlist: the fourth entry is the clean-sheet §2.5
+        # kokoro-onnx candidate (wheel --no-deps + the 27 MB voices file).
+        assert set(vi.TARGETS) == {"voice-local-lite", "voice-local-gpu",
+                                   "tier1-models", "kokoro-onnx"}

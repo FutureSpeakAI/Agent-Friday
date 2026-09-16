@@ -44,7 +44,8 @@ def test_orchestrator_includes_openai_and_local(client):
 def test_models_route_reports_voice_engines(client):
     data = client.get("/api/models").get_json()
     ids = {e["id"] for e in data.get("voice_engines", [])}
-    assert {"auto", "local", "local-gpu", "gemini"} <= ids
+    assert {"local", "local-gpu", "gemini"} <= ids
+    assert "auto" not in ids          # a synonym for local; not a choice (clean-sheet §8.1)
     assert "voice_engine" in data["selected"]
 
 

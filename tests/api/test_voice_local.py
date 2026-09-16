@@ -195,7 +195,8 @@ def test_models_route_lists_local_voice(client):
     assert "piper-en_US-amy-medium" not in voice_ids
     assert "whisper-small" not in voice_ids
     engine_ids = {e["id"] for e in body["voice_engines"]}
-    assert {"auto", "local", "local-gpu", "gemini"} <= engine_ids
+    assert {"local", "local-gpu", "gemini"} <= engine_ids
+    assert "auto" not in engine_ids   # synonym for local; not a picker choice (clean-sheet §8.1)
 
 
 # ── default settings: voice_engine is local; asr/tts route on-device ──────────

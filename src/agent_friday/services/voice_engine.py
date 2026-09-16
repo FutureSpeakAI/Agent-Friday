@@ -265,7 +265,64 @@ _VOICE_LIVE_TOOLS = [
       "on_complete_spawn": ("string", "Optional title of a follow-up task to auto-start when this one succeeds."),
       "on_complete_prompt": ("string", "Optional full instruction for that follow-up task.")},
      ["name", "prompt"]),
+    # voice-system-clean-sheet.md §4.5 (D7): local brain, cloud mouth. The
+    # ONE tool that lets Gemini Live reach Stephen's context honestly -- by
+    # asking his local model, whose sealed answer is all Google ever sees.
+    ("ask_friday",
+     "Ask Friday's local model, which has full access to Stephen's notes, "
+     "memory, knowledge graph, files, calendar and email. Use it for ANY "
+     "question about Stephen's own context (his notes, his projects, what he "
+     "wrote, what he decided, his wiki, his memory), and for anything that "
+     "needs a tool you do not have. Announce it first ('Let me ask Friday.'), "
+     "then call it, then speak the answer as given. The answer has already "
+     "passed Stephen's privacy gate; if it says something was withheld, say "
+     "so plainly rather than guessing.",
+     {"question": ("string", "The question, in full, as Friday's local model should hear it.")},
+     ["question"]),
 ]
+
+
+def _tool_ask_friday(inp):
+    """Dispatch the question to the LOCAL agent pipeline with the full contract
+    (the same `_generate_agent` a local voice turn uses, on the resident
+    brain seat, reply cap 300), then seal the answer for google-gemini.
+
+    The seal is applied HERE, not only by the Live tool-call runner, so the
+    withheld-whole guarantee (`_gate_voice_tool_result`: a withheld result is
+    the marker, never a partial redaction) holds for every caller. The vault's
+    TIER_2/3 content is read by the local model and never crosses.
+    """
+    from agent_friday.routes.voice import (  # route-owned prompt + gate
+        _build_voice_system_prompt, _gate_voice_tool_result, _voice_reply_cap)
+    from agent_friday.services.agent import _generate_agent
+    question = str((inp or {}).get("question") or "").strip()
+    if not question:
+        return "ask_friday needs a question."
+    settings = _load_settings() or {}
+    try:
+        from agent_friday.services import local_seats
+        seat = local_seats.resolve("brain")
+    except Exception:
+        seat = None
+    if not seat:
+        return ("Friday's local model is not loaded right now, so Stephen's "
+                "context cannot be reached from this session. Say so plainly.")
+    system, _meta = _build_voice_system_prompt(settings)
+    system += ("\n\nYou are answering a question RELAYED from a cloud voice "
+               "session. Answer in one to three plain spoken sentences; the "
+               "answer will be read aloud by another model. Do not mention "
+               "the relay.")
+    try:
+        text, _trace = _generate_agent(
+            [{"role": "user", "content": question}], system=system, model=seat,
+            max_tokens=_voice_reply_cap(settings),
+            session_ctx={"authenticated": True, "provider": "local",
+                         "is_voice": True, "surface": "voice-live-relay"},
+            workspace=settings.get("active_workspace") or "")
+    except Exception as e:
+        _log.error("ask_friday failed: %s: %s", type(e).__name__, e, exc_info=True)
+        return f"Friday's local model could not answer ({type(e).__name__})."
+    return _gate_voice_tool_result((text or "").strip(), "ask_friday")
 
 
 # ── Tools BORROWED VERBATIM from the text registry ────────────────────────
@@ -453,6 +510,21 @@ def _voice_tool_run(name, args, send_client):
                 f"again with confirmed=true only after they say yes.")
 
     try:
+        if name == "ask_friday":
+            try:
+                send_client({"type": "status", "text": "asking local model"})
+                send_client({"type": "stage", "stage": "mind", "state": "busy",
+                             "detail": "asking local model"})
+            except Exception:
+                pass
+            try:
+                return _tool_ask_friday(args)
+            finally:
+                try:
+                    send_client({"type": "stage", "stage": "mind", "state": "idle",
+                                 "detail": ""})
+                except Exception:
+                    pass
         if name in ("navigate_workspace", "navigate"):
             if not args.get("confirmed"):
                 return _needs_confirm(f"switching to the {args.get('workspace') or 'that'} workspace")

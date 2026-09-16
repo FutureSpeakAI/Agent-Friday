@@ -228,10 +228,11 @@ def test_voice_role_excludes_engine_component_models():
 def test_voice_engines_reported():
     cat = build_catalog()
     engines = {e["id"]: e for e in cat["voice_engines"]}
-    assert set(engines) == {"auto", "local", "local-gpu", "gemini"}
+    # `auto` left the picker 2026-09-16 (clean-sheet §8.1 A): it is a synonym
+    # for local and is still accepted on write, never offered as a choice.
+    assert set(engines) == {"local", "local-gpu", "gemini"}
     for e in engines.values():
         assert "label" in e and "available" in e and "short" in e
-    assert engines["auto"]["available"] is True
 
 
 def test_unavailable_entries_carry_key_hint(monkeypatch):
