@@ -439,14 +439,18 @@ def _model_entries_for(provider: dict, registry) -> list:
 
 
 def _voice_engines(registry) -> list:
-    """The four voice ENGINE choices (settings key `voice_engine`), with live
-    availability. Auto is always selectable — it resolves at session time."""
+    """The voice MODE choices (settings key `voice_engine`), with live
+    availability.
+
+    `auto` is deliberately NOT offered (voice-system-clean-sheet.md §8.1 A):
+    since 2026-09-09 it is a synonym for `local` (it never reaches the cloud),
+    so a picker entry for it is a second name for the same thing. The value
+    is still accepted on write (`_VOICE_ENUMS`) and read as local, so an
+    existing settings.json keeps working."""
     local_ok = bool(registry.is_provider_available("local-voice-lite"))
     gpu_ok = bool(registry.is_provider_available("nvidia-nemo"))
     gemini_ok = bool(registry.is_provider_available("google-gemini"))
     return [
-        {"id": "auto", "label": "Auto", "short": "Auto", "available": True,
-         "hint": "GPU tier when ready, else CPU; local preferred over cloud"},
         {"id": "local", "label": "Local CPU (Whisper + Piper)",
          "short": "Local CPU", "available": local_ok,
          "hint": None if local_ok else
@@ -460,6 +464,49 @@ def _voice_engines(registry) -> list:
          "hint": None if gemini_ok else
          "Add GEMINI_API_KEY in Settings → Providers"},
     ]
+
+
+def _tts_engines() -> list:
+    """The Tier-1 synthesizer choices (settings key `local_voice_tts_engine`).
+
+    Shape matches `_voice_engines()` so the settings UI can render both with the
+    same greyed-with-a-reason control. Availability comes from the engine's own
+    health block, not from a filename: `kokoro_available()` performs the import
+    (see kokoro_voice.kokoro_import_status), because a package that resolves by
+    name and raises on import is exactly the state a `--no-deps` install leaves
+    behind, and reporting it as ready is how a picker starts lying.
+
+    `hint` is the remediation shown on the disabled control. It says what would
+    make the option work, per the spec's rule that an unavailable option must
+    explain itself rather than disappear.
+    """
+    out = [{"id": "piper", "label": "Piper (CPU)", "short": "Piper",
+            "available": True,
+            "hint": "On-device, CPU-capable. GPL-3.0 since October 2025."}]
+    try:
+        from agent_friday.services.kokoro_voice import kokoro_health
+        h = kokoro_health() or {}
+    except Exception as e:  # noqa: BLE001
+        h = {"status": "error", "detail": str(e)[:160], "available": False}
+    _ok = bool(h.get("available")) and h.get("status") == "ok"
+    _hint = h.get("detail") or "Kokoro status unknown"
+    if _ok:
+        # Selectable, deliberately not the default. Kokoro is fast on a GPU
+        # (~12x realtime measured) but it is newer on this path than Piper and
+        # its phonemisation runs third-party code over arbitrary text. Say so
+        # where the choice is made, rather than letting the user infer that
+        # "available" means "as proven as the default".
+        _hint = (_hint + " \u2014 newer than Piper on this path; Piper stays the "
+                 "default. A synthesis failure refuses with a reason and offers "
+                 "Piper rather than substituting it silently.")
+    out.append({
+        "id": "kokoro", "label": "Kokoro-82M (GPU)", "short": "Kokoro",
+        "available": _ok,
+        "status": h.get("status", "error"),
+        "default": False,
+        "hint": _hint,
+    })
+    return out
 
 
 def _arbiter_seat_entries() -> list:
@@ -773,4 +820,5 @@ def build_catalog() -> dict:
     } for p in registry.get_enabled_providers()]
 
     return {"roles": roles, "models": flat, "providers": providers,
-            "voice_engines": _voice_engines(registry)}
+            "voice_engines": _voice_engines(registry),
+            "tts_engines": _tts_engines()}
