@@ -2474,6 +2474,63 @@ window.addEventListener('DOMContentLoaded',function(){
 
         // --- THREE.JS ENGINE ---
         let scene, camera, renderer, composer, bloomPass, holoPass;
+        // True while the GPU has taken this canvas's context away. animate() must
+        // not touch the composer in that state, and the user must be told rather
+        // than left looking at a black desktop. See the webglcontextlost handler.
+        let sceneContextLost = false;
+        // Guards against starting a second render loop when init() re-runs after a
+        // context restore.
+        let animateRunning = false;
+
+        // A visible, dismissable notice -- deliberately not a silent degrade.
+        function showSceneLostBanner(extra) {
+            let el = document.getElementById('friday-scene-lost');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'friday-scene-lost';
+                el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:99999;'
+                    + 'padding:10px 16px;border-radius:10px;font:12px/1.5 "JetBrains Mono",monospace;'
+                    + 'background:rgba(20,10,0,0.92);border:1px solid rgba(245,158,11,0.6);color:#f59e0b;'
+                    + 'box-shadow:0 6px 24px rgba(0,0,0,0.5);max-width:min(680px,92vw)';
+                document.body.appendChild(el);
+            }
+            el.innerHTML = '';
+            const msg = document.createElement('span');
+            msg.textContent = 'Holographic visuals stopped: the GPU reclaimed this window’s graphics memory, '
+                + 'most likely while a voice engine or model was loading. '
+                + (extra ? extra + ' ' : 'Friday itself is unaffected — chat, voice and tools all still work. ');
+            el.appendChild(msg);
+            const btn = document.createElement('button');
+            btn.textContent = 'Reload visuals';
+            btn.style.cssText = 'margin-left:10px;padding:4px 10px;border-radius:6px;cursor:pointer;'
+                + 'background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.7);color:#f59e0b;font:inherit';
+            btn.onclick = () => location.reload();
+            el.appendChild(btn);
+        }
+
+        function hideSceneLostBanner() {
+            const el = document.getElementById('friday-scene-lost');
+            if (el) el.remove();
+        }
+
+        // Rebuild after a restore. The old canvas is gone as far as the driver is
+        // concerned, so the honest move is to drop it and run init() again rather
+        // than try to patch a scene graph whose GPU resources all died.
+        function rebuildScene() {
+            try {
+                if (renderer) {
+                    const old = renderer.domElement;
+                    renderer.dispose && renderer.dispose();
+                    if (old && old.parentNode) old.parentNode.removeChild(old);
+                }
+            } catch (_) {}
+            scene = camera = renderer = composer = bloomPass = holoPass = null;
+            // buildAllStructures() reassigns every key, so clearing the map is
+            // enough -- the old THREE objects belong to a context that no longer
+            // exists and must not be reused.
+            structures = {};
+            init();
+        }
         let particleSystem, energyLines = [], starField, nebulaClouds = [];
         let clock = new THREE.Clock();
         let glowTexture, cloudTexture;
@@ -2913,6 +2970,39 @@ window.addEventListener('DOMContentLoaded',function(){
 
             window.addEventListener('resize', onWindowResize);
 
+            // ── WebGL context loss ─────────────────────────────────────────────
+            // The scene shares the GPU with whatever Friday has resident. When a
+            // voice engine or a model loads and the driver runs out of memory for
+            // the display, Chrome takes this canvas's context away. Before this
+            // handler existed the result was a permanently black desktop with no
+            // explanation and no console error: the render loop kept calling a
+            // dead context, so nothing told the user what happened. Observed
+            // 2026-09-10 while NeMo loaded, with the display down to 448 MiB
+            // against its 2560 MiB reserve.
+            //
+            // preventDefault() on the lost event is what makes a restore possible
+            // at all -- without it the browser never fires webglcontextrestored.
+            renderer.domElement.addEventListener('webglcontextlost', ev => {
+                ev.preventDefault();               // required for any restore
+                sceneContextLost = true;           // stops animate() touching a dead context
+                console.warn('friday-scene: WebGL context lost (likely VRAM pressure)');
+                showSceneLostBanner();
+            }, false);
+
+            renderer.domElement.addEventListener('webglcontextrestored', () => {
+                console.warn('friday-scene: WebGL context restored; rebuilding');
+                hideSceneLostBanner();
+                try {
+                    rebuildScene();
+                    sceneContextLost = false;
+                } catch (e) {
+                    // A failed rebuild must not leave a half-dead scene pretending
+                    // to work. Say so and offer the reload instead.
+                    console.error('friday-scene: rebuild failed', e);
+                    showSceneLostBanner('The visuals could not be rebuilt automatically.');
+                }
+            }, false);
+
             // Audio visualizer deliberately disabled — mic is reserved for voice mode.
             // setupAudio() uses getUserMedia which would show the mic indicator on page load.
 
@@ -2923,7 +3013,15 @@ window.addEventListener('DOMContentLoaded',function(){
             if (_evo) _evo.innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
 
             processOrbManager = new ProcessOrbManager(scene, camera, renderer);
-            animate();
+            // Start the render loop exactly once for the life of the page. After a
+            // context restore, init() runs again to rebuild GPU resources, but the
+            // existing loop already reads the module-level renderer/composer, so
+            // calling animate() a second time would leave two loops drawing the
+            // same scene at double cost.
+            if (!animateRunning) {
+                animateRunning = true;
+                animate();
+            }
         }
 
         function buildBackgroundEnvironment() {
@@ -3258,7 +3356,10 @@ window.addEventListener('DOMContentLoaded',function(){
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = Math.min(clock.getDelta(), 0.1); 
+            // With the context gone, every draw call below is a no-op against a
+            // dead context and the per-frame work is wasted. Idle until restore.
+            if (sceneContextLost) return;
+            const delta = Math.min(clock.getDelta(), 0.1);
             const elapsed = clock.getElapsedTime() * 0.5;
 
             // --- HAND CURSOR LOGIC (Minority Report) ---
@@ -24152,6 +24253,20 @@ const VOICE_MODELS = [{
 // Voice ENGINE choices (settings key `voice_engine`): Auto / Local CPU / Local
 // GPU / Gemini Live. Live availability comes from /api/models (voice_engines);
 // this const is the offline fallback only.
+const TTS_ENGINES_FALLBACK = [{
+  id: 'piper',
+  label: 'Piper (CPU)',
+  short: 'Piper',
+  available: true,
+  hint: 'On-device, CPU-capable.'
+}, {
+  id: 'kokoro',
+  label: 'Kokoro-82M (GPU)',
+  short: 'Kokoro',
+  available: false,
+  status: 'unknown',
+  hint: 'Availability unknown \u2014 the model catalogue could not be read.'
+}];
 const VOICE_ENGINES = [{
   id: 'auto',
   label: 'Auto',
@@ -24302,6 +24417,7 @@ function useModelCatalog() {
     creative: pick('creative'),
     voice: pick('voice'),
     voiceEngines: cat && cat.voice_engines && cat.voice_engines.length ? cat.voice_engines : VOICE_ENGINES,
+    ttsEngines: cat && cat.tts_engines && cat.tts_engines.length ? cat.tts_engines : TTS_ENGINES_FALLBACK,
     providers: cat && cat.providers || []
   };
   const byId = {};
@@ -34672,6 +34788,171 @@ function VoiceSetupWizard({
     }
   }, testResult.status === 'ok' ? 'TTS test audio played — did you hear it?' : testResult.message || 'TTS test failed.')));
 }
+// ── Voice Stack card (voice-system-clean-sheet.md §8.1 B) ────────────────────
+// The Voice Manifest, rendered. Three rows — EAR / MIND / MOUTH — each showing
+// selected → effective → PROVEN. Every fact here comes from
+// /api/voice/session-info's `manifest` (the same snapshot the HUD, the API and
+// the model's own self-description read); this component computes nothing of
+// its own about readiness. Opening the panel POSTs /api/voice/arm, which runs
+// the three proofs in the background; rows flip green one by one with their
+// measured latency. "Prove voice now" forces a re-proof.
+const VOICE_STAGE_LABEL = { ear: 'EAR', mind: 'MIND', mouth: 'MOUTH' };
+const VOICE_PROOF_GLYPH = {
+  proven: ['●', '#22c55e'], proving: ['◐', '#38bdf8'],
+  unproven: ['○', 'rgba(255,255,255,0.45)'], refused: ['✕', '#ef4444'],
+  cloud: ['☁', 'rgba(255,255,255,0.6)']
+};
+function voiceEffectiveText(st) {
+  const e = st && st.effective || {};
+  if (!e.engine) return st && st.selected && st.selected.engine ? st.selected.engine + ' (selected)' : '—';
+  let name = e.engine;
+  if (e.engine === 'faster-whisper') name = 'faster-whisper ' + (e.model || '');
+  else if (e.engine === 'seat') name = (e.model || 'local seat');
+  else if (e.engine === 'kokoro') name = 'Kokoro ' + (e.voice || '');
+  else if (e.engine === 'piper') name = 'Piper ' + (e.voice || '');
+  else if (e.engine === 'gemini-live') name = 'Gemini Live';
+  const dev = e.device === 'cuda' ? 'GPU' : e.device === 'cpu' ? 'CPU' : e.device === 'cloud' ? 'cloud' : e.device === 'local' ? (e.window ? ':' + String(e.base || '').split(':').pop() + ' · ' + Math.round(e.window / 1024) + 'k' : 'local') : '';
+  return name.trim() + (dev ? ' · ' + dev : '');
+}
+function VoiceStackRow({ stage, st, onProve, contract }) {
+  const p = st && st.proof || { state: 'unproven' };
+  const [glyph, color] = VOICE_PROOF_GLYPH[p.state] || VOICE_PROOF_GLYPH.unproven;
+  const at = p.at ? new Date(p.at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  let proofText;
+  if (p.state === 'proven') proofText = 'proven ' + at + (p.latency_ms != null ? ' · ' + (p.latency_ms / 1000).toFixed(2) + ' s' : '');
+  else if (p.state === 'proving') proofText = 'proving… ' + (st.progress || '');
+  else if (p.state === 'refused') proofText = 'refused';
+  else if (p.state === 'cloud') proofText = 'cloud';
+  else proofText = 'unproven' + (st && st.reason ? ' — ' + st.reason : '');
+  const extra = stage === 'mind' && contract && contract.tools ? ' · ' + contract.tools.length + ' tools · KG ' + (contract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (contract.memory ? '✓' : '✗') : '';
+  return /*#__PURE__*/React.createElement("div", { style: { display: 'grid', gridTemplateColumns: '58px 1fr', gap: 8, alignItems: 'start', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' } },
+    /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'JetBrains Mono', fontSize: 11, letterSpacing: 1, opacity: 0.8, paddingTop: 2 } }, VOICE_STAGE_LABEL[stage]),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.5 } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("span", { style: { color, marginRight: 6 } }, glyph),
+        /*#__PURE__*/React.createElement("b", null, voiceEffectiveText(st)),
+        /*#__PURE__*/React.createElement("span", { style: { opacity: 0.75, marginLeft: 8 } }, proofText + extra)),
+      p.state !== 'unproven' && st && st.reason && p.state !== 'cloud' && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: p.state === 'refused' ? '#ef4444' : 'var(--warn, #e0a030)' } }, st.reason),
+      p.state === 'refused' && st && st.action && /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '4px 10px', marginTop: 4 }, onClick: () => onProve(st.action) }, st.action.label || 'Retry')));
+}
+function VoiceStackCard({ s, save, mc }) {
+  const [manifest, setManifest] = useState(null);
+  const [err, setErr] = useState('');
+  const pollRef = useRef(null);
+  const take = useCallback(d => {
+    if (!d) return;
+    const m = d.manifest || d;
+    if (m && m.stages) setManifest(m);
+    if (m && m.proving) {
+      clearTimeout(pollRef.current);
+      pollRef.current = setTimeout(() => fetch('/api/voice/arm').then(r => r.json()).then(take).catch(() => {}), 1200);
+    }
+  }, []);
+  useEffect(() => {
+    let stop = false;
+    fetch('/api/voice/session-info').then(r => r.json()).then(d => { if (!stop) take(d); }).catch(() => setErr('Could not read the voice manifest.'));
+    apiFetch('/api/voice/arm', { method: 'POST' }).then(r => r.json()).then(d => { if (!stop) take(d); }).catch(() => {});
+    return () => { stop = true; clearTimeout(pollRef.current); };
+  }, [take, s.voice_engine, s.local_voice_tts_engine, s.local_voice_kokoro_voice, s.voice_ear_gpu, s.voice_mouth_gpu]);
+  const proveNow = useCallback(action => {
+    if (action && action.kind === 'settings') return;
+    apiFetch('/api/voice/prove', { method: 'POST' }).then(r => r.json()).then(take).catch(() => {});
+  }, [take]);
+  const engines = mc && mc.ttsEngines || TTS_ENGINES_FALLBACK;
+  const sel = s.local_voice_tts_engine || 'piper';
+  const stages = manifest && manifest.stages || {};
+  const policyRow = (key, label) => /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 } },
+    /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.7, minWidth: 90 } }, label),
+    [['never', 'GPU: never'], ['if_free', 'GPU: if free'], ['required', 'GPU: required']].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+      key: v, className: `settings-btn ${(s[key] || 'if_free') === v ? 'active' : ''}`, style: { fontSize: 11, padding: '4px 10px' },
+      onClick: () => save({ [key]: v })
+    }, l)));
+  return /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement(StRow, { label: "Voice Stack", desc: "Selected → effective → proven. A row is green only after that stage has actually transcribed, thought or spoken within the last 15 minutes; nothing here reports ready because a package imports." },
+      /*#__PURE__*/React.createElement("div", null,
+        err && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.7 } }, err),
+        ['ear', 'mind', 'mouth'].map(k => /*#__PURE__*/React.createElement(VoiceStackRow, { key: k, stage: k, st: stages[k], onProve: proveNow, contract: manifest && manifest.contract })),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Proving…' : 'Prove voice now'),
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.6 } }, manifest ? (manifest.ready ? 'All stages proven.' : 'Not ready — see the rows above.') + ' Idle unload ' + Math.round((manifest.idle_unload_s || 600) / 60) + ' min.' : 'Reading manifest…')),
+        manifest && manifest.description && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 6, fontStyle: 'italic' } }, "What Friday is told about herself: “", manifest.description, "”"))),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Ear", desc: "faster-whisper small. GPU policy: never keeps the card for the model; if free leases it when the display reserve allows; required refuses the session rather than falling to the CPU." },
+      policyRow('voice_ear_gpu', 'faster-whisper')),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Mouth", desc: "Which synthesizer speaks. Piper is the CPU floor and always present; Kokoro needs a CUDA GPU (or the CPU opt-in below) and refuses rather than quietly running slowly." },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, engines.map(o => {
+          const off = o.available === false;
+          return /*#__PURE__*/React.createElement("button", { key: o.id, className: `settings-btn ${sel === o.id ? 'active' : ''}`, style: { fontSize: 12, padding: '7px 14px', opacity: off ? 0.4 : 1, cursor: off ? 'not-allowed' : 'pointer' }, "aria-disabled": off, title: o.hint || o.label, onClick: off ? undefined : () => save({ local_voice_tts_engine: o.id }) }, o.short || o.label);
+        })),
+        engines.filter(o => o.available === false).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.short || o.label, " unavailable:"), " ", o.hint || 'no reason given')),
+        policyRow('voice_mouth_gpu', sel === 'kokoro' ? 'Kokoro' : 'Piper (CPU)'),
+        sel === 'kokoro' && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
+          /*#__PURE__*/React.createElement("select", { className: "input", style: { width: '100%' }, value: s.local_voice_kokoro_voice || 'af_heart', onChange: e => save({ local_voice_kokoro_voice: e.target.value }) },
+            [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
+          /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on CPU: allowed (slow)' : 'Kokoro on CPU: refused (default)')))));
+}
+// ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
+// One row of modes for the `voice_engine` setting. `auto` is gone from the
+// picker (it is read as `local`, settled 2026-09-09). A cloud mode shows its
+// disclosure BEFORE it takes effect: Gemini's four lines here (with the §4.5
+// relay line), a synthesis provider's from /api/voice/cloud/disclosure.
+// Greyed rows carry the reason (no key, offline, local-only, GA rule).
+function VoiceModePicker({ s, save, mc }) {
+  const [providers, setProviders] = useState([]);
+  const [pending, setPending] = useState(null);   // {id, label, lines}
+  useEffect(() => {
+    fetch('/api/voice/cloud/providers').then(r => r.json()).then(d => setProviders(d && d.providers || [])).catch(() => {});
+  }, []);
+  const cur = (s.voice_engine || 'local') === 'auto' ? 'local' : (s.voice_engine || 'local');
+  const eng = id => (mc && mc.voiceEngines || []).filter(o => o.id === id)[0] || null;
+  const gem = eng('gemini');
+  const gpu = eng('local-gpu');
+  const rows = [
+    { id: 'local', label: 'Local', desc: 'Ears, reasoning and voice on this machine. Nothing leaves it.', off: false, reason: null },
+    { id: 'gemini', label: 'Cloud (Gemini Live)', desc: "Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through Friday's local model.", off: !!(gem && gem.available === false), reason: gem && gem.hint }
+  ].concat(providers.map(pv => ({
+    id: pv.name, label: 'Local listening, cloud voice (' + pv.label + ')',
+    desc: 'Friday hears and thinks here; ' + pv.label + ' speaks. Only the reply text leaves.',
+    off: pv.selectable === false, reason: pv.reason, provider: pv.name
+  }))).concat(gpu ? [{ id: 'local-gpu', label: 'Local GPU (NeMo, experimental)', desc: 'Nemotron ASR + FastPitch on CUDA. Off by default; kept behind the engine interface.', off: gpu.available === false, reason: gpu.hint }] : []);
+  const choose = row => {
+    if (row.off) return;
+    if (row.id === 'local' || row.id === 'local-gpu') { save({ voice_engine: row.id }); return; }
+    if (row.id === 'gemini') {
+      setPending({ id: 'gemini', label: row.label, lines: [
+        ['Mode', 'Speech-to-speech: Gemini hears, thinks and speaks in one hop, with barge-in and native prosody.'],
+        ['What leaves this machine', 'Your microphone audio and the session context, after the privacy gate. Questions about your own notes, memory or knowledge graph are answered by Friday’s local model through ask_friday; only the sealed answer is relayed.'],
+        ['Retention', 'Subject to Google’s API data terms for the Live API.'],
+        ['Cost', 'Metered per session in Settings → Costs; the byte receipt is shown after each session.']
+      ] });
+      return;
+    }
+    fetch('/api/voice/cloud/disclosure?provider=' + encodeURIComponent(row.provider)).then(r => r.json()).then(d => {
+      const x = d && d.disclosure || {};
+      setPending({ id: row.id, label: row.label, lines: [
+        ['Mode', (x.mode || '') + ' — ' + (x.mode_detail || '')],
+        ['What leaves this machine', x.egress || ''],
+        ['Retention', typeof x.retention === 'string' ? x.retention : JSON.stringify(x.retention || '')],
+        ['Cost', (x.cost_per_reply_usd != null ? '$' + x.cost_per_reply_usd + ' per reply' : 'unpriced') + (x.cost_projection && x.cost_projection.usd_per_month != null ? ' · ~$' + x.cost_projection.usd_per_month + '/month at your recent volume' : '')]
+      ] });
+    }).catch(() => setPending({ id: row.id, label: row.label, lines: [['Disclosure', 'Could not load the disclosure; the mode was not changed.']] }));
+  };
+  return /*#__PURE__*/React.createElement(StRow, { label: "Mode", desc: "Which stack answers when you press the mic. Cloud modes show what leaves this machine before they take effect." },
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, rows.map(o => /*#__PURE__*/React.createElement("button", {
+        key: o.id, className: `settings-btn ${cur === o.id ? 'active' : ''}`,
+        style: { fontSize: 12, padding: '7px 14px', opacity: o.off ? 0.4 : 1, cursor: o.off ? 'not-allowed' : 'pointer' },
+        "aria-disabled": o.off, title: o.off && o.reason ? o.reason : o.desc, onClick: () => choose(o)
+      }, o.label))),
+      rows.filter(o => o.id === cur).map(o => /*#__PURE__*/React.createElement("div", { key: 'cur', style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, o.desc)),
+      rows.filter(o => o.off && o.reason).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.label, " unavailable:"), " ", o.reason)),
+      pending && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, marginBottom: 6 } }, "Before switching to ", pending.label),
+        pending.lines.map(([k, v]) => /*#__PURE__*/React.createElement("div", { key: k, style: { marginBottom: 4 } }, /*#__PURE__*/React.createElement("b", null, k, ": "), v)),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
+}
 function SettingsTabVoice({
   s,
   save
@@ -34681,8 +34962,7 @@ function SettingsTabVoice({
   const engineIcon = {
     'local': '🔒 ',
     'local-gpu': '⚡ ',
-    'gemini': '☁ ',
-    'auto': ''
+    'gemini': '☁ '
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -34700,33 +34980,11 @@ function SettingsTabVoice({
     onClose: () => setShowWizard(false)
   }), /*#__PURE__*/React.createElement(StSection, {
     title: "VOICE ENGINE"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Engine",
-    desc: "Local = on-device, private. Cloud = Gemini Live, most expressive."
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      flexWrap: 'wrap'
-    }
-  }, mc.voiceEngines.map(o => {
-    const off = o.available === false;
-    return /*#__PURE__*/React.createElement("button", {
-      key: o.id,
-      className: `settings-btn ${(s.voice_engine || 'local') === o.id ? 'active' : ''}`,
-      style: {
-        fontSize: 12,
-        padding: '7px 14px',
-        opacity: off ? 0.4 : 1,
-        cursor: off ? 'not-allowed' : 'pointer'
-      },
-      "aria-disabled": off,
-      title: o.hint || o.label,
-      onClick: off ? undefined : () => save({
-        voice_engine: o.id
-      })
-    }, (engineIcon[o.id] || '') + (o.short || o.label));
-  }))), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
+  }, /*#__PURE__*/React.createElement(VoiceModePicker, {
+    s: s,
+    save: save,
+    mc: mc
+  }), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
     label: "Gemini Live Model",
     desc: "Real-time speech-to-speech model for the cloud engine."
   }, /*#__PURE__*/React.createElement("select", {
@@ -34759,7 +35017,11 @@ function SettingsTabVoice({
     })
   }, ['Aoede', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Zephyr'].map(v => /*#__PURE__*/React.createElement("option", {
     key: v
-  }, v)))), (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, {
+  }, v)))), /*#__PURE__*/React.createElement(VoiceStackCard, {
+    s: s,
+    save: save,
+    mc: mc
+  }), (s.voice_engine || 'local') !== 'gemini' && (s.local_voice_tts_engine || 'piper') === 'piper' && /*#__PURE__*/React.createElement(StRow, {
     label: "Local TTS Voice (Piper)",
     desc: "On-device voice used by the local engines."
   }, /*#__PURE__*/React.createElement("select", {
@@ -35275,6 +35537,24 @@ function SettingsTabOrchestrator() {
     title: "WORK LOG"
   }, /*#__PURE__*/React.createElement(WorkLogPanel, null))));
 }
+// -- Account state: the STORE's verdict, never the record's existence -------
+// acc.health is derived server-side (services/google_accounts.account_health)
+// from the stored status plus last_sync. An account with no health block is
+// unknown-and-broken, not fine. On 2026-09-09 this surface showed two
+// needs_reauth accounts as "connected" for nine days because it rendered the
+// presence of a record as a working connection; every calendar answer Friday
+// gave in that window was confidently wrong.
+const GA_STATE_COLORS = { connected: '#00ff80', needs_reauth: '#ff8c42', error: '#ff5470', disconnected: '#7a8699', unknown: '#888888' };
+function gaHealth(acc) {
+  const h = acc && acc.health;
+  if (!h) return { state: 'unknown', label: 'Status unknown', summary: 'Status unknown - Friday could not read this account state', healthy: false, actionable: true, stale: false, color: GA_STATE_COLORS.unknown };
+  return Object.assign({}, h, { color: GA_STATE_COLORS[h.state] || GA_STATE_COLORS.unknown });
+}
+function gaSyncTitle(acc) {
+  if (!acc || !acc.last_sync) return 'This account has never completed a sync.';
+  try { return 'Last successful sync: ' + new Date(acc.last_sync).toLocaleString(); }
+  catch (e) { return 'Last successful sync: ' + acc.last_sync; }
+}
 function GoogleAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [msg, setMsg] = useState('');
@@ -35282,6 +35562,11 @@ function GoogleAccountsPanel() {
   const [loading, setLoading] = useState(false);
   const [oauth, setOauth] = useState(null);
   const [copied, setCopied] = useState(false);
+  // The account id whose reconnect is in flight. A status display that is
+  // honest about failure and stale about recovery is only half fixed: consent
+  // finishes in a popup this panel never hears from, so re-poll while a
+  // reconnect is pending and whenever the window regains focus.
+  const [reconnecting, setReconnecting] = useState(null);
   // The consent pre-brief, held between "Add account" and actually opening
   // Google -- see services/google_oauth_client.consent_prebrief.
   const [pending, setPending] = useState(null);
@@ -35321,6 +35606,17 @@ function GoogleAccountsPanel() {
   useEffect(() => {
     refresh();
   }, []);
+  useEffect(() => {
+    if (!reconnecting) return;
+    const t = setInterval(() => { refresh(); }, 4000);
+    const stop = setTimeout(() => setReconnecting(null), 180000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [reconnecting]);
+  useEffect(() => {
+    const onFocus = () => { refresh(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
   const copyRedirectUri = () => {
     if (!oauth) return;
     navigator.clipboard?.writeText(oauth.redirect_uri).then(() => {
@@ -35328,7 +35624,7 @@ function GoogleAccountsPanel() {
       setTimeout(() => setCopied(false), 1800);
     }).catch(() => {});
   };
-  const addAccount = async () => {
+  const startConnect = async account => {
     setLoading(true);
     try {
       const r = await apiFetch('/api/google/accounts/connect', {
@@ -35336,7 +35632,10 @@ function GoogleAccountsPanel() {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
+        body: JSON.stringify(account ? {
+          account_id: account.id,
+          email: account.email
+        } : {
           label
         })
       });
@@ -35346,14 +35645,16 @@ function GoogleAccountsPanel() {
         // this app" with no warning reads it as phishing and stops -- and
         // from our side, stopping there is indistinguishable from never
         // having tried. Show what is coming, then let them press the button.
-        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind });
-        setLabel('');
-      } else setMsg(d.message || 'Failed to start OAuth.');
+        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind, account: account || null });
+        if (!account) setLabel('');
+      } else setMsg(d.message || 'Could not start sign-in.');
     } catch (e) {
       setMsg('Error: ' + e.message);
     }
     setLoading(false);
   };
+  const addAccount = () => startConnect(null);
+  const reconnectAccount = account => startConnect(account);
   const removeAccount = async (id, email) => {
     if (!window.confirm('Remove ' + email + '? This revokes access.')) return;
     try {
@@ -35396,7 +35697,7 @@ function GoogleAccountsPanel() {
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.85)' } }, pending.brief),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12, color: '#00d4ff' },
-        onClick: () => { window.open(pending.url, '_blank', 'width=600,height=700'); setMsg('Finish in the Google window, then press \u21bb.'); setPending(null); } },
+        onClick: () => { const acct = pending.account; window.open(pending.url, '_blank', 'width=600,height=700'); setReconnecting(acct ? acct.id : 'new'); setMsg(acct ? 'Sign in as ' + (acct.email || acct.label || 'that account') + ' in the Google window. This page updates on its own once you are done.' : 'Finish in the Google window. This page updates on its own once you are done.'); setPending(null); } },
         'Continue to Google'),
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12 }, onClick: () => setPending(null) }, 'Not now'),
       pending.kind === 'bundled' && /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12 },
@@ -35482,7 +35783,21 @@ function GoogleAccountsPanel() {
       fontSize: 12,
       marginBottom: 12
     }
-  }, "No Google accounts connected yet."), accounts.map(acc => /*#__PURE__*/React.createElement("div", {
+  }, "No Google accounts connected yet."), accounts.length > 0 && accounts.some(a => !gaHealth(a).healthy) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(255,140,66,0.08)',
+      border: '1px solid rgba(255,140,66,0.3)',
+      borderRadius: 8,
+      padding: '10px 12px',
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { color: '#ff8c42', fontSize: 12, fontWeight: 600, marginBottom: 4 }
+  }, accounts.filter(a => !gaHealth(a).healthy).length + ' of ' + accounts.length + ' account(s) are not working'), /*#__PURE__*/React.createElement("div", {
+    style: { color: 'rgba(255,255,255,0.6)', fontSize: 11, lineHeight: 1.5 }
+  }, "Friday cannot read mail or calendar for these accounts, so anything it tells you about them is out of date. Reconnecting just signs you back in to Google - nothing is deleted and your settings are kept.")), accounts.map(acc => {
+    const h = gaHealth(acc);
+    return /*#__PURE__*/React.createElement("div", {
     key: acc.id,
     style: {
       background: 'rgba(255,255,255,0.03)',
@@ -35528,14 +35843,41 @@ function GoogleAccountsPanel() {
       color: 'rgba(255,255,255,0.4)',
       fontSize: 11
     }
-  }, acc.label || '', acc.last_sync ? ' · synced ' + new Date(acc.last_sync).toLocaleTimeString() : ''))), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 3, flexWrap: 'wrap' }
+  }, /*#__PURE__*/React.createElement("span", {
+    "data-testid": "ga-status-pill",
+    "data-state": h.state,
+    style: {
+      display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10,
+      fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+      color: h.color, background: 'rgba(255,255,255,0.05)',
+      border: '1px solid ' + h.color + '55', borderRadius: 20, padding: '2px 8px'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { width: 6, height: 6, borderRadius: 3, background: h.color, display: 'inline-block' }
+  }), h.label), acc.label && /*#__PURE__*/React.createElement("span", {
+    style: { color: 'rgba(255,255,255,0.35)', fontSize: 11 }
+  }, acc.label)), /*#__PURE__*/React.createElement("div", {
+    "data-testid": "ga-sync-line",
+    title: gaSyncTitle(acc),
+    style: { color: h.stale ? '#ff8c42' : 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 3 }
+  }, h.summary)))), /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }
+  }, !h.healthy && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    "data-testid": "ga-reconnect",
+    style: { fontSize: 11, padding: '4px 12px', color: '#ff8c42', borderColor: '#ff8c42', whiteSpace: 'nowrap' },
+    onClick: () => reconnectAccount(acc),
+    disabled: loading
+  }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect'), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,
       color: '#ff6060'
     },
     onClick: () => removeAccount(acc.id, acc.email || acc.label || 'account')
-  }, "Remove")), /*#__PURE__*/React.createElement("div", {
+  }, "Remove"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -35552,7 +35894,8 @@ function GoogleAccountsPanel() {
       },
       onClick: () => toggleSvc(acc.id, svc, on)
     }, svc === 'gmail' ? '✉️ Gmail' : svc === 'calendar' ? '📅 Cal' : '📁 Drive');
-  })))), /*#__PURE__*/React.createElement("div", {
+  })));
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -37997,6 +38340,64 @@ function SettingsWS() {
     save: save
   }), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null)));
 }
+
+// ── AE-0: the resource strip ────────────────────────────────────────────────
+// Shows what is claimed, by what, and what is free, so Stephen can look at his
+// machine and see WHY something is unavailable rather than watching an
+// operation fail with no cause attached.
+//
+// Every number here comes from /api/arbiter/status, which computes it from a
+// live machine read plus the lease ledger. Nothing on this strip is invented:
+// when a reading cannot be taken the server sets verifiable=false and this
+// renders an em dash, never a number.
+function fmtUnits(v, unit) {
+  if (v === null || v === undefined) return '\u2014';
+  if (unit === 'MiB') return v >= 1024 ? (v / 1024).toFixed(1) + 'G' : v + 'M';
+  return String(v);
+}
+function ArbiterStrip() {
+  const [arb, setArb] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/arbiter/status', { cache: 'no-store' });
+        if (cancelled) return;
+        const d = await r.json();
+        if (!cancelled && d && d.status === 'ok') setArb(d.arbiter);
+      } catch { if (!cancelled) setArb(null); }
+    };
+    poll();
+    const iv = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+  if (!arb) return null;
+  const excl = arb.gpu_exclusive_held_by;
+  const SHORT = { 'GPU VRAM': 'VRAM', 'System RAM': 'RAM', 'CPU cores': 'CPU', 'Disk': 'DISK' };
+  return /*#__PURE__*/React.createElement("span", {
+    style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'JetBrains Mono', fontSize: 10, letterSpacing: '0.04em' }
+  }, excl && /*#__PURE__*/React.createElement("span", {
+    title: 'The GPU is held exclusively by ' + excl + '. Friday will refuse GPU work rather than add contention, and cannot preempt a process it did not start.',
+    style: { padding: '3px 8px', borderRadius: 10, fontWeight: 700, background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.5)', color: '#f59e0b' }
+  }, "GPU HELD \u00b7 ", excl), arb.resources.filter(r => r.resource !== 'gpu_exclusive').map(r => {
+    const ok = r.verifiable;
+    const holders = (r.holders || []).map(h => h.holder + ' ' + fmtUnits(h.amount, r.unit) + (h.holder_kind === 'foreign' ? ' (foreign, not Friday\u2019s to unload)' : '')).join(', ');
+    const tip = r.label + '\n' + 'reading: ' + r.basis + '\n' + 'total on this machine: ' + fmtUnits(r.total_units, r.unit) + '\n' + 'reserved for the desktop: ' + fmtUnits(r.reserve_units, r.unit) + '\n' + 'claimed by leases: ' + fmtUnits(r.claimed_units, r.unit) + '\n' + 'measured free right now: ' + fmtUnits(r.measured_free, r.unit) + '\n' + 'available to new work: ' + (ok ? fmtUnits(r.available_units, r.unit) : 'cannot verify \u2014 Friday will refuse rather than guess') + '\n' + (r.unexplained_units ? ('in use with no declared hold: ' + fmtUnits(r.unexplained_units, r.unit) + '\n') : '') + 'holders: ' + (holders || 'none');
+    const claimed = r.claimed_units > 0;
+    return /*#__PURE__*/React.createElement("span", {
+      key: r.resource,
+      title: tip,
+      style: {
+        padding: '3px 7px', borderRadius: 9, whiteSpace: 'nowrap',
+        background: claimed ? 'rgba(0,212,255,0.12)' : 'rgba(139,147,167,0.10)',
+        border: '1px solid ' + (ok ? (claimed ? 'rgba(0,212,255,0.45)' : 'rgba(139,147,167,0.30)') : 'rgba(245,158,11,0.5)'),
+        color: ok ? (claimed ? '#00d4ff' : '#8b93a7') : '#f59e0b'
+      }
+    }, SHORT[r.label] || r.label, " ", ok ? fmtUnits(r.available_units, r.unit) : '\u2014', claimed && /*#__PURE__*/React.createElement("span", {
+      style: { opacity: 0.8 }
+    }, " \u00b7 ", fmtUnits(r.claimed_units, r.unit), " held"));
+  }));
+}
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
@@ -39592,6 +39993,21 @@ function App() {
   // bubbles so the chat panel mirrors what was actually said.
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
+  // F3/F6 (voice-mode-diagnosis-and-repair.md): two notices the server sends
+  // at session start that must OUTLIVE the status line, which 'listening' /
+  // 'speaking' overwrite every turn. voiceReach: can the model in this loop
+  // call tools and reach the knowledge graph? voiceEgress: which provider is
+  // receiving the microphone, and at the end, how many bytes it got.
+  const [voiceReach, setVoiceReach] = useState(null);
+  // Clean-sheet HUD (voice-system-clean-sheet.md §8.2): the three stage
+  // lamps, the contract line, the live partial transcript and the
+  // one-per-code degrade notices. All are server frames; nothing here
+  // computes readiness on its own.
+  const [voiceStages, setVoiceStages] = useState({});
+  const [voiceContract, setVoiceContract] = useState(null);
+  const [voicePartial, setVoicePartial] = useState('');
+  const [voiceNotices, setVoiceNotices] = useState([]);
+  const [voiceEgress, setVoiceEgress] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
   const voiceRef = useRef({
     ws: null,
@@ -39710,6 +40126,13 @@ function App() {
     if (!_isReconnect) {
       voiceKeepRef.current.attempts = 0;
       voiceKeepRef.current.fatalTs = 0;
+      // A fresh session starts with no notices; the server re-sends both.
+      setVoiceReach(null);
+      setVoiceStages({});
+      setVoiceContract(null);
+      setVoicePartial('');
+      setVoiceNotices([]);
+      setVoiceEgress(null);
     }
     const _vgen = ++voiceGenRef.current;
     const _stale = () => _vgen !== voiceGenRef.current;
@@ -40350,6 +40773,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         }
         _playAudioChunk(m.data);
       } else if (m.type === 'input_transcript') {
+        setVoicePartial('');
         // The user is actually speaking to the live session — anything else
         // making noise (the Front Page WAV player) yields immediately.
         try {
@@ -40471,6 +40895,35 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         v.playbackCancelled = false;
         v.playCursor = v.audioCtx && v.audioCtx.state !== 'closed' ? v.audioCtx.currentTime : 0;
         setVoiceStatus('listening');
+      } else if (m.type === 'context_reach') {
+        setVoiceReach(m);
+      } else if (m.type === 'stage') {
+        setVoiceStages(p => ({ ...p, [m.stage]: m }));
+      } else if (m.type === 'contract') {
+        setVoiceContract(m);
+      } else if (m.type === 'partial_transcript') {
+        setVoicePartial(m.text || '');
+      } else if (m.type === 'error-nonfatal') {
+        setVoiceNotices(p => p.some(n => n.code === m.code) ? p : p.concat([m]));
+      } else if (m.type === 'manifest' || m.type === 'turn_receipt') {
+        window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: ' + m.type, m);
+        if (m.type === 'turn_receipt') setVoicePartial('');
+      } else if (m.type === 'egress_notice') {
+        setVoiceEgress({
+          active: true,
+          provider: m.provider,
+          label: m.label,
+          text: m.text,
+          bytes: 0
+        });
+      } else if (m.type === 'egress_receipt') {
+        setVoiceEgress({
+          active: false,
+          provider: m.provider,
+          label: m.label,
+          text: m.text,
+          bytes: m.bytes || 0
+        });
       } else if (m.type === 'status') {
         setVoiceStatus(m.text);
       } else if (m.type === 'error') {
@@ -42762,7 +43215,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     },
     title: "Settings",
     "aria-label": "Open settings"
-  }, /*#__PURE__*/React.createElement("span", null, "\u2699")), (netState.status === 'offline' || netState.status === 'degraded') && /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "\u2699")), /*#__PURE__*/React.createElement(ArbiterStrip, null), (netState.status === 'offline' || netState.status === 'degraded') && /*#__PURE__*/React.createElement("span", {
     title: netState.status === 'offline' ? netState.ollama_available ? 'Offline — running on local models (Ollama). Cloud tasks are queued until you reconnect.' : 'Offline — no local model available; cloud tasks are queued until you reconnect.' : 'Network degraded — retrying connection',
     style: {
       display: 'inline-flex',
@@ -43431,7 +43884,35 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       transform: 'scale(' + (1 + Math.min(0.6, micLevel * 4)).toFixed(2) + ')',
       transition: 'background .12s, box-shadow .12s, transform .12s'
     }
-  }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…')), !voiceOn && voiceStatus && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
+    const st = voiceStages[k] && voiceStages[k].state || 'idle';
+    const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
+    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
+  }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
+    title: voiceEgress.text || '',
+    style: {
+      fontSize: 10,
+      color: '#ffb347',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.05em'
+    }
+  }, "\u2601 MIC \u2192 ", voiceEgress.label || voiceEgress.provider), voiceOn && voiceReach && !voiceReach.full_context && voiceReach.notice && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#ffb347',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      lineHeight: 1.4
+    }
+  }, "\u26A0 ", voiceReach.notice), !voiceOn && voiceEgress && !voiceEgress.active && voiceEgress.bytes > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#8a94a6',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u2601 ", voiceEgress.text), !voiceOn && voiceStatus && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: '#ff6699',
