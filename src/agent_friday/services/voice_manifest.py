@@ -147,29 +147,17 @@ class ProofRefused(RuntimeError):
         self.action = action
 
 
-def _run_ear_cpu(model_size: str, pcm: bytes, progress) -> tuple[str, dict]:
-    from agent_friday.services.local_voice import WhisperASR
-    asr = WhisperASR(model_size)
-    asr.load(progress=progress)
-    return asr.transcribe(pcm), {"engine": "faster-whisper", "device": "cpu",
-                                 "model": f"{model_size} int8"}
+def _run_ear(selection: dict, pcm: bytes, progress) -> tuple[str, dict]:
+    """Phase 1: the ear behind the engine ABC — a leased CUDA worker when the
+    selection's GPU policy allows and admission passes, else in-process CPU.
+    The engine the proof loads is HELD for the session (voice_workers.held)."""
+    from agent_friday.services import voice_workers
+    return voice_workers.run_ear_proof(selection, pcm, progress)
 
 
 def _run_mouth(selection: dict, text: str, progress) -> tuple[bytes, dict]:
-    engine = selection.get("engine") or "piper"
-    if engine == "kokoro":
-        from agent_friday.services.kokoro_voice import KokoroTTS
-        s = _settings()
-        tts = KokoroTTS(selection.get("voice") or "af_heart",
-                        allow_cpu=bool(s.get("local_voice_kokoro_allow_cpu")))
-        tts.load(progress=progress)
-        return tts.synthesize(text), {"engine": "kokoro", "device": tts._device or "?",
-                                      "model": "kokoro-82M", "voice": tts.voice}
-    from agent_friday.services.local_voice import PiperTTS
-    tts = PiperTTS(selection.get("voice") or "en_US-amy-medium")
-    tts.load(progress=progress)
-    return tts.synthesize(text), {"engine": "piper", "device": "cpu",
-                                  "model": tts.voice, "voice": tts.voice}
+    from agent_friday.services import voice_workers
+    return voice_workers.run_mouth_proof(selection, text, progress)
 
 
 def _run_mind(selection: dict, progress) -> dict:
@@ -226,7 +214,7 @@ def _run_mind(selection: dict, progress) -> dict:
 #: Indirection so a test can make every engine fail without touching a proof
 #: field. Replacing an entry with ``lambda *a, **k: (_ for _ in ()).throw(...)``
 #: is how ``test_manifest_cannot_be_proven_without_running`` works.
-ENGINE_RUNNERS = {"ear": _run_ear_cpu, "mouth": _run_mouth, "mind": _run_mind}
+ENGINE_RUNNERS = {"ear": _run_ear, "mouth": _run_mouth, "mind": _run_mind}
 
 
 def compute_contract(seat: str, system_prompt: str | None = None) -> dict:
@@ -409,10 +397,19 @@ class VoiceManifest:
             self._refuse(stage, e.code, e.message, e.action)
         except Exception as e:  # noqa: BLE001
             log.warning("voice %s proof failed: %s: %s", stage, type(e).__name__, e)
-            self._refuse(stage, "voice_stage_unproven",
-                         f"Friday couldn't prove her {self._noun(stage)} works "
-                         f"right now: {type(e).__name__}: {str(e)[:160]}",
-                         {"label": "Prove again", "kind": "retry"})
+            # An admission refusal (voice_workers.GpuRefused under policy
+            # `required`) carries its own taxonomy code and sentence.
+            code = getattr(e, "code", None)
+            if code and getattr(e, "message", None):
+                self._refuse(stage, str(code), str(e.message),
+                             {"label": "Set GPU to 'if free'", "kind": "settings"}
+                             if code == "local_voice_gpu_refused" else
+                             {"label": "Prove again", "kind": "retry"})
+            else:
+                self._refuse(stage, "voice_stage_unproven",
+                             f"Friday couldn't prove her {self._noun(stage)} works "
+                             f"right now: {type(e).__name__}: {str(e)[:160]}",
+                             {"label": "Prove again", "kind": "retry"})
         self._notify()
         return self.snapshot_stage(stage)
 
@@ -421,7 +418,7 @@ class VoiceManifest:
             raise ProofRefused("cloud_stage", "Gemini Live hears; nothing local to prove.")
         pcm = load_proof_pcm()
         runner = ENGINE_RUNNERS["ear"]
-        text, effective = runner(sel.get("model") or "small", pcm, prog)
+        text, effective = runner(sel, pcm, prog)
         # Load time is included: it is the cost the user pays on arm, and the
         # row shows what arming cost. Per-utterance figures are the receipts'.
         ms = (time.perf_counter() - t0) * 1000.0
@@ -571,6 +568,20 @@ class VoiceManifest:
         contract = dict(mind_eff.get("contract") or {})
         if self.mode == "gemini":
             contract = self.cloud_contract(contract)
+        # Phase 1: a GPU row shows its idle-unload countdown while its worker
+        # is resident, and the admission/eviction notices ride along so the
+        # card and the HUD can show them once (§3.2 rule 4, §7).
+        notices = []
+        try:
+            from agent_friday.services import voice_workers
+            for k in ("ear", "mouth"):
+                e = voice_workers.held(k)
+                if e is not None and hasattr(e, "worker"):
+                    stages[k]["idle_remaining_s"] = int(e.worker.idle_remaining_s())
+                    stages[k]["worker_pid"] = getattr(e.worker.proc, "pid", None)
+            notices = list(voice_workers.NOTICES)
+        except Exception:
+            pass
         return {
             "mode": self.mode,
             "stages": stages,
@@ -578,6 +589,7 @@ class VoiceManifest:
             "proving": self._proving,
             "contract": contract,
             "idle_unload_s": getattr(self, "idle_unload_s", 600),
+            "notices": notices,
             "description": self.describe_for_model(),
             "at": self._clock(),
         }

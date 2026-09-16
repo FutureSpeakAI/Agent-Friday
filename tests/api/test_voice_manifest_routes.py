@@ -34,7 +34,7 @@ def _fresh(monkeypatch, settings=None):
 
 
 def _runners(monkeypatch, ok=True, delay=0.0):
-    def ear(size, pcm, prog):
+    def ear(sel, pcm, prog):
         time.sleep(delay)
         if not ok:
             raise RuntimeError("no ear")
@@ -72,7 +72,7 @@ def test_session_info_carries_the_manifest_and_never_proves(client, monkeypatch)
     _fresh(monkeypatch)
     calls = {"n": 0}
 
-    def ear(size, pcm, prog):
+    def ear(sel, pcm, prog):
         calls["n"] += 1
         raise RuntimeError("should not run on a read")
     monkeypatch.setitem(vm.ENGINE_RUNNERS, "ear", ear)

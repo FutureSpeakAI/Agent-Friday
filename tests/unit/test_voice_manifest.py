@@ -36,9 +36,9 @@ def _good_runners(monkeypatch, *, ear_text="Friday, what time is it right now?",
                   mouth_pcm=b"\x00\x01" * 24000, mouth_engine="kokoro",
                   mouth_device="cuda", contract=None):
     monkeypatch.setitem(vm.ENGINE_RUNNERS, "ear",
-                        lambda size, pcm, prog: (ear_text, {"engine": "faster-whisper",
-                                                            "device": "cpu",
-                                                            "model": f"{size} int8"}))
+                        lambda sel, pcm, prog: (ear_text, {"engine": "faster-whisper",
+                                                           "device": "cpu",
+                                                           "model": f"{sel.get('model')} int8"}))
     monkeypatch.setitem(vm.ENGINE_RUNNERS, "mouth",
                         lambda sel, text, prog: (mouth_pcm, {"engine": mouth_engine,
                                                              "device": mouth_device,
@@ -247,7 +247,7 @@ def test_auto_reads_as_local(monkeypatch):
 def test_prove_all_is_single_flight(manifest, monkeypatch):
     calls = {"n": 0}
 
-    def slow_ear(size, pcm, prog):
+    def slow_ear(sel, pcm, prog):
         calls["n"] += 1
         time.sleep(0.15)
         return "Friday, what time is it right now?", {"engine": "faster-whisper",
