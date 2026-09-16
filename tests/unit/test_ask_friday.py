@@ -79,9 +79,11 @@ def test_ask_friday_reports_mind_busy_to_the_hud(monkeypatch):
 
 
 def test_cloud_contract_names_ask_friday():
-    """§4.5 honesty line: reach is real, and it is through the local model."""
+    """§4.5 honesty line: reach is real, and it is through the local model
+    -- when that model is proven (§3.1); the caller states it here."""
     import agent_friday.routes.voice as rv
-    r = rv._voice_context_reach("gemini", ["query_calendar", "check_email", "ask_friday"])
+    r = rv._voice_context_reach("gemini", ["query_calendar", "check_email", "ask_friday"],
+                                local_mind_ready=True)
     assert r["knowledge_graph"] is True and r["memory"] is True
     assert r["full_context"] is True and r["via_local"] is True
     assert r["line"] == ("2 native tools + ask_friday → your context is reached "

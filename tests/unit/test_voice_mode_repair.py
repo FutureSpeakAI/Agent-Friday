@@ -46,18 +46,34 @@ def test_local_reach_is_full_and_quiet():
     assert r["full_context"] is True and r["notice"] == ""
 
 
-def test_cloud_reach_reads_the_real_table_by_default():
+def test_cloud_reach_reads_the_real_table_by_default(monkeypatch):
     """The default path must consult the live declarations, not a comment.
 
     Flipped 2026-09-16 (voice-system-clean-sheet.md §4.5): the table now
     carries `ask_friday`, so the knowledge graph and memory ARE reachable --
-    through the local model -- and the notice goes quiet in favour of the
-    honesty line that names the relay."""
+    through the local model, WHEN that model is proven -- and the notice goes
+    quiet in favour of the honesty line that names the relay."""
+    monkeypatch.setattr(rv, "_local_mind_proven", lambda: True)
     r = rv._voice_context_reach("gemini")
     assert r["tools"] >= 10
     assert r["knowledge_graph"] is True and r["via_local"] is True
     assert "ask_friday" in r["line"]
     assert r["notice"] == ""
+
+
+def test_cloud_reach_relay_is_not_reach_when_the_local_mind_is_unproven(monkeypatch):
+    """§3.1: a relay to a model that is not there is not reach. On
+    2026-09-16 the reach line claimed full context via the local model in
+    the same payload whose manifest said the local model was unavailable."""
+    monkeypatch.setattr(rv, "_local_mind_proven", lambda: False)
+    r = rv._voice_context_reach("gemini", ["query_calendar", "ask_friday"])
+    assert r["full_context"] is False and r["via_local"] is False
+    assert r["knowledge_graph"] is False and r["memory"] is False
+    assert "not proven" in r["line"] and "local model" in r["notice"]
+    # An explicit answer from the caller wins over the manifest.
+    r = rv._voice_context_reach("gemini", ["query_calendar", "ask_friday"],
+                                local_mind_ready=True)
+    assert r["full_context"] is True and r["via_local"] is True
 
 
 # ── F4 ───────────────────────────────────────────────────────────────────────
