@@ -85,6 +85,8 @@ def test_session_info_cloud_carries_context_reach(client, monkeypatch):
     monkeypatch.setattr(core, "GEMINI_API_KEY", "AQ.fake-key-for-test")  # pragma: allowlist secret
     monkeypatch.setattr(rv, "_network_status", lambda: {"offline": False})
     monkeypatch.setattr(rv, "resolve_gemini_key", lambda: {"valid": True})
+    # The relay is only reach when the local mind is proven (§3.1).
+    monkeypatch.setattr(rv, "_local_mind_proven", lambda: True)
     body = client.get("/api/voice/session-info").get_json()
     assert body["engine"] == "gemini"
     cr = body["context_reach"]

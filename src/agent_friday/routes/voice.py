@@ -863,12 +863,31 @@ _MEMORY_TOOL_NAMES = ("memory_recall", "recall_memory", "search_memory",
                       "memory_search", "remember")
 
 
-def _voice_context_reach(engine, tool_names=None):
+def _local_mind_proven() -> bool:
+    """Is the local mind PROVEN right now (clean-sheet §3.1), not merely
+    configured? The `ask_friday` relay only reaches the user's context when
+    there is a local model to relay to. Never raises; unknown reads as not
+    proven, because a relay that may not exist is not reach."""
+    try:
+        from agent_friday.services import voice_manifest as _vm
+        return bool(_vm.get_manifest().snapshot_stage("mind").get("ready"))
+    except Exception:
+        return False
+
+
+def _voice_context_reach(engine, tool_names=None, local_mind_ready=None):
     """F3 of voice-mode-diagnosis-and-repair.md: can the model in this voice
     loop call tools and reach the knowledge graph / memory? Said at session
     start, in one line, instead of letting a cloud session run a degraded loop
     that triages email fine and then cannot answer a question about the
     user's own notes. Never raises.
+
+    `local_mind_ready` lets a caller (or a test) state whether the local mind
+    is proven; None asks the manifest. The relay through `ask_friday` is real
+    reach ONLY when that is true -- on 2026-09-16 this function said "full
+    context via the local model" in the same payload whose manifest said the
+    local model was not available, which is the self-description lie §3.1
+    exists to make impossible.
     """
     engine = str(engine or "local").strip().lower()
     if engine == "gemini":
@@ -891,13 +910,30 @@ def _voice_context_reach(engine, tool_names=None):
                       "session: it can talk, but cannot check email, search, or "
                       "reach your knowledge graph or memory.")
         elif relay and not (kg and mem):
-            notice = ""
+            mind_ok = (bool(local_mind_ready) if local_mind_ready is not None
+                       else _local_mind_proven())
+            if mind_ok:
+                return {"engine": "gemini", "tool_capable": True,
+                        "tools": len(names), "knowledge_graph": True, "memory": True,
+                        "full_context": True, "via_local": True,
+                        "line": (f"{len(names) - 1} native tools + ask_friday → your "
+                                 "context is reached through Friday's local model"),
+                        "notice": ""}
+            # The relay exists but has nothing to relay to. Say that, in the
+            # same words the manifest's describe_for_model() uses, so the
+            # HUD and the model agree.
             return {"engine": "gemini", "tool_capable": True,
-                    "tools": len(names), "knowledge_graph": True, "memory": True,
-                    "full_context": True, "via_local": True,
-                    "line": (f"{len(names) - 1} native tools + ask_friday → your "
-                             "context is reached through Friday's local model"),
-                    "notice": notice}
+                    "tools": len(names), "knowledge_graph": False, "memory": False,
+                    "full_context": False, "via_local": False,
+                    "line": (f"{len(names) - 1} native tools + ask_friday, but "
+                             "Friday's local model is not proven right now — "
+                             "your notes, memory and knowledge graph are out of "
+                             "reach"),
+                    "notice": ("Cloud voice (Gemini Live) is running, but Friday's "
+                               "local model is not available right now, so it "
+                               "cannot reach your knowledge graph or memory. Open "
+                               "Settings → Voice to prove the local model, or "
+                               "switch to local voice.")}
         elif not full:
             missing = [w for w, ok in (("knowledge graph", kg), ("memory", mem)) if not ok]
             notice = (f"Cloud voice (Gemini Live) runs with {len(names)} fixed "
