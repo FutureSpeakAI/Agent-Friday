@@ -141,3 +141,28 @@ def test_computer_control_override_is_announced_not_silent(client, monkeypatch):
     sys_lines = [m for m in chat_mod.CHAT_HISTORY
                  if isinstance(m, dict) and m.get("kind") == "seat_notice"]
     assert sys_lines and "Computer Control is on" in sys_lines[-1]["text"]
+
+
+def test_a_substituted_seat_is_announced_in_the_turn(client, monkeypatch):
+    """The picker holds gemma4:12b (not installed); the router substitutes the
+    installed FridayWeaver seat. The turn must say so -- on the response and
+    as a system line -- instead of an INFO line in a log nobody reads.
+    (Live on 2026-09-18 a scratch conversation was created bound to the
+    serving seat, so this path is pinned here rather than by a live turn.)"""
+    local, cloud = _arrange_turn(monkeypatch, reasoning_model="gemma4:12b")
+    from agent_friday.routing import model_router as _rm
+    monkeypatch.setattr(_rm.ModelRouter, "_chosen_seat",
+                        lambda self, ctx=None: ("gemma4:12b", "ollama-local"))
+    chat_mod._CC_PERMISSION.clear()
+    r = client.post("/api/chat", json={"message": "hello there",
+                                       "conversation_id": "conv-test-seat"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    body = r.get_json()
+    assert body["seat"] == "local" and body["model"] == SEAT
+    notice = body.get("seat_notice") or ""
+    assert "You chose gemma4:12b" in notice and SEAT in notice
+    assert "not installed" in notice
+    sys_lines = [m for m in chat_mod.CHAT_HISTORY
+                 if isinstance(m, dict) and m.get("kind") == "seat_notice"]
+    assert sys_lines and "gemma4:12b" in sys_lines[-1]["text"]
+    assert local.calls == 1 and cloud.calls == 0
