@@ -23,6 +23,16 @@ from PIL import Image
 
 from agent_friday.paths import friday_home
 
+# No console windows from anything this process spawns. The tray outlives the
+# server — it is what starts Friday and what keeps running after Friday is
+# closed — so the popups Stephen reported "when Friday is closed" come from
+# here. Installed before anything can shell out. See services/no_console.py.
+try:
+    from agent_friday.services.no_console import install as _install_no_console
+    _install_no_console()
+except Exception:
+    pass
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
@@ -301,8 +311,51 @@ def main() -> None:
               "(no desktop to put it on in kiosk mode).")
         return
 
-    # Single-instance guard: bind a loopback port to ensure only one tray runs.
+    # Single-instance guard.
+    #
+    # 2026-09-18: this did not hold. Two trays were found running, both
+    # created in the same second (7:56:24), each having started its own
+    # server.py — so Friday was running twice, and both copies' schedulers
+    # and health probes were hitting one single-slot llama-server. The seat
+    # log showed four-token requests taking seven to twenty seconds, which
+    # is what queueing behind another Friday looks like from inside.
+    #
+    # A bare bind() is not a reliable mutex on Windows. Without
+    # SO_EXCLUSIVEADDRUSE the OS will let a second socket take the same
+    # loopback address under conditions that are easy to hit and hard to
+    # reproduce on purpose, and a guard that fails open is worse than none:
+    # it reads as protection in the source while the duplicate it was meant
+    # to stop runs anyway. A named kernel mutex has no such ambiguity —
+    # CreateMutexW either creates it or tells you it already existed.
+    _mutex_handle = None
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            ERROR_ALREADY_EXISTS = 183
+            _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            _k32.CreateMutexW.restype = wintypes.HANDLE
+            _k32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL,
+                                          wintypes.LPCWSTR]
+            # Local\ scopes the name to this logon session, which is the
+            # boundary we actually want: one tray per signed-in user.
+            _mutex_handle = _k32.CreateMutexW(None, True,
+                                              r"Local\AgentFridayTray")
+            if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+                sys.exit(0)
+        except Exception:
+            # Never let the guard itself stop Friday from starting; fall
+            # through to the socket below.
+            _mutex_handle = None
+
     guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if sys.platform == "win32":
+        try:
+            # SO_EXCLUSIVEADDRUSE (0xFFFFFFFB as a signed int) is the option
+            # that makes a Windows bind actually exclusive.
+            guard.setsockopt(socket.SOL_SOCKET, ~socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
     try:
         guard.bind(("127.0.0.1", 51847))
     except OSError:
