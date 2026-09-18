@@ -746,19 +746,102 @@ def gguf_registry_path() -> Path:
     return runtime_dir() / "residency" / "gguf_models.json"
 
 
+_EMPTY_ANNOUNCED = {"at": 0.0}
+
+
+def _legacy_gguf_registry() -> dict:
+    """The old `residency/gguf_models.json`, model_id -> path, present files
+    only. Secondary to `models.json` now; kept so a model registered only by
+    `gguf_extract.register_gguf` still surfaces."""
+    from agent_friday.services import path_probe
+    try:
+        raw = json.loads(gguf_registry_path().read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items()
+            if isinstance(v, str) and path_probe.exists(v)}
+
+
+def seat_files() -> dict:
+    """model_id -> {"gguf", "lora", "mmproj"} for every seat llama-server
+    could be asked to serve. This is what the Arbiter loads from.
+
+    Built from Friday's own store (`~/.friday/runtime/models/models.json`)
+    first, because that is the registry that knows a seat is a base plus an
+    adapter plus a projector. The older `residency/gguf_models.json` is read
+    second, for weights-only entries it alone names. On 2026-09-17 that file
+    named seven GGUFs under a directory that no longer existed, the store's
+    only live seat was on a wedged network share, and the Arbiter's map came
+    back empty without a word: every pinned load then fell through to an
+    Ollama daemon with no models. An empty map is now announced, with the
+    reasons, so a Friday with no local seat says so instead of degrading
+    quietly.
+    """
+    out: dict = {}
+    reasons: list = []
+    try:
+        from agent_friday.services import model_store as ms
+        for model_id, files in ms.seat_file_map().items():
+            if files.get("gguf"):
+                out[model_id] = dict(files)
+        try:
+            for model_id, rec in ms.missing().items():
+                reasons.append("%s: %s" % (model_id, rec.get("why") or "?"))
+        except Exception:
+            pass
+    except Exception as e:
+        reasons.append("model store unreadable: %s" % e)
+    legacy_stale = []
+    try:
+        raw = json.loads(gguf_registry_path().read_text(encoding="utf-8-sig"))
+        legacy_all = {str(k): str(v) for k, v in (raw or {}).items()
+                      if isinstance(v, str)}
+    except Exception:
+        legacy_all = {}
+    legacy_live = _legacy_gguf_registry()
+    for model_id, path in legacy_live.items():
+        if model_id not in out and canonical_model_id(model_id) not in {
+                canonical_model_id(k) for k in out}:
+            out[model_id] = {"gguf": path, "lora": None, "mmproj": None}
+    legacy_stale = sorted(set(legacy_all) - set(legacy_live))
+    if legacy_stale:
+        reasons.append("%s names %d file(s) that are not on disk: %s"
+                       % (gguf_registry_path().name, len(legacy_stale),
+                          ", ".join(legacy_stale)))
+    if not out:
+        now = time.time()
+        # Once a minute, not once per call: `installed_entries` runs under
+        # every plan and every /api/intelligence read.
+        if now - _EMPTY_ANNOUNCED["at"] > 60:
+            _EMPTY_ANNOUNCED["at"] = now
+            msg = ("[residency] NO LOCAL SEAT CAN BE SERVED: no GGUF is "
+                   "mapped for any model. Every pinned seat will be "
+                   "unenforced and every local turn will refuse or fall to "
+                   "the cloud. " + ("; ".join(reasons) if reasons
+                                     else "the store is empty"))
+            print("  " + msg)
+            try:
+                import logging
+                logging.getLogger("friday.residency").error(msg)
+            except Exception:
+                pass
+    return out
+
+
 def gguf_models() -> dict:
-    """model_id -> GGUF path, for models served by llama-server.
+    """model_id -> GGUF weights path, for models served by llama-server.
 
     Ollama's `list_models` is not the whole local inventory any more. After the
     26b moved to llama-server it stopped appearing in `ollama list` entirely,
     and a catalog built from Ollama alone silently loses the heavy seat — the
     plan then has no heavy_hitter and the arbiter cannot grant a heavy lease.
+
+    Weights only; `seat_files()` carries the adapter and projector beside
+    them.
     """
-    try:
-        raw = json.loads(gguf_registry_path().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return {k: v for k, v in raw.items() if Path(v).exists()}
+    return {k: v["gguf"] for k, v in seat_files().items() if v.get("gguf")}
 
 
 def gguf_models_canonical() -> dict:
