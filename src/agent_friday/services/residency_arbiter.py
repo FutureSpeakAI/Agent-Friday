@@ -135,7 +135,9 @@ def endpoints_path() -> Path:
 def _read_published() -> dict:
     """`model_id -> base_url` as the file currently claims. Never raises."""
     try:
-        data = json.loads(endpoints_path().read_text(encoding="utf-8"))
+        # utf-8-sig: a BOM on this file cost a seat its adoption on
+        # 2026-09-09 (Friday-Models/docs/DECISIONS.md).
+        data = json.loads(endpoints_path().read_text(encoding="utf-8-sig"))
         return {str(m): str(b)
                 for m, b in (data.get("endpoints") or {}).items() if b}
     except Exception:
@@ -342,6 +344,18 @@ class OllamaBackend:
         except Exception:
             return {}
 
+    def has(self, model_id) -> bool:
+        """Does the daemon hold this model at all? `/api/tags`, not `/api/ps`:
+        the question is whether a load could succeed, not whether one has."""
+        try:
+            names = {str(m.get("name") or m.get("model") or "")
+                     for m in (_get(self.base_url + "/api/tags") or {})
+                     .get("models", [])}
+        except Exception:
+            return False
+        mid = str(model_id)
+        return mid in names or (mid + ":latest") in names
+
     def load(self, model_id, num_ctx, keep_alive="15m", think=False):
         body = {"model": model_id, "prompt": "hi", "stream": False,
                 "keep_alive": keep_alive,
@@ -541,12 +555,33 @@ def _seat_num_ctx(pid: int) -> int | None:
 
 
 def survey_live_seats(port_lo: int = PORT_BASE, port_hi: int = PORT_BASE + 40) -> dict:
-    """`model_id -> (pid, port)` for llama-servers answering on our ports."""
+    """`model_id -> (pid, port)` for llama-servers answering on our ports.
+
+    THE WINDOW IS NOT THE WHOLE STORY. A fixed 8090..8130 scan finds only the
+    seats this Arbiter allocated ports for. A seat spawned by hand, by an
+    older build, or by a script that picked its own port is invisible to it —
+    and invisible here means unadoptable, unpublished, and (before the guard
+    in `adopt_or_reap`) killed as an orphan on the next boot.
+
+    Observed 2026-09-09: the FridayWeaver seat ran healthy on :8713 answering
+    as `gemma4:e2b-fridayweaver-1.0`, while this survey returned {} , the
+    published record was written empty, and every local turn fell through to
+    the Ollama daemon — which had zero models — and 404'd to the cloud. The
+    seat was fine. Nothing could see it.
+
+    So the window is a floor, not a fence: any port a llama-server we
+    recognise is actually LISTENING on is probed too, wherever it sits.
+    """
     listening = _listening_ports()
+    ports = {p for p in range(port_lo, port_hi + 1) if p in listening}
+    # Ports held by a llama-server of OURS, whatever number it landed on.
+    try:
+        ours = _llama_server_pids()
+        ports |= {p for p, pid in listening.items() if pid in ours}
+    except Exception:
+        pass
     found = {}
-    for port in range(port_lo, port_hi + 1):
-        if port not in listening:
-            continue
+    for port in sorted(ports):
         model = _model_on_port(port)
         if model:
             found[model] = (listening[port], port)
@@ -597,7 +632,7 @@ class LlamaServerBackend:
         return [b for b in order if Path(b).exists()]
 
     def load(self, model_id, num_ctx, *, gguf_path, port,
-             n_cpu_moe=None, timeout=300):
+             n_cpu_moe=None, timeout=300, lora_path=None, mmproj_path=None):
         engines = self.engines_for(model_id)
         if not engines:
             raise TransitionError("no llama-server binary found (looked at %s "
@@ -607,7 +642,9 @@ class LlamaServerBackend:
             try:
                 took = self._spawn(binary, model_id, num_ctx,
                                    gguf_path=gguf_path, port=port + i,
-                                   n_cpu_moe=n_cpu_moe, timeout=timeout)
+                                   n_cpu_moe=n_cpu_moe, timeout=timeout,
+                                   lora_path=lora_path,
+                                   mmproj_path=mmproj_path)
                 _ENGINE_MEMO[model_id] = str(binary)
                 return took
             except TransitionError as e:
@@ -661,7 +698,32 @@ class LlamaServerBackend:
     # took a monitor off the desktop. Measured on this card at 65,536 before
     # committing to it -- see the report; a claim about a flat curve is not
     # the same as this card.
-    MAX_SEAT_NUM_CTX = 32768
+    #
+    # RAISED TO 131,072 ON 2026-09-12, AND THE OLD NUMBER WAS NOT WRONG --
+    # IT WAS MEASURED WITHOUT THE BATCH CAPS THIS CLASS NOW ALWAYS SPAWNS WITH.
+    #
+    # The 1,385 MiB delta recorded above came from a run at the default batch,
+    # where the compute buffer scales with context and dwarfs the KV cache.
+    # `_spawn_once` has since pinned `-b 512 -ub 512` for exactly that reason.
+    # Re-measured end to end on this card (RTX 4070, 12,282 MiB) on 2026-09-12,
+    # each rung actually serving a completion before the card was read:
+    #
+    #     no seat at all          1,791 MiB
+    #     -c 32768                5,398 MiB   (seat: 3,607)
+    #     -c 65536                5,622 MiB   (seat: 3,831, +224 over 32k)
+    #     -c 131072               6,082 MiB   (seat: 4,291, +684 over 32k)
+    #
+    # Doubling twice costs 684 MiB, not 1,385 per doubling, and 131,072 leaves
+    # 6,200 MiB free against a 2,560 MiB display reserve. The old ceiling was
+    # measuring the compute buffer, not the context.
+    #
+    # Why this is worth changing rather than leaving safe: at 32,768 the tool
+    # budget was trimming 75 core tools down to 40-49 on every turn to fit
+    # 16-18k-token prompts, and on 2026-09-10 that trimming dropped
+    # `knowledge_query` -- Friday's own route into its knowledge graph. A
+    # window that forces the agent to discard its capabilities mid-turn is not
+    # a safe default, it is a quiet one.
+    MAX_SEAT_NUM_CTX = 131072
 
     # KV CACHE QUANTIZATION. Off by default in llama.cpp, which stores K and V
     # at f16; q8_0 halves that (8 bits plus a 2-byte scale per 32 elements =
@@ -705,7 +767,7 @@ class LlamaServerBackend:
         return self.KV_CACHE_TYPE
 
     def _spawn(self, binary, model_id, num_ctx, *, gguf_path, port,
-               n_cpu_moe=None, timeout=300):
+               n_cpu_moe=None, timeout=300, lora_path=None, mmproj_path=None):
         """Spawn a seat, retrying once unquantized if the KV flag is rejected.
 
         The retry exists because this flag is the only argument in the command
@@ -719,7 +781,9 @@ class LlamaServerBackend:
         try:
             return self._spawn_once(binary, model_id, num_ctx,
                                     gguf_path=gguf_path, port=port,
-                                    n_cpu_moe=n_cpu_moe, timeout=timeout)
+                                    n_cpu_moe=n_cpu_moe, timeout=timeout,
+                                    lora_path=lora_path,
+                                    mmproj_path=mmproj_path)
         except TransitionError as e:
             if not quantized or getattr(self, "_kv_quant_unsupported", False):
                 raise
@@ -735,10 +799,13 @@ class LlamaServerBackend:
                 "falling back to f16", Path(binary).name, model_id, e)
             return self._spawn_once(binary, model_id, num_ctx,
                                     gguf_path=gguf_path, port=port,
-                                    n_cpu_moe=n_cpu_moe, timeout=timeout)
+                                    n_cpu_moe=n_cpu_moe, timeout=timeout,
+                                    lora_path=lora_path,
+                                    mmproj_path=mmproj_path)
 
     def _spawn_once(self, binary, model_id, num_ctx, *, gguf_path, port,
-                    n_cpu_moe=None, timeout=300):
+                    n_cpu_moe=None, timeout=300, lora_path=None,
+                    mmproj_path=None):
         try:
             asked = int(num_ctx or 0)
         except Exception:
@@ -793,13 +860,34 @@ class LlamaServerBackend:
         # looking like a model that cannot, because a file next to it was never
         # handed over. A text-only model simply has no projector here, so a
         # missing file is a normal outcome and not a failure.
-        try:
-            from agent_friday.services import gguf_extract as _gx
-            proj = _gx.projector_path(model_id)
-            if proj.exists():
-                cmd += ["--mmproj", str(proj)]
-        except Exception:
-            pass
+        #
+        # The store's own projector comes first (`models.json` `mmproj`,
+        # resolved by `model_store.seat_files` to a local copy when one
+        # exists); the extractor's side-file is the fallback for models that
+        # were imported from Ollama before the store recorded projectors.
+        if mmproj_path:
+            cmd += ["--mmproj", str(mmproj_path)]
+        else:
+            try:
+                from agent_friday.services import gguf_extract as _gx
+                proj = _gx.projector_path(model_id)
+                if proj.exists():
+                    cmd += ["--mmproj", str(proj)]
+            except Exception:
+                pass
+        # The adapter. FridayWeaver-1.0 is a Q8_0 base plus a LoRA applied at
+        # serve time; without `--lora` the process that comes up under that
+        # name is the stock base model, which is the silent wrong-model
+        # failure Friday-Models/docs/DECISIONS.md refused on 2026-09-09.
+        # A record that names an adapter and a spawn that cannot pass it is a
+        # TransitionError, never a base seat under the fine-tune's name.
+        if lora_path:
+            if not Path(str(lora_path)).exists():
+                raise TransitionError(
+                    "%s names adapter %s and it is not reachable; refusing "
+                    "to serve the base under the fine-tune's name"
+                    % (model_id, lora_path))
+            cmd += ["--lora", str(lora_path)]
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
         # THE SEAT'S OWN BANNER, KEPT. This was stdout=DEVNULL/stderr=DEVNULL,
@@ -848,15 +936,62 @@ class LlamaServerBackend:
             try:
                 with urllib.request.urlopen(
                         "http://127.0.0.1:%d/health" % port, timeout=3) as r:
-                    if r.status == 200:
-                        self.procs[model_id] = (proc, port)
-                        _publish_endpoints(self.procs)
-                        return round(time.time() - t0, 2)
+                    ready = r.status == 200
             except Exception:
-                time.sleep(1.5)
+                ready = False
+            if ready:
+                if lora_path:
+                    why = self._adapter_missing(port, lora_path)
+                    if why:
+                        proc.terminate()
+                        raise TransitionError(
+                            "%s came up without its adapter (%s); stopped "
+                            "rather than serve the base under the "
+                            "fine-tune's name" % (model_id, why))
+                self.procs[model_id] = (proc, port)
+                _publish_endpoints(self.procs)
+                return round(time.time() - t0, 2)
+            time.sleep(1.5)
         proc.terminate()
         raise TransitionError("%s never became ready in %ss for %s"
                               % (Path(binary).name, timeout, model_id))
+
+    @staticmethod
+    def _adapter_missing(port: int, lora_path) -> str | None:
+        """Ask the seat what adapters it loaded. `None` when the adapter is
+        there at a non-zero scale; otherwise the reason.
+
+        A definitive negative (the endpoint answers and the adapter is not in
+        the list, or is at scale 0) is a refusal. A build without the
+        endpoint, or a transient error, is not: the spawn passed `--lora` and
+        llama-server exits non-zero when it cannot load one, so the process
+        being up is itself the evidence in that case.
+        """
+        try:
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:%d/lora-adapters" % port,
+                    timeout=5) as r:
+                if r.status != 200:
+                    return None
+                rows = json.loads(r.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+        if not isinstance(rows, list):
+            return None
+        want = Path(str(lora_path)).name.lower()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            path = str(row.get("path") or "").lower()
+            if path.endswith(want) or Path(path).name == want:
+                try:
+                    scale = float(row.get("scale", 0))
+                except Exception:
+                    scale = 0.0
+                if scale > 0:
+                    return None
+                return "adapter listed at scale %s" % scale
+        return "adapter not in /lora-adapters (%d listed)" % len(rows)
 
     def evict(self, model_id):
         entry = self.procs.pop(model_id, None)
@@ -928,7 +1063,80 @@ class LlamaServerBackend:
             elif model_id in self.procs:
                 claimed.add(pid)
 
-        for pid in (_llama_server_pids() - claimed):
+        # REAP ONLY WHAT THE SURVEY COULD IDENTIFY.
+        #
+        # `_llama_server_pids() - claimed` reaps by ABSENCE: anything the
+        # survey did not return is assumed dead weight and killed. That
+        # inverts the burden of proof on the one question where a wrong
+        # answer is unrecoverable — a process we cannot identify is not the
+        # same as a process nobody wants, and the difference is invisible
+        # from here.
+        #
+        # Observed 2026-09-09: a healthy FridayWeaver seat on :8713 sat
+        # outside the scanned window, so the survey returned {}, nothing was
+        # claimed, and this loop was one boot away from `taskkill /F`-ing the
+        # only working local model on the machine — while fixing nothing,
+        # because the routing failure was the invisibility, not the process.
+        #
+        # So: a pid is reaped only if the survey positively SAW it serving a
+        # model and nothing claimed it. An unidentified llama-server is left
+        # alone. The cost is that a genuine orphan on a port we cannot see
+        # may leak its VRAM until someone kills it by hand; that is strictly
+        # the cheaper mistake, and the survey widening above shrinks the set
+        # it can happen to.
+        # A SEAT THE USER'S CONFIGURATION ROUTES TO IS NOT AN ORPHAN.
+        #
+        # `wanted` comes from the residency plan alone. On 2026-09-09 that
+        # plan contained no pinned text seat at all — only stt/tts on-demand
+        # and a leased image seat — because the brain had never been measured
+        # on this hardware. So `wanted` was empty, and a healthy
+        # gemma4:e2b-fridayweaver-1.0 seat, surveyed and identified, was
+        # reaped as unwanted the moment it became visible. It had survived
+        # earlier restarts only by sitting outside the scanned port range.
+        # Making it visible without this check turns invisibility-as-luck
+        # into a reliable kill.
+        #
+        # An enabled local openai-compatible descriptor naming that port is
+        # an explicit statement that dispatch routes there. The plan not
+        # asking for a seat is not the same as the user not wanting one.
+        _protected = set()
+        try:
+            from agent_friday.services.provider_registry import (
+                get_provider_registry)
+            _cfg_ports = set()
+            for prov in get_provider_registry().get_enabled_providers():
+                if (prov.get("classification") == "local"
+                        and prov.get("type") == "openai-compatible"):
+                    _p = _endpoint_port(str(prov.get("base_url") or ""))
+                    if _p:
+                        _cfg_ports.add(_p)
+            _protected = {pid for _m, (pid, port) in live.items()
+                          if port in _cfg_ports}
+        except Exception:
+            _protected = set()
+
+        # AN EMPTY PLAN IS NOT AUTHORITY TO KILL.
+        #
+        # `wanted` is empty whenever the plan pins no llama.cpp seat — which
+        # on this machine is the NORMAL state, because the brain has never
+        # been measured on this hardware and the plan therefore lists only
+        # stt/tts on-demand and a leased image seat. Reaping on an empty
+        # `wanted` reads "the plan asked for nothing, so everything running
+        # is garbage". The truthful reading is "the plan has no opinion",
+        # and no opinion is not a mandate.
+        #
+        # Measured the hard way on 2026-09-09: a healthy FridayWeaver seat
+        # was surveyed, found absent from an empty `wanted`, and killed —
+        # twice — on a restart whose only purpose was to make it reachable.
+        if not wanted:
+            print("  [arbiter] plan pins no llama.cpp seat; not reaping "
+                  f"{len(_llama_server_pids())} live llama-server process(es) "
+                  "— an empty plan is no opinion, not a mandate")
+            _publish_endpoints(self.procs)
+            return report
+
+        _surveyed = {pid for _m, (pid, _p) in live.items()}
+        for pid in ((_llama_server_pids() & _surveyed) - claimed - _protected):
             try:
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                                capture_output=True, timeout=20)
@@ -1032,6 +1240,21 @@ def _configured_image_model() -> str | None:
         return None
 
 
+def _normalise_seat_files(raw) -> dict:
+    out = {}
+    for model_id, v in dict(raw or {}).items():
+        if isinstance(v, dict):
+            if v.get("gguf"):
+                out[model_id] = {"gguf": str(v["gguf"]),
+                                 "lora": str(v["lora"]) if v.get("lora")
+                                 else None,
+                                 "mmproj": str(v["mmproj"]) if v.get("mmproj")
+                                 else None}
+        elif v:
+            out[model_id] = {"gguf": str(v), "lora": None, "mmproj": None}
+    return out
+
+
 class Arbiter:
     def __init__(self, profile=None, entries=None, *, ollama=None,
                  llama=None, comfy=None, gguf_paths=None):
@@ -1046,8 +1269,12 @@ class Arbiter:
         # the residency layer's central rule (R9) was unenforced everywhere
         # while looking configured — the caller has to remember to pass the one
         # thing without which nothing works.
-        self.gguf_paths = dict(gguf_paths if gguf_paths is not None
-                               else rc.gguf_models())
+        # A seat is up to three files. `gguf_paths` accepts the old shape
+        # (`model_id -> weights path`) and the current one
+        # (`model_id -> {"gguf", "lora", "mmproj"}`); both are normalised to
+        # the second so `_load_pinned` can pass an adapter and a projector.
+        self.gguf_paths = _normalise_seat_files(
+            gguf_paths if gguf_paths is not None else rc.seat_files())
         self.state = STATE_DEFAULT
         self.plan = None
         self.planned_at = None          # when self.plan was computed
@@ -1127,6 +1354,24 @@ class Arbiter:
         the arbiter so `rp.plan` remains a pure function of the profile and its
         golden fixtures keep meaning something.
         """
+        # THE USER'S SEAT BINDINGS SURVIVE A BARE RECOMPUTE.
+        #
+        # Every reader passes `seat_binding.overrides_from_settings(...)` --
+        # `plan_fresh`, the status route, replan -- so the plan they render
+        # pins the seat the user chose. `boot()` did not: it called
+        # `compute_plan()` bare, twice, so the plan it LOADED FROM had no
+        # binding, printed "plan pins no llama.cpp seat", and skipped
+        # `_load_pinned` entirely. Observed on the reference machine at the
+        # 2026-09-17 17:02 and 2026-09-18 04:21 boots: the status page showed
+        # `gemma4:e2b-fridayweaver-1.0` pinned at 131,072 while no
+        # llama-server existed, because the only path that spawns one had
+        # planned without the settings that name it. `server.py` primes this
+        # with the settings overrides immediately before `boot()`; a call
+        # with `overrides=None` reuses them rather than planning blind.
+        if overrides is None:
+            overrides = getattr(self, "_last_overrides", None)
+        else:
+            self._last_overrides = overrides
         from agent_friday.services import context_budget
         hwp.refresh_display_reserve(
             self.profile, ours_resident_mib=self._ours_resident_mib())
@@ -1810,10 +2055,36 @@ class Arbiter:
         except Exception:
             pass
 
+    def _seat_files(self, model_id) -> dict:
+        """The files a seat is spawned from, or an empty map."""
+        return dict(self.gguf_paths.get(model_id) or {})
+
+    def _llama_kwargs(self, files: dict) -> dict:
+        """Only pass the adapter and projector when the seat has them, so a
+        backend with the older `load()` signature keeps working."""
+        kw = {}
+        if files.get("lora"):
+            kw["lora_path"] = files["lora"]
+        if files.get("mmproj"):
+            kw["mmproj_path"] = files["mmproj"]
+        return kw
+
+    def _daemon_has(self, model_id) -> bool:
+        """Whether the daemon could serve this model. A backend without a
+        `has()` (the test fakes) is assumed able, which is the old behaviour."""
+        has = getattr(self.ollama, "has", None)
+        if has is None:
+            return True
+        try:
+            return bool(has(model_id))
+        except Exception:
+            return False
+
     def _load_pinned(self, seat, role):
         """R9: a pinned seat is a process we own, not a request to a daemon."""
         entry = self._entry(seat["model_id"])
-        gguf = self.gguf_paths.get(seat["model_id"])
+        files = self._seat_files(seat["model_id"])
+        gguf = files.get("gguf")
         t0 = time.time()
         why = DAEMON_SERVED.get(seat["model_id"])
         if why:
@@ -1828,7 +2099,8 @@ class Arbiter:
             try:
                 took = self.llama.load(seat["model_id"], seat["num_ctx"],
                                        gguf_path=gguf, port=port,
-                                       timeout=self.timeout_for(entry))
+                                       timeout=self.timeout_for(entry),
+                                       **self._llama_kwargs(files))
                 self._record("load-pinned", role, seat["model_id"], took)
                 return took
             except TransitionError as e:
@@ -1841,6 +2113,28 @@ class Arbiter:
                 why = str(e)
         else:
             why = "no GGUF mapped"
+
+        # A MISSING MAPPING NEVER FALLS TO A DAEMON THAT DOES NOT HAVE THE
+        # MODEL. On 2026-09-17 the GGUF registry named seven files in a
+        # directory that no longer existed, Ollama held zero models, and every
+        # pinned load went to the daemon, 404ed, and left the boot DEGRADED
+        # with nothing in the log that said why. An honest empty seat, with
+        # the reason on it, is the state the status endpoint should show.
+        if not self._daemon_has(seat["model_id"]):
+            reason = ("%s for %s, and the Ollama daemon does not have it "
+                      "either; this seat is NOT SERVING (R9)"
+                      % (why, seat["model_id"]))
+            seat["pin_unenforced"] = reason
+            seat["absent"] = True
+            print("  [arbiter] %s" % reason)
+            try:
+                __import__("logging").getLogger("friday.residency").error(
+                    "[arbiter] %s", reason)
+            except Exception:
+                pass
+            self._record("load-pinned-absent", role, seat["model_id"],
+                         round(time.time() - t0, 2))
+            return 0.0
 
         self.ollama.load(seat["model_id"], seat["num_ctx"])
         took = round(time.time() - t0, 2)
@@ -1862,7 +2156,8 @@ class Arbiter:
         control the offload placement needs.
         """
         entry = self._entry(seat["model_id"])
-        gguf = self.gguf_paths.get(seat["model_id"])
+        files = self._seat_files(seat["model_id"])
+        gguf = files.get("gguf")
         t0 = time.time()
         if gguf:
             port = PORT_BASE + 20 + len(self.llama.procs)
@@ -1871,7 +2166,12 @@ class Arbiter:
                 port=port,
                 n_cpu_moe=(seat.get("offload") or {}).get("n_cpu_moe", 20)
                 if seat.get("is_moe") else None,
-                timeout=self.timeout_for(entry))
+                timeout=self.timeout_for(entry),
+                **self._llama_kwargs(files))
+        elif not self._daemon_has(seat["model_id"]):
+            raise TransitionError(
+                "no GGUF mapped for %s and the Ollama daemon does not have "
+                "it; the lease cannot be served" % seat["model_id"])
         else:
             self.ollama.load(seat["model_id"], seat["num_ctx"] or 2048)
             took = round(time.time() - t0, 2)
@@ -1965,9 +2265,18 @@ class Arbiter:
                     total += int(mib)
         except Exception:
             pass
+        # `llama.procs` values are `(Popen, port)` tuples, not dicts, so the
+        # old read of `proc.get("vram_mib")` counted nothing and the
+        # display-reserve sampler then treated every llama-server seat as
+        # compositor draw. The seat's footprint lives on the plan.
         try:
-            for proc in getattr(self.llama, "procs", {}).values() or {}:
-                mib = (proc or {}).get("vram_mib") if isinstance(proc, dict) else None
+            seats = ((self.plan or {}).get("seats") or {})
+            by_model = {}
+            for seat in seats.values():
+                if isinstance(seat, dict) and seat.get("model_id"):
+                    by_model.setdefault(seat["model_id"], seat)
+            for model_id in list(getattr(self.llama, "procs", {}) or {}):
+                mib = (by_model.get(model_id) or {}).get("vram_mib")
                 if isinstance(mib, (int, float)) and mib > 0:
                     total += int(mib)
         except Exception:
