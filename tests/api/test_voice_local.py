@@ -73,6 +73,19 @@ def test_ws_voice_local_route_registered(app):
     assert "/ws/live" in rules  # cloud path still present (opt-in)
 
 
+def test_ws_voice_and_its_alias_share_one_implementation(app):
+    """flask-sock's decorator returns None, so an alias function that called
+    the decorated name called None: every /ws/voice connect was an HTTP 500
+    (observed 2026-09-18) while /ws/voice-local worked. Both paths must wrap
+    the SAME undecorated handler."""
+    by_rule = {r.rule: r.endpoint for r in app.url_map.iter_rules()}
+    a = app.view_functions[by_rule["/ws/voice"]]
+    b = app.view_functions[by_rule["/ws/voice-local"]]
+    impl_a, impl_b = getattr(a, "__wrapped__", None), getattr(b, "__wrapped__", None)
+    assert impl_a is not None and impl_a is impl_b
+    assert callable(impl_a) and impl_a.__name__ == "ws_voice_local"
+
+
 # ── session-info: local is default, cloud is opt-in ───────────────────────────
 
 class _FakeEngine:
