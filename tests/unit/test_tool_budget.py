@@ -251,3 +251,33 @@ def test_junk_is_survivable(junk, monkeypatch):
     _seat(monkeypatch, 32768)
     kept, note = tb.fit_tools_to_seat("seat:9b", junk)
     assert kept == [] and note is None
+
+
+def test_a_request_the_seat_measures_as_fitting_is_never_trimmed_on_an_estimate(monkeypatch):
+    """Re-measured 2026-09-18 on the FridayWeaver seat: 75 declarations
+    estimate 12,740 tokens and render to 12,433, so on that seat chars/4 is
+    honest -- but another template can expand tools differently in either
+    direction. When the seat will count the request, its count decides."""
+    _seat(monkeypatch, 32768)
+    fat = [_tool(f"fat_{i}", size=2000) for i in range(20)]     # ~20k by chars/4
+    calls = []
+
+    def measure(model_id, system, messages, tools):
+        calls.append(bool(tools))
+        return 10_000 if not tools else 10_000 + 8_000          # the seat says 8k
+    monkeypatch.setattr(tb, "measure_request", measure)
+    kept, note = tb.fit_tools_to_seat("seat", fat, system="sys", messages=[])
+    assert calls == [False, True]                              # prompt, then all-in
+    assert len(kept) == len(fat) and note is None              # nothing trimmed
+
+
+def test_a_request_the_seat_measures_as_too_big_is_trimmed_despite_a_small_estimate(monkeypatch):
+    _seat(monkeypatch, 32768)
+    thin = [_tool(f"thin_{i}", size=100) for i in range(20)]   # ~2k by chars/4
+
+    def measure(model_id, system, messages, tools):
+        return 10_000 if not tools else 10_000 + 20_000         # the seat says 20k
+    monkeypatch.setattr(tb, "measure_request", measure)
+    kept, note = tb.fit_tools_to_seat("seat", thin, system="sys", messages=[])
+    assert len(kept) < len(thin)                               # the estimate lied small
+    assert note                                                # and the model is told

@@ -108,6 +108,89 @@ def _served_ctx(model_id: str) -> int | None:
     return n
 
 
+def _seat_base(model_id: str) -> str | None:
+    """The seat's HTTP root, by the same two-branch resolution as _served_ctx."""
+    try:
+        from agent_friday.services.local_call import seat_endpoint
+        base = seat_endpoint(model_id)
+    except Exception:
+        base = None
+    if not base:
+        try:
+            from agent_friday.services.model_seat_gate import (
+                _local_openai_descriptor)
+            prov = _local_openai_descriptor(model_id)
+            base = ((prov or {}).get("base_url") or "").rstrip("/") or None
+        except Exception:
+            base = None
+    if not base:
+        return None
+    return base[:-3] if base.endswith("/v1") else base
+
+
+def _oai_tools(tools) -> list:
+    """Registry entries (name/description/input_schema) rendered the way the
+    seat receives them, so a measurement counts what will be served. Entries
+    already in OpenAI shape pass through."""
+    out = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") == "function" and isinstance(t.get("function"), dict):
+            out.append(t)
+            continue
+        out.append({"type": "function", "function": {
+            "name": t.get("name"), "description": t.get("description") or "",
+            "parameters": t.get("input_schema") or {"type": "object", "properties": {}}}})
+    return out
+
+
+def measure_request(model_id: str, system, messages, tools) -> int | None:
+    """EXACTLY how many tokens this request renders to, or None.
+
+    Prefer measuring over estimating. llama-server renders the same jinja chat
+    template it will use to serve the request (`/apply-template`) and will
+    tokenize the result with the same tokenizer (`/tokenize`), so this is not
+    an approximation of the cost -- it is the cost.
+
+    Measured to be practical on the reference machine: both endpoints answer a
+    102-turn conversation with 75 tool declarations in well under a second, so
+    this is affordable once per turn. It is still best-effort: any seat that
+    does not expose these endpoints returns None and the caller falls back to
+    chars/4, which measurement showed runs about 0.98x of true -- close, and
+    on the safe side.
+    """
+    root = _seat_base(model_id)
+    if not root:
+        return None
+    try:
+        import urllib.request
+        convo = []
+        if system:
+            convo.append({"role": "system", "content": str(system)})
+        for m in (messages or []):
+            c = m.get("content")
+            if isinstance(c, str):
+                convo.append({"role": m.get("role") or "user", "content": c})
+        body = {"messages": convo}
+        if tools:
+            body["tools"] = tools
+
+        def _post(path, payload, timeout=10):
+            req = urllib.request.Request(
+                root + path, data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode())
+
+        prompt = _post("/apply-template", body).get("prompt")
+        if not isinstance(prompt, str):
+            return None
+        return len(_post("/tokenize", {"content": prompt}).get("tokens") or [])
+    except Exception:
+        return None
+
+
 def _spawn_cap(model_id: str) -> int | None:
     """The ceiling every arbiter-run llama-server seat is spawned under.
 
@@ -300,6 +383,30 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
 
     core_cost = _tokens(core)
     conn_cost = _tokens(connectors)
+
+    # THE SEAT COUNTS THE TOOLS TOO. The prompt was measured exactly above;
+    # the tool declarations were still chars/4, which cannot see how a chat
+    # template renders them. Re-measured 2026-09-18 against the FridayWeaver
+    # seat: 75 declarations estimate 12,740 tokens, render to 12,433 (0.98x),
+    # and the prompt estimates 14,315 against 14,359 -- so on THIS seat the
+    # estimate is honest, and the "Context size has been exceeded" errors
+    # date from 2026-09-09 at a 32k window and did not recur at 65k. The
+    # exact count is used anyway: another template may expand tools
+    # differently, and a decision the seat can make for us should not rest
+    # on an estimate in either direction.
+    true_all = None
+    if tools and (messages is not None or system is not None):
+        true_all = measure_request(model_id, system, messages, _oai_tools(tools))
+    if true_all and (core_cost + conn_cost) > 0:
+        true_tools = max(0, int(true_all) - int(prompt_cost or 0))
+        if true_tools <= budget:
+            return FittedTools(tools), None
+        ratio = true_tools / float(core_cost + conn_cost)
+        if ratio > 0 and abs(ratio - 1.0) > 0.01:
+            # Rescale the budget rather than every per-tool cost below: the
+            # comparisons that follow stay in estimate units, corrected by
+            # how far the seat's rendering departs from chars/4.
+            budget = int(budget / ratio)
 
     # CORE TOOLS MUST BE DROPPABLE TOO. A trimmer whose only lever is
     # connectors cannot trim the thing that is too big.

@@ -289,8 +289,11 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             _prompt_cost = (len(_sys_out or "") + sum(
                 len(m.get("content")) for m in (messages or [])
                 if isinstance(m.get("content"), str))) // 4
+            # Hand over the prompt and transcript so the seat can COUNT the
+            # request (prompt and tools) instead of taking chars/4 on faith.
             _fitted, _fit_note = fit_tools_to_seat(
-                use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost)
+                use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost,
+                system=_sys_out, messages=messages)
             if _fit_note:
                 _sys_out = (_sys_out or "") + "\n[SEAT] " + _fit_note
         except Exception:
