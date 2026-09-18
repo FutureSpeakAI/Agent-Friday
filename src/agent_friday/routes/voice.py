@@ -1198,8 +1198,44 @@ def _build_voice_system_prompt(settings=None, description=None):
         full_ctx += _build_session_continuity_block() + _build_emotional_tone_block()
     except Exception:
         pass
+    # THE VOLATILE TAIL LEAVES THE SYSTEM MESSAGE.
+    #
+    # Measured against the FridayWeaver seat on 2026-09-18: with its chat
+    # template, ANY change to the system message -- 54 characters at the very
+    # end -- re-prefills the whole prompt (17,203 of 17,203 tokens in the
+    # probe; 27,480 on a real session), while a changed user message costs
+    # ~10. The clock, auto-context, continuity and tone blocks after
+    # `VOLATILE_MARKER` change between builds, so every session's first
+    # turn paid ~8 s and a warm could never help. They now ride in the user
+    # turn instead (`_voice_user_message`), which keeps the system text
+    # byte-identical across proofs, warms and sessions -- and gives the
+    # model a fresh clock every turn instead of the one frozen at session
+    # start. ~500 tokens per turn is the whole cost.
+    try:
+        from agent_friday.services.prompt_cache import VOLATILE_MARKER
+        idx = full_ctx.find(VOLATILE_MARKER)
+    except Exception:
+        idx = -1
+    volatile = ""
+    if idx >= 0:
+        volatile = full_ctx[idx:]
+        full_ctx = full_ctx[:idx]
     return voice_prefix + full_ctx, {"is_local_brain": _is_local_brain,
-                                     "provider": _prov}
+                                     "provider": _prov, "volatile": volatile}
+
+
+def _voice_user_message(user_text, settings=None, volatile=None):
+    """The user turn: the volatile context block (clock, auto-context,
+    continuity, tone), rebuilt fresh (~45 ms), then what was said."""
+    if volatile is None:
+        try:
+            volatile = _build_voice_system_prompt(settings)[1].get("volatile") or ""
+        except Exception:
+            volatile = ""
+    volatile = (volatile or "").strip()
+    if not volatile:
+        return user_text
+    return volatile + "\n\n== THE USER JUST SAID ==\n" + user_text
 
 
 def _voice_prompt_for_contract():
@@ -1231,7 +1267,9 @@ def _warm_seat_prefix() -> dict:
         _tok = TIMINGS_SINK.set(lambda t: timings.update(t or {}))
         try:
             _generate_agent(
-                [{"role": "user", "content": "OK."}],
+                [{"role": "user",
+                  "content": _voice_user_message("OK.", settings,
+                                                 volatile=_pmeta.get("volatile"))}],
                 system=system_prompt, model=_brain, max_tokens=1,
                 temperature=settings.get("temperature"),
                 session_ctx={"authenticated": True, "provider": _pmeta["provider"],
@@ -1836,7 +1874,8 @@ if sock is not None:
             _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
             try:
                 reply, _trace = _generate_agent(
-                    [{"role": "user", "content": user_text}],
+                    [{"role": "user",
+                      "content": _voice_user_message(user_text, settings)}],
                     system=system_prompt,
                     model=_brain,
                     max_tokens=_voice_reply_cap(settings),

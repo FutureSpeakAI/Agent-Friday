@@ -52,8 +52,14 @@ def test_ask_friday_is_egress_gated(monkeypatch):
     assert calls["model"] == "seat-x"
     assert calls["ctx"]["provider"] == "local" and calls["ctx"]["is_voice"] is True
     assert calls["max_tokens"] == 300
-    assert calls["messages"][0]["content"] == "what is Janet's number?"
-    assert calls["system"].startswith("VOICE PROMPT")
+    # The relay note rides in the USER turn and the question ends it; the
+    # system text is the voice prompt untouched, so it shares the seat's
+    # prefix cache with local sessions (measured 2026-09-18: any change to
+    # the system message re-prefills the whole prompt).
+    user = calls["messages"][0]["content"]
+    assert user.endswith("what is Janet's number?")
+    assert "RELAYED from a cloud voice session" in user
+    assert calls["system"] == "VOICE PROMPT"
 
 
 def test_ask_friday_without_a_seat_says_so(monkeypatch):
