@@ -474,7 +474,29 @@ def search(query: str, count: int = 10) -> dict:
     last["query"] = q
     last["backend"] = runners[-1][0] if runners else "none"
     last["detail"] = "; ".join(tried)
+    # Observed 2026-09-18: with no Firecrawl key, every query fell to the
+    # DuckDuckGo scrape, which answered HTTP 202 anti-bot walls, and the
+    # model told the user "I don't have Firecrawl wired up as a tool right
+    # now, nothing in my toolkit is named that" -- false; it is the first
+    # backend in this chain. A failure that hides the fix is half a lie.
+    if not _firecrawl_ready():
+        last["detail"] = (last["detail"] + " " + FIRECRAWL_UNCONFIGURED_NOTE).strip()
+        last["firecrawl"] = {"configured": False, "how": FIRECRAWL_KEY_HOWTO}
     return last
+
+
+#: Where the key goes. Read by firecrawl.api_key() in this order: the
+#: FIRECRAWL_API_KEY environment variable (start.bat sets Friday's keys),
+#: the credential store, then `firecrawl_api_key` in settings.json.
+FIRECRAWL_KEY_HOWTO = (
+    "Set FIRECRAWL_API_KEY in your environment (start.bat, beside the other "
+    "keys) or `firecrawl_api_key` in settings.json, then restart Friday.")
+
+FIRECRAWL_UNCONFIGURED_NOTE = (
+    "Firecrawl is wired in as the PREFERRED search backend but has no API key "
+    "on this machine, so it was not tried. " + FIRECRAWL_KEY_HOWTO +
+    " Do not tell the user that Firecrawl is unavailable or not a tool: it "
+    "exists and is unconfigured.")
 
 
 def _firecrawl_ready() -> bool:
