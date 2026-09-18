@@ -1689,7 +1689,6 @@ def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
 
 if sock is not None:
 
-    @sock.route('/ws/voice-local')
     def ws_voice_local(ws):
         """Tier-1 LOCAL voice: mic → VAD → faster-whisper → LLM brain → Piper → speaker.
 
@@ -1954,11 +1953,18 @@ if sock is not None:
             except Exception:
                 pass
 
-    @sock.route('/ws/voice')
-    def ws_voice(ws):
-        """Clean-sheet §6.3: `/ws/voice` is the local route; `/ws/voice-local`
-        is kept as an alias for one release."""
-        return ws_voice_local(ws)
+    # Clean-sheet §6.3: `/ws/voice` is the local route; `/ws/voice-local` is
+    # kept as an alias for one release. ONE implementation, two paths.
+    #
+    # flask-sock's `route` decorator returns None, so a decorated
+    # `ws_voice_local` was None by the time an alias function called it:
+    # every /ws/voice connect answered HTTP 500 ("'NoneType' object is not
+    # callable", observed 2026-09-18) while /ws/voice-local -- the URL
+    # session-info hands the mic -- kept working. Register the undecorated
+    # implementation under both paths, with distinct endpoint names so
+    # Flask does not see one endpoint mapped to two view functions.
+    sock.route('/ws/voice-local', endpoint='ws_voice_local')(ws_voice_local)
+    sock.route('/ws/voice', endpoint='ws_voice')(ws_voice_local)
 
     @sock.route('/ws/live')
     def ws_live(ws):
