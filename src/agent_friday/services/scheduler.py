@@ -49,6 +49,57 @@ _RUNS_LOCK = threading.Lock()
 
 # ref -> {fn, label, default_trigger, default_spec, notify, weekday_only, source}
 BUILTIN_TASKS: dict = {}
+
+
+class SkippedRun(RuntimeError):
+    """This run did not happen, on purpose, and that is not a failure.
+
+    Inherits RuntimeError so every existing handler still catches it; the
+    distinction is in the message, which says why nothing ran. Used by
+    `local_only` schedules when no local seat is serving: not running is the
+    correct outcome there, and spending money would be the bug.
+    """
+
+
+def _resolve_local_seat():
+    """The local model actually serving right now, or None.
+
+    Deliberately asks what is SERVING rather than what is configured. A
+    settings file naming a local model proves nothing — that exact gap is how
+    a seat that had died kept being "selected" while every turn went to
+    Anthropic. `describe_dispatch` verifies against the server itself, so a
+    name only comes back when something is genuinely answering to it.
+    """
+    try:
+        from agent_friday.services import local_seats
+        from agent_friday.services.local_call import describe_dispatch
+    except Exception:
+        return None
+    try:
+        # Prefer the configured reasoning seat when it is genuinely up, so a
+        # scheduled run uses the same brain the user does.
+        try:
+            from agent_friday.core import _load_settings
+            cfg = ((_load_settings() or {}).get("capability_routing") or {})
+            preferred = ((cfg.get("reasoning") or {}).get("model") or "").strip()
+        except Exception:
+            preferred = ""
+        candidates = []
+        if preferred:
+            candidates.append(preferred)
+        candidates += [n for n, _ in (local_seats.installed() or [])]
+        for name in candidates:
+            if not name:
+                continue
+            try:
+                d = describe_dispatch(name) or {}
+            except Exception:
+                continue
+            if d.get("route") in ("seat", "daemon"):
+                return name
+    except Exception as e:
+        _log.debug("local seat resolution failed (%s)", e)
+    return None
 _RUNNING: set = set()                 # schedule ids currently dispatched
 _RUNNING_LOCK = threading.Lock()
 
@@ -517,9 +568,31 @@ def _run_task(rec):
     # (which already carries its model badge). Give that orb the ⏰ icon so a
     # scheduled run reads as a single timer orb — no separate scheduler wrapper
     # orb, so no duplicate/double-icon orb.
+    # LOCAL-ONLY SCHEDULES.
+    #
+    # A recurring job is the worst possible thing to let escalate to a paid
+    # seat, because nobody is watching when it does. The heartbeat checks mail
+    # and calendar every run and reports "NO CHANGE" most of the time; paying
+    # a frontier model to say nothing, twice a day, forever, is a bill nobody
+    # decided to incur. Stephen, 2026-09-18: "make sure it's only going to
+    # execute on a local seat. I don't want to keep getting charged by
+    # Anthropic for checking my email and calendar."
+    #
+    # `local_only: true` on the task means exactly that, and it means it in
+    # the strict sense: if no local seat is actually serving, the run is
+    # SKIPPED rather than quietly sent to the cloud. A schedule that silently
+    # changes who it pays is the same silent-substitution defect this codebase
+    # has spent a lot of effort removing from the interactive path.
+    _model = task.get("model")
+    if task.get("local_only"):
+        _model = _resolve_local_seat()
+        if not _model:
+            raise SkippedRun(
+                "local_only schedule skipped: no local seat is serving right "
+                "now, and this job is not permitted to run in the cloud")
     tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                       description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
-                      tools=task.get("tools"))
+                      tools=task.get("tools"), model=_model)
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
