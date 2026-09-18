@@ -43746,7 +43746,49 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "+ New Chat"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+  }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
+    /* HEARTBEAT, ON ONE CLICK.
+       The heartbeat runs twice a day and checks calendar and inbox for
+       anything time-sensitive. Running it on demand was already possible —
+       Settings, find the schedules list, find this row, Run Now — which is
+       four clicks and knowing where to look, and so it was never used.
+
+       The result lands in the chat as a system line rather than a toast,
+       because the answer to "anything I should know about?" is something you
+       read, not something that fades. 409 is the scheduler refusing to
+       double-fire a run already in progress; that is a real answer and is
+       reported as one. */
+    onClick: () => {
+      const say = t => setChatMsgs(p => [...p, {
+        role: 'system', kind: 'heartbeat', text: t,
+        time: new Date().toLocaleTimeString(),
+      }]);
+      say('Running the heartbeat now — checking calendar and inbox.');
+      apiFetch('/api/schedules/sch_heartbeat/run-now', { method: 'POST' })
+        .then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })))
+        .then(({ ok, status, d }) => {
+          if (ok) return;
+          say(status === 409
+                ? 'The heartbeat is already running — its result will arrive '
+                  + 'on its own.'
+                : 'The heartbeat could not start: '
+                  + ((d && d.message) || ('HTTP ' + status)) + '.');
+        })
+        .catch(e => say('The heartbeat could not start: ' + e + '.'));
+    },
+    title: "Run the heartbeat now (calendar + inbox check)",
+    "aria-label": "Run the heartbeat now",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "♥ Heartbeat"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
     /* UNDOCK. This conversation, in its own window, so a second one can be
        worked alongside it — the point being two MODELS at once, since each
        conversation carries its own seat binding.
