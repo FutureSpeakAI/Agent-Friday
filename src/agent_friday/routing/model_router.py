@@ -376,14 +376,41 @@ class ModelRouter:
         if not model_id:
             return None
         if provider in self._LOCAL_PROVIDERS:
-            return {
-                "provider": "local",
-                "model": model_id,
-                "task_type": task_type,
-                "reason": "the model seat he chose (capability_routing.reasoning)",
-            }
+            # The probe stays advisory: a busy daemon must not cost him a seat
+            # he explicitly bound. But "the daemon is slow to answer" and "this
+            # model has never been on this machine" are different facts, and
+            # this branch conflated them. It returned local for ANY id whose
+            # provider merely LOOKED local, so a seat naming an uninstalled
+            # model was routed local, failed below the router, and was answered
+            # from the cloud with no badge, no substitution notice and no word
+            # in the log.
+            #
+            # 2026-09-18 is the case in point: capability_routing.reasoning
+            # named gemma4:12b with provider ollama-local on a machine whose
+            # Ollama store was empty. He asked for that model four times and
+            # Sonnet answered four times. The honest branch at the bottom of
+            # this method — the one that sets `substituted_for` and says
+            # plainly that this is not what was asked for — was unreachable,
+            # because this early return fired first.
+            #
+            # So demote only on POSITIVE evidence of absence. An inventory we
+            # could not read still yields to the binding, exactly as before.
+            if not self._seat_is_positively_absent(model_id):
+                return {
+                    "provider": "local",
+                    "model": model_id,
+                    "task_type": task_type,
+                    "reason": "the model seat he chose (capability_routing.reasoning)",
+                }
         names = {m["name"] for m in self._local_candidates()}
-        if model_id in names or self._is_registry_local(model_id):
+        # `_is_registry_local` stays, because it is what rescues a custom-named
+        # Ollama model that IS installed but whose name reads as cloud. It just
+        # cannot be a licence on its own: it is true for any id declared under a
+        # local-type provider, installed or not, so on its own it waved
+        # gemma4:12b straight through to a local route on a machine that has
+        # never held it. Kind, qualified by presence.
+        if model_id in names or (self._is_registry_local(model_id)
+                                 and not self._seat_is_positively_absent(model_id)):
             return {
                 "provider": "local",
                 "model": model_id,
@@ -416,6 +443,42 @@ class ModelRouter:
             "reason": ("you chose %s, but nothing on this machine can serve it "
                        "right now — answered in the cloud instead" % model_id),
         }
+
+    def _seat_is_positively_absent(self, model_id):
+        """True only when this local id is provably on no path on this machine.
+
+        Conservative by construction, and deliberately asymmetric: every way
+        of failing to READ an inventory returns False, so an unreachable or
+        busy daemon never costs the user a seat he bound on purpose. Only a
+        clear answer that does not contain the model counts as absence, and
+        only after her own store, the registry and a live seat endpoint have
+        all been asked. An empty inventory is treated as "nothing answered",
+        not as "nothing exists".
+        """
+        if not model_id:
+            return False
+        try:
+            names = {m["name"] for m in self._local_candidates()}
+        except Exception:
+            return False
+        if not names or model_id in names:
+            return False
+        # Deliberately NOT asking _is_registry_local() here. That answers a
+        # different question — "is this id declared under a local-type
+        # provider", which exists so a custom-named Ollama model is not
+        # mistaken for cloud and slipped past the egress gate. It is a
+        # statement about KIND, not about presence, and it returns True for
+        # gemma4:12b on a machine that has never held a byte of it. Consulting
+        # it here made this method answer False for exactly the case it was
+        # written to catch, which is how the first version of this fix passed
+        # review in my head and failed its own test.
+        try:
+            from agent_friday.services.local_call import seat_endpoint
+            if seat_endpoint(model_id):
+                return False
+        except Exception:
+            return False
+        return True
 
     def _local_candidates(self):
         """Local generation models Friday can actually serve right now.
@@ -885,9 +948,8 @@ class ModelRouter:
                 "offer_cloud_switch": True,
                 "task_type": task_type,
                 "warning": ("Local-only mode is on, but no local model is "
-                           "available to answer this. Install or start "
-                           "Ollama, or switch to Cloud-Only mode for this "
-                           "and future turns."),
+                           "serving right now. Load one on the Intelligence "
+                           "tab, or answer this turn in the cloud."),
                 "reason": "local_only mode — no local seat available",
             }
 

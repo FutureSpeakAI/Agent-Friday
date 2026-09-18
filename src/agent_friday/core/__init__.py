@@ -1574,6 +1574,14 @@ DEFAULT_SETTINGS = {
     # egress_mode and the top-level vault_local_only (docs/design/
     # security-boundary.md #18).
     "knowledge_graph": {},
+    # Top-level wiki sections whose pages never enter the ambient knowledge
+    # block for a cloud provider and are encrypted at rest with the vault
+    # key (services/wiki_engine._wiki_encrypted_sections, knowledge_graph/
+    # integration.knowledge_context_block). Read by both since 2026-08, but
+    # ABSENT here until 2026-09-17, so the whitelist read above discarded it
+    # on every load: the feature could not be switched on from settings.json
+    # at all. The Privacy tab's checklist writes it (model-soup.md §11.4).
+    "wiki_encrypted_sections": [],
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
@@ -2216,7 +2224,23 @@ def _sync_capability_routing(settings, changed=None):
     if not os.environ.get("FRIDAY_TESTING"):
         try:
             from agent_friday.services.local_seats import heal as _heal_seats
+            import logging as _seatlog
+            _seen_notes = globals().setdefault("_SEAT_NOTES_LOGGED", set())
             for _note in _heal_seats(settings):
+                # print() writes to a console nobody reads, so a seat repair
+                # left no trace anyone could find afterwards. A seat changing
+                # under the user, or an inventory we could not check, is
+                # exactly the state change he is entitled to discover later.
+                #
+                # Once per distinct note, not once per settings load. This runs
+                # on every cache miss, so an unreachable daemon would otherwise
+                # repeat one warning until the log is worth nothing — the same
+                # flood that made the VRAM dispute line useless until it was
+                # made change-triggered.
+                if _note not in _seen_notes:
+                    _seen_notes.add(_note)
+                    _seatlog.getLogger("friday.settings").warning(
+                        "seats: %s", _note)
                 print(f"  [seats] healed settings - {_note}")
         except Exception:
             pass
