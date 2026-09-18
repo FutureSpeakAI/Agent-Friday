@@ -179,6 +179,51 @@ _ACTION_CLAIM_RE = re.compile(
     r"|sent|wrote|made|ran|took)"
     r"\b(?![^.]*\?)", re.I)
 
+#: What kind of tool could have done the thing the reply says it did.
+#:
+#: THE CHECK MOVES OFF THE PROSE AND ONTO THE RECEIPTS. Until now the mutation
+#: check fired only when NOTHING ran at all, which is a real signal but a
+#: narrow one: a turn that searched the wiki and then announced "I've sent the
+#: email" had a receipt, so it passed. The receipt was for the wrong thing, and
+#: nothing looked.
+#:
+#: So a claimed action is now matched to the FAMILY of tool that could have
+#: performed it, and the question becomes whether a tool of that family ran —
+#: which is the question a reader would ask. The verb stems are the same ones
+#: `_ACTION_CLAIM_RE` already recognises; this maps them onto the toolbox.
+#:
+#: STILL REFUSAL-TO-GUESS. A verb with no family here falls back to the old
+#: rule (fire only if nothing ran at all) rather than guessing, and a family
+#: match is a substring test against tool names, which errs towards finding a
+#: receipt rather than missing one. Both directions of doubt resolve in favour
+#: of staying quiet, because a checker that cries wolf gets muted and then
+#: every honest warning it has ever printed is worth nothing.
+_ACTION_FAMILIES = (
+    (("send", "sent", "email", "post", "messag", "repl", "notif"),
+     ("send", "email", "mail", "message", "post", "slack", "notify",
+      "reply", "draft", "publish")),
+    (("remov", "delet", "eras", "clear", "cancel", "unsubscrib", "kill",
+      "stop"),
+     ("delete", "remove", "trash", "clear", "archive", "cancel", "kill",
+      "stop", "unsubscribe")),
+    (("creat", "add", "writ", "wrote", "sav", "updat", "renam", "mov",
+      "made"),
+     ("write", "creat", "save", "updat", "edit", "append", "wiki", "note",
+      "file", "rename", "move", "propose")),
+    (("schedul", "book"),
+     ("schedule", "calendar", "event", "book", "remind", "task")),
+)
+
+
+def _family_for(verb: str):
+    """Tool-name fragments that could have performed this verb, or None."""
+    v = (verb or "").lower()
+    for stems, tools in _ACTION_FAMILIES:
+        if any(v.startswith(s) for s in stems):
+            return tools
+    return None
+
+
 #: A path the reply asserts as a real location on this machine.
 _PATH_CLAIM_RE = re.compile(r"[`'\"]?(~[/\\][\w./\\ -]{3,120}?\.\w{1,6})[`'\"]?")
 
@@ -222,17 +267,39 @@ def unsupported_actions(text):
                           "moved on screen",
             })
 
-        # 2. MUTATION. Only when NOTHING ran. If some tool ran we cannot
-        #    prove from here that it was the wrong one, and guessing would
-        #    put a false accusation in front of the user.
-        if not _ran_any():
-            m = _ACTION_CLAIM_RE.search(t)
-            if m:
+        # 2. MUTATION, checked against the receipts for THAT action.
+        #
+        #    This used to fire only when NOTHING ran, which let the commonest
+        #    shape through: a turn that searched the wiki and then announced
+        #    "I've sent the email" had a receipt, so it passed. The receipt
+        #    was for the wrong thing and nothing looked.
+        #
+        #    Now the claimed verb is mapped to the family of tool that could
+        #    have performed it, and the question is whether a tool of that
+        #    family ran. A verb with no known family keeps the old rule rather
+        #    than guessing.
+        m = _ACTION_CLAIM_RE.search(t)
+        if m:
+            verb = (m.group(1) or "").strip()
+            family = _family_for(verb)
+            if family is None:
+                if not _ran_any():
+                    out.append({
+                        "kind": "action",
+                        "quote": m.group(0).strip(),
+                        "reason": "the reply states this was done or is being "
+                                  "done now, but no tool ran at all this turn",
+                    })
+            elif not _ran_like(*family):
+                ran = ", ".join(sorted({r["tool"] for r in receipts()}))
                 out.append({
                     "kind": "action",
                     "quote": m.group(0).strip(),
-                    "reason": "the reply states this was done or is being "
-                              "done now, but no tool ran at all this turn",
+                    "reason": ("the reply states this was done or is being "
+                               "done now, but nothing that could have done it "
+                               "ran this turn" +
+                               (" (what ran: %s)" % ran if ran else
+                                " — no tool ran at all")),
                 })
 
         # 3. CITED PATH. Existence is a fact about the disk, not a judgement.
