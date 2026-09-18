@@ -355,6 +355,84 @@ session.
 
 ---
 
+## What shipped afterwards
+
+The investigation above was the first half of the day. The second half was
+committing a backlog and building the specs, in 27 commits from `18d3d91`.
+
+**The repository.** 85 files were uncommitted, spanning 2026-09-08 to 09-18 —
+33 of them dated the 9th alone. That is a fortnight of finished, tested work
+living in a working tree where one bad command would have taken it. All of it
+is now in git, grouped by theme, each group's tests run before its commit.
+
+Three things the repo's own pre-commit guard caught, all of which would
+otherwise have shipped: the maintainer's real email address hardcoded in three
+test files and one history record (eight occurrences, replaced with
+`primary@example.com`); a private Windows path in a design document; and one
+false positive — a `restore_token` in the arbiter tests whose value is a
+model-and-port identifier rather than a credential, which got the documented
+allowlist pragma rather than a rename to dodge the check.
+
+(The guard then caught this very paragraph, because the sentence describing
+that false positive contained the assignment it was describing. It was right
+both times, which is the correct number.)
+
+`ui_parts/app.html` had been rewritten CRLF at some point, so its diff was
+24,064 lines hiding 184 real ones. Normalised back to LF before committing:
+same content, reviewable diff.
+
+**The specs.** Eight of ten items:
+
+- **1 — multiple chat windows and undock.** The UI had been calling six
+  `/api/conversations` endpoints that did not exist, with a complete service
+  layer underneath and 125 conversations sitting unreachable on disk. Wrote
+  the routes; the switcher, the per-chat model picker and the transcript
+  loader all work. Added the undock button and a chrome-less window mode.
+  A second conversation binding a different local model is refused with a
+  reason naming what is in the way.
+- **2.4 — latency budget.** Three declared ceilings with tests, including two
+  that guard the guard: one proves the measurement is not returning zero, the
+  other proves the ceiling is between 1x and 2x the measured value, because a
+  budget at reality always fires and one far above it never does.
+- **2.5 — receipts over regex.** A claimed action is now checked against
+  receipts for THAT action rather than only when nothing ran at all.
+- **3.1 — the tier vocabulary.** `spawn_task` takes `small_local`,
+  `large_local` or `cloud_frontier`. A tier that cannot be served is refused
+  with a reason; nothing is quietly relocated across the local/cloud line.
+- **3.5 — the honesty suite.** Twelve golden fixtures had been sitting with no
+  runner for weeks. Split into a deterministic validator that always runs and
+  a behavioural runner that is opt-in (`--run-honesty`), verified end to end
+  against the live seat. Sycophancy is reported for human review rather than
+  scored, because no string distinguishes agreement from
+  agreement-because-pressed and a scorer that guessed would be inventing a
+  verdict.
+- Plus the heartbeat on one click — it existed, four clicks deep in Settings,
+  which is the same as not existing.
+
+**2.2 is mostly already done**, which is worth recording rather than building
+something to cover. The capability-state block puts live account status in the
+system prompt every turn, and the UI already colours `needs_reauth` distinctly
+with the nine-day incident recorded in a source comment. What remains is a
+scheduled sweep and a lead-with-the-expiry rule.
+
+**3.3 was deliberately not started.** 3.1 unblocks it; it is a design piece
+rather than a repair, and it will be better done fresh.
+
+**Found while committing, unresolved:** the GitHub connector is in `error`
+with `spawn failed: GCM auth tag mismatch — tampered ciphertext or wrong key`.
+That is the encrypted credential store failing to decrypt — either the token
+was written under a different key or the vault key changed beneath it. Left
+for the maintainer.
+
+**Not verified:** the undock button and the heartbeat button parse and are
+served, but no human has seen them render. The browser pane was unavailable.
+
+**Pre-existing test failures, not regressions:** `tests/unit/
+test_residency_arbiter.py` and `test_run_chain.py` fail on this tree and
+failed identically at `18d3d91`, checked in a worktree at that commit —
+twelve failures there, nine here. Their count also shifts with which files are
+run together, so there is shared state between them.
+
 ## The pattern worth remembering
 
 Six of these nine faults share one shape: **a permanent conclusion drawn from
