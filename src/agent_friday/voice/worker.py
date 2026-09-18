@@ -201,6 +201,52 @@ def serve(engine, inp, out) -> int:
     lock = threading.Condition()
     eof = threading.Event()
 
+    # LOAD BEFORE ANY OTHER THREAD EXISTS.
+    #
+    # Measured on the reference machine, 2026-09-18: with the reader thread
+    # already blocked in ReadFile on the stdin pipe, the engine's first
+    # `import numpy` (faster-whisper and torch both pull it in on load)
+    # never returned -- py-spy showed the main thread parked inside
+    # numpy/__config__ with 0.3 s of CPU used, for as long as anyone waited.
+    # The same worker with numpy imported before `serve()` loaded in 10 s.
+    # Both GPU engines therefore died on the parent's 120 s load timeout
+    # and every session fell to the CPU with "crashed on the GPU".
+    #
+    # So the first frame is read synchronously here, and if it is the load
+    # it is performed on a single-threaded process. Cancel frames cannot
+    # arrive during a load anyway: the parent's only lever during load is
+    # its timeout, which kills us.
+    first = read_frame(inp)
+    if first is None:
+        return 0
+    if first[0] == _KIND_JSON:
+        try:
+            first_msg = json.loads(first[1].decode("utf-8"))
+        except Exception:
+            first_msg = {}
+        pending.append(("J", first_msg))
+    else:
+        pending.append(("B", first[1]))
+    loaded = False
+    if pending and pending[0][0] == "J" and pending[0][1].get("op") == "load":
+        _, msg = pending.pop(0)
+        job = msg.get("job")
+        try:
+            t0 = time.perf_counter()
+            info = engine.load() or {}
+            loaded = True
+            send_json(out, {"ok": True, "job": job,
+                            "resident_mib": info.get("resident_mib"),
+                            "device": engine.device, "model": engine.model,
+                            "voice": info.get("voice"),
+                            "load_ms": int((time.perf_counter() - t0) * 1000),
+                            "threads_at_load": threading.active_count()})
+        except Exception as e:  # noqa: BLE001
+            code = getattr(e, "code", None) or "engine_error"
+            send_json(out, {"error": str(code), "job": job,
+                            "detail": f"{type(e).__name__}: {str(e)[:300]}"})
+            return 3
+
     def reader():
         while True:
             fr = read_frame(inp)
@@ -227,7 +273,6 @@ def serve(engine, inp, out) -> int:
                     lock.notify_all()
 
     threading.Thread(target=reader, daemon=True).start()
-    loaded = False
 
     def _next():
         with lock:
