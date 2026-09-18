@@ -226,7 +226,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
-                   "model. Install or start Ollama (or adjust "
+                   "model. Load one on the Intelligence tab (or adjust "
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
 
@@ -294,7 +294,9 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             _fitted, _fit_note = fit_tools_to_seat(
                 use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost,
                 system=_sys_out, messages=messages)
-            if _fit_note:
+            # Once only — see the twin of this line in
+            # `model_router._call_openai` for what repeated appends cost.
+            if _fit_note and "\n[SEAT] " not in (_sys_out or ""):
                 _sys_out = (_sys_out or "") + "\n[SEAT] " + _fit_note
         except Exception:
             _fitted = CLAUDE_TOOLS

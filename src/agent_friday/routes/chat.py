@@ -138,17 +138,130 @@ def _gate_vision_prompt(text: str) -> str:
 
 
 
-def _fit_tools(model_id, tools, prompt_cost=0):
+def _fit_tools(model_id, tools, prompt_cost=0, intent=None,
+               system=None, messages=None):
     """As much of the tool registry as this seat can hold. Never raises.
 
-    `prompt_cost` — estimated tokens of system prompt + transcript, so the
-    budget covers the request as a whole, not the tool preamble in isolation.
+    THE SINGLE AUTHORITY on what fits. `_via_ollama` and `_call_openai` also
+    used to fit, independently, against a prompt this call had already grown
+    with its own `[SEAT]` note — so one turn was budgeted three times and the
+    trims compounded (75 -> 10 -> 8, observed). They now pass a `FittedTools`
+    result straight through; this is where the decision is made.
+
+    `system`/`messages` let the budget MEASURE the rendered prompt against the
+    seat's own tokenizer instead of estimating it. `intent` is the user's
+    message, so the tool the turn is obviously about outranks cheap schemas.
     """
     try:
         from agent_friday.services.tool_budget import fit_tools_to_seat
-        return fit_tools_to_seat(model_id, tools, prompt_cost=prompt_cost)
+        return fit_tools_to_seat(model_id, tools, prompt_cost=prompt_cost,
+                                 intent=intent, system=system,
+                                 messages=messages)
     except Exception:
         return list(tools or []), None
+
+#: The transcript is budgeted in TOKENS, not messages, and the window is only
+#: allowed to move in whole steps.
+#:
+#: Counting messages was the original mistake. A hundred messages is anywhere
+#: between 10,000 and 20,000 tokens depending on whether they are one-line
+#: questions or multi-paragraph answers, and an ordinary conversation moves
+#: through that whole range as short old messages age out and long new ones
+#: arrive. Measured on 2026-09-18: consecutive turns carrying prompts of
+#: 10,209 and then 20,092 tokens. The larger one cost forty seconds of prompt
+#: evaluation on its own, and the swing between them crossed several tool
+#: budget steps, which changed the tool list, which broke the prefix cache as
+#: well. One unbudgeted number was doing both kinds of damage at once.
+#: 8,000, and the tighter 5,000 was tried first and is worse. A smaller budget
+#: means a smaller window, and a smaller window is exhausted sooner, so the
+#: start index has to move more often: simulated over 200 turns, 5,000 moved
+#: the window 53 times against 18 at 8,000, and left the worst turn-to-turn
+#: cost swing higher rather than lower (1.59x against 1.39x).
+#:
+#: Which matters more is settled by measurement, not taste. The fast turns on
+#: this machine were fast because the cache HIT, not because the prompt was
+#: small — 3.8 seconds on a ~20,000-token prompt. A miss costs about forty
+#: seconds whatever the size. So 18 misses at ~45s beats 53 at ~39s, by a
+#: factor of two and a half, and the extra 3,000 tokens the larger budget
+#: carries are free on every turn that hits.
+_HISTORY_TOKEN_BUDGET = 8000
+
+#: Never carry fewer than this many messages, whatever they cost. A budget that
+#: can starve the transcript to nothing would answer a follow-up question with
+#: no idea what it follows.
+_HISTORY_MIN_MESSAGES = 12
+
+#: Chars per token. The same rough figure `tool_budget` uses; exactness is not
+#: the point here, stability is.
+_CHARS_PER_TOKEN = 4
+
+#: The window's start index moves in multiples of this and no less.
+_HISTORY_STEP = 20
+
+
+def _history_start(history) -> int:
+    """Where this turn's transcript begins — by token cost, in whole steps.
+
+    A SLIDING WINDOW AND A PROMPT CACHE CANNOT BOTH WORK.
+
+    This was `CHAT_HISTORY[-100:]`. Each turn appends a user message and an
+    assistant message, so the window slid by two and EVERY message changed
+    position. A seat's prefix cache can only reuse text that is byte-identical
+    from the first token, so a transcript where message one is a different
+    message than it was last turn matches nothing — and nothing after it can
+    match either.
+
+    Measured by recording what Friday actually sent: ninety-five messages per
+    turn, none of them in the same place twice, and the seat dutifully
+    reprocessing the entire ~21,000-token prompt at about 500 tokens a second.
+    Forty-three seconds, every turn, to rebuild something it already had. The
+    same seat, given a prompt that genuinely repeated, answered in 0.43s.
+
+    Two rules, and they do different jobs:
+
+    The BUDGET bounds what the transcript costs. Walking back from the newest
+    message until `_HISTORY_TOKEN_BUDGET` is spent gives a transcript of
+    roughly constant size in the only unit the seat cares about, instead of one
+    that doubles because the last few answers happened to be long.
+
+    The STEP bounds how often the window moves. Rounding the start index UP to
+    a multiple of `_HISTORY_STEP` keeps it inside the budget while letting it
+    sit still for several turns at a time; when it does move it jumps, and one
+    turn pays for a cache miss instead of every turn paying for one. That is
+    the bargain compaction makes, and the same one
+    `tool_budget._BUDGET_QUANTUM` makes for the tool list.
+
+    Accepts the history itself rather than a count, because a count cannot be
+    weighed.
+    """
+    rows = list(history or [])
+    total = len(rows)
+    if total <= _HISTORY_MIN_MESSAGES:
+        return 0
+
+    # Walk back from the newest message until the budget is spent.
+    spent = 0
+    kept = 0
+    for msg in reversed(rows):
+        if (msg or {}).get("role") == "system":
+            # Never model context (B2/B5), so it must not be charged for
+            # either — otherwise the budget shrinks the real transcript to pay
+            # for lines the model will never see.
+            kept += 1
+            continue
+        cost = len((msg or {}).get("text") or "") // _CHARS_PER_TOKEN
+        if kept >= _HISTORY_MIN_MESSAGES and spent + cost > _HISTORY_TOKEN_BUDGET:
+            break
+        spent += cost
+        kept += 1
+
+    start = max(0, total - kept)
+    # UP, not down: rounding down would admit more than the budget allows,
+    # which is the failure this function exists to prevent.
+    start = min(total, -(-start // _HISTORY_STEP) * _HISTORY_STEP)
+    # ...but never past the floor.
+    return max(0, min(start, total - _HISTORY_MIN_MESSAGES))
+
 
 def _conv_id_from(data):
     """The conversation this request addresses; Main when unaddressed.
@@ -582,7 +695,17 @@ def chat():
         # let two open chats contaminate each other's context.
         raw_history = _conv_context(_conversation_id, 100)
         messages = _compress_trajectory(raw_history)
-        messages.append({"role": "user", "content": message})
+        # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
+        # memory too -- including this assistant's own earlier answers -- so a
+        # live-state question carries its live reading here, adjacent to the
+        # turn being answered, where nothing sits between them. No-op for
+        # every other kind of question. See services/live_state.py.
+        try:
+            from agent_friday.services import live_state as _live_state
+            _final_user = _live_state.annotate_user_turn(message)
+        except Exception:
+            _final_user = message
+        messages.append({"role": "user", "content": _final_user})
 
         # ── Semantic context pruning (RAG over our own history) ──
         # When the conversation is long, keep the turns most relevant to the
@@ -689,14 +812,34 @@ def chat():
                 _known = False
                 try:
                     from agent_friday.services.model_catalog import build_catalog
-                    _known = any(m.get('id') == _want
-                                 for m in (build_catalog().get('models') or []))
-                    if not _known:
-                        from agent_friday.services import local_seats
-                        _known = any(n == _want for n, _ in local_seats.installed())
-                    if not _known:
-                        from agent_friday.services.local_call import seat_endpoint
-                        _known = bool(seat_endpoint(_want))
+                    from agent_friday.services import local_seats
+                    # Catalogue membership is not presence, for a LOCAL id.
+                    #
+                    # build_catalog() lists what Friday KNOWS OF, which includes
+                    # local models that were never pulled: on 2026-09-18 it
+                    # listed gemma4:12b, gemma4:26b and gemma4:e4b on a machine
+                    # whose Ollama store was empty. Asking it first set _known
+                    # True for an absent model, so this guard never fired and
+                    # the turn fell through to the cloud — the silent
+                    # substitution §3.8 forbids, defeated by the one check
+                    # written to prevent it.
+                    #
+                    # So for a local id, ask the machine: the daemon's own
+                    # inventory, then a live seat endpoint, which is what keeps
+                    # the gemma4:e2b case above working when the catalogue has
+                    # forgotten a model that is answering two ports away. A
+                    # cloud id keeps the catalogue as its authority, because it
+                    # is not "installed" anywhere and absence from a local
+                    # inventory says nothing about it.
+                    if local_seats._is_local_name(_want):
+                        _known = any(n == _want
+                                     for n, _ in local_seats.installed())
+                        if not _known:
+                            from agent_friday.services.local_call import seat_endpoint
+                            _known = bool(seat_endpoint(_want))
+                    else:
+                        _known = any(m.get('id') == _want
+                                     for m in (build_catalog().get('models') or []))
                 except Exception:
                     _known = True          # cannot check → do not block the turn
                 if not _known:
@@ -1077,6 +1220,7 @@ def chat():
         # ── Dispatch. ──
         reply, tool_trace = None, []
         _fell_back_from_local = None
+        _tool_surface = None
         if _routed_local:
             # As much of the tool registry as this seat can physically hold.
             # 112 tools cost ~46k tokens; his seat's window is 32,768, so
@@ -1090,11 +1234,44 @@ def chat():
             _prompt_cost = (len(system_prompt or '') + sum(
                 len(m.get('content')) for m in messages
                 if isinstance(m.get('content'), str))) // 4
+            # The user's own words decide which tools survive a trim. The
+            # reported failure was a calendar question that trimmed away
+            # query_calendar and then narrated the answer.
+            _intent = ''
+            for _m in reversed(messages or []):
+                if _m.get('role') == 'user' and isinstance(_m.get('content'), str):
+                    _intent = _m['content']
+                    break
             _local_tools, _tool_note = _fit_tools(
                 _route_info.get('model'), CLAUDE_TOOLS,
-                prompt_cost=_prompt_cost)
+                prompt_cost=_prompt_cost, intent=_intent,
+                system=system_prompt, messages=messages)
             if _tool_note:
                 system_prompt = (system_prompt or '') + "\n\n[SEAT] " + _tool_note
+                # Make the loss legible to the person, not only to the model.
+                try:
+                    _kept_n = {str(t.get('name')) for t in (_local_tools or [])}
+                    _lost = sorted(str(t.get('name')) for t in CLAUDE_TOOLS
+                                   if str(t.get('name')) not in _kept_n)
+                    _tool_surface = {
+                        "kept": len(_kept_n),
+                        "registry": len(CLAUDE_TOOLS),
+                        "dropped": _lost,
+                        "window": _route_info.get('model'),
+                    }
+                except Exception:
+                    _tool_surface = None
+            try:
+                from agent_friday.services.model_router import _trace_outgoing
+                _trace_outgoing("chat.dispatch_local", "local",
+                                _route_info.get('model'),
+                                {"messages": messages},
+                                {"registry": len(CLAUDE_TOOLS),
+                                 "fitted": len(_local_tools or []),
+                                 "prompt_cost": _prompt_cost,
+                                 "note": bool(_tool_note)})
+            except Exception:
+                pass
             try:
                 reply, tool_trace = _call_ollama(
                     messages, system=system_prompt,
@@ -1577,10 +1754,27 @@ def chat():
         except Exception:
             pass
 
+        # The same rule for claims that name no tool. Most of the fabrications
+        # in the 2026-09-09 session did not name one: an asserted workspace
+        # switch with no navigate call, "I'll remove it from your active task
+        # list now" on a turn where nothing ran, a cited wiki path that does
+        # not exist. Checked here, after `actions` is built, so the navigation
+        # check reads the same receipts the UI move depends on.
+        _unsupported = []
+        try:
+            _unsupported = _receipts.unsupported_actions(reply)
+            if _unsupported:
+                reply = (reply or "") + _receipts.action_correction_note(_unsupported)
+                print("  [receipts] UNSUPPORTED ACTION CLAIM in reply: %s"
+                      % ", ".join(c["kind"] for c in _unsupported))
+        except Exception:
+            pass
+
         return jsonify({
             "response": reply,
             "tools_ran": _receipts.summary(),
             "unbacked_claims": _unbacked,
+            "unsupported_actions": _unsupported,
             "user_msg": user_msg,
             "friday_msg": friday_msg,
             "sources": sources,
@@ -1605,6 +1799,11 @@ def chat():
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
             "local_fallback": _fell_back_from_local,
+            # A capability loss the user did not ask for and cannot otherwise
+            # see. When the seat could not carry the whole toolbox, say so in
+            # the turn — same principle as local_fallback above. Absent on
+            # every turn that kept its tools, which is the normal case.
+            "tool_surface": _tool_surface,
         })
     except Exception as e:
         traceback.print_exc()  # console launches; a no-op loss under pythonw
@@ -1780,7 +1979,7 @@ def chat_send():
 
         # Anthropic-format message history
         messages = []
-        for msg in CHAT_HISTORY[-100:]:
+        for msg in CHAT_HISTORY[_history_start(CHAT_HISTORY):]:
             if msg.get('role') == 'system':
                 # B2/B5: transparency system lines are never model context.
                 continue
@@ -1788,7 +1987,17 @@ def chat_send():
             text = msg.get('text', '')
             if text:
                 messages.append({"role": role, "content": text})
-        messages.append({"role": "user", "content": message})
+        # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
+        # memory too -- including this assistant's own earlier answers -- so a
+        # live-state question carries its live reading here, adjacent to the
+        # turn being answered, where nothing sits between them. No-op for
+        # every other kind of question. See services/live_state.py.
+        try:
+            from agent_friday.services import live_state as _live_state
+            _final_user = _live_state.annotate_user_turn(message)
+        except Exception:
+            _final_user = message
+        messages.append({"role": "user", "content": _final_user})
 
         _sess_ctx = {
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
