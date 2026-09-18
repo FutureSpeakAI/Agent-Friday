@@ -257,6 +257,97 @@ def comfy_root() -> Path:
     return runtime_dir() / "ComfyUI"
 
 
+# ── Does this model fit THIS card, ever? ──────────────────────────────────────
+#
+# Measured render peaks, in MiB. These are lease-time measurements on the
+# reference 4070 12GB (see the module docstring and `friday measure <id>`), not
+# weight-file sizes and not estimates.
+#
+# WHY THIS TABLE EXISTS: on a 12,282 MiB card with a 2,560 MiB Windows display
+# reserve, only 9,722 MiB can EVER be free for a render, even with every
+# language seat evicted. Z-Image needs 10,453. So the default local image model
+# cannot run on this machine and never could, and the refusal Stephen kept
+# hitting on 2026-09-10 was correct policy applied to an impossible default.
+# Nobody had put the two numbers next to each other.
+MEASURED_PEAK_MIB: dict = {
+    "z-image-turbo-fp8": 10453,
+    "sd3.5-medium-fp8": 10621,
+    "sdxl-base-1.0": 8192,
+    "flux1-dev-fp8": 11878,
+    # Qwen-Image Q3_K_S is described as "quantized for 12GB" but has no
+    # lease-time measurement in the tree. Absent a measured number this stays
+    # out of the table rather than carrying a guess: fits_this_card() reports
+    # "unknown" for it, which is the truth and is not the same as "fits".
+}
+
+
+def render_ceiling_mib() -> int | None:
+    """How much VRAM a render could have at most, after the display reserve.
+
+    Returns None when the card or the reserve cannot be read -- callers must
+    treat that as "unknown", never as "plenty".
+    """
+    try:
+        from agent_friday.services.hardware_profile import (
+            detect, vram_headroom)
+        from agent_friday.services.headroom_contract import (
+            resolve_display_reserve)
+        # The RECONCILED reserve, not vram_headroom()'s unclamped default:
+        # that default is 256 MiB on a single-monitor Windows box while the
+        # real contract is 2,560, and picking the wrong one here would turn a
+        # model that cannot fit into one that looks like it barely does.
+        reserve = int((resolve_display_reserve(detect()) or {}).get("mib") or 0)
+        total = int((vram_headroom(reserve_mib=reserve) or {}).get(
+            "total_mib") or 0)
+        if total <= 0 or reserve <= 0:
+            return None
+        return max(0, total - reserve)
+    except Exception as e:                       # never break a generation
+        _log.debug("render_ceiling_mib unavailable: %s", e)
+        return None
+
+
+def fits_this_card(model_id: str | None = None) -> dict:
+    """Can this model ever render here, with the whole card to itself?
+
+    This is a question about the machine, not about what happens to be loaded
+    right now: it compares the model's measured peak against the ceiling that
+    remains after the display reserve. A model that fails this check will fail
+    every time, no matter what is evicted first, and telling someone to "free
+    the card" is then bad advice.
+    """
+    mid = model_id or MODEL_ID
+    peak = MEASURED_PEAK_MIB.get(mid)
+    ceiling = render_ceiling_mib()
+    if peak is None or ceiling is None:
+        return {"model": mid, "verdict": "unknown", "peak_mib": peak,
+                "ceiling_mib": ceiling,
+                "detail": ("no measured peak for this model" if peak is None
+                           else "the card or display reserve could not be read")}
+    return {"model": mid, "verdict": "fits" if peak <= ceiling else "too_big",
+            "peak_mib": peak, "ceiling_mib": ceiling,
+            "shortfall_mib": max(0, peak - ceiling),
+            "detail": ("needs %d MiB at peak; at most %d MiB can ever be free "
+                       "on this card after the display reserve"
+                       % (peak, ceiling))}
+
+
+def models_that_fit() -> list:
+    """Installed local image models whose measured peak fits this card."""
+    out = []
+    for mid in MODELS:
+        if not is_installed(mid):
+            continue
+        v = fits_this_card(mid)
+        if v["verdict"] == "fits":
+            out.append({"model": mid,
+                        "label": MODELS[mid].get("label") or mid,
+                        "short": MODELS[mid].get("short") or mid,
+                        "peak_mib": v["peak_mib"]})
+    out.sort(key=lambda x: x["peak_mib"])
+    return out
+
+
 def is_installed(model_id: str | None = None) -> bool:
     """Are this model's weights actually present? Availability is earned, not
     declared — the picker must not offer a model this machine cannot run.
@@ -678,6 +769,83 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
             pass
 
 
+def _explain_refusal(env: dict, model_id: str) -> dict:
+    """Turn a bare lease refusal into one a person can act on.
+
+    Adds three things the lease itself cannot know:
+
+    1. `fit` -- whether this model can EVER render on this card. A model over
+       the ceiling is not blocked by other work and will not be helped by
+       unloading any of it.
+    2. `blocking` -- who is actually holding video memory, including processes
+       Friday did not start. Those are the ones it cannot unload on its own,
+       and naming them is the difference between an answer and a shrug.
+    3. `options` -- concrete next moves, cheapest first. A smaller installed
+       model that fits comes before "free the card", because it is the one
+       that works without giving anything up.
+
+    Never raises. A refusal that fails to explain itself is still a refusal,
+    and losing the original reason to a diagnostics bug would be worse than
+    having no diagnostics.
+    """
+    try:
+        fit = fits_this_card(model_id)
+        env["fit"] = fit
+        options: list = []
+
+        if fit.get("verdict") == "too_big":
+            alts = [a for a in models_that_fit() if a["model"] != model_id]
+            for a in alts:
+                options.append({
+                    "kind": "smaller_model",
+                    "model": a["model"],
+                    "description": ("render with %s instead — measured %d MiB "
+                                    "peak, which fits this card"
+                                    % (a["short"], a["peak_mib"])),
+                })
+            options.append({
+                "kind": "cloud",
+                "description": ("render this image in the cloud, which has no "
+                                "VRAM ceiling"),
+            })
+            env["structural"] = True
+            env["reason"] = ((env.get("reason") or "").rstrip(". ")
+                             + ". This model cannot run on this card at all: "
+                             + fit["detail"] + ".")
+        else:
+            options.append({"kind": "free_card",
+                            "description": ("unload what is holding video "
+                                            "memory, then retry")})
+            options.append({"kind": "cloud",
+                            "description": "render this image in the cloud"})
+
+        # Who holds the card, per the arbiter's ledger -- foreign holds
+        # included, which is the whole reason that ledger exists.
+        try:
+            from agent_friday.services import arbiter as _arb
+            rows = {r["resource"]: r for r in _arb.status(fresh=True)["resources"]}
+            holders = (rows.get("gpu_vram") or {}).get("holders") or []
+            if holders:
+                env["blocking"] = holders
+                for h in holders:
+                    if h.get("holder_kind") == "foreign":
+                        options.insert(0, {
+                            "kind": "stop_foreign",
+                            "holder": h.get("holder"),
+                            "description": ("stop %s, which is holding %s MiB "
+                                            "and which Friday did not start, "
+                                            "so it needs your say-so"
+                                            % (h.get("holder"), h.get("amount"))),
+                        })
+        except Exception as e:
+            _log.debug("refusal enrichment: arbiter unreadable: %s", e)
+
+        env["options"] = options
+    except Exception as e:                       # diagnostics must not mask it
+        _log.warning("could not explain image refusal: %s", e)
+    return env
+
+
 def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
              steps: int = 0, seed: int = 0,
              arbiter=None, lease_ttl_s: int = 900,
@@ -815,9 +983,17 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             if not lease.get("ok"):
                 # A refusal is an answer. Say which rule and stop — do not
                 # start ComfyUI anyway and fight the language seats for VRAM.
-                return {"status": "refused", "provider": PROVIDER,
-                        "reason": lease.get("error"),
-                        "rule_id": (lease.get("refused") or {}).get("rule_id")}
+                #
+                # And say WHAT TO DO, which needs one distinction the lease
+                # cannot make: whether this model could ever run here. "Free
+                # the card" is sound advice for a model that fits and useless
+                # for one that does not, and Friday spent 2026-09-10 giving
+                # the useless version because nothing compared the model's
+                # measured peak to the card's ceiling.
+                env = {"status": "refused", "provider": PROVIDER,
+                       "reason": lease.get("error"),
+                       "rule_id": (lease.get("refused") or {}).get("rule_id")}
+                return _explain_refusal(env, _model_id)
         else:
             # No arbiter governing this process: start ComfyUI directly, and
             # say so, because nothing is protecting the GPU in that case.
