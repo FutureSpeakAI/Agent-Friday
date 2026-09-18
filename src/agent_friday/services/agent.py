@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -3651,11 +3651,52 @@ def _tool_spawn_task(inp):
     on_complete = (inp or {}).get('on_complete')
     if on_complete is not None and not isinstance(on_complete, dict):
         on_complete = None
-    tid = _spawn_task(name, prompt, desc, on_complete=on_complete)
+
+    # TIER: which KIND of model should pick this up (spec 3.1). Optional, and
+    # omitting it keeps the previous behaviour exactly - whatever seat the
+    # background worker would have used.
+    #
+    # A TIER THAT CANNOT BE SERVED IS REPORTED, NOT SUBSTITUTED. Asking for
+    # `large_local` when the 27B is not loaded gets a refusal naming what is
+    # loaded, never the cloud with a shrug and never a 4B wearing the 27B's
+    # name. Silent substitution across the local/cloud line is the failure
+    # that cost a day on 2026-09-18: a local model quietly stopped being
+    # local and nothing on screen said so.
+    _tier = ((inp or {}).get('tier') or '').strip().lower()
+    _model = None
+    _tier_note = ''
+    if _tier:
+        from agent_friday.services import tiers as _tiers
+        res = _tiers.resolve(_tier)
+        if not res.ok:
+            return json.dumps({
+                'status': 'refused',
+                'tier': _tier,
+                'message': ("Did not spawn '%s': %s. Say so plainly rather "
+                            "than starting it somewhere else."
+                            % (name, res.reason)),
+            })
+        if not res.is_local:
+            # Escalation off the machine surfaces to the user rather than
+            # spending quietly. The consent record and cost ledger already
+            # exist; this is the seam that makes a tier request use them.
+            _tier_note = (" This one runs on %s, which is off-device and "
+                          "billed." % res.model)
+        elif res.reason:
+            _tier_note = " (%s)" % res.reason
+        _model = res.model
+
+    tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
+                      model=_model)
     return json.dumps({
         'task_id': tid,
         'status': 'running',
-        'message': f"Spawned background task '{name}'. The user can watch progress in the Task Tray (bottom-right) and you can tell them you've started working on it.",
+        'tier': _tier or None,
+        'model': _model,
+        'message': (f"Spawned background task '{name}'." + _tier_note
+                    + " The user can watch progress in the Task Tray "
+                      "(bottom-right) and you can tell them you've started "
+                      "working on it."),
     })
 
 
@@ -3669,6 +3710,22 @@ CLAUDE_TOOLS.append({
             "name": {"type": "string", "description": "Short, human-readable task title (e.g., 'Research Bobby Tahir')."},
             "description": {"type": "string", "description": "Optional one-line subtitle shown in the Task Tray."},
             "prompt": {"type": "string", "description": "The full instruction the background agent should execute."},
+            "tier": {
+                "type": "string",
+                "enum": ["small_local", "large_local", "cloud_frontier"],
+                "description": (
+                    "Optional. Which KIND of model should pick this up, by "
+                    "cost and reach rather than by name. small_local: "
+                    "on-device and fast, for short judgements where latency "
+                    "matters more than depth. large_local: on-device and "
+                    "capable but slow, for real work that must not leave the "
+                    "machine. cloud_frontier: off-device, fastest and most "
+                    "capable, COSTS MONEY and SENDS DATA off the machine — "
+                    "ask for it only when the work genuinely needs it. Omit "
+                    "to use whatever seat is already serving. If the tier "
+                    "cannot be served the task is REFUSED with a reason; "
+                    "nothing is quietly run somewhere else."),
+            },
             "on_complete": {
                 "type": "object",
                 "description": "Optional follow-up to chain after this task finishes. {\"spawn\": \"<next task title>\", \"prompt\": \"<full instruction for the next task>\", \"with_context\": true} — when set, that follow-up auto-starts on success, and (if with_context) this task's result is fed in as its context.",
