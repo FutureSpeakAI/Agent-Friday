@@ -329,3 +329,25 @@ def test_build_mouth_serves_piper_when_kokoro_is_refused(broker, monkeypatch):
                                    "device_policy": "if_free"}, "hi")
     assert eff["engine"] == "piper" and len(pcm) == 4800
     vw.release_all()
+
+
+def test_worker_loads_before_its_reader_thread_exists():
+    """Measured 2026-09-18: with the reader thread already blocked on the
+    stdin pipe, the engine's first `import numpy` inside load() never
+    returned (py-spy: main thread parked in numpy/__config__, 0.3 s CPU),
+    so both GPU engines died on the parent's load timeout and every
+    session fell to the CPU. The first frame is now read and the load run
+    before any other thread is started; the reply reports the thread
+    count at load so this cannot silently regress."""
+    import json, struct
+    hdr = struct.Struct(">cI")
+    p = _spawn_fake()()
+    try:
+        payload = json.dumps({"op": "load", "job": 0}).encode()
+        p.stdin.write(hdr.pack(b"J", len(payload)) + payload); p.stdin.flush()
+        kind, n = hdr.unpack(p.stdout.read(hdr.size))
+        reply = json.loads(p.stdout.read(n).decode())
+        assert reply["ok"] is True
+        assert reply["threads_at_load"] == 1, reply
+    finally:
+        p.kill()
