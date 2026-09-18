@@ -391,6 +391,43 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+
+        /* ── Undocked chat (?chrome=chat) ────────────────────────────────
+           One conversation in its own browser window, so two models can be
+           worked at once. The holographic shell is a single-window thing —
+           one 3D scene, one HUD, one camera — and running a second copy of
+           it costs a GPU that is already holding a 27B model. So an undocked
+           window keeps the React layer and drops the rest.
+
+           Suppression is CSS rather than a branch in the React tree: the tree
+           is 45,000 lines of compiled createElement calls, and a stylesheet
+           that hides four elements cannot break the thirty features it is not
+           touching. The panel keeps every behaviour it has when docked —
+           transcript, seat picker, composer — because it is the same panel.
+           Only the room around it is gone. */
+        body.chrome-chat #friday-scene-canvas,
+        body.chrome-chat #hud-overlay,
+        body.chrome-chat #camera-indicator,
+        body.chrome-chat #hand-cursor,
+        body.chrome-chat #state-indicator { display: none !important; }
+        body.chrome-chat { background: #070b14; }
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            max-height: none !important;
+            border-left: none !important;
+            box-shadow: none !important;
+            background: rgba(10,14,26,0.96);
+            transition: none !important;
+        }
+        /* A window that IS the panel cannot be resized by dragging its edge,
+           and a handle that does nothing is worse than no handle. */
+        body.chrome-chat .chat-resize-w,
+        body.chrome-chat .chat-resize-h { display: none !important; }
+
         /* Chat panel resize handles — left edge (width) + top edge (height). */
         .chat-resize-w {
             position: absolute; top: 0; left: -3px; width: 8px; height: 100%;
@@ -2270,6 +2307,23 @@ window.addEventListener('DOMContentLoaded',function(){
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
+
+    <!-- Undocked chat mode (?chrome=chat), set as early as the body exists.
+         The holographic shell is a single-window thing - one scene, one HUD,
+         one camera - and a second copy of it costs a WebGL context and a
+         render loop on a GPU already holding a 27B model. An undocked window
+         keeps the React layer and drops the room around it. The CSS that does
+         the hiding is body.chrome-chat in the stylesheet above. -->
+    <script>
+      (function () {
+        try {
+          if (new URLSearchParams(window.location.search).get('chrome') === 'chat') {
+            document.body.classList.add('chrome-chat');
+            window.__FRIDAY_CHROME__ = 'chat';
+          }
+        } catch (e) { /* a window that cannot read its own URL still works */ }
+      })();
+    </script>
 
     <!-- MediaPipe — async so a dead/stalling CDN never blocks first paint.
          The Hands/FaceDetection/Camera globals are only instantiated lazily
@@ -38459,7 +38513,10 @@ function App() {
   })), []);
   const [zMap, setZMap] = useState({});
   const [zC, setZC] = useState(42);
-  const [chatOpen, setChatOpen] = useState(false);
+  /* An undocked window IS the chat panel, so it opens open. Anywhere else the
+     panel starts closed, as it always has. */
+  const [chatOpen, setChatOpen] = useState(
+    () => window.__FRIDAY_CHROME__ === 'chat');
   const [chatMsgs, setChatMsgs] = useState([]);
   const [chatIn, setChatIn] = useState('');
   const [chatLoad, setChatLoad] = useState(false);
@@ -38475,7 +38532,17 @@ function App() {
      is unchanged — but WHICH conversation that is now moves, and each carries
      its own model binding. Switching loads that chat's own messages. */
   const [convList, setConvList] = useState([]);
-  const [convId, setConvId] = useState(null);
+  /* An undocked window is addressed by URL: ?conversation=<id> opens THAT
+     thread rather than Main. Seeded here rather than in an effect, because
+     `refreshConvs` does `setConvId(cur => cur || d.main_id)` — an effect that
+     set it afterwards would race the list and the window could flash Main
+     before landing on the thread it was opened for. */
+  const [convId, setConvId] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('conversation')
+             || null;
+    } catch (e) { return null; }
+  });
   const [convOpen, setConvOpen] = useState(false);
   const [convSeat, setConvSeat] = useState(null);
   const [convPickerOpen, setConvPickerOpen] = useState(false);
@@ -43679,7 +43746,45 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
+  }, "+ New Chat"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+    /* UNDOCK. This conversation, in its own window, so a second one can be
+       worked alongside it — the point being two MODELS at once, since each
+       conversation carries its own seat binding.
+
+       A real browser window rather than a floating div: Friday is served over
+       HTTP, so the OS already knows how to give a window a position, a size
+       and a place in the alt-tab order, and none of that has to be rebuilt.
+       The undocked window drops the holographic shell (?chrome=chat) because
+       one scene, one HUD and one camera are what the machine has.
+
+       Hidden in an already-undocked window, where it would only ever open a
+       duplicate of itself. */
+    onClick: () => {
+      const cid = convId;
+      if (!cid) return;
+      const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
+      const w = window.open(url, 'friday-chat-' + cid,
+                            'width=520,height=860,menubar=no,toolbar=no');
+      if (!w) {
+        alert('The browser blocked that window. Allow pop-ups for Friday and '
+              + 'try again.');
+        return;
+      }
+      try { w.focus(); } catch (e) {}
+    },
+    title: "Open this conversation in its own window",
+    "aria-label": "Undock this conversation",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "⇱ Undock"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
     title: "Close chat",
     "aria-label": "Close chat",
