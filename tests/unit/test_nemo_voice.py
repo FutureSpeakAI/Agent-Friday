@@ -72,13 +72,13 @@ def test_gpu_tier_ready_false_without_nemo(monkeypatch):
 def test_gpu_tier_ready_requires_cuda_and_vram(monkeypatch):
     monkeypatch.setattr(nv, "nemo_deps_installed", lambda: True)
     monkeypatch.setattr(nv, "gpu_status",
-                        lambda: {"cuda": True, "sufficient": True})
+                        lambda **_k: {"cuda": True, "sufficient": True})
     assert gpu_tier_ready() is True
     monkeypatch.setattr(nv, "gpu_status",
-                        lambda: {"cuda": True, "sufficient": False})
+                        lambda **_k: {"cuda": True, "sufficient": False})
     assert gpu_tier_ready() is False
     monkeypatch.setattr(nv, "gpu_status",
-                        lambda: {"cuda": False, "sufficient": True})
+                        lambda **_k: {"cuda": False, "sufficient": True})
     assert gpu_tier_ready() is False
 
 
@@ -200,3 +200,111 @@ def test_nemo_tts_interface():
 
 def test_min_vram_constant_sane():
     assert isinstance(MIN_VRAM_GB, (int, float)) and MIN_VRAM_GB > 0
+
+
+# ── F1/F2 (voice-mode-diagnosis-and-repair.md): cache, warn-once, conservative ──
+
+@pytest.fixture(autouse=True)
+def _reset_gpu_cache():
+    nv.reset_gpu_status_cache()
+    yield
+    nv.reset_gpu_status_cache()
+
+
+def _fake_torch_probe(monkeypatch, torch_free_gb, smi_free_gb):
+    """Drive the torch branch of the probe without torch: a stub module in
+    sys.modules plus a stubbed nvidia-smi answer."""
+    import sys as _sys
+    import types
+
+    class _Cuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def current_device():
+            return 0
+
+        @staticmethod
+        def get_device_name(_i):
+            return "Fake RTX"
+
+        @staticmethod
+        def mem_get_info(_i):
+            return int(torch_free_gb * 1e9), int(12.0 * 1e9)
+
+    fake = types.ModuleType("torch")
+    fake.cuda = _Cuda
+    monkeypatch.setitem(_sys.modules, "torch", fake)
+    monkeypatch.setattr(nv, "_module_installed", lambda name: name == "torch")
+
+    class _R:
+        stdout = "%d\n" % int(smi_free_gb * 1024)
+
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(nv, "_local_gpu_voice_selected", lambda: True)
+
+
+def test_gpu_status_is_cached_and_fresh_bypasses(monkeypatch):
+    """F1: health pollers share one reading; an admission re-measures."""
+    calls = []
+    monkeypatch.setattr(nv, "_probe_gpu_status",
+                        lambda: calls.append(1) or {"cuda": False, "sufficient": False})
+    monkeypatch.setattr(nv, "_local_gpu_voice_selected", lambda: True)
+    nv.gpu_status()
+    nv.gpu_status()
+    nv.gpu_status()
+    assert len(calls) == 1
+    nv.gpu_status(fresh=True)
+    assert len(calls) == 2
+
+
+def test_gpu_status_cache_expires(monkeypatch):
+    calls = []
+    monkeypatch.setattr(nv, "_probe_gpu_status",
+                        lambda: calls.append(1) or {"cuda": False})
+    monkeypatch.setattr(nv, "_local_gpu_voice_selected", lambda: True)
+    nv.gpu_status()
+    nv._gpu_cache["at"] -= nv._GPU_STATUS_TTL_S + 1
+    nv.gpu_status()
+    assert len(calls) == 2
+
+
+def test_admission_uses_conservative_figure(monkeypatch):
+    """F2: torch=11.5 free, nvidia-smi=2.0 free -> NOT sufficient."""
+    _fake_torch_probe(monkeypatch, torch_free_gb=11.5, smi_free_gb=2.0)
+    g = nv.gpu_status(fresh=True)
+    assert g["cuda"] is True
+    assert g["vram_free_real_gb"] == 2.0
+    assert g["sufficient_reachable"] is True   # torch's verdict, reported
+    assert g["sufficient"] is False            # nvidia-smi's verdict, admitted
+    monkeypatch.setattr(nv, "nemo_deps_installed", lambda: True)
+    assert gpu_tier_ready(fresh=True) is False
+
+
+def test_admission_passes_when_conservative_figure_has_room(monkeypatch):
+    _fake_torch_probe(monkeypatch, torch_free_gb=11.5, smi_free_gb=6.7)
+    g = nv.gpu_status(fresh=True)
+    assert g["sufficient"] is True
+    assert g["vram_measurement_disputed"] is True   # 4.8 GB gap still reported
+
+
+def test_dispute_is_warned_once_then_debug(monkeypatch, caplog):
+    """F1: twelve identical warnings a minute drowned the log."""
+    import logging
+    _fake_torch_probe(monkeypatch, torch_free_gb=11.5, smi_free_gb=6.7)
+    with caplog.at_level(logging.DEBUG, logger="friday.nemo_voice"):
+        for _ in range(5):
+            nv.gpu_status(fresh=True)
+    warns = [r for r in caplog.records
+             if r.levelno == logging.WARNING and "disputed" in r.getMessage()]
+    assert len(warns) == 1
+    # A verdict change is news again.
+    _fake_torch_probe(monkeypatch, torch_free_gb=11.5, smi_free_gb=2.0)
+    with caplog.at_level(logging.DEBUG, logger="friday.nemo_voice"):
+        nv.gpu_status(fresh=True)
+    warns = [r for r in caplog.records
+             if r.levelno == logging.WARNING and "disputed" in r.getMessage()]
+    assert len(warns) == 2
