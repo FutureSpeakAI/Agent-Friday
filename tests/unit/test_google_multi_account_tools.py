@@ -29,6 +29,23 @@ from agent_friday.services import calendar_engine as ce
 from agent_friday.services import google_accounts as ga
 
 
+def _summary(connected=True, total=1, healthy=1, degraded=False,
+             attention=(), note=""):
+    """A google_accounts.accounts_summary() stand-in.
+
+    These tests used to stub ga.has_accounts() -- "does a record exist" -- to
+    put the tools into their connected state. The tools now ask whether an
+    account actually WORKS (services.google_accounts.accounts_summary), so the
+    stub has to answer that question instead. has_accounts is still stubbed
+    alongside it: search_email keeps using it to decide whether a
+    never-connected install may fall back to the offline cache.
+    """
+    return {"total": total, "healthy": healthy, "connected": connected,
+            "degraded": degraded, "needs_attention": list(attention),
+            "note": note}
+
+
+
 class TestQueryCalendarMultiAccount:
     def test_reports_every_account_not_just_the_primary(self, monkeypatch):
         # OLD path: single stale event, no per-account attribution at all —
@@ -36,6 +53,7 @@ class TestQueryCalendarMultiAccount:
         monkeypatch.setattr(ce, "_fetch_calendar_today",
                             lambda: [{"title": "STALE single-account event"}])
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_calendar", lambda days=2: {
             "accounts": [
                 {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
@@ -60,6 +78,7 @@ class TestQueryCalendarMultiAccount:
         monkeypatch.setattr(ce, "_fetch_calendar_today",
                             lambda: [{"error": "OLD single-account path — must not be used"}])
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_calendar", lambda days=2: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "events": [],
@@ -81,12 +100,15 @@ class TestQueryCalendarMultiAccount:
 
     def test_zero_accounts_still_gives_the_honest_not_connected_note(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        monkeypatch.setattr(ga, "accounts_summary",
+                            lambda: _summary(connected=False, total=0, healthy=0))
         result = json.loads(agent_mod._tool_query_calendar({}))
         assert result.get("connected") is False
         assert "connecting" in result.get("note", "").lower()
 
     def test_names_which_store_was_checked(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_calendar", lambda days=2: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "events": [], "errors": [],
@@ -100,6 +122,7 @@ class TestSearchEmailMultiAccount:
         monkeypatch.setattr(ce, "_collect_messages",
                             lambda limit=25: ([{"subject": "STALE single-account cache hit"}], "cache"))
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15: {
             "accounts": [
                 {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
@@ -122,6 +145,7 @@ class TestSearchEmailMultiAccount:
         monkeypatch.setattr(ce, "_collect_messages",
                             lambda limit=25: ([], "empty"))
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "messages": [],
@@ -140,15 +164,27 @@ class TestSearchEmailMultiAccount:
         # rather than regressing it; this is the one case where the OLD path
         # is still the right path.
         monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        monkeypatch.setattr(ga, "accounts_summary",
+                            lambda: _summary(connected=False, total=0, healthy=0))
         monkeypatch.setattr(ce, "_collect_messages",
                             lambda limit=25: ([{"subject": "cached", "sender": "x", "snippet": "y"}], "cache"))
         blob = agent_mod._tool_search_email({"query": ""})
         result = json.loads(blob)
-        assert result.get("connected") is True
+        # CHANGED 2026-09-09. This asserted connected is True while zero Google
+        # accounts existed -- cached mail labelled as a live connection, the
+        # same presence-is-not-function error that cost Stephen nine days on
+        # the calendar side. The cache fallback is still the right path here;
+        # calling it "connected" was not. The results must arrive marked as
+        # cache so the model can say so instead of reading them out as the
+        # current inbox.
+        assert result.get("connected") is False
         assert result.get("source") == "cache"
+        assert "cache" in result.get("note", "").lower()
+        assert result.get("count") == 1
 
     def test_names_which_store_was_checked(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "messages": [], "errors": [],
@@ -188,13 +224,24 @@ class TestConnectorStatusMultiAccount:
         by_label = {a["label"]: a["status"] for a in status["accounts"]}
         assert by_label["Personal"] == "connected"
         assert by_label["Work"] == "needs_reauth"
-        # Overall status still reflects SOME account working.
-        assert status["status"] == "connected"
+        # CHANGED 2026-09-09. This previously asserted that the overall status
+        # "still reflects SOME account working" -- i.e. green. That expectation
+        # was the bug: a green badge told Stephen his Google was fine while one
+        # of two accounts had needed re-auth for nine days, and his calendar was
+        # silently half-empty through two job interviews. The aggregate is only
+        # `connected` when EVERY account is; a partial failure is a failure the
+        # user has to be able to see.
+        assert status["status"] == "error"
+        assert status["accounts_healthy"] == 1
+        assert status["accounts_total"] == 2
+        # ...and it must name which account is broken, not just go red.
+        assert "work@example.com" in status["detail"]
 
 
 class TestSearchDriveMultiAccount:
     def test_reports_every_account_and_badges_files(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_drive_search", lambda query, max_results: {
             "accounts": [
                 {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
@@ -214,6 +261,7 @@ class TestSearchDriveMultiAccount:
 
     def test_a_real_api_error_is_never_mislabeled_as_not_connected(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_drive_search", lambda query, max_results: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "files": [],
@@ -229,6 +277,8 @@ class TestSearchDriveMultiAccount:
 
     def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        monkeypatch.setattr(ga, "accounts_summary",
+                            lambda: _summary(connected=False, total=0, healthy=0))
         result = json.loads(agent_mod._tool_search_drive({"query": ""}))
         assert result.get("connected") is False
         assert "connecting" in result.get("note", "").lower()
@@ -241,6 +291,7 @@ class TestReadDocMultiAccount:
 
     def test_reads_via_the_named_account(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "list_accounts", lambda: [
             {"id": "acc1", "label": "Personal", "services": {"docs": True}},
         ])
@@ -262,6 +313,7 @@ class TestReadDocMultiAccount:
         # No account_id given -> must try candidates in order rather than
         # assuming the file belongs to the first account.
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "list_accounts", lambda: [
             {"id": "acc1", "label": "Personal", "services": {"docs": True}},
             {"id": "acc2", "label": "Work", "services": {"docs": True}},
@@ -280,6 +332,8 @@ class TestReadDocMultiAccount:
 
     def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        monkeypatch.setattr(ga, "accounts_summary",
+                            lambda: _summary(connected=False, total=0, healthy=0))
         result = json.loads(agent_mod._tool_read_doc({"file_id": "f1"}))
         assert result.get("connected") is False
         assert "connecting" in result.get("note", "").lower()
@@ -288,6 +342,7 @@ class TestReadDocMultiAccount:
 class TestListTasksMultiAccount:
     def test_reports_every_account_and_badges_tasks(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "merged_tasks", lambda max_results: {
             "accounts": [
                 {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
@@ -305,6 +360,8 @@ class TestListTasksMultiAccount:
 
     def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        monkeypatch.setattr(ga, "accounts_summary",
+                            lambda: _summary(connected=False, total=0, healthy=0))
         result = json.loads(agent_mod._tool_list_tasks({}))
         assert result.get("connected") is False
         assert "connecting" in result.get("note", "").lower()
@@ -386,6 +443,7 @@ class TestTaskWritesToolHandlers:
 class TestSearchContactsMultiAccount:
     def test_reports_every_account_and_badges_contacts(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "search_contacts", lambda query, max_results: {
             "accounts": [
                 {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
@@ -405,6 +463,7 @@ class TestSearchContactsMultiAccount:
 
     def test_a_real_api_error_is_never_mislabeled_as_not_connected(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
         monkeypatch.setattr(ga, "search_contacts", lambda query, max_results: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "contacts": [],
@@ -420,6 +479,8 @@ class TestSearchContactsMultiAccount:
 
     def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        monkeypatch.setattr(ga, "accounts_summary",
+                            lambda: _summary(connected=False, total=0, healthy=0))
         result = json.loads(agent_mod._tool_search_contacts({"query": ""}))
         assert result.get("connected") is False
         assert "connecting" in result.get("note", "").lower()
