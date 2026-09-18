@@ -191,6 +191,21 @@ def _run_mind(selection: dict, progress) -> dict:
                      {"role": "user", "content": "Say OK."}],
         "max_tokens": 8, "temperature": 0,
     }
+    # The gemma4 e-series thinks first, inside <|channel>thought, and eight
+    # tokens of thinking is an empty `content`. Observed live on
+    # 2026-09-18 against the FridayWeaver seat: content '' with
+    # reasoning 'Thinking Process:\n1', finish_reason 'length' -- and this
+    # proof called that "answered with no completion" on a seat that was
+    # fine. The router's real turns already disable thinking for these
+    # models (model_router._call_openai, channel_toolcalls.
+    # needs_thinking_disabled); the proof has to ask the same way, or it
+    # refuses a seat the turn would have used.
+    try:
+        from agent_friday.services import channel_toolcalls as _ct
+        if _ct.needs_thinking_disabled(seat):
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+    except Exception:
+        pass
     contract.pop("_system", None)
     if tools:
         body["tools"] = tools

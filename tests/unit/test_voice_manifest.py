@@ -270,3 +270,49 @@ def test_bundled_proof_asset_is_present_and_well_formed():
     assert 1.5 <= seconds <= 4.0
     assert vm.transcript_matches("Friday, what time is it right now?")
     assert not vm.transcript_matches("what time is it")
+
+
+def _capture_mind_request(monkeypatch, seat):
+    """Route _run_mind at a fake seat and capture the JSON body it sends."""
+    import io, json as _json
+    from agent_friday.services import local_seats, tool_budget
+    monkeypatch.setattr(local_seats, "resolve", lambda role: seat)
+    monkeypatch.setattr(tool_budget, "_seat_base", lambda m: "http://127.0.0.1:1")
+    monkeypatch.setattr(vm, "compute_contract", lambda s, system_prompt=None: {
+        "_oai_tools": [{"type": "function", "function": {"name": "knowledge_query",
+                                                          "parameters": {"type": "object"}}}],
+        "_system": "sys", "tools": ["knowledge_query"], "floor_present": True,
+        "knowledge_graph": True, "memory": False, "window": 131072,
+        "prompt_tokens": 100, "tool_tokens": 10, "loop_reserve": 6144,
+        "reply_cap": 300, "fits": True, "note": "", "reason": ""})
+    sent = {}
+
+    class _Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def _urlopen(req, timeout=0):
+        sent["body"] = _json.loads(req.data.decode())
+        return _Resp(_json.dumps({"choices": [{"message": {"content": "OK"}}],
+                                  "timings": {"prompt_n": 5}}).encode())
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    return sent
+
+
+def test_mind_proof_disables_thinking_on_the_gemma4_family(monkeypatch):
+    """Observed live 2026-09-18: with thinking on, the FridayWeaver seat
+    spent all eight tokens inside <|channel>thought, `content` came back
+    empty, and the proof refused a seat the real turn would have used
+    (the router already sends enable_thinking=false for this family)."""
+    sent = _capture_mind_request(monkeypatch, "gemma4:e2b-fridayweaver-1.0")
+    out = vm._run_mind({}, None)
+    assert out["content"] == "OK"
+    assert sent["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert sent["body"]["tools"], "the proof must carry the real tools"
+
+
+def test_mind_proof_leaves_thinking_alone_for_other_families(monkeypatch):
+    sent = _capture_mind_request(monkeypatch, "qwen3:4b")
+    vm._run_mind({}, None)
+    assert "chat_template_kwargs" not in sent["body"]
