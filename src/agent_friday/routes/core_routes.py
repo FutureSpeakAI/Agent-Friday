@@ -849,6 +849,69 @@ def _check_local_model_seat_gate(new_settings):
     return None
 
 
+_LOCAL_SEAT_PROVIDERS = frozenset({"ollama-local", "llama-cpp-local", "arbiter-local",
+                                   "local", "local-comfyui"})
+
+
+def _check_seat_installed(new_settings):
+    """Refuse to bind a LOCAL seat to a model that is not on this machine.
+
+    This is not the removed conformance gate above: it asks nothing about
+    quality, only whether the weights exist. Observed 2026-09-18: the picker
+    wrote `capability_routing.reasoning = gemma4:12b` (Ollama held zero
+    models; the only local weights were the FridayWeaver e2b set), the save
+    returned 200, the UI announced success, and `local_seats.resolve()`
+    substituted e2b at INFO in a log nobody reads. A seat change that cannot
+    be served must fail here, out loud, naming what is missing and what is
+    installed -- not succeed on paper and be quietly rewritten at dispatch.
+
+    Returns an error dict (HTTP 400 at the call site) or None. When the
+    installed list cannot be read at all (daemon down AND an empty store)
+    the save is allowed: refusing on an unknown would lock the user out of a
+    control that may be perfectly valid.
+    """
+    if not isinstance(new_settings, dict):
+        return None
+    wanted = []
+    cr = new_settings.get("capability_routing")
+    if isinstance(cr, dict):
+        for cap, entry in cr.items():
+            if not isinstance(entry, dict):
+                continue
+            model = str(entry.get("model") or "").strip()
+            prov = str(entry.get("provider") or "").strip().lower()
+            if model and prov in _LOCAL_SEAT_PROVIDERS:
+                wanted.append((f"capability_routing.{cap}", model, prov))
+    mr = new_settings.get("model_routing")
+    if isinstance(mr, dict) and str(mr.get("local_model") or "").strip():
+        wanted.append(("model_routing.local_model",
+                       str(mr["local_model"]).strip(), "local"))
+    if not wanted:
+        return None
+    try:
+        from agent_friday.services import local_seats
+        installed = sorted({n for n, _ in local_seats.installed(force=True)})
+    except Exception:
+        installed = []
+    if not installed:
+        return None
+    for key, model, prov in wanted:
+        if model in installed:
+            continue
+        return {
+            "status": "error",
+            "error": "seat_not_installed",
+            "key": key, "model": model, "provider": prov,
+            "installed": installed,
+            "detail": (f"{model} is not installed on this machine, so it cannot "
+                       f"take the {key.split('.')[-1]} seat. Installed local "
+                       f"models: {', '.join(installed)}. Pull it first (for "
+                       f"example `ollama pull {model}`) or pick one of the "
+                       f"installed models. Nothing was changed."),
+        }
+    return None
+
+
 @core_bp.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """GET: return current agent settings + personality.
@@ -875,6 +938,10 @@ def api_settings():
         seat_error = _check_local_model_seat_gate(new_settings)
         if seat_error is not None:
             return jsonify(seat_error), 400
+
+        installed_error = _check_seat_installed(new_settings)
+        if installed_error is not None:
+            return jsonify(installed_error), 400
 
         enum_error = _check_voice_enums(new_settings)
         if enum_error is not None:

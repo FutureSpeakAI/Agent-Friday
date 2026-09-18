@@ -204,6 +204,46 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
     CHAT_HISTORY.append(friday_msg)
 
 
+_SEAT_NOTICES_SENT = set()
+
+
+def _announce_seat_notice(conversation_id, text):
+    """Put a seat discrepancy where the user reads: a system line in the
+    transcript and a notification, once per conversation and wording.
+    Never raises; a notice that could break the turn is worse than none."""
+    key = (conversation_id, text)
+    if key in _SEAT_NOTICES_SENT:
+        return
+    _SEAT_NOTICES_SENT.add(key)
+    try:
+        import logging as _nlog
+        _nlog.getLogger("friday.routing").warning("seat notice: %s", text)
+    except Exception:
+        pass
+    try:
+        sys_msg = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "role": "system",
+            "kind": "seat_notice",
+            "text": "⚙ " + text,
+            "pinned": False,
+        }
+        if conversation_id:
+            sys_msg["conversation_id"] = conversation_id
+        CHAT_HISTORY.append(sys_msg)
+        _save_chat_history(CHAT_HISTORY)
+    except Exception:
+        pass
+    try:
+        from agent_friday.notifications_engine import push
+        push(title="Answered by a different model than you chose", body=text,
+             priority="high", source="routing", kind="seat_notice",
+             dedupe_key="seat_notice:" + text[:80])
+    except Exception:
+        pass
+
+
 @chat_bp.route('/api/chat/stream', methods=['POST'])
 def chat_stream():
     """The same turn as /api/chat, delivered as it is written.
@@ -790,9 +830,48 @@ def chat():
         # vault — vault data must never leave the device, so privacy wins there.
         if _CC_PERMISSION.is_set() and _routed_local and not _vault_access:
             print("  [ROUTER] Computer Control enabled — routing to cloud for the tool-use loop")
+            import logging as _rlog
+            _rlog.getLogger("friday.routing").warning(
+                "Computer Control is on: routed-local turn (%s) sent to the cloud "
+                "for the tool-use loop", _route_info.get('model'))
             _routed_local = False
             _provider = 'cloud'
+            _route_info['override'] = 'computer_control'
+            _route_info['overridden_local_model'] = _route_info.get('model')
             _route_info['model'] = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
+
+        # ── SAY WHEN THE SEAT THAT ANSWERS IS NOT THE SEAT THAT WAS CHOSEN ──
+        #
+        # Observed 2026-09-18 (persisted chat records + friday.log): the picker
+        # held gemma4:12b, which is not installed; the router substituted the
+        # FridayWeaver seat at INFO; Computer Control was on, so the override
+        # above then sent every turn to claude-sonnet-5 with a print() to a
+        # stdout nobody reads. The user asked three times for the local model
+        # and was told "Done" each time. Both facts now reach the user in the
+        # turn itself: a system line in the transcript, a notification, and
+        # `seat_notice` on the response.
+        _seat_notice = None
+        try:
+            _chosen_m, _chosen_p = _router._chosen_seat(
+                {"conversation_seat": _conv_seat})
+        except Exception:
+            _chosen_m, _chosen_p = None, None
+        if _route_info.get('override') == 'computer_control':
+            _seat_notice = (
+                "Computer Control is on, and only a cloud model can drive it, so "
+                f"this turn ran on the cloud model instead of your local seat"
+                + (f" ({_route_info.get('overridden_local_model')})"
+                   if _route_info.get('overridden_local_model') else "")
+                + ". Turn Computer Control off to be answered by the local model.")
+        elif (_chosen_m and _routed_local
+              and (_route_info.get('model') or '') != _chosen_m):
+            _seat_notice = (
+                f"You chose {_chosen_m} for the reasoning seat, but it is not "
+                f"installed on this machine; this turn was answered by "
+                f"{_route_info.get('model')} instead. Install {_chosen_m} or pick "
+                f"an installed model in the seat picker.")
+        if _seat_notice:
+            _announce_seat_notice(_conversation_id, _seat_notice)
 
         # ── Build the (vault-gated) system prompt + scrub PII for the provider. ──
         # Cloud: vault TIER_2/TIER_3 content is gated out and PII is scrubbed.
@@ -1401,6 +1480,8 @@ def chat():
             'model': _seat_model,
             'seat': _seat_class,
         }
+        if _seat_notice:
+            friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
         _persist_turn(_conversation_id, user_msg, friday_msg,
@@ -1512,6 +1593,7 @@ def chat():
             "session_id": session_id,
             "model": _seat_model,
             "seat": _seat_class,
+            "seat_notice": _seat_notice,
             "seat_events": _seat_events,
             # An image reaching a cloud provider, or being withheld because the
             # mode forbids it, is disclosed in the turn. Empty on every turn
