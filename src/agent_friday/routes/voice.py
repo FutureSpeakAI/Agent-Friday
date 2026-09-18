@@ -1209,6 +1209,53 @@ def _voice_prompt_for_contract():
 _vm.set_prompt_builder(_voice_prompt_for_contract)
 
 
+def _warm_seat_prefix() -> dict:
+    """F5 / clean-sheet §4.4: put the session's prompt prefix into the seat's
+    KV cache right after the proofs, through the SAME call a turn makes.
+
+    Measured 2026-09-18: the first utterance after arming prefilled 27,460
+    tokens and took ~8 s to first audio; the second prefilled 15 and took
+    ~1.5 s. The proofs themselves cannot warm it, because the manifest's
+    self-description is the prompt's first line and it changes when the
+    proofs land. A one-token completion with the post-proof prompt, the
+    resolved seat and the voice session context makes turn one warm.
+    """
+    t0 = _time.time()
+    settings = _load_settings() or {}
+    try:
+        system_prompt, _pmeta = _build_voice_system_prompt(settings)
+        from agent_friday.services import local_seats as _seats
+        _brain = _seats.resolve("brain")
+        from agent_friday.services.model_router import TIMINGS_SINK
+        timings = {}
+        _tok = TIMINGS_SINK.set(lambda t: timings.update(t or {}))
+        try:
+            _generate_agent(
+                [{"role": "user", "content": "OK."}],
+                system=system_prompt, model=_brain, max_tokens=1,
+                temperature=settings.get("temperature"),
+                session_ctx={"authenticated": True, "provider": _pmeta["provider"],
+                             "is_voice": True, "prefix_warm": True},
+                workspace=settings.get("active_workspace") or "",
+            )
+        finally:
+            TIMINGS_SINK.reset(_tok)
+        out = {"warmed": True, "seat": _brain, "prompt_n": timings.get("prompt_n"),
+               "ms": int((_time.time() - t0) * 1000)}
+        _log.info("voice prefix warm: seat=%s prompt_n=%s in %d ms",
+                  _brain, timings.get("prompt_n"), out["ms"])
+        return out
+    except Exception as e:  # noqa: BLE001
+        _log.warning("voice prefix warm failed: %s: %s", type(e).__name__, e)
+        return {"warmed": False, "reason": f"{type(e).__name__}: {e}"}
+
+
+try:
+    _vm.get_manifest().after_prove = _warm_seat_prefix
+except Exception:
+    pass
+
+
 @voice_bp.route('/api/voice/session-info')
 def voice_session_info():
     """Tell the browser which engine + WebSocket URL to use for this session.

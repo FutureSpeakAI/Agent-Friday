@@ -294,6 +294,19 @@ def set_prompt_builder(fn) -> None:
     _PROMPT_BUILDER = fn
 
 
+def _seat_label(model_id) -> str:
+    """The seat's human label from the model store ("FridayWeaver-1.0"),
+    never its id: the id is a tag a small model repeats verbatim."""
+    try:
+        from agent_friday.services import model_store
+        lab = ((model_store.get(model_id) or {}).get("label") or "").strip()
+        if lab:
+            return lab
+    except Exception:
+        pass
+    return str(model_id or "Friday's local model")
+
+
 def _prompt_for_contract() -> str:
     if _PROMPT_BUILDER is None:
         return "You are Agent Friday in a live voice conversation."
@@ -512,6 +525,20 @@ class VoiceManifest:
             self.refresh_selection()
             for k in stages:
                 self.prove(k)
+            # F5 / §4.4: the proofs change the self-description, which is the
+            # FIRST line of the session prompt, so the seat's prefix cache is
+            # cold on the first utterance even right after arming (measured
+            # 2026-09-18: 27,460 prefill tokens and ~8 s to first audio on
+            # turn 1, then 15 tokens and ~1.5 s from turn 2). The route
+            # registers a warm hook that sends the session's exact prompt
+            # once, through the same code path a turn uses.
+            hook = getattr(self, "after_prove", None)
+            if hook is not None and self.mode == "local" and \
+                    self.snapshot_stage("mind").get("ready"):
+                try:
+                    hook()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("after_prove hook failed: %s", e)
         finally:
             with self._lock:
                 self._proving = False
@@ -641,7 +668,7 @@ class VoiceManifest:
             if e == "faster-whisper":
                 e = f"faster-whisper {eff.get('model') or ''}".strip()
             elif e == "seat":
-                e = f"{eff.get('model') or 'the local seat'} running locally"
+                e = f"{_seat_label(eff.get('model'))} running locally"
             elif e == "kokoro":
                 e = f"Kokoro ({eff.get('voice') or 'af_heart'})"
             elif e == "piper":
@@ -685,6 +712,15 @@ class VoiceManifest:
                      + "; ".join(unproven) + ". Do not describe it as running.")
         else:
             text += "All three run on this machine; nothing leaves it."
+        # Measured 2026-09-18 on the reference machine: given its engine ids
+        # in this line, the 4.6B seat parroted them into replies ("Gemma 4 is
+        # handling that for you", "I'm running on gemma4:e2b-fridayweaver-1.0
+        # for this one", and once a bare "Gemma 4"). The facts stay so the
+        # model cannot claim a pipeline it does not have; the register is
+        # set explicitly so they do not leak into every answer.
+        text += (" You are Friday. These are facts for you to know, not to "
+                 "announce: never name these engines or models in a reply "
+                 "unless the user asks what you are running on.")
         return text.strip()
 
 
