@@ -846,12 +846,37 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     if sidekick is not None:
         seats["sidekick"] = _place(sidekick, "sidekick", "pinned")
         if seats["sidekick"] is None:
-            refusals.append(_refusal(
-                "sidekick", sidekick["model_id"], "R3",
-                "no GPU has room beside the pinned brain: needs %s MiB, "
-                "largest remaining budget is %d MiB"
-                % (_vram_for(sidekick, DEFAULT_NUM_CTX["sidekick"]),
-                   max(free.values()) if free else 0)))
+            # UNMEASURED IS NOT THE SAME AS TOO BIG, AND MUST NOT READ LIKE IT.
+            #
+            # `_vram_for` returns None for a model with no measurement on this
+            # machine. Interpolated straight into the sentence below that came
+            # out as "needs None MiB, largest remaining budget is 6382 MiB" --
+            # arithmetic against a missing value, presented as a capacity
+            # verdict. Observed 2026-09-10 on Stephen's machine for
+            # `gemma4:e2b-fridayweaver-1.0`, and it was the first link in a
+            # six-step cascade: refused for "size", therefore not in the
+            # plan's wanted set, therefore never adopted by `adopt_or_reap`,
+            # therefore absent from the Arbiter's resident list, therefore
+            # missing from endpoints.json, therefore invisible to the seat
+            # resolver, which fell back to size ordering and picked a retired
+            # alias that no longer exists. A seat that was up and answering
+            # the entire time.
+            _need = _vram_for(sidekick, DEFAULT_NUM_CTX["sidekick"])
+            _largest = max(free.values()) if free else 0
+            if _need is None:
+                refusals.append(_refusal(
+                    "sidekick", sidekick["model_id"], "R3",
+                    "this model has never been measured on this machine, so "
+                    "its video-memory cost is unknown and it cannot be placed "
+                    "-- this is a missing measurement, not a model that is "
+                    "too large. Run `friday measure %s` to record it. "
+                    "(largest remaining budget is %d MiB)"
+                    % (sidekick["model_id"], _largest)))
+            else:
+                refusals.append(_refusal(
+                    "sidekick", sidekick["model_id"], "R3",
+                    "no GPU has room beside the pinned brain: needs %d MiB, "
+                    "largest remaining budget is %d MiB" % (_need, _largest)))
     elif not budgets and brain is not None:
         # CPU-only: one seat serves both roles (see fixture P5).
         seats["sidekick"] = dict(seats["interactive_brain"] or {},
@@ -1061,11 +1086,24 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens,
             host_mib=host_mib, ceiling_mib=ram["hard_ceiling_mib"])
 
     if not heavy.get("is_moe") and budgets:
+        # Same distinction as the sidekick refusal above: `total or 0` turned
+        # an unmeasured model into "dense model needs 0 MiB", which reads as a
+        # capacity finding and is really a missing measurement. Observed for
+        # `gemma4:e2b-friday-v1` on 2026-09-10.
+        _largest = max(b["available_mib"] for b in budgets)
+        if total is None:
+            return None, _refusal(
+                "heavy_hitter", heavy["model_id"], "R6",
+                "this model has never been measured on this machine, so its "
+                "footprint is unknown and it cannot be placed -- a missing "
+                "measurement, not a size verdict. Run `friday measure %s` to "
+                "record it. (largest GPU budget is %d MiB)"
+                % (heavy["model_id"], _largest))
         return None, _refusal(
             "heavy_hitter", heavy["model_id"], "R6",
             "dense model needs %d MiB and the largest GPU budget is %d MiB; "
             "dense models must fit or be demoted, only MoE may expert-offload"
-            % (total or 0, max(b["available_mib"] for b in budgets)))
+            % (total, _largest))
 
     seat = _placement(heavy, "heavy_hitter",
                       ("gpu:%d+cpu" % sorted(free)[0]) if budgets else "cpu",

@@ -630,19 +630,43 @@ def _friday_store_entries(exclude: set | None = None) -> list:
     except Exception:
         owned_endpoint = lambda _m: None            # noqa: E731
 
+    # The same presence question local_seats._friday_store asks, answered
+    # the same way: through the guarded probe, never `Path.exists()` inline.
+    # Profiled 2026-09-17 with the WSL share wedged: this loop's stat on the
+    # FridayWeaver record cost 25.4 s of a 27.2 s /api/intelligence request,
+    # the endpoint the top-bar model pill reads. Retired records and
+    # fine-tunes without their adapter are not pickable either.
+    try:
+        from agent_friday.services import path_probe as _probe
+    except Exception:
+        _probe = None
+    store_dir = _pl.Path(friday_home(), "runtime", "models", "gguf")
+
+    def _reachable(rec, key):
+        p = rec.get(key)
+        if not p:
+            return True
+        local = (rec.get("local_files") or {}).get(key)
+        cands = [c for c in (local, str(store_dir / _pl.Path(str(p)).name), p)
+                 if c]
+        if _probe is None:
+            return any(_pl.Path(c).exists() for c in cands)
+        return any(_probe.exists(c) for c in cands)
+
     for mid, rec in rows.items():
         if mid in exclude or not isinstance(rec, dict):
             continue
         if rec.get("is_embedding") or rec.get("can_generate") is False:
             continue
-        path = rec.get("path")
-        if path:
-            try:
-                import pathlib as _pl2
-                if not _pl2.Path(path).exists():
-                    continue                        # listed is not present
-            except Exception:
-                pass
+        if rec.get("retired"):
+            continue
+        try:
+            if not _reachable(rec, "path"):
+                continue                            # listed is not present
+            if rec.get("lora") and not _reachable(rec, "lora"):
+                continue                            # base without its adapter
+        except Exception:
+            pass
         try:
             live = bool(owned_endpoint(mid))
         except Exception:
