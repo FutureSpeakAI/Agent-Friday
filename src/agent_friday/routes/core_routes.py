@@ -849,6 +849,19 @@ def _check_local_model_seat_gate(new_settings):
     return None
 
 
+@core_bp.route('/api/capabilities/state', methods=['GET'])
+def api_capabilities_state():
+    """The live capability picture the model reads every turn, for any UI or
+    health surface that wants the same truth (services/capability_state.py).
+    Absent and unconfigured are distinct, and unconfigured names its key."""
+    try:
+        from agent_friday.services import capability_state as _cs
+        return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
+                        "states": list(_cs.STATES)})
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"{type(e).__name__}: {e}"}), 500
+
+
 _LOCAL_SEAT_PROVIDERS = frozenset({"ollama-local", "llama-cpp-local", "arbiter-local",
                                    "local", "local-comfyui"})
 

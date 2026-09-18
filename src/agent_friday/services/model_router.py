@@ -3163,6 +3163,20 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         add(clock_context_block(), _T1)
     except Exception:
         pass
+    # LIVE CAPABILITY STATE, right behind the clock and for the same reason:
+    # it is true of the machine right now, not of anything remembered. It
+    # rides in the volatile tail (after prompt_cache.VOLATILE_MARKER) so a
+    # key appearing or a seat dying changes the model's picture on the next
+    # turn without churning the cached prefix. 2026-09-18: absent and
+    # unconfigured were one word to the model, and it told the user a wired,
+    # unkeyed backend "is not a tool". See services/capability_state.py.
+    try:
+        from agent_friday.services import capability_state as _cs
+        _cap_block = _cs.describe_for_model()
+        if _cap_block:
+            add(_cap_block, _T1)
+    except Exception:
+        pass
 
     # security-boundary.md §20: the retrieval ledger. One row per named,
     # tier-tagged section, written HERE — before gating decides what

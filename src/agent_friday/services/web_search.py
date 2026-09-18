@@ -110,6 +110,10 @@ ABSENT = "absent"
 PRESENT_FAILING = "present_but_failing"
 WORKING = "working"
 UNVERIFIED = "present_unverified"
+#: A missing key is NOT absence. This vocabulary used to return ABSENT for
+#: "no key configured", which is how a built, wired-in backend reached the
+#: model as "not a tool" (2026-09-18). See services/capability_state.py.
+UNCONFIGURED = "unconfigured"
 
 _HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
                  "checked_at": 0.0}
@@ -125,8 +129,11 @@ def health_state() -> dict:
     on every page load would be its own problem.
     """
     if not brave_key():
-        return {"state": ABSENT, "proven_on": None,
-                "detail": "No Brave key is configured.", "checked_at": 0.0}
+        return {"state": UNCONFIGURED, "proven_on": None,
+                "needs": ["BRAVE_SEARCH_API_KEY", "brave_search_api_key"],
+                "detail": "Brave web search is wired in but no key is configured "
+                          "(BRAVE_SEARCH_API_KEY, or brave_search_api_key in "
+                          "settings.json).", "checked_at": 0.0}
     return dict(_HEALTH)
 
 
@@ -134,8 +141,11 @@ def firecrawl_health() -> dict:
     """Same three states for Firecrawl. `working` only after a real query
     returned real results — never on the strength of a stored string."""
     if not _firecrawl_ready():
-        return {"state": ABSENT, "proven_on": None,
-                "detail": "No Firecrawl key is configured.", "checked_at": 0.0}
+        return {"state": UNCONFIGURED, "proven_on": None,
+                "needs": ["FIRECRAWL_API_KEY", "firecrawl_api_key"],
+                "detail": "Firecrawl is wired in but no key is configured "
+                          "(FIRECRAWL_API_KEY, or firecrawl_api_key in "
+                          "settings.json).", "checked_at": 0.0}
     return dict(_FC_HEALTH)
 
 
@@ -479,9 +489,19 @@ def search(query: str, count: int = 10) -> dict:
     # model told the user "I don't have Firecrawl wired up as a tool right
     # now, nothing in my toolkit is named that" -- false; it is the first
     # backend in this chain. A failure that hides the fix is half a lie.
+    try:
+        from agent_friday.services import capability_state as _cs
+        note = _cs.unconfigured_backends_note()
+    except Exception:
+        note = FIRECRAWL_UNCONFIGURED_NOTE if not _firecrawl_ready() else ""
+    if note:
+        last["detail"] = (last["detail"] + " " + note).strip()
     if not _firecrawl_ready():
-        last["detail"] = (last["detail"] + " " + FIRECRAWL_UNCONFIGURED_NOTE).strip()
         last["firecrawl"] = {"configured": False, "how": FIRECRAWL_KEY_HOWTO}
+    if not brave_key():
+        last["brave"] = {"configured": False,
+                         "how": "Set BRAVE_SEARCH_API_KEY in your environment or "
+                                "brave_search_api_key in settings.json, then restart Friday."}
     return last
 
 
