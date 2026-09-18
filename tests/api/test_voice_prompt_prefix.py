@@ -34,18 +34,32 @@ def test_voice_prompt_is_prefix_stable(monkeypatch):
     p1, meta1 = rv._build_voice_system_prompt({"orchestrator_model": "seat"})
     clock["t"] = "2026-09-16 09:13"                       # a minute passes
     p2, meta2 = rv._build_voice_system_prompt({"orchestrator_model": "seat"})
-    assert p1 != p2                                       # the clock moved
-    i1, i2 = p1.index(VOLATILE_MARKER), p2.index(VOLATILE_MARKER)
-    assert i1 == i2 and p1[:i1] == p2[:i2]                # identical prefix
-    prefix = p1[:i1]
+    # Measured 2026-09-18 on the FridayWeaver seat: ANY change to the
+    # system message re-prefills the whole prompt, so the system text must
+    # be byte-identical across builds. The clock moved, and the SYSTEM text
+    # did not -- the volatile tail rides in `meta["volatile"]` and is put in
+    # the user turn by `_voice_user_message`.
+    assert p1 == p2
+    assert VOLATILE_MARKER not in p1
+    assert meta1["volatile"] != meta2["volatile"]
+    assert meta1["volatile"].startswith(VOLATILE_MARKER)
+    prefix = p1
     # Order: description first, then the voice rules + choreography, then the
-    # stable context; everything volatile is AFTER the marker.
+    # stable context; everything volatile is in the tail, not the prefix.
     assert prefix.index("Your ears are faster-whisper") < prefix.index("NEVER use markdown")
     assert prefix.index("NEVER use markdown") < prefix.index("TOOL CHOREOGRAPHY")
     assert prefix.index("TOOL CHOREOGRAPHY") < prefix.index("== FRIDAY ==")
     for volatile in ("Now: 2026", "== CONTINUITY ==", "== TONE =="):
-        assert p1.index(volatile) > i1
-    assert meta1 == meta2 == {"is_local_brain": True, "provider": "local"}
+        assert volatile not in p1
+        assert volatile in meta1["volatile"]
+    for m in (meta1, meta2):
+        assert m["is_local_brain"] is True and m["provider"] == "local"
+    # The user turn carries the fresh tail, then what was said.
+    u = rv._voice_user_message("what time is it", volatile=meta2["volatile"])
+    assert u.startswith(VOLATILE_MARKER) and "09:13" in u
+    assert u.endswith("== THE USER JUST SAID ==\nwhat time is it")
+    # With no volatile block (a builder without the marker) the text is bare.
+    assert rv._voice_user_message("hi", volatile="") == "hi"
 
 
 def test_description_change_changes_the_prefix_only_when_a_proof_changes(monkeypatch):

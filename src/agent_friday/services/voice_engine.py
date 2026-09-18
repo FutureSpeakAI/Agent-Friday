@@ -308,13 +308,19 @@ def _tool_ask_friday(inp):
         return ("Friday's local model is not loaded right now, so Stephen's "
                 "context cannot be reached from this session. Say so plainly.")
     system, _meta = _build_voice_system_prompt(settings)
-    system += ("\n\nYou are answering a question RELAYED from a cloud voice "
-               "session. Answer in one to three plain spoken sentences; the "
-               "answer will be read aloud by another model. Do not mention "
-               "the relay.")
+    # The relay note and the volatile context ride in the USER turn: the
+    # seat's template re-prefills the whole prompt on any system-message
+    # change (measured 2026-09-18), so the system text stays the one the
+    # local sessions and the proofs already have in cache.
+    from agent_friday.routes.voice import _voice_user_message
+    user = _voice_user_message(
+        "You are answering a question RELAYED from a cloud voice session. "
+        "Answer in one to three plain spoken sentences; the answer will be "
+        "read aloud by another model. Do not mention the relay.\n\n"
+        + question, settings, volatile=_meta.get("volatile"))
     try:
         text, _trace = _generate_agent(
-            [{"role": "user", "content": question}], system=system, model=seat,
+            [{"role": "user", "content": user}], system=system, model=seat,
             max_tokens=_voice_reply_cap(settings),
             session_ctx={"authenticated": True, "provider": "local",
                          "is_voice": True, "surface": "voice-live-relay"},
