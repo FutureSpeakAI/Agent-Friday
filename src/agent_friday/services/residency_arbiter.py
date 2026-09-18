@@ -377,13 +377,37 @@ class OllamaBackend:
             self.evict(name)
 
 
+#: Where Friday keeps its own copy of the engine described below, so the
+#: capability survives Ollama being uninstalled.
+VENDORED_E_SERIES_ENGINE = ("llama.cpp-ollama", "llama-server.exe")
+
+
 def ollama_engine_path() -> Path:
-    """Ollama's own llama-server, which we run as a PROCESS WE OWN.
+    """The llama-server build that can read the Gemma-4 e-series.
 
     Not the daemon. The daemon is what R9 exists because of; this is the engine
-    binary that ships beside it, started and killed by the Arbiter like any
+    binary that shipped beside it, started and killed by the Arbiter like any
     other seat process. Nothing schedules it but us.
+
+    2026-09-18: Stephen asked for Ollama to stop being a dependency of Friday
+    at all, and by then the daemon already served nothing — `_DAEMON_MODELS`
+    has been empty since channel_toolcalls.py learned to parse the e-series
+    tool-call format directly. The only thing still wanted from that install
+    was this binary, because upstream llama.cpp refuses `gemma4:e2b` from a
+    provably intact file ("wrong number of tensors; expected 2012, got 601")
+    and FridayWeaver is built on it.
+
+    So the engine was copied into Friday's own runtime and Ollama removed.
+    Friday's copy comes first; the original path stays as a fallback for an
+    install that still has Ollama, because a machine that has not run the
+    migration should not lose the seat over it.
     """
+    try:
+        mine = runtime_dir().joinpath(*VENDORED_E_SERIES_ENGINE)
+        if mine.exists():
+            return mine
+    except Exception:
+        pass
     return (Path.home() / "AppData" / "Local" / "Programs" / "Ollama" /
             "lib" / "ollama" / "llama-server.exe")
 
@@ -537,6 +561,117 @@ def _model_on_port(port: int) -> str | None:
     return None
 
 
+#: Flags the Arbiter must own no matter what a model record says. These are
+#: not preferences — they are how the Arbiter finds, identifies and reaps its
+#: own seats, so a model that overrode them would become invisible to the
+#: process responsible for it.
+_RESERVED_SERVE_FLAGS = {"-m", "--model", "--alias", "--host", "--port",
+                         "-c", "--ctx-size", "--mmproj",
+                         "--chat-template-file"}
+
+
+def _merge_declared_args(cmd: list, declared: list) -> list:
+    """Apply a model's declared llama-server flags over the default command.
+
+    A declared flag REPLACES the default's value for that flag rather than
+    appending a second copy, because llama.cpp takes the last occurrence and a
+    command carrying `-ub 512 ... -ub 2048` reads as a contradiction to anyone
+    debugging it later. Flags in `_RESERVED_SERVE_FLAGS` are refused: the
+    Arbiter has to be able to identify and reap what it spawned.
+    """
+    if not declared:
+        return cmd
+    out = list(cmd)
+    i = 0
+    while i < len(declared):
+        flag = declared[i]
+        if not flag.startswith("-"):
+            i += 1
+            continue
+        has_value = (i + 1 < len(declared)
+                     and not declared[i + 1].startswith("-"))
+        value = declared[i + 1] if has_value else None
+        i += 2 if has_value else 1
+        if flag in _RESERVED_SERVE_FLAGS:
+            print(f"  [arbiter] ignoring declared {flag}: the Arbiter owns it")
+            continue
+        if flag in out:
+            at = out.index(flag)
+            if value is not None and at + 1 < len(out) and \
+                    not out[at + 1].startswith("-"):
+                out[at + 1] = value
+            elif value is not None:
+                out.insert(at + 1, value)
+        else:
+            out.append(flag)
+            if value is not None:
+                out.append(value)
+    return out
+
+
+#: What a llama.cpp build actually says when it will not take the KV cache
+#: flags. Anything outside this list is some other failure wearing the same
+#: exit code.
+_KV_FLAG_REJECTION_MARKERS = (
+    "unknown argument",
+    "invalid argument",
+    "error while handling argument",
+    "unrecognized argument",
+    "unsupported cache type",
+    "invalid cache type",
+    "invalid kv cache type",
+    "requires flash attention",
+)
+
+#: Failures that are emphatically NOT about the flag, listed so that a message
+#: containing both (llama.cpp prints usage text on some errors) is read as the
+#: allocation failure it is.
+_ALLOCATION_FAILURE_MARKERS = (
+    "out of memory",
+    "cudamalloc",
+    "failed to allocate",
+    "unable to allocate",
+    "insufficient memory",
+    "buffer_type_alloc_buffer",
+)
+
+
+def _reap_our_seat_on_port(port: int) -> bool:
+    """Kill a llama-server of OURS still holding `port`. True if one died.
+
+    Deliberately narrow. `_llama_server_pids()` is the same discriminator the
+    reaper uses — a process is ours only if it loaded from Friday's own model
+    directory — so a seat belonging to anything else on that port is left
+    exactly where it is. Killing another scheduler's process is the
+    discourtesy this module exists to stop.
+    """
+    try:
+        pid = _listening_ports().get(int(port))
+        if not pid or pid not in _llama_server_pids():
+            return False
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                       capture_output=True, timeout=20)
+        print(f"  [arbiter] reaped our leftover seat pid {pid} on :{port}")
+        return True
+    except Exception:
+        return False
+
+
+def _reads_as_rejected_kv_flag(err) -> bool:
+    """True only when the build itself says it will not take --cache-type-*.
+
+    Conservative on purpose: absence of evidence is not evidence that the
+    flag is unsupported, and the caller's fallback is expensive enough that
+    guessing wrong costs more than not falling back at all.
+    """
+    text = str(err or "").lower()
+    if not text:
+        return False
+    if any(m in text for m in _ALLOCATION_FAILURE_MARKERS):
+        return False
+    return any(m in text for m in _KV_FLAG_REJECTION_MARKERS)
+
+
 def _seat_num_ctx(pid: int) -> int | None:
     """The `-c` a running llama-server was started with, or None."""
     try:
@@ -617,9 +752,47 @@ class LlamaServerBackend:
         self.fallback = fallback if fallback is not None else \
             ollama_engine_path()
         self.procs: dict = {}          # model_id -> (Popen, port)
+        # Serializes the check-then-spawn in `load`. Two roles naming the same
+        # model are pinned one after another, but the boot path is threaded
+        # and a 27B takes a minute to come up, which is a wide enough window
+        # for both to look, both to see nothing, and both to spawn.
+        self._load_lock = threading.RLock()
 
     def resident(self):
         return {m: 0 for m in self.procs}
+
+    @staticmethod
+    def _declared_engine(model_id):
+        """An engine the model store says this model REQUIRES, or None.
+
+        Learning by trial (`_ENGINE_MEMO`) works when every candidate engine
+        can at least attempt the file. It does not work when a model needs a
+        binary that is not among the candidates at all, and the failure mode
+        is expensive rather than merely slow.
+
+        2026-09-18: Bonsai 2 27B was registered with its weights, projector and
+        chat template, and nothing recorded that it needs the PrismML fork of
+        llama.cpp — stock llama.cpp rejects its ternary tensor type outright
+        ("invalid ggml type 143"). So the Arbiter did exactly what it was
+        built to do: saw the seat down, killed the working process, respawned
+        with `runtime/llama.cpp/llama-server.exe`, got `exited 1`, marked the
+        seat NOT SERVING (R9), and every turn escalated to the cloud. From the
+        user's side a local model simply stopped answering and Sonnet replied
+        instead, repeatedly, for reasons nothing on screen explained.
+
+        A model that needs a particular runtime should be able to say so, in
+        the same record that holds its weights. Declared beats learned, and
+        both still beat guessing.
+        """
+        try:
+            from agent_friday.services import model_store as _ms
+            rec = _ms.get(model_id) or {}
+            cand = (rec.get("engine") or "").strip()
+            if cand and Path(cand).exists():
+                return Path(cand)
+        except Exception:
+            pass
+        return None
 
     def engines_for(self, model_id):
         """Engines to try, best first, with anything already learned first."""
@@ -629,10 +802,83 @@ class LlamaServerBackend:
             order.append(Path(self.fallback))
         if known:
             order = [Path(known)] + [b for b in order if str(b) != str(known)]
+        # A declared requirement outranks both the default and the memo: the
+        # memo can only remember engines that were tried, and the whole point
+        # here is an engine that was never a candidate.
+        declared = self._declared_engine(model_id)
+        if declared:
+            order = [declared] + [b for b in order
+                                  if str(b) != str(declared)]
         return [b for b in order if Path(b).exists()]
 
     def load(self, model_id, num_ctx, *, gguf_path, port,
              n_cpu_moe=None, timeout=300, lora_path=None, mmproj_path=None):
+        # A SEAT IS A MODEL, NOT A ROLE.
+        #
+        # `_pin` calls this once per pinned ROLE, and several roles routinely
+        # name the same model — on this machine `reasoning`, `heavy_hitter`,
+        # `subagent`, `memory_manager` and `local` were all bonsai2:27b.
+        # Nothing here checked whether the model was already served, so each
+        # role spawned its own 27B process: two were found alive on :8090 and
+        # :8091 holding 11,605 MiB of a 12,282 MiB card between them, and
+        # because `self.procs` is keyed by model_id the second overwrote the
+        # first's entry — so the first was not merely redundant, it was
+        # orphaned, unevictable and invisible to the thing responsible for it.
+        # A chat turn arriving in that state never returns.
+        #
+        # Roles share a seat. That was always the intent — `self.procs` being
+        # keyed by model is the proof — it simply was not enforced at the one
+        # place that creates them.
+        with self._load_lock:
+            existing = self._already_serving(model_id)
+            if existing is not None:
+                return existing
+            return self._load_locked(
+                model_id, num_ctx, gguf_path=gguf_path, port=port,
+                n_cpu_moe=n_cpu_moe, timeout=timeout, lora_path=lora_path,
+                mmproj_path=mmproj_path)
+
+    def _already_serving(self, model_id):
+        """0.0 if this model is already seated and answering, else None.
+
+        Checks the process we remember first, then the ports, because a seat
+        can outlive the Arbiter that started it (see `adopt_or_reap`) and
+        spawning a second copy of a 27B model is not a recoverable mistake on
+        a 12 GB card.
+        """
+        entry = self.procs.get(model_id)
+        if entry is not None:
+            proc, port = entry
+            try:
+                if proc.poll() is None and _model_on_port(port) == model_id:
+                    return 0.0
+            except Exception:
+                pass
+            # Remembered but not actually serving: forget it rather than
+            # refuse to reload, and say so.
+            print(f"  [arbiter] {model_id} was recorded on :{port} but is not "
+                  f"serving; reloading")
+            self.procs.pop(model_id, None)
+        try:
+            live = survey_live_seats()
+        except Exception:
+            return None
+        if model_id in live:
+            pid, port = live[model_id]
+            cap = self.seat_cap(model_id)
+            over = _seat_num_ctx(pid)
+            if over and over > cap:
+                return None      # non-conforming; let the caller reload it
+            self.procs[model_id] = (AdoptedProc(pid), port)
+            _publish_endpoints(self.procs)
+            print(f"  [arbiter] {model_id} already serving on :{port} "
+                  f"(pid {pid}) — adopted instead of spawning a second copy")
+            return 0.0
+        return None
+
+    def _load_locked(self, model_id, num_ctx, *, gguf_path, port,
+                     n_cpu_moe=None, timeout=300, lora_path=None,
+                     mmproj_path=None):
         engines = self.engines_for(model_id)
         if not engines:
             raise TransitionError("no llama-server binary found (looked at %s "
@@ -649,6 +895,11 @@ class LlamaServerBackend:
                 return took
             except TransitionError as e:
                 last = e
+                # Belt and braces for the overlap described in `_spawn_once`:
+                # whatever that attempt may have left listening on its port is
+                # ours and is in the way of the next engine. Anything not
+                # recognisably one of our seats is left alone.
+                _reap_our_seat_on_port(port + i)
         raise TransitionError("no engine could load %s: %s" % (model_id, last))
 
     # A seat's window is the Arbiter's decision, and it is bounded.
@@ -723,7 +974,62 @@ class LlamaServerBackend:
     # `knowledge_query` -- Friday's own route into its knowledge graph. A
     # window that forces the agent to discard its capabilities mid-turn is not
     # a safe default, it is a quiet one.
+    # EVERY NUMBER ABOVE WAS MEASURED ON gemma4:12b, AND IT DOES NOT TRANSFER.
+    #
+    # Gemma 4 interleaves five sliding-window layers with one full-attention
+    # layer, eight times over — only the eight full layers scale with `-c`,
+    # which is exactly why the curve looked flat enough to justify 131,072.
+    # Bonsai 2 27B is a dense Qwen3.5: every layer's KV scales, and the model
+    # is more than twice the size. Measured on this card on 2026-09-18, the
+    # 27B at 65,536 held 11,518 MiB of 12,282 and left 495 MiB free, under
+    # even the old 1,024 MiB display reserve, let alone the 2,560 in force.
+    # At 131,072 — what this cap allows — the seat thrashes and a turn takes
+    # tens of seconds.
+    #
+    # The cap is not wrong; it is a ceiling derived from one model family and
+    # applied to all of them. A model whose serving window has been measured
+    # should be able to say so in the same record that holds its weights and
+    # its engine, and the arbiter should believe it. Declared beats the class
+    # default, and the class default still beats guessing — the ceiling stays
+    # a ceiling, so a declaration can only ever lower it.
     MAX_SEAT_NUM_CTX = 131072
+
+    @staticmethod
+    def _declared_num_ctx(model_id):
+        """A serving window the model store says this model was measured at.
+
+        Returns None when nothing is declared, so the class ceiling applies
+        unchanged. Never raises: a store that cannot be read must not stop a
+        seat from loading.
+        """
+        try:
+            from agent_friday.services import model_store as _ms
+            rec = _ms.get(model_id) or {}
+            v = int(rec.get("serve_num_ctx") or 0)
+            return v if v > 0 else None
+        except Exception:
+            return None
+
+    @classmethod
+    def seat_cap(cls, model_id):
+        """The largest window this model may be served at on this machine."""
+        declared = cls._declared_num_ctx(model_id)
+        if declared:
+            return min(int(declared), int(cls.MAX_SEAT_NUM_CTX))
+        return int(cls.MAX_SEAT_NUM_CTX)
+
+    @staticmethod
+    def _declared_serve_args(model_id):
+        """Extra llama-server flags this model was measured with, or []."""
+        try:
+            from agent_friday.services import model_store as _ms
+            rec = _ms.get(model_id) or {}
+            args = rec.get("serve_args")
+            if isinstance(args, (list, tuple)):
+                return [str(a) for a in args if str(a).strip()]
+        except Exception:
+            pass
+        return []
 
     # KV CACHE QUANTIZATION. Off by default in llama.cpp, which stores K and V
     # at f16; q8_0 halves that (8 bits plus a 2-byte scale per 32 elements =
@@ -787,6 +1093,39 @@ class LlamaServerBackend:
         except TransitionError as e:
             if not quantized or getattr(self, "_kv_quant_unsupported", False):
                 raise
+            if not _reads_as_rejected_kv_flag(e):
+                # An unexplained failure is usually transient here: the seat
+                # being replaced is often still releasing its VRAM when the
+                # new one starts. Observed today — two spawns died silently
+                # during model load, a third with identical arguments came up
+                # fine nine seconds later. So retry once as-is, and keep the
+                # quantized cache we came for.
+                if not getattr(self, "_kv_retry_in_flight", False):
+                    self._kv_retry_in_flight = True
+                    try:
+                        print("  [arbiter] %s: spawn failed (%s) — retrying "
+                              "once with the same settings." % (model_id, e))
+                        time.sleep(5)
+                        return self._spawn_once(
+                            binary, model_id, num_ctx, gguf_path=gguf_path,
+                            port=port, n_cpu_moe=n_cpu_moe, timeout=timeout,
+                            lora_path=lora_path, mmproj_path=mmproj_path)
+                    finally:
+                        self._kv_retry_in_flight = False
+                # 2026-09-18: this branch used to fire on ANY spawn failure,
+                # and the cost was the opposite of what it intended. A second
+                # Bonsai seat failed to load because the card was full; the
+                # Arbiter read that as "this build rejects --cache-type-k",
+                # latched f16 for the whole process, and every subsequent seat
+                # spawned with a KV cache twice the size — on the card that
+                # had just run out of room. A fallback that makes its own
+                # trigger more likely is not a fallback.
+                #
+                # So the downgrade now needs the build to actually say so.
+                # Anything else is reported as what it is and re-raised: an
+                # out-of-memory spawn should look like an out-of-memory spawn,
+                # not like a capability this machine turns out not to have.
+                raise
             self._kv_quant_unsupported = True
             print("  [arbiter] %s: spawn failed with a quantized KV cache "
                   "(%s) — retrying at f16. This build may not support "
@@ -810,10 +1149,13 @@ class LlamaServerBackend:
             asked = int(num_ctx or 0)
         except Exception:
             asked = 0
-        if asked > self.MAX_SEAT_NUM_CTX:
+        cap = self.seat_cap(model_id)
+        if asked > cap:
+            why = ("declared for this model" if cap < self.MAX_SEAT_NUM_CTX
+                   else "to keep the display reserve")
             print(f"  [arbiter] {model_id}: capping context {asked:,} -> "
-                  f"{self.MAX_SEAT_NUM_CTX:,} to keep the display reserve")
-            num_ctx = self.MAX_SEAT_NUM_CTX
+                  f"{cap:,} ({why})")
+            num_ctx = cap
         cmd = [str(binary), "-m", str(gguf_path), "--alias", model_id,
                "--host", "127.0.0.1", "--port", str(port),
                "-ngl", "99", "--flash-attn", "on", "-c", str(num_ctx),
@@ -825,6 +1167,16 @@ class LlamaServerBackend:
                # the compute buffer, not the model, and it is the difference
                # between the pinned pair fitting and not.
                "-b", "512", "-ub", "512"]
+        # `-b 512 -ub 512` is measured on gemma4:12b and is not universal
+        # either. On Bonsai 2 27B, -ub 2048 lifted prompt processing from 370
+        # to 467 tok/s on a 16k prompt, and -np 1 meant every background probe
+        # queued behind a chat turn on the one slot — the seat log showed
+        # four-token requests taking seven to twenty seconds because of it.
+        # A model that has been measured can declare the flags it was measured
+        # with, by the same argument as `engine` and `serve_num_ctx` above: a
+        # per-model fact belongs in the per-model record, not in a class
+        # constant that some other model's measurement set.
+        cmd = _merge_declared_args(cmd, self._declared_serve_args(model_id))
         # See KV_CACHE_TYPE above. Settings can pin this back to "f16" without
         # a code change; `_spawn_with_fallback` retries unquantized if the
         # binary rejects the flag, so a build that does not support it costs a
@@ -952,7 +1304,29 @@ class LlamaServerBackend:
                 _publish_endpoints(self.procs)
                 return round(time.time() - t0, 2)
             time.sleep(1.5)
+        # TERMINATE IS A REQUEST; THE VRAM IS NOT FREE UNTIL THE PROCESS IS.
+        #
+        # 2026-09-18: this was `proc.terminate()` followed straight by the
+        # raise, and `load()` moved on to the next engine on the next port
+        # immediately. A 27B seat takes seconds to die and release ten
+        # gigabytes, so the two overlapped: two bonsai2:27b servers were found
+        # alive on :8090 and :8091 at once, together holding 11,605 MiB of a
+        # 12,282 MiB card. The second spawn was then competing with the corpse
+        # of the first for the memory it needed, which is a good way to turn
+        # one slow boot into two failures.
+        #
+        # So wait for the exit, escalate to a kill if the request is ignored,
+        # and only then report the failure. A caller that is about to try
+        # another engine is entitled to a card in the state this one found it.
         proc.terminate()
+        try:
+            proc.wait(timeout=20)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=10)
+            except Exception:
+                pass
         raise TransitionError("%s never became ready in %ss for %s"
                               % (Path(binary).name, timeout, model_id))
 
@@ -1050,10 +1424,11 @@ class LlamaServerBackend:
             # at 448 MiB free. A seat that does not conform to policy is not
             # adopted; it is reaped, and the plan reloads it inside the cap.
             over = _seat_num_ctx(pid)
-            if over and over > self.MAX_SEAT_NUM_CTX:
+            _cap = self.seat_cap(model_id)
+            if over and over > _cap:
                 print(f"  [arbiter] not adopting {model_id} on :{port}: it was "
                       f"started at {over:,} context, over the "
-                      f"{self.MAX_SEAT_NUM_CTX:,} cap - reloading it instead")
+                      f"{_cap:,} cap - reloading it instead")
                 continue
 
             if model_id in wanted and model_id not in self.procs:
