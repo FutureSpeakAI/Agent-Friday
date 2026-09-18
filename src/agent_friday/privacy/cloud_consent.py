@@ -362,6 +362,10 @@ def status(profile: dict | None = None) -> dict:
         "source": cs.source,
         "unrestricted": cs.unrestricted,
         "needs_prompt": needs_prompt,
+        # The snapshot the answer was given against, so a surface can say
+        # "answered when the machine believed local was incapable because
+        # nothing had been measured" instead of just the date.
+        "capability_snapshot": cs.capability_snapshot,
     }
     if needs_prompt:
         payload["capability"] = assess_local_capability(profile)
