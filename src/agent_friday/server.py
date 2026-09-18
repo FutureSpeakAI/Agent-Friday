@@ -1,4 +1,4 @@
-﻿"""
+"""
 FRIDAY Desktop v4.4 — Phase B OS Backend (slim entry point).
 
 The 18k-line monolith was decomposed into:
@@ -14,6 +14,18 @@ import os
 import sys
 import threading
 import logging
+
+# No console windows from child processes. Friday shells out constantly — git,
+# powershell, ffmpeg, nvidia-smi, the credential helpers, the MCP clients — and
+# on Windows each one flashes a console unless told otherwise. An audit on
+# 2026-09-18 found 46 subprocess calls in this tree with no `creationflags` at
+# all. This sets the default once, before `core` imports anything that can
+# spawn, rather than editing 46 call sites and missing the 47th.
+try:
+    from agent_friday.services.no_console import install as _install_no_console
+    _install_no_console()
+except Exception:
+    pass
 
 import agent_friday.core as core
 
@@ -75,8 +87,8 @@ from flask import Blueprint as _Blueprint
 # is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
-    'activity',
-    'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'code',
+    'activity', 'arbiter',
+    'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
     'control', 'core_routes',
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
@@ -383,6 +395,37 @@ if not _TESTING:
 
     if _notif_engine:
         threading.Thread(target=_notification_trigger_loop, daemon=True).start()
+
+    # THE EMBEDDER IS LOADED AT BOOT, NOT ON THE USER'S FIRST SENTENCE.
+    #
+    # `sensitivity_classifier._load_embedder` imports sentence-transformers and
+    # builds the exemplar matrix the first time anything asks for an egress
+    # classification. Every chat turn asks, through
+    # `routing.model_router.needs_vault_access`, so the FIRST turn after a
+    # restart was paying for a torch import inline, on the request thread,
+    # while the user watched an empty chat box. Caught with py-spy on
+    # 2026-09-18: a turn sitting in `<frozen importlib._bootstrap>` under
+    # `sentence_transformers/__init__.py`, and cold turns measured at 104 to
+    # 166 seconds against 46 for a warm one.
+    #
+    # Nothing about that work needs to happen then. It is the same import
+    # either way; doing it here means it overlaps the rest of boot and is
+    # finished before anyone types. Daemon and best-effort: a machine without
+    # sentence-transformers logs its warning here instead of mid-turn, which is
+    # also the better place for it.
+    def _warm_sensitivity_embedder():
+        try:
+            import time as _time
+            from agent_friday.services import sensitivity_classifier as _sc
+            _t = _time.time()
+            if _sc._load_embedder() is not None:
+                print("  Sensitivity embedder: ready (%.1fs)"
+                      % (_time.time() - _t))
+        except Exception as _we:
+            print(f"  Sensitivity embedder: unavailable ({_we})")
+
+    threading.Thread(target=_warm_sensitivity_embedder, daemon=True,
+                     name="warm-embedder").start()
 
     # Persistent news archive: grow the per-day article store on the RSS cadence.
     threading.Thread(target=_news_archiver_loop, daemon=True).start()
