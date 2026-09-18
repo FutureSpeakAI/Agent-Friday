@@ -121,6 +121,14 @@ def extract_keywords(text, limit=8):
     return [w for w, _ in ranked[:limit]]
 
 
+# Supersession metadata keys. Values are strings because Chroma metadata is
+# restricted to scalar types and "" reads as absent everywhere it is checked.
+_SUPERSEDED_KEY = "superseded"
+_SUPERSEDED_REASON = "superseded_reason"
+_SUPERSEDED_AT = "superseded_at"
+_SUPERSEDED_BY = "superseded_by"
+
+
 class ConversationMemory:
     """Persistent, embedding-backed store of every chat turn.
 
@@ -348,16 +356,23 @@ class ConversationMemory:
         return ids
 
     # ── reads ────────────────────────────────────────────────────────
-    def search(self, query, n=5, session_id=None, roles=None):
+    def search(self, query, n=5, session_id=None, roles=None,
+               include_superseded=False):
         """Semantic search over past turns.
 
         Returns a list (most-relevant first) of dicts:
             {text, role, timestamp, date, session_id, topic_keywords,
-             distance, relevance}
+             distance, relevance, superseded, superseded_reason}
         where `relevance` is 1 - cosine_distance, clamped to [0, 1].
 
-        session_id  optional filter to a single conversation
-        roles       optional iterable of roles to restrict to (e.g. ['friday'])
+        session_id          optional filter to a single conversation
+        roles               optional iterable of roles to restrict to
+        include_superseded  return entries stripped of evidential authority
+                            (see supersede()). False by default: this is the
+                            RETRIEVAL path that feeds the model's context, and
+                            a superseded turn must not come back as evidence.
+                            get_session()/recent() are the HISTORY paths and
+                            always return everything, flagged.
         """
         query = (query or "").strip()
         if not query or not self._ensure():
@@ -382,9 +397,18 @@ class ConversationMemory:
                 count = self._collection.count()
                 if count == 0:
                     return []
+                # Over-fetch when filtering supersession out in Python. Doing
+                # it here rather than in a Chroma `where` clause is deliberate:
+                # entries written before the flag existed have no such key at
+                # all, and metadata predicates over a missing key are not
+                # portable across Chroma versions -- a filter that silently
+                # dropped every pre-existing memory would be a far worse bug
+                # than over-fetching a few rows.
+                want = max(1, int(n))
+                fetch = want if include_superseded else min(count, want * 4)
                 res = self._collection.query(
                     query_texts=[query],
-                    n_results=max(1, min(int(n), count)),
+                    n_results=max(1, min(fetch, count)),
                     where=where,
                     include=["documents", "metadatas", "distances"],
                 )
@@ -398,6 +422,9 @@ class ConversationMemory:
                     rel = max(0.0, min(1.0, 1.0 - float(dist)))
                 except (TypeError, ValueError):
                     rel = None
+                is_superseded = str(meta.get(_SUPERSEDED_KEY) or "") == "1"
+                if is_superseded and not include_superseded:
+                    continue
                 out.append({
                     "text": doc,
                     "role": meta.get("role"),
@@ -410,10 +437,122 @@ class ConversationMemory:
                     ],
                     "distance": dist,
                     "relevance": rel,
+                    "superseded": is_superseded,
+                    "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
                 })
+                if len(out) >= want:
+                    break
             return out
         except Exception as e:
             print(f"  [MEMORY] search failed (non-fatal): {e}")
+            return []
+
+    # ── supersession ─────────────────────────────────────────────────
+    # NEVER DELETE. A stored turn is a record of something the user or Friday
+    # actually said; erasing it destroys history and hides the fact that a
+    # correction ever happened. Superseding keeps the row exactly as written
+    # and removes only its AUTHORITY AS EVIDENCE: it stops coming back from
+    # search() (the retrieval path that feeds the model) while remaining
+    # visible in get_session()/recent() (the history paths), flagged with a
+    # reason. unsupersede() restores it, so the operation is reversible.
+    #
+    # Why this exists (2026-09-09): Friday's settings page displayed two
+    # expired Google accounts as "connected". Stephen read that page and told
+    # Friday what he saw. Friday stored his sentence as a user-authored fact --
+    # its highest-trust source -- and from then on answered "are my Google
+    # accounts connected?" by retrieving his own sentence and citing him,
+    # without consulting anything live. The display's error was laundered
+    # through the person it was shown to and came back wearing his authority.
+    # See docs/DECISIONS.md, "Recall can be poisoned by a broken display".
+
+    def supersede(self, ids, reason, superseded_by=""):
+        """Strip evidential authority from stored turns. Reversible.
+
+        ids            iterable of document ids (see find_ids / get_session)
+        reason         why -- shown in the history paths, required
+        superseded_by  optional pointer to what is now authoritative
+                       (e.g. "services.google_accounts.accounts_summary")
+
+        Returns {"superseded": [ids...], "missing": [ids...]}.
+        """
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("supersede() requires a reason")
+        return self._set_supersession(ids, "1", reason, superseded_by)
+
+    def unsupersede(self, ids):
+        """Restore evidential authority. The exact reverse of supersede()."""
+        return self._set_supersession(ids, "", "", "")
+
+    def _set_supersession(self, ids, flag, reason, superseded_by):
+        ids = [str(i) for i in (ids or []) if str(i).strip()]
+        out = {"superseded": [], "missing": []}
+        if not ids or not self._ensure():
+            out["missing"] = ids
+            return out
+        try:
+            with self._lock:
+                got = self._collection.get(ids=ids, include=["metadatas"])
+                found = list(got.get("ids") or [])
+                metas = list(got.get("metadatas") or [])
+                new_metas = []
+                for meta in metas:
+                    meta = dict(meta or {})
+                    if flag:
+                        meta[_SUPERSEDED_KEY] = "1"
+                        meta[_SUPERSEDED_REASON] = reason
+                        meta[_SUPERSEDED_AT] = datetime.now().isoformat()
+                        meta[_SUPERSEDED_BY] = superseded_by or ""
+                    else:
+                        # Chroma keeps keys it is not told about, so blank them
+                        # rather than relying on deletion semantics.
+                        meta[_SUPERSEDED_KEY] = ""
+                        meta[_SUPERSEDED_REASON] = ""
+                        meta[_SUPERSEDED_AT] = ""
+                        meta[_SUPERSEDED_BY] = ""
+                    new_metas.append(meta)
+                if found:
+                    self._collection.update(ids=found, metadatas=new_metas)
+            out["superseded"] = found
+            out["missing"] = [i for i in ids if i not in found]
+        except Exception as e:
+            print(f"  [MEMORY] supersede failed (non-fatal): {e}")
+            out["missing"] = ids
+        return out
+
+    def find_ids(self, substring, limit=50):
+        """Document ids whose text contains *substring* (case-insensitive).
+
+        For operating on specific known entries; supersede() takes ids, and
+        the ids are not otherwise exposed by search().
+        """
+        needle = (substring or "").strip().lower()
+        if not needle or not self._ensure():
+            return []
+        try:
+            with self._lock:
+                res = self._collection.get(include=["documents", "metadatas"])
+            ids = res.get("ids") or []
+            docs = res.get("documents") or []
+            metas = res.get("metadatas") or []
+            hits = []
+            for did, doc, meta in zip(ids, docs, metas):
+                if needle in (doc or "").lower():
+                    meta = meta or {}
+                    hits.append({
+                        "id": did,
+                        "text": doc,
+                        "role": meta.get("role"),
+                        "date": meta.get("date"),
+                        "timestamp": meta.get("timestamp"),
+                        "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
+                        "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    })
+                    if len(hits) >= limit:
+                        break
+            return hits
+        except Exception as e:
+            print(f"  [MEMORY] find_ids failed (non-fatal): {e}")
             return []
 
     def get_session(self, session_id, limit=500):
@@ -445,6 +584,10 @@ class ConversationMemory:
                         k.strip() for k in (meta.get("topic_keywords") or "").split(",")
                         if k.strip()
                     ],
+                    # History paths show superseded turns, flagged -- the record
+                    # of what was said survives; only its authority is gone.
+                    "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
+                    "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "")
             return rows
@@ -490,6 +633,10 @@ class ConversationMemory:
                         k.strip() for k in (meta.get("topic_keywords") or "").split(",")
                         if k.strip()
                     ],
+                    # History paths show superseded turns, flagged -- the record
+                    # of what was said survives; only its authority is gone.
+                    "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
+                    "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
             return rows[:max(0, int(n))]
