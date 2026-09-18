@@ -38,6 +38,61 @@ CORE = [_tool(f"core_{i}") for i in range(20)]
 CONN = [_tool(f"mcp_hf_{i}") for i in range(112)]
 
 
+def test_the_research_floor_survives_a_punishing_prompt(monkeypatch):
+    """knowledge_query must not be trimmable, at any prompt length.
+
+    THE OBSERVED FAILURE: on 2026-09-10 a 17,650-token prompt on the
+    fridayweaver seat trimmed 75 core tools to 40 and dropped
+    `knowledge_query`, `read_doc`, `search_drive`, `search_news` and
+    `search_files` in the same turn -- every lookup route Friday had. The
+    intent tier did not save it, because a turn does not have to mention the
+    knowledge graph for the next turn to need it.
+
+    THIS TEST COULD FAIL: with `_FLOOR_TOOLS` reverted to ranking-only, the
+    floor tools sit at the tail of a 60-tool sort under a budget that fits
+    about four, and `knowledge_query` is dropped. That is the state this
+    assertion is written against, not a tautology about a list.
+    """
+    _seat(monkeypatch, 32768)
+    # The pressure has to be hard enough that the ESSENTIAL tier alone cannot
+    # save them: a first draft of this test used cheap decoys, and the floor
+    # tools survived on essential-set ranking whether the floor existed or
+    # not. It passed while proving nothing. So: every essential tool, all fat,
+    # on a budget that fits about two of them.
+    tools = [_tool(n, size=3000) for n in sorted(tb._ESSENTIAL_TOOLS)]
+    kept, _note = tb.fit_tools_to_seat("seat:e2b", tools, prompt_cost=20000)
+    names = {t["name"] for t in kept}
+    assert len(names) < len(tools), \
+        "the budget must actually have bitten, or this proves nothing"
+    for n in tb._FLOOR_TOOLS:
+        assert n in names, f"{n} was trimmed away; the floor did not hold"
+
+    # And the falsification, in the test rather than in a comment: with the
+    # reservation removed, these same four are dropped. Measured: 4 kept with
+    # the floor, 2 kept without it and none of them a floor tool.
+    monkeypatch.setattr(tb, "_FLOOR_TOOLS", ())
+    kept2, _ = tb.fit_tools_to_seat("seat:e2b-nofloor", tools,
+                                    prompt_cost=20000)
+    names2 = {t["name"] for t in kept2}
+    assert not [n for n in ("knowledge_query", "search_wiki", "read_wiki",
+                            "search_web") if n in names2], \
+        ("without the floor these should be trimmed -- if they survive, this "
+         "test is not measuring the floor")
+
+
+def test_knowledge_query_is_a_real_tool_name(monkeypatch):
+    """The floor must name tools that exist, or it protects nothing.
+
+    A protected list of misspelled names is the most comfortable kind of bug:
+    every test passes and the tool is still missing at runtime.
+    """
+    agent = pytest.importorskip("agent_friday.services.agent")
+    registry = {t.get("name") for t in getattr(agent, "CLAUDE_TOOLS", [])}
+    assert registry, "no tool registry to check against"
+    for n in tb._FLOOR_TOOLS:
+        assert n in registry, f"{n} is in the floor but not in the registry"
+
+
 def test_connector_tools_are_dropped_when_they_do_not_fit(monkeypatch):
     _seat(monkeypatch, 32768)
     kept, note = tb.fit_tools_to_seat("seat:9b", CORE + CONN)
@@ -231,8 +286,27 @@ def test_the_model_is_told_which_tools_it_lost(monkeypatch):
     gone = [t["name"] for t in CORE if t["name"] not in kept_names]
     assert gone, "fixture should trim something"
     assert "OVERRIDES ANY TOOL LIST ABOVE" in note
-    for n in gone:
-        assert n in note, f"{n} was dropped but never named to the model"
+
+    # The contract is that the note leaves the model in NO DOUBT about what it
+    # can call — not that it always names the casualties. `_surface_override`
+    # deliberately prints whichever list is shorter, because an exhaustive
+    # "you can call EXACTLY these and nothing else" whitelist is as complete a
+    # disclosure as a blacklist and costs less of the budget that got us here.
+    #
+    # This assertion used to demand the blacklist unconditionally and passed
+    # only by luck: with the old headroom the fixture happened to keep more
+    # tools than it dropped. A budget change flipped which list was shorter and
+    # the test failed while the behaviour was still correct. Assert the
+    # contract, not the branch.
+    if len(gone) <= len(kept_names):
+        for n in gone:
+            assert n in note, f"{n} was dropped but never named to the model"
+    else:
+        assert "EXACTLY these" in note, "no exhaustive whitelist given"
+        for n in kept_names:
+            assert n in note, f"{n} survived but was never named to the model"
+        for n in gone:
+            assert f"• {n}\n" not in note, f"{n} was dropped but listed as callable"
 
 
 def test_an_empty_tool_list_still_corrects_the_prompt(monkeypatch):
@@ -281,3 +355,73 @@ def test_a_request_the_seat_measures_as_too_big_is_trimmed_despite_a_small_estim
     kept, note = tb.fit_tools_to_seat("seat", thin, system="sys", messages=[])
     assert len(kept) < len(thin)                               # the estimate lied small
     assert note                                                # and the model is told
+
+
+def test_the_tool_list_holds_still_while_the_prompt_breathes(monkeypatch):
+    """A tool list that changes size costs the whole prompt, every turn.
+
+    A chat template renders tool declarations before anything else, so one
+    tool appearing or disappearing moves every token after it and the seat's
+    prefix cache matches nothing. Measured 2026-09-18: consecutive turns sent
+    62 tools and then 63, because the budget subtracts the prompt from the
+    window and the prompt breathes as the conversation moves. The capability
+    difference between 62 tools and 63 is nil; the cost was ~21,000 tokens
+    reprocessed at ~500 tok/s, about forty-three seconds, on every turn.
+
+    THE FIXTURE MATTERS, and the first version of this test was worthless.
+    It used the module's CORE + CONN, where the connectors are all dropped and
+    all twenty core tools survive at every prompt length in range - so it
+    passed with the rounding removed, which makes it evidence of nothing.
+
+    This one is shaped like the real catalogue instead: seventy-five of
+    Friday's own tools costing ~14,000 tokens against a 32,768 window, which
+    is what the machine actually runs. Without the rounding that fixture moves
+    the tool count thirty-two times across a six-thousand-token prompt range,
+    stepping 66, 65, 64, 63, 62 - the production symptom exactly.
+
+    THE CLAIM IS FEWER CHANGES, NOT NONE. Crossing a step is a real change
+    and should cost one turn; the rounding exists so that the other turns
+    between steps cost nothing. An assertion of "never changes" would be
+    false, and a test that asserts something false gets deleted by the next
+    person rather than fixed.
+    """
+    _seat(monkeypatch, 32768)
+    catalogue = [_tool("core_%02d" % i) for i in range(75)]
+    for t in catalogue:
+        t["description"] = "d" * 640
+
+    shapes = []
+    for cost in range(9000, 15000, 100):
+        kept, _ = tb.fit_tools_to_seat("seat:27b", catalogue, prompt_cost=cost)
+        shapes.append(tuple(t["name"] for t in kept))
+
+    changes = sum(1 for i in range(1, len(shapes))
+                  if shapes[i] != shapes[i - 1])
+    # Measured on this fixture with the rounding removed: 32 changes across
+    # this sweep, stepping 66, 65, 64, 63, 62 - one cache miss per turn.
+    assert changes <= 4, (
+        "the tool list changed %d times across a 6,000-token prompt sweep; "
+        "each change is a full prompt reprocess" % changes)
+
+    # And it must be a FUNCTION of the prompt, not of history: the same
+    # prompt size has to give the same list, or nothing above holds.
+    again = [tuple(t["name"] for t in
+                   tb.fit_tools_to_seat("seat:27b", catalogue,
+                                        prompt_cost=cost)[0])
+             for cost in range(9000, 15000, 100)]
+    assert again == shapes, "the selection is not deterministic"
+
+
+def test_quantising_the_budget_never_empties_a_small_seat(monkeypatch):
+    """Rounding down is safe at a fraction and ruinous at everything.
+
+    The stability rounding above nearly shipped as an unconditional
+    `budget // 2048 * 2048`. On an 8,192-token seat carrying a 4,200-token
+    prompt the budget is 972 tokens, and that expression is ZERO - every tool
+    dropped, on precisely the seats least able to spare them. The rounding is
+    now confined to budgets of at least two whole steps, which caps the loss
+    at half and keeps small seats out of it entirely.
+    """
+    _seat(monkeypatch, 8192)
+    kept, _note = tb.fit_tools_to_seat("seat:9b", CORE + CONN, prompt_cost=4200)
+    assert kept, "a small seat must still carry tools"
