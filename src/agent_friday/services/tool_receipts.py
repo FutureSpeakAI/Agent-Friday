@@ -103,6 +103,190 @@ def unbacked_claims(text):
     return out
 
 
+# ── Claims that name no tool ────────────────────────────────────────────────
+#
+# `unbacked_claims` catches a reply that NAMES a tool it did not run. That is
+# the provable case, and it caught the fabricated query_calendar/search_email
+# turn on 2026-09-09. It is also, on the evidence of that same session, the
+# minority of the failure. Three of the four fabrications that day named no
+# tool at all:
+#
+#   * "I'll remove it from your active task list now" — nothing ran; thirty
+#     seconds later the same assistant admitted it could not find the task.
+#   * "...located at `~/wiki/research/janet-jay-research.md`" — a path that
+#     does not exist, and a different path for the same document one turn
+#     earlier.
+#   * "Navigating you to the **Code** workspace" — no navigate call, no
+#     on-screen move, and the user only noticed because the screen did not
+#     change.
+#
+# The last one has a sting in it. The deterministic navigation path replies
+# "Opening the **Wiki** workspace for you." — and at 16:35:31 the model
+# produced that EXACT sentence with no navigation behind it, having seen it
+# twice earlier in the conversation. The house confirmation string was the
+# one phrase that used to prove a real navigation. It now proves nothing, so
+# it is treated here as a claim requiring a receipt like any other.
+#
+# Each check below is still refusal-to-guess, in the spirit of the module: it
+# fires only where the contradiction is DEMONSTRABLE — an asserted navigation
+# with no navigate receipt, an asserted mutation on a turn where nothing ran
+# at all, a cited path that is not on the disk. Where the evidence is merely
+# suggestive it stays quiet, because a checker that cries wolf gets muted and
+# then everything above is worthless.
+
+_NAV_CLAIM_RE = re.compile(
+    r"\b(?:"
+    r"opening the \*{0,2}\w[\w \-]{0,30}?\*{0,2} workspace"
+    r"|navigat(?:ing|e)\s+(?:you\s+)?(?:to|over to)\b"
+    r"|switch(?:ing)?\s+you\s+(?:directly\s+)?to\b"
+    r"|(?:i'?ll|i am|i'?m|let me)\s+(?:switch|take|move|bring)\s+you\b"
+    r"|taking you (?:to|over to)\b"
+    r"|pulling up the \*{0,2}\w[\w \-]{0,30}?\*{0,2} workspace"
+    r")", re.I)
+
+#: A first-person assertion that a state change has happened or is happening
+#: right now. Deliberately excludes hedged/offered forms ("shall I", "want me
+#: to", "I can") — an offer is not a claim.
+_ACTION_CLAIM_RE = re.compile(
+    # "I'll" IS NOT A CLAIM, AND USED TO BE TREATED AS ONE.
+    #
+    # 2026-09-18, conv with the Bonsai seat: the user asked for a workaround,
+    # the reply said "I'll stop using em dashes ... and keep it ASCII-safe",
+    # and this guard appended "Check failed — do not rely on the answer above.
+    # It claims an action that did not happen this turn: 'I'll stop'". Nothing
+    # was claimed. That is a statement of future intent, and the correction
+    # note directly beneath it says "the reply states this was done or is
+    # being done now", which was simply untrue of the sentence it quoted.
+    #
+    # The cost of that is not the one wrong banner. It is that a guard which
+    # cries wolf on ordinary English is a guard the user learns to scroll
+    # past, and this one exists to be believed on the turn that matters. So
+    # the future tense is out; what remains is the present progressive ("I am
+    # sending", "I'm removing"), the perfect ("I've sent", "I have deleted"),
+    # and "let me", which asserts doing it now rather than later.
+    r"\b(?:i am|i'?m|i'?ve|i have|let me)\s+"
+    r"(?:go ahead and\s+|just\s+|now\s+)?"
+    r"(remov\w*|delet\w*|eras\w*|clear\w*|cancel\w*|unsubscrib\w*"
+    r"|creat\w*|add\w*|writ\w*|sav\w*|updat\w*|renam\w*|mov\w*"
+    r"|send\w*|email\w*|post\w*|schedul\w*|book\w*|kill\w*|stopp?\w*"
+    # IRREGULAR PAST TENSES, which the stems above cannot reach. `send\w*`
+    # matches "send", "sending" and "sends" and never "sent"; `writ\w*` gets
+    # "writing" and "written" and never "wrote". So "I've sent the email" --
+    # about as plain a false completion claim as exists -- sailed through this
+    # check from the day it was written. Found 2026-09-18 by a test built to
+    # prove the future-tense fix above had not broken anything, which is the
+    # only reason anyone looked.
+    r"|sent|wrote|made|ran|took)"
+    r"\b(?![^.]*\?)", re.I)
+
+#: A path the reply asserts as a real location on this machine.
+_PATH_CLAIM_RE = re.compile(r"[`'\"]?(~[/\\][\w./\\ -]{3,120}?\.\w{1,6})[`'\"]?")
+
+#: Tools whose receipt means the assistant genuinely looked at the filesystem.
+_FS_TOOLS = ("read", "file", "wiki", "search", "list", "glob", "grep", "open",
+             "knowledge", "note")
+
+
+def _ran_any():
+    return bool(receipts())
+
+
+def _ran_like(*fragments):
+    names = [r["tool"].lower() for r in receipts()]
+    return any(f in n for n in names for f in fragments)
+
+
+def unsupported_actions(text):
+    """Assertions of completed work that the turn's receipts contradict.
+
+    Returns a list of {kind, quote, reason}. Empty means nothing provably
+    unsupported was asserted. Never raises — a checker that can crash the
+    reply it is checking is worse than no checker.
+    """
+    out = []
+    if not text:
+        return out
+    t = str(text)
+    try:
+        # 1. NAVIGATION. The UI move happens client-side off the `navigate`
+        #    tool's receipt, so "no navigate receipt" is not an inference
+        #    about the model's intent — it is the absence of the only thing
+        #    that could have moved the screen.
+        m = _NAV_CLAIM_RE.search(t)
+        if m and not _ran_like("navigate"):
+            out.append({
+                "kind": "navigation",
+                "quote": m.group(0).strip(),
+                "reason": "the reply says the workspace changed, but the "
+                          "navigate tool did not run this turn, so nothing "
+                          "moved on screen",
+            })
+
+        # 2. MUTATION. Only when NOTHING ran. If some tool ran we cannot
+        #    prove from here that it was the wrong one, and guessing would
+        #    put a false accusation in front of the user.
+        if not _ran_any():
+            m = _ACTION_CLAIM_RE.search(t)
+            if m:
+                out.append({
+                    "kind": "action",
+                    "quote": m.group(0).strip(),
+                    "reason": "the reply states this was done or is being "
+                              "done now, but no tool ran at all this turn",
+                })
+
+        # 3. CITED PATH. Existence is a fact about the disk, not a judgement.
+        try:
+            import os as _os
+            for pm in _PATH_CLAIM_RE.finditer(t):
+                raw = pm.group(1)
+                real = _os.path.expanduser(raw.replace("\\", "/"))
+                if _os.path.exists(real):
+                    continue
+                if _ran_like(*_FS_TOOLS):
+                    # Something did look at the filesystem; a wrong path may
+                    # be a stale memory rather than an invention, and this
+                    # module does not adjudicate that.
+                    continue
+                out.append({
+                    "kind": "path",
+                    "quote": raw,
+                    "reason": "the reply cites this file as a real location, "
+                              "but it does not exist and nothing read the "
+                              "filesystem this turn",
+                })
+                break
+        except Exception:
+            pass
+    except Exception:
+        return out
+    return out
+
+
+def action_correction_note(claims):
+    """The line appended to a reply that asserted work with nothing behind it.
+
+    Same opening sentence and same refusal as `correction_note` — the wording
+    is what the user has learned to trust, and two checks that speak with two
+    voices teach them to weigh one over the other.
+    """
+    if not claims:
+        return ""
+    bits = []
+    for c in claims:
+        q = str(c.get("quote") or "").strip()
+        bits.append(f"“{q}” — {c.get('reason')}" if q
+                    else str(c.get("reason")))
+    body = "; ".join(bits)
+    return (
+        "\n\n---\n"
+        "**Check failed — do not rely on the answer above.** It claims an "
+        f"action that did not happen this turn: {body}. Nothing was carried "
+        "out, so any confirmation above was not observed and may be invented. "
+        "Ask again, or have the action performed directly."
+    )
+
+
 def correction_note(claims):
     """The line appended to a reply that talked about tools it never ran.
 
