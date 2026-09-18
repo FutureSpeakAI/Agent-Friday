@@ -1,4 +1,4 @@
-﻿"""Cost metering for every model call (Part D of Self-Sufficient Friday).
+"""Cost metering for every model call (Part D of Self-Sufficient Friday).
 
 Completes the in-memory ``CostTracker`` (model_router.py) into a durable,
 queryable spend ledger:
@@ -115,9 +115,32 @@ PRICING = {
     # "v2 Multilingual & v3" models bill at $0.10/1K chars; "Flash/Turbo"
     # models bill at $0.05/1K chars.
     "eleven_multilingual_v2":    {"in": 0.10, "out": 0.0},   # $0.10 / 1K chars
-    "eleven_multilingual_v3":    {"in": 0.10, "out": 0.0},
+    # REMOVED 2026-09-09: "eleven_multilingual_v3" was priced here but is
+    # not a real ElevenLabs model id -- it does not appear in their model
+    # table (verified 2026-09-09). A rate for a model that cannot be called
+    # is a small lie of the same family as an unverified rate, so it is
+    # deleted rather than left as harmless clutter.
     "eleven_turbo_v2_5":         {"in": 0.05, "out": 0.0},   # flash/turbo tier
     "eleven_flash_v2_5":         {"in": 0.05, "out": 0.0},
+
+    # -- Inworld TTS (services/cloud_voice.py) ------------------------------
+    # Same per-character convention as the ElevenLabs rows above: the "in"-per-1K
+    # slot is USD per 1K CHARACTERS, call site passes len(text) as input_tokens
+    # and 0 as output_tokens. Converted from Inworld's published $/1M On-Demand
+    # rates ($25/1M and $15/1M) as of 2026-09-08.
+    #
+    # THESE ROWS ARE THE ON-DEMAND CEILING. Inworld's price is tier-dependent
+    # (On-Demand -> Growth -> Enterprise), unlike ElevenLabs' flat rate, so a
+    # single row would silently OVER-report for anyone on a higher tier. That is
+    # resolved by cloud_voice.meter_model_id(): only an on-demand account meters
+    # under these ids; every other tier meters under "<model>:<tier>", which is
+    # in UNPRICED_MODELS below and stores SQL NULL. Note also that Artificial
+    # Analysis lists $20.8/1M and $10.4/1M, which does NOT match Inworld's own
+    # page -- this file's invariant says the provider's own current pricing page
+    # wins and third-party aggregators are not acceptable sources, so Inworld's
+    # figures are used. Spec Q4.
+    "inworld-tts-2":             {"in": 0.025, "out": 0.0},  # $25/1M chars
+    "inworld-tts-2-flash":       {"in": 0.015, "out": 0.0},  # $15/1M chars
 
     # ── Opt-in provider catalogs (routing/provider_descriptors.py
     #    BUILTIN_EXTRA_PROVIDERS). The _call_openai -> cost_meter.meter() path
@@ -151,6 +174,13 @@ UNPRICED_MODELS = frozenset({
     "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768",  # Groq
     "grok-4", "grok-4-fast",  # xAI
     "command-r-plus", "command-r", "command-a",  # Cohere
+    # Inworld on a plan tier whose rate this install cannot confirm. The
+    # On-Demand rows in PRICING are a published ceiling, not this account's
+    # rate, so recording a number here would be a guess wearing a fact's
+    # clothes. cloud_voice.meter_model_id() routes non-on-demand calls to these
+    # ids so they store SQL NULL and render "not priced". Spec Q4.
+    "inworld-tts-2:growth", "inworld-tts-2:enterprise",
+    "inworld-tts-2-flash:growth", "inworld-tts-2-flash:enterprise",
 })
 
 
