@@ -157,9 +157,27 @@ def pytest_addoption(parser):
         "--run-live-residency", action="store_true", default=False,
         help="run tests marked `live_residency` (loads real models, minutes)",
     )
+    # The honesty corpus asks a real model real questions and judges the
+    # answers. It needs a seat, takes minutes, and is not deterministic - the
+    # same three reasons the two above are opt-in. Gating commits on it would
+    # make the suite slow and flaky; the alternative, which is what actually
+    # happened, is that the fixtures sat unread for weeks. Opt-in is the
+    # middle: runnable on demand, and its absence from a green default run is
+    # not mistaken for a pass.
+    parser.addoption(
+        "--run-honesty", action="store_true", default=False,
+        help="run tests marked `honesty` (asks a live seat; minutes)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--run-honesty"):
+        skip_honesty = pytest.mark.skip(
+            reason="asks a live model and judges the answers; "
+                   "pass --run-honesty")
+        for item in items:
+            if item.get_closest_marker("honesty"):
+                item.add_marker(skip_honesty)
     if not config.getoption("--run-live-residency"):
         skip_live = pytest.mark.skip(
             reason="loads real multi-GB models; pass --run-live-residency")
