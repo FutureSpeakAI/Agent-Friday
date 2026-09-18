@@ -122,13 +122,104 @@ def _save_index(data: dict) -> None:
     cs.harden_permissions(ACCOUNTS_INDEX)
 
 
+# ── health: what the STORED STATUS says, not whether a record exists ─────────
+# A record existing in accounts.json means Friday once held a grant for that
+# address. It says nothing about whether that grant still works. Every surface
+# that renders account state must ask the second question, so the derivation
+# lives here once and is attached to every public record.
+#
+# 2026-09-09: both of Stephen's accounts sat at status="needs_reauth" with a
+# last_sync of 2026-09-01 while the connectors page said "connected", because
+# the page rendered the presence of the record. Nine days of confidently wrong
+# calendar answers, including a day with two job interviews reported as empty.
+
+STALE_AFTER_DAYS = 2
+
+# stored status -> (state, human label, is the account usable, needs the user)
+_STATUS_PRESENTATION = {
+    "connected":    ("connected",    "Connected",                True,  False),
+    "needs_reauth": ("needs_reauth", "Needs reauthorisation",    False, True),
+    "revoked":      ("needs_reauth", "Access revoked at Google", False, True),
+    "error":        ("error",        "Error",                    False, True),
+    "disconnected": ("disconnected", "Disconnected",             False, True),
+}
+
+# Fail closed. An unrecognised or absent status is NOT evidence of health.
+_UNKNOWN_PRESENTATION = ("unknown", "Status unknown", False, True)
+
+
+def _sync_age_days(last_sync: str | None) -> float | None:
+    if not last_sync:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(last_sync).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - ts).total_seconds() / 86400.0)
+
+
+def account_health(rec: dict) -> dict:
+    """Derive an account's real state from its STORED status + last sync.
+
+    Never infers health from the record existing. The only input that can make
+    `healthy` true is an explicit stored status of "connected"; everything else
+    -- including a missing, empty or unrecognised status -- is unhealthy and
+    actionable.
+
+    `stale` is a second, independent signal: an account can be nominally
+    connected and still not have synced for days, and "connected on September
+    1st" tells a very different story from "connected".
+    """
+    raw = (rec or {}).get("status")
+    key = str(raw).strip().lower() if raw else ""
+    state, label, healthy, actionable = _STATUS_PRESENTATION.get(
+        key, _UNKNOWN_PRESENTATION)
+    last_sync = (rec or {}).get("last_sync")
+    age = _sync_age_days(last_sync)
+    stale = age is not None and age >= STALE_AFTER_DAYS
+    if age is None:
+        sync_phrase = "never synced"
+    elif age < 1:
+        sync_phrase = "last synced today"
+    elif age < 2:
+        sync_phrase = "last synced yesterday"
+    else:
+        sync_phrase = f"last synced {int(age)} days ago"
+    if healthy and stale:
+        summary = f"Connected, but {sync_phrase}"
+    elif healthy:
+        summary = f"Connected \u2014 {sync_phrase}"
+    else:
+        summary = f"{label} \u2014 {sync_phrase}"
+    return {
+        "state": state,
+        "label": label,
+        "healthy": bool(healthy),
+        "actionable": bool(actionable),
+        "action": "reconnect" if actionable else None,
+        "stored_status": raw,
+        "last_sync": last_sync,
+        "stale": bool(stale),
+        "stale_after_days": STALE_AFTER_DAYS,
+        "sync_age_days": None if age is None else round(age, 2),
+        "sync_phrase": sync_phrase,
+        "summary": summary,
+    }
+
+
 def _public_record(rec: dict) -> dict:
     """A copy of an account record safe to send to the frontend. Defensive — the
     index never holds token material, but this guarantees nothing secret leaks
     even if the schema grows."""
     safe_keys = {"id", "email", "label", "status", "services", "color",
                  "created", "last_sync", "scopes", "enc_method"}
-    return {k: rec.get(k) for k in safe_keys if k in rec}
+    out = {k: rec.get(k) for k in safe_keys if k in rec}
+    # Every consumer of a public record gets the derived verdict alongside the
+    # raw status, so no surface has to (or gets to) invent its own answer.
+    out["health"] = account_health(rec)
+    return out
 
 
 # ── google credential helpers ────────────────────────────────────────────────
@@ -163,8 +254,74 @@ def _persist_token(account_id: str, creds) -> str:
 
 # ── public API ───────────────────────────────────────────────────────────────
 def has_accounts() -> bool:
+    """Whether any account RECORD exists. Not whether any account WORKS.
+
+    Callers that report a user-facing "connected" state must use
+    has_working_accounts() instead -- this answers a storage question, and
+    answering a health question with it is what produced the 2026-09-09
+    incident (see account_health above). Kept because the legacy fallback
+    paths genuinely want "was this install ever connected".
+    """
     _migrate_legacy_if_needed()
     return bool(_load_index().get("accounts"))
+
+
+def _health_of(rec: dict) -> dict:
+    """Health for a record from any source. Records built by hand (callers,
+    tests, older code paths) have no `health` key; derive it rather than
+    assuming, and never treat a missing key as healthy."""
+    h = (rec or {}).get("health")
+    return h if isinstance(h, dict) else account_health(rec)
+
+
+def has_working_accounts() -> bool:
+    """Whether at least one account is actually usable right now."""
+    return any(_health_of(a)["healthy"] for a in list_accounts())
+
+
+def accounts_summary() -> dict:
+    """One honest snapshot for anything that reports Google connectivity.
+
+    {total, healthy, connected, degraded, needs_attention:[{email,label,state,
+    summary}], note} -- `connected` is true only when something works, and
+    `degraded` marks the case a boolean cannot express: some accounts work and
+    some do not.
+    """
+    accts = list_accounts()
+    broken = [a for a in accts if not _health_of(a)["healthy"]]
+    healthy_n = len(accts) - len(broken)
+    if not accts:
+        # Deliberately empty. "Never connected" is not an anomaly to warn the
+        # model about -- it is the caller's ordinary not-connected case, and
+        # the caller's own note explains how to connect. Emitting text here
+        # would override that with something less useful.
+        note = ""
+    elif not healthy_n:
+        note = ("Every Google account needs reauthorisation. Do NOT report "
+                "Google as connected, and do not present any calendar or mail "
+                "result as complete. Say which accounts need reconnecting: "
+                + "; ".join(f"{a.get('email') or a.get('label')} "
+                            f"({_health_of(a)['sync_phrase']})" for a in broken))
+    elif broken:
+        note = ("Some Google accounts work and some do not, so any calendar or "
+                "mail answer is INCOMPLETE. Say so, and name the accounts that "
+                "need reconnecting: "
+                + "; ".join(f"{a.get('email') or a.get('label')} "
+                            f"({_health_of(a)['sync_phrase']})" for a in broken))
+    else:
+        note = ""
+    return {
+        "total": len(accts),
+        "healthy": healthy_n,
+        "connected": healthy_n > 0,
+        "degraded": bool(broken) and healthy_n > 0,
+        "needs_attention": [
+            {"email": a.get("email"), "label": a.get("label"),
+             "state": _health_of(a)["state"], "summary": _health_of(a)["summary"]}
+            for a in broken
+        ],
+        "note": note,
+    }
 
 
 def list_accounts() -> list:
