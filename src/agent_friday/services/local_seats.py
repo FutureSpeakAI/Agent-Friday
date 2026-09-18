@@ -271,7 +271,13 @@ def _announce(role: str, wanted: str | None, got: str) -> None:
     else:
         msg = f"  [seats] {role}: using {got!r}"
     print(msg)
-    _log.info(msg.strip())
+    # A substitution is a WARNING: the user asked for one model and is being
+    # answered by another. At INFO this sat in friday.log unread on
+    # 2026-09-18 while the UI said the seat change had succeeded.
+    if wanted:
+        _log.warning(msg.strip())
+    else:
+        _log.info(msg.strip())
 
 
 def resolve(role: str, configured: str | None = None) -> str | None:

@@ -33184,11 +33184,16 @@ function StateChip({ m, serving }) {
 function ModelRow({ m, need, current, onPick, machine, servingId }) {
   const fit = suitability(m, need);
   const isCur = current === m.id;
+  const off = m.available === false;
   return E('button', {
-    onClick: () => onPick(m),
-    title: m.id + (m.providers && m.providers.length > 1 ? '  (offered by ' + m.providers.join(', ') + ')' : ''),
+    // Not installed / no key: visible, explained in the title, not pickable.
+    onClick: () => off ? null : onPick(m),
+    disabled: off,
+    'aria-disabled': off,
+    title: (off && m.hint ? m.hint + '\n' : '') + m.id + (m.providers && m.providers.length > 1 ? '  (offered by ' + m.providers.join(', ') + ')' : ''),
     style: {
-      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+      display: 'block', width: '100%', textAlign: 'left', cursor: off ? 'not-allowed' : 'pointer',
+      opacity: off ? 0.45 : 1,
       background: isCur ? 'rgba(0,212,255,0.10)' : 'transparent',
       border: '1px solid ' + (isCur ? 'rgba(0,212,255,0.45)' : 'transparent'),
       borderRadius: 7, padding: '7px 9px', marginBottom: 2,
@@ -43046,7 +43051,14 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         headers: { 'Content-Type': 'application/json' },
         // MUST be wrapped in `settings` — the route reads data['settings'].
         body: JSON.stringify({ settings: { capability_routing: { reasoning: { model: m.id, provider: (m.providers || [])[0] } } } })
-      }).then(r => r.json()).then(() => apiFetch('/api/settings'))
+      }).then(r => r.json()).then(res => {
+          // The server refuses a local seat whose weights are not on this
+          // machine (seat_not_installed). Say exactly what it said.
+          if (res && res.status === 'error' && res.detail) {
+            throw new Error(res.detail);
+          }
+          return apiFetch('/api/settings');
+        })
         .then(r => r.json()).then(d => {
           // Confirm against what the SERVER now holds. A 200 means the request
           // was accepted, not that the seat changed.
@@ -43061,7 +43073,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           }
           setAgentSettings(a => ({ ...a, orchestrator_model: m.id }));
           try { fridayInvalidateModelCatalog(); } catch (_) {}
-        }).catch(() => setPendingSeat(null));
+        }).catch(e => {
+          setPendingSeat(null);
+          if (e && e.message) alert(e.message);
+        });
     }
   })), /*#__PURE__*/React.createElement("div", {
     style: {
