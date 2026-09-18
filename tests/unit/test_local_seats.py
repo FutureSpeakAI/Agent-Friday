@@ -105,6 +105,8 @@ def test_embedding_models_are_never_offered_as_answering_seats(monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
+    # A daemon that answers /api/tags is listening; see `_daemon_returning`.
+    monkeypatch.setattr(seats, "_daemon_port_open", lambda *a, **k: True)
     monkeypatch.setattr(seats.urllib.request, "urlopen", lambda *a, **k: _R())
     assert [n for n, _ in seats.installed(force=True)] == ["real:9b"]
     assert _io  # keep the import honest
@@ -169,12 +171,32 @@ def test_a_cloud_model_is_never_touched(monkeypatch):
 
 
 def test_nothing_is_healed_while_the_daemon_is_unreachable(monkeypatch):
-    """A blip must not rewrite his choices permanently."""
+    """A blip must not rewrite his choices permanently.
+
+    Updated 2026-09-18. The rule this test defends is that an unreadable
+    inventory must not MUTATE his settings, and that still holds below. What
+    it used to also assert — that heal() says nothing at all — turned out to
+    be the bug rather than the contract. Friday booted before the FridayWeaver
+    weights reached local disk, installed() came back empty, heal() returned
+    silently, capability_routing.reasoning kept naming an uninstalled
+    gemma4:12b, and four turns went to the cloud with no word anywhere. So the
+    return is now advisory: no repair, but a note that nothing was verified.
+    """
     monkeypatch.setattr(seats, "installed", lambda force=False: [])
     settings = {"orchestrator_model": "gemma4:e2b",
                 "capability_routing": {"reasoning": {"model": "gemma4:e2b"}}}
-    assert seats.heal(settings) == []
+    notes = seats.heal(settings)
+
+    # The contract: his choices are untouched.
     assert settings["orchestrator_model"] == "gemma4:e2b"
+    assert settings["capability_routing"]["reasoning"]["model"] == "gemma4:e2b"
+
+    # The new part: unverified must not read as verified.
+    assert len(notes) == 1
+    assert "could not read the local model inventory" in notes[0]
+    assert "gemma4:e2b" in notes[0]
+    # And it must not claim to have repaired anything.
+    assert "now " not in notes[0]
 
 
 def test_a_vision_model_does_not_win_a_text_role_by_being_smaller(monkeypatch):
@@ -219,7 +241,19 @@ def test_a_seat_bound_to_fridays_own_model_is_not_healed_away(monkeypatch):
 
 
 def _daemon_returning(monkeypatch, payload):
-    """Stub Ollama's /api/tags with a fixed inventory."""
+    """Stub Ollama's /api/tags with a fixed inventory.
+
+    Also declares the daemon's PORT open, because `installed()` now checks
+    that before spending four seconds on an HTTP timeout — Ollama was removed
+    from the reference machine on 2026-09-18 and this probe sits on the chat
+    path, so the common case became "nothing is listening" and paying the full
+    timeout for it on every turn was not affordable.
+
+    Stubbing the HTTP response without the socket underneath it describes a
+    machine that cannot exist: a daemon that answers /api/tags is, by
+    definition, listening. Saying so here keeps the fixture honest and keeps
+    these tests testing what they are named for rather than the pre-flight.
+    """
     import json as _json
 
     class _R:
@@ -227,6 +261,7 @@ def _daemon_returning(monkeypatch, payload):
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
+    monkeypatch.setattr(seats, "_daemon_port_open", lambda *a, **k: True)
     monkeypatch.setattr(seats.urllib.request, "urlopen", lambda *a, **k: _R())
 
 

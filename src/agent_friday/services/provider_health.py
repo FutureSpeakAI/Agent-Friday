@@ -546,6 +546,55 @@ def _latency_verdict(model_id: str, ms_per_token) -> str | None:
     return None
 
 
+def _prove_local_seat(base: str, model: str):
+    """Prove a local llama-server is serving `model`, without generating.
+
+    Returns `(status, detail, proved)` for `_result`, or None when this server
+    cannot be proven this way and the caller should fall back to a real
+    generation.
+
+    Two questions, two endpoints, neither of which occupies a slot:
+      * `/health` — is a model loaded and is the server past startup?
+      * `/v1/models` — is it the model we think it is?
+
+    The second matters as much as the first. "Something is serving on this
+    port" is exactly the claim that let a seat run for hours under the wrong
+    alias earlier in this codebase's history, so the alias is checked rather
+    than assumed.
+    """
+    import requests
+    root = base[:-3].rstrip("/") if base.endswith("/v1") else base
+    try:
+        h = requests.get(f"{root}/health", timeout=4)
+        if h.status_code != 200:
+            return ("down", f"/health returned HTTP {h.status_code}", False)
+        state = str((h.json() or {}).get("status") or "").lower()
+        if state and state != "ok":
+            # llama-server says "loading model" while it is still warming up.
+            return ("down", f"/health says {state!r}", False)
+    except Exception:
+        # No /health here — not a llama-server, or not reachable. Let the
+        # caller do what it did before rather than guessing.
+        return None
+    try:
+        m = requests.get(f"{base}/models", timeout=4)
+        served = [str(row.get("id") or "")
+                  for row in ((m.json() or {}).get("data") or [])]
+    except Exception:
+        served = []
+    if served and model not in served:
+        return ("down",
+                "serving %s, not %s" % (", ".join(served[:3]), model), False)
+    where = "%s (%s)" % (base, ", ".join(served[:2]) if served else "alias "
+                         "unreported")
+    # `proved_inference` is True and the detail says precisely what was
+    # checked, because a health surface that overstates its evidence is the
+    # thing this module exists to stop.
+    return ("ok", "loaded and serving at %s — proven by /health rather than a "
+                  "generation, which would evict the seat's prompt cache"
+                  % where, True)
+
+
 def inference_probe(name, prov=None, use_cache=True) -> dict | None:
     """Send a one-token generation and report whether inference actually works.
 
@@ -653,6 +702,41 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             base = (prov.get("base_url") or "").rstrip("/")
             if not base or not model:
                 return _result("down", "no base_url or model", False)
+            # A LOCAL SEAT IS PROVEN BY /health, NOT BY GENERATING.
+            #
+            # This probe was built for KEYED providers, where "the key is
+            # present" and "the key still works" are different claims and only
+            # a real completion can tell them apart. None of that applies to a
+            # llama-server this machine started: it has no key to revoke, no
+            # quota to exhaust and no bill to stop paying. If it answers
+            # /health and reports the right model, it is serving.
+            #
+            # And the generation is not free. llama-server keeps ONE cached
+            # prompt per slot, and Friday's seats run with a single slot, so
+            # this probe's four-token prompt REPLACES whatever the slot was
+            # holding. Measured 2026-09-18: the probe runs every
+            # _PROBE_TTL_S (60s), which is almost always shorter than the gap
+            # between a user reading one answer and typing the next — so the
+            # probe reliably landed between turns and evicted the chat
+            # prefix. Every turn then reprocessed its whole ~21,000-token
+            # prompt at about 500 tokens a second. Forty-three seconds a turn,
+            # spent proving a local process was alive, which /health answers
+            # in a millisecond without touching a slot.
+            #
+            # A health check that makes the thing it watches slower is not
+            # monitoring, it is overhead wearing monitoring's clothes.
+            _local = prov.get("classification") == "local"
+            if not _local:
+                try:
+                    from agent_friday.routing.provider_descriptors import (
+                        is_private_host)
+                    _local = bool(is_private_host(base))
+                except Exception:
+                    _local = False
+            if _local:
+                proven = _prove_local_seat(base, model)
+                if proven is not None:
+                    return _result(*proven)
             # A thinking model needs room to think before it can say anything;
             # a 1-token ceiling makes a healthy one look empty (measured on
             # gemma4 via llama-server: 200 OK, content='').
