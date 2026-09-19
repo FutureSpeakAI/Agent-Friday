@@ -40,6 +40,7 @@ def only(monkeypatch):
         monkeypatch.setattr(S, "_provider_key_findings", lambda: list(findings))
         monkeypatch.setattr(S, "_google_findings", lambda: [])
         monkeypatch.setattr(S, "_platform_findings", lambda: [])
+        monkeypatch.setattr(S, "_mcp_secret_findings", lambda: [])
         monkeypatch.setattr(S, "_vault_findings", lambda: [])
     return _set
 
@@ -154,6 +155,7 @@ def test_one_broken_source_does_not_cost_the_whole_inventory(monkeypatch):
                         lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(S, "_google_findings", lambda: [_finding("g", ch.WORKING)])
     monkeypatch.setattr(S, "_platform_findings", lambda: [])
+    monkeypatch.setattr(S, "_mcp_secret_findings", lambda: [])
     monkeypatch.setattr(S, "_vault_findings", lambda: [])
 
     inv = S.inventory()
@@ -183,3 +185,45 @@ def test_a_real_inventory_runs_and_leaks_nothing():
 def test_notifying_without_an_engine_is_harmless(only):
     only([_finding("x", ch.UNREADABLE)])
     S.sweep(notify=True)          # must not raise when no notif engine exists
+
+
+# ── the class that hid the GitHub token ─────────────────────────────────────
+
+def test_mcp_connector_secrets_are_swept(tmp_path, monkeypatch):
+    """THE BLIND SPOT. These live as base64 inside mcp_servers.json rather
+    than as blobs on disk, so the file-walking migration could not see them -
+    which is why five credentials were recovered while GitHub kept failing
+    every spawn. A sweep that inherited the same blind spot would be the same
+    mistake with a schedule attached.
+    """
+    import json
+
+    import agent_friday.core as core
+    from agent_friday.services import connector_secrets as cse
+    from agent_friday.services import keystore as ks
+
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(ks, "KEYSTORE_PATH", tmp_path / "security" / "ks.json")
+    monkeypatch.setattr(ks, "_CACHED_KEY", None)
+    monkeypatch.setattr(ks, "_passphrase", lambda: "")
+
+    good = cse.encrypt_value("ghp_realtoken")
+    broken = cse.SECRET_MARKER + "vault:" + "bm90LWEtcmVhbC1ibG9i"
+    (tmp_path / "mcp_servers.json").write_text(json.dumps({"servers": {
+        "github": {"env": {"GITHUB_PERSONAL_ACCESS_TOKEN": good}},
+        "slack": {"env": {"SLACK_BOT_TOKEN": broken, "LOG_LEVEL": "debug"}},
+    }}), encoding="utf-8")
+
+    found = {f.id: f for f in S._mcp_secret_findings()}
+    assert "mcp:github:GITHUB_PERSONAL_ACCESS_TOKEN" in found
+    assert found["mcp:github:GITHUB_PERSONAL_ACCESS_TOKEN"].health.state == ch.WORKING
+    assert found["mcp:slack:SLACK_BOT_TOKEN"].health.state == ch.UNREADABLE
+    assert found["mcp:slack:SLACK_BOT_TOKEN"].health.action == "unlock"
+    # A non-secret env value is not a credential.
+    assert not any(k.endswith("LOG_LEVEL") for k in found)
+
+
+def test_a_missing_mcp_config_is_not_a_finding(tmp_path, monkeypatch):
+    import agent_friday.core as core
+    monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    assert S._mcp_secret_findings() == []

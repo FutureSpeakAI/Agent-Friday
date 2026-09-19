@@ -158,6 +158,61 @@ def _platform_findings() -> list:
     return out
 
 
+def _mcp_secret_findings() -> list:
+    """Credentials living inside `mcp_servers.json`.
+
+    THE CLASS THAT HID THE GITHUB TOKEN. These are base64 inside a JSON
+    document rather than blobs on disk, so `credential_store._credential_files`
+    cannot see them - which is why five credentials were recovered on
+    2026-09-19 while GitHub kept failing every spawn, and why it took reading
+    a connector-health endpoint to notice. A sweep that inherited the same
+    blind spot would be the same mistake with a schedule attached.
+
+    Reads the config directly rather than through the MCP manager: the question
+    is whether the CREDENTIAL opens, not whether the server is up, and a server
+    that is merely stopped must not read as a credential fault.
+    """
+    import json
+    from pathlib import Path
+
+    from agent_friday.core import FRIDAY_DIR
+    from agent_friday.services import connector_secrets as cse
+
+    out = []
+    path = Path(FRIDAY_DIR) / "mcp_servers.json"
+    if not path.exists():
+        return out
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [Finding(id="mcp_servers.json", kind="mcp",
+                        label="MCP server config",
+                        health=_ch.unknown(
+                            detail="%s: %s" % (type(e).__name__, e),
+                            source="connector_secrets"))]
+    for name, spec in (cfg.get("servers") or {}).items():
+        env = (spec or {}).get("env") if isinstance(spec, dict) else None
+        if not isinstance(env, dict):
+            continue
+        for key, value in env.items():
+            if not cse.is_encrypted(value):
+                continue
+            try:
+                cse.decrypt_value(value)
+                h = _ch.Health(state=_ch.WORKING, source="connector_secrets",
+                               source_state="opens",
+                               summary="%s / %s opens" % (name, key))
+            except Exception as e:
+                h = _ch.Health(
+                    state=_ch.UNREADABLE, source="connector_secrets",
+                    source_state=type(e).__name__, action="unlock",
+                    summary="%s cannot decrypt its %s" % (name, key),
+                    detail=str(e)[:200])
+            out.append(Finding(id="mcp:%s:%s" % (name, key), kind="mcp",
+                               label="%s (%s)" % (name, key), health=h))
+    return out
+
+
 def _vault_findings() -> list:
     """Files sealed with a key nothing currently derives.
 
@@ -217,6 +272,7 @@ def inventory() -> dict:
     for name, fn in (("provider keys", _provider_key_findings),
                      ("google", _google_findings),
                      ("platforms", _platform_findings),
+                     ("mcp secrets", _mcp_secret_findings),
                      ("vault", _vault_findings)):
         try:
             findings.extend(fn() or [])
