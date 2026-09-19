@@ -428,6 +428,45 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-chat .chat-resize-w,
         body.chrome-chat .chat-resize-h { display: none !important; }
 
+        /* ── Compact mode (?chrome=orb) ───────────────────────────────────
+           Friday as presence rather than as an application: the holographic
+           element alone, animating as she speaks, with nothing else on the
+           glass. For a second monitor, a corner of the desk, or a tab you
+           leave open and talk to.
+
+           The INVERSE of chrome-chat. That one keeps the React layer and
+           drops the scene; this keeps the scene and drops the React layer.
+           The canvas and the mood line stay — the mood line is the one piece
+           of chrome that says something the orb cannot, which is what state
+           she thinks she is in.
+
+           `pointer-events: none` on the UI layer rather than `display: none`:
+           the React tree keeps running, so voice, the socket and the
+           scheduler behave exactly as they do anywhere else. Hiding a tree is
+           not the same as not having one, and the difference here is whether
+           a voice session survives switching to this mode. */
+        body.chrome-orb #ui-root { opacity: 0 !important; pointer-events: none !important; }
+        body.chrome-orb .hud-corner { display: none !important; }
+        body.chrome-orb #camera-indicator,
+        body.chrome-orb #hand-cursor { display: none !important; }
+        body.chrome-orb #state-indicator {
+            left: 50% !important;
+            transform: translateX(-50%);
+            bottom: 28px !important;
+        }
+        body.chrome-orb { background: #05070d; cursor: default; }
+        /* One way back out, because a mode with no exit is a trap. */
+        body.chrome-orb #chrome-orb-exit {
+            position: fixed; top: 14px; right: 16px; z-index: 200;
+            background: rgba(0,212,255,0.08);
+            border: 1px solid rgba(0,212,255,0.25);
+            color: #00d4ff; font-family: 'Inter', sans-serif; font-size: 11px;
+            padding: 5px 11px; border-radius: 5px; cursor: pointer;
+            opacity: 0.25; transition: opacity .25s ease;
+        }
+        body.chrome-orb #chrome-orb-exit:hover { opacity: 1; }
+        #chrome-orb-exit { display: none; }
+
         /* Chat panel resize handles — left edge (width) + top edge (height). */
         .chat-resize-w {
             position: absolute; top: 0; left: -3px; width: 8px; height: 100%;
@@ -2314,14 +2353,30 @@ window.addEventListener('DOMContentLoaded',function(){
          render loop on a GPU already holding a 27B model. An undocked window
          keeps the React layer and drops the room around it. The CSS that does
          the hiding is body.chrome-chat in the stylesheet above. -->
+    <button id="chrome-orb-exit" title="Leave compact mode">&#8598; Full view</button>
     <script>
       (function () {
+        var chrome = '';
         try {
-          if (new URLSearchParams(window.location.search).get('chrome') === 'chat') {
-            document.body.classList.add('chrome-chat');
-            window.__FRIDAY_CHROME__ = 'chat';
+          chrome = new URLSearchParams(window.location.search).get('chrome') || '';
+        } catch (e) { return; }   /* a window that cannot read its own URL still works */
+        if (chrome !== 'chat' && chrome !== 'orb') return;
+        document.body.classList.add('chrome-' + chrome);
+        window.__FRIDAY_CHROME__ = chrome;
+        if (chrome === 'orb') {
+          /* The way out. A mode with no exit is a trap, and the orb itself
+             cannot carry a control without becoming the thing this mode
+             exists to remove. */
+          var exit = document.getElementById('chrome-orb-exit');
+          if (exit) {
+            exit.style.display = 'block';
+            exit.addEventListener('click', function () {
+              var u = new URL(window.location.href);
+              u.searchParams.delete('chrome');
+              window.location.href = u.toString();
+            });
           }
-        } catch (e) { /* a window that cannot read its own URL still works */ }
+        }
       })();
     </script>
 
@@ -4714,6 +4769,29 @@ function FWin({
       fontSize: 12
     }
   }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
+    /* ANY WORKSPACE CAN BE ITS OWN TAB. Friday is served over HTTP, so a
+       second tab is the same app pointed somewhere else - ?workspace=<id>,
+       read once on load. No feature string on window.open, because passing
+       one is what turns a tab into a chrome-less popup.
+
+       Hidden inside a window that is already a tab's whole reason for
+       existing, where it would only ever open a duplicate. */
+    title: `Open ${title} in a new tab`,
+    "aria-label": `Open ${title} in a new tab`,
+    onClick: e => {
+      e.stopPropagation();
+      const w = window.open('/?workspace=' + encodeURIComponent(id), '_blank');
+      if (!w) {
+        alert('The browser blocked that tab. Allow pop-ups for Friday and try '
+              + 'again.');
+        return;
+      }
+      try { w.focus(); } catch (err) {}
+    },
+    style: {
+      fontSize: 12
+    }
+  }, "\u2197"), /*#__PURE__*/React.createElement("button", {
     onClick: onClose
   }, "\xD7"))), /*#__PURE__*/React.createElement("div", {
     className: "fwin-body"
@@ -42401,6 +42479,25 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if (window.fridayOpenWorkspace) delete window.fridayOpenWorkspace;
     };
   }, []);
+
+  /* A WORKSPACE IS ADDRESSABLE BY URL, so any of them can be a tab.
+     ?workspace=code opens that workspace on load, which is all a new Friday
+     tab needs to be: the same app, pointed somewhere else. Runs once, after
+     fridayOpenWorkspace is installed above, and does nothing when the
+     parameter is absent or names a workspace that is not in the dock - a URL
+     someone edited by hand should not leave a window that cannot be closed. */
+  useEffect(() => {
+    let wanted = '';
+    try {
+      wanted = new URLSearchParams(window.location.search).get('workspace') || '';
+    } catch (e) { return; }
+    if (!wanted) return;
+    if (!WS.some(w => w.id === wanted)) {
+      console.warn('[friday] ?workspace=' + wanted + ' is not a workspace');
+      return;
+    }
+    openWs(wanted);
+  }, []);
   // Global Workspace Studio opener — the 💬 button on any window (and custom
   // quick-actions) call this to open that workspace's contextual chat, optionally
   // seeding a prompt to send immediately.
@@ -43804,18 +43901,22 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     onClick: () => {
       const cid = convId;
       if (!cid) return;
+      /* A TAB, NOT A POPUP. Passing a feature string ('width=...,height=...')
+         is what tells Chrome to make a chrome-less popup window; omitting it
+         entirely gives an ordinary tab. The first version of this specified a
+         size, got a popup, and was wrong about what the user wanted in a way
+         only the user could see. */
       const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
-      const w = window.open(url, 'friday-chat-' + cid,
-                            'width=520,height=860,menubar=no,toolbar=no');
+      const w = window.open(url, '_blank');
       if (!w) {
-        alert('The browser blocked that window. Allow pop-ups for Friday and '
+        alert('The browser blocked that tab. Allow pop-ups for Friday and '
               + 'try again.');
         return;
       }
       try { w.focus(); } catch (e) {}
     },
-    title: "Open this conversation in its own window",
-    "aria-label": "Undock this conversation",
+    title: "Open this conversation in a new tab",
+    "aria-label": "Open this conversation in a new tab",
     style: {
       background: 'rgba(0,212,255,0.06)',
       border: '1px solid rgba(0,212,255,0.2)',
@@ -43826,7 +43927,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       borderRadius: 4,
       fontFamily: 'Inter'
     }
-  }, "⇱ Undock"), /*#__PURE__*/React.createElement("button", {
+  }, "↗ New tab"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
     title: "Close chat",
     "aria-label": "Close chat",
