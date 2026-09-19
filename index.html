@@ -450,6 +450,64 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-chat #ui-inner { visibility: hidden !important; }
         body.chrome-chat .chat-panel { visibility: visible !important; }
 
+        /* ── The chat sidebar ─────────────────────────────────────────────
+           Every thread you own, down the left of a chat tab.
+
+           This revises the rule directly above it. That rule said a tab shows
+           the chat and nothing else, which was right when a tab was a way to
+           read one thread beside another. Seeing it working changed the ask:
+           the tab is the desk you work at, so chat NAVIGATION belongs in it.
+           What stays banished is APP chrome - the dock, the workspaces, the
+           holographic shell - none of which a tab has any use for. The
+           floating window is still the glance: one thread, no sidebar.
+
+           It re-shows itself through the allow-list above rather than being
+           excepted from it, which is the whole point of that mechanism. */
+        .chat-sidebar {
+            position: fixed; left: 0; top: 0; bottom: 0; width: 268px;
+            /* border-box, so 268px is what it OCCUPIES rather than what it
+               contains. Without it the 1px border pushes the outer width to
+               269 while the panel below still starts at 268, and the panel
+               sits under the border. Invisible, and still the same mistake as
+               the dock: a number used for layout has to mean the same thing
+               in both places that read it. */
+            box-sizing: border-box;
+            z-index: 66; display: none; flex-direction: column;
+            background: rgba(8,11,20,0.97);
+            border-right: 1px solid rgba(0,212,255,0.14);
+        }
+        body.chrome-chat .chat-sidebar {
+            display: flex; visibility: visible !important;
+        }
+        /* The panel gives up the width rather than sitting under the column.
+           Same reasoning as the dock: a composer you cannot reach is not a
+           composer. */
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open {
+            left: 268px !important;
+            width: calc(100vw - 268px) !important;
+        }
+        .chat-sidebar-head {
+            display: flex; gap: 6px; padding: 10px;
+        }
+        .chat-sidebar-scroll {
+            flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 6px 10px;
+        }
+        .chat-sidebar-scroll::-webkit-scrollbar { width: 6px; }
+        .chat-sidebar-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.10); border-radius: 3px;
+        }
+        /* A 268px column on a phone leaves no chat. Below that width the
+           sidebar steps aside entirely rather than splitting a screen that
+           has nothing to split. */
+        @media (max-width: 720px) {
+            body.chrome-chat .chat-sidebar { display: none; }
+            body.chrome-chat .chat-panel,
+            body.chrome-chat .chat-panel.open {
+                left: 0 !important; width: 100vw !important;
+            }
+        }
+
         /* ── Compact mode (?chrome=orb) ───────────────────────────────────
            Friday as presence rather than as an application: the holographic
            element alone, animating as she speaks, with nothing else on the
@@ -34039,6 +34097,469 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
     })) : null);
 }
 
+/* ── The chat sidebar ────────────────────────────────────────────────────────
+ *
+ * Every thread you own, grouped into projects, down the left of a chat tab.
+ *
+ * ONE DATA SOURCE, TWO VIEWS. This reads `convList` and `projList` from the
+ * app, the same state the ConversationBar switcher above renders from and the
+ * same `refreshConvs` writes. It does not fetch its own copy. Two lists of the
+ * same threads, each with its own fetch, is how you rename a chat in one place
+ * and watch the other keep the old name for a minute - and this codebase has
+ * lost enough afternoons to two surfaces disagreeing about one fact.
+ *
+ * TAB ONLY. The floating holographic window is a glance at one thread and has
+ * no navigation in it; the tab is the desk you work at. Same chat panel, two
+ * jobs, and the sidebar belongs to the second.
+ *
+ * Rows carry the seat and the spend, which is the thing this sidebar can show
+ * and the ones it is modelled on structurally cannot. A list of chats is less
+ * useful than a list of what your machine has been doing.
+ */
+function SidebarRow({ c, active, onOpen, onAct, projects }) {
+  const [menu, setMenu] = useState(false);
+  // The seat this chat will ACTUALLY answer on. A chat with no binding of its
+  // own inside a Bonsai project runs on Bonsai, and a row that showed nothing
+  // there would be lying by omission. Inherited seats are dimmer than bound
+  // ones so the two are never confused.
+  const own = (c.seat || {}).model || '';
+  const eff = (c.effective_seat || {}).model || '';
+  const cost = (c.totals || {}).cost_usd || 0;
+  const act = (what, arg) => { setMenu(false); onAct(c, what, arg); };
+  return E('div', {
+    style: { position: 'relative' },
+    onMouseLeave: () => setMenu(false),
+  },
+    E('div', {
+      onClick: () => onOpen(c.id),
+      title: c.title || 'New chat',
+      style: {
+        display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+        background: active ? 'rgba(0,212,255,0.10)' : 'transparent',
+        border: '1px solid ' + (active ? 'rgba(0,212,255,0.38)' : 'transparent'),
+        borderRadius: 7, padding: '6px 8px', marginBottom: 1,
+      },
+    },
+      c.pinned_at ? E('span', {
+        title: 'Pinned', style: { fontSize: 9, color: '#00d4ff', flexShrink: 0 },
+      }, '◆') : null,
+      E('div', { style: { flex: 1, minWidth: 0 } },
+        E('div', {
+          style: {
+            fontFamily: 'JetBrains Mono', fontSize: 11.5,
+            color: 'rgba(255,255,255,0.9)', overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          },
+        }, c.title || 'New chat'),
+        E('div', {
+          style: {
+            fontSize: 9, color: 'rgba(255,255,255,0.4)',
+            fontFamily: 'JetBrains Mono', marginTop: 1, display: 'flex',
+            gap: 6, alignItems: 'center',
+          },
+        },
+          eff ? E('span', {
+            title: own ? ('Bound to ' + own)
+                       : ('Inherited from this chat’s project: ' + eff),
+            style: { color: own ? '#cfefff' : 'rgba(207,239,255,0.5)' },
+          }, (own ? '' : '↳ ') + prettyModel(eff)) : E('span', null, 'default'),
+          cost ? E('span', null, '$' + Number(cost).toFixed(2)) : null)),
+      E('button', {
+        onClick: e => { e.stopPropagation(); setMenu(!menu); },
+        title: 'More', 'aria-label': 'Actions for this chat',
+        style: {
+          background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
+          color: 'rgba(255,255,255,0.35)', fontSize: 13, padding: '0 2px',
+        },
+      }, '⋯')),
+    menu ? E('div', {
+      style: {
+        position: 'absolute', right: 6, top: '100%', zIndex: 40, width: 190,
+        background: '#0a0e1a', border: '1px solid rgba(0,212,255,0.22)',
+        borderRadius: 8, padding: 4, boxShadow: '0 14px 40px rgba(0,0,0,0.6)',
+      },
+    },
+      E(MenuItem, { onClick: () => act('pin') },
+        c.pinned_at ? 'Unpin' : 'Pin to top'),
+      E(MenuItem, { onClick: () => act('rename') }, 'Rename…'),
+      E('div', {
+        style: {
+          fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono',
+          padding: '6px 8px 2px',
+        },
+      }, 'Move to'),
+      c.project ? E(MenuItem, { onClick: () => act('move', null) },
+        'No project') : null,
+      projects.filter(p => p.id !== c.project).map(p => E(MenuItem, {
+        key: p.id, onClick: () => act('move', p.id),
+      }, p.name)),
+      E(MenuItem, { onClick: () => act('archive'), danger: true }, 'Archive'))
+      : null);
+}
+
+function MenuItem({ onClick, children, danger }) {
+  return E('button', {
+    onClick: onClick,
+    style: {
+      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+      background: 'none', border: 'none', borderRadius: 5, padding: '5px 8px',
+      fontFamily: 'JetBrains Mono', fontSize: 10.5,
+      color: danger ? '#ff8095' : 'rgba(255,255,255,0.8)',
+    },
+  }, children);
+}
+
+function ChatSidebar({ convList, projList, convId, onOpenConversation,
+                       onRefresh, apiFetch }) {
+  const [q, setQ] = useState('');
+  const [shut, setShut] = useState({});          // project id -> collapsed
+  const [editing, setEditing] = useState(null);  // project being configured
+  const [busy, setBusy] = useState(false);
+
+  const api = (url, opts) => apiFetch(url, opts).then(r => r.json());
+
+  const note = d => {
+    // The API answers with what IS, and a `note` when what was asked for did
+    // not happen. Surfacing it is the whole point of it being there.
+    if (d && d.note) alert(d.note);
+    return d;
+  };
+
+  const newChat = (pid) => {
+    if (busy) return;
+    setBusy(true);
+    api('/api/conversations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'New chat', project: pid || null }),
+    }).then(d => {
+      onRefresh();
+      if (d && d.conversation) onOpenConversation(d.conversation.id);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+
+  const newProject = () => {
+    const name = prompt('Name this project');
+    if (!name) return;
+    api('/api/projects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name }),
+    }).then(() => onRefresh()).catch(() => {});
+  };
+
+  const onAct = (c, what, arg) => {
+    const patch = body => api(
+      '/api/conversations/' + encodeURIComponent(c.id),
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body) }
+    ).then(note).then(() => onRefresh()).catch(() => {});
+    if (what === 'pin') return patch({ pinned_at: !c.pinned_at });
+    if (what === 'move') return patch({ project: arg });
+    if (what === 'archive') return patch({ status: 'archived' });
+    if (what === 'rename') {
+      const t = prompt('Rename this chat', c.title || '');
+      if (t) return patch({ title: t });
+    }
+  };
+
+  const live = (convList || []).filter(c => c.status !== 'archived');
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? live.filter(c => (c.title || '').toLowerCase().indexOf(needle) >= 0)
+    : live;
+  // Pins first, then most recently worked in. `last_active_at` is not restamped
+  // by filing or pinning, so tidying the sidebar does not reorder the thing
+  // being tidied.
+  const order = a => [a.pinned_at ? 0 : 1, -(a.last_active_at || 0)];
+  const sortRows = rows => rows.slice().sort((x, y) => {
+    const [px, tx] = order(x), [py, ty] = order(y);
+    return px - py || tx - ty;
+  });
+  const loose = sortRows(shown.filter(c => !c.project));
+  const byProject = {};
+  shown.forEach(c => {
+    if (c.project) (byProject[c.project] = byProject[c.project] || []).push(c);
+  });
+
+  const heading = t => E('div', {
+    style: {
+      fontSize: 8.5, letterSpacing: '.1em', textTransform: 'uppercase',
+      color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono',
+      padding: '10px 4px 4px',
+    },
+  }, t);
+
+  return E('div', { className: 'chat-sidebar' },
+    E('div', { className: 'chat-sidebar-head' },
+      E('button', {
+        onClick: () => newChat(null), disabled: busy,
+        style: {
+          flex: 1, cursor: busy ? 'wait' : 'pointer',
+          background: 'rgba(0,212,255,0.10)',
+          border: '1px solid rgba(0,212,255,0.3)', borderRadius: 8,
+          padding: '7px 9px', color: '#cfefff',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, '+ New chat'),
+      E('button', {
+        onClick: newProject, title: 'New project',
+        'aria-label': 'New project',
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)', borderRadius: 8,
+          padding: '7px 9px', color: 'rgba(255,255,255,0.65)',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, '+ Project')),
+
+    E('input', {
+      value: q, onChange: e => setQ(e.target.value),
+      placeholder: 'Search chats…', className: 'input',
+      style: { margin: '0 10px 6px', fontSize: 11 },
+    }),
+
+    E('div', { className: 'chat-sidebar-scroll' },
+      (projList || []).map(p => {
+        const rows = sortRows(byProject[p.id] || []);
+        // While searching, a project with no matching chat is noise.
+        if (needle && !rows.length) return null;
+        const collapsed = shut[p.id] && !needle;
+        const pseat = (p.seat || {}).model || '';
+        return E('div', { key: p.id, style: { marginBottom: 2 } },
+          E('div', {
+            style: {
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '6px 4px 4px',
+            },
+          },
+            E('button', {
+              onClick: () => setShut(s => ({ ...s, [p.id]: !s[p.id] })),
+              style: {
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.75)', fontFamily: 'JetBrains Mono',
+                fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 5,
+                flex: 1, minWidth: 0, textAlign: 'left', padding: 0,
+              },
+            },
+              E('span', { style: { fontSize: 8, opacity: 0.6 } },
+                collapsed ? '▸' : '▾'),
+              E('span', {
+                style: {
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap', flex: 1,
+                },
+              }, p.name),
+              pseat ? E('span', {
+                title: 'Chats here default to ' + pseat,
+                style: {
+                  fontSize: 8.5, color: 'rgba(207,239,255,0.65)',
+                  border: '1px solid rgba(0,212,255,0.22)', borderRadius: 5,
+                  padding: '0 4px', flexShrink: 0,
+                },
+              }, prettyModel(pseat)) : null,
+              E('span', { style: { fontSize: 9, opacity: 0.4 } },
+                rows.length || '')),
+            E('button', {
+              onClick: () => setEditing(p), title: 'Project settings',
+              'aria-label': 'Settings for ' + p.name,
+              style: {
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.3)', fontSize: 11, padding: '0 2px',
+              },
+            }, '⚙'),
+            E('button', {
+              onClick: () => newChat(p.id), title: 'New chat in ' + p.name,
+              'aria-label': 'New chat in ' + p.name,
+              style: {
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: '0 2px',
+              },
+            }, '+')),
+          collapsed ? null : E('div', { style: { paddingLeft: 8 } },
+            rows.length
+              ? rows.map(c => E(SidebarRow, {
+                  key: c.id, c: c, active: c.id === convId,
+                  onOpen: onOpenConversation, onAct: onAct,
+                  projects: projList || [],
+                }))
+              : E('div', {
+                  style: {
+                    fontSize: 9.5, color: 'rgba(255,255,255,0.28)',
+                    fontFamily: 'JetBrains Mono', padding: '3px 8px 6px',
+                  },
+                }, 'No chats here yet.')));
+      }),
+
+      loose.length ? heading((projList || []).length ? 'Not in a project'
+                                                     : 'Chats') : null,
+      loose.map(c => E(SidebarRow, {
+        key: c.id, c: c, active: c.id === convId,
+        onOpen: onOpenConversation, onAct: onAct, projects: projList || [],
+      })),
+
+      (!shown.length) ? E('div', {
+        style: {
+          fontSize: 10.5, color: 'rgba(255,255,255,0.35)',
+          fontFamily: 'JetBrains Mono', padding: 12, textAlign: 'center',
+        },
+      }, needle ? 'Nothing matches “' + q + '”.' : 'No chats yet.')
+        : null),
+
+    editing ? E(ProjectSettings, {
+      project: editing, apiFetch: apiFetch,
+      onClose: () => setEditing(null),
+      onSaved: () => { setEditing(null); onRefresh(); },
+    }) : null);
+}
+
+/** Name, default model and standing instructions for one project. */
+function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
+  const [name, setName] = useState(project.name || '');
+  const [instr, setInstr] = useState(project.instructions || '');
+  const [seat, setSeat] = useState(project.seat || null);
+  const [picking, setPicking] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const save = () => {
+    setSaving(true);
+    apiFetch('/api/projects/' + encodeURIComponent(project.id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, instructions: instr, seat: seat }),
+    }).then(r => r.json()).then(d => {
+      // The response carries the project as it now IS. A default model the
+      // machine cannot seat comes back refused with a reason, and saying so
+      // here is cheaper than finding out during a turn that hangs.
+      if (d && d.note) alert(d.note);
+      onSaved();
+    }).catch(() => setSaving(false));
+  };
+
+  const remove = () => {
+    if (!confirm('Delete the project “' + (project.name || '') +
+                 '”?\n\nIts chats are kept and moved out of it.')) return;
+    apiFetch('/api/projects/' + encodeURIComponent(project.id),
+             { method: 'DELETE' })
+      .then(r => r.json()).then(d => {
+        if (d && d.note) alert(d.note);
+        onSaved();
+      }).catch(() => {});
+  };
+
+  const label = t => E('div', {
+    style: {
+      fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase',
+      color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono',
+      margin: '10px 0 4px',
+    },
+  }, t);
+
+  return E('div', {
+    onClick: e => { if (e.target === e.currentTarget) onClose(); },
+    style: {
+      position: 'fixed', inset: 0, zIndex: 3000,
+      background: 'rgba(3,6,14,0.6)', backdropFilter: 'blur(3px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    },
+  }, E('div', {
+    style: {
+      width: 420, maxWidth: '92vw', padding: 16,
+      background: '#0a0e1a', border: '1px solid rgba(0,212,255,0.25)',
+      borderRadius: 12, boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
+    },
+  },
+    E('div', {
+      style: {
+        fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff',
+        marginBottom: 2,
+      },
+    }, 'PROJECT'),
+
+    label('Name'),
+    E('input', {
+      value: name, onChange: e => setName(e.target.value),
+      className: 'input', style: { width: '100%' },
+    }),
+
+    label('Default model'),
+    E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono', lineHeight: 1.5, marginBottom: 5,
+      },
+    }, 'Chats in here use this unless they are bound to something else. ' +
+       'Only one local model fits on this machine at a time, so grouping ' +
+       'chats by model is grouping them by what the hardware can do.'),
+    E('button', {
+      onClick: () => setPicking(!picking),
+      style: {
+        cursor: 'pointer', background: 'rgba(0,212,255,0.07)',
+        border: '1px solid rgba(0,212,255,0.22)', borderRadius: 8,
+        padding: '5px 9px', color: seat ? '#cfefff' : 'rgba(255,255,255,0.5)',
+        fontFamily: 'JetBrains Mono', fontSize: 10.5,
+      },
+    }, seat ? prettyModel(seat.model) : 'follow my default'),
+    picking ? E('div', { style: { marginTop: 6 } },
+      E(ConversationSeatPicker, {
+        current: seat && seat.model,
+        onPick: m => {
+          setSeat(m ? { model: m.id, provider: (m.providers || [])[0] } : null);
+          setPicking(false);
+        },
+        onClear: () => { setSeat(null); setPicking(false); },
+        onClose: () => setPicking(false),
+      })) : null,
+
+    label('Standing instructions'),
+    E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono', lineHeight: 1.5, marginBottom: 5,
+      },
+    }, 'Sent with every turn in this project, so they are charged on every ' +
+       'turn too. Friday’s memory is unchanged either way — a ' +
+       'project files your chats, it does not narrow what she knows.'),
+    E('textarea', {
+      value: instr, onChange: e => setInstr(e.target.value),
+      rows: 4, className: 'input',
+      style: { width: '100%', resize: 'vertical', fontSize: 11 },
+    }),
+
+    E('div', {
+      style: {
+        display: 'flex', gap: 8, marginTop: 14, alignItems: 'center',
+      },
+    },
+      E('button', {
+        onClick: save, disabled: saving,
+        style: {
+          cursor: 'pointer', background: 'rgba(0,212,255,0.14)',
+          border: '1px solid rgba(0,212,255,0.35)', borderRadius: 8,
+          padding: '7px 14px', color: '#cfefff',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, saving ? 'Saving…' : 'Save'),
+      E('button', {
+        onClick: onClose,
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)', borderRadius: 8,
+          padding: '7px 12px', color: 'rgba(255,255,255,0.6)',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, 'Cancel'),
+      E('span', { style: { flex: 1 } }),
+      E('button', {
+        onClick: remove,
+        title: 'Deletes the folder. The chats inside are kept.',
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,77,109,0.3)', borderRadius: 8,
+          padding: '7px 12px', color: '#ff8095',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, 'Delete'))));
+}
+
 // ── Surface 2: Settings → Intelligence ───────────────────────────────────────
 
 function Bar({ used, total, reserve, label, sub }) {
@@ -38985,10 +39506,18 @@ function App() {
   const [convSeat, setConvSeat] = useState(null);
   const [convPickerOpen, setConvPickerOpen] = useState(false);
 
+  /* Projects ride along with the chat list rather than having their own
+     fetch, so the sidebar draws folders and threads in one frame instead of
+     the folders arriving a beat later. Same single source the switcher uses:
+     everything that changes a chat or a project calls refreshConvs, and both
+     surfaces move together. */
+  const [projList, setProjList] = useState([]);
+
   const refreshConvs = React.useCallback(() => apiFetch('/api/conversations')
     .then(r => r.json()).then(d => {
       if (d && d.status === 'ok') {
         setConvList(d.conversations || []);
+        setProjList(d.projects || []);
         setConvId(cur => cur || d.main_id);
       }
       return d;
@@ -44169,7 +44698,21 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     emoji: wsChat.emoji,
     seedPrompt: wsChat.seed,
     onClose: () => setWsChat(null)
-  }), /*#__PURE__*/React.createElement("div", {
+  }),
+  /* The sidebar is a SIBLING of the chat panel, not a change to its insides.
+     The panel is a long compiled tree that a dozen features already depend on;
+     adding a column beside it and shifting it over with CSS cannot break any
+     of them, where restructuring its children could. It exists only in a chat
+     tab - `chrome=chat` - because the floating holographic window is a glance
+     at one thread and has no navigation in it. */
+  window.__FRIDAY_CHROME__ === 'chat'
+    ? /*#__PURE__*/React.createElement(ChatSidebar, {
+        convList: convList, projList: projList, convId: convId,
+        onOpenConversation: openConversation, onRefresh: refreshConvs,
+        apiFetch: apiFetch,
+      })
+    : null,
+  /*#__PURE__*/React.createElement("div", {
     className: `chat-panel ${chatOpen ? 'open' : ''}`,
     style: chatH ? {
       width: chatW,

@@ -787,10 +787,13 @@ def chat():
             _router = get_router(_routing_cfg)
             # The conversation's own binding, if it has one. A null seat
             # means "follow the global default", resolved per turn.
+            # `effective_seat`, not `.seat`: a chat with no binding of its own
+            # inherits its project's default, and reading the raw field here
+            # would drop that on the floor at the one point it matters.
             _conv_seat = None
             try:
                 from agent_friday.services import conversations as _convs
-                _conv_seat = (_convs.load(_conversation_id) or {}).get("seat")
+                _conv_seat = _convs.effective_seat(_conversation_id)
             except Exception:
                 pass
             # A conversation bound to a model that is GONE.
@@ -1987,10 +1990,16 @@ def chat_send():
         # the difference between multiple chat windows being a feature and
         # being decoration: two windows are only worth having if they can be
         # two models.
+        #
+        # Resolved through `effective_seat` so a project's default model
+        # reaches the turn. A chat filed under a project and never bound
+        # itself has an empty `.seat`, and reading the raw field here would
+        # have made project defaults decoration in exactly the way per-chat
+        # bindings were before 2026-09-18.
         _conv_seat_model = ''
         try:
             from agent_friday.services import conversations as _cv
-            _cs = (_cv.load(_conversation_id) or {}).get('seat')
+            _cs = _cv.effective_seat(_conversation_id)
             if isinstance(_cs, dict):
                 _conv_seat_model = (_cs.get('model') or '').strip()
         except Exception as _cse:
