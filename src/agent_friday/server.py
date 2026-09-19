@@ -447,6 +447,19 @@ if not _TESTING:
     from agent_friday.services.connectors import connector_health_monitor_loop
     threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
 
+    # Credential sweep: read every credential Friday holds and say what is
+    # wrong, hourly and locally.
+    #
+    # On 2026-09-19 seven credentials were found stranded, and not one was
+    # found by anybody noticing a symptom - every one turned up because
+    # something finally enumerated a whole class at once. Firecrawl presented
+    # as "no API key set" while the key sat there undecryptable; GitHub
+    # presented as a broken MCP server; Drive presented as working. The
+    # enumeration that found them was a one-off migration helper. This is the
+    # standing version of it.
+    from agent_friday.services.credential_sweep import sweep_loop
+    threading.Thread(target=sweep_loop, daemon=True).start()
+
     # Residency: compute the placement plan, bind it into capability_routing,
     # and bring the GPU to that plan (decision Q9).
     #

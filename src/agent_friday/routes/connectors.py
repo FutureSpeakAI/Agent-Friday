@@ -71,6 +71,25 @@ def api_connectors_catalogue():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@connectors_bp.route('/api/credentials/inventory', methods=['GET'])
+def api_credentials_inventory():
+    """Every credential Friday holds, and whether each one actually opens.
+
+    Never returns secret material - only whether a credential decrypts, when
+    it expires, and what the user can do about it.
+
+    The enumeration that found seven stranded credentials on 2026-09-19 was a
+    one-off migration helper whose FIRST RUN found five dead. This is the
+    standing version, because a function that valuable should not run once.
+    """
+    try:
+        from agent_friday.services import credential_sweep as _cs
+        return jsonify({"status": "ok", **_cs.inventory()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @connectors_bp.route('/api/connectors/health', methods=['GET'])
 def api_connectors_health():
     """Ambient health snapshot — drives the connector status strip + monitoring."""
