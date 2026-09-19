@@ -17,6 +17,14 @@ def _unkeyed(monkeypatch):
     from agent_friday.services import firecrawl as fc
     monkeypatch.setattr(fc, "configured", lambda: False)
     monkeypatch.setattr(ws, "_firecrawl_ready", lambda: False)
+    # wigolo runs on 127.0.0.1:3333 when it is installed, which makes these
+    # tests pass or fail depending on whether a local service happens to be up
+    # on the machine running them - it answers first and the assertions about
+    # the keyed backends never get their turn. Caught 2026-09-19, when the
+    # detail came back "local, keyless" instead of DuckDuckGo's HTTP 202.
+    # "Unkeyed" has to mean every backend is out, including the one that needs
+    # no key.
+    monkeypatch.setattr(ws, "_wigolo_ready", lambda: False)
 
 
 def test_a_missing_key_is_unconfigured_not_absent(monkeypatch):
