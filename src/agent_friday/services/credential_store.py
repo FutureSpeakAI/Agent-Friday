@@ -425,6 +425,21 @@ def _legacy_keys() -> list[tuple[str, bytes]]:
     return out
 
 
+def decrypt_any(blob: bytes) -> tuple[bytes, str]:
+    """Public `_decrypt_any`, for migrating credentials that do NOT live in a
+    file of their own.
+
+    `mcp_servers.json` keeps its secrets as base64 inside JSON rather than as
+    blobs on disk (services/connector_secrets.py), so it is invisible to
+    `_credential_files()` and was missed by the first keystore migration. The
+    cost of that miss was concrete: Stephen's GitHub MCP server failed every
+    spawn with "GCM auth tag mismatch" while the other five recovered
+    credentials came back, because its token was still sealed under the
+    passphrase the resolver had stopped preferring.
+    """
+    return _decrypt_any(blob)
+
+
 def _decrypt_any(blob: bytes) -> tuple[bytes, str]:
     """Plaintext for `blob` using whatever key opens it, and the key's label.
 
