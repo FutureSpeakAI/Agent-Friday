@@ -59,7 +59,11 @@ class TestCredentialStore:
     def test_protect_roundtrip(self):
         data = b'{"token":"super-secret","refresh_token":"rt"}'
         blob, method = cs.protect(data)
-        assert method in ("vault", "dpapi", "plaintext")
+        # "keystore" joined the list on 2026-09-19 and is now what a healthy
+        # host writes: Friday's own root key, one file, no OS keychain and no
+        # DPAPI. The three below it remain only so blobs written before that
+        # date still READ; nothing new is written with them.
+        assert method in ("keystore", "vault", "dpapi", "plaintext")
         assert cs.unprotect(blob) == data
 
     def test_encrypted_blob_is_not_plaintext(self):
