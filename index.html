@@ -5479,20 +5479,103 @@ function ConversationWindow({
     // Cascade, so a second window does not land exactly on the first and look
     // like nothing happened.
     x: Math.max(16, (window.innerWidth || 1280) - 440 - (offset || 0) * 34),
-    y: 76 + (offset || 0) * 30
+    // The cascade is capped the same way dragging is, so the eighth window
+    // does not open already half-buried under the dock.
+    y: Math.min(76 + (offset || 0) * 30,
+                Math.max(0, (window.innerHeight || 800) - 64 - 234))
   }));
   const [dragging, setDragging] = useState(false);
   const dOff = useRef({ x: 0, y: 0 });
   const endRef = useRef(null);
   const inRef = useRef(null);
 
+  /* THE DOCK IS A FLOOR, NOT A BACKGROUND.
+     The dock is fixed to the bottom of the screen, and a chat window that
+     runs under it puts the composer — the one part you have to reach to use
+     the thing at all — behind a bar you cannot type through. The docked
+     .chat-panel already allows for this with `bottom: 116px`; a floating
+     window has to do the same arithmetic itself.
+
+     MEASURED, NOT ASSUMED. The dock's height comes from its own
+     getBoundingClientRect, so restyling it (or the mobile rules, which give
+     it a different size) cannot silently reintroduce the overlap. A constant
+     here would be correct until the first time someone changed a padding.
+
+     GEOMETRY, NOT THE CLASS. The first version asked whether the dock carried
+     its `hidden` class and treated that as gone. It is not gone: `.dock.hidden`
+     slides away over 350ms, so for a third of a second the class says absent
+     while 86px of dock is still sitting on the screen. Worse, measured
+     2026-09-19: with the window's animations paused the transition never
+     advances at all, and the dock sits fully visible wearing the hidden class
+     indefinitely. Anything that pauses compositing does this - a background
+     tab, a hidden pane, low-power mode - and prefers-reduced-motion is a
+     standing version of the same state.
+
+     So the question asked is "how much of the bottom of the viewport is the
+     dock covering right now", answered from its transformed rect. That is
+     true mid-slide, true when the slide never runs, and true if someone
+     rewrites the hide to use `bottom` or `height` instead of a transform. */
+  const [floor, setFloor] = useState(0);
+  const [vh, setVh] = useState(() => window.innerHeight || 800);
+  useEffect(() => {
+    const dock = document.querySelector('.dock');
+    const read = () => {
+      const h = window.innerHeight || 800;
+      setVh(h);
+      if (!dock) return setFloor(0);
+      const cs = window.getComputedStyle(dock);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return setFloor(0);
+      const r = dock.getBoundingClientRect();
+      if (!(r.height > 0)) return setFloor(0);
+      // r.top already includes the slide transform, so a dock halfway out
+      // reserves half its height and one fully out reserves nothing.
+      setFloor(Math.max(0, Math.min(h, Math.round(h - r.top))));
+    };
+    read();
+    window.addEventListener('resize', read);
+
+    /* The dock moves continuously while it slides, and a single reading taken
+       when the class changes would capture the frame before the motion. So a
+       class change opens a short sampling window instead - one frame at a
+       time, for a little longer than the 350ms transition. */
+    let raf = 0, until = 0;
+    const follow = () => {
+      read();
+      raf = performance.now() < until ? requestAnimationFrame(follow) : 0;
+    };
+    const kick = () => {
+      until = performance.now() + 520;
+      if (!raf) raf = requestAnimationFrame(follow);
+    };
+    let obs = null;
+    if (dock && window.MutationObserver) {
+      obs = new MutationObserver(kick);
+      obs.observe(dock, { attributes: true, attributeFilter: ['class', 'style'] });
+      dock.addEventListener('transitionend', read);
+    }
+    return () => {
+      window.removeEventListener('resize', read);
+      if (raf) cancelAnimationFrame(raf);
+      if (obs) obs.disconnect();
+      if (dock) dock.removeEventListener('transitionend', read);
+    };
+  }, []);
+
+  // What the window may occupy between its top edge and the dock.
+  const roomBelow = Math.max(220, vh - pos.y - floor - 14);
+
   useEffect(() => {
     if (!dragging) return;
     const mv = e => setPos({
       x: Math.min(Math.max(0, e.clientX - dOff.current.x),
                   (window.innerWidth || 1280) - 120),
+      // Never draggable under the dock: the title bar has to stay reachable
+      // AND the body has to keep somewhere to be. The 234 is the 220 minimum
+      // height plus the 14 of breathing room `roomBelow` subtracts, so the
+      // clamp lands exactly on that minimum instead of sailing past it and
+      // letting the Math.max floor push the window back under the dock.
       y: Math.min(Math.max(0, e.clientY - dOff.current.y),
-                  (window.innerHeight || 800) - 60)
+                  Math.max(0, (window.innerHeight || 800) - floor - 234))
     });
     const up = () => setDragging(false);
     window.addEventListener('mousemove', mv);
@@ -5501,7 +5584,11 @@ function ConversationWindow({
       window.removeEventListener('mousemove', mv);
       window.removeEventListener('mouseup', up);
     };
-  }, [dragging]);
+    // `floor` belongs here: the dock can hide or return mid-drag, and a
+    // listener that closed over the old height would clamp to a bar that is
+    // no longer there (or stop clamping for one that is). Re-binding is free
+    // - the drag's own state lives in a ref, not in this closure.
+  }, [dragging, floor]);
 
   // The thread's own transcript and its own seat. Both per-conversation; see
   // the note above about disagreement between surfaces.
@@ -5565,7 +5652,11 @@ function ConversationWindow({
     onMouseDown: onFocus,
     style: {
       position: 'fixed', left: pos.x, top: pos.y,
-      width: 420, maxWidth: '94vw', height: 'min(640px,78vh)',
+      width: 420, maxWidth: '94vw',
+      // Tall as it likes, but never taller than the gap above the dock. The
+      // composer is the bottom row of this box, so this is what keeps the
+      // input reachable.
+      height: Math.min(640, Math.round(vh * 0.78), roomBelow),
       zIndex: zIndex || 132,
       display: 'flex', flexDirection: 'column',
       background: 'rgba(10,14,24,0.97)',
@@ -38860,7 +38951,6 @@ function App() {
     [id]: patch || {}
   })), []);
   const [zMap, setZMap] = useState({});
-  const [zC, setZC] = useState(42);
   /* An undocked window IS the chat panel, so it opens open. Anywhere else the
      panel starts closed, as it always has. */
   const [chatOpen, setChatOpen] = useState(
@@ -42703,14 +42793,41 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     n.delete(id);
     return n;
   });
+  /* WINDOWS LIVE IN A BAND, NOT ON A LADDER.
+     Raising a window used to hand it an ever-increasing counter starting at
+     42. The dock and the top bar are at 70, quick settings at 68, the chat
+     panel at 65 - so after roughly twenty-three raises, which is an ordinary
+     afternoon, holographic windows silently began painting over the shell.
+     Nothing announced it; the app just started behaving differently the
+     longer it stayed open, which is the worst kind of bug to be handed.
+
+     So the stack is a fixed band below the shell, and raising a window
+     re-ranks rather than climbs: when the top of the band is reached, the
+     open windows are compacted back down in their existing order and the
+     raised one goes on top. Relative order - the only thing a z-stack owes
+     anyone - is preserved, and the band cannot leak into the dock's layer no
+     matter how long the session runs.
+
+     The counter is gone rather than capped. It was never read anywhere but
+     inside itself, and a derived peak cannot drift out of step with the map
+     the way a parallel counter can. */
+  const Z_WIN_BASE = 42;
+  const Z_WIN_TOP = 64;          // chat panel is 65; stay under the shell
   const bringFront = id => {
     setFocusWin(id);
-    setZC(c => {
-      setZMap(m => ({
-        ...m,
-        [id]: c
-      }));
-      return c + 1;
+    setZMap(m => {
+      const keys = Object.keys(m);
+      const peak = keys.reduce((h, k) => Math.max(h, m[k] || 0), Z_WIN_BASE - 1);
+      if (m[id] === peak && peak >= Z_WIN_BASE) return m;   // already on top
+      if (peak + 1 <= Z_WIN_TOP) return { ...m, [id]: peak + 1 };
+      const others = keys
+        .filter(k => k !== id)
+        .sort((a, b) => (m[a] || 0) - (m[b] || 0))
+        .slice(-(Z_WIN_TOP - Z_WIN_BASE));
+      const out = {};
+      others.forEach((k, i) => { out[k] = Z_WIN_BASE + i; });
+      out[id] = Z_WIN_BASE + others.length;
+      return out;
     });
   };
 
@@ -44038,7 +44155,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     convId: cw.cid,
     title: cw.title,
     offset: i,
-    zIndex: zMap['chat:' + cw.cid] || (132 + i),
+    // Same band as every other window (see bringFront). 132 here predated the
+    // band and would have put a chat window over the dock and the top bar -
+    // harmless only because a chat window is now clamped never to reach them,
+    // which is not a reason to leave a number that says otherwise.
+    zIndex: zMap['chat:' + cw.cid] || Math.min(Z_WIN_TOP, Z_WIN_BASE + i),
     onFocus: () => bringFront('chat:' + cw.cid),
     onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid))
   })), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
