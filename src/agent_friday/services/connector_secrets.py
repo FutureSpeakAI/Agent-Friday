@@ -165,6 +165,89 @@ def encrypt_config(cfg: dict) -> dict:
     return out
 
 
+def rewrap_config_onto_keystore(cfg: dict) -> tuple:
+    """Re-seal every encrypted value under Friday's keystore root key.
+
+    Returns `(new_cfg, report)`. Never raises for one bad value.
+
+    WHY THIS IS SEPARATE FROM credential_store.migrate_to_keystore. That
+    migration walks FILES, and these secrets are base64 inside a JSON document,
+    so `_credential_files()` cannot see them. The cost of the gap was exact:
+    five credentials were recovered on 2026-09-19 and the GitHub MCP server
+    kept failing every spawn with "GCM auth tag mismatch", because its token
+    was the one still sealed under the passphrase the resolver had stopped
+    preferring.
+
+    The rules are the ones that migration follows, for the same reason - this
+    is somebody's only copy of a token:
+
+      * decrypt with ANY key Friday knows, because an older key is exactly
+        what a stranded credential is sealed with
+      * round-trip the new ciphertext before it replaces anything
+      * a value that will not open is LEFT EXACTLY AS IT IS and reported,
+        never dropped and never replaced with an empty string
+      * already-migrated values are skipped, so a second run is free
+    """
+    from agent_friday.services import credential_store as _cs
+    from agent_friday.services import keystore as _ks
+
+    report = {"examined": 0, "already": 0, "rewrapped": 0,
+              "recovered": [], "unreadable": []}
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("servers"), dict):
+        return cfg, report
+
+    out = dict(cfg)
+    servers = {}
+    for name, spec in cfg["servers"].items():
+        if not isinstance(spec, dict) or not isinstance(spec.get("env"), dict):
+            servers[name] = spec
+            continue
+        env = {}
+        for key, value in spec["env"].items():
+            if not is_encrypted(value):
+                env[key] = value
+                continue
+            report["examined"] += 1
+            body = value[len(SECRET_MARKER):]
+            method, _, payload = body.partition(":")
+            try:
+                raw = base64.b64decode(payload, validate=False)
+            except Exception:
+                report["unreadable"].append({"server": name, "key": key,
+                                             "error": "undecodable envelope"})
+                env[key] = value
+                continue
+            if _ks.is_keystore_blob(raw):
+                report["already"] += 1
+                env[key] = value
+                continue
+            try:
+                plain, via = _cs.decrypt_any(raw)
+            except Exception as e:
+                report["unreadable"].append({"server": name, "key": key,
+                                             "error": type(e).__name__})
+                env[key] = value          # left exactly as it was
+                continue
+            try:
+                fresh = encrypt_value(plain.decode("utf-8"))
+                if decrypt_value(fresh).encode("utf-8") != plain:
+                    raise RuntimeError("round-trip mismatch")
+            except Exception as e:
+                report["unreadable"].append({"server": name, "key": key,
+                                             "error": "rewrap failed: %s" % e})
+                env[key] = value
+                continue
+            env[key] = fresh
+            report["rewrapped"] += 1
+            if via != "current":
+                report["recovered"].append({"server": name, "key": key,
+                                            "via": via})
+            del plain
+        servers[name] = dict(spec, env=env)
+    out["servers"] = servers
+    return out, report
+
+
 def config_has_plaintext_secrets(cfg: dict) -> bool:
     servers = (cfg or {}).get("servers")
     if not isinstance(servers, dict):
