@@ -680,6 +680,117 @@ def _accounts_with(service: str) -> list:
 _DEFAULT_GMAIL_WINDOW_DAYS = 7
 
 
+# ── per-service condition at the provider ───────────────────────────────────
+#
+# AN ACCOUNT BEING HEALTHY DOES NOT MEAN EVERY SERVICE ON IT WORKS. Measured
+# 2026-09-19: both of Stephen's accounts were connected, their tokens valid,
+# their `services` maps carrying `drive: true` - and every Drive call returned
+# `403 Google Drive API has not been used in project 449982820564 before or it
+# is disabled`. The Drive API had never been switched on for the Cloud project.
+# Nothing recorded that, so the connectors page reported Drive as on, the model
+# was told Drive was available, and the only evidence was a 403 thrown away
+# inside an errors list nobody surfaced.
+#
+# A CONDITION AT THE PROVIDER IS STICKY UNTIL IT ISN'T. It is not a transient:
+# enabling an API is a deliberate act in a console, so the condition persists
+# until someone performs it. It is therefore worth recording - but cleared the
+# instant a call succeeds, because a verdict that can only get worse is not a
+# health check (the lesson from `credentials_for` the same day).
+
+_SERVICE_STATE_FILE = ACCOUNTS_DIR / "service_state.json"
+
+#: Substrings that mean "the provider has turned this off", as opposed to a
+#: network blip. Matched conservatively: anything not recognised here is left
+#: alone rather than recorded as a provider condition, because wrongly marking
+#: a service degraded is the same class of mistake as wrongly marking an
+#: account revoked.
+_PROVIDER_OFF_SIGNS = (
+    "has not been used in project",
+    "is disabled",
+    "accessnotconfigured",
+    "insufficient authentication scopes",
+    "insufficientpermissions",
+)
+
+
+def _load_service_state() -> dict:
+    try:
+        return json.loads(_SERVICE_STATE_FILE.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _save_service_state(state: dict) -> None:
+    try:
+        ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _SERVICE_STATE_FILE.with_name(_SERVICE_STATE_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp.replace(_SERVICE_STATE_FILE)
+    except Exception:
+        pass
+
+
+def note_service_result(service: str, ok: bool, detail: str = "") -> None:
+    """Record whether `service` is switched on at the provider.
+
+    Only a RECOGNISED provider-side refusal is recorded. A timeout, a 500 or an
+    unfamiliar message leaves the state untouched: "I could not check" is not
+    "it is off", the same rule the seat probes and the credential classifier
+    already follow.
+    """
+    state = _load_service_state()
+    cur = state.get(service) or {}
+    if ok:
+        if cur.get("blocked"):
+            state[service] = {"blocked": False, "detail": "",
+                              "at": _now_iso()}
+            _save_service_state(state)
+        return
+    low = (detail or "").lower()
+    if not any(sign in low for sign in _PROVIDER_OFF_SIGNS):
+        return
+    if cur.get("blocked") and cur.get("detail") == detail:
+        return
+    state[service] = {"blocked": True, "detail": (detail or "")[:400],
+                      "at": _now_iso()}
+    _save_service_state(state)
+
+
+def service_health(service: str):
+    """Whether `service` can actually be used right now, across all accounts.
+
+    Three questions, in order, because they have different answers and the
+    surfaces that ask only the first are the ones that lie:
+
+      1. Is any account configured for it at all?      -> ABSENT
+      2. Are those accounts usable?                    -> NEEDS_USER / UNREADABLE
+      3. Is the service switched on at the provider?   -> DEGRADED
+
+    `routes/news.py` reported Gmail AND Calendar as connected from one check of
+    the primary account's credentials, which answers none of these three.
+    """
+    from agent_friday.services import connector_health as _ch
+    recs = [r for r in _load_index().get("accounts", [])
+            if r.get("services", {}).get(service, True)]
+    if not recs:
+        return _ch.Health(state=_ch.ABSENT, source="google_accounts",
+                          source_state="no-account",
+                          summary="No Google account has %s switched on" % service)
+    healths = [_ch.from_google_account(r) for r in recs]
+    worst = _ch.worst(healths)
+    if not worst.healthy:
+        return worst
+    cur = (_load_service_state().get(service) or {})
+    if cur.get("blocked"):
+        return _ch.Health(
+            state=_ch.DEGRADED, source="google_accounts",
+            source_state="provider-off", action="enable_api",
+            detail=str(cur.get("detail") or ""),
+            summary="Your Google account is connected, but %s is switched off "
+                    "at Google for this project" % service)
+    return worst
+
+
 def _gmail_window_days(override: int | None = None) -> int:
     """Days of history a Gmail fetch covers. Caller > settings > default."""
     if override:
@@ -859,8 +970,13 @@ def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) ->
                 "modified": f.get("modifiedTime"), "size": f.get("size"),
                 "link": f.get("webViewLink"), "icon": f.get("iconLink"),
             })
+        note_service_result("drive", True)
         return {"account": _public_record(rec), "folder_id": folder_id, "files": files}
     except Exception as e:
+        # A 403 saying the API is off at the Cloud project is the difference
+        # between "Drive is broken" and "Drive was never switched on", and the
+        # user can only act on the second if someone writes it down.
+        note_service_result("drive", False, str(e))
         return {"error": f"Drive fetch failed: {e}", "account_id": account_id}
 
 
@@ -879,10 +995,16 @@ def merged_drive_search(query: str = "", max_results: int = 20) -> dict:
             errors.append({"account_id": aid, "label": rec.get("label"), "error": "needs_reauth"})
             continue
         used.append(_public_record(rec))
+        _saw_result = False
         for f in _drive_search_for_creds(creds, query, max_results):
             if "error" in f:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": f["error"]})
+                # The 403 that was being thrown away. See note_service_result.
+                note_service_result("drive", False, str(f["error"]))
+                _saw_result = True
                 continue
+            _saw_result = True
+            note_service_result("drive", True)
             f["account_id"] = aid
             f["account_label"] = rec.get("label")
             f["account_email"] = rec.get("email")
