@@ -669,7 +669,14 @@ def _tool_search_web(inp):
              f"{len(results)} results). URLs below are real and fetchable — "
              f"pass one verbatim to browse_web:\n"]
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}")
+        # `.get`, not `[...]`. web_search normalises every backend's rows to
+        # title/url/snippet now, so this should never be missing - but a hard
+        # subscript here is what turned one backend's different field name
+        # into "Tool error (search_web): 'snippet'" on every search for a day.
+        # A renderer should degrade to a blank line, not take down the tool.
+        lines.append(f"{i}. {r.get('title') or r.get('url') or ''}\n"
+                     f"   {r.get('snippet') or r.get('description') or ''}\n"
+                     f"   {r.get('url') or ''}")
     if out.get('detail'):
         lines.append(f"\n[note: {out['detail']}]")
     return '\n'.join(lines)[:100_000]

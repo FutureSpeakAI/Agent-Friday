@@ -528,11 +528,55 @@ def _gate_search_query(query: str, provider: str) -> tuple[str, str]:
     return gated, ""
 
 
+#: The row shape every caller is entitled to assume, whichever backend answered.
+_ROW_KEYS = ("title", "url", "snippet")
+
+
+def _normalise_rows(rows) -> list:
+    """Force every backend's rows into one shape: title, url, snippet.
+
+    THE WHOLE POINT IS THAT CALLERS STOP GUESSING. Four backends each invented
+    their own field name for the same string - Brave and DuckDuckGo and
+    Firecrawl say `snippet`, wigolo says `description` - and
+    `services/agent.py` renders results with a hard `r['snippet']`. So the
+    moment wigolo became the first runner on 2026-09-18, every single web
+    search raised `KeyError: 'snippet'` and the model was handed
+    "Tool error (search_web): 'snippet'". Search was 100% dead for a day, on
+    the one backend that always answers because it is local and keyless.
+
+    Reported 2026-09-19 as DuckDuckGo choking on an anti-bot wall, which was a
+    reasonable theory and the wrong one: DuckDuckGo returns `snippet` and
+    degrades cleanly. Measured before fixing - wigolo ready, wigolo answering,
+    three results, row keys ['description', 'title', 'url'].
+
+    Normalising HERE rather than teaching agent.py a second key name is the
+    difference between fixing this bug and fixing this class of bug. A fifth
+    backend that calls it `abstract` now costs nothing.
+    """
+    out = []
+    for r in (rows or []):
+        if not isinstance(r, dict):
+            continue
+        url = str(r.get("url") or "").strip()
+        if not url:
+            continue                  # the contract is a real fetchable href
+        out.append({
+            "title": str(r.get("title") or url)[:300],
+            "url": url,
+            "snippet": str(r.get("snippet") or r.get("description")
+                           or r.get("abstract") or r.get("text") or "")[:1000],
+        })
+    return out
+
+
 def search(query: str, count: int = 10) -> dict:
     """Search the web. Returns {status, results[], backend, detail, query}.
 
     `results[i]["url"]` is always a real, fetchable, clickable href — that is
     this function's contract and the thing the old one got wrong.
+
+    Rows are always `{title, url, snippet}` whatever backend answered; see
+    `_normalise_rows` for the day that cost.
     """
     q = (query or "").strip()
     if not q:
@@ -571,7 +615,7 @@ def search(query: str, count: int = 10) -> dict:
                    "detail": f"{type(e).__name__}: {e}"}
         _note_backend_health(name, out)
         if out.get("status") == SearchStatus.OK:
-            out.setdefault("results", [])
+            out["results"] = _normalise_rows(out.get("results"))
             out["query"] = q
             out["backend"] = name
             if tried:
