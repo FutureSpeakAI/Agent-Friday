@@ -52,6 +52,25 @@ def api_connectors_list():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@connectors_bp.route('/api/connectors/catalogue', methods=['GET'])
+def api_connectors_catalogue():
+    """What Friday CAN connect to, next to what it IS connected to.
+
+    Those two questions were never askable together. `/api/connectors`
+    answered the second, and for six of eighteen things; nothing answered the
+    first at all, which is how twelve connectors stayed invisible for months
+    without anyone being able to notice by reading a list.
+
+    Phase 4 of docs/design/connector-ecosystem.md.
+    """
+    try:
+        from agent_friday.services import connector_registry as _reg
+        return jsonify({"status": "ok", **_reg.catalogue()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @connectors_bp.route('/api/connectors/health', methods=['GET'])
 def api_connectors_health():
     """Ambient health snapshot — drives the connector status strip + monitoring."""
