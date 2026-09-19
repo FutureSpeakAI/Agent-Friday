@@ -1,4 +1,4 @@
-﻿"""
+"""
 routing/model_router.py — ROUTING LAYER (WHERE to send a request).
 
 This module decides which provider (Anthropic / Ollama / OpenAI-compatible)
@@ -1002,6 +1002,38 @@ class ModelRouter:
             # every turn, not just the unattended ones. (cloud_only and
             # local_only both return earlier in this method and never reach
             # here.)
+            #
+            # A PER-CONVERSATION BINDING IS THE ONE THING THAT OUTRANKS THIS,
+            # and the distinction is narrow on purpose. The ruling above is
+            # about the GLOBAL reasoning seat: shipping with a cloud default
+            # must not make `local_preferred` unreachable, so a global cloud
+            # seat loses to the mode. A seat bound to ONE CONVERSATION is a
+            # different statement — it is the user saying "this thread, that
+            # model", per thread, which is the entire point of being able to
+            # open several chats at once. Overriding it would make the
+            # per-chat picker decorative in the cloud direction: measured
+            # 2026-09-18, a conversation bound to claude-sonnet-5 was answered
+            # by bonsai2:27b while another bound to bonsai2:27b was answered
+            # correctly, so the picker worked in exactly one of two
+            # directions.
+            #
+            # STATED PLAINLY BECAUSE IT COSTS SOMETHING: a chat bound to a
+            # cloud model will leave this machine even in local_preferred, and
+            # will be billed. That is what binding it means, and the reason
+            # string says so where the decision is logged.
+            _conv_seat = (ctx or {}).get("conversation_seat")
+            _conv_model = ((_conv_seat or {}).get("model") or "").strip() \
+                if isinstance(_conv_seat, dict) else ""
+            if _conv_model and not self._is_registry_local(_conv_model):
+                return {
+                    "provider": "cloud",
+                    "model": _conv_model,
+                    "task_type": task_type,
+                    "reason": ("this conversation is bound to %s, which is a "
+                               "cloud model; a per-chat binding outranks the "
+                               "local preference" % _conv_model),
+                }
+
             local = self._local_candidates()
             if local:
                 # The BRAIN, not the fastest thing that fits: a heartbeat

@@ -85,7 +85,8 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
                     workspace=None, on_route=None, tools=None,
-                    system_builder=None, on_text_delta=None):
+                    system_builder=None, on_text_delta=None,
+                    conversation_seat=None):
     """Tool-using (agentic) generation via the user's CONFIGURED provider.
 
     on_text_delta: optional `callable(str)` fired per streamed content
@@ -148,7 +149,8 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                    pii_lookup=pii_lookup, orb_label=orb_label,
                    orb_category=orb_category, orb_icon=orb_icon,
                    workspace=workspace, on_route=on_route, tools=tools,
-                   system_builder=system_builder, on_text_delta=None)
+                   system_builder=system_builder, on_text_delta=None,
+                   conversation_seat=conversation_seat)
 
         def _with_sink():
             _DS.set(on_text_delta)
@@ -185,7 +187,22 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         route = get_router(routing_cfg).route(messages, task_context={
             "has_tools": True,
             "workspace": workspace or '',
-            "cloud_model": model or settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+            # `model` is a CLOUD-model hint here, not a binding, which is why
+            # handing this a local id does not pin the turn to it: the router
+            # reads it as "if you go to the cloud, go here". Passing
+            # bonsai2:27b through it got a conversation bound to the local 27B
+            # answered by Sonnet after a 74-second attempt (measured
+            # 2026-09-18) — the router never saw a binding at all.
+            "cloud_model": ((model if model and ':' not in str(model)
+                             else None)
+                            or settings.get('orchestrator_model')
+                            or ANTHROPIC_MODEL_DEFAULT),
+            # The binding. `/api/chat` has always passed this; `/api/chat/send`
+            # never did, so the per-conversation model picker wrote a seat
+            # nothing on the UI's sending path read. This is the key the router
+            # actually honours.
+            "conversation_seat": (conversation_seat
+                                  or ({"model": model} if model else None)),
             # Unattended work is allowed to prefer a local seat. Without this
             # the router cannot tell a scheduled heartbeat from the user typing,
             # and every tool-using turn looks interactive.
