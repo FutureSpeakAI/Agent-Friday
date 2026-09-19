@@ -247,7 +247,24 @@ class PlatformAdapter:
         return True
 
     def status(self) -> Dict[str, Any]:
-        """Connection facts only — never token material (§12.2)."""
+        """Connection facts only — never token material (§12.2).
+
+        `connected` USED TO MEAN "a credential exists". That is the bug
+        `google_accounts.py:128-135` was rewritten to fix in September 2026 -
+        rendering the presence of a record as health - and it survived here
+        untouched, in a mechanism nobody revisited. This adapter stored
+        `expires_at`, displayed it, and never once consulted it: a token that
+        expired in August reported as connected in September.
+
+        Now derived, via services/connector_health.py, and it fails closed. A
+        stored credential with no expiry is UNKNOWN rather than working,
+        because nothing has checked it; an expired one is NEEDS_USER; nothing
+        stored at all is ABSENT. `connected` is kept in the payload with its
+        old key so existing callers do not break, but it is now the derived
+        `healthy` rather than a presence test.
+        """
+        from agent_friday.services import connector_health as _ch
+
         out = {
             "name": self.name,
             "label": self.label,
@@ -259,17 +276,66 @@ class PlatformAdapter:
             "tier": self.automation_tier,
             "last_error": self._last_error,
         }
+        health = _ch.Health(state=_ch.ABSENT, source="platforms")
         try:
             creds = self.load_credentials()
-            connected = creds is not None or bool(self.simple_secret())
-            out["connected"] = connected
+            simple = bool(self.simple_secret())
             if isinstance(creds, dict):
                 out["account"] = creds.get("account")
                 out["scopes"] = list(creds.get("scopes") or [])
                 out["expires_at"] = creds.get("expires_at")
+            health = self._health_from(creds, simple)
         except Exception as e:
             out["last_error"] = str(e)
+            health = _ch.unknown(detail="%s: %s" % (type(e).__name__, e),
+                                 source="platforms")
+        out["connected"] = health.healthy
+        out["health"] = health.as_dict()
         return out
+
+    def _health_from(self, creds, simple_secret_present: bool):
+        """The verdict for one adapter's stored credential."""
+        import time as _t
+
+        from agent_friday.services import connector_health as _ch
+
+        if creds is None and not simple_secret_present:
+            return _ch.Health(state=_ch.ABSENT, source="platforms",
+                              source_state="absent",
+                              summary="%s is not connected" % self.label)
+        expires_at = None
+        if isinstance(creds, dict):
+            expires_at = creds.get("expires_at")
+        if expires_at:
+            try:
+                exp = float(expires_at)
+            except (TypeError, ValueError):
+                try:
+                    from datetime import datetime
+                    exp = datetime.fromisoformat(
+                        str(expires_at).replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    exp = None
+            if exp is not None and exp <= _t.time():
+                return _ch.Health(
+                    state=_ch.NEEDS_USER, source="platforms",
+                    source_state="expired", action="reconnect",
+                    summary="%s's authorisation expired" % self.label,
+                    detail="expired at %s" % expires_at)
+            if exp is not None:
+                # A live token with a future expiry is the one case here that
+                # can honestly claim to be working.
+                return _ch.Health(
+                    state=_ch.WORKING, source="platforms",
+                    source_state="valid",
+                    summary="%s is connected" % self.label)
+        # An app password or PAT with no expiry to check. Usable - refusing it
+        # would break publishing with a credential the user supplied correctly -
+        # but reported as unverified rather than as a checked "connected".
+        return _ch.from_credential_presence(
+            True, "platforms",
+            detail="%s stores no expiry, so nothing can confirm the credential "
+                   "still works until it is used" % self.label)
 
     # ── publish path ──────────────────────────────────────────────────────────
     def prepare(self, target: Dict[str, Any], post: Dict[str, Any]) -> Dict[str, Any]:
