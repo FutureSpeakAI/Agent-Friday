@@ -1,4 +1,4 @@
-﻿"""
+"""
 google_accounts — secure multi-account Google integration (Gmail / Calendar / Drive).
 
 Extends Friday's single-account Google support to N accounts, each with its own
@@ -142,7 +142,38 @@ _STATUS_PRESENTATION = {
     "revoked":      ("needs_reauth", "Access revoked at Google", False, True),
     "error":        ("error",        "Error",                    False, True),
     "disconnected": ("disconnected", "Disconnected",             False, True),
+    # A LOCAL PROBLEM, NOT A GOOGLE ONE. The token is on disk and Google has
+    # revoked nothing; Friday cannot decrypt it, because the vault key this
+    # process derived is not the key the token was written with.
+    #
+    # This had to stop being filed as needs_reauth. Reconnecting does appear
+    # to fix it - it rewrites the token under whatever key the current process
+    # has - which is the worst possible property for a wrong diagnosis to
+    # have, because the remedy that hides the fault buys exactly one day.
+    # Measured 2026-09-19 in Stephen's audit log: 11,508 of these on Sept 4th,
+    # 9,517 on the 11th, 8,109 on the 17th, every one recorded as if Google
+    # had pulled the grant, and a reconnect every morning to clear it.
+    "unreadable":   ("unreadable",   "Stored credential unreadable",
+                     False, True),
 }
+
+#: Exception names that mean "this is a local storage or key problem", not
+#: "the user's grant is gone". Matched by NAME rather than by class so this
+#: module does not have to import the vault crypto just to classify an error.
+_LOCAL_STORAGE_ERRORS = ("IntegrityError", "VaultCryptoError", "RuntimeError",
+                         "InvalidTag", "PermissionError", "FileNotFoundError")
+
+
+def _classify_credential_error(exc: BaseException) -> str:
+    """Stored status for a credential that would not load.
+
+    The distinction that matters to the user is whether the remedy is theirs
+    at Google (reconnect) or Friday's on this machine (fix the key). Getting
+    it wrong in the safe-looking direction - calling everything needs_reauth -
+    is what produced the daily reconnect ritual.
+    """
+    return ("unreadable" if type(exc).__name__ in _LOCAL_STORAGE_ERRORS
+            else "needs_reauth")
 
 # Fail closed. An unrecognised or absent status is NOT evidence of health.
 _UNKNOWN_PRESENTATION = ("unknown", "Status unknown", False, True)
@@ -486,11 +517,22 @@ def credentials_for(account_id: str):
     try:
         creds = _raw_credentials(account_id)
     except Exception as e:
-        _mark_status(account_id, "needs_reauth")
+        # A decryption failure is not a revoked grant. See
+        # `_classify_credential_error` and the "unreadable" entry above.
+        _mark_status(account_id, _classify_credential_error(e))
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
-                       success=False, error=type(e).__name__)
+                       success=False, error=type(e).__name__,
+                       detail=str(e)[:200])
         return None
     if creds is None:
+        # NO TOKEN ON DISK, and the index still claiming whatever it last
+        # claimed. Returning None while leaving the stored status alone is how
+        # "connected" survived an account that could not produce a credential
+        # at all - the settings page said fine, every fetch came back empty,
+        # and nothing wrote down that they disagreed.
+        _mark_status(account_id, "disconnected")
+        cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
+                       success=False, error="NoStoredToken")
         return None
     if creds.refresh_token and (creds.expired or not creds.valid):
         try:
@@ -505,6 +547,13 @@ def credentials_for(account_id: str):
                            success=False, error=type(e).__name__)
             return None
     if not creds or not creds.valid:
+        # Expired with no refresh token to spend: the grant really is gone and
+        # reconnecting really is the remedy. This branch used to return None
+        # silently, leaving the index saying "connected" for an account that
+        # could not answer a single call.
+        _mark_status(account_id, "needs_reauth")
+        cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
+                       success=False, error="NoUsableCredential")
         return None
     cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id, success=True)
     return creds
@@ -575,10 +624,25 @@ def _migrate_legacy_if_needed() -> None:
 
 # ── merged / per-account data fetches (token-free output) ────────────────────
 def _accounts_with(service: str) -> list:
+    """Accounts that have `service` switched on AND are actually usable.
+
+    FAIL CLOSED, via the one derivation. This used to read
+    `status != "needs_reauth"`, which is a deny-list of exactly one value in
+    a module whose header says health is never inferred from a record
+    existing. Every other unhealthy state - "error", "disconnected",
+    "revoked", a missing status, and the "unreadable" state added on
+    2026-09-19 - passed straight through it as usable. `account_health` is
+    where usability is decided for every other surface; a fetch path that
+    decides it a second way is how the connectors page and the data end up
+    telling the user different stories.
+    """
     out = []
     for r in _load_index().get("accounts", []):
-        if r.get("services", {}).get(service, True) and r.get("status") != "needs_reauth":
-            out.append(r)
+        if not r.get("services", {}).get(service, True):
+            continue
+        if not account_health(r).get("healthy"):
+            continue
+        out.append(r)
     return out
 
 
