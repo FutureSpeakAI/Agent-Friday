@@ -5585,6 +5585,18 @@ def _vault_read_text(path) -> str:
     during rollover). Raises on an encrypted blob with no/incorrect key.
     """
     raw = Path(path).read_bytes()
+    # KEYSTORE FIRST. A file re-sealed under Friday's own root key
+    # (privacy/vault_rekey.py) carries the keystore envelope, and the whole
+    # point of moving it there is that reading it no longer depends on a
+    # passphrase that half the launchers do not set. Tried before the
+    # passphrase path so a rekeyed file opens even when no passphrase exists
+    # at all - which is the state this machine is heading for.
+    try:
+        from agent_friday.services import keystore as _ks
+        if _ks.is_keystore_blob(raw):
+            return _ks.decrypt(raw).decode("utf-8")
+    except ImportError:
+        pass
     key = _get_vault_key()
     if _HAS_VAULT_CRYPTO and _vc.is_encrypted(raw):
         if key is None:
