@@ -301,6 +301,99 @@ def active_backend() -> str:
     return "brave" if brave_key() else "duckduckgo-scrape"
 
 
+#: wigolo — a local-first web layer for agents (search, fetch, crawl) that
+#: runs on this machine with no API key and no per-query cost. Started with
+#: `npx wigolo serve`; it listens on loopback only unless a bearer token is
+#: configured, so nothing here is reachable from off the machine.
+#:
+#: WHY IT GOES FIRST. Every other backend in this chain can fail for a reason
+#: the user has to go and fix with a credit card. On 2026-09-18 neither
+#: Firecrawl nor Brave had a key on this machine, so every search fell to the
+#: DuckDuckGo scrape, which answered HTTP 202 anti-bot walls — a working
+#: internet and no way to read it. A keyless local backend removes that whole
+#: class of failure rather than reporting it better.
+_WIGOLO_URL = "http://127.0.0.1:3333"
+_WIGOLO_PROBE_TTL_S = 30.0
+_wigolo_seen: dict = {"at": 0.0, "up": False}
+
+
+def _wigolo_ready() -> bool:
+    """Is wigolo serving on loopback? Cached briefly; never raises.
+
+    A connect check rather than a request: it answers in about a millisecond
+    when nothing is listening, and this sits in front of every search.
+    """
+    import socket
+    now = time.time()
+    if now - (_wigolo_seen.get("at") or 0) < _WIGOLO_PROBE_TTL_S:
+        return bool(_wigolo_seen.get("up"))
+    up = False
+    try:
+        with socket.create_connection(("127.0.0.1", 3333), 0.35):
+            up = True
+    except OSError:
+        up = False
+    except Exception:
+        up = False
+    _wigolo_seen.update({"at": now, "up": up})
+    return up
+
+
+def _wigolo_search(query: str, count: int) -> dict:
+    """Search via the local wigolo engine.
+
+    Its response carries far more than this chain's contract needs — per-engine
+    telemetry, score decomposition, verbatim evidence spans. Only the results
+    are taken here, because `search()`'s contract is a list of real fetchable
+    urls and quietly widening that shape would break every caller that trusts
+    it. The richer surface is worth wiring to deliberately, later, not by
+    accident now.
+    """
+    import requests          # local, as every other backend here does
+    try:
+        r = requests.post(
+            f"{_WIGOLO_URL}/v1/search",
+            json={"query": query, "max_results": max(1, int(count or 5))},
+            timeout=45,
+        )
+    except Exception as e:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": f"wigolo unreachable ({type(e).__name__})"}
+    if r.status_code >= 400:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": f"wigolo HTTP {r.status_code}"}
+    try:
+        body = r.json() or {}
+    except Exception:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": "wigolo returned a body that is not JSON"}
+    rows = body.get("results") or []
+    out = []
+    for row in rows:
+        url = (row.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            # The contract is a REAL fetchable href. A row without one is
+            # dropped rather than passed on to be clicked.
+            continue
+        out.append({
+            "title": (row.get("title") or url)[:300],
+            "url": url,
+            "description": (row.get("snippet") or row.get("description")
+                            or "")[:1000],
+        })
+    if not out:
+        return {"status": SearchStatus.NO_RESULTS,
+                "detail": "wigolo answered with no usable results"}
+    # wigolo reports its own degradation; pass that on rather than presenting
+    # a partial answer as a whole one.
+    warn = body.get("engine_warnings") or []
+    detail = "local, keyless"
+    if warn:
+        detail += "; wigolo reported: " + "; ".join(str(w) for w in warn[:2])
+    return {"status": SearchStatus.OK, "results": out[:count],
+            "detail": detail}
+
+
 def _firecrawl_search(query: str, count: int) -> dict:
     from agent_friday.services import firecrawl
     out = firecrawl.search(query, count)
@@ -449,7 +542,14 @@ def search(query: str, count: int = 10) -> dict:
     # attempt records what it learned, so health cannot drift from reality and
     # the caller is always told which backend ACTUALLY answered — a result
     # labelled with the backend we hoped for would be its own small lie.
-    runners = [("firecrawl", _firecrawl_search)] if _firecrawl_ready() else []
+    # wigolo first when it is running: it is local, keyless and costs nothing
+    # per query, which makes it the only backend in this chain that cannot
+    # fail for a reason the user has to go and fix with a credit card. The
+    # keyed services stay behind it and are still tried when it is absent —
+    # this is an addition to the ladder, not a replacement for it.
+    runners = [("wigolo", _wigolo_search)] if _wigolo_ready() else []
+    if _firecrawl_ready():
+        runners.append(("firecrawl", _firecrawl_search))
     if brave_key():
         runners.append(("brave", _brave))
     runners.append(("duckduckgo-scrape", _duckduckgo))
