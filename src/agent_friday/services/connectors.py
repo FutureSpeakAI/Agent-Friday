@@ -286,6 +286,10 @@ def _has_required_tokens(defn: dict, server_cfg: dict | None) -> bool:
 #                      a generic "failed to start")
 _STATUS_COLORS = {
     "connected": "#00ff80",
+    # Connected, and one thing it offers is switched off at the provider - the
+    # Drive case. Amber rather than red: the account works, and colouring it as
+    # a failure would be the opposite lie to the one it replaced.
+    "degraded": "#f59e0b",
     "connecting": "#f59e0b",
     "error": "#ff5470",
     "disconnected": "#7a8699",
@@ -503,6 +507,34 @@ def list_connectors() -> list[dict]:
             s = _build_status(key)
             if s:
                 out.append(s)
+    # Mechanisms that have no CONNECTOR_DEFS entry, read through the protocol
+    # (phase 3 of docs/design/connector-ecosystem.md). Publishing platforms and
+    # channel bridges have never appeared here, because this module does not
+    # import either package - so a LinkedIn connection that died was a
+    # connection nothing watched, and Telegram was reachable and unseeable at
+    # the same time.
+    #
+    # Appended rather than interleaved so the existing display order is
+    # untouched, and wrapped so a broken adapter costs its own row and not the
+    # page.
+    try:
+        from agent_friday.services.connector_adapters import extra_connectors
+        known = {c["key"] for c in out}
+        for conn in extra_connectors():
+            try:
+                row = conn.to_status_dict()
+            except Exception as e:
+                _log.warning("connector %s could not report: %s", conn.id, e)
+                continue
+            if row["key"] not in known:
+                # The colour mapping stays in this module, so there is one
+                # table rather than two that can drift apart.
+                row["color"] = _STATUS_COLORS.get(row["status"],
+                                                  _STATUS_COLORS["unknown"])
+                out.append(row)
+                known.add(row["key"])
+    except Exception as e:
+        _log.warning("protocol connectors unavailable: %s", e)
     return out
 
 
