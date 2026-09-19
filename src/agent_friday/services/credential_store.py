@@ -136,7 +136,13 @@ from agent_friday.services.vault_passphrase import (  # noqa: E402
 
 
 def protection_method() -> str:
-    """The mechanism that will be used right now: 'vault' | 'dpapi' | 'plaintext'."""
+    """The mechanism that will be used right now."""
+    try:
+        from agent_friday.services import keystore as _ks
+        _ks.root_key()
+        return "keystore"
+    except Exception:
+        pass
     if _vault_key() is not None:
         return "vault"
     if _dpapi_available():
@@ -145,12 +151,36 @@ def protection_method() -> str:
 
 
 def protect(data: bytes) -> tuple[bytes, str]:
-    """Encrypt `data` with the strongest available method.
+    """Encrypt `data` with Friday's own keystore.
 
     Returns (blob, method). `method` is recorded in metadata for auditing; the
     blob itself is also self-describing so unprotect() never needs it.
+
+    FRIDAY'S OWN STORE, FIRST AND NORMALLY ONLY. Everything written from
+    2026-09-19 goes through `keystore`, which keeps one random root key in one
+    file that every process finds the same way. The three mechanisms below it
+    survive only so that blobs written before that date can still be READ; see
+    `unprotect`. Nothing new is written with them, because the whole defect was
+    a store that picked a different key depending on how the process started
+    and then reported the result as the user's Google account being revoked.
+
+    The keystore raising is not a reason to drop a tier. If it is locked, the
+    honest outcome is a failure the user can act on, not a credential written
+    under a weaker scheme they never chose.
     """
     global _WARNED_PLAINTEXT
+    from agent_friday.services import keystore as _ks
+    try:
+        return _ks.encrypt(data), "keystore"
+    except _ks.KeystoreLocked:
+        # Fail closed and say why. Falling through here would write the
+        # credential under a key the unlocked process cannot read, which is
+        # the original bug with the sign flipped.
+        raise
+    except Exception as e:
+        print("[credstore] keystore unavailable (%s: %s); falling back to the "
+              "legacy mechanism for this write." % (type(e).__name__, e),
+              file=sys.stderr)
     key = _vault_key()
     if key is not None:
         return _vc.encrypt(data, key), "vault"
@@ -190,6 +220,9 @@ def looks_protected(blob: bytes) -> str | None:
     secret hands garbage to whatever consumes it.
     """
     try:
+        from agent_friday.services import keystore as _ks
+        if _ks.is_keystore_blob(blob):
+            return "keystore"
         if _HAS_VC and _vc.is_encrypted(blob):
             return "vault"
         if blob[:len(_DPAPI_MAGIC)] == _DPAPI_MAGIC:
@@ -200,7 +233,17 @@ def looks_protected(blob: bytes) -> str | None:
 
 
 def unprotect(blob: bytes) -> bytes:
-    """Inverse of protect(). Auto-detects the protection method from the blob."""
+    """Inverse of protect(). Auto-detects the protection method from the blob.
+
+    READS EVERY GENERATION. A credential written under DPAPI in August has to
+    keep opening today, or "Friday has its own credential store now" would mean
+    "reconnect everything" - which is the ritual this work exists to end. The
+    migration in `migrate_to_keystore` rewrites them at leisure; until it runs,
+    or for anything it could not touch, this reads them where they lie.
+    """
+    from agent_friday.services import keystore as _ks
+    if _ks.is_keystore_blob(blob):
+        return _ks.decrypt(blob)
     if _HAS_VC and _vc.is_encrypted(blob):
         key = _vault_key()
         if key is None:
@@ -263,6 +306,214 @@ def harden_permissions(path: Path) -> None:
                 )
         except Exception:
             pass
+
+
+# ── migration onto Friday's own keystore ─────────────────────────────────────
+#
+# Every credential Friday holds, rewritten under the keystore root key so the
+# machine stops depending on which launcher started the process.
+#
+# THIS CANNOT BE ALLOWED TO LOSE A CREDENTIAL. It is the operation with the
+# worst downside in the codebase: a bad run means re-authorising every Google
+# account, every MCP server, every platform and every provider key. So the
+# rules are narrow and boring:
+#
+#   * A blob is only rewritten after it has been decrypted AND the new
+#     ciphertext has been decrypted back and compared. Round-trip, not hope.
+#   * Anything that will not decrypt is LEFT EXACTLY WHERE IT IS and reported.
+#     A credential this process cannot read is not necessarily a dead one - it
+#     may be readable by the process that wrote it - and deleting it would
+#     destroy the only copy on the strength of a guess.
+#   * The original bytes are copied aside before anything is replaced.
+#   * Already-migrated blobs are skipped, so running it twice is free and
+#     an interrupted run resumes.
+
+#: Where the pre-migration bytes go. Kept rather than deleted: the whole point
+#: of a backup is to exist on the day the clever new code is wrong.
+def _migration_backup_dir() -> Path:
+    return _SECURITY_DIR / "pre-keystore-backup"
+
+
+def _credential_files() -> list[Path]:
+    """Every path `write_secret` is known to write.
+
+    Enumerated from the call sites rather than by globbing the home directory,
+    so this cannot wander into a file that merely looks like a credential.
+    """
+    out: list[Path] = []
+    # Imported from the modules that own them rather than rebuilt here. A
+    # second copy of a path is a second thing to get wrong, and getting it
+    # wrong means silently migrating nothing while reporting success.
+    roots: list[tuple[Path, str]] = [
+        (_PROVIDER_KEYS_DIR, "*.key"),
+        (core.FRIDAY_DIR / "google_accounts" / "tokens", "*.token.enc"),
+        (core.FRIDAY_DIR / "mcp_oauth", "*.oauth.enc"),
+        (core.FRIDAY_DIR / "platforms", "*.cred"),
+    ]
+    legacy = core.FRIDAY_DIR / "google_token.json"
+    if legacy.exists():
+        out.append(legacy)
+    for d, pat in roots:
+        if not d.exists():
+            continue
+        for p in sorted(d.glob(pat)):
+            if p.is_file() and not p.name.endswith(".tmp"):
+                out.append(p)
+    return out
+
+
+def _legacy_keys() -> list[tuple[str, bytes]]:
+    """Every key a credential on this machine could plausibly have been
+    written with, newest-preference first.
+
+    NOT PARANOIA - MEASURED. On 2026-09-19 Stephen's machine held TWO different
+    passphrases: one in friday_startup.bat and a different one in the Windows
+    keychain. `vault_passphrase.resolve()` prefers the keychain, so every
+    credential written before that keychain entry appeared became unreadable
+    the moment it did - four provider API keys and an MCP OAuth token, silently,
+    with the health surface reporting them as "no API key set" rather than as
+    "we have your key and cannot open it".
+
+    Migration is exactly the moment to reach for an older key. Reading with one
+    is safe in a way that writing with one would not be: the plaintext is
+    immediately re-encrypted under the keystore root key and the old ciphertext
+    is kept as a backup.
+    """
+    out: list[tuple[str, bytes]] = []
+    if not _HAS_VC:
+        return out
+    try:
+        salt = _vc.load_salt(_VAULT_CONFIG_FILE)
+    except Exception:
+        try:
+            cfg = json.loads(_VAULT_CONFIG_FILE.read_text(encoding="utf-8"))
+            salt = bytes.fromhex(cfg["salt_hex"])
+        except Exception:
+            return out
+    seen: set[bytes] = set()
+    try:
+        from agent_friday.services import vault_passphrase as _vp
+        sources: list[tuple[str, str]] = []
+        try:
+            hv, hn, lv, ln = _vp._env_candidates()
+            if hv:
+                sources.append(("env:%s" % hn, hv))
+            if lv:
+                sources.append(("launcher:%s" % ln, lv))
+        except Exception:
+            pass
+        for label, fn in (("os-keychain", _vp._from_keyring),
+                          ("dpapi-file", _vp._from_dpapi_file),
+                          ("start.bat", _vp._from_start_bat)):
+            try:
+                v = fn()
+                if v:
+                    sources.append((label, v))
+            except Exception:
+                continue
+        for label, pw in sources:
+            try:
+                k = _vc.derive_key(pw, salt)
+            except Exception:
+                continue
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append((label, k))
+    except Exception:
+        pass
+    return out
+
+
+def _decrypt_any(blob: bytes) -> tuple[bytes, str]:
+    """Plaintext for `blob` using whatever key opens it, and the key's label.
+
+    Raises the ORIGINAL failure if nothing does, so the caller reports the real
+    error rather than "tried five things".
+    """
+    try:
+        return unprotect(blob), "current"
+    except Exception as first:
+        if not (_HAS_VC and _vc.is_encrypted(blob)):
+            raise
+        for label, key in _legacy_keys():
+            try:
+                return _vc.decrypt(blob, key), label
+            except Exception:
+                continue
+        raise first
+
+
+def migrate_to_keystore(dry_run: bool = False) -> dict:
+    """Rewrite every credential under the keystore root key.
+
+    Returns a report. Never raises for one bad credential - a single
+    unreadable blob must not stop the other nineteen from being fixed.
+    """
+    import shutil
+    from agent_friday.services import keystore as _ks
+
+    report = {"examined": 0, "already": 0, "migrated": 0,
+              "unreadable": [], "failed": [], "dry_run": bool(dry_run),
+              "backup_dir": str(_migration_backup_dir())}
+
+    try:
+        _ks.root_key()
+    except Exception as e:
+        report["failed"].append({"path": "<keystore>", "error": "%s: %s"
+                                 % (type(e).__name__, e)})
+        return report
+
+    backup = _migration_backup_dir()
+    for path in _credential_files():
+        report["examined"] += 1
+        try:
+            blob = path.read_bytes()
+        except Exception as e:
+            report["failed"].append({"path": str(path),
+                                     "error": "unreadable file: %s" % e})
+            continue
+        if _ks.is_keystore_blob(blob):
+            report["already"] += 1
+            continue
+        try:
+            plain, via = _decrypt_any(blob)
+        except Exception as e:
+            # Left alone on purpose. See the rules above.
+            report["unreadable"].append({"path": str(path),
+                                         "error": type(e).__name__})
+            continue
+        if via != "current":
+            # Worth reporting loudly: this credential was ALREADY broken for
+            # everyday use and the migration is what rescued it.
+            report.setdefault("recovered", []).append(
+                {"path": str(path), "via": via})
+        if dry_run:
+            report["migrated"] += 1
+            continue
+        try:
+            fresh = _ks.encrypt(plain)
+            if _ks.decrypt(fresh) != plain:
+                raise RuntimeError("round-trip mismatch")
+            backup.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup / (path.name + ".bak"))
+            harden_permissions(backup / (path.name + ".bak"))
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_bytes(fresh)
+            harden_permissions(tmp)
+            tmp.replace(path)
+            harden_permissions(path)
+            report["migrated"] += 1
+        except Exception as e:
+            report["failed"].append({"path": str(path),
+                                     "error": "%s: %s" % (type(e).__name__, e)})
+        finally:
+            del plain
+    audit_event("keystore", "migrate", migrated=report["migrated"],
+                already=report["already"], unreadable=len(report["unreadable"]),
+                failed=len(report["failed"]), dry_run=bool(dry_run),
+                success=not report["failed"])
+    return report
 
 
 # ── audit trail ──────────────────────────────────────────────────────────────

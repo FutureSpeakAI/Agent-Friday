@@ -555,8 +555,28 @@ def credentials_for(account_id: str):
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
                        success=False, error="NoUsableCredential")
         return None
+    # SUCCESS CLEARS A STALE FAILURE. Only a successful *refresh* used to write
+    # "connected" back, so an account marked bad by one transient failure stayed
+    # bad for as long as its token remained valid - no refresh was due, so
+    # nothing ever said otherwise, and every fetch skipped it. Observed
+    # 2026-09-19: both accounts reading fine, audit full of success=true, and
+    # the connectors page insisting they needed reauthorising.
+    #
+    # This is the other half of "the status is a live check, not a remembered
+    # claim". A verdict that can only ever get worse is not a health check.
+    try:
+        if (_load_index_status(account_id) or "") != "connected":
+            _mark_status(account_id, "connected", touch_sync=True)
+    except Exception:
+        pass
     cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id, success=True)
     return creds
+
+
+def _load_index_status(account_id: str) -> str | None:
+    rec = next((r for r in _load_index().get("accounts", [])
+                if r.get("id") == account_id), None)
+    return (rec or {}).get("status")
 
 
 def _mark_status(account_id: str, status: str, touch_sync: bool = False) -> None:

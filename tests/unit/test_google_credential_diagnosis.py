@@ -149,16 +149,50 @@ def test_an_expired_credential_with_no_refresh_token_does_say_reconnect(monkeypa
     assert marks == ["needs_reauth"]
 
 
+class _Good:
+    refresh_token = "present"
+    expired = False
+    valid = True
+
+
 def test_a_working_credential_is_returned_and_marks_nothing(monkeypatch):
     marks = []
     _one_account(monkeypatch, marks)
-
-    class Good:
-        refresh_token = "present"
-        expired = False
-        valid = True
-    good = Good()
+    monkeypatch.setattr(G, "_load_index_status", lambda _: "connected")
+    good = _Good()
     monkeypatch.setattr(G, "_raw_credentials", lambda _: good)
 
     assert G.credentials_for("a1") is good
-    assert marks == []
+    assert marks == [], "a healthy account was rewritten for no reason"
+
+
+def test_a_successful_read_clears_a_stale_failure(monkeypatch):
+    """THE STICKY-STATUS BUG. Only a successful *refresh* used to write
+    "connected" back, so an account marked bad by one transient failure stayed
+    bad for as long as its token stayed valid - no refresh was due, so nothing
+    ever said otherwise, and every fetch skipped it.
+
+    Observed 2026-09-19 right after the keystore migration: both accounts
+    reading fine, the audit log full of success=true, and the connectors page
+    insisting they needed reauthorising. A verdict that can only ever get worse
+    is not a health check.
+    """
+    marks = []
+    _one_account(monkeypatch, marks)
+    monkeypatch.setattr(G, "_load_index_status", lambda _: "needs_reauth")
+    good = _Good()
+    monkeypatch.setattr(G, "_raw_credentials", lambda _: good)
+
+    assert G.credentials_for("a1") is good
+    assert marks == ["connected"]
+
+
+@pytest.mark.parametrize("stale", ["needs_reauth", "unreadable", "error",
+                                   "disconnected", None])
+def test_any_stale_failure_is_cleared_by_a_working_read(monkeypatch, stale):
+    marks = []
+    _one_account(monkeypatch, marks)
+    monkeypatch.setattr(G, "_load_index_status", lambda _: stale)
+    monkeypatch.setattr(G, "_raw_credentials", lambda _: _Good())
+    G.credentials_for("a1")
+    assert marks == ["connected"]
