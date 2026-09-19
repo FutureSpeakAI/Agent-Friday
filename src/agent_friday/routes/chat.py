@@ -1973,6 +1973,29 @@ def chat_send():
                 print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
             return prompt
 
+        # THE CONVERSATION'S OWN SEAT, ON THE PATH THE UI ACTUALLY USES.
+        #
+        # `/api/chat` has honoured a per-conversation seat binding for a long
+        # time. `/api/chat/send` — which is what index.html posts to, and
+        # therefore what every real turn goes through — never read it. So the
+        # model picker in the conversation switcher wrote a binding that
+        # nothing on the sending path ever looked at: choosing a model for one
+        # chat appeared to work, persisted correctly, and changed nothing.
+        #
+        # Caught 2026-09-18 by binding one conversation to bonsai2:27b and
+        # another to claude-sonnet-5 and watching both answer on Sonnet. It is
+        # the difference between multiple chat windows being a feature and
+        # being decoration: two windows are only worth having if they can be
+        # two models.
+        _conv_seat_model = ''
+        try:
+            from agent_friday.services import conversations as _cv
+            _cs = (_cv.load(_conversation_id) or {}).get('seat')
+            if isinstance(_cs, dict):
+                _conv_seat_model = (_cs.get('model') or '').strip()
+        except Exception as _cse:
+            print(f"  [chat/send] could not read the conversation seat: {_cse}")
+
         _send_provider = _predict_route_provider(
             keywords=message, workspace=workspace, has_tools=True)
         system_prompt = _sys_for(_send_provider)
@@ -2016,6 +2039,8 @@ def chat_send():
         reply, tool_trace = _generate_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
             session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
+            conversation_seat=({"model": _conv_seat_model}
+                               if _conv_seat_model else None),
         )
 
         # ── FR-2/A7 on this endpoint too: pseudo-tool-call leaks and
@@ -2027,6 +2052,12 @@ def chat_send():
                 messages + [{"role": "user", "content": corrective_note}],
                 system=system_prompt, temperature=settings.get('temperature'),
                 session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
+                # The corrective retry stays on the seat the conversation
+                # chose. A retry that silently moves model is how a chat bound
+                # to a local seat ends up answered by the cloud halfway
+                # through its own turn.
+                conversation_seat=({"model": _conv_seat_model}
+                                   if _conv_seat_model else None),
             )
 
         reply, tool_trace, _send_integrity = validate_toolcall_integrity(

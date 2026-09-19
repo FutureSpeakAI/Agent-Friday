@@ -5419,6 +5419,249 @@ class Safe extends React.Component {
   }
 }
 
+// ═══ CONVERSATION WINDOW ═══
+//
+// A chat thread as a window INSIDE the holographic UI, not a browser tab and
+// not the single docked panel. Several can be open at once, each bound to its
+// own conversation and therefore to its own model seat — which is the whole
+// point: two windows, two models, one machine.
+//
+// Modelled on WorkspaceChat directly above, which had already solved the hard
+// parts (self-contained state, a draggable frame, a composer that behaves).
+// That one is bound to /api/workspace/<id>/chat and exists to edit a
+// workspace; this is its sibling against /api/chat/send. Sharing the frame by
+// copying it rather than by extracting a base component is deliberate: one of
+// them is about a workspace and one is about a conversation, they will drift,
+// and a premature abstraction over two things that are about to diverge costs
+// more than the duplication.
+//
+// EVERY WINDOW IS A CONVERSATION, so nothing here is global. The transcript
+// comes from /api/conversations/<cid>/messages, the send carries
+// conversation_id, and the seat shown in the header is that conversation's
+// own binding — read from the server rather than from app state, because the
+// docked panel and three windows disagreeing about which model a thread uses
+// would be worse than not having windows at all.
+function ConversationWindow({
+  convId,
+  title,
+  zIndex,
+  offset,
+  onClose,
+  onFocus
+}) {
+  const [msgs, setMsgs] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [seat, setSeat] = useState(null);
+  const [pos, setPos] = useState(() => ({
+    // Cascade, so a second window does not land exactly on the first and look
+    // like nothing happened.
+    x: Math.max(16, (window.innerWidth || 1280) - 440 - (offset || 0) * 34),
+    y: 76 + (offset || 0) * 30
+  }));
+  const [dragging, setDragging] = useState(false);
+  const dOff = useRef({ x: 0, y: 0 });
+  const endRef = useRef(null);
+  const inRef = useRef(null);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const mv = e => setPos({
+      x: Math.min(Math.max(0, e.clientX - dOff.current.x),
+                  (window.innerWidth || 1280) - 120),
+      y: Math.min(Math.max(0, e.clientY - dOff.current.y),
+                  (window.innerHeight || 800) - 60)
+    });
+    const up = () => setDragging(false);
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', up);
+    };
+  }, [dragging]);
+
+  // The thread's own transcript and its own seat. Both per-conversation; see
+  // the note above about disagreement between surfaces.
+  useEffect(() => {
+    if (!convId) return;
+    let live = true;
+    apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
+      .then(r => r.json())
+      .then(d => {
+        if (!live) return;
+        setMsgs((d.messages || []).map(m => ({
+          role: m.role === 'friday' ? 'friday'
+                : (m.role === 'user' ? 'user' : 'system'),
+          text: m.text || '',
+          model: (m.meta || {}).model
+        })));
+      })
+      .catch(() => { if (live) setMsgs([]); });
+    apiFetch('/api/conversations/' + encodeURIComponent(convId))
+      .then(r => r.json())
+      .then(d => { if (live) setSeat((d.conversation || {}).seat || null); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [convId]);
+
+  useEffect(() => {
+    endRef.current && endRef.current.scrollIntoView({ block: 'end' });
+  }, [msgs, loading]);
+
+  const send = async text => {
+    const m = (text === undefined ? input : text).trim();
+    if (!m || loading) return;
+    setInput('');
+    setMsgs(p => [...p, { role: 'user', text: m }]);
+    setLoading(true);
+    try {
+      const r = await apiFetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // conversation_id is the whole feature. Without it every window would
+        // write into Main and the threads would be one thread wearing three
+        // frames.
+        body: JSON.stringify({ message: m, conversation_id: convId,
+                               workspace: 'chat' })
+      });
+      const d = await r.json();
+      const fm = d.friday_msg || {};
+      setMsgs(p => [...p, {
+        role: 'friday',
+        text: fm.text || d.response || '[no response]',
+        model: fm.model || d.model
+      }]);
+    } catch (e) {
+      setMsgs(p => [...p, { role: 'system', text: '[Connection error]' }]);
+    }
+    setLoading(false);
+    inRef.current && inRef.current.focus();
+  };
+
+  return /*#__PURE__*/React.createElement("div", {
+    onMouseDown: onFocus,
+    style: {
+      position: 'fixed', left: pos.x, top: pos.y,
+      width: 420, maxWidth: '94vw', height: 'min(640px,78vh)',
+      zIndex: zIndex || 132,
+      display: 'flex', flexDirection: 'column',
+      background: 'rgba(10,14,24,0.97)',
+      border: '1px solid rgba(0,212,255,0.28)',
+      borderRadius: 14,
+      boxShadow: '0 18px 60px rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(14px)',
+      overflow: 'hidden'
+    }
+  },
+    /*#__PURE__*/React.createElement("div", {
+      onMouseDown: e => {
+        if (e.target.closest('button')) return;
+        setDragging(true);
+        dOff.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+      },
+      style: {
+        cursor: dragging ? 'grabbing' : 'grab',
+        padding: '9px 12px',
+        borderBottom: '1px solid rgba(0,212,255,0.18)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: 'rgba(0,212,255,0.05)'
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", {
+          style: {
+            fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff',
+            letterSpacing: '.04em', whiteSpace: 'nowrap',
+            overflow: 'hidden', textOverflow: 'ellipsis'
+          }
+        }, title || 'Conversation'),
+        /*#__PURE__*/React.createElement("div", {
+          style: { fontSize: 10, color: '#7d8da3', marginTop: 1 }
+        }, seat && seat.model ? seat.model : 'default model')),
+      /*#__PURE__*/React.createElement("button", {
+        title: "Open this conversation in a new tab",
+        onClick: e => {
+          e.stopPropagation();
+          const w = window.open('/?conversation=' + encodeURIComponent(convId)
+                                + '&chrome=chat', '_blank');
+          if (w) { try { w.focus(); } catch (err) {} }
+        },
+        style: {
+          background: 'none', border: 'none', color: '#00d4ff',
+          cursor: 'pointer', fontSize: 12
+        }
+      }, "↗"),
+      /*#__PURE__*/React.createElement("button", {
+        title: "Close this window (the conversation is kept)",
+        onClick: e => { e.stopPropagation(); onClose && onClose(); },
+        style: {
+          background: 'none', border: 'none', color: '#999',
+          cursor: 'pointer', fontSize: 13
+        }
+      }, "✕")),
+
+    /*#__PURE__*/React.createElement("div", {
+      style: { flex: 1, overflowY: 'auto', padding: '10px 12px' }
+    },
+      msgs.length === 0 && !loading && /*#__PURE__*/React.createElement("div", {
+        style: { color: '#5d6b80', fontSize: 12, padding: '8px 2px' }
+      }, "Nothing in this thread yet."),
+      msgs.map((m, i) => /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: {
+          margin: '7px 0', display: 'flex',
+          justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          maxWidth: '86%', padding: '7px 10px', borderRadius: 10,
+          fontSize: 12.5, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          background: m.role === 'user' ? 'rgba(0,212,255,0.12)'
+                      : m.role === 'system' ? 'rgba(255,140,66,0.10)'
+                      : 'rgba(255,255,255,0.045)',
+          color: m.role === 'system' ? '#ffb27d' : '#dfe7f2'
+        }
+      }, m.text))),
+      loading && /*#__PURE__*/React.createElement("div", {
+        style: { color: '#00d4ff', fontSize: 11, padding: '6px 2px' }
+      }, "Friday is thinking…"),
+      /*#__PURE__*/React.createElement("div", { ref: endRef })),
+
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: 9, borderTop: '1px solid rgba(0,212,255,0.14)',
+        display: 'flex', gap: 7
+      }
+    },
+      /*#__PURE__*/React.createElement("input", {
+        ref: inRef,
+        value: input,
+        onChange: e => setInput(e.target.value),
+        onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } },
+        placeholder: loading ? 'Waiting for Friday…' : 'Message this thread…',
+        disabled: loading,
+        style: {
+          flex: 1, background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(0,212,255,0.18)', borderRadius: 8,
+          color: '#e8eef7', padding: '7px 10px', fontSize: 12.5,
+          fontFamily: 'Inter', outline: 'none'
+        }
+      }),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => send(),
+        disabled: loading || !input.trim(),
+        style: {
+          background: 'rgba(0,212,255,0.12)',
+          border: '1px solid rgba(0,212,255,0.3)',
+          color: '#00d4ff', borderRadius: 8, padding: '7px 13px',
+          fontSize: 12, cursor: loading ? 'default' : 'pointer',
+          fontFamily: 'Inter'
+        }
+      }, "Send")));
+}
+
 // ═══ FRIDAY SAYS (proactive insight) ═══
 function FridaySays({
   text
@@ -38584,6 +38827,11 @@ function App() {
   // Workspace Studio: which workspace's contextual chat is open, + the live
   // customization map shared down to every FWin via WsCustomCtx.
   const [wsChat, setWsChat] = useState(null); // {wsId,label,emoji,seed} | null
+  /* Conversations open as WINDOWS inside the holographic UI, several at once,
+     each on its own seat. An array rather than a Set because the order is the
+     cascade order - the nth window is offset so it does not land exactly on
+     the first and look like nothing happened. */
+  const [convWins, setConvWins] = useState([]); // [{cid, title}]
   const [wsCustMap, setWsCustMap] = useState({}); // wsId -> customization patch
   const setCust = useCallback((id, patch) => setWsCustMap(m => ({
     ...m,
@@ -42444,6 +42692,26 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     });
   };
 
+  /* Open a conversation as a window in the holographic UI.
+     Idempotent: asking for a thread that is already open raises it rather
+     than stacking a second copy of the same conversation, which would give
+     two frames writing into one transcript and disagreeing about it. */
+  const openConvWin = React.useCallback((cid, title) => {
+    if (!cid) return;
+    setConvWins(p => p.some(w => w.cid === cid)
+      ? p.map(w => (w.cid === cid ? { ...w, title: title || w.title } : w))
+      : [...p, { cid: cid, title: title || 'Conversation' }]);
+    bringFront('chat:' + cid);
+  }, []);
+
+  /* Exposed the same way fridayOpenWorkspace is, so the conversation
+     switcher, a quick action or a tool result can open a thread as a window
+     without prop-drilling through the whole tree. */
+  useEffect(() => {
+    window.fridayOpenChatWindow = (cid, title) => openConvWin(cid, title);
+    return () => { delete window.fridayOpenChatWindow; };
+  }, [openConvWin]);
+
   // The Friday Edition is the front page: once setup is confirmed done, open
   // it automatically so it's what greets you, same as a real morning paper.
   useEffect(() => {
@@ -43743,7 +44011,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }, /*#__PURE__*/React.createElement(Safe, {
       name: w.label
     }, wsMap[id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")));
-  }), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
+  }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
+    key: cw.cid,
+    convId: cw.cid,
+    title: cw.title,
+    offset: i,
+    zIndex: zMap['chat:' + cw.cid] || (132 + i),
+    onFocus: () => bringFront('chat:' + cw.cid),
+    onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid))
+  })), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
     key: wsChat.wsId + ':' + wsChat.key,
     wsId: wsChat.wsId,
     label: wsChat.label,
@@ -43886,6 +44162,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontFamily: 'Inter'
     }
   }, "♥ Heartbeat"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+    /* THE THREAD AS A WINDOW, inside the holographic UI. This is the one the
+       user actually asked for: several conversations open at once, each on
+       its own seat, managed by Friday rather than by the browser. The tab
+       button beside it is the other thing he asked for and a different
+       gesture - a tab leaves the machine's window manager in charge, a window
+       keeps it here. */
+    onClick: () => {
+      if (!convId) return;
+      const c = (convList || []).find(x => x.id === convId);
+      window.fridayOpenChatWindow
+        && window.fridayOpenChatWindow(convId, (c && c.title) || 'Conversation');
+    },
+    title: "Open this conversation as a window in the workspace",
+    "aria-label": "Open this conversation as a window",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "⧉ Window"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
     /* UNDOCK. This conversation, in its own window, so a second one can be
        worked alongside it — the point being two MODELS at once, since each
        conversation carries its own seat binding.
