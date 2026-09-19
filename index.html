@@ -428,6 +428,28 @@ window.addEventListener('DOMContentLoaded',function(){
         body.chrome-chat .chat-resize-w,
         body.chrome-chat .chat-resize-h { display: none !important; }
 
+        /* NOTHING FROM THE APP, ONLY THE CHAT.
+           The first version dropped the 3D scene and the HUD but left the
+           React layer whole, so the liquid dock was still sitting across the
+           bottom of a window whose entire job is one conversation — offering
+           workspaces that, if clicked, would open behind a full-screen chat
+           panel in a tab that exists to not have them.
+
+           An ALLOW-LIST, not a list of things to hide. `visibility` is the
+           one property a descendant can turn back on after an ancestor turns
+           it off, so hiding the whole React layer and re-showing the chat
+           panel means anything added to the app later is hidden here by
+           default rather than appearing in a view it was never designed for.
+           A deny-list would need editing every time someone adds a bar.
+
+           visibility rather than display, for the same reason as compact
+           mode: the tree keeps running, so voice, the socket and the
+           scheduler behave exactly as they do in the main window. Hidden
+           elements also take no pointer events, so the dock underneath
+           cannot be clicked through the panel. */
+        body.chrome-chat #ui-inner { visibility: hidden !important; }
+        body.chrome-chat .chat-panel { visibility: visible !important; }
+
         /* ── Compact mode (?chrome=orb) ───────────────────────────────────
            Friday as presence rather than as an application: the holographic
            element alone, animating as she speaks, with nothing else on the
