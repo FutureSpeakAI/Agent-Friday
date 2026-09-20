@@ -588,33 +588,164 @@ Only on evidence from Phase 4. The economy last, for the reasons in §4.6.
 
 ---
 
-## 6. WHAT IS STEPHEN'S TO DECIDE
+## 6. THE FOUR PRODUCT CALLS, AND WHAT I RECOMMEND
 
 Sequencing and architecture above are mine and I own them. These four are product
-intent and they change what gets built.
+intent. Recommendations follow, with the reasoning and the caveat on each, because
+a recommendation without its own objection is a sales pitch.
 
-**1. How open, day one?** A `.friday-workspace` file you send someone, or a hosted
-registry with browse and install? Phase 4 assumes the former. The former is roughly
-two weeks and no server; the latter is a hosting, moderation and abuse commitment
-that does not end.
+### 6.1 How open, day one?
 
-**2. Do community workspaces get network access at all?** Refusing outright —
-`"network": ["none"]`, full stop, everything goes through the broker — is a real
-option and it is the single largest reduction in blast radius available. It also
-rules out a class of genuinely good workspaces. Figma allows it with a declared
-domain list and required prose; Obsidian allows it and discloses it. The middle
-path exists. I lean toward brokered-only for v1 and a declared host list later, but
-this is a product ceiling, not an engineering one.
+**Recommendation: neither a file nor a registry. Share it over the federation layer
+that already exists and has never carried anything real.**
 
-**3. Positrons as reputation, or as a price?** §4.6 argues reputation, on Roblox's
-evidence. If the pitch needs positrons to be spendable — and the FutureSpeak framing
-may well need exactly that — say so, because it changes the fraud model completely
-and moves the anti-sybil work from "nice" to "load-bearing before launch."
+The obvious answer is "a `.friday-workspace` file you email, and a registry later,"
+and that is what Phase 4 was drafted as. On a second pass it is the wrong shape for
+this codebase specifically.
 
-**4. Can an agent publish without a human sponsor?** Allowing it is the more
-interesting product and it is the thing that broke Obsidian's queue eight months
-ago. Requiring a human signature on an agent-authored bundle is one line in the
-manifest and a large change in what the marketplace becomes.
+`services/federation_transport.py` is real crypto that works: Ed25519 seed converted
+to X25519, ECDH, HKDF key derivation, `encrypt_message`/`decrypt_message`, rate
+limiting, `send_to_peer` over the wire (`:120`, `:139`, `:232`, `:309`, `:424-443`).
+`services/federation.py` does a genuine three-check handshake — cLaws hash, Ed25519
+signature, and agent_id↔pubkey match (`:521-578`). All of it built, none of it
+carrying a payload anyone cares about.
+
+A workspace handed from one Friday instance to another over that channel is
+strictly better than a registry for v1, on four counts. The trust context comes
+free, because you already know who the peer is and the handshake already proved it.
+There is no hosting, no moderation queue, no abuse desk, no takedown process — the
+commitments that never end. It is the FutureSpeak thesis doing something instead of
+being a slide: agentic federation, value moving because trust is provable, with an
+artefact actually moving. And it degrades gracefully to a file, because a signed
+bundle is a signed bundle whether it arrives over a socket or over email.
+
+A registry then stops being a separate decision. It is the same bundle with a URL
+and a search index, added when there is evidence anyone publishes.
+
+**Caveat, and it is a hard blocker:** `_verify_peer_card` never rejects
+(`federation.py:275-304` — it prints on a failed signature and falls through, while
+its own call site's docstring at `:246` claims it raises). Sharing executable
+content over a handshake that cannot fail is worse than sharing a file. That fix
+moves from "Phase 1 defect list" to "prerequisite," and the honest cost of this
+recommendation is that Phase 4 now depends on the federation path being trustworthy,
+which today it is not.
+
+### 6.2 Do community workspaces get network access?
+
+**Recommendation: `"network": ["none"]` for v1. Brokered only. No exceptions, no
+declared-host escape hatch, not yet.**
+
+Egress control is the only layer in the entire survey that survives a valid
+signature, and that is not theoretical — ChainDrop shipped with genuine SLSA
+provenance recorded in Rekor, and the Nx Console payload carried full Sigstore
+integration, and both of them still needed an outbound connection to be worth
+anything. Meanwhile Figma, who did this properly, documents their own leak: network
+limits "only apply directly to the website's domain. Network access limits do not
+affect resources needed by that website." Even the sophisticated version has a hole
+in it.
+
+The Friday-specific argument is the stronger one, though. Most workspaces worth
+having here do not want the internet. They want *your* data — calendar, wiki, mail,
+the knowledge graph — arranged differently. That is precisely what the broker is
+for. A weather panel is the real counterexample, and its correct answer is a brokered
+`http.get` capability with a declared host list, which is a clean v2 feature with an
+obvious shape.
+
+And this is exactly why the boundary goes in the sandbox rather than in policy:
+policy can be loosened later without re-architecting anything. Starting closed costs
+one feature class and buys the ability to open deliberately. Starting open cannot be
+reversed without breaking whatever shipped in the meantime.
+
+**Caveat:** this will feel arbitrary to the first person whose workspace needs an
+API. The mitigation is to ship `http.get`-with-allowlist as a named, dated Phase 5
+item rather than as a vague "later," so the ceiling reads as sequencing instead of
+refusal.
+
+### 6.3 Positrons as reputation, or as a price?
+
+**Recommendation: neither. Positrons price trust, not artefacts. You stake them to
+vouch for a workspace, and you lose them when it goes bad.**
+
+§4.6 argued reputation over price on Roblox's evidence, and that holds — in April
+2024 Roblox pulled their own soft currency out of their own small-artefact
+marketplace because it produced a race to the bottom where "robust plugins [were]
+really hard to justify making." But "reputation" as usually built is a scoreboard,
+and the badge literature has been revised down to roughly 20% of users responding,
+with part of the original 2013 effect identified as a statistical artifact. A
+scoreboard is weak.
+
+Staking is better, and it is better *because it is the FutureSpeak claim taken
+literally*. Proof of Integrity says value moves because trust is provable. It does
+not say artefacts have prices. So: nothing costs positrons to install. What
+positrons buy is the right to say "I vouch for this," backed by something you can
+lose.
+
+That single mechanism does four jobs at once:
+
+- **It is the sink.** Every soft currency that died, died of having sources and no
+  sinks. Vouching burns on a bad outcome. EVE's whole nineteen-year lesson is that
+  the sink has to be the core loop, and here it is.
+- **It is the anti-sybil layer.** A sybil has no positrons to stake, because
+  positrons are earned on sustained installed use by distinct machines over time —
+  the hard-to-fake signal, not throughput. This is Blur versus LooksRare: reward
+  listing and bidding while excluding self-trades and you get single-digit fraud;
+  reward volume and you get 98% fake.
+- **It is the sponsorship mechanism** for §6.4, which is why that question turns out
+  not to need its own machinery.
+- **It gives the listing a number nobody else can show**, when paired with the
+  negatron side: what a workspace costs to run, metered through the broker against
+  `cost_meter.py`'s real per-token accounting, rather than claimed.
+
+**Caveat, and it is the one that decides whether this works:** the meta-lesson from
+every anti-sybil programme in the survey is that *the adjudication layer gets
+attacked.* LayerZero's sybil-reporting phase drew 3,000 reports and 30,000 appeals
+within hours and had to be paused, because people were reporting their accusers to
+get reports withdrawn. So the staking resolution must never be a vote or a community
+judgement. It resolves only on machine-checkable events: a version failing automated
+review, a capability-widening update, a bundle pulled for cause. If it ever needs a
+human to adjudicate who was right, it has become the attack surface.
+
+**Second caveat, stated plainly: this is an economy with no users.** Design the
+fields now — `authored_by_agent`, the audit log, the negatron meter — so the data
+exists when there is traffic. Build the staking machinery last. Every developer-tool
+marketplace in the survey (VS Code, Open VSX, Chrome Web Store, Obsidian, Raycast,
+npm) has no payment rail, and several killed one deliberately.
+
+### 6.4 Can an agent publish without a human sponsor?
+
+**Recommendation: yes. Any agent can publish. Publishing requires a stake, and an
+agent that has not earned one borrows it from its principal.**
+
+This falls straight out of §6.3, which is the point. The wrong version of a
+"human sponsor" requirement is a human reviewing the content — that does not scale,
+it is the exact thing that broke Obsidian's queue in May 2026 ("as coding agents
+accelerate the creation of plugins, the review queue was only getting longer"), and
+it makes agents second-class in a product whose entire thesis is that they are not.
+
+The right version is that somebody with something to lose is on the hook. A Friday
+instance that has published good workspaces has its own positrons and stakes them
+itself. A fresh agent has none, so its principal stakes for it. Same mechanism, no
+special case, and the human involvement is proportional to how much the agent has
+already proved.
+
+`authored_by_agent` stays in the manifest and is displayed — as a byline, the way a
+byline is a fact. Not a warning badge. Friday is an agent; a product that
+warning-labels its own kind is arguing against itself.
+
+**Caveat:** every version gets machine review, not just the first. Nx Console and
+`postmark-mcp` both passed clean initial reviews and went bad on a later version, and
+this is the failure mode that pre-publication review cannot see by construction.
+Obsidian's fix — automated review of *every* version, with human review narrowed to
+the flagged minority — is the one to copy, and it is a Phase 5 commitment that
+should be written down now so it is not discovered later.
+
+### 6.5 The through-line
+
+All four answers are the same answer. **Put the boundary where it cannot be
+misconfigured, and make the social layer cost something to abuse.** The sandbox is
+the boundary; the stake is the cost. Everything else — review, signatures, badges,
+scores — is evidence for humans, not enforcement, and the survey is unanimous that
+treating evidence as enforcement is how these systems fail.
 
 ---
 
