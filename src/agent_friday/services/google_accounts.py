@@ -808,13 +808,17 @@ def _gmail_window_days(override: int | None = None) -> int:
     return _DEFAULT_GMAIL_WINDOW_DAYS
 
 
-def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
-    """Recent Gmail across all gmail-enabled accounts, each thread badged with the
+def merged_gmail(limit_per_account: int = 15, days: int | None = None,
+                  query: str | None = None) -> dict:
+    """Gmail across all gmail-enabled accounts, each thread badged with the
     account it came from. Returns {accounts:[...], messages:[...], errors:[...]}.
 
-    `days` overrides the configured window (see `_gmail_window_days`)."""
+    `days` overrides the configured window (see `_gmail_window_days`).
+    `query` is a real Gmail search string (from:, subject:, quotes, booleans,
+    newer_than:, etc.). When given, it is sent to Gmail's own `q=` parameter
+    instead of the fixed unread/recent-window default -- Gmail does the
+    matching, not a local substring filter over a tiny fetched window."""
     _migrate_legacy_if_needed()
-    from agent_friday.services.calendar_engine import _fetch_gmail_recent  # legacy single-account
     messages, errors, used = [], [], []
     for rec in _accounts_with("gmail"):
         aid = rec["id"]
@@ -824,7 +828,7 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
                            "error": "needs_reauth"})
             continue
         used.append(_public_record(rec))
-        for m in _gmail_for_creds(creds, limit_per_account, days=days):
+        for m in _gmail_for_creds(creds, limit_per_account, days=days, query=query):
             if "error" in m:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": m["error"]})
                 continue
@@ -837,7 +841,16 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
     return {"accounts": used, "messages": messages, "errors": errors}
 
 
-def _gmail_for_creds(creds, limit: int, days: int | None = None) -> list:
+def _gmail_for_creds(creds, limit: int, days: int | None = None,
+                      query: str | None = None) -> list:
+    """Fetch messages for one account's credentials.
+
+    When `query` is given (a real Gmail search string), it is sent directly
+    as Gmail's own `q=` -- Gmail's server-side search already understands
+    from:/subject:/quotes/booleans/newer_than: etc., so there is no local
+    re-filtering to do here for the live-API path. With no query, falls back
+    to the previous unread/recent-window default so unrelated callers (the
+    daily briefing, notifications, etc.) keep their existing behavior."""
     try:
         from googleapiclient.discovery import build
     except Exception as e:
@@ -845,9 +858,14 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None) -> list:
     try:
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         seen, out = set(), []
-        window = "newer_than:%dd" % _gmail_window_days(days)
-        for q in (f"is:unread {window}", window):
-            resp = svc.users().messages().list(userId="me", q=q, maxResults=limit).execute()
+        q = (query or "").strip()
+        if q:
+            queries = (q,)
+        else:
+            window = "newer_than:%dd" % _gmail_window_days(days)
+            queries = (f"is:unread {window}", window)
+        for qs in queries:
+            resp = svc.users().messages().list(userId="me", q=qs, maxResults=limit).execute()
             for ref in resp.get("messages", []):
                 mid = ref.get("id")
                 if not mid or mid in seen:
