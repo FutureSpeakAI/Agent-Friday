@@ -625,8 +625,16 @@ CLAUDE_TOOLS = [
     {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string"}}, "required": ["workspace"]}},
-    {"name": "draft_email", "description": "Compose an email. Needs a write-enabled Gmail connection (native Google integration is read-only). If unavailable, tell the user it needs connecting and offer setup — do NOT say you can't email.",
-     "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    {"name": "draft_email", "description": "Write an email and put it in front of the user for approval. This NEVER sends on its own — it creates an approval card showing the exact From/To/Subject/body, and the message goes out only when the user approves that card. Say so plainly in your reply: tell them it's waiting for their approval, not that you sent it. Write the full final text in `body`; the user reads what you wrote, and editing it afterwards invalidates the approval. Requires an account connected with sending allowed — if the tool says none is, tell them Settings → Connectors → Google → Add account with \"allow sending\" ticked, and do NOT claim you can't email at all.",
+     "input_schema": {"type": "object", "properties": {
+         "to": {"type": "string", "description": "One address, or several separated by commas."},
+         "subject": {"type": "string"},
+         "body": {"type": "string", "description": "The complete message as it should go out. Not a summary or an outline."},
+         "cc": {"type": "string"},
+         "account_id": {"type": "string", "description": "Which connected account to send as. Required only when more than one account can send; the tool will tell you and list them."}},
+      "required": ["to", "subject", "body"]}},
+    {"name": "list_sending_accounts", "description": "Which connected Google accounts are allowed to send mail. Use this before draft_email when the user has more than one address, or when draft_email asks you which account to use. An account missing from this list was connected read-only — that is a permission the user has to grant, not something to work around.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_career_pipeline", "description": "Get the current job-search pipeline status from the wiki.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_briefing", "description": "Get the most recent daily briefing summary.",
@@ -1957,8 +1965,11 @@ def _tool_open_url(inp):
                 action_description=(
                     "Open Google's OAuth consent screen to link Calendar "
                     "(read-only) and Gmail (read-only) to Friday. One-time "
-                    "authorization. Friday never requests the gmail.send "
-                    "scope — it cannot send email on your behalf."
+                    "authorization. This connection does NOT include "
+                    "permission to send mail: sending is a separate scope, "
+                    "asked for only when you tick it yourself in Settings, "
+                    "and every individual message still waits for your "
+                    "approval."
                 ),
                 force_gate=True, payload={"url": url},
             )
@@ -2504,17 +2515,63 @@ def _tool_switch_model(inp):
 
 
 def _tool_draft_email(inp):
-    """Compose an email. The native Google integration is READ-ONLY, so composing
-    needs a write-enabled Gmail connection (the gmail-mcp connector can send once
-    authenticated). Report accurately and offer setup — never 'not installed'."""
-    to = ((inp or {}).get('to') or '').strip()
-    subject = ((inp or {}).get('subject') or '').strip()
-    return ("Sending/drafting email needs a write-enabled Gmail connection. Gmail is "
-            "built in but currently read-only / not yet authenticated for sending. Tell "
-            "the user you can read and search their mail once connected, and that sending "
-            "needs the Gmail connector authenticated (its `authenticate` tool, or connect "
-            "at /api/google/auth). OFFER to walk them through it — do NOT say you can't "
-            f"email. (Draft was to={to!r}, subject={subject!r}.)")
+    """Queue an email for the owner's approval. Cannot send.
+
+    The tool the model can reach is deliberately the one that ASKS. There is
+    no agent tool that delivers a message: services/gmail_send.send() runs
+    only from the approval hook or an explicit HTTP call, so no amount of
+    tool-calling — by this model, by a subagent, or by the unattended
+    self-improvement loop at 3am — produces a sent message without a human
+    decision in between.
+    """
+    inp = inp or {}
+    try:
+        from agent_friday.services import gmail_send as gs
+    except Exception as e:
+        return json.dumps({"error": f"gmail_send unavailable: {e}"})
+    try:
+        result = gs.request_send(
+            to=(inp.get('to') or '').strip(),
+            subject=(inp.get('subject') or '').strip(),
+            body=inp.get('body') or '',
+            cc=(inp.get('cc') or '').strip() or None,
+            account_id=(inp.get('account_id') or '').strip() or None,
+            requested_by="friday:draft_email",
+        )
+    except gs.SendRefused as e:
+        return json.dumps({"sent": False, "queued": False, "reason": str(e)})
+    except Exception as e:
+        return json.dumps({"sent": False, "queued": False,
+                           "reason": f"could not queue the message: {e}"})
+    appr = result.get("approval") or {}
+    return json.dumps({
+        "sent": False,
+        "queued": True,
+        "approval_id": result.get("approval_id"),
+        "from": (appr.get("payload") or {}).get("from_email"),
+        "note": ("The message is WAITING FOR THE USER'S APPROVAL and has not "
+                 "been sent. Tell them it's queued and that approving the "
+                 "card sends it. Do not say you sent it, and do not call "
+                 "this tool again for the same message."),
+    }, default=str)
+
+
+def _tool_list_sending_accounts(_inp):
+    """Which connected accounts may send. Reports granted scopes, not asked ones."""
+    try:
+        from agent_friday.services import gmail_send as gs
+    except Exception as e:
+        return json.dumps({"error": f"gmail_send unavailable: {e}"})
+    accounts = gs.sendable_accounts()
+    return json.dumps({
+        "accounts": accounts,
+        "can_send": bool(accounts),
+        "note": ("" if accounts else
+                 "No connected account has been granted permission to send. "
+                 "The user grants it at Settings → Connectors → Google → Add "
+                 "account, with \"allow sending\" ticked. This is a "
+                 "permission, not a bug — don't try another route."),
+    }, default=str)
 
 
 def _tool_get_career_pipeline(_inp):
@@ -4340,6 +4397,7 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate": _tool_navigate,
     "switch_model": _tool_switch_model,
     "draft_email": _tool_draft_email,
+    "list_sending_accounts": _tool_list_sending_accounts,
     "get_career_pipeline": _tool_get_career_pipeline,
     "get_briefing": _tool_get_briefing,
     "spawn_task": _tool_spawn_task,
@@ -4710,7 +4768,8 @@ TOOL_RINGS: dict[str, int] = {
     "update_task":          2,
     "delete_task":          2,   # irreversible — also gated by _ALWAYS_CONFIRM
     "search_contacts":      2,
-    "draft_email":          2,
+    "draft_email":          2,   # queues an approval; cannot itself send
+    "list_sending_accounts": 2,
     "open_url":             2,
     "open_path":            2,
     "spawn_task":           2,

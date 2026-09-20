@@ -347,6 +347,23 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     return record
 
 
+def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
+              ) -> Optional[dict]:
+    """Burn an approval after the thing it authorised actually happened.
+
+    ONE DECISION, ONE ACTION. `_consume` below marks a card as seen by the
+    caller that is about to act; this records that the act COMPLETED, with
+    what it produced. The difference matters for anything irreversible: a
+    send that crashed halfway should not leave an approval that looks spent,
+    and an approval that has been spent must never authorise a second send.
+
+    Added 2026-09-20 for services/gmail_send.py, where the whole safety
+    property is that one human decision buys exactly one message.
+    """
+    return _patch(approval_id, consumed=True, used_by=actor,
+                  used_at=time.time(), used_detail=detail or {})
+
+
 def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     """Mark a freshly-approved card as consumed. Returns (record, was_first)
     — was_first is True only the FIRST time this is observed."""

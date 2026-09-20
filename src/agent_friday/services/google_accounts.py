@@ -71,6 +71,21 @@ USERINFO_EMAIL = "https://www.googleapis.com/auth/userinfo.email"
 GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, DOCS_READ, SHEETS_READ,
                        TASKS_RW, CONTACTS_READ, USERINFO_EMAIL]
 
+# Sending mail is NOT in the list above, and that is the whole design.
+#
+# Every other scope here is one Friday needs to be useful at all, so they are
+# requested together and the account is connected or it isn't. Sending is the
+# one capability whose mistakes are unrecoverable and visible to other people,
+# so it is asked for separately, per account, only when the owner ticks the box
+# — `build_auth_flow(include_send=True)`. An account connected the ordinary way
+# cannot send, and services/gmail_send.py checks the granted scopes rather than
+# assuming.
+#
+# gmail.send, not gmail.compose: compose would additionally let Friday create,
+# read, alter and delete drafts in the real mailbox. The review copy belongs on
+# the approval card, where the owner already is.
+GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+
 # Legacy single-account scopes (what google_token.json was consented for).
 _LEGACY_SCOPES = [GMAIL_READ, "https://www.googleapis.com/auth/calendar.readonly"]
 
@@ -1423,9 +1438,17 @@ def active_client_kind() -> str:
         return "none"
 
 
-def build_auth_flow(state: str | None = None):
+def build_auth_flow(state: str | None = None, include_send: bool = False):
     """Construct an OAuth Flow for a new account connection. Returns
-    (flow, redirect_uri, client_type) or raises with a clear message."""
+    (flow, redirect_uri, client_type) or raises with a clear message.
+
+    `include_send` adds GMAIL_SEND. Off by default so the ordinary connect
+    path never asks for it: a person reconnecting a broken account should not
+    have "Send email on your behalf" appear in the consent screen they are
+    clicking through at speed. BOTH legs of the OAuth round-trip must pass the
+    same value — the callback rebuilds this flow from scratch, and a mismatch
+    changes what the token is exchanged for.
+    """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
     from agent_friday.services import google_oauth_client as goc
@@ -1443,7 +1466,10 @@ def build_auth_flow(state: str | None = None):
     from google_auth_oauthlib.flow import Flow
     client_type = _google_client_type(cfg) or "installed"
     redirect_uri = multi_redirect_uri(cfg, client_type)
+    scopes = list(GOOGLE_MULTI_SCOPES)
+    if include_send:
+        scopes.append(GMAIL_SEND)
     flow = Flow.from_client_config(
-        cfg, scopes=GOOGLE_MULTI_SCOPES, redirect_uri=redirect_uri, state=state
+        cfg, scopes=scopes, redirect_uri=redirect_uri, state=state
     )
     return flow, redirect_uri, client_type

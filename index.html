@@ -36627,6 +36627,13 @@ function GoogleAccountsPanel() {
   // The consent pre-brief, held between "Add account" and actually opening
   // Google -- see services/google_oauth_client.consent_prebrief.
   const [pending, setPending] = useState(null);
+  // Permission to send mail as the owner, asked per connection and never
+  // remembered between them. A sticky checkbox would turn this into something
+  // ticked once, months ago, for an account nobody remembers connecting —
+  // which is the opposite of what "only with explicit authorization" meant.
+  // A RECONNECT DOES NOT INHERIT IT: fixing a broken token is the moment a
+  // person is least likely to read a consent screen carefully.
+  const [allowSend, setAllowSend] = useState(false);
   const [byo, setByo] = useState(null);
   const [byoId, setByoId] = useState('');
   const [byoSecret, setByoSecret] = useState('');
@@ -36693,7 +36700,8 @@ function GoogleAccountsPanel() {
           account_id: account.id,
           email: account.email
         } : {
-          label
+          label,
+          include_send: allowSend
         })
       });
       const d = await r.json();
@@ -36702,8 +36710,8 @@ function GoogleAccountsPanel() {
         // this app" with no warning reads it as phishing and stops -- and
         // from our side, stopping there is indistinguishable from never
         // having tried. Show what is coming, then let them press the button.
-        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind, account: account || null });
-        if (!account) setLabel('');
+        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind, account: account || null, requestingSend: !!d.requesting_send });
+        if (!account) { setLabel(''); setAllowSend(false); }
       } else setMsg(d.message || 'Could not start sign-in.');
     } catch (e) {
       setMsg('Error: ' + e.message);
@@ -36752,6 +36760,14 @@ function GoogleAccountsPanel() {
   // ── What is about to happen, said before it happens ──────────────────────
   const prebriefUI = pending && /*#__PURE__*/React.createElement("div", { style: _card },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.85)' } }, pending.brief),
+    // Google's consent screen will say "Send email on your behalf", which
+    // reads alarmingly if you were not expecting it. Say it here first, and
+    // say what the limit is, so the screen confirms rather than surprises.
+    pending.requestingSend && /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: 10, padding: '9px 11px', borderRadius: 6, background: 'rgba(255,140,66,0.08)', border: '1px solid rgba(255,140,66,0.3)', fontSize: 11.5, lineHeight: 1.55, color: 'rgba(255,255,255,0.88)' } },
+      'Google will also ask to let Friday ',
+      /*#__PURE__*/React.createElement("b", null, 'send email on your behalf'),
+      '. That is this request, and it is expected. Friday still cannot send anything on its own: every message waits on an approval card showing the exact From, To, Subject and text, and approving that card is what sends it.'),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12, color: '#00d4ff' },
         onClick: () => { const acct = pending.account; window.open(pending.url, '_blank', 'width=600,height=700'); setReconnecting(acct ? acct.id : 'new'); setMsg(acct ? 'Sign in as ' + (acct.email || acct.label || 'that account') + ' in the Google window. This page updates on its own once you are done.' : 'Finish in the Google window. This page updates on its own once you are done.'); setPending(null); } },
@@ -36985,7 +37001,23 @@ function GoogleAccountsPanel() {
     },
     onClick: refresh,
     title: "Refresh"
-  }, "\u21BB")), msg && /*#__PURE__*/React.createElement("div", {
+  }, "\u21BB")),
+  // Sending is opt-in, per connection. It sits next to Add Account rather
+  // than in a settings list because the only moment it can be granted is the
+  // moment consent is given \u2014 Google decides scopes at the consent screen,
+  // so there is no toggle that could turn it on later without reconnecting.
+  /*#__PURE__*/React.createElement("label", {
+    style: { display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, cursor: 'pointer' }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: 'checkbox',
+    checked: allowSend,
+    onChange: e => setAllowSend(e.target.checked),
+    style: { marginTop: 2 }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, lineHeight: 1.5, color: 'rgba(255,255,255,0.6)' }
+  }, /*#__PURE__*/React.createElement("span", { style: { color: 'rgba(255,255,255,0.85)' } }, 'Let Friday send mail from this account'),
+     ' \u2014 every message still waits for your approval, one card per message. Leave this off and the account is read-only for mail. Applies to the account you add next; it cannot be turned on later without reconnecting.')),
+  msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#00d4ff',
@@ -40440,6 +40472,10 @@ function App() {
   const [googleProtection, setGoogleProtection] = useState('');
   const [googleAcctMsg, setGoogleAcctMsg] = useState('');
   const [googleAcctLabel, setGoogleAcctLabel] = useState('');
+  // Off every time the panel is opened, and never remembered. Permission to
+  // send mail as Stephen is asked for per connection, deliberately — a
+  // sticky checkbox would make it a thing he ticked once, months ago.
+  const [googleAllowSend, setGoogleAllowSend] = useState(false);
   const refreshGoogleAccounts = () => {
     fetch('/api/google/accounts').then(r => r.json()).then(d => {
       if (d && d.accounts) {
@@ -40460,14 +40496,16 @@ function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          label: googleAcctLabel
+          label: googleAcctLabel,
+          include_send: googleAllowSend
         })
       });
       const d = await r.json();
       if (d.status === 'ok' && d.auth_url) {
         window.open(d.auth_url, '_blank', 'width=520,height=660');
-        setGoogleAcctMsg('Approve in the popup, then tap Refresh.');
+        setGoogleAcctMsg(d.requesting_send ? 'Google will ask to let Friday send mail — that’s expected. Approve, then tap Refresh.' : 'Approve in the popup, then tap Refresh.');
         setGoogleAcctLabel('');
+        setGoogleAllowSend(false);
       } else {
         setGoogleAcctMsg(d.message || 'Could not start sign-in.');
       }
