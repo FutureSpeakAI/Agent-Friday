@@ -154,13 +154,33 @@ class TestRecoveryPathIsOffered:
                 seen.update(kw)
                 return "https://accounts.google.com/o/oauth2/auth?x=1", "state123"
 
-        monkeypatch.setattr(ga, "build_auth_flow",
-                            lambda state=None: (FakeFlow(), "http://127.0.0.1:3000/cb", "installed"))
+        # Captures what the route ASKED FOR, not just that it asked. The fake
+        # used to be `lambda state=None:`, which silently became a TypeError
+        # the day build_auth_flow grew the send scope (2026-09-20) — and the
+        # route catches everything and returns {"status": "error"}, so the
+        # failure surfaced as "reconnect is broken" rather than "the stub is
+        # stale." Keyword-only, so the next parameter added to the real
+        # function fails here loudly instead of vanishing into **kwargs.
+        built = {}
+
+        def _fake_build_auth_flow(state=None, include_send=False):
+            built["state"] = state
+            built["include_send"] = include_send
+            return FakeFlow(), "http://127.0.0.1:3000/cb", "installed"
+
+        monkeypatch.setattr(ga, "build_auth_flow", _fake_build_auth_flow)
         r = client.post("/api/google/accounts/connect", json={"account_id": "a1"})
         d = r.get_json()
         assert d["status"] == "ok"
         assert seen.get("login_hint") == "stephen@futurespeak.ai"
         assert d["reconnecting"] is True
+        # A RECONNECT MUST NOT QUIETLY ASK FOR MORE THAN THE ACCOUNT HAD.
+        # Someone fixing a broken token is the person least likely to read a
+        # consent screen carefully, so permission to send mail is never
+        # inherited or re-requested here — it is granted only from an explicit
+        # tick in Settings → Dock's sibling, the Google connector panel.
+        assert built["include_send"] is False
+        assert d["requesting_send"] is False
 
 
 # ── the other direction: recovery must not be masked by a cached verdict ────
