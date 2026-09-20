@@ -87,7 +87,11 @@ keyring = ["keyring>=24.0"]
 windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0", "pystray>=0.19"]  # computer control + global kill-switch + tray icon
 pdf = ["pdfplumber>=0.11"]  # retained alias; pdfplumber is now a core dependency
 # Development and CI: the test runner and the fatal-rule linter.
-dev = ["pytest>=8.0", "ruff>=0.5"]
+# pytest-xdist is not optional: pytest.ini defaults to `-n auto --dist
+# loadfile`, and without it every `pytest` invocation fails on an unknown
+# argument. It is also the difference between a ~21 minute suite and a ~100
+# minute one.
+dev = ["pytest>=8.0", "pytest-xdist>=3.5", "ruff>=0.5"]
 all = [
     "pyttsx3>=2.90",
     "pillow>=10.0",

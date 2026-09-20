@@ -20,6 +20,13 @@ def _no_gate(monkeypatch):
     monkeypatch.setattr(ws, "_gate_search_query", lambda q, backend: (q, None))
     monkeypatch.setattr(ws, "_note_backend_health", lambda name, out: None)
     monkeypatch.setattr(ws, "brave_key", lambda: "")
+    # wigolo runs on 127.0.0.1:3333 when installed, answers FIRST, and is
+    # keyless — so on a machine where it is up these tests assert a failure
+    # that never happens and fail for a reason that has nothing to do with
+    # Firecrawl. A test whose result depends on whether a local service
+    # happens to be running is measuring the afternoon, not the code.
+    # Same fix as tests/unit/test_capability_state.py::_unkeyed.
+    monkeypatch.setattr(ws, "_wigolo_ready", lambda: False)
 
 
 def test_firecrawl_is_tried_first_when_a_key_is_present(monkeypatch):

@@ -3041,12 +3041,13 @@ class FeatureFlags:
         except Exception:
             flags["chromadb"] = False
 
-        try:
-            import requests as _r  # type: ignore
-            _r.get("http://localhost:11434/api/tags", timeout=1)
-            flags["ollama"] = True
-        except Exception:
-            flags["ollama"] = False
+        # NO NETWORK IN A FEATURE PROBE. This used to `requests.get` Ollama's
+        # /api/tags with a one-second timeout, so "which optional subsystems
+        # are available" included a blocking round trip — to a daemon that was
+        # removed from this project on 2026-09-18 (its llama.cpp engine was
+        # kept, the daemon was not). A probe that reaches the network is a
+        # probe that hangs when the network does.
+        flags["ollama"] = False
 
         return cls(**flags)
 
@@ -3054,7 +3055,38 @@ class FeatureFlags:
         return {slot: getattr(self, slot) for slot in self.__slots__}
 
 
-# Singleton — detected once at module-load; refresh via FeatureFlags.detect()
-FEATURE_FLAGS: FeatureFlags = FeatureFlags.detect()
+# Singleton — detected on FIRST USE, not at module load.
+#
+# SIX SECONDS, PER PROCESS, FOR A VALUE NOTHING READ. This used to be
+# `FEATURE_FLAGS = FeatureFlags.detect()` at module scope, so every single
+# import of `agent_friday.core` ran the whole probe: a dozen
+# `importlib.import_module` calls including chromadb, which drags in
+# OpenTelemetry and the OTLP gRPC exporters (~1s measured via -X importtime),
+# plus a network request to Ollama with a one-second timeout — to a service
+# that was deliberately removed from this project.
+#
+# Measured 2026-09-19: `import agent_friday.core` took 6.06s, of which ~2.0s
+# was this function's own body. Test collection alone took 38.5s and the full
+# suite over an hour, which is why several defects that week survived — the
+# gate nobody can afford to run is a gate that stops being run.
+#
+# And `FEATURE_FLAGS` had ZERO consumers. Grepped across src/ and tests/: no
+# route, no test, no caller. The docstring's claim that it is "exposed via
+# GET /api/health" is not true of this tree.
+#
+# Kept rather than deleted, lazily: the name stays importable and the probe
+# still works for anything that ever wants it, but nobody pays for it up
+# front. PEP 562 module-level __getattr__.
+_FEATURE_FLAGS_CACHE = None
+
+
+def __getattr__(name):
+    """Lazy module attributes. See FEATURE_FLAGS above."""
+    if name == "FEATURE_FLAGS":
+        global _FEATURE_FLAGS_CACHE
+        if _FEATURE_FLAGS_CACHE is None:
+            _FEATURE_FLAGS_CACHE = FeatureFlags.detect()
+        return _FEATURE_FLAGS_CACHE
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
