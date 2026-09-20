@@ -2,6 +2,16 @@ import os
 import io
 import json
 import glob
+from contextvars import ContextVar
+
+#: The conversation a tool call belongs to, for the duration of that call.
+#:
+#: Set by `_execute_tool` and read by any handler that spawns background work,
+#: so a task knows where to report. Without it everything a background run has
+#: to say - including "I was interrupted by a restart" - is filed in Main, and
+#: the person who started it never sees it. See `_spawn_task`.
+_CURRENT_CONVERSATION: ContextVar = ContextVar("friday_tool_conversation",
+                                               default=None)
 import subprocess
 import shutil
 import base64
@@ -1294,6 +1304,31 @@ def _tool_query_calendar(_inp):
     return json.dumps(payload, default=str)
 
 
+def _email_query_matches(query: str, blob: str) -> bool:
+    """Word-boundary match for the local email search filter.
+
+    A plain substring test (`query in blob`) makes "test" match "latest",
+    "contest", "protest" -- false positives on top of whatever Gmail's own
+    q= already filtered. \b anchors the match to whole-word boundaries
+    instead. An empty query matches everything (unchanged prior behavior).
+    Multi-word queries (e.g. "budget forecast") require each word to appear
+    somewhere in the blob as its own word, in any order -- this keeps a
+    multi-word natural-language query useful instead of requiring an exact
+    phrase match.
+    """
+    q = (query or "").strip()
+    if not q:
+        return True
+    words = q.lower().split()
+    if not words:
+        return True
+    for word in words:
+        pattern = r"\b" + re.escape(word) + r"\b"
+        if not re.search(pattern, blob):
+            return False
+    return True
+
+
 def _tool_search_email(inp):
     """Search recent Gmail across every connected Google account.
 
@@ -1335,12 +1370,11 @@ def _tool_search_email(inp):
                                         + f" Email fetch error: {e}").strip()})
         accounts_status = _summarize_multi_account_errors(result)
         cards = result.get("messages") or []
-        ql = q.lower()
         hits = []
         for c in cards:
             blob = " ".join(str(c.get(k) or "") for k in
                             ("sender", "subject", "snippet")).lower()
-            if not ql or ql in blob:
+            if _email_query_matches(q, blob):
                 hits.append({
                     "from": c.get("sender") or "",
                     "subject": c.get("subject") or "",
@@ -3183,8 +3217,21 @@ def _report_task_completion(task_id, name, status, result_text):
 
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
-                model=None, tools=None):
+                model=None, tools=None, conversation_id=None):
     """Spawn a background task.
+
+    conversation_id: WHERE THIS TASK REPORTS. Without it a task belongs to
+        nobody, and `reconcile.resolve` sends everything it has to say to Main
+        - so a workflow step that dies explains itself in a conversation the
+        user is not reading.
+
+        That is not hypothetical. On 2026-09-19 a workflow step came back
+        "interrupted" twice with no reason, and hours went into theorising
+        about model capability and spec quality. The reason existed the whole
+        time: `reconcile_tasks` writes "Interrupted by a restart - this was a
+        free-form run and its state lived in a process that no longer exists."
+        It went to Main. The person was in a different chat, and the assistant
+        in that chat correctly reported that it could not see why.
 
     tools: optional list of CLAUDE_TOOLS names to narrow this task's registry
         to (see _task_worker). None keeps the default full registry.
@@ -3232,6 +3279,10 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'chain': chain,
             'chain_step': chain_step,
             'model': model,
+            # Who this task answers to. `reconcile` reads this to decide where
+            # an interruption notice goes; None means Main, which is where
+            # explanations go to be unread.
+            'conversation_id': conversation_id,
         }
     # Durable from the first instant (TV2): the created event, the state
     # snapshot and the index row exist before the worker thread starts, so
@@ -3376,8 +3427,14 @@ def delete_workflow_chain(name):
     return False
 
 
-def run_workflow_chain(name):
-    """Kick off a stored chain at step 0. Returns the first task_id (or None)."""
+def run_workflow_chain(name, conversation_id=None):
+    """Kick off a stored chain at step 0. Returns the first task_id (or None).
+
+    `conversation_id` is where the chain reports. Without it every notice a
+    step has to give - including "I was interrupted by a restart" - is filed
+    in Main, and the person who started the chain never sees it. See
+    `_spawn_task` for the evening that cost.
+    """
     chain = load_workflow_chain(name)
     if not chain:
         return None
@@ -3392,6 +3449,7 @@ def run_workflow_chain(name):
         description=f"Chain '{chain.get('name')}' · step 1/{len(steps)}",
         chain=slug, chain_step=0,
         model=first.get('seat') or chain.get('seat'),
+        conversation_id=conversation_id,
     )
 
 
@@ -3442,6 +3500,15 @@ def chain_run_status(name):
             'ended': (row or {}).get('ended'),
             'result_tail': ((row or {}).get('result') or '')[-400:],
             'log_tail': ((row or {}).get('log') or [])[-3:],
+            # WHY, next to WHAT. A status word with no cause is a dead end,
+            # and a dead end is where invented explanations come from - two
+            # evenings were spent theorising about model capability for a step
+            # that had simply been killed by a restart, with the reason
+            # written down the whole time.
+            'reason': ((row or {}).get('status_reason')
+                       or ((row or {}).get('log') or [None])[-1]
+                       if (row or {}).get('status') in
+                       ('interrupted', 'failed') else None),
         })
     running = any(s['status'] in ('queued', 'running') for s in out_steps)
     failed = any(s['status'] == 'failed' for s in out_steps)
@@ -3482,7 +3549,8 @@ def _tool_run_workflow(inp):
     name = (inp.get('name') or '').strip()
     if not name:
         return "run_workflow error: 'name' is required."
-    tid = run_workflow_chain(name)
+    # The chain reports back where it was started from, not into Main.
+    tid = run_workflow_chain(name, conversation_id=_CURRENT_CONVERSATION.get())
     if not tid:
         return "run_workflow error: no chain named %r (or it has no steps)." % name
     return ("workflow '%s' started (first task %s). Steps auto-advance; check "
@@ -3502,6 +3570,13 @@ def _tool_workflow_status(inp):
     lines = ["%s: %s" % (st['name'], st['state'])]
     for s in st['steps']:
         lines.append("  %d. %s - %s" % (s['index'] + 1, s['name'], s['status']))
+        # THE REASON, WHERE THE STATUS IS. This tool returned a bare status
+        # word, so a step that died gave the model nothing to reason from and
+        # the only honest answer was "I cannot see why" - which is what
+        # happened twice on 2026-09-19, for a step that had been killed by a
+        # server restart with the cause written down each time.
+        if s.get('reason'):
+            lines.append("     reason: %s" % str(s['reason'])[:300])
         if s['status'] == 'failed' and s.get('result_tail'):
             lines.append("     failure tail: %s" % s['result_tail'][-200:])
     return "\n".join(lines)
@@ -6071,7 +6146,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         return verdict.reason
 
     try:
-        result = handler(ctx.input)
+        # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
+        # tool that spawns background work had no way to say where that work
+        # should report - and everything it had to say went to Main, which is
+        # where explanations go to be unread. Set around the call rather than
+        # threaded through sixty handler signatures; a ContextVar because
+        # tasks run in threads and a module global would cross-talk.
+        _tok = _CURRENT_CONVERSATION.set(
+            ((session_ctx or {}).get("conversation_id")
+             or (session_ctx or {}).get("conversation")) or None)
+        try:
+            result = handler(ctx.input)
+        finally:
+            _CURRENT_CONVERSATION.reset(_tok)
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
@@ -7716,6 +7803,32 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                   "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
                                              f"data — switch to a local model to access it."})
                     continue
+
+            # A TOOL CALLED WITHOUT ITS SCHEMA STILL RUNS - and now arrives
+            # for the next round.
+            #
+            # `_execute_tool` dispatches by name out of CLAUDE_TOOL_HANDLERS
+            # and never consults the list the model was sent, so under
+            # progressive disclosure a model that skips `load_tools` and calls
+            # something directly is not blocked. What it lacks is the argument
+            # shape. Pulling the schema in here means the SECOND attempt is
+            # well-formed, which turns "guessed wrong twice" into "guessed
+            # wrong once".
+            if _catalogue_all and tname != _TC.LOADER_NAME:
+                _known = {(t.get("function") or t).get("name")
+                          for t in (oai_tools or [])}
+                if tname not in _known:
+                    _late, _ = _TC.expand(_catalogue_all, [tname], oai_tools)
+                    if _late:
+                        try:
+                            from agent_friday.routing.model_router import (
+                                anthropic_to_openai_tools as _a2o)
+                            oai_tools = (oai_tools or []) + _a2o(_late)
+                            print("  [tools] %s was called without being "
+                                  "loaded; schema added for the next round"
+                                  % tname, flush=True)
+                        except Exception:
+                            pass
 
             _task_log_tool(session_ctx, tname, targs)
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
