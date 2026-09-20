@@ -1714,6 +1714,28 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.
+    #
+    # NOT `dock_layout`. That name was already taken at line ~2035 by the
+    # distribution preset ("standard" | "journalism" | "developer" | ...), and a
+    # second entry under the same name in this dict literal would have been
+    # silently shadowed by the later one — a control that saves, reports success,
+    # and does nothing, which is the exact defect scripts/check_settings_readers.py
+    # exists to catch. (Separately: grep finds no reader for that preset anywhere,
+    # so it appears to be a sixth dead setting. Not fixed here; noted.)
+    #
+    # Empty means UNCONFIGURED, and show_all_workspaces above governs exactly as
+    # it always has. The moment an arrangement exists it wins outright, because
+    # two switches over one dock is how you get a control that appears to do
+    # nothing. Settings → Dock says so, and the quick toggle disables itself
+    # rather than silently losing the argument.
+    #
+    # `order` is a flat list across all three dock groups. Group separators are
+    # DERIVED from it — a separator renders wherever two adjacent items belong to
+    # different groups — so leaving the default order reproduces today's dock
+    # exactly, and interleaving collapses the groups without needing a second
+    # setting to say so.
+    "dock_custom": {"order": [], "hidden": []},
     # How long the machine must be idle before a parked batch may take the GPU.
     # Present here because a key missing from DEFAULT_SETTINGS is DELETED on
     # every save — the same defect that silently dropped `heavy_hitter` from

@@ -4280,6 +4280,64 @@ const DOCK_GROUPS = [{
   }]
 }];
 const WS = DOCK_GROUPS.flatMap(g => g.items);
+const WS_BY_ID = WS.reduce((m, w) => (m[w.id] = w, m), {});
+const WS_GROUP_OF = DOCK_GROUPS.reduce((m, g) => (g.items.forEach(w => { m[w.id] = g.name; }), m), {});
+
+// ═══ DOCK ARRANGEMENT ═══
+// The owner's dock, computed from three inputs in one place so the dock render,
+// the Dock settings panel and its live preview cannot disagree about what the
+// dock is. Returns the SAME {name, items[]} shape DOCK_GROUPS has, so the render
+// body below is untouched by any of this.
+//
+// `custom` is settings.dock_custom = {order: [id...], hidden: [id...]}. Empty
+// means the owner has never shaped the dock, and `show_all_workspaces` governs
+// exactly as it always has. A non-empty arrangement wins outright — two switches
+// over one dock is how you get a control that silently does nothing.
+//
+// GROUPS ARE DERIVED, never configured. Adjacent items sharing a group name form
+// a group, so the default order reproduces today's three-group dock precisely.
+// Interleaving would otherwise produce a confetti of one-item labelled groups,
+// so the moment the arrangement stops being group-contiguous the dock goes flat
+// and unlabelled. That is one rule the owner can predict, rather than a second
+// setting asking a question they did not ask to be asked.
+function dockArrangement(custom, showAll) {
+  const cust = (custom && typeof custom === 'object') ? custom : {};
+  const rawOrder = Array.isArray(cust.order) ? cust.order : [];
+  const hidden = new Set(Array.isArray(cust.hidden) ? cust.hidden : []);
+  const configured = rawOrder.length > 0 || hidden.size > 0;
+
+  // Explicit order first, real ids only, then every workspace the order never
+  // mentioned in its registry position. A workspace added by a later version of
+  // Friday therefore APPEARS, rather than vanishing because a saved order
+  // predates it — the failure mode of every hand-maintained ordering.
+  const seen = new Set();
+  const ids = [];
+  rawOrder.forEach(id => {
+    if (WS_BY_ID[id] && !seen.has(id)) { seen.add(id); ids.push(id); }
+  });
+  WS.forEach(w => { if (!seen.has(w.id)) { seen.add(w.id); ids.push(w.id); } });
+
+  const visible = ids.filter(id => configured ? !hidden.has(id)
+                                              : (showAll || WS_BY_ID[id].core));
+
+  const groups = [];
+  visible.forEach(id => {
+    const name = WS_GROUP_OF[id] || 'More';
+    const last = groups[groups.length - 1];
+    if (last && last.name === name) last.items.push(WS_BY_ID[id]);
+    else groups.push({ name: name, items: [WS_BY_ID[id]] });
+  });
+  const flat = groups.length > DOCK_GROUPS.length;
+  return {
+    groups: flat ? [{ name: '', items: visible.map(id => WS_BY_ID[id]) }] : groups,
+    ids: ids,
+    visible: visible,
+    hidden: hidden,
+    configured: configured,
+    flattened: flat,
+  };
+}
+
 function getGreeting() {
   const h = new Date().getHours();
   if (h < 5) return 'Late night';
@@ -36612,6 +36670,118 @@ function gaSyncTitle(acc) {
   try { return 'Last successful sync: ' + new Date(acc.last_sync).toLocaleString(); }
   catch (e) { return 'Last successful sync: ' + acc.last_sync; }
 }
+// ═════════════════════════════════════════════════════════════════════════════
+//  SETTINGS → DOCK — shape the dock, one workspace at a time
+// ═════════════════════════════════════════════════════════════════════════════
+// Writes through window.fridaySaveDock rather than useSettings' own save(), so
+// there is exactly ONE writer for dock_custom and the dock updates as you edit
+// rather than on the next full settings load. useSettings and App's
+// agentSettings are parallel stores over the same endpoint (see the comment in
+// useSettings.save), and a second writer here is how they would drift.
+function DockSettingsPanel() {
+  const [custom, setCustom] = useState({ order: [], hidden: [] });
+  const [showAll, setShowAll] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = (d && d.settings) || {};
+      const c = s.dock_custom;
+      setCustom(c && typeof c === 'object'
+        ? { order: c.order || [], hidden: c.hidden || [] }
+        : { order: [], hidden: [] });
+      setShowAll(s.show_all_workspaces !== false);
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+
+  const shape = dockArrangement(custom, showAll);
+
+  // Every edit writes a COMPLETE arrangement, seeded from what is on screen
+  // right now. Otherwise the first click on a dock that show_all_workspaces had
+  // trimmed would hide one workspace and simultaneously reveal seven, because
+  // the moment an arrangement exists show_all stops applying.
+  const commit = next => {
+    setCustom(next);
+    setMsg('Saved ✓');
+    setTimeout(() => setMsg(''), 1600);
+    try { window.fridaySaveDock && window.fridaySaveDock(next); } catch (e) {}
+  };
+  const seeded = () => ({
+    order: shape.ids.slice(),
+    hidden: shape.configured
+      ? (custom.hidden || []).slice()
+      : WS.filter(w => !shape.visible.includes(w.id)).map(w => w.id)
+  });
+  const toggleVisible = id => {
+    const base = seeded();
+    const hid = new Set(base.hidden);
+    if (hid.has(id)) hid.delete(id); else hid.add(id);
+    commit({ order: base.order, hidden: [...hid] });
+  };
+  const move = (id, delta) => {
+    const base = seeded();
+    const order = base.order.slice();
+    const i = order.indexOf(id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    order[i] = order[j];
+    order[j] = id;
+    commit({ order: order, hidden: base.hidden });
+  };
+  const resetDock = () => commit({ order: [], hidden: [] });
+
+  const _card = { background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.18)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 };
+  const _dim = { fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 };
+  const _mini = { background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, color: 'rgba(255,255,255,0.65)', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: '3px 6px' };
+
+  if (!loaded) return /*#__PURE__*/React.createElement("div", { style: _dim }, "Reading your dock…");
+
+  const rows = shape.ids.map((id, idx) => {
+    const w = WS_BY_ID[id];
+    const visible = shape.visible.indexOf(id) !== -1;
+    return /*#__PURE__*/React.createElement("div", {
+      key: id,
+      style: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, background: visible ? 'rgba(255,255,255,0.03)' : 'transparent', opacity: visible ? 1 : 0.45 }
+    },
+      /*#__PURE__*/React.createElement("input", {
+        type: 'checkbox', checked: visible, onChange: () => toggleVisible(id),
+        title: visible ? 'Hide from the dock' : 'Show in the dock'
+      }),
+      /*#__PURE__*/React.createElement("span", { style: { width: 20, textAlign: 'center' } }, w.ico),
+      /*#__PURE__*/React.createElement("span", { style: { flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono' } }, w.label),
+      /*#__PURE__*/React.createElement("span", { style: { ..._dim, fontSize: 10, minWidth: 44 } }, WS_GROUP_OF[id]),
+      /*#__PURE__*/React.createElement("button", { style: _mini, disabled: idx === 0, onClick: () => move(id, -1), title: "Move up" }, "↑"),
+      /*#__PURE__*/React.createElement("button", { style: _mini, disabled: idx === shape.ids.length - 1, onClick: () => move(id, 1), title: "Move down" }, "↓"));
+  });
+
+  return /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("div", { style: _card },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, "Your dock"),
+      /*#__PURE__*/React.createElement("div", { style: _dim },
+        shape.configured
+          ? "This is your own arrangement, so “Show all workspaces” no longer applies. Reset below to hand it back."
+          : "Untouched, so “Show all workspaces” still governs. Your first change here takes over from it, starting from exactly what you see now."),
+      shape.flattened && /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginTop: 6, color: 'rgba(255,200,120,0.75)' } },
+        "Your order interleaves the groups, so the dock is rendering flat and unlabelled. Keep each group together to get the labels back."),
+      /*#__PURE__*/React.createElement("div", {
+        style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(0,0,0,0.35)' }
+      }, shape.visible.length
+        ? shape.visible.map(id => /*#__PURE__*/React.createElement("span", {
+            key: id,
+            style: { fontSize: 10, fontFamily: 'JetBrains Mono', padding: '3px 7px', borderRadius: 4, background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.25)' }
+          }, WS_BY_ID[id].ico + ' ' + WS_BY_ID[id].label))
+        : /*#__PURE__*/React.createElement("span", { style: { ..._dim, color: 'rgba(255,120,120,0.8)' } },
+            "Nothing is showing. An empty dock is allowed — Ctrl+K still opens anything.")),
+      /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' } },
+        /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 11 }, onClick: resetDock }, "Reset to default"),
+        msg && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: '#00d4ff' } }, msg))),
+    /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 8 } },
+      "Untick to hide. Arrows reorder. Group labels are derived from the order, not set separately."),
+    rows);
+}
+
 function GoogleAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [msg, setMsg] = useState('');
@@ -39283,6 +39453,14 @@ function SettingsWS() {
     label: 'General',
     ico: '⚡️'
   }, {
+    // Two edits, always. An entry here with no branch in the render chain
+    // below gives a rail item that selects a blank pane; a branch with no
+    // entry here gives a panel nothing can reach, which is exactly how
+    // SettingsTabProviders sat complete and unreferenced (see below).
+    id: 'dock',
+    label: 'Dock',
+    ico: '\u{1F39B}️'
+  }, {
     id: 'intelligence',
     label: 'Intelligence',
     ico: '🧠'
@@ -39409,7 +39587,9 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  }), tab === 'dock' && /*#__PURE__*/React.createElement(StSection, {
+    title: "Dock"
+  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
   }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
@@ -39946,7 +40126,10 @@ function App() {
     audio_input_device_id: '',
     audio_output_device_id: '',
     computer_control_enabled: false,
-    show_all_workspaces: true
+    show_all_workspaces: true,
+    // The owner's own dock arrangement. Empty = never shaped, and
+    // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
+    dock_custom: { order: [], hidden: [] }
   };
   const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
   const [agentPersonality, setAgentPersonality] = useState('');
@@ -43454,6 +43637,23 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     };
   }, []);
 
+  // The one writer for dock_custom. Settings → Dock lives inside SettingsWS,
+  // which reads through useSettings() — a parallel store over the same POST
+  // endpoint that does not feed agentSettings. Routing the write back here
+  // means the dock reshapes as the panel is edited instead of on the next full
+  // settings load, and means there is a single place that writes the key.
+  useEffect(() => {
+    window.fridaySaveDock = custom => saveAgentSettings({
+      dock_custom: {
+        order: (custom && custom.order) || [],
+        hidden: (custom && custom.hidden) || []
+      }
+    });
+    return () => {
+      if (window.fridaySaveDock) delete window.fridaySaveDock;
+    };
+  }, [agentSettings]);
+
   /* A WORKSPACE IS ADDRESSABLE BY URL, so any of them can be a tab.
      ?workspace=code opens that workspace on load, which is all a new Friday
      tab needs to be: the same app, pointed somewhere else. Runs once, after
@@ -43849,6 +44049,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces = agentSettings.show_all_workspaces !== false;
+  // One computation of what the dock is, shared by the dock itself and by
+  // Settings → Dock. Recomputed only when an input changes, because it runs on
+  // every App render otherwise and App re-renders on every chat token.
+  const dockShape = React.useMemo(
+    () => dockArrangement(agentSettings.dock_custom, showAllWorkspaces),
+    [agentSettings.dock_custom, showAllWorkspaces]);
   const wsMap = {
     edition: /*#__PURE__*/React.createElement(EditionWS, null),
     home: /*#__PURE__*/React.createElement(HomeWS, null),
@@ -46287,16 +46493,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     style: {
       marginBottom: 8
     }
-  }, "Quick Toggles"), /*#__PURE__*/React.createElement("div", {
-    className: "settings-toggle",
-    onClick: () => saveAgentSettings({
-      show_all_workspaces: !showAllWorkspaces
-    })
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "settings-toggle-label"
-  }, "Show all workspaces"), /*#__PURE__*/React.createElement("div", {
-    className: `settings-toggle-switch ${showAllWorkspaces ? 'on' : ''}`
-  })), /*#__PURE__*/React.createElement("div", {
+  }, "Quick Toggles"),
+  // Once the dock has been shaped by hand, this toggle no longer decides
+  // anything — dockArrangement() ignores show_all_workspaces the moment a
+  // custom arrangement exists. A switch that flips and changes nothing is
+  // worse than one that says why it is off, so it says why.
+  dockShape.configured
+    ? /*#__PURE__*/React.createElement("div", {
+        className: "settings-toggle",
+        style: { opacity: 0.5, cursor: 'default' },
+        title: "Your own dock arrangement is in use, so this no longer applies.",
+        onClick: () => { setSettingsOpen(false); toggle('settings'); window.__fridaySettingsTab = 'dock'; }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "settings-toggle-label"
+      }, "Show all workspaces — set in Settings → Dock"))
+    : /*#__PURE__*/React.createElement("div", {
+        className: "settings-toggle",
+        onClick: () => saveAgentSettings({
+          show_all_workspaces: !showAllWorkspaces
+        })
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "settings-toggle-label"
+      }, "Show all workspaces"), /*#__PURE__*/React.createElement("div", {
+        className: `settings-toggle-switch ${showAllWorkspaces ? 'on' : ''}`
+      })),
+  /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
     onClick: () => saveAgentSettings({
       off_record: !agentSettings.off_record
@@ -46448,15 +46669,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, p)))), /*#__PURE__*/React.createElement("div", {
     className: `dock ${dockHidden ? 'hidden' : ''}`
-  }, DOCK_GROUPS.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: g.name
+  }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: g.name + ':' + gi
   }, gi > 0 && /*#__PURE__*/React.createElement("div", {
     className: "dock-sep"
   }), /*#__PURE__*/React.createElement("div", {
     className: "dock-group"
   }, /*#__PURE__*/React.createElement("div", {
     className: "dock-group-btns"
-  }, g.items.filter(w => showAllWorkspaces || w.core).map(w => /*#__PURE__*/React.createElement("button", {
+  }, g.items.map(w => /*#__PURE__*/React.createElement("button", {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${suggestedWs.has(w.id) && !openWins.has(w.id) ? 'suggested' : ''}`,
     onClick: () => toggle(w.id),
@@ -46547,7 +46768,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       justifyContent: 'center',
       boxShadow: '0 0 8px rgba(245,158,11,0.7)'
     }
-  }, contentAlerts)))), /*#__PURE__*/React.createElement("div", {
+  }, contentAlerts)))), g.name && /*#__PURE__*/React.createElement("div", {
     className: "dock-group-label"
   }, g.name))))), paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
     onClose: () => setPaletteOpen(false),
