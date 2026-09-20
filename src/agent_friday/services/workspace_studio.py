@@ -285,21 +285,49 @@ def restore_as_of(ws_id, when):
     return out, None
 
 
+def _changed_keys(before, after) -> list:
+    """Which customization keys differ between two states.
+
+    Snapshots hold the state BEFORE a change, so comparing snapshot N with
+    whatever came next (snapshot N+1, or the live customization for the newest)
+    is what turns "a change" into "a change that touched css and accent". The
+    label alone is whatever the model called it at the time; this is derived
+    from the states themselves and cannot be wrong about what moved.
+    """
+    before = before or {}
+    after = after or {}
+    return sorted(k for k in set(before) | set(after)
+                  if before.get(k) != after.get(k))
+
+
 def history(ws_id):
     """The audit trail, in his language: what changed, when, how to undo it."""
     doc = load_ws_doc(ws_id)
     vers = doc.get("versions") or []
+    current = doc.get("customization") or {}
     out = []
-    for v in reversed(vers):
+    # Oldest → newest, so each snapshot can be compared with what came after it;
+    # the list is reversed at the end because a timeline reads newest-first.
+    for i, v in enumerate(vers):
+        nxt = vers[i + 1].get("customization") if i + 1 < len(vers) else current
+        changed = _changed_keys(v.get("customization"), nxt)
         out.append({
             "version_id": v.get("id"),
             "when": v.get("ts"),
+            "label": v.get("label") or "a change",
             "describes": ("state BEFORE: %s" % (v.get("label") or "a change")),
             "undo_hint": ("restoring this version undoes '%s' and everything "
                           "after it" % (v.get("label") or "that change")),
+            # What this snapshot would restore, and what the change after it
+            # actually moved. Both are key names only — never the CSS itself,
+            # which can be 8000 characters and has no business in a list view.
+            "keys": sorted(v.get("customization") or {}),
+            "changed": changed,
+            "changed_label": (", ".join(changed) if changed else "nothing"),
         })
-    return {"workspace": ws_id, "current": doc.get("customization") or {},
-            "entries": out}
+    out.reverse()
+    return {"workspace": ws_id, "current": current,
+            "current_keys": sorted(current), "entries": out}
 
 
 def reset_customization(ws_id):

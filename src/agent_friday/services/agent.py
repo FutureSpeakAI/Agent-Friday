@@ -622,9 +622,11 @@ CLAUDE_TOOLS = [
          "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
       "required": ["workspace"]}},
-    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means.",
+    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means. Each entry names the keys that change touched (`changed_label`) and the keys restoring it would bring back (`keys`) — the customization itself is not returned, so read the entry and revert, don't ask for the contents.",
      "input_schema": {"type": "object", "properties": {
-         "workspace": {"type": "string"}}, "required": ["workspace"]}},
+         "workspace": {"type": "string"},
+         "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
+      "required": ["workspace"]}},
     {"name": "draft_email", "description": "Write an email and put it in front of the user for approval. This NEVER sends on its own — it creates an approval card showing the exact From/To/Subject/body, and the message goes out only when the user approves that card. Say so plainly in your reply: tell them it's waiting for their approval, not that you sent it. Write the full final text in `body`; the user reads what you wrote, and editing it afterwards invalidates the approval. Requires an account connected with sending allowed — if the tool says none is, tell them Settings → Connectors → Google → Add account with \"allow sending\" ticked, and do NOT claim you can't email at all.",
      "input_schema": {"type": "object", "properties": {
          "to": {"type": "string", "description": "One address, or several separated by commas."},
@@ -1182,11 +1184,44 @@ def _tool_revert_workspace(inp):
 
 
 def _tool_list_workspace_history(inp):
+    """Recent customization snapshots for one workspace.
+
+    Bounded by DROPPING ENTRIES, never by slicing the serialised string.
+    This used to end `json.dumps(...)[:2400]`, and history() returns up to 40
+    snapshots plus the full live customization — whose `css` field alone can
+    be 8000 characters. So the model was routinely handed JSON cut off
+    mid-token: unparseable, and unparseable in a way that looks like a model
+    failure rather than a tool one.
+
+    The whole customization blob is not sent at all. A list view needs to know
+    WHICH keys a snapshot would restore and what the change after it moved;
+    the stylesheet itself belongs in the revert, not the listing.
+    """
     from agent_friday.services import workspace_studio as ws
     wsid = ((inp or {}).get("workspace") or "").strip()
     if not wsid:
         return "list_workspace_history error: 'workspace' is required."
-    return json.dumps(ws.history(wsid), default=str)[:2400]
+    try:
+        limit = max(1, min(int((inp or {}).get("limit") or 12), 40))
+    except (TypeError, ValueError):
+        limit = 12
+    full = ws.history(wsid)
+    entries = full.get("entries") or []
+    out = {
+        "workspace": wsid,
+        "current_keys": full.get("current_keys") or [],
+        "total": len(entries),
+        "showing": min(limit, len(entries)),
+        "entries": [
+            {k: e.get(k) for k in
+             ("version_id", "when", "label", "changed_label", "keys")}
+            for e in entries[:limit]
+        ],
+    }
+    if len(entries) > limit:
+        out["note"] = ("%d older snapshots not shown; ask with a larger limit."
+                       % (len(entries) - limit))
+    return json.dumps(out, default=str)
 
 
 # -- Google connectivity, answered honestly ---------------------------------

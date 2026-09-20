@@ -379,9 +379,22 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
   if(cust.density==='compact')custCss+=`${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
   if(cust.accent)custCss+=`${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
   const openWsChat=(seed)=>window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji,seed);
+  // The history overlay is local to THIS window rather than App-level, so two
+  // open workspaces each get their own. Two arrival paths, because the window
+  // may or may not already exist: a flag read on mount covers "Settings opened
+  // this workspace just now", an event covers "the window was already open, so
+  // nothing is going to mount." Both clear the flag, or it would sit there and
+  // fire on some unrelated open later.
+  const[histOpen,setHistOpen]=useState(false);
+  useEffect(()=>{
+    if(window.__fridayOpenHistoryFor===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}
+    const onOpen=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}};
+    window.addEventListener('friday:open-ws-history',onOpen);
+    return()=>window.removeEventListener('friday:open-ws-history',onOpen);
+  },[id]);
   return(<div className="fwin" style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button onClick={onClose}>×</button></div>
+      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
@@ -389,6 +402,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
       {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
       {children}
     </div></div>
+    {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
   </div>);
 }
@@ -8495,6 +8509,82 @@ function gaSyncTitle(acc){
   try{return'Last successful sync: '+new Date(acc.last_sync).toLocaleString();}catch(e){return'Last successful sync: '+acc.last_sync;}
 }
 // ═════════════════════════════════════════════════════════════════════════════
+//  WORKSPACE HISTORY — the 40 snapshots that were already being kept
+// ═════════════════════════════════════════════════════════════════════════════
+// services/workspace_studio.py has kept a snapshot before every customization
+// since it shipped — undo, revert-to-version and restore-as-of all work, and the
+// ONLY way to reach any of it was to ask Friday out loud. This is that history,
+// on screen.
+//
+// Snapshots hold the state BEFORE a change, which is why each row reads "undo X"
+// rather than "restore X": restoring entry N undoes the change labelled N and
+// everything after it. Reverting is itself snapshotted server-side, so nothing
+// here is a one-way door — worth SAYING, because a list of destructive-looking
+// buttons that are all reversible still reads as dangerous until someone says so.
+function WorkspaceHistory({wsId,label,onClose}){
+  const[data,setData]=useState(null);
+  const[busy,setBusy]=useState('');
+  const[err,setErr]=useState('');
+  const load=()=>apiFetch('/api/workspace/'+encodeURIComponent(wsId)+'/history')
+    .then(r=>r.json())
+    .then(d=>setData(d&&d.entries?d:{entries:[],current_keys:[]}))
+    .catch(()=>setErr('Could not read the history for this workspace.'));
+  useEffect(()=>{load()},[wsId]);
+  const act=async(path,body,what)=>{
+    setBusy(what);setErr('');
+    try{
+      const r=await apiFetch('/api/workspace/'+encodeURIComponent(wsId)+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+      const d=await r.json();
+      if(d&&(d.ok===false||d.status==='error'))setErr(d.error||d.message||'That did not work.');
+      try{window.dispatchEvent(new CustomEvent('friday:ws-custom-changed',{detail:{workspace:wsId}}))}catch(e){}
+      await load();
+    }catch(e){setErr('That did not work: '+e.message)}
+    setBusy('');
+  };
+  const _dim={fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.5};
+  const _btn={background:'none',border:'1px solid rgba(0,212,255,0.3)',borderRadius:4,color:'#7dd3fc',cursor:'pointer',fontSize:11,padding:'4px 9px',fontFamily:'JetBrains Mono'};
+  const when=ts=>{try{return new Date(ts).toLocaleString()}catch(e){return String(ts||'')}};
+  const entries=(data&&data.entries)||[];
+  // `current_keys`, `changed_label` and per-entry `keys` were added to history()
+  // alongside this panel, so a server that has not restarted yet answers in the
+  // older shape. Deriving the key list from `current` — which the old shape DOES
+  // carry — is the difference between degrading and lying: the first version of
+  // this read `data.current_keys||[]` and cheerfully told a workspace with four
+  // live customizations that it was at its baseline. Where the old shape
+  // genuinely lacks the data, the line is omitted rather than guessed.
+  const currentKeys=(data&&data.current_keys)||Object.keys((data&&data.current)||{}).sort();
+  return(
+    // Starts BELOW the title bar on purpose. Covering it would take the window's
+    // own move, close and 🕒 buttons with it, so the one way out would be the
+    // Close button inside — and a modal you can only leave through its own
+    // affordance is how you strand someone.
+    <div onClick={e=>e.stopPropagation()} style={{position:'absolute',left:0,right:0,bottom:0,top:37,zIndex:6,background:'rgba(6,10,20,0.96)',backdropFilter:'blur(8px)',display:'flex',flexDirection:'column',padding:'14px 16px',overflowY:'auto'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <span className="card-title">{'History — '+(label||wsId)}</span>
+        <span style={{flex:1}}/>
+        <button style={_btn} onClick={onClose}>Close</button>
+      </div>
+      <div style={{..._dim,marginBottom:10}}>{currentKeys.length
+        ?'Friday has customized this workspace: '+currentKeys.join(', ')+'. Every step below is reversible — reverting is snapshotted too.'
+        :'This workspace is at its baseline. Nothing has been customized.'}</div>
+      {err&&<div style={{..._dim,color:'rgba(255,120,120,0.85)',marginBottom:8}}>{err}</div>}
+      <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+        <button style={_btn} disabled={!!busy||!entries.length} onClick={()=>act('/undo',{},'undo')}>{busy==='undo'?'…':'Undo the last change'}</button>
+        <button style={{..._btn,borderColor:'rgba(255,255,255,0.18)',color:'rgba(255,255,255,0.6)'}} disabled={!!busy||!currentKeys.length} onClick={()=>act('/reset',{},'reset')}>{busy==='reset'?'…':'Back to baseline'}</button>
+      </div>
+      {!data&&!err&&<div style={_dim}>Reading the history…</div>}
+      {data&&!entries.length&&<div style={_dim}>No changes recorded yet. Friday snapshots this workspace before every change it makes, so the first one will show up here.</div>}
+      {entries.map((e,i)=>(
+        <div key={e.version_id||i} style={{borderLeft:'2px solid rgba(0,212,255,0.3)',paddingLeft:10,marginBottom:12}}>
+          <div style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{e.label||(e.describes||'a change').replace(/^state BEFORE: /,'')}</div>
+          <div style={_dim}>{when(e.when)+(e.changed_label?' · touched '+e.changed_label:'')}</div>
+          {Array.isArray(e.keys)&&<div style={{..._dim,fontSize:10,opacity:.8}}>{e.keys.length?'Going back here restores: '+e.keys.join(', '):'Going back here returns the workspace to its baseline.'}</div>}
+          <button style={{..._btn,marginTop:5}} disabled={!!busy} title={e.undo_hint||''} onClick={()=>act('/revert',{version_id:e.version_id},e.version_id)}>{busy===e.version_id?'…':'Undo this and everything after'}</button>
+        </div>))}
+    </div>);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  SETTINGS → DOCK — shape the dock, one workspace at a time
 // ═════════════════════════════════════════════════════════════════════════════
 // Writes through window.fridaySaveDock rather than useSettings' own save(), so
@@ -8572,6 +8662,11 @@ function DockSettingsPanel(){
             <span style={{width:20,textAlign:'center'}}>{w.ico}</span>
             <span style={{flex:1,fontSize:12,fontFamily:'JetBrains Mono'}}>{w.label}</span>
             <span style={{..._dim,fontSize:10,minWidth:44}}>{WS_GROUP_OF[id]}</span>
+            {/* The settings half of "launched from the settings menu or the
+                workspace in question": open the workspace with its history
+                already showing, rather than a second copy of the panel that
+                could drift from the one in FWin. */}
+            <button style={_mini} title={'Earlier versions of '+w.label} onClick={()=>{try{window.__fridayOpenHistoryFor=id;window.fridayOpenWorkspace&&window.fridayOpenWorkspace({workspace:id});window.dispatchEvent(new CustomEvent('friday:open-ws-history',{detail:{workspace:id}}))}catch(e){}}}>🕒</button>
             <button style={_mini} disabled={idx===0} onClick={()=>move(id,-1)} title="Move up">↑</button>
             <button style={_mini} disabled={idx===shape.ids.length-1} onClick={()=>move(id,1)} title="Move down">↓</button>
           </div>);
