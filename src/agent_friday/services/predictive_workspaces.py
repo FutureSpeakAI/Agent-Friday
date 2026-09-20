@@ -137,6 +137,24 @@ def build_usage_model():
     }
 
 
+def _hidden_workspaces() -> set:
+    """Workspace ids the owner has hidden from the dock (Settings → Dock).
+
+    Reads `dock_layout.hidden` from settings. Returns an empty set on any
+    failure, which is the right direction to fail: a suggestion nobody wanted
+    is an annoyance, while a settings read that raises would take out the
+    whole prediction endpoint and the hourly prewarm loop with it.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        custom = (_load_settings() or {}).get("dock_custom") or {}
+        if not isinstance(custom, dict):
+            return set()
+        return {str(w) for w in (custom.get("hidden") or []) if w}
+    except Exception:
+        return set()
+
+
 def predict_workspaces(dow=None, hour=None, top=6):
     """Rank workspaces by likelihood of being wanted at (dow, hour).
 
@@ -171,8 +189,19 @@ def predict_workspaces(dow=None, hour=None, top=6):
             recent[e["workspace"]] = recent.get(e["workspace"], 0) + 1
     recent_sum = sum(recent.values()) or 1
 
+    # A workspace the owner took off the dock is not a suggestion.
+    #
+    # The amber "suggested" pulse renders on a dock button, so a hidden
+    # workspace cannot show one — the prediction would simply be computed,
+    # ranked, returned, and dropped, pushing a genuine suggestion out of the
+    # top-N to make room for one nobody can see. Filtering here rather than in
+    # the frontend keeps the API's answer honest for every caller, including
+    # prewarm, which would otherwise spend work warming caches for a workspace
+    # the owner has put away.
+    hidden = _hidden_workspaces()
+
     scores = {}
-    for ws in set(overall) | set(dow_tbl) | set(hour_tbl):
+    for ws in (set(overall) | set(dow_tbl) | set(hour_tbl)) - hidden:
         s = (
             0.55 * (hour_tbl.get(ws, 0) / hour_sum)
             + 0.28 * (dow_tbl.get(ws, 0) / dow_sum)
