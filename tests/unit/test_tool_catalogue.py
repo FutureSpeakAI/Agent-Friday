@@ -179,18 +179,22 @@ def test_a_tool_with_no_description_still_lists(tools):
 
 # ── off until measured ──────────────────────────────────────────────────────
 
-def test_it_is_off_by_default(monkeypatch):
-    """This changes the hot path for every turn. A context saving that costs
-    accuracy is not a saving, and the harness has not ruled that out yet."""
+def test_it_is_on_by_default(monkeypatch):
+    """Defaulted ON on 2026-09-19 once the risk was understood rather than
+    assumed: `_execute_tool` dispatches by NAME and never consults the list the
+    model was sent, so the catalogue governs what Friday is told about, not
+    what it can do."""
     monkeypatch.delenv("FRIDAY_TOOL_CATALOGUE", raising=False)
-    assert TC.enabled() is False
+    assert TC.enabled() is True
 
 
 @pytest.mark.parametrize("val, want", [
-    ("1", True), ("true", True), ("YES", True), ("on", True),
-    ("0", False), ("", False), ("maybe", False),
+    ("0", False), ("false", False), ("NO", False), ("off", False),
+    ("1", True), ("", True), ("anything-else", True),
 ])
-def test_the_flag_reads_plainly(monkeypatch, val, want):
+def test_the_flag_is_an_off_switch(monkeypatch, val, want):
+    """Only an explicit off turns it off. A typo must not silently cost 11,000
+    tokens a turn."""
     monkeypatch.setenv("FRIDAY_TOOL_CATALOGUE", val)
     assert TC.enabled() is want
 

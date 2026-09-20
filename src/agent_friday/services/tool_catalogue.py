@@ -51,9 +51,26 @@ LOADER_NAME = "load_tools"
 ALWAYS_RESIDENT = ("search_web", "read_file", "search_files")
 
 
+#: ON by default as of 2026-09-19, at the maintainer's call, once the risk was
+#: understood rather than assumed.
+#:
+#: WHY IT IS SAFE TO DEFAULT ON. `_execute_tool` dispatches by NAME out of
+#: CLAUDE_TOOL_HANDLERS and never consults the list the model was sent. So the
+#: catalogue governs what Friday is TOLD ABOUT, not what it can DO: a model
+#: that calls a tool it was never shown still gets it executed, and
+#: `_resolve_tool_name` even repairs near-miss names. Every one of the 75 tools
+#: is named with a summary in the loader's description, so nothing is hidden -
+#: the only cost of not loading a schema is guessing the argument shape, and a
+#: malformed call now pulls the schema in for the next round (see the loop).
+#:
+#: The failure this could still cause is a model that never thinks to ask.
+#: That is why the hot tools stay resident and why this remains one env var
+#: away from off.
 def enabled() -> bool:
-    return str(os.environ.get("FRIDAY_TOOL_CATALOGUE", "")).strip().lower() in (
-        "1", "true", "yes", "on")
+    raw = str(os.environ.get("FRIDAY_TOOL_CATALOGUE", "")).strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
 
 
 def _name_of(tool: dict) -> str:
