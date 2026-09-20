@@ -598,8 +598,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  # house to the label. Local is the normal case; marking it
                  # marks everything.
                  temperature=None, orb_label=None, orb_icon='⚡',
-                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
+                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
+                 catalogue_all=None):
     """Call a local Ollama model. Returns (text, tool_trace).
+
+    `catalogue_all` is the FULL tool registry when `tools` is only a catalogue
+    (services/tool_catalogue.py). The loop needs it to satisfy `load_tools`.
+    None means progressive disclosure is off and nothing here changes.
 
     When ``tools`` (the unified CLAUDE_TOOLS list) is supplied, runs a FULL
     agentic tool loop via Ollama's native OpenAI-compatible tool calling — the
@@ -683,6 +688,12 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 orb_label=orb_label or "Local brain…", orb_icon='🧠',
                 tools=tools, pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_oai_local, max_iters=max_iters,
+                # A llama-server seat is served through the OpenAI dialect, so
+                # this forward is the REAL local path. Dropping catalogue_all
+                # here left `load_tools` with an empty registry and every name
+                # answered "No such tool" - observed live on the first run,
+                # with the model correctly told browse_web did not exist.
+                catalogue_all=catalogue_all,
             )
 
     if not ollama.is_available():
@@ -825,6 +836,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             # The loop records the model_invocation event itself (seat="local",
             # token counts from usage) — recording here too would double-count.
             orb_id=orb_id,
+            catalogue_all=catalogue_all,
         )
         try:
             # _oai_agentic_loop returns (text, tool_trace).
@@ -1043,7 +1055,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None):
+                 on_delta=None, catalogue_all=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
 
     Two configuration paths:
@@ -1600,6 +1612,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
             meter_provider=pname,
+            catalogue_all=catalogue_all,
         )
         try:
             _text = _resp[0] if isinstance(_resp, tuple) and _resp else (

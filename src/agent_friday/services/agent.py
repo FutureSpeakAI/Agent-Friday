@@ -299,6 +299,36 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # tokens measured on the reference machine) exceeds n_ctx and the
         # turn dies with a 400 — chat.py's dispatch trims, and so must this.
         _sys_out = _system_for('local')
+
+        # PROGRESSIVE DISCLOSURE, when it is switched on.
+        #
+        # Sends an index of every tool plus one `load_tools` call instead of
+        # 13,300 tokens of schema - 41% of this seat's window, measured, to
+        # answer questions that call two tools. The full registry travels
+        # alongside so the loop can hand over real schemas when asked.
+        #
+        # Deliberately BEFORE fit_tools_to_seat: the budget trimmer drops the
+        # most expensive schemas, so on the catalogue path there is almost
+        # nothing left for it to drop, which is the point.
+        from agent_friday.services import tool_catalogue as _TCat
+        if _TCat.enabled() and CLAUDE_TOOLS:
+            _open = _TCat.opening_set(CLAUDE_TOOLS)
+            try:
+                _s = _TCat.savings(CLAUDE_TOOLS)
+                print("  [tools] catalogue on: %d tools -> %d opening tokens "
+                      "(saved %d, %.0f%%)"
+                      % (_s["tools"], _s["opening_tokens"],
+                         _s["saved_tokens"], _s["saved_pct"]), flush=True)
+            except Exception:
+                pass
+            return _call_ollama(
+                messages, system=_sys_out, model=use_model,
+                max_tokens=max_tokens, temperature=temperature,
+                orb_label=orb_label, tools=_open,
+                pii_lookup=pii_lookup, session_ctx=session_ctx,
+                catalogue_all=CLAUDE_TOOLS,
+            )
+
         try:
             from agent_friday.services.tool_budget import fit_tools_to_seat
             # Budget the whole request, not tools in isolation: in-budget
@@ -7389,7 +7419,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
-                      meter_provider=None, orb_id=None, seat=None):
+                      meter_provider=None, orb_id=None, seat=None,
+                      catalogue_all=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
     provider — local Ollama (gemma4 et al.) AND cloud OpenAI/OpenRouter.
 
@@ -7439,6 +7470,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         convo = _compaction.maybe_compact(convo, model=model)
     except Exception:
         pass
+    # The full registry, for `load_tools` to draw from. None means progressive
+    # disclosure is off and the loop behaves exactly as it always has.
+    from agent_friday.services import tool_catalogue as _TC
+    _catalogue_all = catalogue_all
+
     loops = max_iters if oai_tools else 1
     _empty_retried = False
     _tj_loop = _journal()
@@ -7590,6 +7626,43 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
+
+            # ── Progressive disclosure: the model asks for schemas ──────────
+            #
+            # `load_tools` is not a tool in the registry and never reaches
+            # _execute_tool or the vault gate - it hands the model more of the
+            # tool list it was already entitled to, which is a wire-format
+            # concern rather than an action. Handled here because this is the
+            # only place that owns `oai_tools` across rounds: the set sent on
+            # the next call is the set this loop is holding.
+            #
+            # See services/tool_catalogue.py for why. In short: 13,300 tokens
+            # of schema, 41% of a 32,768 window, to answer questions that call
+            # two tools.
+            if tname == _TC.LOADER_NAME:
+                try:
+                    _raw0 = fn.get("arguments")
+                    _a = (json.loads(_raw0) if isinstance(_raw0, str)
+                          else (_raw0 or {}))
+                    _want = _a.get("names") or []
+                except Exception:
+                    _want = []
+                _new, _msg = _TC.expand(_catalogue_all or [], _want, oai_tools)
+                if _new:
+                    try:
+                        from agent_friday.routing.model_router import (
+                            anthropic_to_openai_tools as _a2o)
+                        oai_tools = (oai_tools or []) + _a2o(_new)
+                    except Exception:
+                        # Could not convert: say so rather than leaving the
+                        # model waiting for schemas that will never arrive.
+                        _msg = ("Could not load those schemas on this seat. "
+                                "Answer with the tools you already have.")
+                tool_trace.append({"name": tname, "input": {"names": _want},
+                                   "result": _msg})
+                convo.append({"role": "tool", "tool_call_id": tcid,
+                              "content": _msg})
+                continue
             # Two wire shapes; assuming only one of them silently destroys
             # every local tool call that takes an argument.
             #
