@@ -1245,10 +1245,34 @@ def chat():
                 if _m.get('role') == 'user' and isinstance(_m.get('content'), str):
                     _intent = _m['content']
                     break
-            _local_tools, _tool_note = _fit_tools(
-                _route_info.get('model'), CLAUDE_TOOLS,
-                prompt_cost=_prompt_cost, intent=_intent,
-                system=system_prompt, messages=messages)
+            # THE CATALOGUE HAS TO REACH THIS PATH TOO.
+            #
+            # `services/tool_catalogue.py` was wired into
+            # `agent._generate_agent -> _via_ollama`, which is what
+            # /api/chat/send uses. THIS is /api/chat, the streaming path the
+            # UI actually talks to, and it assembles its own tool payload -
+            # so the measured 15,930 -> 3,311 token cut never applied to the
+            # surface the person uses. That is the "one registry, one
+            # assembler" rule in docs/design/active/one-tool-registry.md
+            # breaking the day after it was written about: two builders, two
+            # answers.
+            #
+            # Caught 2026-09-19 by a survey of the spec backlog, not by
+            # anything failing - which is the whole argument for the survey.
+            _catalogue_all = None
+            try:
+                from agent_friday.services import tool_catalogue as _TCat
+                if _TCat.enabled() and CLAUDE_TOOLS:
+                    _local_tools = _TCat.opening_set(CLAUDE_TOOLS)
+                    _catalogue_all = CLAUDE_TOOLS
+                    _tool_note = ''
+            except Exception:
+                _catalogue_all = None
+            if _catalogue_all is None:
+                _local_tools, _tool_note = _fit_tools(
+                    _route_info.get('model'), CLAUDE_TOOLS,
+                    prompt_cost=_prompt_cost, intent=_intent,
+                    system=system_prompt, messages=messages)
             if _tool_note:
                 system_prompt = (system_prompt or '') + "\n\n[SEAT] " + _tool_note
                 # Make the loss legible to the person, not only to the model.
@@ -1280,6 +1304,7 @@ def chat():
                     messages, system=system_prompt,
                     model=_route_info['model'],
                     temperature=settings.get('temperature'),
+                    catalogue_all=_catalogue_all,
                     orb_label=f"🏠 {_orb_label}",
                     orb_icon='🏠',
                     # Local models drive the full agent loop too: same
