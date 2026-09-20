@@ -91,7 +91,17 @@ class TestOpenUrlToolGatesGoogleOauth:
         assert opened == []
         assert "declined" in result.lower()
 
-    def test_gate_action_called_with_force_gate_and_never_send_scope_language(self, monkeypatch):
+    def test_gate_action_called_with_force_gate_and_says_this_connect_cannot_send(self, monkeypatch):
+        """The card must say what THIS connection does and does not grant.
+
+        It used to assert the words "gmail.send" alongside a claim that
+        Friday never requests it. On 2026-09-20 that claim stopped being
+        true — sending exists now, as a separate opt-in scope — so an
+        assertion that pins the old sentence would have been pinning a lie
+        into place (cf. test_content_platforms_base's hardcoded expiry).
+        What still has to hold, and is what this checks, is that the
+        ordinary connect is read-only for mail and says so.
+        """
         captured = {}
 
         def fake_gate_action(**kw):
@@ -104,7 +114,9 @@ class TestOpenUrlToolGatesGoogleOauth:
         agent_mod._tool_open_url({"url": "http://localhost:3000/api/google/auth"})
         assert captured["force_gate"] is True
         assert captured["kind"] == "connector_auth"
-        assert "gmail.send" in captured["action_description"]
+        described = captured["action_description"].lower()
+        assert "does not include" in described and "send mail" in described
+        assert "read-only" in described
 
     def test_ordinary_url_bypasses_the_gate_entirely(self, monkeypatch):
         # Also never mocked _validate_url -- a REAL network request to the

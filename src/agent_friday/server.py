@@ -93,6 +93,7 @@ ROUTE_MODULES = [
     'control', 'core_routes',
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
+    'gmail_send',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'memory_proposals', 'messages',
     'news', 'notifications', 'orchestrator', 'ownership',
