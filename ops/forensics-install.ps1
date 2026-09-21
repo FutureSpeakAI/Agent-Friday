@@ -37,13 +37,32 @@ if (-not (Test-Path $script)) { throw "missing: $script" }
 
 # Prefer the repo venv - it is the interpreter the project is tested against,
 # and `python` on PATH here resolves to an unrelated venv.
-$venvPy = Join-Path $repoRoot 'venv\Scripts\python.exe'
+#
+# pythonw.exe, NOT python.exe. python.exe is a console-subsystem binary, so
+# Task Scheduler launching it every two minutes flashes a console window on the
+# desktop every two minutes, forever. That is what it has been doing since this
+# task was installed on 2026-08-24. pythonw.exe is the same interpreter built
+# against the GUI subsystem: it never allocates a console, so there is nothing
+# to show. Task Settings -> Hidden does NOT fix this; that checkbox only hides
+# the task from the scheduler's own list.
+#
+# The snapshotter already logs to ~/.friday/forensics/snapshot.log, so losing
+# stdout costs nothing. Anything that must survive goes through that file.
+$venvPy = Join-Path $repoRoot 'venv\Scripts\pythonw.exe'
+if (-not (Test-Path $venvPy)) {
+	# Old venvs and some minimal installs ship python.exe only.
+	$venvPy = Join-Path $repoRoot 'venv\Scripts\python.exe'
+}
 if (Test-Path $venvPy) {
 	$py = $venvPy
 } else {
-	$py = (Get-Command python -ErrorAction SilentlyContinue).Source
+	$py = (Get-Command pythonw -ErrorAction SilentlyContinue).Source
+	if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
 	if (-not $py) { throw "no python found (looked for $venvPy, then PATH)" }
 	Write-Host "note: repo venv not found, using $py" -ForegroundColor Yellow
+}
+if ($py -notmatch 'pythonw\.exe$') {
+	Write-Host "warning: using $py (console subsystem) - this task will flash a console window on every run" -ForegroundColor Yellow
 }
 
 $outDir = Join-Path $env:USERPROFILE '.friday\forensics'
