@@ -3782,6 +3782,12 @@ _CHAIN_FAILURE_SIGNATURES = (
     "http 404",
     "connection refused",
     "no local seat available",
+    # The harness's own empty-response apology: a seat that answered twice
+    # with nothing produced no work product. Advancing it as a completed
+    # step feeds the apology to the next step as context (observed 2026-09-20,
+    # rsi-phase1-implement). Retry it like any other provider failure.
+    "fault on this end, not an answer",
+    "returned an empty response",
 )
 
 
