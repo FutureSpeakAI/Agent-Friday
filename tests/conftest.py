@@ -38,6 +38,43 @@ from pathlib import Path
 os.environ.setdefault("FRIDAY_REAL_HOME", str(Path.home()))
 
 
+# ── No console windows from the test suite ───────────────────────────────────
+# EIGHT CONSOLE WINDOWS POP UP ON THE DESKTOP EVERY TIME THE SUITE RUNS, and
+# the cause is the console-suppression fix rather than the absence of one.
+#
+# services/no_console.install() patches subprocess.Popen inside the Friday
+# server process, so the `python -m pytest` it spawns is created with
+# CREATE_NO_WINDOW. That patch lives in the server's interpreter and does not
+# survive into the child. pytest-xdist then spawns its workers (`-n auto`, so
+# one per core) through plain execnet Popen calls with no creationflags — and
+# because their parent has no console to inherit, Windows hands each worker a
+# brand-new console window.
+#
+# So the parent is silenced and the grandchildren shout. Installing the same
+# patch here, in the pytest master, is what closes the gap: conftest is
+# imported before xdist builds its workers, so the workers inherit
+# CREATE_NO_WINDOW like everything else.
+#
+# Deliberately best-effort. A test suite that refuses to start because a
+# cosmetic patch failed to import would be a worse bug than the popups.
+def _silence_child_consoles() -> None:
+    """Best-effort; called below once sys.path knows where `src/` is.
+
+    A test suite that refused to start because a cosmetic patch failed to
+    import would be a worse bug than the popups it fixes.
+    """
+    try:
+        from agent_friday.services.no_console import install
+        ok = install()
+        if os.environ.get("FRIDAY_CONSOLE_TRACE"):
+            import subprocess as _sp
+            print("[conftest] no_console install=%s patched=%s" % (
+                ok, getattr(_sp.Popen.__init__, "__friday_no_console__", False)),
+                flush=True)
+    except Exception:  # noqa: BLE001 - deliberately swallowed, see docstring
+        pass
+
+
 def _sweep_stale_test_homes(base: Path, max_age_seconds: float = 3600) -> None:
     """Best-effort cleanup of temp homes orphaned by a prior run.
 
@@ -132,6 +169,10 @@ _SRC = _ROOT / "src"
 for _p in (str(_SRC), str(_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+# Now that `src/` is importable — and still before xdist builds its workers,
+# which is the only ordering that matters. See the comment block above.
+_silence_child_consoles()
 
 import pytest  # noqa: E402
 
