@@ -219,10 +219,37 @@ def _load(name: str) -> dict:
              p.read_text(encoding="utf-8").splitlines() if l.strip())}
 
 
+def _union(rules: dict, laya_s: dict) -> dict:
+    """keyword OR laya, computed rather than asserted.
+
+    This mirrors `laya_backend.union_backend` exactly: `hard` if either scorer
+    says `hard`. It is derived from the two score files instead of being a
+    third pass over the model, because union is a function of the other two
+    and a separate run could only introduce a discrepancy, never information.
+
+    A case only one scorer has is passed through unchanged - that is also what
+    the backend does when Laya is not loaded.
+    """
+    out = {}
+    for cid in set(rules) | set(laya_s):
+        answers = [s["answer"] for s in (rules.get(cid), laya_s.get(cid)) if s]
+        if not answers:
+            continue
+        out[cid] = {
+            "id": cid,
+            "answer": "hard" if "hard" in answers else "soft",
+            "confidence": (laya_s.get(cid) or {}).get("confidence"),
+            "ms": sum((s or {}).get("ms", 0.0)
+                      for s in (rules.get(cid), laya_s.get(cid))),
+        }
+    return out
+
+
 def report() -> None:
     cases = {c["id"]: c for c in read_set()}
     rules = _load("severity_scores_rules.jsonl")
     laya_s = _load("severity_scores_laya.jsonl")
+    union_s = _union(rules, laya_s) if (rules and laya_s) else {}
 
     def grade(scores, only_firm=True):
         n = hit = 0
@@ -254,7 +281,8 @@ def report() -> None:
     print("  %s" % ("-" * 68))
     print("  %-8s %8s %8s %14s %14s" %
           ("scorer", "n", "correct", "MISSED hard", "false hard"))
-    for name, scores in (("rules", rules), ("laya", laya_s)):
+    for name, scores in (("rules", rules), ("laya", laya_s),
+                         ("union", union_s)):
         if not scores:
             print("  %-8s %8s  (not scored yet)" % (name, "-"))
             continue
@@ -262,6 +290,20 @@ def report() -> None:
         print("  %-8s %8d %8s %14d %14d"
               % (name, n, "%d (%.0f%%)" % (hit, 100.0 * hit / max(n, 1)),
                  mh, ms_))
+
+    # THE PROPERTY THE UNION IS FOR, stated as a count rather than a claim.
+    # If this is ever non-zero, taking either vote no longer drives the
+    # expensive error to zero and the argument for union weakens to accuracy
+    # alone - which union loses. So it is printed every run, not asserted once.
+    if rules and laya_s:
+        both = [cid for cid, c in cases.items()
+                if not c["arguable"] and c["label"] == "hard"
+                and rules.get(cid, {}).get("answer") == "soft"
+                and laya_s.get(cid, {}).get("answer") == "soft"]
+        print()
+        print("  hard cases MISSED BY BOTH scorers: %d" % len(both))
+        for cid in both:
+            print("    %s" % cases[cid]["text"][:64])
 
     for name, scores in (("rules", rules), ("laya", laya_s)):
         if not scores:
