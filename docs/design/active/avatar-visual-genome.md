@@ -1,8 +1,8 @@
 # Avatar visual genome: an explained, credited, permanent evolution of Friday's look
 
-> **Status:** proposal (nothing built). Owner answered decisions 1–3 and 5 on
-> 2026-09-22. The rating model (§7) is a proposed direction pending his
-> confirmation.
+> **Status:** proposal (nothing built). Owner answered the model choice,
+> nightly dream-rsi and user control of history on 2026-09-22, and
+> **DECIDED** the rating model (§7) the same day.
 > **Last verified:** 2026-09-22
 > **Implementation:** none yet. Builds on:
 > - `index.html`, the holographic scene (`MOODS`, `EVOLUTION_PATH`,
@@ -424,34 +424,109 @@ federation is deferred (V6 §1.1).
    use two different serializations and need one canonical form.
 4. **Moderating preview images.**
 
-**Ratings: proposed direction, pending the owner's confirmation.** Today ψ
-is currency, η is cost or penalty, and there is no rating record at all.
-The proposal:
+### Ratings: DECIDED (owner, 2026-09-22)
 
-- **Negatrons (η): the measured cost of adopting a module.**
-  - Measured by the installer, not claimed by the publisher: compute, VRAM,
-    disk, tokens per use, and permissions requested.
-  - Unfakeable because the installer measures it and signs the
-    measurement.
-  - A negatron is a price tag, not a punishment. For an avatar card it is
-    small but real (particle count against GPU cost, disk).
-- **Positrons (ψ): proven value.**
-  - **Retained installs:** still active N days after adoption, attested by
-    the adopter's signed heartbeat.
-  - **Signed endorsements.**
-  - Never self-minted. The current `/api/economy/earn` and `transfer`
-    accept caller-supplied identities with no caps, so they cannot be the
-    source.
-- **Negative experiences: separate signed flags.**
-  - Each flag has a stated reason from a fixed list plus optional text.
-  - One flag per person per module.
-  - Weighted by the flagger's standing, using the same trust-times-spam-
-    penalty weighting defederation already uses.
-  - Flags are not negatrons and never mixed with them.
+Today ψ is currency, η is cost or penalty, and there is no rating record at
+all. That changes as follows.
 
-This keeps the existing specs' positions: positrons are not a price, and
-adjudication is never a plain vote. Until the owner confirms, the avatar
-card design depends on none of it.
+**Negatrons (η) are the measured cost of adopting a module.**
+
+- What is measured: compute, VRAM, disk, tokens per use, and permissions
+  requested.
+- The **installer** computes it on the adopting machine and signs the
+  measurement. The publisher never supplies it, so it cannot be faked.
+- It is **not votable.** Nobody can add or remove negatrons by opinion.
+- A negatron is a price tag, not a punishment. For an avatar card it is
+  small but real: the particle count's GPU cost, plus disk.
+
+**Positrons (ψ) are proven value.** They are **not a like button.**
+
+- **Retained installs:** a module still active N days after adoption,
+  attested by the adopter's signed heartbeat.
+- **Signed endorsements:** one per identity per module, from an identity
+  with standing.
+- Never self-minted, never minted from raw engagement counts, and never
+  from a caller-supplied identity.
+
+**Negative experiences are a separate channel.**
+
+- A negative experience is a signed flag with a stated reason (a fixed list
+  plus optional text).
+- One flag per person per module.
+- Weighted by the flagger's standing, using the trust-times-spam-penalty
+  weighting defederation already uses.
+- Flags are never converted into negatrons, and negatrons are never read
+  as flags.
+
+**How market cards show it.** Every card shows **value versus cost**:
+
+- positrons, broken down into retained installs and endorsements;
+- negatrons, as the measured adoption cost itemised by resource;
+- the flags **alongside**, with their reasons and weighted count, kept
+  separate from both numbers.
+
+There is no single blended score.
+
+This keeps two positions the existing specs already take: positrons are not
+a price, and adjudication is never a plain vote.
+
+### Follow-up: existing specs and code that define ψ/η differently (not changed in this pass)
+
+**Code:**
+
+1. **`services/economy.py` module docstring (lines 1-25) and constants.**
+   - ψ is "earned by creating content, receiving likes/shares, completing
+     tasks, early adopter bonus".
+   - η is "spent on API calls, purchases, bandwidth, minted by system for
+     violations".
+   - `PSI_CREATE_CONTENT`, `PSI_LIKE` and the genesis bonus mint ψ from
+     activity, and `mint_negatron` makes η a penalty. All of this contradicts
+     "ψ = proven value, not a like button" and "η = measured adoption cost,
+     not votable".
+2. **`routes/federation.py` `/api/economy/earn` and `/api/economy/transfer`**
+   (about lines 442-507).
+   - They accept any caller-supplied `agent_id`/`from_agent`, and earning
+     has no caps, so anyone can mint ψ for any identity.
+   - They must become signed, identity-bound and capped, or be removed from
+     the public surface.
+3. **`services/budget_enforcer.py` and `services/orchestrator.py`
+   (`budget_mψ`).** Task budgets are denominated in milli-Positrons, so ψ is
+   spent to run work. Under the decision, what work costs is η; budgets need
+   their own unit (USD or η).
+4. **`services/platforms/federation_pub.py`**, and the pricing UI in
+   `index.html` near lines 11720 and 11823 ("milli-Positrons"), let a piece
+   be *priced* in positrons. That contradicts both "positrons are not a
+   price" and the decision.
+5. **The `index.html` Settings copy near line 37601:** "earn by contributing
+   compute, spend on orchestrated tasks. Q-score = reputation charge."
+6. **Q = Σψ − Ση** (`economy.py`, `get_leaderboard`). With η as adoption
+   cost, subtracting it from value no longer means "reputation". The
+   leaderboard needs redefining or retiring.
+
+**Specs and docs:**
+
+7. **`docs/design/implemented/content-pipeline-spec.md`**
+   - §8.7 "Engagement → Positrons": ψ from likes and shares crossing
+     thresholds.
+   - Decision D10.
+   - The `PSI_CREATE_CONTENT`/`PSI_LIKE` findings.
+
+   All of these are the like-button model the decision rejects. The
+   engagement collector that writes `psi_awards` would stop minting ψ.
+8. **`docs/design/active/workspace-ecosystem.md` §4.6.** Mostly aligned: it
+   already rewards "sustained installed use by distinct machines" and says
+   positrons are not a price. Two reconciliations are needed:
+   - it meters η as the *cost to run* (brokered consumption through
+     `cost_meter`), where the decision measures the *cost to adopt*
+     (installer-measured compute, VRAM, disk, tokens per use, permissions);
+   - it adopts Q as "contribution minus consumption".
+9. **`src/agent_friday/SELF.md`** ("Earn Positrons (ψ) from engagement")
+   and **`src/agent_friday/VOICE_DEMO.md`** ("engagement even earns
+   Positrons"). Friday's self-description would be wrong once the economy
+   changes.
+10. **`docs/design/active/v6-wholeness-spec.md` (line 49)** describes the
+    "Positron / compute-provider" stack as in-scope infrastructure. Its
+    wording should follow item 3 once budgets get their own unit.
 
 ## Decisions
 
@@ -463,15 +538,18 @@ card design depends on none of it.
 3. **User preference is paramount.** Looks can be hidden or deleted.
    Deletion is deliberate, confirmable, with a 30-day undo, and never
    automatic (§4).
+4. **Ratings (DECIDED).** Negatrons are the installer-measured adoption
+   cost; positrons are proven value; negative experiences are separate
+   signed, standing-weighted flags; cards show value against cost with
+   flags alongside (§7).
 
 **Still open:**
 
-4. **Nightly or weekly avatar evolution.** Recommended: weekly (§3).
-5. **Clock and pin.** Should growth replace the four-day clock, and what
+5. **Nightly or weekly avatar evolution.** Recommended: weekly (§3).
+6. **Clock and pin.** Should growth replace the four-day clock, and what
    happens to the currently pinned structure?
-6. **Moving backwards.** If calibration falls or sycophancy rises, may the
+7. **Moving backwards.** If calibration falls or sycophancy rises, may the
    look regress?
-7. **Ratings.** Confirm or amend the §7 direction.
 8. **Sharing defaults.** The default licence for a shared card, and whether
    the rationale is included by default.
 9. **Night window.** Are 00:30–05:15 for starts and 06:15 for the hard stop
@@ -493,5 +571,5 @@ card design depends on none of it.
 5. The card: export, import, verify, lineage with `lineage_models`.
 6. The share-intent hook, stopping before the market.
 7. **Separate item:** nightly dream-rsi scheduling (§5).
-8. **Later, after federation un-defers:** the market plumbing and ratings
+8. **Later, after federation un-defers:** the market plumbing, the decided ratings, and the §7 reconciliation list
    (§7).
