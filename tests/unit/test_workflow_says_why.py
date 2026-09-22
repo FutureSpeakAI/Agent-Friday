@@ -30,17 +30,45 @@ from agent_friday.services import reconcile as R
 
 
 @pytest.fixture()
-def tasks(monkeypatch):
-    """`reconcile_tasks` imports TASKS from `core` INSIDE the function, so the
-    patch has to land on core - patching the reconcile module does nothing and
-    the tests silently exercise the real registry."""
-    import threading
+def tasks():
+    """The live task ledger, emptied around the test.
 
-    import agent_friday.core as core
-    store = {}
-    monkeypatch.setattr(core, "TASKS", store, raising=False)
-    monkeypatch.setattr(core, "TASKS_LOCK", threading.RLock(), raising=False)
-    return store
+    This fixture used to do `monkeypatch.setattr(core, "TASKS", store,
+    raising=False)`, matching what `reconcile_tasks` then imported. Both were
+    wrong in the same direction, and they hid each other:
+
+      * TASKS and TASKS_LOCK live in `services.agent`, never in `core`.
+      * `raising=False` on a name that does not exist CREATES it. So the
+        fixture manufactured `core.TASKS` moments before the function tried to
+        import it, the import succeeded, and these tests passed - inside a
+        world that existed only while they ran.
+      * In production there was no fixture. The import raised ImportError on
+        every boot, `reconcile_tasks` swallowed it and returned
+        `{"interrupted": []}`, and the function whose whole purpose is "a job
+        that stopped must say it stopped" had never marked a single task in
+        its life.
+
+    That is why the evening described at the top of this file was lost twice:
+    the reason was NOT written down both times. It was never written at all.
+    The status tool had a second, real bug, which is what the later tests here
+    cover - but this half of the story was a test keeping its own subject
+    asleep.
+
+    Fixed 2026-09-22 (services/reconcile now imports from services.agent).
+    Patching where production actually reads means these tests exercise the
+    real registry, which is also why the fixture has to clear it rather than
+    swap it.
+    """
+    from agent_friday.services.agent import TASKS, TASKS_LOCK
+    with TASKS_LOCK:
+        saved = dict(TASKS)
+        TASKS.clear()
+    try:
+        yield TASKS
+    finally:
+        with TASKS_LOCK:
+            TASKS.clear()
+            TASKS.update(saved)
 
 
 # ── the reason is written where the status is ───────────────────────────────
