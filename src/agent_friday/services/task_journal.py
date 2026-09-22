@@ -250,6 +250,65 @@ def read_state(task_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# ── side blobs ───────────────────────────────────────────────────────────────
+# A named file in the task's own directory, written with the same atomicity
+# and at-rest protection as state.json. Exists so a resume checkpoint
+# (services/task_resume) does not have to reimplement either, and so deleting
+# a task still takes everything with it: delete() rmtree's this directory.
+
+def write_blob(task_id: str, name: str, obj: Any) -> bool:
+    """Atomically write ``obj`` as JSON to ``<task dir>/<name>``. Never raises."""
+    with _LOCK:
+        if task_id in _DELETED:
+            return False
+        try:
+            raw = json.dumps(obj, default=str, ensure_ascii=False).encode("utf-8")
+            _write_atomic(task_dir(task_id) / name, _protect(raw))
+            return True
+        except Exception as e:
+            _on_write_failure(task_id, f"{name}: {e}")
+            return False
+
+
+def read_blob(task_id: str, name: str) -> Optional[Any]:
+    p = task_dir(task_id) / name
+    if not p.exists():
+        return None
+    try:
+        return json.loads(_unprotect(p.read_bytes()).decode("utf-8"))
+    except Exception as e:
+        _log.warning("task journal: unreadable %s for %s (%s)", name, task_id, e)
+        return None
+
+
+def blob_exists(task_id: str, name: str) -> bool:
+    """Is the file there, regardless of whether it can be READ?
+
+    The distinction is not academic. ``read_blob`` returns None both when
+    nothing was ever written and when at-rest protection cannot open what was
+    — and on this machine the second case is real: rotating the vault
+    passphrase left 20+ older ``state.json`` files failing with "GCM auth tag
+    mismatch". A caller that cannot tell those apart reports "nothing was
+    saved" about work that was saved and is now unreachable, which is the
+    silent loss the journal exists to prevent.
+    """
+    try:
+        return (task_dir(task_id) / name).exists()
+    except Exception:
+        return False
+
+
+def delete_blob(task_id: str, name: str) -> bool:
+    p = task_dir(task_id) / name
+    try:
+        if p.exists():
+            p.unlink()
+            return True
+    except Exception as e:
+        _log.warning("task journal: could not remove %s for %s (%s)", name, task_id, e)
+    return False
+
+
 # ── the index ────────────────────────────────────────────────────────────────
 
 def index_put(task_id: str, name: str, status: str, created: Optional[float],

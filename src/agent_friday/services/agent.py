@@ -2678,6 +2678,65 @@ def _journal():
     return _tj
 
 
+def _resume():
+    from agent_friday.services import task_resume as _tr
+    return _tr
+
+
+def _resume_task_id(session_ctx):
+    """The task this loop belongs to, or None.
+
+    A plain chat turn has no task id and therefore no checkpoint. That is
+    deliberate: the user is sitting there, a lost chat turn is retyped in
+    seconds, and checkpointing every keystroke-driven turn would write the
+    whole transcript to disk for no recoverable value.
+    """
+    try:
+        return _journal().resolve_task_id(session_ctx)
+    except Exception:
+        return None
+
+
+def _resume_checkpoint(session_ctx, **kw):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().checkpoint(tid, **kw)
+    except Exception:
+        pass
+
+
+def _resume_mark(session_ctx, tool_name, tool_use_id):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().mark_tool_pending(tid, tool_name, tool_use_id)
+    except Exception:
+        pass
+
+
+def _resume_unmark(session_ctx):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().clear_tool_pending(tid)
+    except Exception:
+        pass
+
+
+def _resume_done(session_ctx):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().clear(tid)
+    except Exception:
+        pass
+
+
 def _journal_state(task_id):
     """Persist the current in-memory record as the task's state snapshot."""
     with TASKS_LOCK:
@@ -2802,8 +2861,22 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 TASKS[tid] = st
                 loaded += 1
         summary['loaded'] = loaded
+        # Which of the casualties still have a transcript on disk. The journal
+        # can only say a task was interrupted; services/task_resume is what can
+        # say it is recoverable, so the two notices are separate and the
+        # resumable one is the good news.
+        try:
+            from agent_friday.services import task_resume as _tr
+            summary['resumable'] = _tr.resumable_after_boot()
+        except Exception:
+            summary['resumable'] = []
         if announce:
             tj.announce_interrupted(summary.get('interrupted') or [])
+            try:
+                from agent_friday.services import task_resume as _tr2
+                _tr2.announce(summary.get('resumable') or [])
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:
@@ -3322,14 +3395,66 @@ def _admission_seat_for(model):
         {'model': model}, default_seat_resolver=_router_default_seat)
 
 
-def _start_pending_task_thread(task_id):
-    """Thread factory for FIFO promotion: start a deferred worker thread."""
+def _start_pending_task_thread(task_or_id):
+    """Thread factory for FIFO promotion: start a deferred worker thread.
+
+    Takes the task id OR the whole record, because the supervisor hands it the
+    record and this used to take only an id. That mismatch was not cosmetic:
+    ``_PENDING_TASK_THREADS.pop(<dict>, None)`` raises
+    ``TypeError: unhashable type: 'dict'`` as soon as the dict is non-empty —
+    and it is non-empty exactly when a task is queued behind a busy local
+    seat, which is the only situation promotion happens in.
+
+    So every promotion raised. A second task aimed at the busy local seat was
+    admitted, queued, shown an honest "waiting for the seat" status — and then
+    never started when the seat freed, because ``_sync_promotions`` died on
+    the way. The exception surfaced in the finishing worker's ``finally`` and
+    in the cancel route, nowhere near the task it stranded. Reproduced against
+    the real supervisor before this was changed; pinned by
+    tests/unit/test_seat_promotion.py, which fails on the old signature.
+    """
+    task_id = task_or_id.get("id") if isinstance(task_or_id, dict) else task_or_id
+    if not task_id:
+        return False
     with _PENDING_TASK_THREADS_LOCK:
         th = _PENDING_TASK_THREADS.pop(task_id, None)
     if th is None:
         return False
     th.start()
+    # The queue moved on, so a pending "shall I pay to skip this wait?" card
+    # is now a question about work that is already running. Answering it later
+    # would spend money on a task that no longer needs it.
+    try:
+        from agent_friday.services import cloud_spill as _cs
+        _cs.withdraw(task_id, "the local seat freed and the task started there")
+    except Exception:
+        pass
     return True
+
+
+def _offer_cloud_while_waiting(record, wait_s):
+    """A task has been waiting on the busy local seat. Ask; do not decide.
+
+    The task is NOT blocked on the answer. It keeps its place in the local
+    queue and starts there the moment the seat frees, whether or not anyone
+    ever opens the card — which is what makes asking cheap enough to be
+    allowed at all. See services/cloud_spill for the three rules it obeys:
+    name both models, never nag or block, and only interrupt when money is
+    genuinely at stake.
+    """
+    try:
+        from agent_friday.services import cloud_spill as _cs
+        out = _cs.offer(record, wait_s=wait_s)
+    except Exception:
+        return
+    if not out:
+        return
+    tid = record.get("id") or record.get("task_id")
+    cloud = ((out.get("approval") or {}).get("payload") or {}).get(
+        "cloud_model") or "a cloud model"
+    _task_log(tid, "local seat busy for %ds — asked whether to run this on %s "
+                   "instead. Still queued locally either way."
+              % (int(wait_s), cloud))
 
 
 def _seat_supervisor():
@@ -3346,7 +3471,15 @@ def _seat_supervisor():
             sup = _ss.SeatSupervisor(
                 thread_factory=_start_pending_task_thread,
                 reclaim_seat=None,
+                on_queued_wait=_offer_cloud_while_waiting,
             )
+            # Register the answer path at the same moment as the ask path, so
+            # a card can never exist with nothing listening for its decision.
+            try:
+                from agent_friday.services import cloud_spill as _cs
+                _cs.register()
+            except Exception:
+                pass
             sup.start()
             _SEAT_SUPERVISOR = sup
         return _SEAT_SUPERVISOR
@@ -7566,7 +7699,7 @@ def _ledger_model_invocation(model, provider, seat, duration_ms, tokens_in,
         pass
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠'):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -7594,7 +7727,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         safe_messages = list(messages)
         safe_system = system
 
-    tool_trace = []
+    # A resumed turn inherits the trace of the steps it already took, so the
+    # caller's receipt covers the WHOLE task rather than only the part that ran
+    # after the crash.
+    tool_trace = list(resumed_tool_trace or [])
     convo = list(safe_messages)
 
     # ── Auto-compaction (Part C): summarize the middle of a long transcript
@@ -7712,9 +7848,15 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     pass
 
             # Update orb: reasoning step
+            # `progress` deliberately NOT reported: this loop has no
+            # denominator. It used to send 0.05 + 0.1*(iter-1), a straight
+            # line to 90% that quietly asserts "about ten steps" and then
+            # parks — and the local loop sent nothing, so a local task showed
+            # 0% however well it was going. The step number is what is
+            # actually known, so that is what is said.
             _orb_safe(process_update, orb_id,
                       label="Reasoning…" if iter_count == 1 else f"Reasoning (step {iter_count})",
-                      progress=min(0.05 + (iter_count - 1) * 0.1, 0.9),
+                      step_n=iter_count,
                       step={"type": "reason", "iter": iter_count, "ts": _time.time()})
             # Task journal (TV3): the checkpoint is a step of the loop, written
             # BEFORE the model call so a crash mid-call still records the
@@ -7814,6 +7956,13 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                                        duration_ms=int((_time.time() - _t0) * 1000),
                                        session_ctx=session_ctx,
                                        kind=(session_ctx or {}).get("kind"))
+                # Feed the REAL billed dollars to the advisory budget. The
+                # token tally counts a re-sent transcript at freight; this is
+                # what the provider actually charged for it once cache reads
+                # are priced at 0.1x. Without it the advisory quotes a
+                # four-million-token number with no idea that it meant $3.14.
+                if _budget is not None:
+                    _budget.charge_usd(_iter_cost)
             except Exception:
                 pass
             # Task journal (TV3/TV4): what the call cost and where it ran,
@@ -7846,6 +7995,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
             if resp.stop_reason != 'tool_use' or not tool_uses:
                 _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
+                # The turn finished. A checkpoint that outlives it is an
+                # invitation to replay work that is already done.
+                _resume_done(session_ctx)
                 # Badge truth: record the model that ACTUALLY
                 # generated this text — the badge layer reads this, never
                 # the router's intent.
@@ -7916,7 +8068,18 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         continue
 
                 _task_log_tool(session_ctx, tu.name, tu.input)
+                # Crash-resume (services/task_resume): the ONE window where a
+                # restart cannot tell whether a side effect landed is between
+                # here and the line after. Mark it before, clear it after, so
+                # the resume path knows it is in that window instead of
+                # assuming it is not.
+                _resume_mark(session_ctx, tu.name, tu.id)
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                # Cleared on the SUCCESS path only, deliberately not in a
+                # `finally`. If _execute_tool raised, the tool's side effect is
+                # exactly as unknown as it is after a process death, and a
+                # `finally` would erase the one marker that says so.
+                _resume_unmark(session_ctx)
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
                 _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
@@ -7939,6 +8102,19 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     "content": result,
                 })
             convo.append({"role": "user", "content": tool_results})
+
+            # ── CRASH CHECKPOINT (services/task_resume) ──
+            # Exactly here and nowhere else: every tool_use in `convo` now has
+            # its matching tool_result, which is the only shape Anthropic will
+            # accept back. Checkpointing mid-round would save a transcript that
+            # 400s on resume. One atomic write per tool round buys the whole
+            # turn back after a crash; without it the record says what the task
+            # did and the work itself is gone.
+            _resume_checkpoint(session_ctx, convo=convo, tool_trace=tool_trace,
+                               iteration=iter_count, model=model,
+                               max_tokens=max_tokens, system=safe_system,
+                               orb_label=orb_label, orb_category=orb_category,
+                               orb_icon=orb_icon)
 
         _orb_safe(process_update, orb_id, status='error', label='Max iters', progress=1.0)
         return ("[Agent hit max tool iterations without completing.]", tool_trace)
@@ -8056,6 +8232,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # Anthropic loop; the coverage test counts these against rounds.
         _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
                             session_ctx=session_ctx)
+        # Every round reports, not only the ones that call tools — a local
+        # model that reasons for three rounds before picking a tool was
+        # previously indistinguishable from one that had not started.
+        _orb(label="Reasoning…" if _round == 1 else f"Reasoning (step {_round})",
+             step_n=_round)
         _t_round = _time.time()
         resp = send_fn(convo, oai_tools)
 
@@ -8180,7 +8361,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         })
         try:
             _first = (tool_calls[0].get("function") or {}).get("name") or "tool"
-            _orb(label=f"{_first}…",
+            _orb(label=f"{_first}…", step_n=_round,
                  step={"type": "tool", "name": _first, "ts": _time.time()})
         except Exception:
             pass

@@ -2859,13 +2859,13 @@ window.addEventListener('DOMContentLoaded',function(){
                 labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
                 this.labelContainer.appendChild(labelEl);
                 this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
-                    oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
+                    oAngle,oRadius,oHeight,oSpeed, /* null = nobody can compute a fraction for this yet; 0 would be a claim */ progress:null, status:'running',
                     birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
                     hoverScale:1.0, baseGlowOpacity:0.4, snapping:false});
             }
             updateOrb(id, upd) {
                 const o = this.orbs.get(id); if (!o) return;
-                if (upd.progress !== undefined) o.progress = Math.max(0,Math.min(1,upd.progress));
+                if (upd.progress !== undefined) o.progress = (upd.progress === null) ? null : Math.max(0,Math.min(1,upd.progress));
                 if (upd.status !== undefined) o.status = upd.status;
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
                 if (upd.status === 'completed') { o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e); }
@@ -3025,12 +3025,37 @@ window.addEventListener('DOMContentLoaded',function(){
                     }
                     o.glow.material.opacity = o.baseGlowOpacity-0.1 + amp*0.3 + Math.sin(elapsed*3+o.oAngle)*0.1 + ((isHovered || o.snapping) ? 0.45 : 0);
 
-                    const segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
+                    /* An UNKNOWN fraction is not zero. An agent loop has no
+                       denominator - it runs until the model stops asking for
+                       tools - so `progress` is now null for those, and a ring
+                       drawn from null sat empty for the whole run: the orb
+                       said "0% complete" about a task that was going fine.
+                       Unknown draws a travelling arc instead, which reports
+                       activity without claiming an amount. A real fraction
+                       (image generation knows its step count) still fills. */
+                    const known = (o.progress !== null && o.progress !== undefined && o.progress > 0);
+                    const running = (o.status === 'running' || o.status === undefined);
+                    let segs, arcFrom = 0;
+                    if (known) {
+                        segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
+                    } else if (running) {
+                        const span = Math.max(3, Math.floor(o.ringSegs*0.18));
+                        arcFrom = Math.floor((elapsed*0.45 + o.oAngle) * o.ringSegs / (Math.PI*2)) % o.ringSegs;
+                        segs = span;
+                    } else {
+                        segs = Math.max(2, Math.floor(o.ringSegs*(o.progress||0)));
+                    }
                     const pos = o.ringGeo.attributes.position.array;
                     for (let i=0;i<o.ringSegs;i++) {
                         const th = (i/o.ringSegs)*Math.PI*2, r=0.55;
-                        if (i<segs) { pos[i*3]=Math.cos(th)*r; pos[i*3+1]=Math.sin(th)*r; pos[i*3+2]=0; }
-                        else { const lt=((segs-1)/o.ringSegs)*Math.PI*2; pos[i*3]=Math.cos(lt)*r; pos[i*3+1]=Math.sin(lt)*r; pos[i*3+2]=0; }
+                        const on = (known || !running) ? (i<segs)
+                            : (((i - arcFrom + o.ringSegs) % o.ringSegs) < segs);
+                        if (on) { pos[i*3]=Math.cos(th)*r; pos[i*3+1]=Math.sin(th)*r; pos[i*3+2]=0; }
+                        else {
+                            const anchor = (known || !running) ? (segs-1) : arcFrom;
+                            const lt=((anchor+o.ringSegs)%o.ringSegs)/o.ringSegs*Math.PI*2;
+                            pos[i*3]=Math.cos(lt)*r; pos[i*3+1]=Math.sin(lt)*r; pos[i*3+2]=0;
+                        }
                     }
                     o.ringGeo.attributes.position.needsUpdate = true;
                     o.ring.lookAt(this.camera.position);
@@ -30873,7 +30898,8 @@ function fmtElapsed(sec) {
 // the task runs. A gap in the sequence is shown, never hidden.
 function TaskTimeline({
   taskId,
-  live
+  live,
+  fallback
 }) {
   const [events, setEvents] = useState([]);
   const [gaps, setGaps] = useState([]);
@@ -30954,6 +30980,11 @@ function TaskTimeline({
     }), "\u2022 ", k, ev.status ? ' \xB7 ' + ev.status : '', ev.model ? ' \xB7 ' + ev.model : '');
     return null;
   };
+  /* An orb-backed row has no journal but DOES carry its own log and step
+     thread. Prefer the journal; fall back to what the row already has rather
+     than claiming there is nothing. */
+  const fb = fallback || {};
+  const fbLines = Array.isArray(fb.log) && fb.log.length ? fb.log : Array.isArray(fb.steps) ? fb.steps.map(st => st && (st.text || st.name || st.type || '')).filter(Boolean) : [];
   return /*#__PURE__*/React.createElement("div", {
     className: "task-card-log"
   }, /*#__PURE__*/React.createElement("div", {
@@ -30980,12 +31011,29 @@ function TaskTimeline({
     style: {
       color: '#ff0080'
     }
-  }, "\u26A0 record gap: ", gaps.map(g => g.cursor_ahead ? 'cursor beyond the record' : `seq ${g.missing_from}\u2013${g.missing_to} missing`).join(', '), " \u2014 this timeline is incomplete"), events.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "\u26A0 record gap: ", gaps.map(g => g.cursor_ahead ? 'cursor beyond the record' : `seq ${g.missing_from}\u2013${g.missing_to} missing`).join(', '), " \u2014 this timeline is incomplete"),
+  /* "\u2014 no journal yet \u2014" was shown for every row whose id is
+     an ORB pid rather than a task id, which is most of what the tray lists.
+     A live process is not a journalled task and never will have a journal,
+     so "yet" was a promise that could not be kept. The orb's own log and
+     step thread are already on the row; the panel simply never read them.
+     Same defect family as the "\u2014 waiting for activity \u2014" bug
+     in routes/tasks.py, raised five times before anyone noticed the row
+     being clicked was the orb and not the task. */
+  events.length === 0 ? fbLines.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "task-card-log-line",
     style: {
       color: '#888'
     }
-  }, "\u2014 no journal yet \u2014") : events.map(row));
+  }, "\u2014 live process \u00B7 its own activity, not a task journal \u2014"), fbLines.slice(-60).map((l, i) => /*#__PURE__*/React.createElement("div", {
+    key: 'fb' + i,
+    className: "task-card-log-line"
+  }, String(l)))) : /*#__PURE__*/React.createElement("div", {
+    className: "task-card-log-line",
+    style: {
+      color: '#888'
+    }
+  }, live ? '\u2014 nothing reported yet \u2014' : '\u2014 nothing was recorded for this one \u2014') : events.map(row));
 }
 function TaskControls({
   task,
@@ -31081,7 +31129,8 @@ function TaskCard({
   expanded,
   onToggle,
   onCancel,
-  onView
+  onView,
+  onChanged
 }) {
   const status = task.status || 'running';
   const stalled = status === 'running' && !!task.stalled;
@@ -31131,6 +31180,27 @@ function TaskCard({
     },
     title: "Cancel",
     "aria-label": "Cancel task"
+  }, "\u2715"),
+  /* A finished card had NO control at all - the \u2715 only ever appeared
+     while a task was running, where it means "cancel". That is why 81 of them
+     piled up with no way to clear one. This hides the card; the record, the
+     journal and the result all stay where they are ("Delete record", in the
+     drawer, is still the one that destroys anything). */
+  status !== 'running' && status !== 'queued' && /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn",
+    style: {
+      opacity: 0.65
+    },
+    onClick: e => {
+      e.stopPropagation();
+      fetch('/api/tasks/' + encodeURIComponent(task.task_id) + '/dismiss', {
+        method: 'POST'
+      }).catch(() => {}).then(() => {
+        if (onChanged) onChanged();
+      });
+    },
+    title: "Dismiss this card. The record and its journal are kept.",
+    "aria-label": "Dismiss card"
   }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
     className: "task-card-meta"
   }, /*#__PURE__*/React.createElement("span", {
@@ -31170,7 +31240,16 @@ function TaskCard({
       color: '#ff0080',
       fontWeight: 700
     }
-  }, "\u2715"), "FAILED")), /*#__PURE__*/React.createElement("span", {
+  }, "\u2715"), "FAILED")), /* What is actually known. An agent loop has no denominator - it runs
+     until the model stops asking for tools - so a percentage here would
+     be invented. "step 7" is true; "0%" was not. */
+  task.step_n > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "task-card-status",
+    style: {
+      color: '#888',
+      fontWeight: 400
+    }
+  }, "step ", task.step_n, task.step_total ? ' of ' + task.step_total : ''), /*#__PURE__*/React.createElement("span", {
     className: "task-card-elapsed"
   }, fmtElapsed(task.elapsed))), (task.now || task.cost_usd != null) && /*#__PURE__*/React.createElement("div", {
     className: "task-card-sub",
@@ -31195,9 +31274,59 @@ function TaskCard({
       e.stopPropagation();
       onView();
     }
-  }, "View Results")), expanded && /*#__PURE__*/React.createElement(TaskTimeline, {
-    taskId: task.task_id,
-    live: status === 'running' || status === 'queued'
+  }, "View Results")),
+  /* RESUME. An interrupted task whose transcript was checkpointed can be
+     picked up where it stopped - every tool it already ran is answered in the
+     saved transcript, so nothing already done is redone and nothing already
+     paid for is bought twice. The reason is shown rather than summarised:
+     when a side-effecting tool was in flight at the crash, nothing on disk
+     can say whether it landed, and that is the user's call to make, not a
+     detail to bury behind a button. */
+  status === 'interrupted' && task.resumable && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "task-card-sub",
+    style: {
+      fontSize: 10,
+      color: '#aaa',
+      marginBottom: 4
+    }
+  }, task.resume_reason || ''), /*#__PURE__*/React.createElement("button", {
+    className: "task-card-btn results",
+    onClick: e => {
+      e.stopPropagation();
+      const body = task.resume_needs_confirmation ? {
+        confirm_pending: true
+      } : {};
+      if (task.resume_needs_confirmation && !window.confirm(task.resume_reason + '\n\nResume anyway?')) return;
+      fetch('/api/tasks/' + encodeURIComponent(task.task_id) + '/resume', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }).catch(() => {}).then(() => {
+        if (onChanged) onChanged();
+      });
+    }
+  }, task.resume_from_step ? 'Resume from step ' + task.resume_from_step : 'Resume')),
+  status === 'interrupted' && !task.resumable && task.resume_reason && /*#__PURE__*/React.createElement("div", {
+    className: "task-card-sub",
+    style: {
+      marginTop: 4,
+      fontSize: 10,
+      color: '#888'
+    }
+  }, "Cannot resume \u2014 ", task.resume_reason),
+  expanded && /*#__PURE__*/React.createElement(TaskTimeline, {
+    taskId: task.linked_task_id || task.task_id,
+    live: status === 'running' || status === 'queued',
+    fallback: {
+      log: task.log,
+      steps: task.steps
+    }
   }), expanded && /*#__PURE__*/React.createElement(TaskControls, {
     task: task
   }));
@@ -40105,6 +40234,10 @@ function App() {
   const chatEpoch = useRef(0);
   const inFlightEpoch = useRef(-1);
   const inFlightSince = useRef(0);
+  /* The id this turn was sent under, so the client can ASK whether it is
+     still working instead of inferring from a stopwatch that it is not. */
+  const inFlightTurn = useRef(null);
+  const [turnStatus, setTurnStatus] = useState(null);
   // ── Resizable chat panel ── drag the left edge for width, the top edge for
   // height. Clamped to 300–80vw × 200–80vh, persisted across sessions.
   const CHAT_MINW = 300,
@@ -41299,25 +41432,77 @@ function App() {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [sceneMenuOpen]);
-  /* No wait without an end. "Friday is thinking" with nothing behind it is
-     the same never-resolving state as the Intelligence spinner: if a turn has
-     been in flight far longer than any real reply takes, release the composer
-     and say so rather than spinning silently. */
+  /* No wait without an end — but "long" is not "dead", and this used to
+     confuse the two. It released the chat after fifteen minutes with "check
+     the work view to see whether it is still going", which on this machine
+     lands on perfectly healthy work: a routine turn here runs 25 tool calls
+     over five minutes and the long ones run far past that.
+
+     A clock cannot tell a working turn from a wedged one. The server can, so
+     ASK it (GET /api/chat/turn/<id>/liveness):
+
+       working / quiet -> the worker thread is alive. NEVER release. Say what
+                          it is doing and keep waiting, however long it takes.
+       gone            -> the thread died without answering. A real failure,
+                          and the only honest release.
+       hang.stalled    -> services/hang_watchdog says the process itself is
+                          wedged. Different condition, different sentence.
+       no answer at all-> if the interpreter is frozen this request cannot be
+                          served either, so sustained silence IS the hang
+                          signature. Four consecutive misses, not one, so a
+                          dropped packet never masquerades as a hang. */
   useEffect(() => {
-    if (!chatLoad) return;
-    const iv = setInterval(() => {
-      if (!inFlightSince.current) return;
-      if (Date.now() - inFlightSince.current < 15 * 60 * 1000) return;
+    if (!chatLoad) { setTurnStatus(null); return; }
+    let misses = 0, stop = false;
+    const release = (text) => {
       setChatLoad(false);
       inFlightSince.current = 0;
-      setChatMsgs(p => [...p, {
-        role: 'system', kind: 'stalled',
-        text: 'That turn has been running for over fifteen minutes with no reply. '
-          + 'I have released this chat so you can keep talking — check the work '
-          + 'view to see whether it is still going.',
-      }]);
-    }, 30000);
-    return () => clearInterval(iv);
+      inFlightTurn.current = null;
+      setTurnStatus(null);
+      setChatMsgs(p => [...p, { role: 'system', kind: 'stalled', text }]);
+    };
+    const iv = setInterval(async () => {
+      if (stop || !inFlightSince.current || !inFlightTurn.current) return;
+      const elapsed = Date.now() - inFlightSince.current;
+      /* Short turns are the overwhelming majority and need no supervision. */
+      if (elapsed < 90 * 1000) return;
+      let live = null;
+      try {
+        const r = await fetch('/api/chat/turn/'
+          + encodeURIComponent(inFlightTurn.current) + '/liveness');
+        if (r.ok) live = await r.json();
+      } catch (_) {/* counted below, never thrown */}
+      if (!live) {
+        if (++misses < 4) return;
+        release('Friday has stopped answering — the server is not responding '
+          + 'at all, which is what a hang looks like from here. Your turn may '
+          + 'not have finished. The chat is yours again.');
+        return;
+      }
+      misses = 0;
+      if (live.hang && live.hang.stalled) {
+        release('The Friday process has gone silent — the hang watchdog says '
+          + 'its heartbeat stopped ' + Math.round(live.hang.stale_for_s)
+          + 's ago, so this is a hang and not a long turn. A stack dump was '
+          + 'written to ~/.friday/logs. The chat is yours again.');
+        return;
+      }
+      if (live.state === 'gone') {
+        release('That turn ended without producing a reply — its worker is no '
+          + 'longer running. Nothing is still going in the background. The '
+          + 'chat is yours again.');
+        return;
+      }
+      /* working or quiet: the turn is HIS. Report, never release. */
+      setTurnStatus({
+        elapsed_s: live.elapsed_s,
+        label: live.label,
+        quiet: live.state === 'quiet',
+        quiet_for_s: live.quiet_for_s,
+        model: live.model,
+      });
+    }, 15000);
+    return () => { stop = true; clearInterval(iv); };
   }, [chatLoad]);
 
   const modelCatalog = useModelCatalog();
@@ -43358,7 +43543,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             color: p.color != null ? p.color : null
           });
           window.fridayUpdateOrb?.(p.id, {
-            progress: p.progress || 0,
+            progress: p.progress == null ? null : p.progress,
             status: p.status || 'running',
             label: p.label || p.name
           });
@@ -44226,6 +44411,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     setPausePending(null);
     inFlightEpoch.current = chatEpoch.current;
     inFlightSince.current = Date.now();
+    /* Minted here, sent with the turn, and the handle the liveness poll above
+       uses. Without it the client can only guess, which is how a stopwatch
+       ended up making this decision. */
+    inFlightTurn.current = 'turn-' + Date.now().toString(36) + '-'
+      + Math.random().toString(36).slice(2, 8);
+    setTurnStatus(null);
     setChatLoad(true);
     try {
       const body = {
@@ -44233,7 +44424,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         voice_mode: voiceOn,
         cite_sources: !!agentSettings.cite_sources,
         // Without this every turn lands in Main and the transcripts merge again.
-        conversation_id: convId || undefined
+        conversation_id: convId || undefined,
+        turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
       if (focusWin) body.workspace = focusWin;
@@ -45684,7 +45876,21 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     className: "typing-indicator"
   }, /*#__PURE__*/React.createElement("span", {
     className: "label"
-  }, "Friday is thinking"), /*#__PURE__*/React.createElement("span", {
+  },
+  /* A long turn stays his and says what it is doing. The alternative this
+     replaced was handing the chat back and pointing at another view. */
+  (() => {
+    if (!turnStatus) return "Friday is thinking";
+    const m = Math.floor((turnStatus.elapsed_s || 0) / 60);
+    const el = m >= 1 ? m + "m" : Math.round(turnStatus.elapsed_s) + "s";
+    if (turnStatus.quiet) {
+      return "Still working (" + el + ") — nothing reported for "
+        + Math.round(turnStatus.quiet_for_s) + "s. A single model call can "
+        + "run this long in silence; still holding the thread.";
+    }
+    return "Still working (" + el + ")"
+      + (turnStatus.label ? " — " + turnStatus.label : "");
+  })()), /*#__PURE__*/React.createElement("span", {
     className: "dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "dot"
@@ -46327,7 +46533,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       color: 'rgba(255,255,255,0.7)',
       letterSpacing: '0.04em'
     }
-  }, sortedBgTasks.length || 0)), sortedBgTasks.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, sortedBgTasks.length || 0), sortedBgTasks.some(t => t.status !== 'running' && t.status !== 'queued') && /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      fetch('/api/tasks/dismiss-all', {
+        method: 'POST'
+      }).catch(() => {}).then(() => setBgTasks(p => p.filter(x => x.status === 'running' || x.status === 'queued' || x.status === 'interrupted' && x.resumable)));
+    },
+    title: "Hide finished cards. Records are kept, and anything that can still be resumed stays.",
+    style: {
+      background: 'none',
+      border: 'none',
+      color: 'rgba(255,255,255,0.4)',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      padding: 0,
+      marginLeft: 8
+    }
+  }, "CLEAR FINISHED")), sortedBgTasks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "notif-empty"
   }, "No active tasks") : sortedBgTasks.slice(0, 8).map(t => /*#__PURE__*/React.createElement(TaskCard, {
     key: t.task_id,
@@ -46338,6 +46561,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       [t.task_id]: !e[t.task_id]
     })),
     onCancel: () => cancelBgTask(t.task_id),
+    onChanged: () => setBgTasks(p => p.filter(x => x.task_id !== t.task_id)),
     onView: () => viewBgTaskResult(t)
   })), /*#__PURE__*/React.createElement("div", {
     className: "notif-section-divider"
