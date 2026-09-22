@@ -1894,6 +1894,34 @@ DEFAULT_SETTINGS = {
     # and that is why "open all nine of these" stopped after none of them: the
     # gate denies the call and instructs the model to stop and wait for a yes.
     "confirm_before_opening": False,
+    # ── Which scanner decides whether an action needs your sign-off ──
+    #
+    # `dissent_gate.classify_severity` - a scan for ~40 substrings - decides
+    # whether an action reaches you as an approval card, including sending
+    # mail as you. `laya-union` adds a second opinion (a 421M encoder on CPU,
+    # ~400 ms) and gates when EITHER votes to gate.
+    #
+    # Measured on a 27-case adversarial set, 2026-09-22: the keyword scan
+    # missed 5 outward actions, Laya missed 1, and their misses were DISJOINT,
+    # so taking either vote missed none. The union scores lower overall (22/27
+    # vs Laya's 23) and is still the right mode, because a missed gate sends
+    # mail with no human in the loop and a false gate costs one approval card.
+    #
+    # ON BY DEFAULT as of 2026-09-22, Stephen's call with the eval in hand.
+    # What makes that safe is structural rather than statistical: `keyword` is
+    # one of the two inputs to the OR, so there is no input on which this
+    # REMOVES a card the substring scan would have raised. A missing model, a
+    # corrupt download or a load still in progress costs approval cards, never
+    # a silent send - `union_backend` falls back to a pure keyword verdict and
+    # says which in the decision log.
+    #
+    # An unregistered name here falls back to `keyword` loudly rather than
+    # raising, so a typo cannot take the approval gate offline.
+    "decision_backend": "laya-union",
+    # Score a second backend alongside the deciding one and write both answers
+    # to ~/.friday/decisions.jsonl, changing no verdict. "" is off. This is how
+    # a candidate earns the seat above; it is not itself a gate.
+    "decision_shadow": "",
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where the user can read
     # and set it. Before this existed there was nothing legible for a seat to

@@ -40,6 +40,24 @@ _WATCHED = {
     "subagent_model": "subagent seat",
     "model_routing.mode": "routing mode",
     "model_routing.local_model": "local seat",
+    # WHICH SCANNER GUARDS OUTWARD ACTIONS is a seat in every sense that
+    # matters here. It decides whether sending mail as him reaches him as an
+    # approval card first, and it is settable from the Settings panel, so the
+    # same rule applies: he always knows what is serving him, and a change
+    # announces itself rather than being discoverable only by reading a file.
+    "decision_backend": "approval scanner",
+    "decision_shadow": "approval scanner (shadow)",
+}
+
+#: What each scanner actually does, in the same spirit as _MODE_MEANING.
+_SCANNER_MEANING = {
+    "keyword": "a scan for ~40 marker substrings decides on its own",
+    "laya-union": "the keyword scan AND Laya both vote, and an action is held "
+                  "for your approval when EITHER says it should be - so this "
+                  "can add approval cards, never remove one",
+    "laya": "Laya decides ALONE - the keyword scan is not consulted, which "
+            "gives up the guarantee that enabling it cannot remove a card",
+    "": "nothing (off)",
 }
 
 _MODE_MEANING = {
@@ -94,6 +112,8 @@ def _snapshot(settings) -> dict:
         "subagent_model": settings.get("subagent_model"),
         "model_routing.mode": routing.get("mode"),
         "model_routing.local_model": routing.get("local_model"),
+        "decision_backend": settings.get("decision_backend"),
+        "decision_shadow": settings.get("decision_shadow"),
     }
 
 
@@ -115,6 +135,15 @@ def _write_state(snap: dict):
 
 def _describe(key: str, old, new) -> str:
     label = _WATCHED.get(key, key)
+    if key.startswith("decision_"):
+        # Not "Seat change" - he would read that as a model swap, and the
+        # thing that moved is what guards his outbound mail.
+        line = (f"Approval gate change: {label} "
+                f"{old or '(none)'} → {new or '(none)'}.")
+        meaning = _SCANNER_MEANING.get(str(new or ""))
+        if meaning:
+            line += f" Now, {meaning}."
+        return line
     line = f"Seat change: {label} {old or '(unset)'} → {new or '(unset)'}."
     if key == "model_routing.mode" and new in _MODE_MEANING:
         line += f" In {new} mode, {_MODE_MEANING[new]}."
@@ -169,7 +198,9 @@ def observe_seats(settings) -> list:
     # (b) High-priority notification naming old → new.
     try:
         from agent_friday.notifications_engine import push
-        push(title="Model seat changed",
+        _only_gate = all(e["key"].startswith("decision_") for e in events)
+        push(title=("Approval gate changed" if _only_gate
+                    else "Model seat changed"),
              body=summary,
              priority="high", source="seat_transparency",
              kind="seat_change",

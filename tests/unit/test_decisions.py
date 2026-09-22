@@ -214,7 +214,13 @@ def test_scrubbing_happens_before_clipping(tmp_path, monkeypatch):
 #  THE RECORD
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_every_gate_decision_is_written_down(tmp_path):
+def test_every_gate_decision_is_written_down(tmp_path, monkeypatch):
+    # Pinned to `keyword` explicitly. What this proves is that the LOG records
+    # a decision faithfully, which has nothing to do with which backend ships
+    # as the default - and on 2026-09-22 that default became `laya-union`, so
+    # a test that read the ambient setting started asserting the wrong method.
+    # It was only ever passing because the two happened to coincide.
+    monkeypatch.setenv("FRIDAY_DECISION_BACKEND", "keyword")
     approvals.classify("Send an email to the whole team")
     rows = _rows(tmp_path)
     assert len(rows) == 1
@@ -300,9 +306,37 @@ def test_a_broken_log_never_breaks_a_verdict(tmp_path, monkeypatch):
 #  BACKENDS, AND FAILING TO THE INCUMBENT
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_default_backend_is_keyword_and_stays_that_way():
+def test_the_fallback_backend_is_keyword_and_stays_that_way():
+    """The FALLBACK, which is a different thing from the shipped default.
+
+    This test used to assert both: that `DEFAULT_BACKEND` is keyword and that
+    `active_backend()` returns it. The second half stopped being true on
+    2026-09-22, when Stephen turned the union on with the eval in hand - the
+    shipped default is now `laya-union` (core.DEFAULT_SETTINGS), and that is a
+    product decision, not a regression.
+
+    What must NOT move is this: `DEFAULT_BACKEND` is the value every failure
+    path lands on. `decide()` falls back to it when a backend raises,
+    `active_backend()` returns it when a setting names something unregistered,
+    and `union_backend` answers from it when Laya is absent or still loading.
+    A substring scan that always works is the floor under all three. If this
+    ever becomes a model, an unloadable checkpoint takes the approval gate
+    with it.
+    """
     assert decisions.DEFAULT_BACKEND == "keyword"
-    assert decisions.active_backend() == "keyword"
+    assert decisions._BACKENDS[decisions.DEFAULT_BACKEND] is decisions._keyword_backend
+
+
+def test_the_shipped_default_is_the_union_and_is_selectable(monkeypatch):
+    """The other half of the old assertion, restated as what is true now."""
+    from agent_friday import core
+    assert core.DEFAULT_SETTINGS["decision_backend"] == "laya-union"
+
+    from agent_friday.services import laya_backend
+    laya_backend.register()
+    monkeypatch.setattr("agent_friday.core._load_settings",
+                        lambda: dict(core.DEFAULT_SETTINGS), raising=False)
+    assert decisions.active_backend() == "laya-union"
 
 
 def test_unknown_backend_name_falls_back_loudly_not_fatally(monkeypatch):
@@ -390,7 +424,10 @@ def test_that_action_really_is_soft_normally():
 #  READING IT BACK
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_summary_counts_what_actually_happened(tmp_path):
+def test_summary_counts_what_actually_happened(tmp_path, monkeypatch):
+    # Pinned for the same reason as test_every_gate_decision_is_written_down:
+    # this is about the summary's arithmetic, not about which scanner ships.
+    monkeypatch.setenv("FRIDAY_DECISION_BACKEND", "keyword")
     approvals.classify("Send an email to the team")
     approvals.classify("Summarise my notes")
     approvals.classify("Post this publicly")

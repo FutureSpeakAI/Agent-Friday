@@ -143,7 +143,17 @@ def start_warming() -> None:
     Called from the server's warm-up alongside the other caches, so the ~42 s
     is spent while Friday is starting rather than in front of Stephen's first
     approval card.
+
+    INERT UNDER FRIDAY_TESTING=1, like every other daemon in this codebase.
+    Without that guard the self-healing call in `union_backend` fires inside
+    the suite: each xdist worker that exercises the union starts a real 808 MB
+    checkpoint load, and the first thing that went wrong was not a wrong
+    verdict but `OSError: [Errno 28] No space left on device` in the middle of
+    an unrelated test. The tests that care about warming monkeypatch this
+    function, so they are unaffected.
     """
+    if os.environ.get("FRIDAY_TESTING") == "1":
+        return
     if _agent is not None or _loading:
         return
     threading.Thread(target=_load_now, name="laya-warm", daemon=True).start()
@@ -261,8 +271,22 @@ def union_backend(question: str, state: str, **kw):
     kw_answer, _, kw_detail = _dec._keyword_backend(question, state, **kw)
 
     if not is_ready():
+        # SELF-HEALING, AND STILL NOT BLOCKING. However this backend got
+        # selected - the Settings panel, a hand-edited settings.json, a CLI
+        # write - the first decision that needs it kicks the load on a
+        # background thread and is answered by `keyword` right now. Without
+        # this, flipping the switch on a running server would select a model
+        # that never loads until the next restart, and the panel would sit on
+        # "still loading" forever.
+        #
+        # Guarded on `_load_error`: a checkpoint that failed to load is not
+        # retried on every approval, which would turn one missing download
+        # into a thread per decision.
+        if not _loading and _load_error is None:
+            start_warming()
         return kw_answer, None, dict(kw_detail, union="keyword-only",
-                                     reason="laya not loaded")
+                                     reason="laya still loading"
+                                     if _loading else "laya not loaded")
     try:
         severity, conf, detail = _answer(state)
     except Exception as e:
@@ -290,6 +314,71 @@ def union_backend(question: str, state: str, **kw):
                                      laya=severity, escalated=False)
 
     raise KeyError("union backend has no answer for %r" % question)
+
+
+# ---------------------------------------------------------------------------
+#  THE THREE STATES, AS ONE DEFINITION
+# ---------------------------------------------------------------------------
+#
+# The settings file carries two generic keys - `decision_backend` and
+# `decision_shadow` - because `decisions.py` is deliberately backend-agnostic
+# and shadowing is the seam's job for ANY candidate, not a favour this module
+# does itself. But four combinations of two keys is not a control a person can
+# reason about, and two of them are states nobody should be able to pick:
+#
+#   decision_backend="laya"  would REPLACE the keyword scan rather than adding
+#   to it, which throws away the structural safety property - that the union
+#   can only ever ADD an approval card - and leaves only the 85% accuracy.
+#   It stays registered and reachable by hand for evaluation; it is not
+#   offered in the UI, and turning the switch to "on" never selects it.
+#
+# So the UI gets three named states and this table is the only place they are
+# translated. A mapping written once in Python and again in two HTML files is
+# a mapping that will disagree with itself.
+
+MODES = {
+    "off":    {"decision_backend": "keyword",     "decision_shadow": ""},
+    "shadow": {"decision_backend": "keyword",     "decision_shadow": "laya"},
+    "on":     {"decision_backend": "laya-union",  "decision_shadow": ""},
+}
+
+MODE_MEANING = {
+    "off": "the keyword scan alone decides which actions need your sign-off",
+    "shadow": "the keyword scan still decides; Laya scores the same actions "
+              "alongside it and both answers are logged, changing no verdict",
+    "on": "an action is held for your sign-off when EITHER the keyword scan "
+          "or Laya says it should be - so this can add approval cards, never "
+          "remove one",
+}
+
+
+def settings_for_mode(mode: str) -> dict:
+    """The settings delta that puts the gate in `mode`. Unknown -> off."""
+    return dict(MODES.get(str(mode or "").lower()) or MODES["off"])
+
+
+def current_mode(settings=None) -> str:
+    """Which of the three states the CURRENT settings describe.
+
+    Anything that is not one of the three - a hand-edited `decision_backend:
+    "laya"`, or a shadow set alongside a union - reports "custom" rather than
+    being rounded to the nearest switch position. The UI shows that plainly
+    instead of displaying a state the file does not contain.
+    """
+    if settings is None:
+        try:
+            from agent_friday.core import _load_settings
+            settings = _load_settings() or {}
+        except Exception:
+            settings = {}
+    have = {
+        "decision_backend": str((settings or {}).get("decision_backend") or ""),
+        "decision_shadow": str((settings or {}).get("decision_shadow") or ""),
+    }
+    for name, want in MODES.items():
+        if have == want:
+            return name
+    return "custom"
 
 
 def register() -> None:

@@ -159,6 +159,82 @@ def friday_capabilities():
         return jsonify({"error": str(e)[:200]}), 500
 
 
+@core_bp.route('/api/decisions/gate_status')
+def decisions_gate_status():
+    """What is actually deciding which actions need Stephen's sign-off.
+
+    The settings file says which scanner is SELECTED. This says whether it is
+    running, which is a different question and the one that matters when the
+    answer is "the model is still loading" or "the download is missing". A
+    switch that shows `on` while the gate is in fact keyword-only would be the
+    same class of lie the approval log was built to stop.
+
+    Never 500s on a missing model: an absent Laya is a degraded feature with a
+    working fallback, not a broken endpoint, and the panel has to be able to
+    say so.
+    """
+    from agent_friday.services import decisions as _dec
+    out = {
+        "mode": "off",
+        "selected_backend": _dec.DEFAULT_BACKEND,
+        "effective_backend": _dec.DEFAULT_BACKEND,
+        "available": sorted(_dec.available_backends()),
+        "laya": {"ready": False, "loading": False, "error": "not installed"},
+        "degraded": False,
+        "explain": "",
+    }
+    try:
+        out["selected_backend"] = _dec.active_backend()
+        out["effective_backend"] = out["selected_backend"]
+        out["shadow"] = _dec.shadow_backend()
+    except Exception as e:
+        out["explain"] = "could not read the decision settings: %s" % e
+        return jsonify(out)
+
+    try:
+        from agent_friday.services import laya_backend as _laya
+        out["mode"] = _laya.current_mode()
+        out["laya"] = _laya.status()
+        # The settings delta behind each switch position, served rather than
+        # re-derived in JavaScript. A mapping written once here and again in
+        # two HTML files is a mapping that will eventually disagree with
+        # itself, and the disagreement would be a gate in a state neither file
+        # believes it is in.
+        out["modes"] = _laya.MODES
+        out["mode_meaning"] = _laya.MODE_MEANING
+    except Exception as e:
+        out["laya"] = {"ready": False, "loading": False,
+                       "error": "%s: %s" % (type(e).__name__, e)}
+
+    wants_laya = (out["selected_backend"] in ("laya", "laya-union")
+                  or out.get("shadow") in ("laya", "laya-union"))
+    ready = bool((out["laya"] or {}).get("ready"))
+    loading = bool((out["laya"] or {}).get("loading"))
+
+    # DEGRADED means: you selected Laya and it is not answering. The gate is
+    # still closed - `union_backend` falls back to the keyword verdict - so
+    # this is an honesty flag, not an alarm.
+    if wants_laya and not ready:
+        out["degraded"] = True
+        if out["selected_backend"] == "laya-union":
+            out["effective_backend"] = _dec.DEFAULT_BACKEND
+        out["explain"] = (
+            "Laya is still loading (about a minute from a cold start). Until "
+            "it answers, the keyword scan alone decides - which is exactly "
+            "what it did before, so nothing is less protected."
+            if loading else
+            "Laya is not answering (%s), so the keyword scan alone is "
+            "deciding. Approvals still work; the second opinion is missing."
+            % ((out["laya"] or {}).get("error") or "unavailable"))
+    elif wants_laya and ready:
+        out["explain"] = (
+            "Both scanners are serving. An action is held for your sign-off "
+            "when either one says it should be.")
+    else:
+        out["explain"] = "The keyword scan alone is deciding."
+    return jsonify(out)
+
+
 @core_bp.route('/api/health')
 def friday_health():
     """Return server uptime and system health snapshot for the demo UI."""
