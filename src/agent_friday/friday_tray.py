@@ -33,6 +33,19 @@ try:
 except Exception:
     pass
 
+# Same reasoning, one layer up. The tray is the ROOT of Friday's process tree,
+# so setting HF_HUB_DISABLE_XET here is inherited by the server and by every
+# child the server spawns - which matters because the two hf_xet aborts on
+# 2026-09-22 were in child processes, not in the server itself. Arming
+# faulthandler here additionally covers the tray, which outlives the server
+# and was previously the one process that could die with no record at all.
+try:
+    from agent_friday.services import crash_forensics as _crash
+    _crash.disable_hf_xet()
+    _crash.install()
+except Exception:
+    pass
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
