@@ -4206,6 +4206,158 @@ function apiFetch(url, opts) {
     headers
   }));
 }
+// ── Panel data cache (stale-while-revalidate) ─────────────────────────────
+// A workspace unmounts when closed and refetches everything when reopened,
+// and some of those reads are slow (a git sweep over every repo, a feed
+// crawl, Google Calendar). GETs to the endpoints below are remembered per
+// URL: a reopened panel paints from the last answer at once, and when that
+// answer is older than its freshness window the real request still goes out
+// in the background, so the following open is current. Nothing older than
+// FRIDAY_PANEL_CACHE_MAX_AGE is ever painted. Any non-GET to /api/<area>/...
+// forgets that area (and its linked areas), so a panel never shows the state
+// from before an action taken in it. Only these read-only, unpolled
+// endpoints are cached; every other request passes straight through.
+const FRIDAY_PANEL_CACHE_RULES = [
+  [/^\/api\/repos\/scan$/, 20],
+  [/^\/api\/system$/, 15],
+  [/^\/api\/calendar\/(today|tomorrow|week)$/, 60],
+  [/^\/api\/news\/clusters$/, 600],
+  [/^\/api\/memory\/stats$/, 60],
+  [/^\/api\/wiki\/structure$/, 30],
+  [/^\/api\/(countdowns|trust|personality|epistemic|contacts)$/, 60]
+];
+const FRIDAY_PANEL_CACHE_MAX_AGE = 30 * 60;
+const FRIDAY_PANEL_CACHE_LINKED = {
+  git: ['repos'],
+  repos: ['git']
+};
+(function installPanelCache() {
+  if (window.__fridayPanelCache) return;
+  const rawFetch = window.fetch.bind(window);
+  const store = new Map(); // path -> {t, snap}
+  const inflight = new Map(); // path -> Promise<snap>
+  const stats = {
+    hits: 0,
+    misses: 0,
+    revalidations: 0
+  };
+  const freshFor = path => {
+    for (const [re, secs] of FRIDAY_PANEL_CACHE_RULES) if (re.test(path)) return secs;
+    return null;
+  };
+  const areaOf = path => (path.match(/^\/api\/([^\/?#]+)/) || [])[1];
+  const forget = area => {
+    const areas = [area].concat(FRIDAY_PANEL_CACHE_LINKED[area] || []);
+    for (const k of Array.from(store.keys())) if (areas.indexOf(areaOf(k)) >= 0) store.delete(k);
+    for (const k of Array.from(inflight.keys())) if (areas.indexOf(areaOf(k)) >= 0) inflight.delete(k);
+  };
+  const toResponse = snap => new Response(snap.status === 204 || snap.status === 304 ? null : snap.body, {
+    status: snap.status,
+    statusText: snap.statusText,
+    headers: {
+      'Content-Type': snap.type || 'application/json'
+    }
+  });
+  // One network read per path at a time; every caller gets its own Response
+  // built from the same text, so no caller finds the body already consumed.
+  const load = (path, url, init) => {
+    if (inflight.has(path)) return inflight.get(path);
+    const p = rawFetch(url, init).then(r => r.text().then(body => ({
+      status: r.status,
+      statusText: r.statusText,
+      type: r.headers.get('content-type') || '',
+      body
+    }))).then(snap => {
+      if (inflight.get(path) === p && snap.status === 200 && /json/.test(snap.type)) store.set(path, {
+        t: Date.now(),
+        snap
+      });
+      return snap;
+    }).finally(() => {
+      if (inflight.get(path) === p) inflight.delete(path);
+    });
+    inflight.set(path, p);
+    return p;
+  };
+  window.fetch = function (input, init) {
+    if (typeof input !== 'string') return rawFetch(input, init);
+    let path;
+    try {
+      const u = new URL(input, window.location.href);
+      if (u.origin !== window.location.origin) return rawFetch(input, init);
+      path = u.pathname + u.search;
+    } catch (e) {
+      return rawFetch(input, init);
+    }
+    const method = (init && init.method || 'GET').toUpperCase();
+    if (method !== 'GET') {
+      const area = areaOf(path);
+      if (area) forget(area);
+      return rawFetch(input, init);
+    }
+    const fresh = freshFor(path);
+    if (fresh == null) return rawFetch(input, init);
+    const hit = store.get(path);
+    const age = hit ? (Date.now() - hit.t) / 1000 : Infinity;
+    if (hit && age <= FRIDAY_PANEL_CACHE_MAX_AGE) {
+      stats.hits++;
+      if (age > fresh && !inflight.has(path)) {
+        stats.revalidations++;
+        load(path, input, init).catch(() => {});
+      }
+      return Promise.resolve(toResponse(hit.snap));
+    }
+    stats.misses++;
+    return load(path, input, init).then(toResponse);
+  };
+  window.__fridayPanelCache = {
+    stats,
+    forget,
+    size: () => store.size
+  };
+})();
+
+// Warm the panel cache a few seconds after boot, one request at a time and
+// only while the browser is idle: first the workspaces Friday predicts will
+// be opened now (/api/workspace/predictions), then the known-slow ones. The
+// server keeps its own cache behind these, so this also starts the slow
+// server-side work (git sweep, feed crawl) before anyone is waiting on it.
+const FRIDAY_PREFETCH_URLS = {
+  home: ['/api/countdowns', '/api/trust', '/api/personality', '/api/epistemic', '/api/memory/stats'],
+  calendar: ['/api/calendar/today', '/api/calendar/week', '/api/calendar/tomorrow'],
+  code: ['/api/repos/scan'],
+  system: ['/api/system'],
+  wiki: ['/api/wiki/structure'],
+  contacts: ['/api/contacts'],
+  trust: ['/api/trust'],
+  news: ['/api/news/clusters']
+};
+function fridayPrefetchPanels() {
+  const idle = cb => window.requestIdleCallback ? window.requestIdleCallback(cb, {
+    timeout: 4000
+  }) : setTimeout(cb, 300);
+  return apiFetch('/api/workspace/predictions?top=4').then(r => r.json()).catch(() => ({})).then(d => {
+    const predicted = (d && d.predictions || []).map(p => p.workspace);
+    // News last: its first build is a minute-long feed crawl.
+    const order = predicted.filter(w => w !== 'news').concat(['home', 'calendar', 'code', 'system', 'news']);
+    const urls = [];
+    order.forEach(ws => (FRIDAY_PREFETCH_URLS[ws] || []).forEach(u => {
+      if (urls.indexOf(u) < 0) urls.push(u);
+    }));
+    return new Promise(done => {
+      const next = () => {
+        const u = urls.shift();
+        if (!u) return done();
+        idle(() => apiFetch(u).then(r => r.text()).catch(() => {}).then(next));
+      };
+      next();
+    });
+  });
+}
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
+}
+// ── end panel data cache ──────────────────────────────────────────────────
 // Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
 // (show_all_workspaces=false). Existing installs (show_all_workspaces=true) see
 // every workspace. WS (below) always includes all items so deep-link navigation
