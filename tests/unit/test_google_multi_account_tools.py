@@ -123,7 +123,7 @@ class TestSearchEmailMultiAccount:
                             lambda limit=25: ([{"subject": "STALE single-account cache hit"}], "cache"))
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
         monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
-        monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15: {
+        monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15, **kw: {
             "accounts": [
                 {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
                 {"id": "acc2", "label": "Work", "email": "work@example.com"},
@@ -146,7 +146,7 @@ class TestSearchEmailMultiAccount:
                             lambda limit=25: ([], "empty"))
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
         monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
-        monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15: {
+        monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15, **kw: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "messages": [],
             "errors": [{"account_id": "acc1", "label": "Personal",
@@ -185,7 +185,7 @@ class TestSearchEmailMultiAccount:
     def test_names_which_store_was_checked(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
         monkeypatch.setattr(ga, "accounts_summary", lambda: _summary())
-        monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15: {
+        monkeypatch.setattr(ga, "merged_gmail", lambda limit_per_account=15, **kw: {
             "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
             "messages": [], "errors": [],
         })

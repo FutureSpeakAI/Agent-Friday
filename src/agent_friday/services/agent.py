@@ -542,8 +542,8 @@ CLAUDE_TOOLS = [
          "query": {"type": "string"}}, "required": ["query"]}},
     {"name": "query_calendar", "description": "Check the user's Google Calendar (today's & tomorrow's events). Built-in Google integration. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to walk the user through it; do NOT say you lack calendar access.",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "search_email", "description": "Search and read the user's recent Gmail (built-in read-only Google integration). If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail.",
-     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "search_email", "description": "Search and read the user's recent Gmail across every connected account (built-in read-only Google integration). The query is sent to Gmail's own search, so its operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes and OR. An empty query returns recent unread. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail. If the result has search_failed or error, the search did NOT run — report that failure; never describe it as zero results.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:jere after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
     {"name": "search_drive", "description": "Search Google Drive file/folder names across every connected Google account (built-in read-only integration). Returns each hit's id, name, mime_type, and which account it's in — pass the id + mime_type to read_doc for Docs/Sheets content. If a hit's account never granted Drive access, its error is reported per-account, not as 'not connected'.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Name substring to search for; omit for the most recently modified files."}}}},
     {"name": "read_doc", "description": "Read a Google Doc's text or a Sheet's first-tab values, by file id (get the id from search_drive first). account_id is optional — omit it to try every connected account until one has access.",
@@ -1405,27 +1405,74 @@ def _tool_search_email(inp):
                            "note": summary["note"]})
 
     if has_accounts and summary is not None:
+        # THE QUERY GOES TO GMAIL. It used to not go anywhere.
+        #
+        # This called merged_gmail() with NO query, got back the default
+        # unread/recent window, and then filtered those cards with
+        # `_email_query_matches` -- a word-boundary text match over
+        # sender+subject+snippet. So a Gmail search operator was matched as
+        # LITERAL TEXT: `is:unread` looked for the characters "is:unread" in
+        # the subject line, found them nowhere, and returned count 0.
+        #
+        # Measured 2026-09-22 against the real accounts: `is:unread` through
+        # this tool returned 0 while Gmail itself had 50 unread. `in:inbox`,
+        # `in:primary` and `after:2026-09-21` returned 0 for the same reason.
+        # That is what Stephen saw on "start my day".
+        #
+        # merged_gmail already supported `query` and already documented that
+        # it goes to Gmail's own q= ("Gmail does the matching, not a local
+        # substring filter over a tiny fetched window"). It was simply never
+        # passed. With Gmail doing the search there is nothing left to
+        # re-filter here, and re-filtering would only re-introduce the bug for
+        # any operator Gmail understands and this code does not.
         try:
-            result = ga.merged_gmail(limit_per_account=15)
+            result = ga.merged_gmail(limit_per_account=25, query=(q or None))
         except Exception as e:
-            return json.dumps({**state, "messages": [], "count": 0,
-                               "note": (_google_note(summary, "Gmail")
-                                        + f" Email fetch error: {e}").strip()})
+            return json.dumps({**state, "source": "gmail", "query": q,
+                               "search_failed": True,
+                               "error": f"Gmail search failed and returned no "
+                                        f"result at all: {e}. This is NOT "
+                                        f"zero matches - tell the user the "
+                                        f"search did not run.",
+                               "note": _google_note(summary, "Gmail")})
         accounts_status = _summarize_multi_account_errors(result)
         cards = result.get("messages") or []
-        hits = []
-        for c in cards:
-            blob = " ".join(str(c.get(k) or "") for k in
-                            ("sender", "subject", "snippet")).lower()
-            if _email_query_matches(q, blob):
-                hits.append({
-                    "from": c.get("sender") or "",
-                    "subject": c.get("subject") or "",
-                    "snippet": (c.get("snippet") or "")[:160],
-                    "unread": bool(c.get("unread")),
-                    "when": c.get("timestamp") or "",
-                    "account": c.get("account_label") or c.get("account_email"),
-                })
+        hits = [{
+            "from": c.get("sender") or "",
+            "subject": c.get("subject") or "",
+            "snippet": (c.get("snippet") or "")[:160],
+            "unread": bool(c.get("unread")),
+            "when": c.get("timestamp") or "",
+            "account": c.get("account_label") or c.get("account_email"),
+        } for c in cards]
+
+        # needs_reauth accounts are seeded into accounts_status by
+        # _summarize_multi_account_errors but carry that status, not "error",
+        # so filtering on "error" alone silently drops exactly the broken ones.
+        errored = [a for a in accounts_status
+                   if a["status"] in ("error", "needs_reauth")]
+        searched = [a for a in accounts_status
+                    if a["status"] not in ("error", "needs_reauth")]
+
+        # A SEARCH THAT DID NOT RUN HAS NO COUNT.
+        #
+        # Friday's honesty law: a broken search must never be reported as
+        # "0 unread". When no account could be searched there is no `count`
+        # and no `messages` key in this payload at all - a reader cannot
+        # mistake an absent number for zero, which is exactly the mistake a
+        # `"count": 0` invites.
+        if errored and not searched:
+            detail = "; ".join("%s: %s" % (a.get("label"), a.get("error"))
+                               for a in errored)
+            return json.dumps({**state, "source": "gmail", "query": q,
+                               "accounts": accounts_status,
+                               "search_failed": True,
+                               "error": ("Gmail could not be searched on ANY "
+                                         "account, so no count exists. This is "
+                                         "NOT zero results - say the search "
+                                         "failed and name the reason: "
+                                         + detail)}, default=str)
+
         payload = {
             **state,
             "accounts": accounts_status,
@@ -1434,11 +1481,19 @@ def _tool_search_email(inp):
             "count": len(hits),
             "messages": hits[:25],
         }
-        # needs_reauth accounts are seeded into accounts_status by
-        # _summarize_multi_account_errors but carry that status, not "error",
-        # so filtering on "error" alone silently drops exactly the broken ones.
-        errored = [a for a in accounts_status
-                   if a["status"] in ("error", "needs_reauth")]
+        # A PARTIAL RESULT IS NOT A COMPLETE ONE. `_google_note` only speaks
+        # up when there are no items at all, so one dead account beside one
+        # working account used to report a confident total for both.
+        if errored:
+            payload["partial"] = True
+            payload["not_searched"] = [
+                {"account": a.get("label"), "reason": a.get("error")}
+                for a in errored]
+            payload["error"] = (
+                "This count covers only %d of %d accounts - %s could not be "
+                "searched. Do not present it as a complete answer."
+                % (len(searched), len(accounts_status),
+                   ", ".join(str(a.get("label")) for a in errored)))
         note = _google_note(summary, "Gmail", errored, not cards)
         if note:
             payload["note"] = note
