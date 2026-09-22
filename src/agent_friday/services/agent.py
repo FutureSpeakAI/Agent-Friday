@@ -3395,14 +3395,66 @@ def _admission_seat_for(model):
         {'model': model}, default_seat_resolver=_router_default_seat)
 
 
-def _start_pending_task_thread(task_id):
-    """Thread factory for FIFO promotion: start a deferred worker thread."""
+def _start_pending_task_thread(task_or_id):
+    """Thread factory for FIFO promotion: start a deferred worker thread.
+
+    Takes the task id OR the whole record, because the supervisor hands it the
+    record and this used to take only an id. That mismatch was not cosmetic:
+    ``_PENDING_TASK_THREADS.pop(<dict>, None)`` raises
+    ``TypeError: unhashable type: 'dict'`` as soon as the dict is non-empty —
+    and it is non-empty exactly when a task is queued behind a busy local
+    seat, which is the only situation promotion happens in.
+
+    So every promotion raised. A second task aimed at the busy local seat was
+    admitted, queued, shown an honest "waiting for the seat" status — and then
+    never started when the seat freed, because ``_sync_promotions`` died on
+    the way. The exception surfaced in the finishing worker's ``finally`` and
+    in the cancel route, nowhere near the task it stranded. Reproduced against
+    the real supervisor before this was changed; pinned by
+    tests/unit/test_seat_promotion.py, which fails on the old signature.
+    """
+    task_id = task_or_id.get("id") if isinstance(task_or_id, dict) else task_or_id
+    if not task_id:
+        return False
     with _PENDING_TASK_THREADS_LOCK:
         th = _PENDING_TASK_THREADS.pop(task_id, None)
     if th is None:
         return False
     th.start()
+    # The queue moved on, so a pending "shall I pay to skip this wait?" card
+    # is now a question about work that is already running. Answering it later
+    # would spend money on a task that no longer needs it.
+    try:
+        from agent_friday.services import cloud_spill as _cs
+        _cs.withdraw(task_id, "the local seat freed and the task started there")
+    except Exception:
+        pass
     return True
+
+
+def _offer_cloud_while_waiting(record, wait_s):
+    """A task has been waiting on the busy local seat. Ask; do not decide.
+
+    The task is NOT blocked on the answer. It keeps its place in the local
+    queue and starts there the moment the seat frees, whether or not anyone
+    ever opens the card — which is what makes asking cheap enough to be
+    allowed at all. See services/cloud_spill for the three rules it obeys:
+    name both models, never nag or block, and only interrupt when money is
+    genuinely at stake.
+    """
+    try:
+        from agent_friday.services import cloud_spill as _cs
+        out = _cs.offer(record, wait_s=wait_s)
+    except Exception:
+        return
+    if not out:
+        return
+    tid = record.get("id") or record.get("task_id")
+    _task_log(tid, "local seat busy for %ds — asked whether to run this on "
+                   "%s instead. Still queued locally either way."
+              % (int(wait_s), record.get("cloud_spill_id") and
+                 (out.get("approval") or {}).get("payload", {}).get("cloud_model")
+                 or "a cloud model"))
 
 
 def _seat_supervisor():
@@ -3419,7 +3471,15 @@ def _seat_supervisor():
             sup = _ss.SeatSupervisor(
                 thread_factory=_start_pending_task_thread,
                 reclaim_seat=None,
+                on_queued_wait=_offer_cloud_while_waiting,
             )
+            # Register the answer path at the same moment as the ask path, so
+            # a card can never exist with nothing listening for its decision.
+            try:
+                from agent_friday.services import cloud_spill as _cs
+                _cs.register()
+            except Exception:
+                pass
             sup.start()
             _SEAT_SUPERVISOR = sup
         return _SEAT_SUPERVISOR
