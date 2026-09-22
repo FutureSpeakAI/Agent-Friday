@@ -203,13 +203,35 @@ def api_message_thread(thread_id):
 @messages_bp.route('/api/messages/classify', methods=['POST'])
 def api_messages_classify():
     """Manually reclassify a message into a lane, persisting an override so it
-    sticks across refreshes. Body: {id, lane}."""
+    sticks across refreshes, AND teaching the sender prior. Body: {id, lane,
+    learn?}.
+
+    THE CORRECTION USED TO BE THROWN AWAY. message_triage.record_signal() has
+    always existed, /api/messages/learn has always exposed it, and
+    message_triage's own docstring promises that "correcting one newsletter
+    fixes every future newsletter from that sender". Nothing ever called it:
+    index.html's reclassify() posts here and only here, so every correction
+    moved one message and taught nothing. ~/.friday/messages/sender_signals.json
+    was 38 bytes with zero senders recorded after months of use.
+
+    Learning here rather than in the client because there are two front-ends
+    (index.html and ui_parts/app.html) plus the agent tools, and a teaching
+    step that lives in one of them is a teaching step the other two skip.
+
+    A single correction is deliberately weak, not authoritative: classify()
+    weights a learned sender at W_LEARNED_WEAK per correction until
+    LEARN_CONFIDENT_AT of them agree. So a one-off move ("this person usually
+    writes about X but this once wrote about Y") nudges rather than rewrites,
+    and the response says exactly how many more it would take.
+    """
     data = request.get_json(silent=True) or {}
     mid = str(data.get("id") or "").strip()
     lane = str(data.get("lane") or "").strip().lower()
+    learn = data.get("learn", True)
     if not mid or lane not in MESSAGE_LANE_IDS:
         return jsonify({"status": "error",
                         "message": "id and a valid lane are required"}), 400
+    sender = ""
     with _MESSAGE_LOCK:
         # Persist a lane override onto the cached message so reclassification
         # survives the next live fetch (overrides are honored in _normalize).
@@ -218,6 +240,7 @@ def api_messages_classify():
         for r in cached:
             if str(_message_id(r)) == mid:
                 r["lane"] = lane
+                sender = str(r.get("sender") or r.get("from") or "")
                 found = True
                 break
         if found:
@@ -226,9 +249,23 @@ def api_messages_classify():
         state = _load_message_state()
         st = state.get(mid, {})
         st["lane_override"] = lane
+        # Remember the sender so a live-only message can still teach; without
+        # this, correcting anything not in the cache is silently unlearnable.
+        if sender:
+            st["sender"] = sender
+        sender = sender or str(st.get("sender") or "")
         state[mid] = st
         _save_message_state(state)
-    return jsonify({"status": "ok", "id": mid, "lane": lane})
+
+    learned = None
+    if learn and sender:
+        try:
+            learned = message_triage.record_signal(sender, lane)
+        except Exception as e:
+            # A correction that fails to teach must still move the message.
+            learned = {"ok": False, "error": str(e)}
+    return jsonify({"status": "ok", "id": mid, "lane": lane,
+                    "learned": learned})
 
 
 @messages_bp.route('/api/messages/action', methods=['POST'])
