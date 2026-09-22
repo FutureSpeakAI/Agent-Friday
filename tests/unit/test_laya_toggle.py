@@ -151,17 +151,39 @@ class TestDegradation:
         assert started, "selecting Laya did not kick a background load"
 
     def test_a_failed_load_is_not_retried_on_every_decision(self, monkeypatch):
-        """One missing download must not become a thread per approval."""
+        """One missing download must not become a thread per approval.
+
+        Asserted on THREADS STARTED, not on calls to `start_warming`. The
+        guard used to sit at this call site, keyed on `_load_error is None`,
+        which also made a transient failure permanent - so it moved into
+        `start_warming`, where the cooldown and the attempt budget live
+        together. The call site may now ask on every decision; what must stay
+        bounded is how often that turns into a real load.
+        """
+        import time as _t
         started = []
-        monkeypatch.setattr(laya_backend, "start_warming",
-                            lambda: started.append(True))
+
+        class _CountingThread:
+            def __init__(self, **kw):
+                pass
+
+            def start(self):
+                started.append(True)
+
+        monkeypatch.setattr(laya_backend.threading, "Thread", _CountingThread)
         monkeypatch.setattr(laya_backend, "_agent", None)
+        monkeypatch.setattr(laya_backend, "_loading", False)
         monkeypatch.setattr(laya_backend, "_load_error", "OSError: no such file")
+        monkeypatch.setattr(laya_backend, "_load_attempts", 1)
+        monkeypatch.setattr(laya_backend, "_last_attempt_ts", _t.time())
+        monkeypatch.delenv("FRIDAY_TESTING", raising=False)
         _settings_are(monkeypatch, core.DEFAULT_SETTINGS)
 
         for _ in range(5):
             approvals.classify("Send an email to the whole team")
-        assert not started, "a known-failed load was retried"
+        assert not started, (
+            "a known-failed load started %d real loads inside the cooldown"
+            % len(started))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -276,3 +298,107 @@ class TestTheChangeAnnouncesItself:
     def test_an_unchanged_setting_says_nothing(self):
         self._observe("on")
         assert self._observe("on") == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  A FAILED LOAD MUST NOT BE PERMANENT
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestTheLoadRetries:
+    """A transient failure once disabled the gate for the life of the process.
+
+    The machine rebooted, Friday autostarted, and the boot-time load raised
+    `ImportError: cannot import name 'AutoTokenizer' from 'transformers'`. A
+    fresh interpreter imported it fine forty seconds later - a boot race,
+    nothing more. But `_load_error` was set and every retry path was guarded
+    on it being None, so the gate ran keyword-only until someone restarted.
+
+    A missing checkpoint SHOULD stay refused; retrying per approval is a
+    thread per decision. A transient one has to heal by itself, because the
+    alternative is a feature that is off and says so only to whoever reads a
+    status line.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self, monkeypatch):
+        monkeypatch.setattr(laya_backend, "_agent", None)
+        monkeypatch.setattr(laya_backend, "_loading", False)
+        monkeypatch.setattr(laya_backend, "_load_error", None)
+        monkeypatch.setattr(laya_backend, "_load_attempts", 0)
+        monkeypatch.setattr(laya_backend, "_last_attempt_ts", 0.0)
+        monkeypatch.delenv("FRIDAY_TESTING", raising=False)
+        started = []
+        monkeypatch.setattr(laya_backend.threading, "Thread",
+                            lambda **kw: _FakeThread(started))
+        self.started = started
+        yield
+
+    def test_a_failed_load_is_retried_after_the_cooldown(self, monkeypatch):
+        monkeypatch.setattr(laya_backend, "_load_error", "ImportError: boom")
+        monkeypatch.setattr(laya_backend, "_load_attempts", 1)
+        monkeypatch.setattr(laya_backend, "_last_attempt_ts", 0.0)  # long ago
+        laya_backend.start_warming()
+        assert self.started, (
+            "a failed load was never retried - one boot-time blip would "
+            "disable the gate until a restart")
+
+    def test_it_is_not_retried_during_the_cooldown(self, monkeypatch):
+        import time as _t
+        monkeypatch.setattr(laya_backend, "_load_error", "ImportError: boom")
+        monkeypatch.setattr(laya_backend, "_load_attempts", 1)
+        monkeypatch.setattr(laya_backend, "_last_attempt_ts", _t.time())
+        laya_backend.start_warming()
+        assert not self.started, "retried immediately - that is a thread per approval"
+
+    def test_it_gives_up_after_the_attempt_budget(self, monkeypatch):
+        monkeypatch.setattr(laya_backend, "_load_error", "OSError: no checkpoint")
+        monkeypatch.setattr(laya_backend, "_load_attempts",
+                            laya_backend._MAX_LOAD_ATTEMPTS)
+        monkeypatch.setattr(laya_backend, "_last_attempt_ts", 0.0)
+        laya_backend.start_warming()
+        assert not self.started, (
+            "a genuinely absent model kept being retried forever")
+
+    def test_force_ignores_both_the_cooldown_and_the_budget(self, monkeypatch):
+        import time as _t
+        monkeypatch.setattr(laya_backend, "_load_error", "OSError: no checkpoint")
+        monkeypatch.setattr(laya_backend, "_load_attempts",
+                            laya_backend._MAX_LOAD_ATTEMPTS + 9)
+        monkeypatch.setattr(laya_backend, "_last_attempt_ts", _t.time())
+        laya_backend.start_warming(force=True)
+        assert self.started, (
+            "the operator retry could not get past its own backoff")
+
+    def test_a_successful_load_clears_the_error(self, monkeypatch):
+        """Otherwise the panel keeps reporting a failure that has been fixed."""
+        monkeypatch.setattr(laya_backend, "_load_error", "ImportError: boom")
+        monkeypatch.setattr(laya_backend.threading, "Thread", _real_thread())
+
+        class _Stub:
+            def predict(self, *a, **k):
+                return {"answers": {"severity": {"choice": "hard"}}}
+
+        monkeypatch.setattr(laya_backend, "_load_now",
+                            lambda: _apply(laya_backend, _Stub()))
+        laya_backend._load_now()
+        assert laya_backend._load_error is None
+        assert laya_backend.is_ready()
+
+
+class _FakeThread:
+    def __init__(self, sink):
+        self._sink = sink
+
+    def start(self):
+        self._sink.append(True)
+
+
+def _real_thread():
+    import threading as _th
+    return _th.Thread
+
+
+def _apply(mod, agent):
+    mod._agent = agent
+    mod._load_error = None
+    return agent
