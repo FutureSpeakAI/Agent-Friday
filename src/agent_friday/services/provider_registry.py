@@ -419,15 +419,17 @@ DEFAULT_PROVIDERS = [
         "auth": {"type": "env_var", "key": "GEMINI_API_KEY"},
         # Gemini spans THREE roles, and each model declares its own in model_meta
         # so the picker never mixes them up:
-        #   * VOICE     — Gemini 2.5 Flash (Gemini Live voice) + the live-audio
-        #                 preview variants. NOT a text/creative model.
-        #   * TEXT      — Gemini 3.5 Flash / 3.1 Pro / 3.1 Flash-Lite plus the
-        #                 2.5 generation (2.5 Pro/Flash sunset 2026-10-16). NOT
-        #                 creative/generative. (Gemini 3.5 Pro is not yet in the
-        #                 public API as of 2026-07.)
+        #   * VOICE     — Gemini 2.5 Flash (Gemini Live voice), the live-audio
+        #                 preview variants, and the Gemini 3.8 Live pair.
+        #                 NOT text/creative models.
+        #   * TEXT      — Gemini 3.8 Flash / 3.5 Flash / 3.1 Pro / 3.1 Flash-Lite
+        #                 plus the 2.5 generation (2.5 Pro/Flash sunset
+        #                 2026-10-16). NOT creative/generative. (Gemini 3.5 Pro
+        #                 is not yet in the public API as of 2026-07.)
         #   * CREATIVE  — image generation (Nano Banana Pro / Nano Banana 2) and
         #                 video generation (Google Veo + Gemini Omni Flash).
         "models": [
+            "gemini-3.8-flash",
             "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite",
             "gemini-2.5-pro",
             "gemini-nano-banana-2", "gemini-nano-banana-pro", "veo-3",
@@ -437,6 +439,8 @@ DEFAULT_PROVIDERS = [
             "gemini-2.5-flash-native-audio-preview-09-2025",
             "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
+            "gemini-3.8-live",
+            "gemini-3.8-live-extended-thinking",
             "gemini-2.5-flash",
         ],
         "capabilities": ["tools", "vision", "audio", "live", "image", "video", "music"],
@@ -448,7 +452,10 @@ DEFAULT_PROVIDERS = [
                         "gemini-3.5-flash": 0.00525,
                         "gemini-3.1-pro-preview": 0.007,
                         "gemini-3.1-flash-lite": 0.000875,
-                        "gemini-omni-flash": 0.0095},
+                        "gemini-omni-flash": 0.0095,
+                        "gemini-3.8-flash": 0.002625,
+                        "gemini-3.8-live": 0.0075,
+                        "gemini-3.8-live-extended-thinking": 0.0075},
         "model_meta": {
             # Voice — Gemini 2.5 Flash is the Gemini Live voice model.
             "gemini-2.5-flash": {"label": "Gemini 2.5 Flash", "short": "Flash",
@@ -477,6 +484,16 @@ DEFAULT_PROVIDERS = [
             "gemini-3.1-flash-lite": {"label": "Gemini 3.1 Flash-Lite",
                                        "short": "3.1 Lite", "roles": [],
                                        "modalities": ["text", "vision", "tools"]},
+            # Gemini 3.8 Flash — the 2026-09-15 text model (1M context,
+            # confirmed via models.get 2026-09-22). roles:[] for exactly the
+            # reason stated above and NOT as a placeholder to fill in later:
+            # routing/model_router._apply_cloud_provider only retags
+            # anthropic/openai/local, so a pickable google text model would be
+            # silently answered by a different one. It is listed so the Model
+            # Browser tells the truth about what the provider offers.
+            "gemini-3.8-flash": {"label": "Gemini 3.8 Flash", "short": "3.8 Flash",
+                                  "roles": [],
+                                  "modalities": ["text", "vision", "tools"]},
             # Image generation.
             "gemini-nano-banana-pro": {"label": "Gemini Nano Banana Pro (image)",
                                         "short": "Nano BPro", "roles": [ROLE_CREATIVE],
@@ -489,8 +506,12 @@ DEFAULT_PROVIDERS = [
                        "roles": [ROLE_CREATIVE], "modalities": ["video"]},
             # Gemini Omni Flash — any-to-any video generation/editing (I/O
             # 2026). Friendly id: creative_engine resolves it to
-            # gemini-omni-flash-preview and dispatches via the Interactions
-            # API (NOT Veo’s long-running-operation path).
+            # gemini-omni-1.1-flash and dispatches via the Interactions API
+            # (NOT Veo's long-running-operation path). It used to resolve to
+            # gemini-omni-flash-preview; that model shuts down 2026-09-30 and
+            # the alias was repointed 2026-09-22. The friendly id is the one
+            # stored in settings, which is exactly why it is a friendly id —
+            # this swap needed no migration of anybody's saved seat.
             "gemini-omni-flash": {"label": "Gemini Omni Flash (video)",
                                    "short": "Omni", "roles": [ROLE_CREATIVE],
                                    "modalities": ["video"]},
@@ -518,6 +539,23 @@ DEFAULT_PROVIDERS = [
             "gemini-2.5-flash-native-audio-preview-12-2025": {
                 "label": "Gemini 2.5 Flash Audio Preview", "short": "2.5 Audio",
                 "roles": [ROLE_VOICE], "modalities": ["audio", "live"]},
+            # Gemini 3.8 Live (2026-09-15, stable, no shutdown date).
+            # Both ids below cleared the same bar as the four above: a real
+            # bidiGenerateContent connect on 2026-09-22, run alongside a
+            # deliberately fake id that failed 1008 so the pass means
+            # something. gemini-3.8-live is additionally in
+            # voice_engine.LIVE_MODEL_FALLBACK3.
+            "gemini-3.8-live": {
+                "label": "Gemini 3.8 Live", "short": "3.8 Live",
+                "roles": [ROLE_VOICE], "modalities": ["audio", "live", "video"]},
+            # Extended thinking is selectable but NOT a fallback: it refuses a
+            # bare connect ("Thinking level must be specified for this
+            # model"). routes/voice.py supplies the required thinking_config
+            # when it is the chosen model.
+            "gemini-3.8-live-extended-thinking": {
+                "label": "Gemini 3.8 Live (extended thinking)",
+                "short": "3.8 Live+T",
+                "roles": [ROLE_VOICE], "modalities": ["audio", "live", "video"]},
         },
         "enabled": True,
     },

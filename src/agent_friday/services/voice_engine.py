@@ -416,12 +416,35 @@ def _navigate_tool_description(desc):
     return desc.replace("{workspace_ids}", ids)
 
 
-def _build_voice_live_tools(types):
+def _build_voice_live_tools(types, behavior=None):
     """Render _VOICE_LIVE_TOOLS as a google.genai Tool list for the Live config.
 
     `types` is google.genai.types (imported inside the live handler). Returns a
     single-element list holding one Tool with all function declarations, or []
-    if the SDK shape is unavailable (caller then runs tool-free)."""
+    if the SDK shape is unavailable (caller then runs tool-free).
+
+    `behavior` is an optional google.genai Behavior applied to EVERY
+    declaration — "NON_BLOCKING" for the models that refuse BLOCKING function
+    calls (see _model_requires_non_blocking_tools). It is passed as a plain
+    string and resolved here so an SDK too old to define types.Behavior
+    degrades to today's behaviour (no field set) instead of raising and
+    dropping the whole tool surface, which is how a voice session ends up
+    narrating actions it cannot take.
+    """
+    _behavior = None
+    if behavior:
+        _behavior = getattr(getattr(types, "Behavior", None), str(behavior), None)
+        if _behavior is None:
+            _log.warning("voice live tools: this google-genai has no "
+                         "types.Behavior.%s - declaring tools WITHOUT a "
+                         "behavior; a model that requires NON_BLOCKING will "
+                         "refuse the connect and fall back", behavior)
+
+    def _decl(**kw):
+        if _behavior is not None:
+            kw["behavior"] = _behavior
+        return types.FunctionDeclaration(**kw)
+
     _type_map = {
         "string": types.Type.STRING,
         "integer": types.Type.INTEGER,
@@ -435,7 +458,7 @@ def _build_voice_live_tools(types):
                                 description=pdesc)
             for pname, (ptype, pdesc) in props.items()
         }
-        decls.append(types.FunctionDeclaration(
+        decls.append(_decl(
             name=name, description=_navigate_tool_description(desc),
             parameters=types.Schema(type=types.Type.OBJECT,
                                     properties=schema_props,
@@ -454,8 +477,7 @@ def _build_voice_live_tools(types):
             _log.error("voice shared tool %r: schema could not be rendered for "
                        "the Live API (%s) - NOT declaring it", name, e)
             continue
-        decls.append(types.FunctionDeclaration(
-            name=name, description=desc, parameters=rendered))
+        decls.append(_decl(name=name, description=desc, parameters=rendered))
 
     return [types.Tool(function_declarations=decls)] if decls else []
 
@@ -946,6 +968,24 @@ LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-
 # connect, not just models.list.
 LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-preview-09-2025"
 LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
+# Added 2026-09-22 and verified the ONLY way this block accepts: a real
+# bidiGenerateContent connect (open, one server message, close) against
+# v1beta AND v1alpha, in the same run as a deliberately fake id
+# ("gemini-3.8-live-does-not-exist") that failed 1008 — so the OK is
+# evidence, not the probe rubber-stamping everything handed to it.
+# gemini-3.8-live is the 2026-09-15 stable release: 131072 in / 65536 out,
+# bidirectional audio, no shutdown date. It goes LAST so a working session
+# never changes model underneath a user who did not ask for it.
+#
+# Its sibling gemini-3.8-live-extended-thinking is deliberately NOT in this
+# chain. It is real (models.get: bidiGenerateContent, same limits) but a
+# bare connect fails 1007 "Thinking level must be specified for this model"
+# — it requires thinking_config, which this chain's shared config does not
+# carry. A fallback that cannot connect is worse than no fallback: it burns
+# an attempt and reports a config error as if the previous model's failure
+# continued. It is selectable in the catalogue instead, where
+# _live_thinking_config_for() supplies the required level.
+LIVE_MODEL_FALLBACK3 = "gemini-3.8-live"
 
 # Model IDs that fail a live connect with 1008 "not found" (which reads like
 # an auth failure). validate_live_model() reports them as status "retired" so
@@ -1184,11 +1224,94 @@ def _model_supports_affective_dialog(model_name: str) -> bool:
     1011 if enable_affective_dialog is sent.
     """
     mn = (model_name or "").lower()
+    if _is_gemini_38_live(mn):
+        # 3.8 Live is not a 2.5 native-audio model and must not be treated as
+        # one. Probed 2026-09-22: the server ACCEPTS enable_affective_dialog on
+        # 3.8 (it does not 1011), so this is not a crash guard — it is a
+        # correctness one. The field steers a 2.5-era emotion model that 3.8
+        # does not have, and the general rule of this file is that a flag is
+        # sent only where it is known to do the thing it names.
+        return False
     if "native-audio" in mn:
         return True
     if "2.5-flash" in mn and ("live" in mn or "preview" in mn):
         return True
     return False
+
+
+# ── Gemini 3.8 Live family (released 2026-09-15) ────────────────────────────
+# Three config facts about this family, each established by a real connect on
+# 2026-09-22 rather than by reading the model card, and each one of which
+# turns a working voice session into a 1007 if it is got wrong:
+#
+#   1. `proactivity` is GONE from the setup message. Not "defaults to true",
+#      not "false is rejected" — the field itself no longer exists. Both
+#      proactive_audio=True and =False fail with
+#      1007 'Invalid JSON payload received. Unknown name "proactivity" at
+#      'setup': Cannot find field.' Proactive audio is on permanently; there
+#      is nothing to send.
+#   2. gemini-3.8-live REJECTS thinking_config ("Thinking level is not
+#      supported for this model") while gemini-3.8-live-extended-thinking
+#      REQUIRES it ("Thinking level must be specified for this model") and
+#      rejects MINIMAL specifically. Exactly one of the pair takes the field,
+#      and the other one hard-fails on it.
+#   3. Extended-thinking rejects BLOCKING function calls outright
+#      ("BLOCKING function calls are not supported for this model"); plain
+#      3.8-live accepts either. So NON_BLOCKING is not a preference on
+#      extended-thinking, it is the only mode that connects with tools.
+def _is_gemini_38_live(model_name: str) -> bool:
+    """Is this a Gemini 3.8-generation Live model?
+
+    Matched on the '3.8' + 'live' pair rather than an exact id list so the
+    next 3.8 live variant Google ships inherits the config rules above
+    instead of silently getting 2.5-era ones. Deliberately narrow: it does
+    NOT match gemini-3.8-flash (a text model, never used here).
+    """
+    mn = (model_name or "").lower()
+    return "3.8" in mn and "live" in mn
+
+
+def _model_supports_proactivity_config(model_name: str) -> bool:
+    """May `proactivity` be sent in this model's setup message at all?
+
+    False for the 3.8 family (see fact 1 above). Sending it there is a hard
+    connect failure, which the voice bridge surfaces to the user as a dead
+    socket, so this is checked before the field is ever attached.
+    """
+    return not _is_gemini_38_live(model_name)
+
+
+def _model_requires_thinking_config(model_name: str) -> bool:
+    """Does a bare connect fail without thinking_config? (fact 2)"""
+    return "extended-thinking" in (model_name or "").lower()
+
+
+def _model_rejects_thinking_config(model_name: str) -> bool:
+    """Does this model 1007 if thinking_config IS sent? (fact 2)"""
+    mn = (model_name or "").lower()
+    return _is_gemini_38_live(mn) and "extended-thinking" not in mn
+
+
+#: Levels gemini-3.8-live-extended-thinking accepts. MINIMAL is rejected by
+#: name ("Thinking level MINIMAL is not supported for this model"), so it is
+#: absent here rather than merely undocumented.
+LIVE_THINKING_LEVELS = ("LOW", "MEDIUM", "HIGH")
+DEFAULT_LIVE_THINKING_LEVEL = "LOW"
+
+
+def resolve_live_thinking_level(requested=None) -> str:
+    """Normalise a user-supplied thinking level to one the model accepts.
+
+    Anything unrecognised — including MINIMAL, which reads valid and is not —
+    becomes the default rather than being forwarded to fail the connect.
+    """
+    lvl = str(requested or "").strip().upper()
+    return lvl if lvl in LIVE_THINKING_LEVELS else DEFAULT_LIVE_THINKING_LEVEL
+
+
+def _model_requires_non_blocking_tools(model_name: str) -> bool:
+    """Must function declarations be NON_BLOCKING for this model? (fact 3)"""
+    return "extended-thinking" in (model_name or "").lower()
 
 LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a sovereign personal AI assistant.
 You are having a live voice conversation — natural spoken dialogue, not text chat.

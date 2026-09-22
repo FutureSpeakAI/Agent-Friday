@@ -5829,11 +5829,18 @@ const CREATIVE_MODELS=[
   {id:'veo-3',label:'Google Veo (video)',short:'Veo'},
   {id:'gemini-omni-flash',label:'Gemini Omni Flash (video)',short:'Omni'},
 ];
+// Offline fallback for the voice picker; /api/models supplies the real list
+// from services/provider_registry.py. Keep the two in sync — this array is
+// what the user picks from when the catalogue cannot be read, and an id here
+// that the backend no longer offers is a silent fallback to another model.
 const VOICE_MODELS=[
   {id:'gemini-2.5-flash-native-audio-latest',label:'Gemini 2.5 Flash Native Audio (latest)',short:'Gemini Live'},
   {id:'gemini-2.5-flash-native-audio-preview-09-2025',label:'Gemini 2.5 Flash Audio Preview (09-2025)',short:'Gemini 2.5 09'},
   {id:'gemini-3.1-flash-live-preview',label:'Gemini 3.1 Flash Live Preview',short:'3.1 Live'},
   {id:'gemini-2.5-flash-native-audio-preview-12-2025',label:'Gemini 2.5 Flash Audio Preview (12-2025)',short:'Gemini 2.5 12'},
+  // Both verified by a real bidiGenerateContent connect 2026-09-22.
+  {id:'gemini-3.8-live',label:'Gemini 3.8 Live',short:'3.8 Live'},
+  {id:'gemini-3.8-live-extended-thinking',label:'Gemini 3.8 Live (extended thinking)',short:'3.8 Live+T'},
   {id:'gemini-2.5-flash',label:'Gemini 2.5 Flash',short:'Flash'},
 ];
 // Voice ENGINE choices (settings key `voice_engine`): Auto / Local CPU / Local
@@ -9529,7 +9536,13 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true,
+  // These model ids are the OFFLINE default only: /api/settings overwrites
+  // them on load. They still have to match core/__init__.py's DEFAULT_SETTINGS,
+  // because until that response lands this object is what the settings panel
+  // displays — and it had drifted to claude-opus-4-8 / claude-sonnet-4-6 /
+  // gemini-3.1-flash-live-preview, three ids the backend had already moved off,
+  // so a user opening Settings was shown a model that was not answering them.
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-sonnet-5',subagent_model:'claude-sonnet-5',creative_model:'gemini-nano-banana-2',voice_model:'gemini-2.5-flash-native-audio-latest',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true,
     // The owner's own dock arrangement. Empty = never shaped, and
     // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
     dock_custom:{order:[],hidden:[]}};
