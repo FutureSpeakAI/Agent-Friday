@@ -46,7 +46,10 @@ def quiet_prompt(monkeypatch):
     monkeypatch.setattr(ne, "_get_friday_system_prompt", lambda **kw: "sys")
     monkeypatch.setattr(ne, "_predict_route_provider", lambda **kw: "local")
     monkeypatch.setattr(ne, "_gated_vault_control", lambda: None)
-    monkeypatch.setattr(ne, "_answering_model", lambda: "bonsai2:27b")
+    # Real signature is _answering_model(before): the mark taken before the
+    # call, so an unchanged record reports None instead of naming a model
+    # that some earlier call on this thread ran.
+    monkeypatch.setattr(ne, "_answering_model", lambda before=None: "bonsai2:27b")
 
 
 def test_an_unparsable_reply_is_marked_degraded_and_quoted(quiet_prompt, monkeypatch, caplog):
@@ -204,3 +207,46 @@ def test_a_curated_edition_still_gets_the_ordinary_notice(monkeypatch):
     got = n.pushed[0]
     assert got["title"] == "📰 Friday's Front Page — Morning edition"
     assert got["priority"] == "medium"
+
+
+# ── Naming the seat, or admitting we cannot ─────────────────────────────────
+#
+# services/attribution is thread-local and reset per CHAT turn, not per
+# background job. The scheduler thread that runs the Front Page may already
+# hold a record from an earlier generation, so a blind read would put some
+# unrelated model's name in the failure report and send the reader to the
+# wrong seat. The mark-and-compare is what makes the name trustworthy.
+
+def test_the_seat_is_named_only_when_something_actually_generated():
+    from agent_friday.services import attribution
+
+    attribution.reset()
+    attribution.record_generation("a-previous-unrelated-call", provider="x")
+    before = ne._attribution_mark()
+
+    # Nothing generated since the mark → we do not know, and we say so.
+    assert ne._answering_model(before) is None
+
+    attribution.record_generation("bonsai2:27b", provider="arbiter-local")
+    assert ne._answering_model(before) == "bonsai2:27b"
+
+
+def test_a_refused_ladder_leaves_the_seat_unnamed_rather_than_guessed(
+        monkeypatch, caplog):
+    """Every leg raised, so nothing recorded — the report must not invent one."""
+    from agent_friday.services import attribution
+    attribution.reset()
+    attribution.record_generation("stale-from-an-earlier-job", provider="x")
+
+    monkeypatch.setattr(ne, "_get_friday_system_prompt", lambda **kw: "sys")
+    monkeypatch.setattr(ne, "_predict_route_provider", lambda **kw: "local")
+    monkeypatch.setattr(ne, "_gated_vault_control", lambda: None)
+
+    def _boom(*a, **k):
+        raise RuntimeError("No model provider could generate text")
+    monkeypatch.setattr(ne, "_generate_text", _boom)
+
+    ed = ne._editorialize_front_page(_POOL, slot="morning")
+
+    assert ed["degraded"]["model"] is None
+    assert "stale-from-an-earlier-job" not in json.dumps(ed["degraded"])

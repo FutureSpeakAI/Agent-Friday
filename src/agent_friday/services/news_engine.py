@@ -1395,20 +1395,39 @@ _FALLBACK_LEAD_NOTE = ("Friday's top pick for you right now — highest signal "
                        "against your AI, politics, media, and current-affairs beats.")
 
 
-def _answering_model():
-    """The model that actually generated on this thread, or None.
+def _attribution_mark():
+    """A snapshot of this thread's last recorded generation, to compare against.
 
-    services/attribution is thread-local and every provider primitive records
-    into it at the moment it produces text, so this is the one place that
-    knows whether the routed seat or a ladder fallback answered. Never raises
-    and never guesses: None means nobody recorded, which is itself a fact
-    worth printing rather than papering over with the configured default.
+    services/attribution is thread-local and is reset per CHAT turn, not per
+    background job. A scheduler thread that generated earlier still holds that
+    record, so reading it blind after a call would name a model that had
+    nothing to do with this one. Take a mark before, compare after.
     """
     try:
         from agent_friday.services import attribution
-        return (attribution.last_generation() or {}).get("model")
+        return attribution.last_generation()
     except Exception:
         return None
+
+
+def _answering_model(before):
+    """The model that generated since `before`, or None if that is unknowable.
+
+    Every provider primitive calls `attribution.record_generation` at the
+    moment it produces text, so a changed record is the one authority on
+    whether the routed seat or a ladder fallback answered. Unchanged means
+    nothing generated — a refused ladder, say — and None says so. It does not
+    fall back to the configured default, because naming a model that never
+    ran sends the reader to look at the wrong seat.
+    """
+    try:
+        from agent_friday.services import attribution
+        now = attribution.last_generation()
+    except Exception:
+        return None
+    if not now or now is before:
+        return None
+    return now.get("model")
 
 
 def _editorialize_front_page(pool, slot="morning", prev_stories=None,
@@ -1551,6 +1570,7 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             keywords=prompt, workspace='briefing',
             provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
             vault_control=_gated_vault_control())
+        _attr_before = _attribution_mark()
         # OUTPUT BUDGET, and why it is not 1800 any more.
         #
         # The old 1800 was sized against the JSON alone. It is not the JSON's
@@ -1575,7 +1595,7 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         # Who ANSWERED, not who the router aimed at — the ladder can move the
         # call between legs, and naming the intended seat in a failure report
         # sends the reader to look at the wrong model.
-        _model_used = _answering_model()
+        _model_used = _answering_model(_attr_before)
         data = _extract_json_block(raw)
         if not isinstance(data, dict):
             # The editor answered with something that is not the requested
@@ -1649,7 +1669,8 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         # diagnosis. Swallowing it was how "no provider is up" and "the model
         # answered badly" became the same blank page.
         return _degraded("the editorial call failed",
-                         f"{type(e).__name__}: {e}", _answering_model())
+                         f"{type(e).__name__}: {e}",
+                         _answering_model(locals().get("_attr_before")))
 
 def _front_page_story_urls(edition):
     """Every article URL in an edition (lead + all section articles)."""
