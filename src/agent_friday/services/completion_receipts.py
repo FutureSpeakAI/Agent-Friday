@@ -232,11 +232,18 @@ COMPLETION_CLAIM_REGISTRY = [
                   "wiki", "list"),
     },
     {
+        # `put`, `placed` and `dropped` are how a person actually describes
+        # saving a file — "I put the brief in your creations folder as
+        # bold-panel-prep.md" asserts exactly what "I saved" asserts and was
+        # matching nothing. The sentence-initial form ("Saved the brief
+        # to...") is the same claim with the pronoun dropped, which is a
+        # common way for a model to open a reply.
         "id": "wrote-artifact",
         "pattern": re.compile(
-            _FIRST_PERSON + r"(?:created|wrote|saved|stored|added|updated)"
+            r"(?:" + _FIRST_PERSON + r"|^\s*|(?<=[.!?]\s))"
+            r"(?:created|wrote|saved|stored|added|updated|put|placed|dropped)"
             r"[^.!?\n]{0,120}?" + _ARTIFACT,
-            re.IGNORECASE),
+            re.IGNORECASE | re.MULTILINE),
         "tools": ("write", "create", "save", "learn", "wiki", "update",
                   "add", "edit", "note", "task", "reminder"),
     },
@@ -272,6 +279,43 @@ _INLINE_DELIVERY_RE = re.compile(r"\b(?:below|above|here(?:'s| is| are)?|"
                                  r"inline|in this (?:message|reply))\b",
                                  re.IGNORECASE)
 
+#: Where the clause carrying a claim ENDS. Sentence punctuation, a newline —
+#: and a dash or semicolon, which is where this guard went wrong.
+#:
+#: On 2026-09-22 Friday said, and it was not true:
+#:
+#:     "I saved the full brief to your creations folder as bold-panel-prep.md
+#:      — want me to open it, or are you good running off what's here?"
+#:
+#: The claim matched. The guard then read forward past the em-dash into the
+#: NEXT clause, found "here" in "what's here?", concluded the brief had been
+#: delivered inline, and dropped the violation. The word was a rhetorical
+#: reference to the conversation; the file did not exist. An offer to open
+#: the thing is, in fact, the opposite of having delivered it inline.
+#:
+#: Both directions are bounded, because a genuine delivery can sit on either
+#: side of the claim — "here's the note I wrote for you" puts it in front,
+#: "I've created a draft below" puts it behind.
+_CLAUSE_BREAK = re.compile(r"[.!?\n;]|—|–|(?:\s-{1,2}\s)")
+
+
+def _claim_clause(scanned: str, m) -> str:
+    """The clause the claim actually sits in, for the inline-delivery guard.
+
+    Bounded on BOTH sides by `_CLAUSE_BREAK`. The old version bounded the
+    start at a newline and the end at sentence punctuation, so a trailing
+    clause after a dash was read as part of the claim — which is exactly how
+    an invented file survived the check. See `_CLAUSE_BREAK`.
+    """
+    left = 0
+    for b in _CLAUSE_BREAK.finditer(scanned, 0, m.start()):
+        left = b.end()
+    right = len(scanned)
+    nb = _CLAUSE_BREAK.search(scanned, m.end())
+    if nb is not None:
+        right = nb.start()
+    return scanned[left:right]
+
 
 def _claim_satisfied(entry_tools, tool_trace) -> bool:
     for receipt in (tool_trace or []):
@@ -294,15 +338,7 @@ def find_unreceipted_completion_claims(reply: str, tool_trace,
     violations = []
     for entry in (registry or COMPLETION_CLAIM_REGISTRY):
         for m in entry["pattern"].finditer(scanned):
-            # The sentence around the match — for the inline-delivery guard.
-            start = scanned.rfind("\n", 0, m.start()) + 1
-            end_candidates = [i for i in (
-                scanned.find(".", m.end()), scanned.find("!", m.end()),
-                scanned.find("?", m.end()), scanned.find("\n", m.end()))
-                if i != -1]
-            end = min(end_candidates) if end_candidates else len(scanned)
-            sentence = scanned[start:end]
-            if _INLINE_DELIVERY_RE.search(sentence):
+            if _INLINE_DELIVERY_RE.search(_claim_clause(scanned, m)):
                 continue
             if not _claim_satisfied(entry["tools"], tool_trace):
                 violations.append(m.group(0).strip())
