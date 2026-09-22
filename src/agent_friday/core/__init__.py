@@ -829,6 +829,69 @@ class _JournaldSingleLineFormatter(logging.Formatter):
 # ── File logging setup ─────────────────────────────────────────
 # Now that FRIDAY_DIR is known, wire the rotating file handler. This runs once
 # at import time. Using pythonw (no console) makes this the only debug output.
+class _ResilientRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """A log that cannot rotate keeps logging instead of going dark.
+
+    On Windows a rename fails with PermissionError [WinError 32] while any
+    other process holds the file open, and this app runs two nested server.py
+    processes that both open friday.log. The stock handler raises that through
+    handleError, which prints "--- Logging error ---" and a full traceback to
+    stderr for every record it could not write.
+
+    Measured 2026-09-22: friday.log froze at 10,485,736 bytes at 15:10 and
+    never advanced again; server_stderr.log grew at 5.6 GB/hour. Three hours
+    with no application log -- and a dark friday.log is precisely the signal
+    readers use to conclude the process has silently hung, so a working Friday
+    looked like a wedged one.
+
+    An oversized log is a far smaller problem than no log, so a roll that
+    cannot happen is announced once and then skipped, with a backoff so the
+    rename is not retried per record. The backoff expires, because the other
+    holder eventually exits and rotation should resume by itself.
+    """
+
+    _warned = False
+    _RETRY_AFTER_S = 300.0
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._retry_after = 0.0
+
+    def shouldRollover(self, record):
+        if _time.time() < getattr(self, "_retry_after", 0.0):
+            return 0
+        try:
+            return super().shouldRollover(record)
+        except Exception:
+            return 0
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+            self._retry_after = 0.0
+        except Exception as e:
+            # Do not re-attempt the rename on every record: the attempt is a
+            # filesystem round trip and it keeps failing while the other
+            # process lives.
+            self._retry_after = _time.time() + self._RETRY_AFTER_S
+            if not _ResilientRotatingFileHandler._warned:
+                _ResilientRotatingFileHandler._warned = True
+                try:
+                    sys.stderr.write(
+                        "[FRIDAY] friday.log cannot rotate (%s); continuing to "
+                        "append to the current file%s" % (e, chr(10)))
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+            # super().doRollover() closes the stream before renaming, so
+            # reopen it or every later record is silently dropped.
+            try:
+                if self.stream is None:
+                    self.stream = self._open()
+            except Exception:
+                pass
+
+
 def _setup_friday_logging() -> None:
     root = logging.getLogger("friday")
     if root.handlers:
@@ -856,7 +919,7 @@ def _setup_friday_logging() -> None:
 
     try:
         FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
-        fh = logging.handlers.RotatingFileHandler(
+        fh = _ResilientRotatingFileHandler(
             FRIDAY_DIR / "friday.log",
             maxBytes=10 * 1024 * 1024,
             backupCount=3,

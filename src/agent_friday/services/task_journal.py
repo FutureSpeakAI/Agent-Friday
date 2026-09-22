@@ -32,6 +32,7 @@ only tasks that reached a terminal status before the cutoff.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -114,13 +115,50 @@ def _protect(data: bytes) -> bytes:
         return data
 
 
+# Records that cannot be decrypted, by digest. A passphrase rotation can leave
+# a journal permanently unreadable, and `_decode_line` correctly skips those
+# rows -- but the tray polls /api/tasks every couple of seconds and each poll
+# re-reads every record, so a fixed handful of broken rows was re-reported
+# about ten times a second. That filled friday.log, and rotating it fails with
+# PermissionError while a second process holds it, and logging raises the
+# rotation failure -- printing a full traceback to stderr for every line it
+# could not write. friday.log went dark and stderr grew 5.6 GB/hour.
+#
+# So: complain once per distinct broken record. The bound is the number of
+# damaged rows, never the number of times anyone looks at them. A NEW failure
+# is still reported, because that is a different digest.
+_UNREADABLE: set[str] = set()
+_UNREADABLE_LOCK = threading.Lock()
+_UNREADABLE_CAP = 4096
+
+
+def _forget_unreadable() -> None:
+    """Drop the seen-set. For tests, and for a passphrase change that makes
+    previously unreadable records readable again."""
+    with _UNREADABLE_LOCK:
+        _UNREADABLE.clear()
+
+
+def _first_sighting(blob: bytes) -> bool:
+    """True the first time this exact record fails to decrypt."""
+    mark = hashlib.blake2b(blob, digest_size=16).hexdigest()
+    with _UNREADABLE_LOCK:
+        if mark in _UNREADABLE:
+            return False
+        if len(_UNREADABLE) >= _UNREADABLE_CAP:
+            _UNREADABLE.clear()
+        _UNREADABLE.add(mark)
+        return True
+
+
 def _unprotect(blob: bytes) -> bytes:
     try:
         from agent_friday.services import credential_store as cs
         if cs.looks_protected(blob):
             return cs.unprotect(blob)
     except Exception as e:
-        _log.warning("task journal: could not unprotect a record (%s)", e)
+        if _first_sighting(blob):
+            _log.warning("task journal: could not unprotect a record (%s)", e)
         raise
     return blob
 
