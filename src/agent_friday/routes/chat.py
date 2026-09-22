@@ -1800,6 +1800,26 @@ def chat():
 
         return jsonify({
             "response": reply,
+            # WHO ACTUALLY ANSWERED. Every refusal path here already reports
+            # the model (seat_missing, cloud_only_no_key, local_only_refused) —
+            # the SUCCESS path did not, which left the only way to find out
+            # being to ask the model, and a model answers that from its system
+            # prompt. On 2026-09-22 Stephen was told twice by Sonnet 5 that it
+            # was Bonsai2. Nothing had lied to him at the routing layer: the
+            # picker could not load (18.9 s catalogue) and bonsai2 was missing
+            # from the catalogue entirely, so the turn ran on the configured
+            # default exactly as asked — and then the prompt supplied an
+            # identity the transport never contradicted.
+            #
+            # Routing already refuses rather than substitutes (§3.8). This is
+            # the other half: say what served, every time, from the server's
+            # own record of the call rather than from the model's opinion.
+            "served_by": {
+                "model": _route_info.get('model'),
+                "provider": _route_info.get('provider'),
+                "local": bool(_route_info.get('is_local')),
+                "override": _route_info.get('override'),
+            },
             "tools_ran": _receipts.summary(),
             "unbacked_claims": _unbacked,
             "unsupported_actions": _unsupported,
