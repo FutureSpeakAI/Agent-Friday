@@ -271,6 +271,17 @@ def resumability(task_id) -> Dict[str, Any]:
     if blob.get("version") != VERSION:
         return {**out, "resumable": False,
                 "reason": f"checkpoint format v{blob.get('version')} is not v{VERSION}"}
+    # Which loop wrote this. Only the Anthropic one can be re-entered today,
+    # and resuming an OpenAI-shaped transcript through _call_claude_agent
+    # would be a silent model substitution AND a malformed payload - the two
+    # shapes disagree about how a tool call is linked to its result
+    # (tool_use/tool_result blocks vs assistant.tool_calls + role:"tool").
+    # Refuse by name rather than letting it look like it worked.
+    if (blob.get("loop") or "anthropic") != "anthropic":
+        return {**out, "resumable": False,
+                "reason": (f"this task ran on the {blob.get('loop')} loop, which "
+                           f"cannot be re-entered yet - see "
+                           f"docs/design/active/seat-scheduling-and-cloud-consent.md")}
     if out["attempts"] >= MAX_ATTEMPTS:
         return {**out, "resumable": False,
                 "reason": f"already resumed {out['attempts']} times without finishing"}

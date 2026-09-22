@@ -441,3 +441,17 @@ def test_a_checkpoint_that_cannot_be_decrypted_is_not_called_missing(task):
     assert v["resumable"] is False
     assert v["unreadable"] is True
     assert "cannot be read" in v["reason"] and "passphrase" in v["reason"]
+
+
+def test_a_checkpoint_from_another_loop_is_refused_by_name(task):
+    """Only the Anthropic loop can be re-entered today. Feeding an
+    OpenAI-shaped transcript to _call_claude_agent would be both a silent
+    model substitution and a malformed payload: the two shapes disagree about
+    how a tool call is linked to its result."""
+    tr.checkpoint(task, convo=[{"role": "user", "content": "x"}], iteration=5,
+                  loop="openai")
+    v = tr.resumability(task)
+    assert v["resumable"] is False
+    assert "openai" in v["reason"] and "cannot be re-entered yet" in v["reason"]
+    with pytest.raises(tr.ResumeRefused):
+        tr.resume(task)
