@@ -3301,6 +3301,27 @@ def _resolve_seat_for_model(model):
     return ('local/' + mid) if ':' in mid else ('cloud/' + mid)
 
 
+def _admission_seat_for(model):
+    """Admission-honest seat for a task record (Defect F).
+
+    An undeclared model must queue under the seat it will ACTUALLY run on:
+    the router's real prediction (_predict_route_provider), not the
+    historical hardcoded cloud default that exempted it from local-seat
+    admission. A resolver fault fails LOCAL (seat_admission.FAIL_SAFE_SEAT)
+    -- degradation moves toward the constrained seat, never away from it.
+    Declared models classify via seat_admission's conservative marker list
+    (unrecognized -> cloud, which only ever over-queues).
+    """
+    from agent_friday.services import seat_admission as _sa
+
+    def _router_default_seat():
+        provider = _predict_route_provider(has_tools=True)
+        return 'local/default' if provider == 'local' else 'cloud/default'
+
+    return _sa.resolve_admission_seat(
+        {'model': model}, default_seat_resolver=_router_default_seat)
+
+
 def _start_pending_task_thread(task_id):
     """Thread factory for FIFO promotion: start a deferred worker thread."""
     with _PENDING_TASK_THREADS_LOCK:
@@ -3435,8 +3456,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # Defect E: seat-supervisor admission fields. The queue keys on
             # id + seat; the watchdog view reads tool_calls off the record.
             'id': task_id,
-            'seat': _resolve_seat_for_model(model),
-            'seat_is_local': ':' in (model or ''),
+            'seat': (_admitted_seat := _admission_seat_for(model)),
+            'seat_is_local': _admitted_seat.startswith('local/'),
             'tool_calls': 0,
         }
     # Durable from the first instant (TV2): the created event, the state

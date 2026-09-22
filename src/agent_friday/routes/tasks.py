@@ -247,6 +247,14 @@ def delete_task(task_id):
         from agent_friday.services.agent import _task_set
         _task_set(task_id, status='cancelled', ended=_time.time(),
                   result='[Cancelled] Stopped by the user; the record is kept.')
+        # Defect F: free the seat and promote the FIFO queue only AFTER
+        # the record is terminal -- a supervisor fault cannot un-cancel it,
+        # and a cancelled task can no longer hold a seat as a zombie.
+        try:
+            from agent_friday.services.agent import _seat_supervisor
+            _seat_supervisor().on_task_end(task_id, status='cancelled')
+        except Exception:
+            pass
         return jsonify({"status": "cancelled", "journal": "kept"})
     with TASKS_LOCK:
         existed_in_cache = TASKS.pop(task_id, None) is not None
