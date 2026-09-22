@@ -545,13 +545,33 @@ def _arbiter_seat_entries() -> list:
             p = runtime_dir() / "residency" / "endpoints.json"
             if p.exists():
                 raw = _json.loads(p.read_text(encoding="utf-8")) or {}
-                entries = raw.get("seats") or raw
+                # THE SHAPE THE ARBITER ACTUALLY WRITES IS `endpoints`.
+                #
+                # This read `raw.get("seats") or raw` and then looked for dict
+                # values carrying model_id, or plain strings. The real file is
+                #
+                #   {"pid": ..., "updated_at": ..., "endpoints": {"<model>": "<url>"}}
+                #
+                # so iterating `raw` yields pid (an int), updated_at (a float)
+                # and endpoints (a dict with no model_id) - all three skipped,
+                # and the seat sitting one level down is never seen. The
+                # fallback that exists precisely so a running local model still
+                # reaches the picker extracted ZERO seats from a file naming
+                # one, which is why bonsai2 was absent from the catalogue while
+                # llama-server was serving it on 8090.
+                #
+                # `endpoints` is checked first now, and the older shapes are
+                # still accepted so an Arbiter writing either keeps working.
+                entries = (raw.get("endpoints") or raw.get("seats") or raw)
                 if isinstance(entries, dict):
                     for k, v in entries.items():
+                        if k in ("pid", "updated_at"):
+                            continue
                         if isinstance(v, dict) and v.get("model_id"):
                             seats[k] = v
                         elif isinstance(v, str):
-                            seats[k] = {"model_id": k}
+                            # {model_id: endpoint_url} - the key is the model.
+                            seats[k] = {"model_id": k, "endpoint": v}
         except Exception:
             seats = seats or {}
     if not seats:

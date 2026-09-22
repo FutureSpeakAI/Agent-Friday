@@ -355,8 +355,19 @@ def list_models():
     the UI can show—but disable—models the user hasn't configured yet.
     """
     try:
+        # SERVED FROM THE WARM CACHE, not rebuilt per request.
+        #
+        # build_catalog() was measured at 18.9 s for 598 models on 2026-09-22,
+        # called synchronously here, which is why the model picker timed out
+        # and could not be used to switch seats at all. The value is now
+        # warmed at boot, persisted across restarts, and refreshed behind the
+        # request - `compute_if_cold` means the very first call on a machine
+        # with no cache still gets a real answer rather than an empty picker.
+        from agent_friday.services import warm_cache
         from agent_friday.services.model_catalog import build_catalog
-        cat = build_catalog()
+        warm_cache.register("model_catalog", build_catalog, ttl_s=900.0)
+        cached = warm_cache.get("model_catalog", compute_if_cold=True)
+        cat = cached.get("value") or {"roles": {}, "models": [], "providers": []}
         settings = _load_settings()
         # Catalog freshness per hosted/discovery provider — lets the UI say
         # "catalog stale, showing cached" honestly (spec A2). stale=True when
@@ -383,6 +394,12 @@ def list_models():
             "voice_engines": cat.get("voice_engines", []),
             "tts_engines": cat.get("tts_engines", []),
             "catalog_meta": cat_meta,
+            # Provenance, so the picker can say "showing a list from 4 minutes
+            # ago, refreshing" instead of pretending it is live. A cache that
+            # silently serves old data is worse than a slow endpoint, because
+            # the slow endpoint is at least honest about what it is doing.
+            "cache": {k: cached.get(k) for k in
+                      ("ready", "age_s", "stale", "refreshing", "error")},
             "selected": {
                 "orchestrator_model": settings.get("orchestrator_model"),
                 "subagent_model": settings.get("subagent_model"),
