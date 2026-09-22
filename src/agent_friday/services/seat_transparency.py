@@ -112,8 +112,14 @@ def _snapshot(settings) -> dict:
         "subagent_model": settings.get("subagent_model"),
         "model_routing.mode": routing.get("mode"),
         "model_routing.local_model": routing.get("local_model"),
-        "decision_backend": settings.get("decision_backend"),
-        "decision_shadow": settings.get("decision_shadow"),
+        # NORMALISED, because absent and empty mean the same thing here and
+        # announcing the difference is noise. The first save after this
+        # shipped moved `decision_shadow` from missing to "", and the change
+        # line dutifully read "approval scanner (shadow) (none) -> (none)".
+        # A transparency line that reports a non-change is how a user learns
+        # to skip the line that matters.
+        "decision_backend": settings.get("decision_backend") or "",
+        "decision_shadow": settings.get("decision_shadow") or "",
     }
 
 
