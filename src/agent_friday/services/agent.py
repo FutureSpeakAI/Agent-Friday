@@ -2678,6 +2678,65 @@ def _journal():
     return _tj
 
 
+def _resume():
+    from agent_friday.services import task_resume as _tr
+    return _tr
+
+
+def _resume_task_id(session_ctx):
+    """The task this loop belongs to, or None.
+
+    A plain chat turn has no task id and therefore no checkpoint. That is
+    deliberate: the user is sitting there, a lost chat turn is retyped in
+    seconds, and checkpointing every keystroke-driven turn would write the
+    whole transcript to disk for no recoverable value.
+    """
+    try:
+        return _journal().resolve_task_id(session_ctx)
+    except Exception:
+        return None
+
+
+def _resume_checkpoint(session_ctx, **kw):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().checkpoint(tid, **kw)
+    except Exception:
+        pass
+
+
+def _resume_mark(session_ctx, tool_name, tool_use_id):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().mark_tool_pending(tid, tool_name, tool_use_id)
+    except Exception:
+        pass
+
+
+def _resume_unmark(session_ctx):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().clear_tool_pending(tid)
+    except Exception:
+        pass
+
+
+def _resume_done(session_ctx):
+    tid = _resume_task_id(session_ctx)
+    if not tid:
+        return
+    try:
+        _resume().clear(tid)
+    except Exception:
+        pass
+
+
 def _journal_state(task_id):
     """Persist the current in-memory record as the task's state snapshot."""
     with TASKS_LOCK:
@@ -2802,8 +2861,22 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 TASKS[tid] = st
                 loaded += 1
         summary['loaded'] = loaded
+        # Which of the casualties still have a transcript on disk. The journal
+        # can only say a task was interrupted; services/task_resume is what can
+        # say it is recoverable, so the two notices are separate and the
+        # resumable one is the good news.
+        try:
+            from agent_friday.services import task_resume as _tr
+            summary['resumable'] = _tr.resumable_after_boot()
+        except Exception:
+            summary['resumable'] = []
         if announce:
             tj.announce_interrupted(summary.get('interrupted') or [])
+            try:
+                from agent_friday.services import task_resume as _tr2
+                _tr2.announce(summary.get('resumable') or [])
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:
@@ -7305,7 +7378,7 @@ def _ledger_model_invocation(model, provider, seat, duration_ms, tokens_in,
         pass
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠'):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -7333,7 +7406,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         safe_messages = list(messages)
         safe_system = system
 
-    tool_trace = []
+    # A resumed turn inherits the trace of the steps it already took, so the
+    # caller's receipt covers the WHOLE task rather than only the part that ran
+    # after the crash.
+    tool_trace = list(resumed_tool_trace or [])
     convo = list(safe_messages)
 
     # ── Auto-compaction (Part C): summarize the middle of a long transcript
@@ -7592,6 +7668,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
             if resp.stop_reason != 'tool_use' or not tool_uses:
                 _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
+                # The turn finished. A checkpoint that outlives it is an
+                # invitation to replay work that is already done.
+                _resume_done(session_ctx)
                 # Badge truth: record the model that ACTUALLY
                 # generated this text — the badge layer reads this, never
                 # the router's intent.
@@ -7662,7 +7741,18 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         continue
 
                 _task_log_tool(session_ctx, tu.name, tu.input)
+                # Crash-resume (services/task_resume): the ONE window where a
+                # restart cannot tell whether a side effect landed is between
+                # here and the line after. Mark it before, clear it after, so
+                # the resume path knows it is in that window instead of
+                # assuming it is not.
+                _resume_mark(session_ctx, tu.name, tu.id)
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                # Cleared on the SUCCESS path only, deliberately not in a
+                # `finally`. If _execute_tool raised, the tool's side effect is
+                # exactly as unknown as it is after a process death, and a
+                # `finally` would erase the one marker that says so.
+                _resume_unmark(session_ctx)
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
                 _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
@@ -7685,6 +7775,19 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     "content": result,
                 })
             convo.append({"role": "user", "content": tool_results})
+
+            # ── CRASH CHECKPOINT (services/task_resume) ──
+            # Exactly here and nowhere else: every tool_use in `convo` now has
+            # its matching tool_result, which is the only shape Anthropic will
+            # accept back. Checkpointing mid-round would save a transcript that
+            # 400s on resume. One atomic write per tool round buys the whole
+            # turn back after a crash; without it the record says what the task
+            # did and the work itself is gone.
+            _resume_checkpoint(session_ctx, convo=convo, tool_trace=tool_trace,
+                               iteration=iter_count, model=model,
+                               max_tokens=max_tokens, system=safe_system,
+                               orb_label=orb_label, orb_category=orb_category,
+                               orb_icon=orb_icon)
 
         _orb_safe(process_update, orb_id, status='error', label='Max iters', progress=1.0)
         return ("[Agent hit max tool iterations without completing.]", tool_trace)
