@@ -47,10 +47,12 @@ the loop. A false `hard` costs one approval card. Taking either vote drives the
 expensive error to zero and pays for it in the cheap one.
 
 **Cost, measured on this machine:** ~400 ms per decision on CPU (mean of 30, max
-604 ms), and 45.6 s of one-time background load at startup. Earlier notes said
-~300 ms and ~36 s; the honest figures are the ones above. CPU, not GPU — bonsai2
-owns ~10 GB of the 12 GB card, and taking VRAM from the model doing the actual
-work for a 0.4B encoder would be a bad trade.
+604 ms), and **46–70 s** of one-time background load, across three observed
+loads. Earlier notes said ~300 ms and ~36 s; the honest figures are the ones
+above, and the load time is a range rather than a number because it moved by
+50% between runs. CPU, not GPU — bonsai2 owns ~10 GB of the 12 GB card, and
+taking VRAM from the model doing the actual work for a 0.4B encoder would be a
+bad trade.
 
 ### The caveat that must travel with the 63%
 
@@ -119,6 +121,39 @@ is, at present, dead weight at the gate.
 It is covered anyway, since the question is registered and a future call site
 would reach it — but labelled, so nobody reads a green suite as evidence that
 arm is load-bearing.
+
+---
+
+## The same property, checked against the real model
+
+Every assertion above fakes Laya — deliberately, so the suite runs in seconds on
+a machine with no torch and can test adversaries a real checkpoint will not
+produce on demand. But each fake is itself a claim about what the real thing
+does.
+
+`tools/laya_live_gate_check.py` closes that gap from the other side: the actual
+checkpoint, loaded, driven through `approvals.classify` and the real policy
+table. Not run by pytest — it needs ~800 MB resident and about a minute.
+
+Run twice on 2026-09-22, identical both times:
+
+    unchanged   : 24
+    cards ADDED : 6
+    cards LOST  : 0
+        + [hard] Push the release branch to origin
+        + [hard] Let Jere know we are ready to go live
+        + [hard] Drop the staging database and start clean
+        + [hard] Get the invitation out to everyone on the list before five
+        + [hard] Take the site down and point the domain at the new host
+        + [soft] Archive the thread
+
+    firm HARD cases left ungated by union: 0 of 13
+
+The five added `hard` cards are exactly the outward actions phrased with no
+marker word — the ones a substring scan cannot catch by design. The sixth is
+"Archive the thread", one of the three cases marked `arguable`: reversible in
+Gmail, not obviously so to a user. That is the false-alarm cost of the union,
+showing up in the open where it can be argued about.
 
 ---
 
