@@ -12,8 +12,58 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ## [Unreleased]
 
-Hardening pass of 2026-09-06, after the 5.13.0 tag. Verified defects only,
-each with a regression test.
+### Models
+
+- **Claude Opus 5.5 added, and it takes the Opus tier.** Verified against the
+  published model and pricing pages on 2026-09-22: API id `claude-opus-5-5`,
+  1M context, 128K max output, adaptive thinking, vision and tools,
+  **$4 / $20 per MTok**. It supersedes Opus 5 on capability while costing
+  *less* ($5 / $25), so it leads the Opus entries in the picker and comes
+  before Opus 5 in the router's own fallback chain.
+- **Nobody's saved choice moved.** `default_cloud_model` and the shipped
+  `reasoning` / `subagent` seats remain Claude Sonnet 5. Promoting Opus 5.5
+  there would have doubled the cost of every unrouted cloud turn without
+  anyone asking. Opus 5 stays listed and priced -- a model already selected
+  does not vanish underneath the person who selected it.
+- **Cache reads are no longer billed at a flat tenth.** Opus 5.5 reads cache
+  at 0.05x its input rate ($0.20 per MTok), not the standard 0.1x. The meter
+  now carries a per-model multiplier. This is not a rounding detail: the
+  4.09M-token turn audited on 2026-09-22 was 96.4% cache reads, so this
+  multiplier decides most of the bill.
+- **Fast mode** for Opus 5.5 is priced at $8 / $40, distinct from Opus 5's
+  $10 / $50. Nothing in Friday requests fast mode today; the meter is correct
+  in advance so the first caller cannot silently under-bill.
+
+### Fixed
+
+- **Claude Fable 5.1 was billing at exactly $0.00.** It is in the live
+  /v1/models list, so the picker already offered it, but it was in none of
+  the price tables -- so `price_for` fell through to the provider blended
+  rate, found no row there either, and returned 0/0. The most expensive
+  model in the lineup ($10 / $50) was metered as if it were running
+  on-device for free, and `services/pricing.py` reported it as unknown.
+  Now priced, with the 0.025x cache-read multiplier its page specifies,
+  and listed explicitly rather than only arriving through discovery.
+  This is the same defect as the canonical-Haiku-id zero fixed earlier;
+  it was found while adding Opus 5.5, not looked for.
+
+- **Claude Sonnet 5 was metered 50% too high, in all three price tables.**
+  The rows said $3 / $15; the published page states the $2 / $10 launch price
+  is now the standard price and the scheduled rise to $3 / $15 will not
+  happen. Sonnet 5 is what `default_cloud_model` points at, so this was the
+  most-billed row in the table. Corrected in `cost_meter.PRICING`, in
+  `routing.model_router.CLOUD_COST_PER_1K`, and in the anthropic provider's
+  `cost_per_1k` (the rate the picker displays).
+  **Expect reported Sonnet 5 spend to drop by about a third** -- the earlier
+  figures were overstated, not the new ones understated. Historical rows in
+  `costs.db` keep the cost recorded at the time and are not rewritten.
+- The configuration guide still listed Opus 4.8 / 4.7 / 4.6 and Sonnet 4.6 as
+  pickable. They were removed from the shipped registry some time ago; the
+  guide now names what is actually offered.
+
+
+The sections below come from the hardening pass of 2026-09-06, after the
+5.13.0 tag. Verified defects only, each with a regression test.
 
 ### Security
 

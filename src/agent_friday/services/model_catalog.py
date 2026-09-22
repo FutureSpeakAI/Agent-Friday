@@ -324,7 +324,23 @@ def _model_entries_for(provider: dict, registry) -> list:
     hosted_fallback = False
     if hosted_native:
         if disc_by_id:
-            ids = [m.get("id") for m in discovered if m.get("id")]
+            # A CACHED LIST MUST NOT HIDE A MODEL WE SHIP.
+            #
+            # This replaced the statics outright, and the cache has a 24h TTL.
+            # So on the day Claude Opus 5.5 was added to the shipped list, the
+            # picker did not offer it: the cached /v1/models list predated the
+            # release, was not yet stale, and won. Its declared metadata still
+            # applied (the corrected Sonnet 5 rate showed up fine), which made
+            # the omission look like a typo in the id rather than the cache
+            # deciding what the product offers.
+            #
+            # Discovery still LEADS — it is live truth and it carries the long
+            # tail — but a statically shipped id is our own claim that the
+            # model exists, and it is appended rather than dropped. Retired ids
+            # are removed from the statics when they retire (see the anthropic
+            # descriptor), so this cannot resurrect one.
+            live = [m.get("id") for m in discovered if m.get("id")]
+            ids = live + [m for m in ids if m not in disc_by_id]
         else:
             hosted_fallback = True
 

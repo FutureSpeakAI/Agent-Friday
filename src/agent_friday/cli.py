@@ -382,7 +382,7 @@ def cmd_setup(quick: bool = False):
 # agent_friday.services can't import on a broken install.
 _FALLBACK_ORCHESTRATOR_MODELS = [
     ("claude-sonnet-5", "Claude Sonnet 5", "Frontier default (offline fallback)"),
-    ("claude-opus-5", "Claude Opus 5", "Deep reasoning (offline fallback)"),
+    ("claude-opus-5-5", "Claude Opus 5.5", "Deep reasoning (offline fallback)"),
 ]
 _FALLBACK_CREATIVE_MODELS = [
     ("gemini-nano-banana-2", "Gemini Nano Banana 2", "Image generation (offline fallback)"),
