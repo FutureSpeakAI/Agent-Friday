@@ -120,17 +120,18 @@ class TestCeiling:
         monkeypatch.setattr(pc, "_settings", lambda: {})
         assert pc.check_call_size({"system": "x" * 4000}, "anthropic") == 1000
 
-    def test_task_budget_stops_a_runaway_loop(self, monkeypatch):
-        """`_call_claude_agent` defaults to max_iters=999 and nothing else
-        bounds it; at the measured ~91k tokens/iteration that is 90M tokens."""
+    def test_task_budget_counts_a_long_loop_without_stopping_it(self,
+                                                                 monkeypatch):
+        """Was `test_task_budget_stops_a_runaway_loop`. It no longer stops —
+        see TestAdvisoryTaskBudget below for why, and for the measurement.
+        The tally itself must still be exact, because the advisory is only
+        worth reading if the number in it is right."""
         monkeypatch.setattr(pc, "_settings", lambda: {})
-        with pc.task_budget(limit=25_000, label="runaway") as b:
-            for _ in range(2):
+        monkeypatch.setattr(pc, "_notify", lambda b: None)
+        with pc.task_budget(limit=25_000, label="long") as b:
+            for _ in range(3):
                 pc.check_call_size({"system": "x" * 40_000}, "anthropic")
-            assert b.spent == 20_000
-            with pytest.raises(pc.TaskBudgetExceeded) as e:
-                pc.check_call_size({"system": "x" * 40_000}, "anthropic")
-        assert "runaway" in str(e.value)
+        assert b.spent == 30_000 and b.over is True
 
     def test_a_nested_task_also_charges_its_parent(self, monkeypatch):
         """A fan-out must not launder its way past the outer ceiling."""
@@ -144,11 +145,15 @@ class TestCeiling:
 
     def test_budget_scope_is_released_even_when_a_call_raises(self,
                                                               monkeypatch):
-        monkeypatch.setattr(pc, "_settings", lambda: {})
+        """The per-CALL ceiling still raises, and the scope must still unwind:
+        a leaked thread-local budget would charge the NEXT task on this thread
+        for work it never did."""
+        monkeypatch.setattr(pc, "_settings",
+                            lambda: {"max_call_input_tokens": 1000})
         try:
-            with pc.task_budget(limit=1, label="t"):
+            with pc.task_budget(limit=0, label="t"):
                 pc.check_call_size({"system": "x" * 40_000}, "anthropic")
-        except pc.TaskBudgetExceeded:
+        except pc.CallTooLarge:
             pass
         assert pc.current_budget() is None
 
@@ -302,3 +307,130 @@ class TestOpenRouterCache:
         assert hit is False
         assert content == _sys()
         assert pc._min_cacheable("claude-opus-5") == 512
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  The cumulative task budget is ADVISORY (2026-09-22)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestAdvisoryTaskBudget:
+    """It warns; it does not kill.
+
+    Two real incidents on 2026-09-22 (friday.log:53032 and :56076) stopped a
+    live Sonnet chat turn mid-flight at 4,050,351 and 4,090,829 "input tokens".
+    Cross-checked against ``~/.friday/costs.db`` the second of those was 25
+    calls over five minutes, 96.4% of the tokens were CACHE READS billed at
+    0.1x, and the whole turn cost $3.14. The ceiling was counting re-sent
+    cached context at full freight and killing work over three dollars.
+
+    The seam under test is ``charge`` — the thing the egress chokepoint calls
+    on every cloud send — not the estimator. These tests fail loudly against
+    the old raising implementation, which is the only reason they are evidence.
+    """
+
+    def _no_notify(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(pc, "_settings", lambda: {})
+        monkeypatch.setattr(pc, "_notify", lambda b: seen.append(b))
+        return seen
+
+    def test_a_task_over_its_ceiling_KEEPS_RUNNING(self, monkeypatch):
+        """The whole point. Nothing raises, and the calls after the crossing
+        still go through and are still counted."""
+        self._no_notify(monkeypatch)
+        with pc.task_budget(limit=25_000, label="long turn") as b:
+            for _ in range(6):                       # 60,000 > 25,000
+                assert pc.check_call_size({"system": "x" * 40_000},
+                                          "anthropic") == 10_000
+        assert b.spent == 60_000
+        assert b.over is True
+
+    def test_crossing_warns_once_not_once_per_call(self, monkeypatch):
+        seen = self._no_notify(monkeypatch)
+        with pc.task_budget(limit=25_000, label="long turn") as b:
+            for _ in range(6):
+                pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+        assert len(seen) == 1, "a warning per iteration is noise, not signal"
+        assert b.warned is True
+
+    def test_the_warning_carries_the_numbers_and_the_real_money(self,
+                                                                monkeypatch):
+        """Stephen's standing rule: he always knows what is happening. A
+        warning that cannot be sized, and that quotes a scary token count
+        without the dollars that count actually represents, is not
+        transparency — it is the thing that made the token ceiling look like
+        a catastrophe when it was $3.14."""
+        self._no_notify(monkeypatch)
+        with pc.task_budget(limit=25_000, label="long turn") as b:
+            for _ in range(3):
+                pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+                b.charge_usd(0.41)
+        msg = b.warning
+        assert "long turn" in msg
+        assert "30,000" in msg and "25,000" in msg
+        assert "$1.23" in msg
+        assert "cache" in msg.lower()
+        # and it must NOT claim the task was stopped, because it was not
+        assert "STILL RUNNING" in msg
+        assert "stopped rather than billed further" not in msg
+
+    def test_it_is_surfaced_not_only_logged(self, monkeypatch):
+        """A log line in friday.log is not a surface. It must reach the
+        notification queue the way spend_guard's halts do."""
+        monkeypatch.setattr(pc, "_settings", lambda: {})
+        pushed = {}
+        # Patch the real module's attribute, not a sys.modules entry: `import
+        # a.b as c` resolves through the already-imported parent package, so a
+        # sys.modules swap is ignored and the assertion passes against a
+        # notification that really fired into ~/.friday.
+        import agent_friday.notifications_engine as _ne
+        monkeypatch.setattr(_ne, "push", lambda **kw: pushed.update(kw) or {})
+        with pc.task_budget(limit=1_000, label="long turn"):
+            pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+        assert pushed, "the advisory budget never reached the user"
+        assert pushed.get("kind") == "budget_advisory"
+        assert "long turn" in (pushed.get("body") or "")
+        # advisory, so it must not shout with spend_guard's priority
+        assert pushed.get("priority") != "high"
+
+    def test_status_is_readable_for_the_ui(self, monkeypatch):
+        self._no_notify(monkeypatch)
+        with pc.task_budget(limit=25_000, label="long turn") as b:
+            pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+            b.charge_usd(0.5)
+            s = b.status()
+        assert s["spent"] == 10_000 and s["limit"] == 25_000
+        assert s["over"] is False and s["label"] == "long turn"
+        assert s["spent_usd"] == 0.5
+        assert s["advisory"] is True
+
+    def test_a_nested_task_still_charges_its_parent(self, monkeypatch):
+        """Unchanged behaviour: the tally still rolls up, it just no longer
+        detonates."""
+        self._no_notify(monkeypatch)
+        with pc.task_budget(limit=15_000, label="outer") as outer:
+            with pc.task_budget(limit=100_000, label="inner") as inner:
+                pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+                pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+                assert inner.spent == 20_000
+            assert outer.spent == 20_000 and outer.over is True
+        assert pc.current_budget() is None
+
+    def test_the_money_rolls_up_too(self, monkeypatch):
+        self._no_notify(monkeypatch)
+        with pc.task_budget(limit=0, label="outer") as outer:
+            with pc.task_budget(limit=0, label="inner") as inner:
+                inner.charge_usd(0.25)
+            outer.charge_usd(0.25)
+        assert outer.spent_usd == 0.5
+
+    def test_a_failing_notification_cannot_kill_the_task(self, monkeypatch):
+        monkeypatch.setattr(pc, "_settings", lambda: {})
+
+        def _boom(**kw):
+            raise RuntimeError("notification queue is down")
+
+        import agent_friday.notifications_engine as _ne
+        monkeypatch.setattr(_ne, "push", _boom)
+        with pc.task_budget(limit=1, label="t") as b:
+            pc.check_call_size({"system": "x" * 40_000}, "anthropic")
+        assert b.spent == 10_000

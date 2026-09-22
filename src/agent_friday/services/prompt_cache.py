@@ -16,19 +16,23 @@ the device — but they are NOT the same guarantee and must not be confused:
     billable-equivalent falls to 33.3M — **an 80% cut to the input line**,
     which is where ~99% of the money is (input:output ran 154:1).
 
-  * **A ceiling makes the catastrophe impossible.** Caching cannot do this, and
-    saying otherwise is how a cheap-per-call system still produces a $200 hour.
-    ``_call_claude_agent`` defaults to ``max_iters=999``; at the measured median
-    of ~91,000 input tokens per iteration that is a theoretical 90M tokens on a
-    single task with nothing in the code to stop it. The observed incident — a
-    crash-fallback that re-sent a blown-context turn and billed ~1.43M input
-    tokens on one task — is the small version of that. So: a per-call ceiling,
-    a per-task cumulative ceiling, and a no-progress guard that refuses to
-    re-send a payload no smaller than the one that just failed.
+  * **A per-CALL ceiling makes one catastrophic send impossible.** A single
+    payload far past the model's window cannot succeed, so refusing it before
+    it is billed costs nothing. That guard stays, and it still raises.
 
-Both are settings-driven and both fail LOUD. A refused call raises with the
-numbers in the message, because a silent trim is how an overrun becomes
-invisible again.
+  * **The per-TASK cumulative budget is ADVISORY** and does not stop anything.
+    It used to raise, and on 2026-09-22 it killed two live chat turns at
+    ~4.09M and ~4.05M "input tokens". Checked against ``~/.friday/costs.db``,
+    96.4% of the first of those numbers was CACHE READS billed at 0.1x and the
+    whole turn cost $3.14. The count was accurate; the unit was wrong. A
+    cumulative token tally across an agent loop measures how LONG a task is,
+    not what it costs, and length is not a reason to destroy finished work.
+    ``services/spend_guard`` is the stop that stops, it is denominated in
+    dollars, and the user turns it on.
+
+The per-call ceiling fails LOUD with the numbers in the message, because a
+silent trim is how an overrun becomes invisible again. The per-task budget
+warns loud — log, notification, and ``status()`` for the UI — and keeps going.
 
 Ordering note (the thing that silently defeats caching): a cache hit requires a
 **byte-identical prefix**. One changed byte at position N invalidates everything
@@ -96,7 +100,13 @@ class CallTooLarge(RuntimeError):
 
 
 class TaskBudgetExceeded(RuntimeError):
-    """One task's cumulative cloud input exceeded its ceiling."""
+    """Retained for import compatibility. NO LONGER RAISED.
+
+    ``max_task_input_tokens`` is advisory as of 2026-09-22 — see
+    ``task_budget`` for the measurement that demoted it. Kept as a name so an
+    old ``except`` clause somewhere does not become a NameError, and so this
+    docstring is what a reader finds when they go looking for the guillotine.
+    """
 
 
 def _tokens(text) -> int:
@@ -161,13 +171,36 @@ _local = threading.local()
 
 
 class task_budget:
-    """Context manager scoping a cumulative input-token ceiling to one task.
+    """Context manager tracking one task's cumulative cloud input. ADVISORY.
+
+    It warns. It does not stop the task. That changed on 2026-09-22 and the
+    reason is measured, not argued:
+
+      Two live chat turns were killed mid-flight that morning
+      (friday.log:53032 at 06:29, friday.log:56076 at 08:33) at 4,050,351 and
+      4,090,829 "input tokens". Walking ``~/.friday/costs.db`` backwards from
+      the second kill: 25 calls in five minutes, 4,090,886 tokens presented to
+      Anthropic — matching the counter to 57 tokens — of which 50 were fresh
+      input, 145,643 cache WRITES and 3,945,193 cache READS. 96.4% of the
+      number in that error message was billed at 0.1x. The real cost of the
+      turn the ceiling refused to finish was $3.14.
+
+    So the tokens were real and the counter was accurate; the UNIT was wrong.
+    Prompt caching made a re-sent transcript an order of magnitude cheaper and
+    this ceiling kept pricing it at freight. A cumulative token count in an
+    agent loop is a measure of how long the task is, not of what it costs, and
+    length is not a reason to destroy finished work.
+
+    Money now has its own stop, chosen by the user rather than imposed:
+    ``services/spend_guard`` is denominated in dollars, off by default, and
+    stops at the next call rather than in the middle of one. That is the
+    guillotine; this is the dashboard light.
 
     Thread-local rather than a contextvar because the agent loop and every one
     of its tool calls run on the request's own thread; a nested loop (a task
     that spawns a sub-agent inline) re-enters and the inner scope keeps its own
-    tally while still charging the outer one, so a fan-out cannot launder its
-    way past the parent's ceiling.
+    tally while still charging the outer one, so a fan-out's spend is still
+    visible to the parent.
     """
 
     def __init__(self, limit=None, label=""):
@@ -177,6 +210,9 @@ class task_budget:
         self.limit = int(limit)
         self.label = label or "task"
         self.spent = 0
+        self.spent_usd = 0.0
+        self.over = False
+        self.warned = False
         self._parent = None
 
     def __enter__(self):
@@ -188,18 +224,100 @@ class task_budget:
         _local.budget = self._parent
         return False
 
+    # ── tallies ──────────────────────────────────────────────────────────
     def charge(self, tokens: int):
+        """Count tokens presented to a cloud provider. NEVER raises.
+
+        Anything that can throw here is a thing that can kill a task from
+        inside the egress chokepoint, which is the bug this method used to be.
+        """
         self.spent += max(0, int(tokens))
         if self._parent is not None:
             self._parent.charge(tokens)
-        if self.limit > 0 and self.spent > self.limit:
-            raise TaskBudgetExceeded(
-                f"'{self.label}' has sent {self.spent:,} input tokens to cloud "
-                f"providers, past its ceiling of {self.limit:,}. The task is "
-                f"stopped rather than billed further. Raise "
-                f"model_routing.max_task_input_tokens (or settings "
-                f"'max_task_input_tokens') if this task genuinely needs more."
-            )
+        if self.limit > 0 and self.spent > self.limit and not self.over:
+            self.over = True
+            self._warn()
+
+    def charge_usd(self, usd):
+        """Real billed dollars for this task, as the provider reported them.
+
+        Fed from the agent loop's ``cost_meter.meter()`` return, which reads
+        ``usage.cache_read_input_tokens`` and prices it at the cache rate. This
+        is the honest number, and it is why the warning below can say what the
+        token count actually meant.
+        """
+        try:
+            self.spent_usd += float(usd or 0.0)
+        except (TypeError, ValueError):
+            return
+        if self._parent is not None:
+            self._parent.charge_usd(usd)
+
+    # ── the advisory ─────────────────────────────────────────────────────
+    @property
+    def warning(self):
+        """Live, not a snapshot.
+
+        The notification body is necessarily frozen at the moment of crossing,
+        but the UI keeps reading this while the task runs — and a dollar figure
+        that stopped updating at the crossing is the same class of mistake as
+        the token count that stopped meaning anything once caching landed.
+        """
+        if not self.over:
+            return ""
+        money = (f"${self.spent_usd:,.2f} billed so far"
+                 if self.spent_usd > 0 else
+                 "the billed cost is lower than that count suggests")
+        return (
+            f"'{self.label}' has presented {self.spent:,} input tokens to "
+            f"cloud providers, past its advisory budget of {self.limit:,}. "
+            f"The task is STILL RUNNING and will not be stopped for this. "
+            f"Most of that count is the same conversation re-sent on each "
+            f"step, which prompt cache billing charges at 0.1x — {money}. "
+            f"Adjust 'max_task_input_tokens' to move this notice, or set a "
+            f"real dollar stop in Settings > Cost & Usage."
+        )
+
+    def _warn(self):
+        if self.warned:
+            return
+        self.warned = True
+        _log.warning("task budget advisory: %s", self.warning)
+        try:
+            _notify(self)
+        except Exception as e:                       # never kill the task
+            _log.warning("budget advisory notification failed: %s", e)
+
+    def status(self):
+        """What the UI reads. Advisory is stated, not implied."""
+        return {
+            "label": self.label,
+            "spent": self.spent,
+            "spent_usd": round(self.spent_usd, 6),
+            "limit": self.limit,
+            "over": self.over,
+            "advisory": True,
+            "warning": self.warning or None,
+        }
+
+
+def _notify(budget):
+    """Surface the advisory where spend_guard surfaces its halts.
+
+    Medium priority, not high: nothing is broken and nothing stopped. High is
+    reserved for the dollar stop, which does stop things.
+    """
+    import agent_friday.notifications_engine as _ne
+    _ne.push(
+        title="Long task — token budget passed",
+        body=budget.warning,
+        priority="medium",
+        source="task-budget",
+        kind="budget_advisory",
+        dedupe_key=f"budget-advisory:{budget.label}:{budget.limit}",
+        target={"workspace": "system", "tab": "costs"},
+        meta=budget.status(),
+    )
 
 
 def current_budget():

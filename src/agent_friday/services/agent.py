@@ -7553,6 +7553,13 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                                        duration_ms=int((_time.time() - _t0) * 1000),
                                        session_ctx=session_ctx,
                                        kind=(session_ctx or {}).get("kind"))
+                # Feed the REAL billed dollars to the advisory budget. The
+                # token tally counts a re-sent transcript at freight; this is
+                # what the provider actually charged for it once cache reads
+                # are priced at 0.1x. Without it the advisory quotes a
+                # four-million-token number with no idea that it meant $3.14.
+                if _budget is not None:
+                    _budget.charge_usd(_iter_cost)
             except Exception:
                 pass
             # Task journal (TV3/TV4): what the call cost and where it ran,
