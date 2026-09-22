@@ -7509,6 +7509,75 @@ function OutreachPanel() {
 // communities ignite one by one. Server precomputes x/y/z — no client sim.
 const KG_PALETTE = ['#00d4ff', '#ff00aa', '#00ff80', '#8a2be2', '#ff6600', '#5fa8ff', '#ff8bcb', '#4ecdc4', '#feca57', '#ff6b6b', '#7de1ff', '#b0ffc8'];
 const KG_LOD_THRESHOLD = 2500; // above this, render community super-nodes first
+const KG_EDGE_OPACITY = 0.32; // additive: dense clusters wash out above this
+const KG_ARRANGE_SECS = 1.7; // one node's flight between arrangements
+const KG_ARRANGE_STAGGER = 0.55; // launch spread across nodes, seconds
+const KG_ARRANGEMENTS = [{
+  id: 'galaxy',
+  label: 'Galaxy',
+  tip: 'The linked layout: pages sit near the pages they link to'
+}, {
+  id: 'cluster',
+  label: 'Clusters',
+  tip: 'Each community as its own sphere, biggest first'
+}, {
+  id: 'importance',
+  label: 'Importance',
+  tip: 'A spire: the most-connected pages at the top'
+}, {
+  id: 'section',
+  label: 'Sections',
+  tip: 'One tower per wiki folder'
+}, {
+  id: 'timeline',
+  label: 'Timeline',
+  tip: 'Oldest edit on the left, newest on the right'
+}];
+
+// Node shading. A flat full-brightness sphere has no edge: two same-colour
+// neighbours read as one blob, and bloom fuses a dense cluster into a single
+// glow. Each node instead gets a dim core, a bright rim (fresnel) that marks
+// its boundary, a dark band at the very silhouette that separates it from
+// whatever sits behind it, and a fade with distance from the camera so the
+// near node of an overlapping pair is always the brighter one.
+// uNear/uFar are eye-space depths, updated each frame from the orbit radius.
+const kgNodeMaterial = () => new THREE.ShaderMaterial({
+  uniforms: {
+    uNear: {
+      value: 150
+    },
+    uFar: {
+      value: 450
+    }
+  },
+  vertexShader: `
+    varying vec3 vColor; varying vec3 vN; varying vec3 vV; varying float vDepth;
+    void main(){
+      vec4 p = vec4(position, 1.0); vec3 n = normal;
+      #ifdef USE_INSTANCING
+        p = instanceMatrix * p; n = mat3(instanceMatrix) * n;
+      #endif
+      #ifdef USE_INSTANCING_COLOR
+        vColor = instanceColor;
+      #else
+        vColor = vec3(1.0);
+      #endif
+      vec4 mv = modelViewMatrix * p;
+      vN = normalize(normalMatrix * n); vV = normalize(-mv.xyz); vDepth = -mv.z;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform float uNear; uniform float uFar;
+    varying vec3 vColor; varying vec3 vN; varying vec3 vV; varying float vDepth;
+    void main(){
+      float ndv = clamp(dot(normalize(vN), normalize(vV)), 0.0, 1.0);
+      float rim = pow(1.0 - ndv, 2.4);
+      vec3 col = vColor * (0.28 + 0.26 * ndv) + vColor * rim * 0.95;
+      col *= mix(0.12, 1.0, smoothstep(0.0, 0.16, ndv));
+      col *= mix(0.25, 1.0, 1.0 - smoothstep(uNear, uFar, vDepth));
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
 
 function KnowledgeGraphWS() {
   const mountRef = useRef(null);
@@ -7522,6 +7591,8 @@ function KnowledgeGraphWS() {
   const [searchHits, setSearchHits] = useState([]);
   const [focusComm, setFocusComm] = useState(null);
   const [lodMode, setLodMode] = useState(false);
+  const [arrangement, setArrangement] = useState('galaxy');
+  const [hasDates, setHasDates] = useState(false);
   useNavTarget('knowledge', t => {
     if (t.query) {
       setSearchQ(t.query);
@@ -7580,9 +7651,9 @@ function KnowledgeGraphWS() {
     const buildComposer = (w, h) => {
       composer = new THREE.EffectComposer(renderer);
       composer.addPass(new THREE.RenderPass(scene, camera));
-      // Strength 1.15→0.75 (−35%): the galaxy read as one undifferentiated
-      // glow — nodes lost their silhouettes inside their own bloom halos.
-      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.75, 0.65, 0.12);
+      // Bloom only the bright node rims and labels (threshold 0.3), not the
+      // node bodies: a low threshold fused a dense cluster into one glow.
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.45, 0.3);
       composer.addPass(bloomPass);
     };
     const grp = new THREE.Group();
@@ -7672,6 +7743,8 @@ function KnowledgeGraphWS() {
       content = new THREE.Group();
       grp.add(content);
       S.outline = null;
+      S.nodeMat = null;
+      S.layoutLabels = [];
       S.emphIdx = undefined; // disposed with content — drop stale refs
     };
 
@@ -7741,11 +7814,9 @@ function KnowledgeGraphWS() {
 
       // — nodes (one InstancedMesh, one draw call) —
       const n = entities.length;
-      const geo = new THREE.SphereGeometry(1, 14, 10);
-      const mat = new THREE.MeshBasicMaterial({
-        transparent: true,
-        opacity: 0.98
-      });
+      const geo = new THREE.SphereGeometry(1, 20, 14);
+      const mat = kgNodeMaterial();
+      S.nodeMat = mat;
       const mesh = new THREE.InstancedMesh(geo, mat, n);
       mesh.frustumCulled = false;
       const dummy = new THREE.Object3D();
@@ -7767,6 +7838,9 @@ function KnowledgeGraphWS() {
         mesh.setColorAt(i, opts && opts.instant ? c : dark);
         e.__idx = i;
         e.__ci = ciOf(e);
+        e.__gx = e.x || 0;
+        e.__gy = e.y || 0;
+        e.__gz = e.z || 0;
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       content.add(mesh);
@@ -7782,10 +7856,10 @@ function KnowledgeGraphWS() {
       // applyColors; hidden until the entrance ignition completes.
       {
         const og = new THREE.SphereGeometry(1, 14, 10);
+        // Opaque: a near-black shell behind each node is an ink outline
+        // that separates it from a same-coloured neighbour behind it.
         const om = new THREE.MeshBasicMaterial({
-          side: THREE.BackSide,
-          transparent: true,
-          opacity: 0.85
+          side: THREE.BackSide
         });
         const omesh = new THREE.InstancedMesh(og, om, n);
         omesh.frustumCulled = false;
@@ -7793,7 +7867,7 @@ function KnowledgeGraphWS() {
         for (let i = 0; i < n; i++) {
           const e = entities[i];
           od.position.set(e.x || 0, e.y || 0, e.z || 0);
-          od.scale.setScalar(baseScale[i] * 1.16);
+          od.scale.setScalar(baseScale[i] * 1.12);
           od.updateMatrix();
           omesh.setMatrixAt(i, od.matrix);
           omesh.setColorAt(i, dark);
@@ -7809,10 +7883,12 @@ function KnowledgeGraphWS() {
         const pos = new Float32Array(rels.length * 6),
           col = new Float32Array(rels.length * 6);
         let k = 0;
+        const pairs = [];
         rels.forEach(r => {
           const a = S.entById[r.source],
             b = S.entById[r.target];
           if (!a || !b) return;
+          pairs.push(a.__idx, b.__idx);
           const ca = a.type === 'soul' ? new THREE.Color('#9adfff') : commColor(a.__ci);
           const cb = b.type === 'soul' ? new THREE.Color('#9adfff') : commColor(b.__ci);
           const w = r.weight || 0.5,
@@ -7837,14 +7913,21 @@ function KnowledgeGraphWS() {
         const em = new THREE.LineBasicMaterial({
           vertexColors: true,
           transparent: true,
-          opacity: opts && opts.instant ? 0.55 : 0,
+          opacity: opts && opts.instant ? KG_EDGE_OPACITY : 0,
           blending: THREE.AdditiveBlending,
           depthWrite: false
         });
         const lines = new THREE.LineSegments(eg, em);
+        lines.frustumCulled = false; // endpoints move during arrangements
         content.add(lines);
         S.edgeMat = em;
-      } else S.edgeMat = null;
+        S.edgePos = eg.attributes.position;
+        S.edgePairs = pairs;
+      } else {
+        S.edgeMat = null;
+        S.edgePos = null;
+        S.edgePairs = null;
+      }
 
       // — community nebulae + labels —
       S.nebulae = [];
@@ -7925,6 +8008,11 @@ function KnowledgeGraphWS() {
       }
       S.highlight = null;
       S.applyColors = applyColors;
+      flight = null;
+      S.decor = null;
+      S.layout = 'galaxy';
+      setArrangement('galaxy');
+      setHasDates(entities.some(e => e.updated));
       applyCam();
     };
 
@@ -7948,7 +8036,7 @@ function KnowledgeGraphWS() {
           // Silhouette rim: dimmed node color normally; the HOVERED node's rim
           // goes bright so its boundary — and which node the tooltip means —
           // is unmistakable. Hover-neighbors get a mid rim.
-          if (S.lastHoverIdx === i) oc.copy(bright);else if (hov && hov.has(i)) oc.copy(c).multiplyScalar(0.55);else oc.copy(c).multiplyScalar(0.32);
+          if (S.lastHoverIdx === i) oc.copy(bright);else if (hov && hov.has(i)) oc.copy(c).multiplyScalar(0.55);else oc.copy(c).multiplyScalar(0.05);
           S.outline.setColorAt(i, oc);
         }
       }
@@ -7968,7 +8056,7 @@ function KnowledgeGraphWS() {
         od.updateMatrix();
         S.outline.setMatrixAt(i, od.matrix);
       };
-      if (S.emphIdx !== undefined && S.emphIdx !== idx) apply(S.emphIdx, 1.16);
+      if (S.emphIdx !== undefined && S.emphIdx !== idx) apply(S.emphIdx, 1.12);
       if (idx !== undefined && idx !== null) apply(idx, 1.42);
       S.emphIdx = idx;
       S.outline.instanceMatrix.needsUpdate = true;
@@ -8119,6 +8207,248 @@ function KnowledgeGraphWS() {
       idleSpin = false;
     };
     S.flyTo = flyTo;
+    // ── arrangements: nodes fly between 3D layouts ───────────
+    // Every arrangement maps each node to a target position. A transition
+    // moves e.x/e.y/e.z along a lifted arc, so picking, hover, flyTo, pulses
+    // and edges all follow the nodes mid-flight. 'galaxy' is the server
+    // layout, kept on each entity as __gx/__gy/__gz.
+    let flight = null; // {t0, from, to, lift, delay} while nodes are in the air
+    const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+    const byDegree = (a, b) => (b.degree || 0) - (a.degree || 0) || (b.frequency || 0) - (a.frequency || 0);
+    const layoutTargets = mode => {
+      const E = S.entities,
+        n = E.length,
+        to = new Float32Array(n * 3),
+        labels = [];
+      const put = (e, x, y, z) => {
+        to[e.__idx * 3] = x;
+        to[e.__idx * 3 + 1] = y;
+        to[e.__idx * 3 + 2] = z;
+      };
+      if (mode === 'cluster') {
+        // Each community becomes its own ball of stars on a ring, biggest first.
+        const groups = {};
+        E.forEach(e => {
+          (groups[e.__ci] = groups[e.__ci] || []).push(e);
+        });
+        const keys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
+        const rad = keys.map(k => 5 + 3.4 * Math.cbrt(groups[k].length) * 2.2);
+        const ring = Math.max(70, rad.reduce((s, r) => s + 2 * r + 14, 0) / (2 * Math.PI));
+        let ang = 0;
+        const total = rad.reduce((s, r) => s + 2 * r + 14, 0);
+        keys.forEach((k, gi) => {
+          ang += (rad[gi] + 7) / total * 2 * Math.PI;
+          const cx = ring * Math.cos(ang),
+            cz = ring * Math.sin(ang),
+            cy = (gi % 2 ? 1 : -1) * Math.min(18, rad[gi] * 0.4);
+          ang += (rad[gi] + 7) / total * 2 * Math.PI;
+          const mem = groups[k].slice().sort(byDegree);
+          mem.forEach((e, j) => {
+            const rr = rad[gi] * Math.cbrt((j + 0.5) / mem.length);
+            const yy = 1 - 2 * (j + 0.5) / mem.length,
+              th = j * GOLDEN,
+              sr = Math.sqrt(1 - yy * yy);
+            put(e, cx + rr * sr * Math.cos(th), cy + rr * yy, cz + rr * sr * Math.sin(th));
+          });
+          const c = S.communities[k];
+          if (mem.length > 1) labels.push({
+            text: ((c && c.title) || 'cluster ' + k).toUpperCase() + ' \xB7 ' + mem.length,
+            color: KG_PALETTE[k % KG_PALETTE.length],
+            pos: [cx, cy + rad[gi] + 9, cz]
+          });
+        });
+      } else if (mode === 'importance') {
+        // A spire: the most-connected pages at the summit, the periphery
+        // spiralling out at the base.
+        const order = E.slice().sort(byDegree);
+        order.forEach((e, r) => {
+          const t = n > 1 ? r / (n - 1) : 0;
+          const rr = 5 + 125 * Math.pow(t, 0.6),
+            th = r * GOLDEN;
+          put(e, rr * Math.cos(th), 150 - 300 * Math.pow(t, 0.75), rr * Math.sin(th));
+        });
+        labels.push({
+          text: 'MOST CONNECTED',
+          color: '#dff6ff',
+          pos: [0, 172, 0]
+        }, {
+          text: 'PERIPHERY',
+          color: '#7d93b8',
+          pos: [0, -170, 0]
+        });
+      } else if (mode === 'section') {
+        // A skyline: one tower per wiki folder, tallest first, the
+        // most-connected pages at the top of each tower.
+        const groups = {};
+        E.forEach(e => {
+          const k = e.type === 'soul' ? 'soul' : e.section || 'core';
+          (groups[k] = groups[k] || []).push(e);
+        });
+        const keys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
+        const cols = Math.ceil(Math.sqrt(keys.length)),
+          gap = 72;
+        keys.forEach((k, gi) => {
+          const gx = (gi % cols - (cols - 1) / 2) * gap,
+            gz = (Math.floor(gi / cols) - (Math.ceil(keys.length / cols) - 1) / 2) * gap;
+          const mem = groups[k].slice().sort(byDegree).reverse();
+          const per = Math.max(4, Math.min(12, Math.ceil(Math.sqrt(mem.length) * 1.6)));
+          const ringR = 3 + per * 1.25;
+          mem.forEach((e, j) => {
+            const lvl = Math.floor(j / per),
+              th = (j % per) / per * 2 * Math.PI + lvl * 0.45;
+            put(e, gx + ringR * Math.cos(th), -60 + lvl * 5.5, gz + ringR * Math.sin(th));
+          });
+          labels.push({
+            text: k.toUpperCase() + ' \xB7 ' + mem.length,
+            color: KG_PALETTE[gi % KG_PALETTE.length],
+            pos: [gx, -60 + Math.ceil(mem.length / per) * 5.5 + 9, gz]
+          });
+        });
+      } else if (mode === 'timeline') {
+        // A tunnel through time: oldest edit on the left, newest on the right.
+        const dated = E.filter(e => e.updated).sort((a, b) => a.updated - b.updated);
+        const undated = E.filter(e => !e.updated);
+        const L = 230,
+          m = dated.length;
+        dated.forEach((e, r) => {
+          const t = m > 1 ? r / (m - 1) : 0.5,
+            th = r * GOLDEN * 2;
+          put(e, -L + 2 * L * t, 30 * Math.sin(th), 30 * Math.cos(th));
+        });
+        undated.forEach((e, r) => {
+          const th = r * GOLDEN;
+          put(e, -L - 40, 12 * Math.sin(th) * Math.sqrt(r + 1) / 3, 12 * Math.cos(th) * Math.sqrt(r + 1) / 3);
+        });
+        // Spacing is by rank, not by date, so a burst of recent edits does
+        // not collapse into one point; the markers name the dates at evenly
+        // spaced ranks, skipping repeats.
+        const multiYear = m > 1 && new Date(dated[0].updated * 1000).getFullYear() !== new Date(dated[m - 1].updated * 1000).getFullYear();
+        const fmt = ts => new Date(ts * 1000).toLocaleDateString(undefined, multiYear ? {
+          month: 'short',
+          year: 'numeric'
+        } : {
+          day: 'numeric',
+          month: 'short'
+        });
+        const marks = Math.min(7, m),
+          seen = new Set();
+        for (let q = 0; q < marks; q++) {
+          const r = Math.round(q / Math.max(1, marks - 1) * (m - 1));
+          if (seen.has(fmt(dated[r].updated))) continue;
+          seen.add(fmt(dated[r].updated));
+          labels.push({
+            text: fmt(dated[r].updated),
+            color: '#8fd8ff',
+            pos: [-L + 2 * L * (m > 1 ? r / (m - 1) : 0.5), 46, 0]
+          });
+        }
+      } else {
+        E.forEach(e => put(e, e.__gx, e.__gy, e.__gz));
+      }
+      return {
+        to,
+        labels
+      };
+    };
+    const clearLayoutLabels = () => {
+      (S.layoutLabels || []).forEach(spr => {
+        content.remove(spr);
+        spr.material.map.dispose();
+        spr.material.dispose();
+      });
+      S.layoutLabels = [];
+    };
+    const arrange = mode => {
+      if (!S.mesh || !S.entities || !S.entities.length) return;
+      const E = S.entities,
+        n = E.length;
+      if (entranceT0 >= 0) {
+        entranceT0 = -2;
+        if (S.outline) S.outline.visible = true;
+      }
+      const {
+        to,
+        labels
+      } = layoutTargets(mode);
+      const from = new Float32Array(n * 3),
+        lift = new Float32Array(n * 3),
+        delay = new Float32Array(n);
+      let sd = 4242;
+      const rnd = () => {
+        sd = sd * 1103515245 + 12345 & 0x7fffffff;
+        return sd / 0x7fffffff;
+      };
+      for (let i = 0; i < n; i++) {
+        const e = E[i];
+        from[i * 3] = e.x;
+        from[i * 3 + 1] = e.y;
+        from[i * 3 + 2] = e.z;
+        // Arc control point: bulge outward from the axis and up/down, so
+        // nodes swoop past each other instead of sliding through the crowd.
+        const mx = (e.x + to[i * 3]) / 2,
+          mz = (e.z + to[i * 3 + 2]) / 2;
+        const d = Math.hypot(to[i * 3] - e.x, to[i * 3 + 1] - e.y, to[i * 3 + 2] - e.z);
+        const h = Math.hypot(mx, mz) || 1;
+        lift[i * 3] = mx / h * d * 0.35;
+        lift[i * 3 + 1] = (rnd() - 0.5) * d * 0.6;
+        lift[i * 3 + 2] = mz / h * d * 0.35;
+        delay[i] = rnd() * KG_ARRANGE_STAGGER;
+      }
+      flight = {
+        t0: clock.getElapsedTime(),
+        from,
+        to,
+        lift,
+        delay
+      };
+      clearLayoutLabels();
+      labels.forEach(l => {
+        const spr = makeLabel(l.text, l.color, 0.1);
+        spr.position.set(l.pos[0], l.pos[1], l.pos[2]);
+        content.add(spr);
+        S.layoutLabels.push(spr);
+      });
+      // Outside the galaxy, links are context rather than structure: thin
+      // them so hub edges do not pile into a haze.
+      S.decor = mode === 'galaxy' ? {
+        neb: 0.1,
+        lbl: 0.8,
+        lay: 0,
+        edge: KG_EDGE_OPACITY
+      } : {
+        neb: 0,
+        lbl: 0,
+        lay: 0.85,
+        edge: 0.12
+      };
+      S.layout = mode;
+      setArrangement(mode);
+      // Frame the arrangement: orbit its centre at a distance that fits its
+      // bounding sphere in the 58-degree view.
+      const lo = [1e9, 1e9, 1e9],
+        hi = [-1e9, -1e9, -1e9];
+      for (let i = 0; i < n * 3; i++) {
+        lo[i % 3] = Math.min(lo[i % 3], to[i]);
+        hi[i % 3] = Math.max(hi[i % 3], to[i]);
+      }
+      const cx = (lo[0] + hi[0]) / 2,
+        cy = (lo[1] + hi[1]) / 2,
+        cz = (lo[2] + hi[2]) / 2;
+      let R = 0;
+      for (let i = 0; i < n; i++) R = Math.max(R, Math.hypot(to[i * 3] - cx, to[i * 3 + 1] - cy, to[i * 3 + 2] - cz));
+      camGoal.target.set(cx, cy, cz);
+      camGoal.r = Math.max(120, Math.min(1100, R * 1.9));
+      camGoal.theta += 0.6;
+      // Towers, spire and tunnel read side-on; the cluster ring from above.
+      camGoal.phi = {
+        cluster: 0.95,
+        importance: 1.45,
+        section: 1.32,
+        timeline: 1.4
+      }[mode] || 1.05;
+    };
+    S.arrange = arrange;
+    window.__kgArrange = mode => arrange(mode);
     // Debug/test hook: project entity i to screen coords (used by smoke tests).
     window.__kgPick = i => {
       const e = S.entities && S.entities[i];
@@ -8233,7 +8563,7 @@ function KnowledgeGraphWS() {
         }
         if (S.edgeMat) {
           const ep = Math.min(1, Math.max(0, (et - 2.6) / 1.6));
-          S.edgeMat.opacity = 0.55 * easeIO(ep);
+          S.edgeMat.opacity = KG_EDGE_OPACITY * easeIO(ep);
         }
         if (et > 2.0 + igniteOrder.length * 0.22 + 1.8) {
           entranceT0 = -2;
@@ -8261,6 +8591,82 @@ function KnowledgeGraphWS() {
           S.mesh.instanceMatrix.needsUpdate = true;
           return age < 1.2;
         });
+      }
+
+      // arrangement flight: quadratic arc from→(mid+lift)→to per node, each
+      // node launching after its own small delay; nodes brighten mid-flight.
+      if (flight && S.mesh) {
+        const ft = t - flight.t0,
+          E = S.entities,
+          n = E.length;
+        const od = new THREE.Object3D(),
+          col = new THREE.Color();
+        let done = true;
+        for (let i = 0; i < n; i++) {
+          const p = Math.min(1, Math.max(0, (ft - flight.delay[i]) / KG_ARRANGE_SECS));
+          if (p < 1) done = false;
+          const q = easeIO(p),
+            u = 1 - q,
+            i3 = i * 3,
+            e = E[i];
+          const arc = a => {
+            const A = flight.from[i3 + a],
+              B = flight.to[i3 + a];
+            return u * u * A + 2 * u * q * ((A + B) / 2 + flight.lift[i3 + a]) + q * q * B;
+          };
+          e.x = arc(0);
+          e.y = arc(1);
+          e.z = arc(2);
+          od.position.set(e.x, e.y, e.z);
+          od.scale.setScalar(S.baseScale[i]);
+          od.updateMatrix();
+          S.mesh.setMatrixAt(i, od.matrix);
+          if (S.outline) {
+            od.scale.setScalar(S.baseScale[i] * (S.emphIdx === i ? 1.42 : 1.12));
+            od.updateMatrix();
+            S.outline.setMatrixAt(i, od.matrix);
+          }
+          const glow = 1 + 0.9 * Math.sin(Math.PI * p);
+          col.setRGB(S.baseColor[i3] * glow, S.baseColor[i3 + 1] * glow, S.baseColor[i3 + 2] * glow);
+          S.mesh.setColorAt(i, col);
+        }
+        S.mesh.instanceMatrix.needsUpdate = true;
+        if (S.mesh.instanceColor) S.mesh.instanceColor.needsUpdate = true;
+        if (S.outline) S.outline.instanceMatrix.needsUpdate = true;
+        if (S.edgePos && S.edgePairs) {
+          const P = S.edgePos.array,
+            pr = S.edgePairs;
+          for (let k = 0; k < pr.length; k += 2) {
+            const a = E[pr[k]],
+              b = E[pr[k + 1]],
+              o = k * 3;
+            P[o] = a.x;
+            P[o + 1] = a.y;
+            P[o + 2] = a.z;
+            P[o + 3] = b.x;
+            P[o + 4] = b.y;
+            P[o + 5] = b.z;
+          }
+          S.edgePos.needsUpdate = true;
+        }
+        if (done) {
+          flight = null;
+          applyColors();
+        }
+      }
+      // cross-fade the galaxy's nebulae/labels against the arrangement labels
+      if (S.decor && entranceT0 < -1) {
+        const kd = 1 - Math.pow(0.03, dt);
+        S.nebulae.forEach(m => {
+          if (m) m.opacity += (S.decor.neb - m.opacity) * kd;
+        });
+        S.labels.forEach(m => {
+          if (m) m.opacity += (S.decor.lbl - m.opacity) * kd;
+        });
+        (S.layoutLabels || []).forEach(spr => {
+          spr.material.opacity += (S.decor.lay - spr.material.opacity) * kd;
+        });
+        if (S.edgeMat) S.edgeMat.opacity += (S.decor.edge - S.edgeMat.opacity) * kd;
       }
 
       // hover raycast (only when pointer moved)
@@ -8301,6 +8707,12 @@ function KnowledgeGraphWS() {
         }
       }
       applyCam();
+      if (S.nodeMat) {
+        // Depth cue follows the zoom: full brightness in front of the orbit
+        // target, fading behind it.
+        S.nodeMat.uniforms.uNear.value = cam.r * 0.85;
+        S.nodeMat.uniforms.uFar.value = cam.r * 1.9;
+      }
       if (composer && bloomOn) composer.render();else renderer.render(scene, camera);
 
       // fps meter + graceful degradation
@@ -8422,7 +8834,39 @@ function KnowledgeGraphWS() {
         instant: true
       });
     }
-  }, "\u2190 all constellations"), /*#__PURE__*/React.createElement("button", {
+  }, "\u2190 all constellations"), !lodMode && stats && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 2,
+      border: '1px solid rgba(170,120,255,0.25)',
+      borderRadius: 6,
+      padding: 2
+    }
+  }, KG_ARRANGEMENTS.map(a => {
+    const off = a.id === 'timeline' && !hasDates;
+    return /*#__PURE__*/React.createElement("button", {
+      key: a.id,
+      disabled: off,
+      title: off ? 'Needs page dates \u2014 rebuild the graph (\u21BB) to add them' : a.tip,
+      onClick: () => {
+        const S = kgRef.current;
+        if (S.arrange) {
+          S.arrange(a.id);
+          setArrangement(a.id);
+        }
+      },
+      style: {
+        fontSize: 11,
+        padding: '3px 8px',
+        border: 'none',
+        borderRadius: 4,
+        cursor: off ? 'default' : 'pointer',
+        opacity: off ? 0.35 : 1,
+        background: arrangement === a.id ? 'rgba(0,212,255,0.18)' : 'transparent',
+        color: arrangement === a.id ? '#bff3ff' : '#8fa8c8'
+      }
+    }, a.label);
+  })), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     title: "Rebuild the graph from the wiki",
     style: {

@@ -111,12 +111,21 @@ def list_wiki_pages(wiki_dir: Optional[Path] = None) -> list[Path]:
     return out
 
 
+def _mtime(path: Path) -> Optional[float]:
+    """Last-modified time (epoch seconds), or None when it cannot be read."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 def build_wiki_index(wiki_dir: Optional[Path] = None,
                      include_soul: Optional[bool] = None,
                      mention_edges: Optional[bool] = None) -> dict[str, dict]:
     """Parse the wiki into an in-memory index.
 
     Returns {slug: {title, tags, summary, section, path, sensitivity, body_len,
+                    updated (mtime or None),
                     out_links: [(target_slug, kind)], in_links: [slug]}}
     """
     settings = kg_settings()
@@ -177,6 +186,7 @@ def build_wiki_index(wiki_dir: Optional[Path] = None,
             "path": rel,
             "sensitivity": _page_sensitivity(rel),
             "body_len": len(body),
+            "updated": _mtime(page),
             "out_links": [],
             "in_links": [],
             "mention_count": 0,
@@ -201,6 +211,7 @@ def build_wiki_index(wiki_dir: Optional[Path] = None,
                 "path": "SOUL.md",
                 "sensitivity": 1,
                 "body_len": len(soul_text),
+                "updated": _mtime(SOUL_FILE),
                 "out_links": [],
                 "in_links": [],
                 "mention_count": 0,
@@ -381,6 +392,7 @@ def index_to_records(index: dict[str, dict]) -> dict[str, list[dict]]:
             "community": str(slug_comm.get(slug, 0)),
             "level": 0,
             "section": e["section"],
+            "updated": e.get("updated"),
             "provenance": {
                 "wiki_pages": [e["path"]],
                 "sensitivity": e["sensitivity"],

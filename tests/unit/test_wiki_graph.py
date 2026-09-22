@@ -95,6 +95,16 @@ class TestRecords:
         comms = recs["communities"]
         assert sum(c["size"] for c in comms) == len(recs["entities"])
 
+    def test_entities_carry_page_modified_time(self, vault):
+        # The galaxy's Timeline arrangement orders pages by last edit.
+        import os
+        page = vault / "people" / "ada.md"
+        os.utime(page, (1_700_000_000, 1_700_000_000))
+        idx = wiki_graph.build_wiki_index(wiki_dir=vault, include_soul=False)
+        ents = {e["id"]: e for e in wiki_graph.index_to_records(idx)["entities"]}
+        assert ents["page:people/ada"]["updated"] == 1_700_000_000
+        assert all(isinstance(e["updated"], float) for e in ents.values())
+
     def test_explicit_link_outranks_mention_dedup(self, vault):
         idx = wiki_graph.build_wiki_index(wiki_dir=vault, include_soul=False)
         recs = wiki_graph.index_to_records(idx)
