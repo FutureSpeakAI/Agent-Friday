@@ -774,10 +774,14 @@ def _fetch_calendar_range_live(start, end):
     try:
         from googleapiclient.discovery import build
         svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        # Google rejects a time without a UTC offset (HTTP 400). Callers pass
+        # naive local-midnight bounds; astimezone() reads them as local time.
+        t_min = start if start.tzinfo else start.astimezone()
+        t_max = end if end.tzinfo else end.astimezone()
         resp = svc.events().list(
             calendarId="primary",
-            timeMin=start.isoformat(),
-            timeMax=end.isoformat(),
+            timeMin=t_min.isoformat(),
+            timeMax=t_max.isoformat(),
             singleEvents=True, orderBy="startTime", maxResults=250,
         ).execute()
         out = []
