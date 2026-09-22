@@ -1,6 +1,9 @@
-# The Laya union gate — off by default, shadow first
+# The Laya union gate — shipped ON, with a switch
 
-**Status:** built, wired, defaulting to OFF. Awaiting Stephen's go to enable.
+**Status:** built, wired, **ON by default**, with an off/shadow/on control in
+Settings. Stephen's call, made with the eval below in hand: "land the code,
+land the model, then turn it on." An earlier draft of this document said
+default-OFF; that was superseded the same day and the reversal is his to make.
 **Written:** 2026-09-22
 **Supersedes nothing.** Extends `docs/design/active/laya-across-the-harness.md`,
 which ranked the harness's judgments and recommended the corpus work first.
@@ -183,23 +186,79 @@ warm-up would be scored against a moment that has passed.
 
 | | state |
 |---|---|
-| `decisions.DEFAULT_BACKEND` | `keyword` — **unchanged** |
-| `laya` / `laya-union` backends | **registered** at server start, selectable, not selected |
-| Model load at startup | **only** if `decision_backend` or `decision_shadow` names a Laya backend |
-| Shadow mode | **off** unless `FRIDAY_DECISION_SHADOW` / `decision_shadow` is set |
+| `core.DEFAULT_SETTINGS["decision_backend"]` | **`laya-union`** — the shipped default |
+| `decisions.DEFAULT_BACKEND` (the FALLBACK) | `keyword` — **unchanged, and load-bearing** |
+| Settings control | Privacy → **WHAT NEEDS YOUR SIGN-OFF**, three states |
+| Model load at startup | **only** when a setting names a Laya backend |
+| A change to either key | announced as an **Approval gate change** |
 
-Registering is cheap and unconditional: `laya_backend` imports `laya` — and
-therefore torch and transformers — lazily inside `_load_now`, so importing it
-pulls no ML stack. A machine without torch logs one line and behaves exactly as
-it does today.
+Those first two rows are different things and the distinction is the whole
+safety story. The shipped DEFAULT is the union. The FALLBACK is the substring
+scan, and it is what every failure path lands on: `decide()` when a backend
+raises, `active_backend()` when a setting names something unregistered, and
+`union_backend` when Laya is absent or still loading. If that ever becomes a
+model, an unloadable checkpoint takes the approval gate with it.
 
-### Turning it on
+### The three states
 
-1. **Shadow first, for a week.** `decision_shadow: "laya"`. Costs 45 s of load
-   and ~800 MB resident; changes no verdict.
-2. **Read the log.** `decisions.jsonl` rows where `shadow` is true and `agreed`
-   is false are the entire argument, on real traffic rather than on my 30 cases.
-3. **Then, if the disagreements look right,** `decision_backend: "laya-union"`.
+`decision_backend` and `decision_shadow` are generic keys — `decisions.py` is
+deliberately backend-agnostic — but four combinations of two keys is not a
+control anyone can reason about, and two of them are states nobody should be
+able to pick. So the UI offers three, and the mapping lives in exactly one
+place (`laya_backend.MODES`), served to the panel by
+`/api/decisions/gate_status` rather than restated in two HTML files.
+
+| switch | `decision_backend` | `decision_shadow` | what happens |
+|---|---|---|---|
+| **Off** | `keyword` | `""` | how Friday behaved before Laya |
+| **Shadow** | `keyword` | `laya` | keyword still decides; Laya scores alongside and both are logged |
+| **On** | `laya-union` | `""` | gate when EITHER votes to gate |
+
+`decision_backend: "laya"` — Laya **alone**, keyword not consulted — is not
+offered. It discards the structural guarantee and leaves only the 85%. It stays
+registered and reachable by hand for evaluation; a settings file in that state
+reports `custom` rather than lighting up a switch position that misdescribes it.
+
+### Degradation, which matters more now that it ships on
+
+Selecting Laya while it is missing, corrupt or mid-load answers from the
+keyword scan **immediately** and says so in amber in the panel. It never
+stalls the gate and never fails closed: an ordinary internal action does not
+grow an approval card because a model failed to load. The first decision that
+needs an unloaded model kicks the load on a background thread — so flipping the
+switch on a running server works rather than selecting a model that never
+loads — and a load that has already FAILED is not retried, or one missing
+download would become a thread per approval.
+
+---
+
+## Can the model reach a machine that is not Stephen's?
+
+A feature that works only where the weights already happen to sit is not
+releasable, so this was checked rather than assumed. **It is not a blocker.**
+
+| | verified 2026-09-22 |
+|---|---|
+| `laya` package | on **PyPI**, 15 versions, 0.3.5 current; the installed copy has no `direct_url.json`, so it came from an index rather than a local path |
+| weights repo | `convaiinnovations/laya` — `private: false`, `gated: false`, 38 files |
+| anonymous fetch | `HTTP 200`, **842,609,210 bytes**, with `HF_TOKEN` explicitly unset |
+| licence | **Apache-2.0** — commercially shippable, unlike the Breeze TTS weights that could never ship |
+| installer path | `packaging/windows/requirements/judgment.txt` + a step in `install.ps1`, with `scripts/prefetch_laya.py` pulling the checkpoint during the install |
+
+Three honest conditions on that, none of them new:
+
+* **It needs network at install time.** The wheelhouse carries one package
+  (`pyautogui`) and is not a general offline-install mechanism; torch is not in
+  it either, so this is the same condition the memory tier already has.
+* **It is gated on torch.** `laya` requires `torch>=2.0`, which is the same
+  ~2.5 GB the memory tier installs. The installer step runs **only when torch
+  is already importable**, because running it unconditionally would make torch
+  mandatory on an install that used `-SkipMemory` to decline it.
+* **Declining either leaves keyword-only**, which is exactly today's behaviour,
+  and the Settings panel says so rather than showing a switch that claims
+  otherwise.
+
+---
 
 ---
 
@@ -210,7 +269,9 @@ it does today.
   severity question is a good fit for the phrasing, not because it was taught.
 - It does not fix `sensitivity_classifier`, which the design doc ranks higher
   and which needs no new dependency — that finding stands and is untouched.
-- It does not make Laya a new-install dependency. Still no.
+- It does not make Laya a **hard** new-install dependency. The judgment tier is
+  optional and gated on torch; an install that skips it is not broken, only
+  back to the substring scan.
 - `~/.friday/decisions.jsonl` **is still empty** — the file does not exist. Until
   shadow mode runs on real traffic, there is no corpus, and every number in this
   document comes from a 30-case set I wrote by hand.
