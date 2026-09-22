@@ -41499,7 +41499,22 @@ function App() {
   useEffect(() => {
     if (!chatLoad) { setTurnStatus(null); return; }
     let misses = 0, stop = false;
+    /* ONE RELEASE PER TURN.
+       setInterval does not wait for an async callback, and the staleness
+       guard below used to run only BEFORE the await. A poll can easily take
+       longer than the 15s tick when the server is busy, so ticks overlapped:
+       each one passed the guard while the previous answer was still in
+       flight, and each one released. Measured 2026-09-22 -- a single healthy
+       six-minute turn ("Please start my day", 15:12:16 to 15:18:19, which
+       streamed its reply correctly) produced about a dozen identical "that
+       turn ended without producing a reply" notices.
+       `released` latches the verdict; `polling` keeps one poll outstanding,
+       which is also what makes `misses` count CONSECUTIVE failures instead
+       of concurrent ones -- the four-miss rule was never four in a row. */
+    let released = false, polling = false;
     const release = (text) => {
+      if (released) return;
+      released = true;
       setChatLoad(false);
       inFlightSince.current = 0;
       inFlightTurn.current = null;
@@ -41507,16 +41522,25 @@ function App() {
       setChatMsgs(p => [...p, { role: 'system', kind: 'stalled', text }]);
     };
     const iv = setInterval(async () => {
-      if (stop || !inFlightSince.current || !inFlightTurn.current) return;
+      if (stop || released || polling) return;
+      if (!inFlightSince.current || !inFlightTurn.current) return;
       const elapsed = Date.now() - inFlightSince.current;
       /* Short turns are the overwhelming majority and need no supervision. */
       if (elapsed < 90 * 1000) return;
+      const turn = inFlightTurn.current;
       let live = null;
+      polling = true;
       try {
         const r = await fetch('/api/chat/turn/'
-          + encodeURIComponent(inFlightTurn.current) + '/liveness');
+          + encodeURIComponent(turn) + '/liveness');
         if (r.ok) live = await r.json();
       } catch (_) {/* counted below, never thrown */}
+      finally { polling = false; }
+      /* Everything the guard checked can have changed while the answer was in
+         flight: the effect may have torn down, a reply may have arrived, or
+         another turn may have started. Answer for the turn we asked about, or
+         not at all. */
+      if (stop || released || inFlightTurn.current !== turn) return;
       if (!live) {
         if (++misses < 4) return;
         release('Friday has stopped answering — the server is not responding '
