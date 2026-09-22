@@ -68,12 +68,17 @@ _IMAGE_MODEL_MAP = {
     "nano-banana-pro":        "gemini-3-pro-image",
     "nano_banana_pro":        "gemini-3-pro-image",
     # Nano Banana 2 = the Gemini 3.1 Flash image model (stable 2026-05-28).
-    # gemini-2.5-flash-image is the ORIGINAL Nano Banana (sunsets 2026-10-02)
-    # and stays reachable via the bare "nano-banana" alias.
     "gemini-nano-banana-2":   "gemini-3.1-flash-image",
     "nano-banana-2":          "gemini-3.1-flash-image",
     "nano_banana_2":          "gemini-3.1-flash-image",
-    "nano-banana":            "gemini-2.5-flash-image",
+    # The bare "nano-banana" alias used to resolve to gemini-2.5-flash-image,
+    # the ORIGINAL Nano Banana. Google SHUTS THAT MODEL DOWN 2026-10-02.
+    # Repointed 2026-09-22, ten days ahead of the date, because the failure
+    # mode on the day is not a deprecation warning — it is every bare-alias
+    # image generation returning a 404 the user reads as "Friday is broken".
+    # "nano-banana" now means "the current Nano Banana", which is what a
+    # caller typing the unversioned nickname was always asking for.
+    "nano-banana":            "gemini-3.1-flash-image",
     # Nano Banana Lite — ultra-low-latency image tier (new in 2026).
     "nano-banana-lite":       "gemini-3.1-flash-lite-image",
     "gemini-nano-banana-lite": "gemini-3.1-flash-lite-image",
@@ -96,10 +101,19 @@ _VIDEO_MODEL_MAP = {
     # Gemini Omni Flash — conversational any-to-any video (I/O 2026).
     # Dispatched via the Interactions API, NOT Veo’s LRO path — see
     # _generate_video_omni().
-    "gemini-omni-flash": "gemini-omni-flash-preview",
-    "gemini-omni":       "gemini-omni-flash-preview",
-    "omni-flash":        "gemini-omni-flash-preview",
-    "omni":              "gemini-omni-flash-preview",
+    # gemini-omni-flash-preview SHUTS DOWN 2026-09-30. Repointed 2026-09-22 —
+    # eight days of margin — to the GA replacement gemini-omni-1.1-flash,
+    # whose existence was confirmed by models.get against the live API
+    # (131072 in / 65536 out, generateContent), not by reading a docs table.
+    # The preview id is kept as its own key so a settings.json or a saved
+    # creation that still names it resolves forward instead of 404ing.
+    "gemini-omni-flash": "gemini-omni-1.1-flash",
+    "gemini-omni":       "gemini-omni-1.1-flash",
+    "omni-flash":        "gemini-omni-1.1-flash",
+    "omni":              "gemini-omni-1.1-flash",
+    "gemini-omni-flash-preview": "gemini-omni-1.1-flash",
+    "gemini-omni-1.1-flash":     "gemini-omni-1.1-flash",
+    "omni-1.1":          "gemini-omni-1.1-flash",
 }
 
 DEFAULT_IMAGE_MODEL = "gemini-nano-banana-pro"
@@ -169,7 +183,9 @@ def _configured_video_model() -> str | None:
 _FORBIDDEN_CREATIVE = (
     "gemini-2.5-flash", "gemini-2.5-pro",
     "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
     "gemini-3.1-flash-live-preview",
+    "gemini-3.8-live", "gemini-3.8-live-extended-thinking",
     "gemini-2.5-flash-native-audio-latest",
     "gemini-2.5-flash-native-audio-preview-09-2025",
     "gemini-2.5-flash-native-audio-preview-12-2025",

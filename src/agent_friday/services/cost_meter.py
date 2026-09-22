@@ -67,6 +67,29 @@ PRICING = {
     "gemini-2.5-flash-native-audio-latest":          {"in": 0.0005, "out": 0.002},
     "gemini-2.5-flash-native-audio-preview-09-2025": {"in": 0.0005, "out": 0.002},
     "gemini-2.5-flash-native-audio-preview-12-2025": {"in": 0.0005, "out": 0.002},
+    # ── Gemini 3.8 Live (released 2026-09-15) ───────────────────────────────
+    # Shares the paid-tier rate card with gemini-3.1-flash-flash-live-preview:
+    # input $0.75/1M text, $3.00/1M audio, $1.00/1M image-video;
+    # output $4.50/1M text, $12.00/1M audio. Thinking tokens bill as output,
+    # which is why the extended-thinking row is not cheaper despite producing
+    # the same audio.
+    # A live voice session is audio in and audio out, so the AUDIO rates are
+    # the ones recorded here — using the text rate would under-meter a voice
+    # call fourfold, and this table is read by the cost panel as fact.
+    # CONFIDENCE, stated plainly: these rates come from a documentation
+    # summary handed to this change, NOT from a fetch of
+    # ai.google.dev/gemini-api/docs/pricing by the author of this row. The
+    # same source's claim that enable_affective_dialog had been removed from
+    # the API was tested on 2026-09-22 and found FALSE (the server accepts
+    # it), so treat the numbers as best-effort and re-check them the next
+    # time this file is touched. What WAS independently confirmed by
+    # models.get on 2026-09-22 is the shape of the models: 131072 in /
+    # 65536 out, bidiGenerateContent.
+    "gemini-3.8-live":                    {"in": 0.003, "out": 0.012},
+    "gemini-3.8-live-extended-thinking":  {"in": 0.003, "out": 0.012},
+    # gemini-3.8-flash is a TEXT model (1M context, confirmed via models.get
+    # 2026-09-22), so it takes the text half of the same card.
+    "gemini-3.8-flash":                   {"in": 0.00075, "out": 0.0045},
     # Gemini 3.x lineup (ai.google.dev/gemini-api/docs/pricing, 2026-07).
     # 3.1 Pro uses the <=200k-token tier ($2/$12 per 1M).
     "gemini-3.5-flash":           {"in": 0.0015, "out": 0.009},
@@ -76,7 +99,18 @@ PRICING = {
     # 720p ≈ $0.10/s); text output is $9/1M. Use the video rate — video
     # is the product. Both the friendly id and the wire id are metered.
     "gemini-omni-flash":          {"in": 0.0015, "out": 0.0175},
+    # gemini-omni-flash-preview SHUTS DOWN 2026-09-30. Its row stays: a call
+    # cannot be metered after the fact if the rate is deleted with the model,
+    # and creations already recorded against that id still have to price.
     "gemini-omni-flash-preview":  {"in": 0.0015, "out": 0.0175},
+    # The GA replacement the friendly alias now resolves to (creative_engine
+    # _VIDEO_MODEL_MAP). Priced at the preview's rate because Google has not
+    # published a separate card for it and a MISSING row here does not fail
+    # loudly — it falls through to the registry and meters $0, which the cost
+    # panel renders identically to "ran locally, cost nothing". A rate
+    # inherited from the model it replaces is the least wrong of the
+    # available options, and is flagged as inherited rather than verified.
+    "gemini-omni-1.1-flash":      {"in": 0.0015, "out": 0.0175},
     # Gemini TTS (voice_engine.py _synthesize_tts_wav_gemini) — the exact model
     # id that function calls. ai.google.dev/gemini-api/docs/pricing, verified
     # 2026-09-04: $0.50/1M input (text) tokens, $10/1M output (audio) tokens.

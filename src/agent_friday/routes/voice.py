@@ -78,6 +78,7 @@ from agent_friday.services.model_router import (
 from agent_friday.services.voice_engine import (
     LIVE_MODEL_FALLBACK,
     LIVE_MODEL_FALLBACK2,
+    LIVE_MODEL_FALLBACK3,
     _VOICE_LIVE_TOOLS,
     _build_voice_live_tools,
     _voice_tool_names,
@@ -86,12 +87,17 @@ from agent_friday.services.voice_engine import (
     _get_voice_language,
     _get_voice_style_prompt,
     _local_tts_available,
+    _model_rejects_thinking_config,
+    _model_requires_non_blocking_tools,
+    _model_requires_thinking_config,
     _model_supports_affective_dialog,
+    _model_supports_proactivity_config,
     _persist_voice_turn,
     _spawn_voice_distill,
     _synthesize_tts_wav,
     _voice_tool_run,
     resolve_gemini_key,
+    resolve_live_thinking_level,
     validate_gemini_key,
 )  # noqa: E501
 
@@ -2480,10 +2486,18 @@ if sock is not None:
                     attempts.append(key)
 
             _primary_affective = live_affective and _model_supports_affective_dialog(configured_live_model)
-            if _primary_affective or live_proactive:
+            # v1alpha exists in this list ONLY to carry affective/proactive.
+            # A 3.8 model takes neither (affective is not its feature,
+            # proactivity is not a field it has), so asking for v1alpha on its
+            # behalf spends an attempt — and a possible 1008 "Expected OAuth 2
+            # access token" — to deliver nothing.
+            _primary_proactive = live_proactive and _model_supports_proactivity_config(
+                configured_live_model)
+            if _primary_affective or _primary_proactive:
                 _add_attempt("v1alpha", configured_live_model)
             _add_attempt(None, configured_live_model)
-            for _fallback in (LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2):
+            for _fallback in (LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2,
+                              LIVE_MODEL_FALLBACK3):
                 _add_attempt(None, _fallback)
 
             # Lazily create (and cache) a client per API version.
@@ -2582,14 +2596,50 @@ if sock is not None:
                 # fail with 1011 (unsupported field) or 1008 (auth).
                 use_affective = (api_version == "v1alpha" and live_affective
                                  and _model_supports_affective_dialog(model_name))
-                use_proactive = (api_version == "v1alpha" and live_proactive)
+                use_proactive = (api_version == "v1alpha" and live_proactive
+                                 and _model_supports_proactivity_config(model_name))
                 per_model_kwargs = dict(live_cfg_kwargs)
                 if not use_affective:
                     per_model_kwargs.pop("enable_affective_dialog", None)
                 if not use_proactive:
                     per_model_kwargs.pop("proactivity", None)
+                # Gemini 3.8 Live: thinking_config is mandatory on the
+                # extended-thinking variant and fatal on the plain one, so it
+                # is decided per attempt rather than once for the session —
+                # the fallback chain can hand this loop either kind.
+                _think_level = None
+                if _model_requires_thinking_config(model_name):
+                    _think_level = resolve_live_thinking_level(
+                        live_settings.get("voice_thinking_level"))
+                    try:
+                        per_model_kwargs["thinking_config"] = types.ThinkingConfig(
+                            thinking_level=_think_level)
+                    except Exception as _tce:
+                        # No ThinkingConfig in this SDK means this model cannot
+                        # be connected at all. Skip it rather than send a bare
+                        # config the server rejects with a message about
+                        # thinking levels, which reads like a model outage.
+                        _vlog(f'{model_name} needs thinking_config and this '
+                              f'google-genai cannot build one ({_tce}); skipping')
+                        continue
+                elif _model_rejects_thinking_config(model_name):
+                    per_model_kwargs.pop("thinking_config", None)
+                # Same shape for tools: extended-thinking refuses BLOCKING
+                # function calls, so its declarations are re-rendered
+                # NON_BLOCKING. Only done when required — rebuilding the whole
+                # tool surface for every attempt would be wasted work, and
+                # plain 3.8-live accepts either mode.
+                if (per_model_kwargs.get("tools")
+                        and _model_requires_non_blocking_tools(model_name)):
+                    try:
+                        _nb_tools = _build_voice_live_tools(types, behavior="NON_BLOCKING")
+                        if _nb_tools:
+                            per_model_kwargs["tools"] = _nb_tools
+                    except Exception as _nbe:
+                        _vlog(f'NON_BLOCKING tool rebuild failed for {model_name}: {_nbe}')
                 _vlog(f'connecting to model: {model_name} (api={api_version or "default(v1beta)"}, '
-                      f'affective={use_affective}, proactive={use_proactive})')
+                      f'affective={use_affective}, proactive={use_proactive}'
+                      + (f', thinking={_think_level}' if _think_level else '') + ')')
                 try:
                     # Config/client construction stays INSIDE the per-attempt
                     # try: LiveConnectConfig is a pydantic model that raises
