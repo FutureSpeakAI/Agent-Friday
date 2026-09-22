@@ -2342,7 +2342,10 @@ function KnowledgeGraphWS(){
           E = S.entities,
           n = E.length;
         if (!S.spinHold && S.lastHoverIdx === undefined) M.T += dt;
-        if (Math.abs(pointer.x) <= 1 && Math.abs(pointer.y) <= 1) S.pointerDirty = true;
+        // Re-test hover ~10 times a second, not every frame: a raycast over
+        // every instance each frame costs more than the orbit itself.
+        S.hoverTick = (S.hoverTick || 0) + 1;
+        if (S.hoverTick % 6 === 0 && Math.abs(pointer.x) <= 1 && Math.abs(pointer.y) <= 1) S.pointerDirty = true;
         const ct = Math.cos(M.tilt),
           st = Math.sin(M.tilt);
         for (let i = 0; i < n; i++) {
