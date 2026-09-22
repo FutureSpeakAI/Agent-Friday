@@ -49,9 +49,11 @@ None of that is built here, deliberately, because the measurement comes first.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field, asdict
@@ -72,6 +74,13 @@ LOG_NAME = "decisions.jsonl"
 #: trail into a second copy of the user's data. Long states are truncated and
 #: marked, so a reader can never mistake a clipped record for a full one.
 MAX_LOGGED_STATE = 2000
+
+#: Same two patterns dissent_gate._scrub_and_truncate uses on the governance
+#: log. Copied rather than imported so this module stays a leaf - importing
+#: dissent_gate at RECORD time would put a circular import in the path of the
+#: approval gate, and the keyword backend already imports it lazily.
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_\-]{24,}\b")
 
 
 @dataclass
@@ -174,6 +183,45 @@ def _clip(state: str) -> tuple:
     return s[:MAX_LOGGED_STATE], True
 
 
+def _scrub(state: str) -> str:
+    """Remove addresses and secrets from a state before it is written down.
+
+    ADDED 2026-09-22, and it is a fix to something this module shipped three
+    days earlier. `gmail_send.request_send` builds its action_description as
+    "Send mail as you.\\n\\nFrom: …\\nTo: …\\nCc: …\\nSubject: …\\n\\n<body>",
+    that string is what `approvals.classify` hands to `decide`, and `_record`
+    wrote it verbatim. So the log that exists to make the gate auditable was
+    about to accumulate every recipient and the first ~1,900 characters of
+    every message Stephen sends - in a file whose whole purpose is to be read
+    back later, by a reviewer or by a calibration pass. The governance log
+    covering the SAME decision has scrubbed since it was written
+    (dissent_gate._scrub_and_truncate); this one had no such pass.
+
+    It is unconditional and lives here rather than in the callers on purpose.
+    A redaction rule that each new call site has to remember is not a rule.
+
+    It costs the corpus nothing that matters: severity and policy_class turn
+    on the action's framing ("Send mail as you", "delete", "publish"), never
+    on which address is in the To line. A future classifier trained on these
+    rows should not be learning recipients anyway.
+    """
+    t = _EMAIL_RE.sub("<email>", state or "")
+    return _TOKEN_RE.sub("<token>", t)
+
+
+def _state_digest(state: str) -> str:
+    """Tie a record to its source without storing the payload twice.
+
+    The durable copy of an approval's full text is the approval itself, in
+    approvals.json. Re-scoring later can join on this digest instead of the
+    log holding its own copy of the body.
+    """
+    try:
+        return hashlib.sha256((state or "").encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 #  DECIDE
 # ---------------------------------------------------------------------------
@@ -232,12 +280,16 @@ def decide(question: str, state: str, *, backend: Optional[str] = None,
         name = DEFAULT_BACKEND
 
     elapsed = (time.time() - started) * 1000.0
-    clipped, was_clipped = _clip(state)
+    # Scrub BEFORE clipping. The other order would let an address that sits
+    # just past the 2000-char boundary survive into the record on the day
+    # someone raises the cap.
+    clipped, was_clipped = _clip(_scrub(state))
     _record({
         "at": time.time(),
         "question": question,
         "state": clipped,
         "state_truncated": was_clipped,
+        "state_sha256": _state_digest(state),
         "answer": answer,
         "confidence": confidence,
         "method": name,
