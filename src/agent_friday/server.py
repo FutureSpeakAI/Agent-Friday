@@ -257,6 +257,48 @@ def _register_warm_caches():
 _register_warm_caches()
 
 
+def _register_decision_backends():
+    """Make the Laya backends SELECTABLE, and warm one only if it was selected.
+
+    Two separate things, kept separate on purpose.
+
+    REGISTERING is cheap and unconditional. `laya_backend` imports `laya` -
+    and therefore torch and transformers - lazily inside `_load_now`, so
+    importing this module costs nothing and pulls no ML stack. A machine with
+    no torch installed reaches the `except` below, logs once, and runs exactly
+    as it does today.
+
+    WARMING costs ~45 s of CPU and ~800 MB resident, so it happens only when
+    something actually asked for Laya - as the deciding backend or as the
+    shadow. Loading a model nobody selected would be a tax on every start for
+    a feature that is off by default.
+
+    Neither of these changes a verdict. `decisions.DEFAULT_BACKEND` stays
+    `keyword`, and an unrecognised name in settings already falls back to it
+    loudly, so a Laya that fails to register degrades to today's behaviour
+    rather than to an open gate.
+    """
+    try:
+        from agent_friday.services import laya_backend
+        laya_backend.register()
+    except Exception as _e:
+        _log.info("laya decision backends unavailable (%s) - "
+                  "decisions stay on the keyword scan", _e)
+        return
+    if _TESTING:
+        return
+    try:
+        from agent_friday.services import decisions
+        wanted = {decisions.active_backend(), decisions.shadow_backend()}
+        if wanted & {"laya", "laya-union"}:
+            laya_backend.start_warming()
+    except Exception as _e:
+        _log.warning("could not decide whether to warm laya: %s", _e)
+
+
+_register_decision_backends()
+
+
 # ── Back-compat facade (PEP 562) ──────────────────────────────────
 # The star-import cascade used to make every app symbol addressable as
 # `server.<name>`; the test suite and user scripts rely on that. Resolve

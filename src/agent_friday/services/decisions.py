@@ -249,6 +249,84 @@ def active_backend() -> str:
     return name
 
 
+def shadow_backend() -> Optional[str]:
+    """Which backend, if any, scores alongside the deciding one.
+
+    A property of the seam rather than of any one scorer. Shadow mode is how a
+    candidate earns the default: it answers the same questions on the same
+    real traffic, its answers are written down next to the incumbent's, and it
+    governs nothing while it does so. Whatever goes in `decision_backend`
+    later should have spent time in here first.
+
+    Env wins over settings, same rule as `active_backend`, so a run can be
+    pinned without touching ~/.friday/settings.json.
+    """
+    name = (os.environ.get("FRIDAY_DECISION_SHADOW") or "").strip()
+    if not name:
+        try:
+            from agent_friday.core import _load_settings
+            name = str((_load_settings() or {}).get("decision_shadow") or "")
+        except Exception:
+            name = ""
+    return name or None
+
+
+def _run_shadow(name: str, question: str, state: str, *, decided: Any,
+                decided_by: str, context: Optional[dict] = None) -> None:
+    """Score `state` with `name` and record it BESIDE the real verdict.
+
+    Fire-and-forget on a daemon thread. Three properties, all deliberate:
+
+      * It never blocks. The verdict has already been returned to the caller
+        by the time this runs; a 400 ms encoder must not be in front of an
+        approval card, and a model still loading must not be either.
+      * It never raises into the gate. A shadow that failed is indistinguish-
+        able, from the caller's side, from one that never ran.
+      * It never queues. A backend that is still warming raises, and the row
+        is simply not written. Queueing would mean a burst of decisions during
+        warm-up all landing at once, scored against a moment that has passed.
+    """
+    with _LOCK:
+        fn = _BACKENDS.get(name)
+    if fn is None:
+        return
+
+    def _go():
+        try:
+            t0 = time.time()
+            answer, confidence, detail = fn(question, state, **{})
+            clipped, was_clipped = _clip(_scrub(state))
+            _record({
+                "at": time.time(),
+                "question": question,
+                "state": clipped,
+                "state_truncated": was_clipped,
+                "state_sha256": _state_digest(state),
+                "answer": answer,
+                "confidence": confidence,
+                "method": name,
+                "detail": detail,
+                "elapsed_ms": round((time.time() - t0) * 1000.0, 2),
+                # THE FIELD THAT MAKES THIS A SHADOW. Neither a reader nor a
+                # later scoring pass may mistake one of these rows for a
+                # decision that governed anything.
+                "shadow": True,
+                "decided": decided,
+                "decided_by": decided_by,
+                "agreed": (answer == decided),
+                "context": dict(context or {}, shadow_of=decided_by),
+            })
+        except Exception as e:
+            _log.debug("shadow backend %r did not score (harmless): %s",
+                       name, e)
+
+    try:
+        threading.Thread(target=_go, name="decision-shadow",
+                         daemon=True).start()
+    except Exception as e:  # thread exhaustion is not a gate failure
+        _log.debug("could not start shadow thread: %s", e)
+
+
 def decide(question: str, state: str, *, backend: Optional[str] = None,
            context: Optional[dict] = None, **kw) -> Verdict:
     """Answer one typed question about one state, and write it down.
@@ -298,6 +376,17 @@ def decide(question: str, state: str, *, backend: Optional[str] = None,
         "fell_back_from": fell_back,
         "context": context or {},
     })
+    # AFTER the record and BEFORE the return: the shadow observes a verdict
+    # that is already final. Scoring the same state with the SAME backend that
+    # just decided would only duplicate the row, so that case is skipped.
+    try:
+        _shadow = shadow_backend()
+        if _shadow and _shadow != name:
+            _run_shadow(_shadow, question, state, decided=answer,
+                        decided_by=name, context=context)
+    except Exception as e:
+        _log.debug("shadow dispatch skipped: %s", e)
+
     return Verdict(question=question, answer=answer, method=name,
                    confidence=confidence, detail=detail or {},
                    elapsed_ms=round(elapsed, 2))

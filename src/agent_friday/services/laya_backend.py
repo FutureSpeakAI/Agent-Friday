@@ -195,60 +195,26 @@ def laya_backend(question: str, state: str, **kw):
 # ---------------------------------------------------------------------------
 #  SHADOW MODE
 # ---------------------------------------------------------------------------
+#
+# Shadow scoring now lives in `decisions.py`, not here. It was written in this
+# module first, reaching into `_dec._record`, `_dec._clip`, `_dec._scrub` and
+# `_dec._state_digest` to do it - four private names across a module boundary,
+# which is how a seam stops being one. Running a candidate alongside the
+# incumbent is the seam's job for ANY backend, not a favour this one does for
+# itself, so `decisions.shadow_backend()` and `decisions._run_shadow()` own it
+# and this module keeps only the name.
+#
+#     FRIDAY_DECISION_SHADOW=laya        (or settings: decision_shadow)
+#
+# With that set, `keyword` still decides - the verdict Stephen experiences is
+# byte-identical - and Laya scores the same state on a background thread, with
+# both answers in the log. Disagreements become data instead of an argument.
+
 
 def shadow_backend() -> Optional[str]:
-    """Which backend to run alongside the deciding one, if any."""
-    name = (os.environ.get("FRIDAY_DECISION_SHADOW") or "").strip()
-    if not name:
-        try:
-            from agent_friday.core import _load_settings
-            name = str((_load_settings() or {}).get("decision_shadow") or "")
-        except Exception:
-            name = ""
-    return name or None
-
-
-def observe(question: str, state: str, decided: Any, context: Optional[dict] = None) -> None:
-    """Score `state` with Laya and record it beside the real verdict.
-
-    Fire-and-forget on a daemon thread: the gate must not wait for a shadow,
-    and a shadow that failed must not be distinguishable from one that never
-    ran, from the caller's point of view.
-
-    Skipped entirely when the model is not loaded. Queueing would mean a
-    burst of approvals during warm-up all landing at once, scored against a
-    state whose moment has passed.
-    """
-    if not is_ready():
-        return
-
-    def _run():
-        try:
-            t0 = time.time()
-            answer, conf, detail = _answer(state)
-            from agent_friday.services import decisions as _dec
-            _dec._record({
-                "at": time.time(),
-                "question": question,
-                "state": _dec._clip(_dec._scrub(state))[0],
-                "state_sha256": _dec._state_digest(state),
-                "answer": answer,
-                "confidence": conf,
-                "method": "laya",
-                "detail": detail,
-                "elapsed_ms": round((time.time() - t0) * 1000.0, 2),
-                # THE FIELD THAT MAKES THIS A SHADOW. A reader - or a later
-                # scoring pass - must never mistake one of these rows for a
-                # decision that governed anything.
-                "shadow": True,
-                "decided_by_keyword": decided,
-                "agreed": (answer == decided),
-                "context": dict(context or {}, shadow_of="keyword"),
-            })
-        except Exception as e:
-            _log.debug("shadow scoring failed (harmless): %s", e)
-
-    threading.Thread(target=_run, name="laya-shadow", daemon=True).start()
+    """Kept as a re-export so `status()` and the settings UI have one import."""
+    from agent_friday.services import decisions
+    return decisions.shadow_backend()
 
 
 # ---------------------------------------------------------------------------
