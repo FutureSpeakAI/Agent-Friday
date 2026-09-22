@@ -165,14 +165,27 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
     if action_class and action_class in table:
         cls = action_class
     else:
+        # Routed through services/decisions so every gate decision is written
+        # down. The VERDICT IS UNCHANGED: the `keyword` backend delegates to
+        # dissent_gate.classify_severity and _label_hard_class verbatim, and
+        # `keyword` is the default until something is measured to beat it.
+        #
+        # This existed as an unrecorded substring scan for months, which is
+        # why nobody can say how often it is right — including on the action
+        # that now sends mail as him. decide() logs question, state, answer
+        # and method to ~/.friday/decisions.jsonl.
+        #
+        # Still fails closed. decide() falls back to the keyword backend on
+        # any backend error, and the except here catches the case where the
+        # decisions module itself is unavailable.
         try:
-            from agent_friday.services import dissent_gate as dg
-            severity = dg.classify_severity(action_description)
+            from agent_friday.services import decisions as _dec
+            cls = _dec.decide("policy_class", action_description,
+                              context={"caller": "approvals.classify"}).answer
         except Exception as e:
-            _log.warning("dissent_gate.classify_severity unavailable (%s) — "
-                        "failing closed (treating as gated)", e)
-            severity = "hard"
-        cls = "internal" if severity == "soft" else _label_hard_class(action_description)
+            _log.warning("decision seam unavailable (%s) — failing closed "
+                         "(treating as gated)", e)
+            cls = "outward"
     policy = table.get(cls) or table["outward"]
     return {"policy_class": cls, "gated": bool(policy.get("gated")),
             "expires_seconds": policy.get("expires_seconds")}
@@ -345,6 +358,23 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     if record["status"] == "pending":
         _notify_pending(record)
     return record
+
+
+def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
+              ) -> Optional[dict]:
+    """Burn an approval after the thing it authorised actually happened.
+
+    ONE DECISION, ONE ACTION. `_consume` below marks a card as seen by the
+    caller that is about to act; this records that the act COMPLETED, with
+    what it produced. The difference matters for anything irreversible: a
+    send that crashed halfway should not leave an approval that looks spent,
+    and an approval that has been spent must never authorise a second send.
+
+    Added 2026-09-20 for services/gmail_send.py, where the whole safety
+    property is that one human decision buys exactly one message.
+    """
+    return _patch(approval_id, consumed=True, used_by=actor,
+                  used_at=time.time(), used_detail=detail or {})
 
 
 def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):

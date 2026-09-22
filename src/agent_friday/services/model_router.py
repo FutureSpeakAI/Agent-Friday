@@ -454,7 +454,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
-                   "model. Install or start Ollama (or adjust "
+                   "model. Load one on the Intelligence tab (or adjust "
                    "model_routing.vault_cloud_fallback), then retry.")
     vault_access = bool(route.get('vault_access'))
 
@@ -561,6 +561,36 @@ def _plan_num_ctx(model):
         return None
 
 
+def _trace_outgoing(where, pname, model, payload, extra=None):
+    """Write the SHAPE of an outgoing request to a file, once per call.
+
+    Friday's stdout goes to DEVNULL under the tray, so a `print` here is a
+    diagnosis nobody can make. This is the only way to answer "did that turn
+    actually carry tools" by observation instead of by reading the code.
+    """
+    try:
+        import json as _j, os as _os, time as _t
+        d = _os.path.expanduser("~/.friday/runtime")
+        _os.makedirs(d, exist_ok=True)
+        row = {
+            "ts": _t.time(), "where": where, "provider": pname, "model": model,
+            "n_tools": len(payload.get("tools") or []),
+            "tool_choice": payload.get("tool_choice"),
+            "n_messages": len(payload.get("messages") or []),
+            "prompt_chars": sum(len(m.get("content") or "")
+                                for m in (payload.get("messages") or [])
+                                if isinstance(m.get("content"), str)),
+            "keys": sorted(payload.keys()),
+        }
+        if extra:
+            row.update(extra)
+        with io.open(_os.path.join(d, "payload_trace.jsonl"), "a",
+                     encoding="utf-8") as f:
+            f.write(_j.dumps(row) + "\n")
+    except Exception:
+        pass
+
+
 def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  # An orb's icon should say what the WORK is, not what
                  # transport carried it. A house default here makes every
@@ -568,8 +598,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  # house to the label. Local is the normal case; marking it
                  # marks everything.
                  temperature=None, orb_label=None, orb_icon='⚡',
-                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
+                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
+                 catalogue_all=None):
     """Call a local Ollama model. Returns (text, tool_trace).
+
+    `catalogue_all` is the FULL tool registry when `tools` is only a catalogue
+    (services/tool_catalogue.py). The loop needs it to satisfy `load_tools`.
+    None means progressive disclosure is off and nothing here changes.
 
     When ``tools`` (the unified CLAUDE_TOOLS list) is supplied, runs a FULL
     agentic tool loop via Ollama's native OpenAI-compatible tool calling — the
@@ -653,6 +688,12 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 orb_label=orb_label or "Local brain…", orb_icon='🧠',
                 tools=tools, pii_lookup=pii_lookup, session_ctx=session_ctx,
                 provider=_oai_local, max_iters=max_iters,
+                # A llama-server seat is served through the OpenAI dialect, so
+                # this forward is the REAL local path. Dropping catalogue_all
+                # here left `load_tools` with an empty registry and every name
+                # answered "No such tool" - observed live on the first run,
+                # with the model correctly told browse_web did not exist.
+                catalogue_all=catalogue_all,
             )
 
     if not ollama.is_available():
@@ -795,6 +836,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             # The loop records the model_invocation event itself (seat="local",
             # token counts from usage) — recording here too would double-count.
             orb_id=orb_id,
+            catalogue_all=catalogue_all,
         )
         try:
             # _oai_agentic_loop returns (text, tool_trace).
@@ -838,6 +880,13 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
 #: same place without touching any of it: /api/chat/stream sets the sink,
 #: the transport publishes to it, and chat() is not modified at all.
 DELTA_SINK = _contextvars.ContextVar("friday_delta_sink", default=None)
+
+#: Where a completion's `timings` go (llama-server's per-request
+#: `prompt_n` / `predicted_n` / per-token ms), same mechanism as DELTA_SINK.
+#: The voice session sets it to record `prefill_tokens` in the turn receipt
+#: (voice-system-clean-sheet.md §4.4): prompt_n < 2,000 on turn 2 is the
+#: prefix-cache acceptance, and it is measured, not assumed.
+TIMINGS_SINK = _contextvars.ContextVar("friday_timings_sink", default=None)
 
 AUTO_ROUTER_MODEL = "openrouter/auto"
 
@@ -914,6 +963,29 @@ def _consume_sse_completion(resp, on_delta=None):
     finish_reason = None
     served_model = None
     usage = None
+    timings = None           # llama-server puts them on the last chunk
+
+    # THE EM-DASH BUG LIVED HERE. `decode_unicode=True` tells requests to
+    # decode using `resp.encoding`, and requests derives that from the
+    # Content-Type header. An SSE stream is `text/event-stream` with no
+    # charset, and for any `text/*` without one, RFC 2616 says ISO-8859-1 and
+    # requests obeys. So every multi-byte UTF-8 sequence arrived as its
+    # individual bytes reinterpreted as Latin-1 characters.
+    #
+    # Observed 2026-09-18: Bonsai emits a correct em dash, U+2014, bytes
+    # E2 80 94. It reached chat_history.json as "â" -- three
+    # separate characters, one per byte. On screen: "â€”". The model was
+    # innocent, the HTTP read through `r.json()` was innocent, and the
+    # non-streaming path was fine; only the streamed path corrupted, which is
+    # why it looked like the model had a punctuation habit.
+    #
+    # Setting the encoding explicitly also fixes a second, rarer fault: with a
+    # known encoding requests uses an INCREMENTAL decoder, so a multi-byte
+    # character split across two network chunks is reassembled instead of
+    # being mangled at the seam.
+    if getattr(resp, "encoding", None) is None or str(
+            getattr(resp, "encoding", "")).lower() in ("iso-8859-1", "latin-1", "latin_1"):
+        resp.encoding = "utf-8"
 
     for raw in resp.iter_lines(decode_unicode=True):
         if not raw:
@@ -936,6 +1008,8 @@ def _consume_sse_completion(resp, on_delta=None):
             served_model = chunk["model"]
         if chunk.get("usage"):
             usage = chunk["usage"]
+        if chunk.get("timings"):
+            timings = chunk["timings"]
         for choice in chunk.get("choices") or []:
             if choice.get("finish_reason"):
                 finish_reason = choice["finish_reason"]
@@ -972,6 +1046,8 @@ def _consume_sse_completion(resp, on_delta=None):
         out["model"] = served_model
     if usage:
         out["usage"] = usage
+    if timings:
+        out["timings"] = timings
     return out
 
 
@@ -979,7 +1055,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
                  provider=None, fallback_models=None, stream=None,
-                 on_delta=None):
+                 on_delta=None, catalogue_all=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
 
     Two configuration paths:
@@ -1042,6 +1118,35 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             is_private_host, LOCAL_CAPABLE_ADAPTERS)
         pname = prov.get('name') or 'openai'
         base_url = (prov.get('base_url') or '').rstrip('/')
+        # A LIVE SEAT OUTRANKS A WRITTEN-DOWN PORT.
+        #
+        # A provider descriptor for a local model carries whatever port was
+        # current when somebody wrote the file. The Arbiter picks ports at
+        # spawn time and publishes them, so the two drift apart the moment a
+        # seat moves — and when they do, the descriptor wins, the call is
+        # refused by a port with nothing behind it, and the turn escalates to
+        # the cloud. Observed 2026-09-18: bonsai2:27b was serving happily on
+        # :8090 while `bonsai2-local.provider.json` still said :8099, so the
+        # first message of every session was answered by Sonnet with
+        # "Max retries exceeded ... port=8099" buried in the fallback chain.
+        # The user sees a local model that silently stopped being local.
+        #
+        # So the published endpoint is consulted first for local providers.
+        # It is written by the process that actually started the seat, which
+        # makes it the only account of where that seat is that cannot be
+        # stale by construction.
+        try:
+            from agent_friday.services.local_call import seat_endpoint
+            _live = seat_endpoint(model) if model else None
+            if _live:
+                _live = str(_live).rstrip('/')
+                if _live != base_url:
+                    _log.info("provider %s: using the live seat at %s rather "
+                              "than the descriptor's %s", pname, _live,
+                              base_url or "(unset)")
+                base_url = _live
+        except Exception:
+            pass
         if not base_url:
             raise RuntimeError(f"Provider '{pname}' has no base_url configured.")
         api_key = provider_api_key(prov) or ''  # pragma: allowlist secret
@@ -1103,7 +1208,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 if isinstance(m.get("content"), str))) // 4
             tools, _fit_note = fit_tools_to_seat(
                 model, tools, prompt_cost=_prompt_cost)
-            if _fit_note:
+            # THE NOTE IS APPENDED ONCE, NOT ONCE PER CALL.
+            #
+            # An agentic turn comes through here more than once, and each pass
+            # used to staple another "[SEAT] This seat is small..." paragraph
+            # onto the system prompt. The note is ~900 characters. Three
+            # rounds of tool calls and the system block a seat sees has grown
+            # by three copies of the same sentence — which is silly on its own
+            # terms, and fatal to the prefix cache, because the system block
+            # is rendered before everything else and a system block that grows
+            # every call can never match the one before it.
+            if _fit_note and "\n[SEAT] " not in (system or ""):
                 system = (system or "") + "\n[SEAT] " + _fit_note
         except Exception:
             pass
@@ -1217,6 +1332,44 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                                 "enable_thinking": False}
                     except Exception:
                         pass
+            # REASONING EFFORT ON LOCAL THINKING MODELS.
+            #
+            # A reasoning model left at its own default thinks as hard as it
+            # likes on every turn, including "what should I do with two free
+            # hours". Measured on the reference machine, 2026-09-18, same
+            # question four times against Bonsai 2 27B:
+            #
+            #     default (xhigh)    159.8s   answer 1,288 chars
+            #     medium              77.1s   answer 1,879 chars
+            #     low                 69.0s   answer 1,695 chars
+            #     thinking off        49.5s   answer 3,313 chars
+            #
+            # The default was 3.2x slower than thinking off AND returned the
+            # shortest answer of the four. It is not buying depth here; it is
+            # spending two minutes to say less. PrismML's own card recommends
+            # `medium` for "a balance of speed and accuracy" and nothing in
+            # this codebase was passing anything at all.
+            #
+            # Settable, because the right default is a product decision and
+            # because a hard task genuinely wants the depth: set
+            # `local_reasoning_effort` to "xhigh" to restore the old
+            # behaviour, or "off" to disable thinking outright. Only applied
+            # to seats we serve ourselves, and never over an explicit caller.
+            if local_bypass and "reasoning_effort" not in payload:
+                try:
+                    _eff = ((_load_settings() or {}).get(
+                        "local_reasoning_effort") or "medium").strip().lower()
+                    if _eff in ("off", "none", "disabled"):
+                        payload.setdefault("chat_template_kwargs", {})[
+                            "enable_thinking"] = False
+                    elif _eff not in ("default", "auto", ""):
+                        payload["reasoning_effort"] = _eff
+                except Exception:
+                    pass
+            _trace_outgoing("_call_openai", pname, model, payload,
+                            {"local_bypass": bool(local_bypass),
+                             "tools_in": len(tools or []),
+                             "oai_tools": len(oai_tools or [])})
             # Auto Router: "let Friday decide". The cost tier is nested in a
             # `plugins` entry -- a top-level `cost_tier` is accepted by the
             # API and silently ignored, which would present as the router
@@ -1314,6 +1467,37 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             # reassembles fragmented tool_calls.
             _want_stream = (features.get('streaming', True)
                             if stream is None else bool(stream))
+            # PROMPT-CACHE FORENSICS, off unless asked for.
+            #
+            # A local seat reuses a cached prefix only as far as two requests
+            # agree byte for byte, and on 2026-09-18 Friday's turns were
+            # reprocessing their whole ~21,000-token prompt every time while
+            # the same seat, driven by hand with an equivalent payload, reused
+            # it and answered in 0.43s. Reasoning about which of system, tools
+            # and transcript moved, from the outside, cost hours and did not
+            # settle it. Recording what actually went on the wire settles it in
+            # one turn.
+            #
+            # Switched on by CREATING the directory
+            # `~/.friday/runtime/diag/payload-dump`, not by an environment
+            # variable: Friday is started by a tray app, which is started by a
+            # shortcut, and an env var set in whatever shell happens to be to
+            # hand does not survive that chain — twice today it silently did
+            # not, and the run was wasted. A directory the user can make and
+            # delete is visible, survives restarts, and turns itself off by
+            # being removed.
+            #
+            # Off by default and it must stay that way: these files contain
+            # the entire prompt, which is to say the user's context, memories
+            # and vault material in plain text.
+            _dd = _payload_dump_dir()
+            if _dd is not None:
+                try:
+                    (_dd / ("payload-%.6f.json" % _time.time())).write_text(
+                        json.dumps(payload, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+                except Exception:
+                    pass
             _t0 = _time.time()
             try:
                 if _want_stream:
@@ -1388,6 +1572,14 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 _want_stream = False
             resp = (_consume_sse_completion(r, on_delta=on_delta or DELTA_SINK.get())
                     if _want_stream else r.json())
+            # Publish the seat's timings (llama-server) to whoever asked for
+            # them -- the voice session records `prompt_n` as prefill_tokens.
+            _tsink = TIMINGS_SINK.get()
+            if _tsink is not None and isinstance(resp, dict) and resp.get("timings"):
+                try:
+                    _tsink(resp["timings"])
+                except Exception:
+                    pass
             # Attribute cost to the model the provider ACTUALLY served (an
             # OpenRouter fallback may answer with a different model than asked).
             served = resp.get('model')
@@ -1414,9 +1606,13 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             pass
         _resp = _oai_agentic_loop(
             convo, oai_tools, _send, provider='openai', model=model,
+            # A loopback seat we serve ourselves is LOCAL, whatever dialect it
+            # speaks. Without this the ledger files it as cloud.
+            seat=('local' if local_bypass else 'openai'),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
             meter_provider=pname,
+            catalogue_all=catalogue_all,
         )
         try:
             _text = _resp[0] if isinstance(_resp, tuple) and _resp else (
@@ -1919,11 +2115,21 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
     it to the system prompt (and it is PII-scrubbed for cloud like the rest).
     """
     try:
+        # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY.
+        # A question about what is true RIGHT NOW ("are my Google accounts
+        # connected?") is read from a live source here and recall's licence to
+        # answer it is explicitly withdrawn, because a recalled turn reports
+        # what was true when it was written -- a different question wearing the
+        # same words. See services/live_state.py for the rule and how to
+        # register a new status question.
+        from agent_friday.services import live_state as _live
+        live_block = _live.live_state_block(message)
+
         if not _load_settings().get('memory_recall_enabled', True):
-            return ""
+            return live_block
         mem = _get_conversation_memory()
         if not mem.available():
-            return ""
+            return live_block
         hits = mem.search(message, n=n)
         kept = []
         for h in hits:
@@ -1935,7 +2141,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 continue
             kept.append(h)
         if not kept:
-            return ""
+            return live_block
         lines = [
             "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
             "These are real excerpts from earlier conversations with this user. "
@@ -1954,7 +2160,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 break
             lines.append(entry)
             used += len(entry)
-        return "\n".join(lines) + "\n"
+        return live_block + "\n".join(lines) + "\n"
     except Exception as _e:
         return ""
 
@@ -2812,6 +3018,20 @@ def _gated_vault_control():
     return _get_vault_control()
 
 
+def _payload_dump_dir():
+    """The directory to record outgoing payloads in, or None when off.
+
+    Presence of the directory IS the switch — see the call site in
+    `_call_openai` for why this is a directory rather than an env var.
+    """
+    try:
+        from agent_friday.core import runtime_dir as _rt
+        d = _rt() / "diag" / "payload-dump"
+        return d if d.is_dir() else None
+    except Exception:
+        return None
+
+
 def _build_context_prompt(message, workspace='', workspace_context=None,
                           vision_description=None, provider='cloud',
                           vault_control=None, vault_fallback='redact'):
@@ -3096,6 +3316,20 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         add(clock_context_block(), _T1)
     except Exception:
         pass
+    # LIVE CAPABILITY STATE, right behind the clock and for the same reason:
+    # it is true of the machine right now, not of anything remembered. It
+    # rides in the volatile tail (after prompt_cache.VOLATILE_MARKER) so a
+    # key appearing or a seat dying changes the model's picture on the next
+    # turn without churning the cached prefix. 2026-09-18: absent and
+    # unconfigured were one word to the model, and it told the user a wired,
+    # unkeyed backend "is not a tool". See services/capability_state.py.
+    try:
+        from agent_friday.services import capability_state as _cs
+        _cap_block = _cs.describe_for_model()
+        if _cap_block:
+            add(_cap_block, _T1)
+    except Exception:
+        pass
 
     # security-boundary.md §20: the retrieval ledger. One row per named,
     # tier-tagged section, written HERE — before gating decides what
@@ -3201,11 +3435,87 @@ def _load_smart_context(user_message, workspace=None):
     elif workspace == 'career':
         _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
 
-    # Soft cap — 1M context window means we can afford generous context.
+    # THE CAP HERE USED TO BE 200,000 CHARACTERS, with the comment "1M context
+    # window means we can afford generous context". That was true of the cloud
+    # seat it was written for and is catastrophic on a local one.
+    #
+    # Measured 2026-09-18 on the reference machine. "what is on my calendar
+    # tomorrow" loads 563 characters. "email Mahesh about the interview" trips
+    # the career branch and loads 41,760 — about 10,400 tokens — because that
+    # branch alone passes max_bytes=40_000. The docstring above claims ~8KB;
+    # nothing enforced it. On Bonsai at ~450 tokens/second of prompt
+    # processing, that block costs 23 seconds, and because it is keyed to the
+    # user's wording it lands differently every turn, so llama.cpp's prefix
+    # cache never reuses a byte of it. A cached turn on that seat costs 0.4 to
+    # 5 seconds; an uncached one costs 35 to 50. This block is why.
+    #
+    # So: bound it, and when it must be cut, cut by RELEVANCE rather than by
+    # whatever `_load_section` happened to append first. The first two parts
+    # (core identity, today's date) are anchors and are never dropped. What
+    # goes is named in the prompt, and `search_wiki` / `read_wiki` remain the
+    # honest route to anything omitted — which is what makes this a latency
+    # fix rather than a capability cut.
+    anchors, rest = context_parts[:2], context_parts[2:]
+    budget = _smart_context_budget()
     result = "\n\n".join(context_parts)
-    if len(result) > 200_000:
-        result = result[:200_000] + "\n[context soft-capped — use search_wiki or read_wiki for more]"
+    if len(result) <= budget or not rest:
+        return result
+
+    order = None
+    try:
+        from agent_friday.services import tool_selector
+        order = tool_selector.rank_texts(rest, user_message or "")
+    except Exception:
+        order = None
+    if not order:
+        order = list(range(len(rest)))
+
+    kept_idx, used = [], sum(len(a) + 2 for a in anchors)
+    for i in order:
+        block = rest[i]
+        if used + len(block) + 2 > budget:
+            continue
+        kept_idx.append(i)
+        used += len(block) + 2
+    kept_idx.sort()                      # preserve the loader's original order
+    dropped = len(rest) - len(kept_idx)
+    parts = anchors + [rest[i] for i in kept_idx]
+    if dropped:
+        parts.append(
+            f"[{dropped} context section(s) were left out of this turn to keep "
+            f"the prompt fast. Nothing was deleted: call search_wiki for a "
+            f"keyword search or read_wiki for a specific file.]")
+    result = "\n\n".join(parts)
+    _log.info("smart context bounded: %d -> %d chars (%d of %d sections kept)",
+              sum(len(p) + 2 for p in context_parts), len(result),
+              len(kept_idx), len(rest))
     return result
+
+
+def _smart_context_budget() -> int:
+    """Characters of wiki context this turn can afford, from the serving seat.
+
+    A cloud seat with a huge window can take the old generous allowance; a
+    local 64K seat cannot. Falls back to a conservative figure rather than the
+    old 200,000 whenever the window cannot be read, because being wrong in the
+    generous direction is what caused the problem.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        cr = (_load_settings() or {}).get("capability_routing") or {}
+        model = ((cr.get("reasoning") or {}).get("model") or "").strip()
+        if model:
+            from agent_friday.services.tool_budget import _window
+            window = _window(model)
+            if window:
+                # ~12% of the window, in characters at the usual 4:1. On a 64K
+                # seat that is ~31,000 characters, roughly 7,800 tokens, which
+                # is generous against the 563 a typical turn actually needs and
+                # still far below the 41,760 that made turns unusable.
+                return max(8_000, int(window * 4 * 0.12))
+    except Exception:
+        pass
+    return 32_000
 
 
 def _generate_wiki_indexes():

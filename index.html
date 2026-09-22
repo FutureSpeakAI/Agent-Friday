@@ -391,6 +391,162 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+
+        /* ── Undocked chat (?chrome=chat) ────────────────────────────────
+           One conversation in its own browser window, so two models can be
+           worked at once. The holographic shell is a single-window thing —
+           one 3D scene, one HUD, one camera — and running a second copy of
+           it costs a GPU that is already holding a 27B model. So an undocked
+           window keeps the React layer and drops the rest.
+
+           Suppression is CSS rather than a branch in the React tree: the tree
+           is 45,000 lines of compiled createElement calls, and a stylesheet
+           that hides four elements cannot break the thirty features it is not
+           touching. The panel keeps every behaviour it has when docked —
+           transcript, seat picker, composer — because it is the same panel.
+           Only the room around it is gone. */
+        body.chrome-chat #friday-scene-canvas,
+        body.chrome-chat #hud-overlay,
+        body.chrome-chat #camera-indicator,
+        body.chrome-chat #hand-cursor,
+        body.chrome-chat #state-indicator { display: none !important; }
+        body.chrome-chat { background: #070b14; }
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            max-height: none !important;
+            border-left: none !important;
+            box-shadow: none !important;
+            background: rgba(10,14,26,0.96);
+            transition: none !important;
+        }
+        /* A window that IS the panel cannot be resized by dragging its edge,
+           and a handle that does nothing is worse than no handle. */
+        body.chrome-chat .chat-resize-w,
+        body.chrome-chat .chat-resize-h { display: none !important; }
+
+        /* NOTHING FROM THE APP, ONLY THE CHAT.
+           The first version dropped the 3D scene and the HUD but left the
+           React layer whole, so the liquid dock was still sitting across the
+           bottom of a window whose entire job is one conversation — offering
+           workspaces that, if clicked, would open behind a full-screen chat
+           panel in a tab that exists to not have them.
+
+           An ALLOW-LIST, not a list of things to hide. `visibility` is the
+           one property a descendant can turn back on after an ancestor turns
+           it off, so hiding the whole React layer and re-showing the chat
+           panel means anything added to the app later is hidden here by
+           default rather than appearing in a view it was never designed for.
+           A deny-list would need editing every time someone adds a bar.
+
+           visibility rather than display, for the same reason as compact
+           mode: the tree keeps running, so voice, the socket and the
+           scheduler behave exactly as they do in the main window. Hidden
+           elements also take no pointer events, so the dock underneath
+           cannot be clicked through the panel. */
+        body.chrome-chat #ui-inner { visibility: hidden !important; }
+        body.chrome-chat .chat-panel { visibility: visible !important; }
+
+        /* ── The chat sidebar ─────────────────────────────────────────────
+           Every thread you own, down the left of a chat tab.
+
+           This revises the rule directly above it. That rule said a tab shows
+           the chat and nothing else, which was right when a tab was a way to
+           read one thread beside another. Seeing it working changed the ask:
+           the tab is the desk you work at, so chat NAVIGATION belongs in it.
+           What stays banished is APP chrome - the dock, the workspaces, the
+           holographic shell - none of which a tab has any use for. The
+           floating window is still the glance: one thread, no sidebar.
+
+           It re-shows itself through the allow-list above rather than being
+           excepted from it, which is the whole point of that mechanism. */
+        .chat-sidebar {
+            position: fixed; left: 0; top: 0; bottom: 0; width: 268px;
+            /* border-box, so 268px is what it OCCUPIES rather than what it
+               contains. Without it the 1px border pushes the outer width to
+               269 while the panel below still starts at 268, and the panel
+               sits under the border. Invisible, and still the same mistake as
+               the dock: a number used for layout has to mean the same thing
+               in both places that read it. */
+            box-sizing: border-box;
+            z-index: 66; display: none; flex-direction: column;
+            background: rgba(8,11,20,0.97);
+            border-right: 1px solid rgba(0,212,255,0.14);
+        }
+        body.chrome-chat .chat-sidebar {
+            display: flex; visibility: visible !important;
+        }
+        /* The panel gives up the width rather than sitting under the column.
+           Same reasoning as the dock: a composer you cannot reach is not a
+           composer. */
+        body.chrome-chat .chat-panel,
+        body.chrome-chat .chat-panel.open {
+            left: 268px !important;
+            width: calc(100vw - 268px) !important;
+        }
+        .chat-sidebar-head {
+            display: flex; gap: 6px; padding: 10px;
+        }
+        .chat-sidebar-scroll {
+            flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 6px 10px;
+        }
+        .chat-sidebar-scroll::-webkit-scrollbar { width: 6px; }
+        .chat-sidebar-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.10); border-radius: 3px;
+        }
+        /* A 268px column on a phone leaves no chat. Below that width the
+           sidebar steps aside entirely rather than splitting a screen that
+           has nothing to split. */
+        @media (max-width: 720px) {
+            body.chrome-chat .chat-sidebar { display: none; }
+            body.chrome-chat .chat-panel,
+            body.chrome-chat .chat-panel.open {
+                left: 0 !important; width: 100vw !important;
+            }
+        }
+
+        /* ── Compact mode (?chrome=orb) ───────────────────────────────────
+           Friday as presence rather than as an application: the holographic
+           element alone, animating as she speaks, with nothing else on the
+           glass. For a second monitor, a corner of the desk, or a tab you
+           leave open and talk to.
+
+           The INVERSE of chrome-chat. That one keeps the React layer and
+           drops the scene; this keeps the scene and drops the React layer.
+           The canvas and the mood line stay — the mood line is the one piece
+           of chrome that says something the orb cannot, which is what state
+           she thinks she is in.
+
+           `pointer-events: none` on the UI layer rather than `display: none`:
+           the React tree keeps running, so voice, the socket and the
+           scheduler behave exactly as they do anywhere else. Hiding a tree is
+           not the same as not having one, and the difference here is whether
+           a voice session survives switching to this mode. */
+        body.chrome-orb #ui-root { opacity: 0 !important; pointer-events: none !important; }
+        body.chrome-orb .hud-corner { display: none !important; }
+        body.chrome-orb #camera-indicator,
+        body.chrome-orb #hand-cursor { display: none !important; }
+        body.chrome-orb #state-indicator {
+            left: 50% !important;
+            transform: translateX(-50%);
+            bottom: 28px !important;
+        }
+        body.chrome-orb { background: #05070d; cursor: default; }
+        /* One way back out, because a mode with no exit is a trap. */
+        body.chrome-orb #chrome-orb-exit {
+            position: fixed; top: 14px; right: 16px; z-index: 200;
+            background: rgba(0,212,255,0.08);
+            border: 1px solid rgba(0,212,255,0.25);
+            color: #00d4ff; font-family: 'Inter', sans-serif; font-size: 11px;
+            padding: 5px 11px; border-radius: 5px; cursor: pointer;
+            opacity: 0.25; transition: opacity .25s ease;
+        }
+        body.chrome-orb #chrome-orb-exit:hover { opacity: 1; }
+        #chrome-orb-exit { display: none; }
+
         /* Chat panel resize handles — left edge (width) + top edge (height). */
         .chat-resize-w {
             position: absolute; top: 0; left: -3px; width: 8px; height: 100%;
@@ -2271,6 +2427,39 @@ window.addEventListener('DOMContentLoaded',function(){
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
 
+    <!-- Undocked chat mode (?chrome=chat), set as early as the body exists.
+         The holographic shell is a single-window thing - one scene, one HUD,
+         one camera - and a second copy of it costs a WebGL context and a
+         render loop on a GPU already holding a 27B model. An undocked window
+         keeps the React layer and drops the room around it. The CSS that does
+         the hiding is body.chrome-chat in the stylesheet above. -->
+    <button id="chrome-orb-exit" title="Leave compact mode">&#8598; Full view</button>
+    <script>
+      (function () {
+        var chrome = '';
+        try {
+          chrome = new URLSearchParams(window.location.search).get('chrome') || '';
+        } catch (e) { return; }   /* a window that cannot read its own URL still works */
+        if (chrome !== 'chat' && chrome !== 'orb') return;
+        document.body.classList.add('chrome-' + chrome);
+        window.__FRIDAY_CHROME__ = chrome;
+        if (chrome === 'orb') {
+          /* The way out. A mode with no exit is a trap, and the orb itself
+             cannot carry a control without becoming the thing this mode
+             exists to remove. */
+          var exit = document.getElementById('chrome-orb-exit');
+          if (exit) {
+            exit.style.display = 'block';
+            exit.addEventListener('click', function () {
+              var u = new URL(window.location.href);
+              u.searchParams.delete('chrome');
+              window.location.href = u.toString();
+            });
+          }
+        }
+      })();
+    </script>
+
     <!-- MediaPipe — async so a dead/stalling CDN never blocks first paint.
          The Hands/FaceDetection/Camera globals are only instantiated lazily
          when the user enables face/hand tracking, so load order is free; if
@@ -2474,6 +2663,63 @@ window.addEventListener('DOMContentLoaded',function(){
 
         // --- THREE.JS ENGINE ---
         let scene, camera, renderer, composer, bloomPass, holoPass;
+        // True while the GPU has taken this canvas's context away. animate() must
+        // not touch the composer in that state, and the user must be told rather
+        // than left looking at a black desktop. See the webglcontextlost handler.
+        let sceneContextLost = false;
+        // Guards against starting a second render loop when init() re-runs after a
+        // context restore.
+        let animateRunning = false;
+
+        // A visible, dismissable notice -- deliberately not a silent degrade.
+        function showSceneLostBanner(extra) {
+            let el = document.getElementById('friday-scene-lost');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'friday-scene-lost';
+                el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:99999;'
+                    + 'padding:10px 16px;border-radius:10px;font:12px/1.5 "JetBrains Mono",monospace;'
+                    + 'background:rgba(20,10,0,0.92);border:1px solid rgba(245,158,11,0.6);color:#f59e0b;'
+                    + 'box-shadow:0 6px 24px rgba(0,0,0,0.5);max-width:min(680px,92vw)';
+                document.body.appendChild(el);
+            }
+            el.innerHTML = '';
+            const msg = document.createElement('span');
+            msg.textContent = 'Holographic visuals stopped: the GPU reclaimed this window’s graphics memory, '
+                + 'most likely while a voice engine or model was loading. '
+                + (extra ? extra + ' ' : 'Friday itself is unaffected — chat, voice and tools all still work. ');
+            el.appendChild(msg);
+            const btn = document.createElement('button');
+            btn.textContent = 'Reload visuals';
+            btn.style.cssText = 'margin-left:10px;padding:4px 10px;border-radius:6px;cursor:pointer;'
+                + 'background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.7);color:#f59e0b;font:inherit';
+            btn.onclick = () => location.reload();
+            el.appendChild(btn);
+        }
+
+        function hideSceneLostBanner() {
+            const el = document.getElementById('friday-scene-lost');
+            if (el) el.remove();
+        }
+
+        // Rebuild after a restore. The old canvas is gone as far as the driver is
+        // concerned, so the honest move is to drop it and run init() again rather
+        // than try to patch a scene graph whose GPU resources all died.
+        function rebuildScene() {
+            try {
+                if (renderer) {
+                    const old = renderer.domElement;
+                    renderer.dispose && renderer.dispose();
+                    if (old && old.parentNode) old.parentNode.removeChild(old);
+                }
+            } catch (_) {}
+            scene = camera = renderer = composer = bloomPass = holoPass = null;
+            // buildAllStructures() reassigns every key, so clearing the map is
+            // enough -- the old THREE objects belong to a context that no longer
+            // exists and must not be reused.
+            structures = {};
+            init();
+        }
         let particleSystem, energyLines = [], starField, nebulaClouds = [];
         let clock = new THREE.Clock();
         let glowTexture, cloudTexture;
@@ -2597,7 +2843,19 @@ window.addEventListener('DOMContentLoaded',function(){
                 this.scene.add(group);
                 const labelEl = document.createElement('div');
                 labelEl.className = 'orb-label';
-                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'">'+''+model.split(':')[0].split('-').slice(-1)[0]+'</span>' : '';
+                // FULL MODEL NAME ON THE ORB, not the last hyphen-separated
+                // fragment. This used to read
+                //   model.split(':')[0].split('-').slice(-1)[0]
+                // which turns "claude-sonnet-5" into "5" and "claude-opus-5"
+                // into "5" as well, so two different models rendered the same
+                // single character and the label carried no information at
+                // all. Reported 2026-09-18: "right now when Sonnet 5 executes,
+                // I just see the numeral 5".
+                // Only a vendor prefix is stripped ("anthropic/claude-opus-5"
+                // -> "claude-opus-5"); everything after it is the name and is
+                // kept whole.
+                const modelLabel = String(model || '').split('/').slice(-1)[0];
+                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'" title="'+String(model).replace(/"/g,'&quot;')+'">'+modelLabel+'</span>' : '';
                 labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
                 this.labelContainer.appendChild(labelEl);
                 this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
@@ -2913,6 +3171,39 @@ window.addEventListener('DOMContentLoaded',function(){
 
             window.addEventListener('resize', onWindowResize);
 
+            // ── WebGL context loss ─────────────────────────────────────────────
+            // The scene shares the GPU with whatever Friday has resident. When a
+            // voice engine or a model loads and the driver runs out of memory for
+            // the display, Chrome takes this canvas's context away. Before this
+            // handler existed the result was a permanently black desktop with no
+            // explanation and no console error: the render loop kept calling a
+            // dead context, so nothing told the user what happened. Observed
+            // 2026-09-10 while NeMo loaded, with the display down to 448 MiB
+            // against its 2560 MiB reserve.
+            //
+            // preventDefault() on the lost event is what makes a restore possible
+            // at all -- without it the browser never fires webglcontextrestored.
+            renderer.domElement.addEventListener('webglcontextlost', ev => {
+                ev.preventDefault();               // required for any restore
+                sceneContextLost = true;           // stops animate() touching a dead context
+                console.warn('friday-scene: WebGL context lost (likely VRAM pressure)');
+                showSceneLostBanner();
+            }, false);
+
+            renderer.domElement.addEventListener('webglcontextrestored', () => {
+                console.warn('friday-scene: WebGL context restored; rebuilding');
+                hideSceneLostBanner();
+                try {
+                    rebuildScene();
+                    sceneContextLost = false;
+                } catch (e) {
+                    // A failed rebuild must not leave a half-dead scene pretending
+                    // to work. Say so and offer the reload instead.
+                    console.error('friday-scene: rebuild failed', e);
+                    showSceneLostBanner('The visuals could not be rebuilt automatically.');
+                }
+            }, false);
+
             // Audio visualizer deliberately disabled — mic is reserved for voice mode.
             // setupAudio() uses getUserMedia which would show the mic indicator on page load.
 
@@ -2923,7 +3214,15 @@ window.addEventListener('DOMContentLoaded',function(){
             if (_evo) _evo.innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
 
             processOrbManager = new ProcessOrbManager(scene, camera, renderer);
-            animate();
+            // Start the render loop exactly once for the life of the page. After a
+            // context restore, init() runs again to rebuild GPU resources, but the
+            // existing loop already reads the module-level renderer/composer, so
+            // calling animate() a second time would leave two loops drawing the
+            // same scene at double cost.
+            if (!animateRunning) {
+                animateRunning = true;
+                animate();
+            }
         }
 
         function buildBackgroundEnvironment() {
@@ -3258,7 +3557,10 @@ window.addEventListener('DOMContentLoaded',function(){
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = Math.min(clock.getDelta(), 0.1); 
+            // With the context gone, every draw call below is a no-op against a
+            // dead context and the per-frame work is wasted. Idle until restore.
+            if (sceneContextLost) return;
+            const delta = Math.min(clock.getDelta(), 0.1);
             const elapsed = clock.getElapsedTime() * 0.5;
 
             // --- HAND CURSOR LOGIC (Minority Report) ---
@@ -3978,6 +4280,64 @@ const DOCK_GROUPS = [{
   }]
 }];
 const WS = DOCK_GROUPS.flatMap(g => g.items);
+const WS_BY_ID = WS.reduce((m, w) => (m[w.id] = w, m), {});
+const WS_GROUP_OF = DOCK_GROUPS.reduce((m, g) => (g.items.forEach(w => { m[w.id] = g.name; }), m), {});
+
+// ═══ DOCK ARRANGEMENT ═══
+// The owner's dock, computed from three inputs in one place so the dock render,
+// the Dock settings panel and its live preview cannot disagree about what the
+// dock is. Returns the SAME {name, items[]} shape DOCK_GROUPS has, so the render
+// body below is untouched by any of this.
+//
+// `custom` is settings.dock_custom = {order: [id...], hidden: [id...]}. Empty
+// means the owner has never shaped the dock, and `show_all_workspaces` governs
+// exactly as it always has. A non-empty arrangement wins outright — two switches
+// over one dock is how you get a control that silently does nothing.
+//
+// GROUPS ARE DERIVED, never configured. Adjacent items sharing a group name form
+// a group, so the default order reproduces today's three-group dock precisely.
+// Interleaving would otherwise produce a confetti of one-item labelled groups,
+// so the moment the arrangement stops being group-contiguous the dock goes flat
+// and unlabelled. That is one rule the owner can predict, rather than a second
+// setting asking a question they did not ask to be asked.
+function dockArrangement(custom, showAll) {
+  const cust = (custom && typeof custom === 'object') ? custom : {};
+  const rawOrder = Array.isArray(cust.order) ? cust.order : [];
+  const hidden = new Set(Array.isArray(cust.hidden) ? cust.hidden : []);
+  const configured = rawOrder.length > 0 || hidden.size > 0;
+
+  // Explicit order first, real ids only, then every workspace the order never
+  // mentioned in its registry position. A workspace added by a later version of
+  // Friday therefore APPEARS, rather than vanishing because a saved order
+  // predates it — the failure mode of every hand-maintained ordering.
+  const seen = new Set();
+  const ids = [];
+  rawOrder.forEach(id => {
+    if (WS_BY_ID[id] && !seen.has(id)) { seen.add(id); ids.push(id); }
+  });
+  WS.forEach(w => { if (!seen.has(w.id)) { seen.add(w.id); ids.push(w.id); } });
+
+  const visible = ids.filter(id => configured ? !hidden.has(id)
+                                              : (showAll || WS_BY_ID[id].core));
+
+  const groups = [];
+  visible.forEach(id => {
+    const name = WS_GROUP_OF[id] || 'More';
+    const last = groups[groups.length - 1];
+    if (last && last.name === name) last.items.push(WS_BY_ID[id]);
+    else groups.push({ name: name, items: [WS_BY_ID[id]] });
+  });
+  const flat = groups.length > DOCK_GROUPS.length;
+  return {
+    groups: flat ? [{ name: '', items: visible.map(id => WS_BY_ID[id]) }] : groups,
+    ids: ids,
+    visible: visible,
+    hidden: hidden,
+    configured: configured,
+    flattened: flat,
+  };
+}
+
 function getGreeting() {
   const h = new Date().getHours();
   if (h < 5) return 'Late night';
@@ -4492,6 +4852,31 @@ function FWin({
   if (cust.density === 'compact') custCss += `${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
   if (cust.accent) custCss += `${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
   const openWsChat = seed => window.fridayOpenWorkspaceChat && window.fridayOpenWorkspaceChat(id, title, emoji, seed);
+  // The history overlay is local to THIS window rather than App-level, so two
+  // open workspaces each get their own and closing one does not close the other.
+  // Settings → Dock opens a workspace WITH its history showing by setting the
+  // one-shot flag below, rather than carrying a second copy of the panel that
+  // could drift from this one.
+  const [histOpen, setHistOpen] = useState(false);
+  // Two arrival paths, because the window may or may not already exist. A flag
+  // read on mount covers "Settings opened this workspace just now"; an event
+  // covers "the window was already open, so nothing is going to mount." Both
+  // clear the flag, or it would sit there and fire on some unrelated open
+  // later — a one-shot that is not actually one-shot is worse than neither.
+  useEffect(() => {
+    if (window.__fridayOpenHistoryFor === id) {
+      delete window.__fridayOpenHistoryFor;
+      setHistOpen(true);
+    }
+    const onOpen = e => {
+      if (e && e.detail && e.detail.workspace === id) {
+        delete window.__fridayOpenHistoryFor;
+        setHistOpen(true);
+      }
+    };
+    window.addEventListener('friday:open-ws-history', onOpen);
+    return () => window.removeEventListener('friday:open-ws-history', onOpen);
+  }, [id]);
   return /*#__PURE__*/React.createElement("div", {
     className: "fwin",
     style: {
@@ -4547,6 +4932,43 @@ function FWin({
       fontSize: 12
     }
   }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("button", {
+    /* The 40 snapshots workspace_studio has always kept, finally reachable
+       without asking Friday out loud. Sits next to \uD83D\uDCAC because that is where
+       the changes it lists come from. */
+    title: `Earlier versions of ${title} \u2014 review and roll back`,
+    "aria-label": `Version history for ${title}`,
+    onClick: e => {
+      e.stopPropagation();
+      setHistOpen(v => !v);
+    },
+    style: {
+      fontSize: 12,
+      color: histOpen ? '#00d4ff' : undefined
+    }
+  }, "\uD83D\uDD52"), /*#__PURE__*/React.createElement("button", {
+    /* ANY WORKSPACE CAN BE ITS OWN TAB. Friday is served over HTTP, so a
+       second tab is the same app pointed somewhere else - ?workspace=<id>,
+       read once on load. No feature string on window.open, because passing
+       one is what turns a tab into a chrome-less popup.
+
+       Hidden inside a window that is already a tab's whole reason for
+       existing, where it would only ever open a duplicate. */
+    title: `Open ${title} in a new tab`,
+    "aria-label": `Open ${title} in a new tab`,
+    onClick: e => {
+      e.stopPropagation();
+      const w = window.open('/?workspace=' + encodeURIComponent(id), '_blank');
+      if (!w) {
+        alert('The browser blocked that tab. Allow pop-ups for Friday and try '
+              + 'again.');
+        return;
+      }
+      try { w.focus(); } catch (err) {}
+    },
+    style: {
+      fontSize: 12
+    }
+  }, "\u2197"), /*#__PURE__*/React.createElement("button", {
     onClick: onClose
   }, "\xD7"))), /*#__PURE__*/React.createElement("div", {
     className: "fwin-body"
@@ -4624,7 +5046,11 @@ function FWin({
       fontSize: 11
     },
     onClick: () => openWsChat(a.prompt)
-  }, a.label))), children)), /*#__PURE__*/React.createElement("div", {
+  }, a.label))), children)), histOpen && /*#__PURE__*/React.createElement(WorkspaceHistory, {
+    wsId: id,
+    label: title,
+    onClose: () => setHistOpen(false)
+  }), /*#__PURE__*/React.createElement("div", {
     className: "resize-h",
     title: "Drag to resize",
     onMouseDown: e => {
@@ -5172,6 +5598,340 @@ class Safe extends React.Component {
     }, "Retry"));
     return this.props.children;
   }
+}
+
+// ═══ CONVERSATION WINDOW ═══
+//
+// A chat thread as a window INSIDE the holographic UI, not a browser tab and
+// not the single docked panel. Several can be open at once, each bound to its
+// own conversation and therefore to its own model seat — which is the whole
+// point: two windows, two models, one machine.
+//
+// Modelled on WorkspaceChat directly above, which had already solved the hard
+// parts (self-contained state, a draggable frame, a composer that behaves).
+// That one is bound to /api/workspace/<id>/chat and exists to edit a
+// workspace; this is its sibling against /api/chat/send. Sharing the frame by
+// copying it rather than by extracting a base component is deliberate: one of
+// them is about a workspace and one is about a conversation, they will drift,
+// and a premature abstraction over two things that are about to diverge costs
+// more than the duplication.
+//
+// EVERY WINDOW IS A CONVERSATION, so nothing here is global. The transcript
+// comes from /api/conversations/<cid>/messages, the send carries
+// conversation_id, and the seat shown in the header is that conversation's
+// own binding — read from the server rather than from app state, because the
+// docked panel and three windows disagreeing about which model a thread uses
+// would be worse than not having windows at all.
+function ConversationWindow({
+  convId,
+  title,
+  zIndex,
+  offset,
+  onClose,
+  onFocus
+}) {
+  const [msgs, setMsgs] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [seat, setSeat] = useState(null);
+  const [pos, setPos] = useState(() => ({
+    // Cascade, so a second window does not land exactly on the first and look
+    // like nothing happened.
+    x: Math.max(16, (window.innerWidth || 1280) - 440 - (offset || 0) * 34),
+    // The cascade is capped the same way dragging is, so the eighth window
+    // does not open already half-buried under the dock.
+    y: Math.min(76 + (offset || 0) * 30,
+                Math.max(0, (window.innerHeight || 800) - 64 - 234))
+  }));
+  const [dragging, setDragging] = useState(false);
+  const dOff = useRef({ x: 0, y: 0 });
+  const endRef = useRef(null);
+  const inRef = useRef(null);
+
+  /* THE DOCK IS A FLOOR, NOT A BACKGROUND.
+     The dock is fixed to the bottom of the screen, and a chat window that
+     runs under it puts the composer — the one part you have to reach to use
+     the thing at all — behind a bar you cannot type through. The docked
+     .chat-panel already allows for this with `bottom: 116px`; a floating
+     window has to do the same arithmetic itself.
+
+     MEASURED, NOT ASSUMED. The dock's height comes from its own
+     getBoundingClientRect, so restyling it (or the mobile rules, which give
+     it a different size) cannot silently reintroduce the overlap. A constant
+     here would be correct until the first time someone changed a padding.
+
+     GEOMETRY, NOT THE CLASS. The first version asked whether the dock carried
+     its `hidden` class and treated that as gone. It is not gone: `.dock.hidden`
+     slides away over 350ms, so for a third of a second the class says absent
+     while 86px of dock is still sitting on the screen. Worse, measured
+     2026-09-19: with the window's animations paused the transition never
+     advances at all, and the dock sits fully visible wearing the hidden class
+     indefinitely. Anything that pauses compositing does this - a background
+     tab, a hidden pane, low-power mode - and prefers-reduced-motion is a
+     standing version of the same state.
+
+     So the question asked is "how much of the bottom of the viewport is the
+     dock covering right now", answered from its transformed rect. That is
+     true mid-slide, true when the slide never runs, and true if someone
+     rewrites the hide to use `bottom` or `height` instead of a transform. */
+  const [floor, setFloor] = useState(0);
+  const [vh, setVh] = useState(() => window.innerHeight || 800);
+  useEffect(() => {
+    const dock = document.querySelector('.dock');
+    const read = () => {
+      const h = window.innerHeight || 800;
+      setVh(h);
+      if (!dock) return setFloor(0);
+      const cs = window.getComputedStyle(dock);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return setFloor(0);
+      const r = dock.getBoundingClientRect();
+      if (!(r.height > 0)) return setFloor(0);
+      // r.top already includes the slide transform, so a dock halfway out
+      // reserves half its height and one fully out reserves nothing.
+      setFloor(Math.max(0, Math.min(h, Math.round(h - r.top))));
+    };
+    read();
+    window.addEventListener('resize', read);
+
+    /* The dock moves continuously while it slides, and a single reading taken
+       when the class changes would capture the frame before the motion. So a
+       class change opens a short sampling window instead - one frame at a
+       time, for a little longer than the 350ms transition. */
+    let raf = 0, until = 0;
+    const follow = () => {
+      read();
+      raf = performance.now() < until ? requestAnimationFrame(follow) : 0;
+    };
+    const kick = () => {
+      until = performance.now() + 520;
+      if (!raf) raf = requestAnimationFrame(follow);
+    };
+    let obs = null;
+    if (dock && window.MutationObserver) {
+      obs = new MutationObserver(kick);
+      obs.observe(dock, { attributes: true, attributeFilter: ['class', 'style'] });
+      dock.addEventListener('transitionend', read);
+    }
+    return () => {
+      window.removeEventListener('resize', read);
+      if (raf) cancelAnimationFrame(raf);
+      if (obs) obs.disconnect();
+      if (dock) dock.removeEventListener('transitionend', read);
+    };
+  }, []);
+
+  // What the window may occupy between its top edge and the dock.
+  const roomBelow = Math.max(220, vh - pos.y - floor - 14);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const mv = e => setPos({
+      x: Math.min(Math.max(0, e.clientX - dOff.current.x),
+                  (window.innerWidth || 1280) - 120),
+      // Never draggable under the dock: the title bar has to stay reachable
+      // AND the body has to keep somewhere to be. The 234 is the 220 minimum
+      // height plus the 14 of breathing room `roomBelow` subtracts, so the
+      // clamp lands exactly on that minimum instead of sailing past it and
+      // letting the Math.max floor push the window back under the dock.
+      y: Math.min(Math.max(0, e.clientY - dOff.current.y),
+                  Math.max(0, (window.innerHeight || 800) - floor - 234))
+    });
+    const up = () => setDragging(false);
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', up);
+    };
+    // `floor` belongs here: the dock can hide or return mid-drag, and a
+    // listener that closed over the old height would clamp to a bar that is
+    // no longer there (or stop clamping for one that is). Re-binding is free
+    // - the drag's own state lives in a ref, not in this closure.
+  }, [dragging, floor]);
+
+  // The thread's own transcript and its own seat. Both per-conversation; see
+  // the note above about disagreement between surfaces.
+  useEffect(() => {
+    if (!convId) return;
+    let live = true;
+    apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
+      .then(r => r.json())
+      .then(d => {
+        if (!live) return;
+        setMsgs((d.messages || []).map(m => ({
+          role: m.role === 'friday' ? 'friday'
+                : (m.role === 'user' ? 'user' : 'system'),
+          text: m.text || '',
+          model: (m.meta || {}).model
+        })));
+      })
+      .catch(() => { if (live) setMsgs([]); });
+    apiFetch('/api/conversations/' + encodeURIComponent(convId))
+      .then(r => r.json())
+      .then(d => { if (live) setSeat((d.conversation || {}).seat || null); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [convId]);
+
+  useEffect(() => {
+    endRef.current && endRef.current.scrollIntoView({ block: 'end' });
+  }, [msgs, loading]);
+
+  const send = async text => {
+    const m = (text === undefined ? input : text).trim();
+    if (!m || loading) return;
+    setInput('');
+    setMsgs(p => [...p, { role: 'user', text: m }]);
+    setLoading(true);
+    try {
+      const r = await apiFetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // conversation_id is the whole feature. Without it every window would
+        // write into Main and the threads would be one thread wearing three
+        // frames.
+        body: JSON.stringify({ message: m, conversation_id: convId,
+                               workspace: 'chat' })
+      });
+      const d = await r.json();
+      const fm = d.friday_msg || {};
+      setMsgs(p => [...p, {
+        role: 'friday',
+        text: fm.text || d.response || '[no response]',
+        model: fm.model || d.model
+      }]);
+    } catch (e) {
+      setMsgs(p => [...p, { role: 'system', text: '[Connection error]' }]);
+    }
+    setLoading(false);
+    inRef.current && inRef.current.focus();
+  };
+
+  return /*#__PURE__*/React.createElement("div", {
+    onMouseDown: onFocus,
+    style: {
+      position: 'fixed', left: pos.x, top: pos.y,
+      width: 420, maxWidth: '94vw',
+      // Tall as it likes, but never taller than the gap above the dock. The
+      // composer is the bottom row of this box, so this is what keeps the
+      // input reachable.
+      height: Math.min(640, Math.round(vh * 0.78), roomBelow),
+      zIndex: zIndex || 132,
+      display: 'flex', flexDirection: 'column',
+      background: 'rgba(10,14,24,0.97)',
+      border: '1px solid rgba(0,212,255,0.28)',
+      borderRadius: 14,
+      boxShadow: '0 18px 60px rgba(0,0,0,0.6)',
+      backdropFilter: 'blur(14px)',
+      overflow: 'hidden'
+    }
+  },
+    /*#__PURE__*/React.createElement("div", {
+      onMouseDown: e => {
+        if (e.target.closest('button')) return;
+        setDragging(true);
+        dOff.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+      },
+      style: {
+        cursor: dragging ? 'grabbing' : 'grab',
+        padding: '9px 12px',
+        borderBottom: '1px solid rgba(0,212,255,0.18)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: 'rgba(0,212,255,0.05)'
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", {
+          style: {
+            fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff',
+            letterSpacing: '.04em', whiteSpace: 'nowrap',
+            overflow: 'hidden', textOverflow: 'ellipsis'
+          }
+        }, title || 'Conversation'),
+        /*#__PURE__*/React.createElement("div", {
+          style: { fontSize: 10, color: '#7d8da3', marginTop: 1 }
+        }, seat && seat.model ? seat.model : 'default model')),
+      /*#__PURE__*/React.createElement("button", {
+        title: "Open this conversation in a new tab",
+        onClick: e => {
+          e.stopPropagation();
+          const w = window.open('/?conversation=' + encodeURIComponent(convId)
+                                + '&chrome=chat', '_blank');
+          if (w) { try { w.focus(); } catch (err) {} }
+        },
+        style: {
+          background: 'none', border: 'none', color: '#00d4ff',
+          cursor: 'pointer', fontSize: 12
+        }
+      }, "↗"),
+      /*#__PURE__*/React.createElement("button", {
+        title: "Close this window (the conversation is kept)",
+        onClick: e => { e.stopPropagation(); onClose && onClose(); },
+        style: {
+          background: 'none', border: 'none', color: '#999',
+          cursor: 'pointer', fontSize: 13
+        }
+      }, "✕")),
+
+    /*#__PURE__*/React.createElement("div", {
+      style: { flex: 1, overflowY: 'auto', padding: '10px 12px' }
+    },
+      msgs.length === 0 && !loading && /*#__PURE__*/React.createElement("div", {
+        style: { color: '#5d6b80', fontSize: 12, padding: '8px 2px' }
+      }, "Nothing in this thread yet."),
+      msgs.map((m, i) => /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: {
+          margin: '7px 0', display: 'flex',
+          justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          maxWidth: '86%', padding: '7px 10px', borderRadius: 10,
+          fontSize: 12.5, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          background: m.role === 'user' ? 'rgba(0,212,255,0.12)'
+                      : m.role === 'system' ? 'rgba(255,140,66,0.10)'
+                      : 'rgba(255,255,255,0.045)',
+          color: m.role === 'system' ? '#ffb27d' : '#dfe7f2'
+        }
+      }, m.text))),
+      loading && /*#__PURE__*/React.createElement("div", {
+        style: { color: '#00d4ff', fontSize: 11, padding: '6px 2px' }
+      }, "Friday is thinking…"),
+      /*#__PURE__*/React.createElement("div", { ref: endRef })),
+
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: 9, borderTop: '1px solid rgba(0,212,255,0.14)',
+        display: 'flex', gap: 7
+      }
+    },
+      /*#__PURE__*/React.createElement("input", {
+        ref: inRef,
+        value: input,
+        onChange: e => setInput(e.target.value),
+        onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } },
+        placeholder: loading ? 'Waiting for Friday…' : 'Message this thread…',
+        disabled: loading,
+        style: {
+          flex: 1, background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(0,212,255,0.18)', borderRadius: 8,
+          color: '#e8eef7', padding: '7px 10px', fontSize: 12.5,
+          fontFamily: 'Inter', outline: 'none'
+        }
+      }),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => send(),
+        disabled: loading || !input.trim(),
+        style: {
+          background: 'rgba(0,212,255,0.12)',
+          border: '1px solid rgba(0,212,255,0.3)',
+          color: '#00d4ff', borderRadius: 8, padding: '7px 13px',
+          fontSize: 12, cursor: loading ? 'default' : 'pointer',
+          fontFamily: 'Inter'
+        }
+      }, "Send")));
 }
 
 // ═══ FRIDAY SAYS (proactive insight) ═══
@@ -23330,7 +24090,7 @@ function MessagesWS() {
   };
   const reclassify = async (m, newLane) => {
     try {
-      await fetch('/api/messages/classify', {
+      const r = await fetch('/api/messages/classify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -23340,11 +24100,29 @@ function MessagesWS() {
           lane: newLane
         })
       });
+      const d = await r.json().catch(() => ({}));
       setMsgs(x => x.map(z => z.id === m.id ? {
         ...z,
         lane: newLane
       } : z));
-      flash('Moved to ' + (MSG_LANE_META[newLane]?.label || newLane));
+      // SAY THAT IT LEARNED, and say how far the learning has got.
+      //
+      // The correction used to move one message and teach nothing — the route
+      // never called record_signal, so sender_signals.json sat at 38 bytes
+      // after months. Now that it does teach, the person doing the teaching
+      // has to be able to see it, or a correction still feels like a one-off
+      // chore rather than training. `needed_for_authority` is the engine's
+      // own countdown to a learned sender outranking the configured rules.
+      const label = MSG_LANE_META[newLane]?.label || newLane;
+      const L = d && d.learned;
+      if (L && L.ok && L.authoritative) {
+        flash('Moved to ' + label + ' — learned: ' + L.sender + ' now goes here');
+      } else if (L && L.ok) {
+        flash('Moved to ' + label + ' — ' + L.needed_for_authority +
+              ' more from ' + L.sender + ' and I stop asking');
+      } else {
+        flash('Moved to ' + label);
+      }
       loadStats();
     } catch (e) {}
   };
@@ -24152,6 +24930,20 @@ const VOICE_MODELS = [{
 // Voice ENGINE choices (settings key `voice_engine`): Auto / Local CPU / Local
 // GPU / Gemini Live. Live availability comes from /api/models (voice_engines);
 // this const is the offline fallback only.
+const TTS_ENGINES_FALLBACK = [{
+  id: 'piper',
+  label: 'Piper (CPU)',
+  short: 'Piper',
+  available: true,
+  hint: 'On-device, CPU-capable.'
+}, {
+  id: 'kokoro',
+  label: 'Kokoro-82M (GPU)',
+  short: 'Kokoro',
+  available: false,
+  status: 'unknown',
+  hint: 'Availability unknown \u2014 the model catalogue could not be read.'
+}];
 const VOICE_ENGINES = [{
   id: 'auto',
   label: 'Auto',
@@ -24302,6 +25094,7 @@ function useModelCatalog() {
     creative: pick('creative'),
     voice: pick('voice'),
     voiceEngines: cat && cat.voice_engines && cat.voice_engines.length ? cat.voice_engines : VOICE_ENGINES,
+    ttsEngines: cat && cat.tts_engines && cat.tts_engines.length ? cat.tts_engines : TTS_ENGINES_FALLBACK,
     providers: cat && cat.providers || []
   };
   const byId = {};
@@ -24399,9 +25192,16 @@ function ModelSearchPicker({
     const cur = m.id === value;
     return /*#__PURE__*/React.createElement("button", {
       key: (m.provider || '') + '/' + m.id,
-      onClick: () => onPick && onPick(m.id),
+      // A model the catalog marks unavailable (not installed, or no key) is
+      // shown so the user can see what it would take, but it cannot be
+      // picked: picking it wrote an uninstalled seat and the UI said "done".
+      onClick: () => m.available === false ? null : onPick && onPick(m.id),
+      disabled: m.available === false,
+      'aria-disabled': m.available === false,
       title: m.hint || m.id,
       style: {
+        opacity: m.available === false ? 0.45 : 1,
+        cursor: m.available === false ? 'not-allowed' : 'pointer',
         width: '100%',
         textAlign: 'left',
         display: 'flex',
@@ -32943,6 +33743,11 @@ function consequence(m, machine, serving) {
 function useIntelligence(pollMs) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
+  // `stalled` is the pill's third state (model-soup.md §11.3): the request
+  // has been in flight for 10 s. Distinct from `err`, which only arrives at
+  // the 30 s abort; a wedged filesystem under /api/intelligence held the
+  // route for 25 s on 2026-09-17 and the pill showed "bound" throughout.
+  const [stalled, setStalled] = useState(false);
   /* A fetch that fails has to SAY so. "Reading the machine..." forever is the
      same defect as everything else here — a surface that looks like it is
      working while producing nothing: the user opens Settings, gets the
@@ -32961,6 +33766,7 @@ function useIntelligence(pollMs) {
     // The probe backoff in routes/intelligence.py fixes the repeat cost; this
     // stops the first, honest, slow render being thrown away.
     const timer = setTimeout(() => ctrl.abort(), 30000);
+    const stallTimer = setTimeout(() => setStalled(true), 10000);
     apiFetch('/api/intelligence', { signal: ctrl.signal }).then(r => {
       if (!r.ok) {
         // 401 after a restart is the commonest cause by far: the API token is
@@ -32993,7 +33799,7 @@ function useIntelligence(pollMs) {
         : { kind: 'unreachable',
             what: 'Could not reach the Friday server at all.',
             fix: 'Check that it is still running, then retry.' });
-    }).finally(() => clearTimeout(timer));
+    }).finally(() => { clearTimeout(timer); clearTimeout(stallTimer); setStalled(false); });
   }, []);
   useEffect(() => {
     load();
@@ -33001,7 +33807,7 @@ function useIntelligence(pollMs) {
     const t = setInterval(load, pollMs);
     return () => clearInterval(t);
   }, [load, pollMs]);
-  return { d: d, err: err, reload: load };
+  return { d: d, err: err, reload: load, stalled: stalled };
 }
 
 // ── Shared pieces ────────────────────────────────────────────────────────────
@@ -33068,11 +33874,16 @@ function StateChip({ m, serving }) {
 function ModelRow({ m, need, current, onPick, machine, servingId }) {
   const fit = suitability(m, need);
   const isCur = current === m.id;
+  const off = m.available === false;
   return E('button', {
-    onClick: () => onPick(m),
-    title: m.id + (m.providers && m.providers.length > 1 ? '  (offered by ' + m.providers.join(', ') + ')' : ''),
+    // Not installed / no key: visible, explained in the title, not pickable.
+    onClick: () => off ? null : onPick(m),
+    disabled: off,
+    'aria-disabled': off,
+    title: (off && m.hint ? m.hint + '\n' : '') + m.id + (m.providers && m.providers.length > 1 ? '  (offered by ' + m.providers.join(', ') + ')' : ''),
     style: {
-      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+      display: 'block', width: '100%', textAlign: 'left', cursor: off ? 'not-allowed' : 'pointer',
+      opacity: off ? 0.45 : 1,
       background: isCur ? 'rgba(0,212,255,0.10)' : 'transparent',
       border: '1px solid ' + (isCur ? 'rgba(0,212,255,0.45)' : 'transparent'),
       borderRadius: 7, padding: '7px 9px', marginBottom: 2,
@@ -33216,7 +34027,7 @@ function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry
 function QuickSwitch({ current, onPick, switching }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const { d, err, reload } = useIntelligence(open ? 4000 : 20000);
+  const { d, err, reload, stalled } = useIntelligence(open ? 4000 : 20000);
   useEffect(() => {
     if (!open) return;
     const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -33237,7 +34048,9 @@ function QuickSwitch({ current, onPick, switching }) {
   return E('div', { ref: ref, style: { position: 'relative' } },
     E('button', {
       onClick: () => setOpen(o => !o),
-      title: !serving ? 'No turn served yet.'
+      title: stalled && !d
+        ? "Friday's model status is not answering; the last known seat was " + (current || 'unknown') + '.'
+        : !serving ? 'No turn served yet.'
         : serving.stale
           ? 'Bound model: ' + serving.model + '\nLive serving state unavailable until the server restarts.'
           : 'Answering you now: ' + serving.model + '\nLast turn ' + (fmtAgo(serving.at) || '') + '\nClick to switch.',
@@ -33256,8 +34069,8 @@ function QuickSwitch({ current, onPick, switching }) {
         },
       }),
       E('span', null, name),
-      E('span', { style: { fontSize: 9, opacity: 0.5 } },
-        serving && serving.stale ? 'bound' : (isLocal ? 'local' : 'cloud')),
+      E('span', { style: { fontSize: 9, opacity: 0.5, color: stalled && !d ? '#f59e0b' : undefined } },
+        stalled && !d ? 'stalled' : (serving && serving.stale ? 'bound' : (isLocal ? 'local' : 'cloud'))),
       switching && E('span', {
         style: {
           fontSize: 9, color: '#f59e0b', border: '1px solid rgba(245,158,11,0.45)',
@@ -33401,6 +34214,469 @@ function ConversationBar({ convList, convId, convSeat, open, setOpen,
       onClear: () => onBindSeat(null),
       onClose: () => setPickerOpen(false),
     })) : null);
+}
+
+/* ── The chat sidebar ────────────────────────────────────────────────────────
+ *
+ * Every thread you own, grouped into projects, down the left of a chat tab.
+ *
+ * ONE DATA SOURCE, TWO VIEWS. This reads `convList` and `projList` from the
+ * app, the same state the ConversationBar switcher above renders from and the
+ * same `refreshConvs` writes. It does not fetch its own copy. Two lists of the
+ * same threads, each with its own fetch, is how you rename a chat in one place
+ * and watch the other keep the old name for a minute - and this codebase has
+ * lost enough afternoons to two surfaces disagreeing about one fact.
+ *
+ * TAB ONLY. The floating holographic window is a glance at one thread and has
+ * no navigation in it; the tab is the desk you work at. Same chat panel, two
+ * jobs, and the sidebar belongs to the second.
+ *
+ * Rows carry the seat and the spend, which is the thing this sidebar can show
+ * and the ones it is modelled on structurally cannot. A list of chats is less
+ * useful than a list of what your machine has been doing.
+ */
+function SidebarRow({ c, active, onOpen, onAct, projects }) {
+  const [menu, setMenu] = useState(false);
+  // The seat this chat will ACTUALLY answer on. A chat with no binding of its
+  // own inside a Bonsai project runs on Bonsai, and a row that showed nothing
+  // there would be lying by omission. Inherited seats are dimmer than bound
+  // ones so the two are never confused.
+  const own = (c.seat || {}).model || '';
+  const eff = (c.effective_seat || {}).model || '';
+  const cost = (c.totals || {}).cost_usd || 0;
+  const act = (what, arg) => { setMenu(false); onAct(c, what, arg); };
+  return E('div', {
+    style: { position: 'relative' },
+    onMouseLeave: () => setMenu(false),
+  },
+    E('div', {
+      onClick: () => onOpen(c.id),
+      title: c.title || 'New chat',
+      style: {
+        display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+        background: active ? 'rgba(0,212,255,0.10)' : 'transparent',
+        border: '1px solid ' + (active ? 'rgba(0,212,255,0.38)' : 'transparent'),
+        borderRadius: 7, padding: '6px 8px', marginBottom: 1,
+      },
+    },
+      c.pinned_at ? E('span', {
+        title: 'Pinned', style: { fontSize: 9, color: '#00d4ff', flexShrink: 0 },
+      }, '◆') : null,
+      E('div', { style: { flex: 1, minWidth: 0 } },
+        E('div', {
+          style: {
+            fontFamily: 'JetBrains Mono', fontSize: 11.5,
+            color: 'rgba(255,255,255,0.9)', overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          },
+        }, c.title || 'New chat'),
+        E('div', {
+          style: {
+            fontSize: 9, color: 'rgba(255,255,255,0.4)',
+            fontFamily: 'JetBrains Mono', marginTop: 1, display: 'flex',
+            gap: 6, alignItems: 'center',
+          },
+        },
+          eff ? E('span', {
+            title: own ? ('Bound to ' + own)
+                       : ('Inherited from this chat’s project: ' + eff),
+            style: { color: own ? '#cfefff' : 'rgba(207,239,255,0.5)' },
+          }, (own ? '' : '↳ ') + prettyModel(eff)) : E('span', null, 'default'),
+          cost ? E('span', null, '$' + Number(cost).toFixed(2)) : null)),
+      E('button', {
+        onClick: e => { e.stopPropagation(); setMenu(!menu); },
+        title: 'More', 'aria-label': 'Actions for this chat',
+        style: {
+          background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
+          color: 'rgba(255,255,255,0.35)', fontSize: 13, padding: '0 2px',
+        },
+      }, '⋯')),
+    menu ? E('div', {
+      style: {
+        position: 'absolute', right: 6, top: '100%', zIndex: 40, width: 190,
+        background: '#0a0e1a', border: '1px solid rgba(0,212,255,0.22)',
+        borderRadius: 8, padding: 4, boxShadow: '0 14px 40px rgba(0,0,0,0.6)',
+      },
+    },
+      E(MenuItem, { onClick: () => act('pin') },
+        c.pinned_at ? 'Unpin' : 'Pin to top'),
+      E(MenuItem, { onClick: () => act('rename') }, 'Rename…'),
+      E('div', {
+        style: {
+          fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono',
+          padding: '6px 8px 2px',
+        },
+      }, 'Move to'),
+      c.project ? E(MenuItem, { onClick: () => act('move', null) },
+        'No project') : null,
+      projects.filter(p => p.id !== c.project).map(p => E(MenuItem, {
+        key: p.id, onClick: () => act('move', p.id),
+      }, p.name)),
+      E(MenuItem, { onClick: () => act('archive'), danger: true }, 'Archive'))
+      : null);
+}
+
+function MenuItem({ onClick, children, danger }) {
+  return E('button', {
+    onClick: onClick,
+    style: {
+      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+      background: 'none', border: 'none', borderRadius: 5, padding: '5px 8px',
+      fontFamily: 'JetBrains Mono', fontSize: 10.5,
+      color: danger ? '#ff8095' : 'rgba(255,255,255,0.8)',
+    },
+  }, children);
+}
+
+function ChatSidebar({ convList, projList, convId, onOpenConversation,
+                       onRefresh, apiFetch }) {
+  const [q, setQ] = useState('');
+  const [shut, setShut] = useState({});          // project id -> collapsed
+  const [editing, setEditing] = useState(null);  // project being configured
+  const [busy, setBusy] = useState(false);
+
+  const api = (url, opts) => apiFetch(url, opts).then(r => r.json());
+
+  const note = d => {
+    // The API answers with what IS, and a `note` when what was asked for did
+    // not happen. Surfacing it is the whole point of it being there.
+    if (d && d.note) alert(d.note);
+    return d;
+  };
+
+  const newChat = (pid) => {
+    if (busy) return;
+    setBusy(true);
+    api('/api/conversations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'New chat', project: pid || null }),
+    }).then(d => {
+      onRefresh();
+      if (d && d.conversation) onOpenConversation(d.conversation.id);
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+
+  const newProject = () => {
+    const name = prompt('Name this project');
+    if (!name) return;
+    api('/api/projects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name }),
+    }).then(() => onRefresh()).catch(() => {});
+  };
+
+  const onAct = (c, what, arg) => {
+    const patch = body => api(
+      '/api/conversations/' + encodeURIComponent(c.id),
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body) }
+    ).then(note).then(() => onRefresh()).catch(() => {});
+    if (what === 'pin') return patch({ pinned_at: !c.pinned_at });
+    if (what === 'move') return patch({ project: arg });
+    if (what === 'archive') return patch({ status: 'archived' });
+    if (what === 'rename') {
+      const t = prompt('Rename this chat', c.title || '');
+      if (t) return patch({ title: t });
+    }
+  };
+
+  const live = (convList || []).filter(c => c.status !== 'archived');
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? live.filter(c => (c.title || '').toLowerCase().indexOf(needle) >= 0)
+    : live;
+  // Pins first, then most recently worked in. `last_active_at` is not restamped
+  // by filing or pinning, so tidying the sidebar does not reorder the thing
+  // being tidied.
+  const order = a => [a.pinned_at ? 0 : 1, -(a.last_active_at || 0)];
+  const sortRows = rows => rows.slice().sort((x, y) => {
+    const [px, tx] = order(x), [py, ty] = order(y);
+    return px - py || tx - ty;
+  });
+  const loose = sortRows(shown.filter(c => !c.project));
+  const byProject = {};
+  shown.forEach(c => {
+    if (c.project) (byProject[c.project] = byProject[c.project] || []).push(c);
+  });
+
+  const heading = t => E('div', {
+    style: {
+      fontSize: 8.5, letterSpacing: '.1em', textTransform: 'uppercase',
+      color: 'rgba(255,255,255,0.3)', fontFamily: 'JetBrains Mono',
+      padding: '10px 4px 4px',
+    },
+  }, t);
+
+  return E('div', { className: 'chat-sidebar' },
+    E('div', { className: 'chat-sidebar-head' },
+      E('button', {
+        onClick: () => newChat(null), disabled: busy,
+        style: {
+          flex: 1, cursor: busy ? 'wait' : 'pointer',
+          background: 'rgba(0,212,255,0.10)',
+          border: '1px solid rgba(0,212,255,0.3)', borderRadius: 8,
+          padding: '7px 9px', color: '#cfefff',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, '+ New chat'),
+      E('button', {
+        onClick: newProject, title: 'New project',
+        'aria-label': 'New project',
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)', borderRadius: 8,
+          padding: '7px 9px', color: 'rgba(255,255,255,0.65)',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, '+ Project')),
+
+    E('input', {
+      value: q, onChange: e => setQ(e.target.value),
+      placeholder: 'Search chats…', className: 'input',
+      style: { margin: '0 10px 6px', fontSize: 11 },
+    }),
+
+    E('div', { className: 'chat-sidebar-scroll' },
+      (projList || []).map(p => {
+        const rows = sortRows(byProject[p.id] || []);
+        // While searching, a project with no matching chat is noise.
+        if (needle && !rows.length) return null;
+        const collapsed = shut[p.id] && !needle;
+        const pseat = (p.seat || {}).model || '';
+        return E('div', { key: p.id, style: { marginBottom: 2 } },
+          E('div', {
+            style: {
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '6px 4px 4px',
+            },
+          },
+            E('button', {
+              onClick: () => setShut(s => ({ ...s, [p.id]: !s[p.id] })),
+              style: {
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.75)', fontFamily: 'JetBrains Mono',
+                fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 5,
+                flex: 1, minWidth: 0, textAlign: 'left', padding: 0,
+              },
+            },
+              E('span', { style: { fontSize: 8, opacity: 0.6 } },
+                collapsed ? '▸' : '▾'),
+              E('span', {
+                style: {
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap', flex: 1,
+                },
+              }, p.name),
+              pseat ? E('span', {
+                title: 'Chats here default to ' + pseat,
+                style: {
+                  fontSize: 8.5, color: 'rgba(207,239,255,0.65)',
+                  border: '1px solid rgba(0,212,255,0.22)', borderRadius: 5,
+                  padding: '0 4px', flexShrink: 0,
+                },
+              }, prettyModel(pseat)) : null,
+              E('span', { style: { fontSize: 9, opacity: 0.4 } },
+                rows.length || '')),
+            E('button', {
+              onClick: () => setEditing(p), title: 'Project settings',
+              'aria-label': 'Settings for ' + p.name,
+              style: {
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.3)', fontSize: 11, padding: '0 2px',
+              },
+            }, '⚙'),
+            E('button', {
+              onClick: () => newChat(p.id), title: 'New chat in ' + p.name,
+              'aria-label': 'New chat in ' + p.name,
+              style: {
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: '0 2px',
+              },
+            }, '+')),
+          collapsed ? null : E('div', { style: { paddingLeft: 8 } },
+            rows.length
+              ? rows.map(c => E(SidebarRow, {
+                  key: c.id, c: c, active: c.id === convId,
+                  onOpen: onOpenConversation, onAct: onAct,
+                  projects: projList || [],
+                }))
+              : E('div', {
+                  style: {
+                    fontSize: 9.5, color: 'rgba(255,255,255,0.28)',
+                    fontFamily: 'JetBrains Mono', padding: '3px 8px 6px',
+                  },
+                }, 'No chats here yet.')));
+      }),
+
+      loose.length ? heading((projList || []).length ? 'Not in a project'
+                                                     : 'Chats') : null,
+      loose.map(c => E(SidebarRow, {
+        key: c.id, c: c, active: c.id === convId,
+        onOpen: onOpenConversation, onAct: onAct, projects: projList || [],
+      })),
+
+      (!shown.length) ? E('div', {
+        style: {
+          fontSize: 10.5, color: 'rgba(255,255,255,0.35)',
+          fontFamily: 'JetBrains Mono', padding: 12, textAlign: 'center',
+        },
+      }, needle ? 'Nothing matches “' + q + '”.' : 'No chats yet.')
+        : null),
+
+    editing ? E(ProjectSettings, {
+      project: editing, apiFetch: apiFetch,
+      onClose: () => setEditing(null),
+      onSaved: () => { setEditing(null); onRefresh(); },
+    }) : null);
+}
+
+/** Name, default model and standing instructions for one project. */
+function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
+  const [name, setName] = useState(project.name || '');
+  const [instr, setInstr] = useState(project.instructions || '');
+  const [seat, setSeat] = useState(project.seat || null);
+  const [picking, setPicking] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const save = () => {
+    setSaving(true);
+    apiFetch('/api/projects/' + encodeURIComponent(project.id), {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, instructions: instr, seat: seat }),
+    }).then(r => r.json()).then(d => {
+      // The response carries the project as it now IS. A default model the
+      // machine cannot seat comes back refused with a reason, and saying so
+      // here is cheaper than finding out during a turn that hangs.
+      if (d && d.note) alert(d.note);
+      onSaved();
+    }).catch(() => setSaving(false));
+  };
+
+  const remove = () => {
+    if (!confirm('Delete the project “' + (project.name || '') +
+                 '”?\n\nIts chats are kept and moved out of it.')) return;
+    apiFetch('/api/projects/' + encodeURIComponent(project.id),
+             { method: 'DELETE' })
+      .then(r => r.json()).then(d => {
+        if (d && d.note) alert(d.note);
+        onSaved();
+      }).catch(() => {});
+  };
+
+  const label = t => E('div', {
+    style: {
+      fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase',
+      color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono',
+      margin: '10px 0 4px',
+    },
+  }, t);
+
+  return E('div', {
+    onClick: e => { if (e.target === e.currentTarget) onClose(); },
+    style: {
+      position: 'fixed', inset: 0, zIndex: 3000,
+      background: 'rgba(3,6,14,0.6)', backdropFilter: 'blur(3px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    },
+  }, E('div', {
+    style: {
+      width: 420, maxWidth: '92vw', padding: 16,
+      background: '#0a0e1a', border: '1px solid rgba(0,212,255,0.25)',
+      borderRadius: 12, boxShadow: '0 24px 70px rgba(0,0,0,0.7)',
+    },
+  },
+    E('div', {
+      style: {
+        fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff',
+        marginBottom: 2,
+      },
+    }, 'PROJECT'),
+
+    label('Name'),
+    E('input', {
+      value: name, onChange: e => setName(e.target.value),
+      className: 'input', style: { width: '100%' },
+    }),
+
+    label('Default model'),
+    E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono', lineHeight: 1.5, marginBottom: 5,
+      },
+    }, 'Chats in here use this unless they are bound to something else. ' +
+       'Only one local model fits on this machine at a time, so grouping ' +
+       'chats by model is grouping them by what the hardware can do.'),
+    E('button', {
+      onClick: () => setPicking(!picking),
+      style: {
+        cursor: 'pointer', background: 'rgba(0,212,255,0.07)',
+        border: '1px solid rgba(0,212,255,0.22)', borderRadius: 8,
+        padding: '5px 9px', color: seat ? '#cfefff' : 'rgba(255,255,255,0.5)',
+        fontFamily: 'JetBrains Mono', fontSize: 10.5,
+      },
+    }, seat ? prettyModel(seat.model) : 'follow my default'),
+    picking ? E('div', { style: { marginTop: 6 } },
+      E(ConversationSeatPicker, {
+        current: seat && seat.model,
+        onPick: m => {
+          setSeat(m ? { model: m.id, provider: (m.providers || [])[0] } : null);
+          setPicking(false);
+        },
+        onClear: () => { setSeat(null); setPicking(false); },
+        onClose: () => setPicking(false),
+      })) : null,
+
+    label('Standing instructions'),
+    E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono', lineHeight: 1.5, marginBottom: 5,
+      },
+    }, 'Sent with every turn in this project, so they are charged on every ' +
+       'turn too. Friday’s memory is unchanged either way — a ' +
+       'project files your chats, it does not narrow what she knows.'),
+    E('textarea', {
+      value: instr, onChange: e => setInstr(e.target.value),
+      rows: 4, className: 'input',
+      style: { width: '100%', resize: 'vertical', fontSize: 11 },
+    }),
+
+    E('div', {
+      style: {
+        display: 'flex', gap: 8, marginTop: 14, alignItems: 'center',
+      },
+    },
+      E('button', {
+        onClick: save, disabled: saving,
+        style: {
+          cursor: 'pointer', background: 'rgba(0,212,255,0.14)',
+          border: '1px solid rgba(0,212,255,0.35)', borderRadius: 8,
+          padding: '7px 14px', color: '#cfefff',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, saving ? 'Saving…' : 'Save'),
+      E('button', {
+        onClick: onClose,
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,255,255,0.14)', borderRadius: 8,
+          padding: '7px 12px', color: 'rgba(255,255,255,0.6)',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, 'Cancel'),
+      E('span', { style: { flex: 1 } }),
+      E('button', {
+        onClick: remove,
+        title: 'Deletes the folder. The chats inside are kept.',
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,77,109,0.3)', borderRadius: 8,
+          padding: '7px 12px', color: '#ff8095',
+          fontFamily: 'JetBrains Mono', fontSize: 11,
+        },
+      }, 'Delete'))));
 }
 
 // ── Surface 2: Settings → Intelligence ───────────────────────────────────────
@@ -33823,6 +35099,223 @@ function WizardStarterSetSection({ hw }) {
     }, ss.video === 'cloud' ? 'Video runs in the cloud on every machine today.' : (ss.video || '')));
 }
 
+
+// ── Model Soup ───────────────────────────────────────────────────────────────
+// One card that answers the question the Intelligence tab exists for: what is
+// about to answer me, where does it run, what will it cost. Every row state is
+// the manifest vocabulary (proven / loading / cold / refused) computed by
+// /api/intelligence's `soup` object, never asserted by the client.
+// docs/design/active/model-soup.md §11.2.
+
+const SOUP_GLYPH = { proven: '●', ready: '●', cloud: '●', loading: '◐',
+  cold: '○', absent: '○', refused: '✕' };
+const SOUP_COLOR = { proven: '#00ff80', ready: '#7b61ff', cloud: '#7b61ff', loading: '#f59e0b',
+  cold: 'rgba(255,255,255,0.42)', absent: 'rgba(255,255,255,0.35)', refused: '#ef4444' };
+
+function fmtUsd(v, digits) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const n = Number(v);
+  if (n === 0) return '$0';
+  return '$' + n.toFixed(digits === undefined ? (n < 1 ? 3 : 2) : digits);
+}
+
+function fmtBytes(b) {
+  if (!b && b !== 0) return '';
+  if (b >= 1e9) return (b / 1e9).toFixed(2) + ' GB';
+  if (b >= 1e6) return Math.round(b / 1e6) + ' MB';
+  return Math.round(b / 1e3) + ' KB';
+}
+
+function SoupRow({ label, main, detail, state, reason, action }) {
+  const glyph = SOUP_GLYPH[state] || '\u25CB';
+  const color = SOUP_COLOR[state] || 'rgba(255,255,255,0.4)';
+  // Stacked, not a grid: the Settings window is ~400 px wide by default and a
+  // three-column row wrapped every model name mid-word.
+  return E('div', {
+    style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
+  },
+    E('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' } },
+      E('span', { style: { fontFamily: 'Orbitron', fontSize: 9.5, letterSpacing: 0.7, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' } }, label),
+      E('span', { style: { color: color, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8 } },
+        E('span', null, glyph + ' ' + (detail || state || '')),
+        action)),
+    E('div', { style: { color: 'rgba(255,255,255,0.92)', lineHeight: 1.5, marginTop: 2, fontSize: 12 } }, main),
+    reason && E('div', { style: { fontSize: 10, lineHeight: 1.5, color: state === 'refused' ? '#ef9a9a' : 'rgba(255,255,255,0.45)' } }, reason));
+}
+
+/** The recorded cloud consent, and the one control that re-asks the question
+ *  against the machine as it is now. Read-only until Stephen clicks a choice;
+ *  the POST is the same one the onboarding gate uses. */
+function CloudConsentRow({ consent, onChanged, compact }) {
+  const [assess, setAssess] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const c = consent || {};
+  const reask = () => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/privacy/cloud-consent?assess=1').then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') setAssess(j); else setMsg((j && j.message) || 'Could not assess the machine.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const answer = (choice) => {
+    setBusy(true); setMsg('');
+    apiFetch('/api/privacy/cloud-consent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice: choice }),
+    }).then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') { setAssess(null); setMsg('Recorded.'); onChanged && onChanged(); }
+      else setMsg((j && j.message) || 'Not recorded.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const when = c.at ? new Date(c.at) : null;
+  const whenTxt = when && !isNaN(when) ? when.toLocaleDateString() : (c.source === 'legacy_unrestricted_cloud_flag' ? 'legacy flag' : 'never');
+  const choiceTxt = c.answered === false || !c.choice ? 'not answered (gated)'
+    : c.choice === 'cloud_unrestricted' ? 'unrestricted' : 'local, private';
+  const cap = assess && assess.capability;
+  return E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11 } },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+      E('span', { style: { color: 'rgba(255,255,255,0.9)' } }, 'Cloud consent: ' + choiceTxt),
+      E('span', { style: { color: 'rgba(255,255,255,0.45)' } }, 'answered ' + whenTxt),
+      c.snapshot_capable === false && E('span', { style: { color: '#f59e0b' } },
+        'the machine said local was not capable' + (c.snapshot_why ? ': ' + c.snapshot_why : '')),
+      E('button', {
+        className: 'settings-btn', disabled: busy, onClick: reask,
+        style: { fontSize: 10, padding: '3px 9px' },
+      }, busy ? 'checking…' : 'Re-answer')),
+    !compact && E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 } },
+      'Unrestricted means the egress gate sends every payload untouched. Re-answer runs the capability check again, against the local seat as it is now, and shows both choices with the fresh result.'),
+    assess && E('div', {
+      style: { marginTop: 8, padding: 10, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(0,212,255,0.05)' },
+    },
+      E('div', { style: { color: cap && cap.capable ? '#00ff80' : '#f59e0b', marginBottom: 6 } },
+        cap && cap.capable ? 'This machine can run private-local today.'
+          : 'This machine still cannot run the full private-local set: ' + ((cap && cap.chain_why) || (cap && cap.roles && cap.roles.text && cap.roles.text.why) || 'no reason given') + '.'),
+      E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('local_private') },
+          'Keep it local and private'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => answer('cloud_unrestricted') },
+          'Allow unrestricted cloud'),
+        E('button', { className: 'settings-btn', disabled: busy, onClick: () => setAssess(null),
+          style: { opacity: 0.7 } }, 'Cancel'))),
+    msg && E('div', { style: { fontSize: 10, color: msg === 'Recorded.' ? '#00ff80' : '#f59e0b', marginTop: 4 } }, msg));
+}
+
+function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
+  const modes = d.routing_modes || [];
+  const modeButtons = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
+    modes.map(m => {
+      const on = mode === m.id;
+      return E('button', {
+        key: m.id, onClick: () => setMode(m.id), title: m.help,
+        style: {
+          flex: '1 1 180px', textAlign: 'left', cursor: 'pointer',
+          background: on ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.03)',
+          border: '1px solid ' + (on ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
+          borderRadius: 8, padding: '8px 10px',
+        },
+      },
+        E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 12, color: on ? '#cfefff' : 'rgba(255,255,255,0.85)', display: 'flex', alignItems: 'center', gap: 6 } },
+          E('span', { style: { width: 7, height: 7, borderRadius: 4, flexShrink: 0, background: on ? '#00d4ff' : 'rgba(255,255,255,0.22)' } }),
+          m.label,
+          savingMode === m.id && E('span', { style: { fontSize: 9, color: '#f59e0b' } }, 'saving...')),
+        E('div', { style: { fontSize: 9.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono', marginTop: 3, lineHeight: 1.45 } }, m.help));
+    }));
+  // An older server build answers without `soup`. Say so, and keep the mode
+  // buttons: a control that vanishes because the payload is short is the
+  // silent failure this card exists to end.
+  if (!soup || soup.error) return E(StSection, { title: 'WHAT IS ABOUT TO ANSWER YOU' },
+    E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11, color: '#f59e0b', lineHeight: 1.5 } },
+      soup && soup.error ? 'The card could not be built: ' + soup.error
+        : 'The running server is an older build that does not report the model soup yet. Restart Friday to see what is about to answer you.'),
+    modeButtons);
+  const now = soup.now || {};
+  const deep = soup.deep || {};
+  const cloud = soup.cloud || {};
+  const post = soup.posture || {};
+  const led = soup.ledger || {};
+  const l24 = led['24h'] || {}, l30 = led['30d'] || {};
+  const consent = post.consent || {};
+  const whereTxt = (x) => x.where === 'local'
+    ? 'this machine' + (x.port ? ' · :' + x.port : '') + (x.num_ctx ? ' · ' + Math.round(x.num_ctx / 1024) + 'k' : '')
+    : (x.provider || 'cloud');
+  const stateDetail = (x) => x.state === 'proven' ? 'proven ' + (fmtAgo(x.proven_at) || 'now')
+    : x.state === 'ready' ? 'key present'
+    : x.state === 'cloud' ? 'cloud'
+    : x.state === 'cold' ? 'cold' : x.state === 'refused' ? 'refused' : x.state || '';
+  const postureTxt = [
+    mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
+    'KG indexes ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'locally' + (post.kg_local_possible ? '' : ' (cannot run: nothing is serving)')),
+    'egress ' + (post.egress_mode || 'audit'),
+  ].join(' · ');
+  return E(StSection, { title: 'WHAT IS ABOUT TO ANSWER YOU' },
+    E(SoupRow, {
+      label: 'Now answering',
+      main: (now.label || now.model || 'nothing') + ' · ' + whereTxt(now),
+      detail: stateDetail(now) + (now.where === 'cloud' && now.cost_per_turn_usd ? ' · ' + fmtUsd(now.cost_per_turn_usd) + ' / turn' : now.where === 'local' ? ' · $0' : ''),
+      state: now.state, reason: now.why || now.reason,
+    }),
+    soup.local && soup.local.model && now.model !== soup.local.model && E(SoupRow, {
+      label: 'Local seat',
+      main: (soup.local.label || soup.local.model) + ' · ' + whereTxt(soup.local),
+      detail: stateDetail(soup.local), state: soup.local.state, reason: soup.local.reason,
+    }),
+    E(SoupRow, {
+      label: 'Deep model',
+      main: deep.model ? (deep.label || deep.model) + ' · ' + (deep.where === 'local' ? 'this machine · on demand' : (deep.provider || 'cloud')) : 'none bound',
+      detail: stateDetail(deep), state: deep.state,
+      reason: deep.reason || deep.displaces,
+    }),
+    E(SoupRow, {
+      label: 'Cloud',
+      main: (cloud.label || cloud.model || 'none') + ' · ' + (cloud.provider || ''),
+      detail: (cloud.key_present === false ? 'no key' : 'key present') + (cloud.cost_per_turn_usd ? ' · ' + fmtUsd(cloud.cost_per_turn_usd) + ' / turn typical (30-day median)' : ''),
+      state: cloud.key_present === false ? 'refused' : 'ready', reason: cloud.reason,
+    }),
+    E('div', {
+      style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
+    },
+      E('div', { style: { fontFamily: 'Orbitron', fontSize: 9.5, letterSpacing: 0.7, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' } }, 'Posture'),
+      E('div', { style: { color: 'rgba(255,255,255,0.85)', margin: '2px 0 4px', lineHeight: 1.5 } }, postureTxt),
+      E(CloudConsentRow, { consent: consent, onChanged: reload, compact: true })),
+    E('div', {
+      style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
+    },
+      E('div', { style: { fontFamily: 'Orbitron', fontSize: 9.5, letterSpacing: 0.7, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' } }, 'Ledger'),
+      E('div', { style: { color: 'rgba(255,255,255,0.85)', display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 2, lineHeight: 1.5 } },
+        E('span', null, 'Last 24 h: ' + (l24.calls || 0) + ' calls · ' + (l24.local || 0) + ' local · ' + (l24.cloud || 0) + ' cloud · ' + fmtUsd(l24.cost_usd || 0, 2)),
+        E('span', null, 'Last 30 d: ' + (l30.calls || 0) + ' · ' + (l30.local || 0) + ' local · ' + (l30.cloud || 0) + ' cloud · ' + fmtUsd(l30.cost_usd || 0, 2)))),
+    modeButtons,
+    E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 8 } },
+      'Memory embeddings: ' + (soup.embeddings || 'all-MiniLM-L6-v2 on this CPU, always') + '.'));
+}
+
+/** Where each local seat's weights live, and whether that place answers. A
+ *  path on a network share is a red state: it stalls every liveness check and
+ *  the seat dies on the next page fault when the share drops. */
+function WeightsRows({ rows }) {
+  if (!rows || !rows.length) return null;
+  return E('div', { style: { marginTop: 10 } },
+    E('div', { style: { fontFamily: 'Orbitron', fontSize: 10, letterSpacing: 0.6, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', marginBottom: 4 } }, 'Weights'),
+    rows.map(w => {
+      const bad = w.remote || !w.present || (w.lora && !w.lora_present);
+      const tone = w.retired ? 'rgba(255,255,255,0.35)' : bad ? '#ef4444' : 'rgba(255,255,255,0.8)';
+      const parts = [];
+      if (w.retired) parts.push('retired: ' + w.retired);
+      else if (!w.present) parts.push('not reachable' + (w.probe && w.probe.reason ? ' (' + w.probe.reason + ')' : ''));
+      else if (w.remote) parts.push('served over a network share; move it to ' + w.local_dir);
+      else parts.push('on local disk');
+      if (w.lora) parts.push('adapter ' + (w.lora_present ? 'present' : 'MISSING'));
+      if (w.mmproj) parts.push('projector ' + (w.mmproj_present ? 'present' : 'missing'));
+      return E('div', {
+        key: w.model_id,
+        style: { fontFamily: 'JetBrains Mono', fontSize: 10.5, padding: '4px 0', borderTop: '1px solid rgba(255,255,255,0.05)', lineHeight: 1.5 },
+      },
+        E('div', { style: { color: tone } }, (w.label || w.model_id) + (w.size_bytes ? ' · ' + fmtBytes(w.size_bytes) : '') + (w.sha256_short ? ' · sha ' + w.sha256_short : '')),
+        E('div', { style: { color: bad && !w.retired ? '#ef9a9a' : 'rgba(255,255,255,0.45)', wordBreak: 'break-all' } }, (w.served_from || w.path) + ' — ' + parts.join(' · ')));
+    }));
+}
+
 function SettingsTabIntelligence() {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
@@ -33935,55 +35428,13 @@ function SettingsTabIntelligence() {
 
   return E('div', { style: { padding: '4px 2px' } },
 
-    // ── MODE ─────────────────────────────────────────────────────────────────
-    // Restored from the old dropdown, which had this and the rebuild dropped
-    // it. It belongs above the seats because it governs them: on "Local only"
-    // a busy or failing local model produces an honest refusal instead of a
-    // quiet trip to the cloud, which is the substitution the user objected to.
-    E(StSection, { title: 'WHERE WORK RUNS' },
-      E('div', {
-        style: {
-          fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
-          lineHeight: 1.6, marginBottom: 8,
-        },
-      }, 'This decides whether a seat can be substituted at all.'),
-      E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-        (d.routing_modes || []).map(m => {
-          const on = (d.routing_mode || 'smart') === m.id;
-          return E('button', {
-            key: m.id,
-            onClick: () => setMode(m.id),
-            title: m.help,
-            style: {
-              flex: '1 1 200px', textAlign: 'left', cursor: 'pointer',
-              background: on ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.03)',
-              border: '1px solid ' + (on ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
-              borderRadius: 8, padding: '8px 10px',
-            },
-          },
-            E('div', {
-              style: {
-                fontFamily: 'JetBrains Mono', fontSize: 12,
-                color: on ? '#cfefff' : 'rgba(255,255,255,0.85)',
-                display: 'flex', alignItems: 'center', gap: 6,
-              },
-            },
-              E('span', {
-                style: {
-                  width: 7, height: 7, borderRadius: 4, flexShrink: 0,
-                  background: on ? '#00d4ff' : 'rgba(255,255,255,0.22)',
-                },
-              }),
-              m.label,
-              savingMode === m.id && E('span', {
-                style: { fontSize: 9, color: '#f59e0b' } }, 'saving...')),
-            E('div', {
-              style: {
-                fontSize: 9.5, color: 'rgba(255,255,255,0.45)',
-                fontFamily: 'JetBrains Mono', marginTop: 3, lineHeight: 1.45,
-              },
-            }, m.help));
-        }))),
+    // ── THE CARD ─────────────────────────────────────────────────────────────
+    // What is about to answer, where, at what cost, and the three mode buttons
+    // that change the answer. The mode governs every seat below it.
+    E(ModelSoupCard, {
+      soup: d.soup, d: d, mode: d.routing_mode || 'local_preferred',
+      setMode: setMode, savingMode: savingMode, reload: reload,
+    }),
 
     // ── ROLES ────────────────────────────────────────────────────────────────
     E(StSection, { title: 'WHAT RUNS EACH JOB' },
@@ -33992,8 +35443,8 @@ function SettingsTabIntelligence() {
           fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
           lineHeight: 1.6, marginBottom: 4,
         },
-      }, 'One row per job. Clicking a row shows only models that can actually do it — ' +
-         'which is why speech models no longer appear as candidates for running your chat.'),
+      }, 'One row per job, and every row here has code that reads it. Clicking a row shows only models that can actually do it. ' +
+         'Voice is chosen on the Voice tab.'),
       // Grouped by when a seat costs memory, because a flat list of sixteen
       // jobs reads as sixteen models loaded at once. Only the resident tier
       // is warm; the rest arrive when the work does and leave after. Seven
@@ -34111,6 +35562,7 @@ function SettingsTabIntelligence() {
                 Math.round((vram.total_mib - (vram.free_mib || 0)) / 1024) +
                 ' GB is in use by something'
               : 'nothing — the card is idle')),
+      E(WeightsRows, { rows: (d.soup || {}).weights }),
       // Three sections, because there are three different things here and
       // rendering them identically is what made ten amber boxes read as
       // wallpaper. Only a PROBLEM is amber. A seat nobody has chosen is an
@@ -34186,203 +35638,6 @@ function SettingsTabIntelligence() {
 }
 
 
-function SettingsTabModels({
-  s,
-  save
-}) {
-  const mc = useModelCatalog();
-  const mkSel = (role, key, label, desc) => {
-    const models = mc[role] || [];
-    // A catalog we could not load is reported, not papered over. The old
-    // behaviour showed a hardcoded Claude-only list and looked authoritative.
-    if (mc.error) return /*#__PURE__*/React.createElement(StRow, {
-      key: key,
-      label: label,
-      desc: desc
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: '#ffb347',
-        border: '1px solid rgba(255,179,71,0.4)',
-        borderRadius: 6,
-        padding: '8px 10px',
-        lineHeight: 1.5
-      }
-    }, "\u26A0 Model catalog unavailable \u2014 ", mc.error, ".", /*#__PURE__*/React.createElement("br", null), "Currently routed: ", /*#__PURE__*/React.createElement("b", {
-      style: {
-        fontFamily: 'JetBrains Mono'
-      }
-    }, s[key] || '— default —'), ".", ' ', "This list is hidden rather than shown wrong. ", /*#__PURE__*/React.createElement("a", {
-      href: "#",
-      style: {
-        color: '#00d4ff'
-      },
-      onClick: e => {
-        e.preventDefault();
-        fridayInvalidateModelCatalog();
-      }
-    }, "Retry"), " or reload the page (Ctrl+Shift+R)."));
-    /* Orchestrator and subagent get the SEARCHABLE picker over the whole
-       catalog. They are the two the user names most often and the two that
-       would otherwise be stuck showing a capped provider-ordered list.
-       Creative and voice keep the curated
-       select: those lists are short, deliberately shaped, and tied to hardware
-       setup flows. */
-    if (role === 'orchestrator' || role === 'subagent') {
-      const curLabel = mc.byId[s[key]] && (mc.byId[s[key]].label || s[key]) || s[key] || '— default —';
-      return /*#__PURE__*/React.createElement(StRow, {
-        key: key,
-        label: label,
-        desc: desc
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          border: '1px solid rgba(0,212,255,0.18)',
-          borderRadius: 8,
-          background: 'rgba(10,14,26,0.5)',
-          overflow: 'hidden'
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          padding: '6px 10px',
-          fontSize: 11,
-          fontFamily: 'JetBrains Mono',
-          color: '#00d4ff',
-          borderBottom: '1px solid rgba(255,255,255,0.07)'
-        }
-      }, "Current: ", curLabel, s[key] && /*#__PURE__*/React.createElement("button", {
-        className: "settings-btn",
-        style: {
-          fontSize: 9,
-          padding: '2px 7px',
-          marginLeft: 8
-        },
-        onClick: () => save({
-          [key]: ''
-        })
-      }, "use default")), /*#__PURE__*/React.createElement(ModelSearchPicker, {
-        catalog: mc,
-        value: s[key] || '',
-        onPick: id => save({
-          [key]: id
-        }),
-        placeholder: 'Search all models for ' + label.toLowerCase() + '…'
-      })));
-    }
-    // Creative's picked model may carry a `note` (a real trade-off — steps,
-    // speed, resolution limits) and a `licence`/`licence_note` (real
-    // conditions on using it — commercial-use thresholds, personal-use-only
-    // restrictions). A <select> can't show rich subtext per option, so this
-    // renders the CURRENTLY selected model's note/licence as a line below the
-    // dropdown instead — updates the moment the selection changes, same
-    // derived-state-from-mc.byId read the "via Model Browser" label above
-    // already relies on.
-    const selMeta = role === 'creative' ? mc.byId[s[key]] : null;
-    return /*#__PURE__*/React.createElement(StRow, {
-      key: key,
-      label: label,
-      desc: desc
-    }, /*#__PURE__*/React.createElement("select", {
-      className: "input",
-      style: {
-        width: '100%'
-      },
-      value: s[key] || '',
-      onChange: e => save({
-        [key]: e.target.value
-      })
-    }, /*#__PURE__*/React.createElement("option", {
-      value: ""
-    }, "\u2014 default \u2014"), s[key] && !models.some(m => m.id === s[key]) && /*#__PURE__*/React.createElement("option", {
-      value: s[key]
-    }, mc.byId[s[key]] ? (mc.byId[s[key]].label || s[key]) + ' (via Model Browser)' : s[key] + ' (no longer offered)'), models.map(m => /*#__PURE__*/React.createElement("option", {
-      key: m.id,
-      value: m.id,
-      disabled: m.available === false
-    }, (m.label || m.id) + (m.available === false ? ' — needs ' + (m.needs_key || 'setup') : '')))), selMeta && (selMeta.note || selMeta.licence || selMeta.licence_note) && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.4)',
-        marginTop: 6,
-        lineHeight: 1.5
-      }
-    }, selMeta.note && /*#__PURE__*/React.createElement("div", null, selMeta.note), (selMeta.licence || selMeta.licence_note) && /*#__PURE__*/React.createElement("div", {
-      style: {
-        color: '#ffb347'
-      }
-    }, selMeta.licence, selMeta.licence && selMeta.licence_note ? ' — ' : '', selMeta.licence_note)));
-  };
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
-    title: "CAPABILITY ROUTING"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 14,
-      lineHeight: 1.6
-    }
-  }, "Model assignments per capability. Changes apply next request \u2014 no restart needed."), mkSel('orchestrator', 'orchestrator_model', 'Orchestrator Model', 'Primary model for tool-using agentic loops.'), mkSel('subagent', 'subagent_model', 'Sub-agent Model', 'Model for parallel sub-tasks.'), mkSel('creative', 'creative_model', 'Creative Model', 'Image/video and creative writing.')), /*#__PURE__*/React.createElement(StSection, {
-    title: "REASONING"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Temperature",
-    desc: "Higher = more creative. Lower = more focused."
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: "0",
-    max: "2",
-    step: "0.05",
-    style: {
-      flex: 1
-    },
-    value: s.temperature ?? 0.7,
-    onChange: e => save({
-      temperature: parseFloat(e.target.value)
-    })
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      color: '#00d4ff',
-      minWidth: 32
-    }
-  }, (s.temperature ?? 0.7).toFixed(2))))), /*#__PURE__*/React.createElement(StSection, {
-    title: "RESPONSE"
-  }, /*#__PURE__*/React.createElement(StToggle, {
-    label: "Cite Sources in Chat",
-    value: !!s.cite_sources,
-    onChange: () => save({
-      cite_sources: !s.cite_sources
-    }),
-    /* The honest description, and the honest numbers, measured with the
-       model judge wired. Same question, same seat:
-         mode off ................. 27.4s, 21.1s
-         on, answer already cites .. 22.1s  (no judge call at all)
-         on, answer uncited ........ 35.7s  (judge 8.6s + a second answer)
-       So the cost is not a flat overhead — it is zero when the answer does its
-       job and roughly twelve seconds when it does not. Saying "adds ~12s"
-       flatly would be as misleading as the "costs nothing" it replaces. */
-    desc: "Cites every factual claim inline, and checks each citation against " +
-          "what was actually retrieved — unbacked ones render flagged, not " +
-          "clickable. If an answer arrives with no citations, a model judges " +
-          "whether it makes factual claims and Friday asks again; still " +
-          "unsourced and it ships visibly marked. Costs nothing when the " +
-          "answer already cites (measured 22s against a 21–27s baseline) and " +
-          "about 12s more when it has to be corrected (36s). Turns touching " +
-          "the vault are judged on this machine only, never in the cloud."
-  }), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Streaming Responses",
-    value: s.stream_responses !== false,
-    onChange: () => save({
-      stream_responses: !(s.stream_responses !== false)
-    }),
-    desc: "Stream tokens as they arrive."
-  })));
-}
 function VoiceSetupWizard({
   onClose
 }) {
@@ -34672,6 +35927,171 @@ function VoiceSetupWizard({
     }
   }, testResult.status === 'ok' ? 'TTS test audio played — did you hear it?' : testResult.message || 'TTS test failed.')));
 }
+// ── Voice Stack card (voice-system-clean-sheet.md §8.1 B) ────────────────────
+// The Voice Manifest, rendered. Three rows — EAR / MIND / MOUTH — each showing
+// selected → effective → PROVEN. Every fact here comes from
+// /api/voice/session-info's `manifest` (the same snapshot the HUD, the API and
+// the model's own self-description read); this component computes nothing of
+// its own about readiness. Opening the panel POSTs /api/voice/arm, which runs
+// the three proofs in the background; rows flip green one by one with their
+// measured latency. "Prove voice now" forces a re-proof.
+const VOICE_STAGE_LABEL = { ear: 'EAR', mind: 'MIND', mouth: 'MOUTH' };
+const VOICE_PROOF_GLYPH = {
+  proven: ['●', '#22c55e'], proving: ['◐', '#38bdf8'],
+  unproven: ['○', 'rgba(255,255,255,0.45)'], refused: ['✕', '#ef4444'],
+  cloud: ['☁', 'rgba(255,255,255,0.6)']
+};
+function voiceEffectiveText(st) {
+  const e = st && st.effective || {};
+  if (!e.engine) return st && st.selected && st.selected.engine ? st.selected.engine + ' (selected)' : '—';
+  let name = e.engine;
+  if (e.engine === 'faster-whisper') name = 'faster-whisper ' + (e.model || '');
+  else if (e.engine === 'seat') name = (e.model || 'local seat');
+  else if (e.engine === 'kokoro') name = 'Kokoro ' + (e.voice || '');
+  else if (e.engine === 'piper') name = 'Piper ' + (e.voice || '');
+  else if (e.engine === 'gemini-live') name = 'Gemini Live';
+  const dev = e.device === 'cuda' ? 'GPU' : e.device === 'cpu' ? 'CPU' : e.device === 'cloud' ? 'cloud' : e.device === 'local' ? (e.window ? ':' + String(e.base || '').split(':').pop() + ' · ' + Math.round(e.window / 1024) + 'k' : 'local') : '';
+  return name.trim() + (dev ? ' · ' + dev : '');
+}
+function VoiceStackRow({ stage, st, onProve, contract }) {
+  const p = st && st.proof || { state: 'unproven' };
+  const [glyph, color] = VOICE_PROOF_GLYPH[p.state] || VOICE_PROOF_GLYPH.unproven;
+  const at = p.at ? new Date(p.at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  let proofText;
+  if (p.state === 'proven') proofText = 'proven ' + at + (p.latency_ms != null ? ' · ' + (p.latency_ms / 1000).toFixed(2) + ' s' : '');
+  else if (p.state === 'proving') proofText = 'proving… ' + (st.progress || '');
+  else if (p.state === 'refused') proofText = 'refused';
+  else if (p.state === 'cloud') proofText = 'cloud';
+  else proofText = 'unproven' + (st && st.reason ? ' — ' + st.reason : '');
+  const extra = stage === 'mind' && contract && contract.tools ? ' · ' + contract.tools.length + ' tools · KG ' + (contract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (contract.memory ? '✓' : '✗') : '';
+  return /*#__PURE__*/React.createElement("div", { style: { display: 'grid', gridTemplateColumns: '58px 1fr', gap: 8, alignItems: 'start', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' } },
+    /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'JetBrains Mono', fontSize: 11, letterSpacing: 1, opacity: 0.8, paddingTop: 2 } }, VOICE_STAGE_LABEL[stage]),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.5 } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("span", { style: { color, marginRight: 6 } }, glyph),
+        /*#__PURE__*/React.createElement("b", null, voiceEffectiveText(st)),
+        /*#__PURE__*/React.createElement("span", { style: { opacity: 0.75, marginLeft: 8 } }, proofText + extra)),
+      p.state !== 'unproven' && st && st.reason && p.state !== 'cloud' && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: p.state === 'refused' ? '#ef4444' : 'var(--warn, #e0a030)' } }, st.reason),
+      p.state === 'refused' && st && st.action && /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '4px 10px', marginTop: 4 }, onClick: () => onProve(st.action) }, st.action.label || 'Retry')));
+}
+function VoiceStackCard({ s, save, mc }) {
+  const [manifest, setManifest] = useState(null);
+  const [err, setErr] = useState('');
+  const pollRef = useRef(null);
+  const take = useCallback(d => {
+    if (!d) return;
+    const m = d.manifest || d;
+    if (m && m.stages) setManifest(m);
+    if (m && m.proving) {
+      clearTimeout(pollRef.current);
+      pollRef.current = setTimeout(() => fetch('/api/voice/arm').then(r => r.json()).then(take).catch(() => {}), 1200);
+    }
+  }, []);
+  useEffect(() => {
+    let stop = false;
+    fetch('/api/voice/session-info').then(r => r.json()).then(d => { if (!stop) take(d); }).catch(() => setErr('Could not read the voice manifest.'));
+    apiFetch('/api/voice/arm', { method: 'POST' }).then(r => r.json()).then(d => { if (!stop) take(d); }).catch(() => {});
+    return () => { stop = true; clearTimeout(pollRef.current); };
+  }, [take, s.voice_engine, s.local_voice_tts_engine, s.local_voice_kokoro_voice, s.voice_ear_gpu, s.voice_mouth_gpu]);
+  const proveNow = useCallback(action => {
+    if (action && action.kind === 'settings') return;
+    apiFetch('/api/voice/prove', { method: 'POST' }).then(r => r.json()).then(take).catch(() => {});
+  }, [take]);
+  const engines = mc && mc.ttsEngines || TTS_ENGINES_FALLBACK;
+  const sel = s.local_voice_tts_engine || 'piper';
+  const stages = manifest && manifest.stages || {};
+  const policyRow = (key, label) => /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 } },
+    /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.7, minWidth: 90 } }, label),
+    [['never', 'GPU: never'], ['if_free', 'GPU: if free'], ['required', 'GPU: required']].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+      key: v, className: `settings-btn ${(s[key] || 'if_free') === v ? 'active' : ''}`, style: { fontSize: 11, padding: '4px 10px' },
+      onClick: () => save({ [key]: v })
+    }, l)));
+  return /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement(StRow, { label: "Voice Stack", desc: "Selected → effective → proven. A row is green only after that stage has actually transcribed, thought or spoken within the last 15 minutes; nothing here reports ready because a package imports." },
+      /*#__PURE__*/React.createElement("div", null,
+        err && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.7 } }, err),
+        ['ear', 'mind', 'mouth'].map(k => /*#__PURE__*/React.createElement(VoiceStackRow, { key: k, stage: k, st: stages[k], onProve: proveNow, contract: manifest && manifest.contract })),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Proving…' : 'Prove voice now'),
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.6 } }, manifest ? (manifest.ready ? 'All stages proven.' : 'Not ready — see the rows above.') + ' Idle unload ' + Math.round((manifest.idle_unload_s || 600) / 60) + ' min.' : 'Reading manifest…')),
+        manifest && manifest.description && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 6, fontStyle: 'italic' } }, "What Friday is told about herself: “", manifest.description, "”"))),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Ear", desc: "faster-whisper small. GPU policy: never keeps the card for the model; if free leases it when the display reserve allows; required refuses the session rather than falling to the CPU." },
+      policyRow('voice_ear_gpu', 'faster-whisper')),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Mouth", desc: "Which synthesizer speaks. Piper is the CPU floor and always present; Kokoro needs a CUDA GPU (or the CPU opt-in below) and refuses rather than quietly running slowly." },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, engines.map(o => {
+          const off = o.available === false;
+          return /*#__PURE__*/React.createElement("button", { key: o.id, className: `settings-btn ${sel === o.id ? 'active' : ''}`, style: { fontSize: 12, padding: '7px 14px', opacity: off ? 0.4 : 1, cursor: off ? 'not-allowed' : 'pointer' }, "aria-disabled": off, title: o.hint || o.label, onClick: off ? undefined : () => save({ local_voice_tts_engine: o.id }) }, o.short || o.label);
+        })),
+        engines.filter(o => o.available === false).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.short || o.label, " unavailable:"), " ", o.hint || 'no reason given')),
+        policyRow('voice_mouth_gpu', sel === 'kokoro' ? 'Kokoro' : 'Piper (CPU)'),
+        sel === 'kokoro' && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
+          /*#__PURE__*/React.createElement("select", { className: "input", style: { width: '100%' }, value: s.local_voice_kokoro_voice || 'af_heart', onChange: e => save({ local_voice_kokoro_voice: e.target.value }) },
+            [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
+          /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on CPU: allowed (slow)' : 'Kokoro on CPU: refused (default)')))));
+}
+// ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
+// One row of modes for the `voice_engine` setting. `auto` is gone from the
+// picker (it is read as `local`, settled 2026-09-09). A cloud mode shows its
+// disclosure BEFORE it takes effect: Gemini's four lines here (with the §4.5
+// relay line), a synthesis provider's from /api/voice/cloud/disclosure.
+// Greyed rows carry the reason (no key, offline, local-only, GA rule).
+function VoiceModePicker({ s, save, mc }) {
+  const [providers, setProviders] = useState([]);
+  const [pending, setPending] = useState(null);   // {id, label, lines}
+  useEffect(() => {
+    fetch('/api/voice/cloud/providers').then(r => r.json()).then(d => setProviders(d && d.providers || [])).catch(() => {});
+  }, []);
+  const cur = (s.voice_engine || 'local') === 'auto' ? 'local' : (s.voice_engine || 'local');
+  const eng = id => (mc && mc.voiceEngines || []).filter(o => o.id === id)[0] || null;
+  const gem = eng('gemini');
+  const gpu = eng('local-gpu');
+  const rows = [
+    { id: 'local', label: 'Local', desc: 'Ears, reasoning and voice on this machine. Nothing leaves it.', off: false, reason: null },
+    { id: 'gemini', label: 'Cloud (Gemini Live)', desc: "Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through Friday's local model.", off: !!(gem && gem.available === false), reason: gem && gem.hint }
+  ].concat(providers.map(pv => ({
+    id: pv.name, label: 'Local listening, cloud voice (' + pv.label + ')',
+    desc: 'Friday hears and thinks here; ' + pv.label + ' speaks. Only the reply text leaves.',
+    off: pv.selectable === false, reason: pv.reason, provider: pv.name
+  }))).concat(gpu ? [{ id: 'local-gpu', label: 'Local GPU (NeMo, experimental)', desc: 'Nemotron ASR + FastPitch on CUDA. Off by default; kept behind the engine interface.', off: gpu.available === false, reason: gpu.hint }] : []);
+  const choose = row => {
+    if (row.off) return;
+    if (row.id === 'local' || row.id === 'local-gpu') { save({ voice_engine: row.id }); return; }
+    if (row.id === 'gemini') {
+      setPending({ id: 'gemini', label: row.label, lines: [
+        ['Mode', 'Speech-to-speech: Gemini hears, thinks and speaks in one hop, with barge-in and native prosody.'],
+        ['What leaves this machine', 'Your microphone audio and the session context, after the privacy gate. Questions about your own notes, memory or knowledge graph are answered by Friday’s local model through ask_friday; only the sealed answer is relayed.'],
+        ['Retention', 'Subject to Google’s API data terms for the Live API.'],
+        ['Cost', 'Metered per session in Settings → Costs; the byte receipt is shown after each session.']
+      ] });
+      return;
+    }
+    fetch('/api/voice/cloud/disclosure?provider=' + encodeURIComponent(row.provider)).then(r => r.json()).then(d => {
+      const x = d && d.disclosure || {};
+      setPending({ id: row.id, label: row.label, lines: [
+        ['Mode', (x.mode || '') + ' — ' + (x.mode_detail || '')],
+        ['What leaves this machine', x.egress || ''],
+        ['Retention', typeof x.retention === 'string' ? x.retention : JSON.stringify(x.retention || '')],
+        ['Cost', (x.cost_per_reply_usd != null ? '$' + x.cost_per_reply_usd + ' per reply' : 'unpriced') + (x.cost_projection && x.cost_projection.usd_per_month != null ? ' · ~$' + x.cost_projection.usd_per_month + '/month at your recent volume' : '')]
+      ] });
+    }).catch(() => setPending({ id: row.id, label: row.label, lines: [['Disclosure', 'Could not load the disclosure; the mode was not changed.']] }));
+  };
+  return /*#__PURE__*/React.createElement(StRow, { label: "Mode", desc: "Which stack answers when you press the mic. Cloud modes show what leaves this machine before they take effect." },
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, rows.map(o => /*#__PURE__*/React.createElement("button", {
+        key: o.id, className: `settings-btn ${cur === o.id ? 'active' : ''}`,
+        style: { fontSize: 12, padding: '7px 14px', opacity: o.off ? 0.4 : 1, cursor: o.off ? 'not-allowed' : 'pointer' },
+        "aria-disabled": o.off, title: o.off && o.reason ? o.reason : o.desc, onClick: () => choose(o)
+      }, o.label))),
+      rows.filter(o => o.id === cur).map(o => /*#__PURE__*/React.createElement("div", { key: 'cur', style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, o.desc)),
+      rows.filter(o => o.off && o.reason).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.label, " unavailable:"), " ", o.reason)),
+      pending && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, marginBottom: 6 } }, "Before switching to ", pending.label),
+        pending.lines.map(([k, v]) => /*#__PURE__*/React.createElement("div", { key: k, style: { marginBottom: 4 } }, /*#__PURE__*/React.createElement("b", null, k, ": "), v)),
+        /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 8 } },
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn active", style: { fontSize: 11 }, onClick: () => { save({ voice_engine: pending.id }); setPending(null); } }, "Switch to ", pending.label),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11 }, onClick: () => setPending(null) }, "Keep ", cur)))));
+}
 function SettingsTabVoice({
   s,
   save
@@ -34681,8 +36101,7 @@ function SettingsTabVoice({
   const engineIcon = {
     'local': '🔒 ',
     'local-gpu': '⚡ ',
-    'gemini': '☁ ',
-    'auto': ''
+    'gemini': '☁ '
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -34700,33 +36119,11 @@ function SettingsTabVoice({
     onClose: () => setShowWizard(false)
   }), /*#__PURE__*/React.createElement(StSection, {
     title: "VOICE ENGINE"
-  }, /*#__PURE__*/React.createElement(StRow, {
-    label: "Engine",
-    desc: "Local = on-device, private. Cloud = Gemini Live, most expressive."
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      flexWrap: 'wrap'
-    }
-  }, mc.voiceEngines.map(o => {
-    const off = o.available === false;
-    return /*#__PURE__*/React.createElement("button", {
-      key: o.id,
-      className: `settings-btn ${(s.voice_engine || 'local') === o.id ? 'active' : ''}`,
-      style: {
-        fontSize: 12,
-        padding: '7px 14px',
-        opacity: off ? 0.4 : 1,
-        cursor: off ? 'not-allowed' : 'pointer'
-      },
-      "aria-disabled": off,
-      title: o.hint || o.label,
-      onClick: off ? undefined : () => save({
-        voice_engine: o.id
-      })
-    }, (engineIcon[o.id] || '') + (o.short || o.label));
-  }))), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
+  }, /*#__PURE__*/React.createElement(VoiceModePicker, {
+    s: s,
+    save: save,
+    mc: mc
+  }), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
     label: "Gemini Live Model",
     desc: "Real-time speech-to-speech model for the cloud engine."
   }, /*#__PURE__*/React.createElement("select", {
@@ -34746,7 +36143,7 @@ function SettingsTabVoice({
     key: m.id,
     value: m.id,
     disabled: m.available === false
-  }, (m.label || m.id) + (m.available === false ? ' — ' + (m.hint || 'unavailable') : ''))))), ((s.voice_engine || 'local') === 'gemini' || (s.voice_engine || 'local') === 'auto') && /*#__PURE__*/React.createElement(StRow, {
+  }, (m.label || m.id) + (m.available === false ? ' — ' + (m.hint || 'unavailable') : ''))))), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
     label: "TTS Voice (Gemini)"
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
@@ -34759,7 +36156,11 @@ function SettingsTabVoice({
     })
   }, ['Aoede', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Zephyr'].map(v => /*#__PURE__*/React.createElement("option", {
     key: v
-  }, v)))), (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, {
+  }, v)))), /*#__PURE__*/React.createElement(VoiceStackCard, {
+    s: s,
+    save: save,
+    mc: mc
+  }), (s.voice_engine || 'local') !== 'gemini' && (s.local_voice_tts_engine || 'piper') === 'piper' && /*#__PURE__*/React.createElement(StRow, {
     label: "Local TTS Voice (Piper)",
     desc: "On-device voice used by the local engines."
   }, /*#__PURE__*/React.createElement("select", {
@@ -34915,6 +36316,60 @@ function SettingsTabVoice({
     placeholder: "e.g. en-US"
   }))));
 }
+
+/** The Privacy tab's view of the consent record: fetched on its own so the
+ *  tab does not depend on /api/intelligence. */
+function PrivacyCloudConsent() {
+  const [st, setSt] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/privacy/cloud-consent').then(r => r.json()).then(setSt).catch(() => setSt({ error: true }));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  if (!st) return E('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono' } }, 'Reading the consent record…');
+  if (st.error) return E('div', { style: { fontSize: 11, color: '#f59e0b', fontFamily: 'JetBrains Mono' } }, 'Could not read the consent record.');
+  const snap = st.capability_snapshot || {};
+  return E(CloudConsentRow, {
+    consent: {
+      answered: st.answered, choice: st.choice, at: st.at, source: st.source,
+      snapshot_capable: snap.capable,
+      snapshot_why: snap.why || (snap.roles && snap.roles.text && snap.roles.text.why) || snap.chain_why,
+    },
+    onChanged: load,
+  });
+}
+
+/** `wiki_encrypted_sections`: top-level wiki sections that never enter the
+ *  ambient knowledge block for a cloud provider (model-soup.md §10.2 step 2).
+ *  The suggestion is shown, never pre-applied. */
+const WIKI_SENSITIVE_HINTS = ['health', 'medical', 'finance', 'financial', 'money', 'legal', 'estate', 'family', 'private', 'personal', 'ancestry', 'tax', 'therapy'];
+function WikiEncryptedSections({ s, save }) {
+  const [sections, setSections] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/wiki/structure').then(r => r.json()).then(j => {
+      setSections(Object.keys((j && j.structure) || {}).sort());
+    }).catch(() => setSections([]));
+  }, []);
+  const chosen = new Set((s.wiki_encrypted_sections || []).map(x => String(x).toLowerCase()));
+  const toggle = (name) => {
+    const next = new Set(chosen);
+    const k = name.toLowerCase();
+    if (next.has(k)) next.delete(k); else next.add(k);
+    save({ wiki_encrypted_sections: Array.from(next).sort() });
+  };
+  if (sections === null) return E('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono' } }, 'Reading the wiki…');
+  const suggested = sections.filter(n => WIKI_SENSITIVE_HINTS.some(h => n.toLowerCase().includes(h)) && !chosen.has(n.toLowerCase()));
+  return E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11 } },
+    E('div', { style: { fontSize: 10.5, color: 'rgba(255,255,255,0.45)', marginBottom: 8, lineHeight: 1.6 } },
+      'Checked sections never enter the knowledge block that rides every cloud prompt, and their pages index locally or not at all. Unchecked sections follow the routing mode and the cloud consent above.'),
+    !sections.length && E('div', { style: { color: 'rgba(255,255,255,0.4)' } }, 'The wiki has no sections yet.'),
+    E('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 4 } },
+      sections.map(n => E('label', { key: n, style: { display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', color: chosen.has(n.toLowerCase()) ? '#cfefff' : 'rgba(255,255,255,0.8)' } },
+        E('input', { type: 'checkbox', checked: chosen.has(n.toLowerCase()), onChange: () => toggle(n) }),
+        n))),
+    suggested.length > 0 && E('div', { style: { fontSize: 10, color: '#f59e0b', marginTop: 8 } },
+      'Suggested, not applied: ' + suggested.join(', ') + '. These names match the sensitivity vocabulary.'));
+}
+
 function SettingsTabPrivacy({
   s,
   save
@@ -35062,7 +36517,7 @@ function SettingsTabPrivacy({
       fontFamily: 'JetBrains Mono'
     }
   }, armMsg), /*#__PURE__*/React.createElement(StToggle, {
-    label: "Local-Only Mode",
+    label: "Keep vault content off the cloud",
     // model_routing.vault_local_only is the key the SERVER gates on, and it
     // defaults to on when absent. This read a bare top-level key of the same
     // name — which does not exist — so the switch showed OFF on every install whose
@@ -35079,19 +36534,24 @@ function SettingsTabPrivacy({
         vault_local_only: (s.model_routing || {}).vault_local_only === false
       }
     }),
-    desc: "Force all AI processing to local models. Cloud providers receive no vault data."
+    desc: "Vault-tier notes (finance, health, legal, private) are stripped from cloud prompts, and questions that touch them run on the local model. Everything else follows the routing mode on the Intelligence tab. When no local model is serving, turning this on makes vault questions refuse rather than leak."
   })), /*#__PURE__*/React.createElement(StSection, {
-    title: "CLOUD MODE"
-  }, /*#__PURE__*/React.createElement(StToggle, {
-    label: "Unrestricted Cloud",
-    value: !!(s.model_routing || {}).unrestricted_cloud,
-    onChange: () => save({
-      model_routing: {
-        ...(s.model_routing || {}),
-        unrestricted_cloud: !(s.model_routing || {}).unrestricted_cloud
-      }
-    }),
-    desc: "Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."
+    title: "CLOUD CONSENT"
+  }, /*#__PURE__*/React.createElement(PrivacyCloudConsent, null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'rgba(255,255,255,0.4)',
+      marginTop: 10,
+      lineHeight: 1.6,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "Egress mode: ", /*#__PURE__*/React.createElement("b", {
+    style: { color: 'rgba(255,255,255,0.75)' }
+  }, s.egress_mode || 'audit'), " \u2014 every cloud send is written to the egress ledger with its tier and what was stripped. The old \"Unrestricted Cloud\" switch was removed on 2026-09-17: it wrote a flag the code only reads when no consent is recorded, so it could not change anything.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "WIKI SECTIONS KEPT OFF THE CLOUD"
+  }, /*#__PURE__*/React.createElement(WikiEncryptedSections, {
+    s: s,
+    save: save
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "YOUR DATA"
   }, /*#__PURE__*/React.createElement("div", {
@@ -35253,28 +36713,251 @@ function SettingsTabEconomy() {
     title: "WORKSPACE BUDGETS"
   }, /*#__PURE__*/React.createElement(OrchestratorBudgetPanel, null))));
 }
-function SettingsTabOrchestrator() {
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 20,
-      lineHeight: 1.6
-    }
-  }, "Manage local sub-agent workers. Spawn tasks to Ollama, Python scripts, or HTTP APIs within your budget envelope."), /*#__PURE__*/React.createElement(OrchestratorPanel, null), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 24
-    }
-  }, /*#__PURE__*/React.createElement(StSection, {
-    title: "CAPABILITY CARD"
-  }, /*#__PURE__*/React.createElement(CapabilityCardPanel, null))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 24
-    }
-  }, /*#__PURE__*/React.createElement(StSection, {
-    title: "WORK LOG"
-  }, /*#__PURE__*/React.createElement(WorkLogPanel, null))));
+// -- Account state: the STORE's verdict, never the record's existence -------
+// acc.health is derived server-side (services/google_accounts.account_health)
+// from the stored status plus last_sync. An account with no health block is
+// unknown-and-broken, not fine. On 2026-09-09 this surface showed two
+// needs_reauth accounts as "connected" for nine days because it rendered the
+// presence of a record as a working connection; every calendar answer Friday
+// gave in that window was confidently wrong.
+const GA_STATE_COLORS = { connected: '#00ff80', needs_reauth: '#ff8c42', error: '#ff5470', disconnected: '#7a8699', unknown: '#888888' };
+function gaHealth(acc) {
+  const h = acc && acc.health;
+  if (!h) return { state: 'unknown', label: 'Status unknown', summary: 'Status unknown - Friday could not read this account state', healthy: false, actionable: true, stale: false, color: GA_STATE_COLORS.unknown };
+  return Object.assign({}, h, { color: GA_STATE_COLORS[h.state] || GA_STATE_COLORS.unknown });
 }
+function gaSyncTitle(acc) {
+  if (!acc || !acc.last_sync) return 'This account has never completed a sync.';
+  try { return 'Last successful sync: ' + new Date(acc.last_sync).toLocaleString(); }
+  catch (e) { return 'Last successful sync: ' + acc.last_sync; }
+}
+// ═════════════════════════════════════════════════════════════════════════════
+//  WORKSPACE HISTORY — the 40 snapshots that were already being kept
+// ═════════════════════════════════════════════════════════════════════════════
+// services/workspace_studio.py has kept a snapshot before every customization
+// since it shipped — undo, revert-to-version and restore-as-of all work, and
+// the ONLY way to reach any of it was to ask Friday out loud. This is that
+// history, on screen.
+//
+// Snapshots hold the state BEFORE a change, which is why each row reads "undo
+// X" rather than "restore X": restoring entry N undoes the change labelled N
+// and everything after it. Saying that plainly beats a row of timestamps the
+// owner has to reason about.
+//
+// Reverting is itself snapshotted server-side, so nothing here is a one-way
+// door — which is worth SAYING, because a list of destructive-looking buttons
+// that are all reversible still reads as dangerous until someone says so.
+function WorkspaceHistory({ wsId, label, onClose }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+
+  const load = () => apiFetch('/api/workspace/' + encodeURIComponent(wsId) + '/history')
+    .then(r => r.json())
+    .then(d => setData(d && d.entries ? d : { entries: [], current_keys: [] }))
+    .catch(() => setErr('Could not read the history for this workspace.'));
+  useEffect(() => { load(); }, [wsId]);
+
+  const act = async (path, body, what) => {
+    setBusy(what); setErr('');
+    try {
+      const r = await apiFetch('/api/workspace/' + encodeURIComponent(wsId) + path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {})
+      });
+      const d = await r.json();
+      if (d && (d.ok === false || d.status === 'error')) setErr(d.error || d.message || 'That did not work.');
+      // The dock/window read customizations from their own poll, so nudge it.
+      try { window.dispatchEvent(new CustomEvent('friday:ws-custom-changed', { detail: { workspace: wsId } })); } catch (e) {}
+      await load();
+    } catch (e) { setErr('That did not work: ' + e.message); }
+    setBusy('');
+  };
+
+  const _dim = { fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 };
+  const _btn = { background: 'none', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 4, color: '#7dd3fc', cursor: 'pointer', fontSize: 11, padding: '4px 9px', fontFamily: 'JetBrains Mono' };
+  const when = ts => { try { return new Date(ts).toLocaleString(); } catch (e) { return String(ts || ''); } };
+
+  const entries = (data && data.entries) || [];
+  // `current_keys`, `changed_label` and per-entry `keys` were added to
+  // history() alongside this panel, so a server that has not restarted yet
+  // answers in the older shape. Deriving the key list from `current` — which
+  // the old shape DOES carry — is the difference between degrading and lying:
+  // the first version of this read `data.current_keys || []` and cheerfully
+  // told a workspace with four live customizations that it was at its
+  // baseline. Where the old shape genuinely lacks the data (what each change
+  // touched), the line is omitted rather than guessed.
+  const currentKeys = (data && data.current_keys)
+    || Object.keys((data && data.current) || {}).sort();
+
+  return /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    // Starts BELOW the title bar on purpose. Covering it would take the
+    // window's own move, close and 🕘 buttons with it, so the one way out of
+    // this overlay would be the Close button inside it — and a modal you can
+    // only leave through its own affordance is how you strand someone.
+    style: { position: 'absolute', left: 0, right: 0, bottom: 0, top: 37, zIndex: 6, background: 'rgba(6,10,20,0.96)', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', padding: '14px 16px', overflowY: 'auto' }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 } },
+      /*#__PURE__*/React.createElement("span", { className: 'card-title' }, "History — " + (label || wsId)),
+      /*#__PURE__*/React.createElement("span", { style: { flex: 1 } }),
+      /*#__PURE__*/React.createElement("button", { style: _btn, onClick: onClose }, "Close")),
+    /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 10 } },
+      currentKeys.length
+        ? "Friday has customized this workspace: " + currentKeys.join(", ") + ". Every step below is reversible — reverting is snapshotted too."
+        : "This workspace is at its baseline. Nothing has been customized."),
+    err && /*#__PURE__*/React.createElement("div", { style: { ..._dim, color: 'rgba(255,120,120,0.85)', marginBottom: 8 } }, err),
+    /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' } },
+      /*#__PURE__*/React.createElement("button", { style: _btn, disabled: !!busy || !entries.length, onClick: () => act('/undo', {}, 'undo') }, busy === 'undo' ? '…' : "Undo the last change"),
+      /*#__PURE__*/React.createElement("button", { style: { ..._btn, borderColor: 'rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.6)' }, disabled: !!busy || !currentKeys.length, onClick: () => act('/reset', {}, 'reset') }, busy === 'reset' ? '…' : "Back to baseline")),
+    !data && !err && /*#__PURE__*/React.createElement("div", { style: _dim }, "Reading the history…"),
+    data && !entries.length && /*#__PURE__*/React.createElement("div", { style: _dim },
+      "No changes recorded yet. Friday snapshots this workspace before every change it makes, so the first one will show up here."),
+    entries.map((e, i) => /*#__PURE__*/React.createElement("div", {
+      key: e.version_id || i,
+      style: { borderLeft: '2px solid rgba(0,212,255,0.3)', paddingLeft: 10, marginBottom: 12 }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontFamily: 'JetBrains Mono' } },
+        e.label || (e.describes || 'a change').replace(/^state BEFORE: /, '')),
+      /*#__PURE__*/React.createElement("div", { style: _dim },
+        when(e.when) + (e.changed_label ? " · touched " + e.changed_label : "")),
+      Array.isArray(e.keys) && /*#__PURE__*/React.createElement("div", { style: { ..._dim, fontSize: 10, opacity: .8 } },
+        e.keys.length
+          ? "Going back here restores: " + e.keys.join(", ")
+          : "Going back here returns the workspace to its baseline."),
+      /*#__PURE__*/React.createElement("button", {
+        style: { ..._btn, marginTop: 5 }, disabled: !!busy,
+        title: e.undo_hint || '',
+        onClick: () => act('/revert', { version_id: e.version_id }, e.version_id)
+      }, busy === e.version_id ? '…' : "Undo this and everything after"))));
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  SETTINGS → DOCK — shape the dock, one workspace at a time
+// ═════════════════════════════════════════════════════════════════════════════
+// Writes through window.fridaySaveDock rather than useSettings' own save(), so
+// there is exactly ONE writer for dock_custom and the dock updates as you edit
+// rather than on the next full settings load. useSettings and App's
+// agentSettings are parallel stores over the same endpoint (see the comment in
+// useSettings.save), and a second writer here is how they would drift.
+function DockSettingsPanel() {
+  const [custom, setCustom] = useState({ order: [], hidden: [] });
+  const [showAll, setShowAll] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const s = (d && d.settings) || {};
+      const c = s.dock_custom;
+      setCustom(c && typeof c === 'object'
+        ? { order: c.order || [], hidden: c.hidden || [] }
+        : { order: [], hidden: [] });
+      setShowAll(s.show_all_workspaces !== false);
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+
+  const shape = dockArrangement(custom, showAll);
+
+  // Every edit writes a COMPLETE arrangement, seeded from what is on screen
+  // right now. Otherwise the first click on a dock that show_all_workspaces had
+  // trimmed would hide one workspace and simultaneously reveal seven, because
+  // the moment an arrangement exists show_all stops applying.
+  const commit = next => {
+    setCustom(next);
+    setMsg('Saved ✓');
+    setTimeout(() => setMsg(''), 1600);
+    try { window.fridaySaveDock && window.fridaySaveDock(next); } catch (e) {}
+  };
+  const seeded = () => ({
+    order: shape.ids.slice(),
+    hidden: shape.configured
+      ? (custom.hidden || []).slice()
+      : WS.filter(w => !shape.visible.includes(w.id)).map(w => w.id)
+  });
+  const toggleVisible = id => {
+    const base = seeded();
+    const hid = new Set(base.hidden);
+    if (hid.has(id)) hid.delete(id); else hid.add(id);
+    commit({ order: base.order, hidden: [...hid] });
+  };
+  const move = (id, delta) => {
+    const base = seeded();
+    const order = base.order.slice();
+    const i = order.indexOf(id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    order[i] = order[j];
+    order[j] = id;
+    commit({ order: order, hidden: base.hidden });
+  };
+  const resetDock = () => commit({ order: [], hidden: [] });
+
+  const _card = { background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.18)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 };
+  const _dim = { fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 };
+  const _mini = { background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, color: 'rgba(255,255,255,0.65)', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: '3px 6px' };
+
+  if (!loaded) return /*#__PURE__*/React.createElement("div", { style: _dim }, "Reading your dock…");
+
+  const rows = shape.ids.map((id, idx) => {
+    const w = WS_BY_ID[id];
+    const visible = shape.visible.indexOf(id) !== -1;
+    return /*#__PURE__*/React.createElement("div", {
+      key: id,
+      style: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, background: visible ? 'rgba(255,255,255,0.03)' : 'transparent', opacity: visible ? 1 : 0.45 }
+    },
+      /*#__PURE__*/React.createElement("input", {
+        type: 'checkbox', checked: visible, onChange: () => toggleVisible(id),
+        title: visible ? 'Hide from the dock' : 'Show in the dock'
+      }),
+      /*#__PURE__*/React.createElement("span", { style: { width: 20, textAlign: 'center' } }, w.ico),
+      /*#__PURE__*/React.createElement("span", { style: { flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono' } }, w.label),
+      /*#__PURE__*/React.createElement("span", { style: { ..._dim, fontSize: 10, minWidth: 44 } }, WS_GROUP_OF[id]),
+      // Stephen asked for history reachable "from the settings menu or the
+      // workspace in question." This is the settings half: open the workspace
+      // with its history already showing, rather than duplicating the panel
+      // in a second place where the two copies could drift.
+      /*#__PURE__*/React.createElement("button", {
+        style: _mini, title: "Earlier versions of " + w.label,
+        onClick: () => {
+          try {
+            window.__fridayOpenHistoryFor = id;
+            window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: id });
+            window.dispatchEvent(new CustomEvent('friday:open-ws-history', { detail: { workspace: id } }));
+          } catch (e) {}
+        }
+      }, "🕒"),
+      /*#__PURE__*/React.createElement("button", { style: _mini, disabled: idx === 0, onClick: () => move(id, -1), title: "Move up" }, "↑"),
+      /*#__PURE__*/React.createElement("button", { style: _mini, disabled: idx === shape.ids.length - 1, onClick: () => move(id, 1), title: "Move down" }, "↓"));
+  });
+
+  return /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("div", { style: _card },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, "Your dock"),
+      /*#__PURE__*/React.createElement("div", { style: _dim },
+        shape.configured
+          ? "This is your own arrangement, so “Show all workspaces” no longer applies. Reset below to hand it back."
+          : "Untouched, so “Show all workspaces” still governs. Your first change here takes over from it, starting from exactly what you see now."),
+      shape.flattened && /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginTop: 6, color: 'rgba(255,200,120,0.75)' } },
+        "Your order interleaves the groups, so the dock is rendering flat and unlabelled. Keep each group together to get the labels back."),
+      /*#__PURE__*/React.createElement("div", {
+        style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(0,0,0,0.35)' }
+      }, shape.visible.length
+        ? shape.visible.map(id => /*#__PURE__*/React.createElement("span", {
+            key: id,
+            style: { fontSize: 10, fontFamily: 'JetBrains Mono', padding: '3px 7px', borderRadius: 4, background: 'rgba(0,212,255,0.12)', border: '1px solid rgba(0,212,255,0.25)' }
+          }, WS_BY_ID[id].ico + ' ' + WS_BY_ID[id].label))
+        : /*#__PURE__*/React.createElement("span", { style: { ..._dim, color: 'rgba(255,120,120,0.8)' } },
+            "Nothing is showing. An empty dock is allowed — Ctrl+K still opens anything.")),
+      /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' } },
+        /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 11 }, onClick: resetDock }, "Reset to default"),
+        msg && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: '#00d4ff' } }, msg))),
+    /*#__PURE__*/React.createElement("div", { style: { ..._dim, marginBottom: 8 } },
+      "Untick to hide. Arrows reorder. Group labels are derived from the order, not set separately."),
+    rows);
+}
+
 function GoogleAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [msg, setMsg] = useState('');
@@ -35282,9 +36965,21 @@ function GoogleAccountsPanel() {
   const [loading, setLoading] = useState(false);
   const [oauth, setOauth] = useState(null);
   const [copied, setCopied] = useState(false);
+  // The account id whose reconnect is in flight. A status display that is
+  // honest about failure and stale about recovery is only half fixed: consent
+  // finishes in a popup this panel never hears from, so re-poll while a
+  // reconnect is pending and whenever the window regains focus.
+  const [reconnecting, setReconnecting] = useState(null);
   // The consent pre-brief, held between "Add account" and actually opening
   // Google -- see services/google_oauth_client.consent_prebrief.
   const [pending, setPending] = useState(null);
+  // Permission to send mail as the owner, asked per connection and never
+  // remembered between them. A sticky checkbox would turn this into something
+  // ticked once, months ago, for an account nobody remembers connecting —
+  // which is the opposite of what "only with explicit authorization" meant.
+  // A RECONNECT DOES NOT INHERIT IT: fixing a broken token is the moment a
+  // person is least likely to read a consent screen carefully.
+  const [allowSend, setAllowSend] = useState(false);
   const [byo, setByo] = useState(null);
   const [byoId, setByoId] = useState('');
   const [byoSecret, setByoSecret] = useState('');
@@ -35321,6 +37016,17 @@ function GoogleAccountsPanel() {
   useEffect(() => {
     refresh();
   }, []);
+  useEffect(() => {
+    if (!reconnecting) return;
+    const t = setInterval(() => { refresh(); }, 4000);
+    const stop = setTimeout(() => setReconnecting(null), 180000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [reconnecting]);
+  useEffect(() => {
+    const onFocus = () => { refresh(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
   const copyRedirectUri = () => {
     if (!oauth) return;
     navigator.clipboard?.writeText(oauth.redirect_uri).then(() => {
@@ -35328,7 +37034,7 @@ function GoogleAccountsPanel() {
       setTimeout(() => setCopied(false), 1800);
     }).catch(() => {});
   };
-  const addAccount = async () => {
+  const startConnect = async account => {
     setLoading(true);
     try {
       const r = await apiFetch('/api/google/accounts/connect', {
@@ -35336,8 +37042,12 @@ function GoogleAccountsPanel() {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          label
+        body: JSON.stringify(account ? {
+          account_id: account.id,
+          email: account.email
+        } : {
+          label,
+          include_send: allowSend
         })
       });
       const d = await r.json();
@@ -35346,14 +37056,16 @@ function GoogleAccountsPanel() {
         // this app" with no warning reads it as phishing and stops -- and
         // from our side, stopping there is indistinguishable from never
         // having tried. Show what is coming, then let them press the button.
-        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind });
-        setLabel('');
-      } else setMsg(d.message || 'Failed to start OAuth.');
+        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind, account: account || null, requestingSend: !!d.requesting_send });
+        if (!account) { setLabel(''); setAllowSend(false); }
+      } else setMsg(d.message || 'Could not start sign-in.');
     } catch (e) {
       setMsg('Error: ' + e.message);
     }
     setLoading(false);
   };
+  const addAccount = () => startConnect(null);
+  const reconnectAccount = account => startConnect(account);
   const removeAccount = async (id, email) => {
     if (!window.confirm('Remove ' + email + '? This revokes access.')) return;
     try {
@@ -35394,9 +37106,17 @@ function GoogleAccountsPanel() {
   // ── What is about to happen, said before it happens ──────────────────────
   const prebriefUI = pending && /*#__PURE__*/React.createElement("div", { style: _card },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.85)' } }, pending.brief),
+    // Google's consent screen will say "Send email on your behalf", which
+    // reads alarmingly if you were not expecting it. Say it here first, and
+    // say what the limit is, so the screen confirms rather than surprises.
+    pending.requestingSend && /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: 10, padding: '9px 11px', borderRadius: 6, background: 'rgba(255,140,66,0.08)', border: '1px solid rgba(255,140,66,0.3)', fontSize: 11.5, lineHeight: 1.55, color: 'rgba(255,255,255,0.88)' } },
+      'Google will also ask to let Friday ',
+      /*#__PURE__*/React.createElement("b", null, 'send email on your behalf'),
+      '. That is this request, and it is expected. Friday still cannot send anything on its own: every message waits on an approval card showing the exact From, To, Subject and text, and approving that card is what sends it.'),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12, color: '#00d4ff' },
-        onClick: () => { window.open(pending.url, '_blank', 'width=600,height=700'); setMsg('Finish in the Google window, then press \u21bb.'); setPending(null); } },
+        onClick: () => { const acct = pending.account; window.open(pending.url, '_blank', 'width=600,height=700'); setReconnecting(acct ? acct.id : 'new'); setMsg(acct ? 'Sign in as ' + (acct.email || acct.label || 'that account') + ' in the Google window. This page updates on its own once you are done.' : 'Finish in the Google window. This page updates on its own once you are done.'); setPending(null); } },
         'Continue to Google'),
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12 }, onClick: () => setPending(null) }, 'Not now'),
       pending.kind === 'bundled' && /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12 },
@@ -35482,7 +37202,21 @@ function GoogleAccountsPanel() {
       fontSize: 12,
       marginBottom: 12
     }
-  }, "No Google accounts connected yet."), accounts.map(acc => /*#__PURE__*/React.createElement("div", {
+  }, "No Google accounts connected yet."), accounts.length > 0 && accounts.some(a => !gaHealth(a).healthy) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(255,140,66,0.08)',
+      border: '1px solid rgba(255,140,66,0.3)',
+      borderRadius: 8,
+      padding: '10px 12px',
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { color: '#ff8c42', fontSize: 12, fontWeight: 600, marginBottom: 4 }
+  }, accounts.filter(a => !gaHealth(a).healthy).length + ' of ' + accounts.length + ' account(s) are not working'), /*#__PURE__*/React.createElement("div", {
+    style: { color: 'rgba(255,255,255,0.6)', fontSize: 11, lineHeight: 1.5 }
+  }, "Friday cannot read mail or calendar for these accounts, so anything it tells you about them is out of date. Reconnecting just signs you back in to Google - nothing is deleted and your settings are kept.")), accounts.map(acc => {
+    const h = gaHealth(acc);
+    return /*#__PURE__*/React.createElement("div", {
     key: acc.id,
     style: {
       background: 'rgba(255,255,255,0.03)',
@@ -35528,14 +37262,41 @@ function GoogleAccountsPanel() {
       color: 'rgba(255,255,255,0.4)',
       fontSize: 11
     }
-  }, acc.label || '', acc.last_sync ? ' · synced ' + new Date(acc.last_sync).toLocaleTimeString() : ''))), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 3, flexWrap: 'wrap' }
+  }, /*#__PURE__*/React.createElement("span", {
+    "data-testid": "ga-status-pill",
+    "data-state": h.state,
+    style: {
+      display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10,
+      fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+      color: h.color, background: 'rgba(255,255,255,0.05)',
+      border: '1px solid ' + h.color + '55', borderRadius: 20, padding: '2px 8px'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { width: 6, height: 6, borderRadius: 3, background: h.color, display: 'inline-block' }
+  }), h.label), acc.label && /*#__PURE__*/React.createElement("span", {
+    style: { color: 'rgba(255,255,255,0.35)', fontSize: 11 }
+  }, acc.label)), /*#__PURE__*/React.createElement("div", {
+    "data-testid": "ga-sync-line",
+    title: gaSyncTitle(acc),
+    style: { color: h.stale ? '#ff8c42' : 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 3 }
+  }, h.summary)))), /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }
+  }, !h.healthy && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    "data-testid": "ga-reconnect",
+    style: { fontSize: 11, padding: '4px 12px', color: '#ff8c42', borderColor: '#ff8c42', whiteSpace: 'nowrap' },
+    onClick: () => reconnectAccount(acc),
+    disabled: loading
+  }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect'), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,
       color: '#ff6060'
     },
     onClick: () => removeAccount(acc.id, acc.email || acc.label || 'account')
-  }, "Remove")), /*#__PURE__*/React.createElement("div", {
+  }, "Remove"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -35552,7 +37313,8 @@ function GoogleAccountsPanel() {
       },
       onClick: () => toggleSvc(acc.id, svc, on)
     }, svc === 'gmail' ? '✉️ Gmail' : svc === 'calendar' ? '📅 Cal' : '📁 Drive');
-  })))), /*#__PURE__*/React.createElement("div", {
+  })));
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -35585,7 +37347,23 @@ function GoogleAccountsPanel() {
     },
     onClick: refresh,
     title: "Refresh"
-  }, "\u21BB")), msg && /*#__PURE__*/React.createElement("div", {
+  }, "\u21BB")),
+  // Sending is opt-in, per connection. It sits next to Add Account rather
+  // than in a settings list because the only moment it can be granted is the
+  // moment consent is given \u2014 Google decides scopes at the consent screen,
+  // so there is no toggle that could turn it on later without reconnecting.
+  /*#__PURE__*/React.createElement("label", {
+    style: { display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, cursor: 'pointer' }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: 'checkbox',
+    checked: allowSend,
+    onChange: e => setAllowSend(e.target.checked),
+    style: { marginTop: 2 }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, lineHeight: 1.5, color: 'rgba(255,255,255,0.6)' }
+  }, /*#__PURE__*/React.createElement("span", { style: { color: 'rgba(255,255,255,0.85)' } }, 'Let Friday send mail from this account'),
+     ' \u2014 every message still waits for your approval, one card per message. Leave this off and the account is read-only for mail. Applies to the account you add next; it cannot be turned on later without reconnecting.')),
+  msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#00d4ff',
@@ -37187,7 +38965,7 @@ function SettingsTabKnowledge({
     style: lbl
   }, "Semantic indexing"), /*#__PURE__*/React.createElement("div", {
     style: sub
-  }, "Where Tier-B LLM extraction runs — your choice, not automatic. Local: nothing ever leaves this machine. Cloud: routes through Friday's normal cloud privacy rules" + ((s.model_routing || {}).unrestricted_cloud ? " — currently UNRESTRICTED, see Privacy & Security" : "") + ".")), /*#__PURE__*/React.createElement("select", {
+  }, "Where Tier-B LLM extraction runs. Local: runs on the local seat on this machine and nothing leaves; it cannot run while no local model is serving. Cloud: sends wiki, memory and conversation text to the cloud model under your recorded cloud consent (see Privacy & Security), which decides whether that text is redacted by tier or sent untouched.")), /*#__PURE__*/React.createElement("select", {
     style: sel,
     value: kg.indexing_mode || 'local',
     onChange: e => patch({
@@ -37199,9 +38977,9 @@ function SettingsTabKnowledge({
     value: "cloud"
   }, "Cloud (frontier models)"))), /*#__PURE__*/React.createElement("div", {
     style: {...sub, marginTop: -6, marginBottom: 9}
-  }, "Active now: ", /*#__PURE__*/React.createElement("b", {
+  }, "Setting: ", /*#__PURE__*/React.createElement("b", {
     style: {color: kg.indexing_mode === 'cloud' ? '#ff9f43' : '#4ade80'}
-  }, kg.indexing_mode === 'cloud' ? 'CLOUD' : 'LOCAL')), /*#__PURE__*/React.createElement("div", {
+  }, kg.indexing_mode === 'cloud' ? 'CLOUD' : 'LOCAL'), " \u2014 what the last pass actually used is shown in the indexing log below, not here."), /*#__PURE__*/React.createElement("div", {
     style: row
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: lbl
@@ -37851,6 +39629,14 @@ function SettingsWS() {
     label: 'General',
     ico: '⚡️'
   }, {
+    // Two edits, always. An entry here with no branch in the render chain
+    // below gives a rail item that selects a blank pane; a branch with no
+    // entry here gives a panel nothing can reach, which is exactly how
+    // SettingsTabProviders sat complete and unreferenced (see below).
+    id: 'dock',
+    label: 'Dock',
+    ico: '\u{1F39B}️'
+  }, {
     id: 'intelligence',
     label: 'Intelligence',
     ico: '🧠'
@@ -37977,7 +39763,9 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
+  }), tab === 'dock' && /*#__PURE__*/React.createElement(StSection, {
+    title: "Dock"
+  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null)), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, {
     s: s,
     save: save
   }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
@@ -37997,20 +39785,85 @@ function SettingsWS() {
     save: save
   }), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null)));
 }
+
+// ── AE-0: the resource strip ────────────────────────────────────────────────
+// Shows what is claimed, by what, and what is free, so Stephen can look at his
+// machine and see WHY something is unavailable rather than watching an
+// operation fail with no cause attached.
+//
+// Every number here comes from /api/arbiter/status, which computes it from a
+// live machine read plus the lease ledger. Nothing on this strip is invented:
+// when a reading cannot be taken the server sets verifiable=false and this
+// renders an em dash, never a number.
+function fmtUnits(v, unit) {
+  if (v === null || v === undefined) return '\u2014';
+  if (unit === 'MiB') return v >= 1024 ? (v / 1024).toFixed(1) + 'G' : v + 'M';
+  return String(v);
+}
+function ArbiterStrip() {
+  const [arb, setArb] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/arbiter/status', { cache: 'no-store' });
+        if (cancelled) return;
+        const d = await r.json();
+        if (!cancelled && d && d.status === 'ok') setArb(d.arbiter);
+      } catch { if (!cancelled) setArb(null); }
+    };
+    poll();
+    const iv = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+  if (!arb) return null;
+  const excl = arb.gpu_exclusive_held_by;
+  const SHORT = { 'GPU VRAM': 'VRAM', 'System RAM': 'RAM', 'CPU cores': 'CPU', 'Disk': 'DISK' };
+  return /*#__PURE__*/React.createElement("span", {
+    style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'JetBrains Mono', fontSize: 10, letterSpacing: '0.04em' }
+  }, excl && /*#__PURE__*/React.createElement("span", {
+    title: 'The GPU is held exclusively by ' + excl + '. Friday will refuse GPU work rather than add contention, and cannot preempt a process it did not start.',
+    style: { padding: '3px 8px', borderRadius: 10, fontWeight: 700, background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.5)', color: '#f59e0b' }
+  }, "GPU HELD \u00b7 ", excl), arb.resources.filter(r => r.resource !== 'gpu_exclusive').map(r => {
+    const ok = r.verifiable;
+    const holders = (r.holders || []).map(h => h.holder + ' ' + fmtUnits(h.amount, r.unit) + (h.holder_kind === 'foreign' ? ' (foreign, not Friday\u2019s to unload)' : '')).join(', ');
+    const tip = r.label + '\n' + 'reading: ' + r.basis + '\n' + 'total on this machine: ' + fmtUnits(r.total_units, r.unit) + '\n' + 'reserved for the desktop: ' + fmtUnits(r.reserve_units, r.unit) + '\n' + 'claimed by leases: ' + fmtUnits(r.claimed_units, r.unit) + '\n' + 'measured free right now: ' + fmtUnits(r.measured_free, r.unit) + '\n' + 'available to new work: ' + (ok ? fmtUnits(r.available_units, r.unit) : 'cannot verify \u2014 Friday will refuse rather than guess') + '\n' + (r.unexplained_units ? ('in use with no declared hold: ' + fmtUnits(r.unexplained_units, r.unit) + '\n') : '') + 'holders: ' + (holders || 'none');
+    const claimed = r.claimed_units > 0;
+    return /*#__PURE__*/React.createElement("span", {
+      key: r.resource,
+      title: tip,
+      style: {
+        padding: '3px 7px', borderRadius: 9, whiteSpace: 'nowrap',
+        background: claimed ? 'rgba(0,212,255,0.12)' : 'rgba(139,147,167,0.10)',
+        border: '1px solid ' + (ok ? (claimed ? 'rgba(0,212,255,0.45)' : 'rgba(139,147,167,0.30)') : 'rgba(245,158,11,0.5)'),
+        color: ok ? (claimed ? '#00d4ff' : '#8b93a7') : '#f59e0b'
+      }
+    }, SHORT[r.label] || r.label, " ", ok ? fmtUnits(r.available_units, r.unit) : '\u2014', claimed && /*#__PURE__*/React.createElement("span", {
+      style: { opacity: 0.8 }
+    }, " \u00b7 ", fmtUnits(r.claimed_units, r.unit), " held"));
+  }));
+}
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
   // Workspace Studio: which workspace's contextual chat is open, + the live
   // customization map shared down to every FWin via WsCustomCtx.
   const [wsChat, setWsChat] = useState(null); // {wsId,label,emoji,seed} | null
+  /* Conversations open as WINDOWS inside the holographic UI, several at once,
+     each on its own seat. An array rather than a Set because the order is the
+     cascade order - the nth window is offset so it does not land exactly on
+     the first and look like nothing happened. */
+  const [convWins, setConvWins] = useState([]); // [{cid, title}]
   const [wsCustMap, setWsCustMap] = useState({}); // wsId -> customization patch
   const setCust = useCallback((id, patch) => setWsCustMap(m => ({
     ...m,
     [id]: patch || {}
   })), []);
   const [zMap, setZMap] = useState({});
-  const [zC, setZC] = useState(42);
-  const [chatOpen, setChatOpen] = useState(false);
+  /* An undocked window IS the chat panel, so it opens open. Anywhere else the
+     panel starts closed, as it always has. */
+  const [chatOpen, setChatOpen] = useState(
+    () => window.__FRIDAY_CHROME__ === 'chat');
   const [chatMsgs, setChatMsgs] = useState([]);
   const [chatIn, setChatIn] = useState('');
   const [chatLoad, setChatLoad] = useState(false);
@@ -38026,15 +39879,33 @@ function App() {
      is unchanged — but WHICH conversation that is now moves, and each carries
      its own model binding. Switching loads that chat's own messages. */
   const [convList, setConvList] = useState([]);
-  const [convId, setConvId] = useState(null);
+  /* An undocked window is addressed by URL: ?conversation=<id> opens THAT
+     thread rather than Main. Seeded here rather than in an effect, because
+     `refreshConvs` does `setConvId(cur => cur || d.main_id)` — an effect that
+     set it afterwards would race the list and the window could flash Main
+     before landing on the thread it was opened for. */
+  const [convId, setConvId] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('conversation')
+             || null;
+    } catch (e) { return null; }
+  });
   const [convOpen, setConvOpen] = useState(false);
   const [convSeat, setConvSeat] = useState(null);
   const [convPickerOpen, setConvPickerOpen] = useState(false);
+
+  /* Projects ride along with the chat list rather than having their own
+     fetch, so the sidebar draws folders and threads in one frame instead of
+     the folders arriving a beat later. Same single source the switcher uses:
+     everything that changes a chat or a project calls refreshConvs, and both
+     surfaces move together. */
+  const [projList, setProjList] = useState([]);
 
   const refreshConvs = React.useCallback(() => apiFetch('/api/conversations')
     .then(r => r.json()).then(d => {
       if (d && d.status === 'ok') {
         setConvList(d.conversations || []);
+        setProjList(d.projects || []);
         setConvId(cur => cur || d.main_id);
       }
       return d;
@@ -38431,7 +40302,10 @@ function App() {
     audio_input_device_id: '',
     audio_output_device_id: '',
     computer_control_enabled: false,
-    show_all_workspaces: true
+    show_all_workspaces: true,
+    // The owner's own dock arrangement. Empty = never shaped, and
+    // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
+    dock_custom: { order: [], hidden: [] }
   };
   const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
   const [agentPersonality, setAgentPersonality] = useState('');
@@ -38957,6 +40831,10 @@ function App() {
   const [googleProtection, setGoogleProtection] = useState('');
   const [googleAcctMsg, setGoogleAcctMsg] = useState('');
   const [googleAcctLabel, setGoogleAcctLabel] = useState('');
+  // Off every time the panel is opened, and never remembered. Permission to
+  // send mail as Stephen is asked for per connection, deliberately — a
+  // sticky checkbox would make it a thing he ticked once, months ago.
+  const [googleAllowSend, setGoogleAllowSend] = useState(false);
   const refreshGoogleAccounts = () => {
     fetch('/api/google/accounts').then(r => r.json()).then(d => {
       if (d && d.accounts) {
@@ -38977,14 +40855,16 @@ function App() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          label: googleAcctLabel
+          label: googleAcctLabel,
+          include_send: googleAllowSend
         })
       });
       const d = await r.json();
       if (d.status === 'ok' && d.auth_url) {
         window.open(d.auth_url, '_blank', 'width=520,height=660');
-        setGoogleAcctMsg('Approve in the popup, then tap Refresh.');
+        setGoogleAcctMsg(d.requesting_send ? 'Google will ask to let Friday send mail — that’s expected. Approve, then tap Refresh.' : 'Approve in the popup, then tap Refresh.');
         setGoogleAcctLabel('');
+        setGoogleAllowSend(false);
       } else {
         setGoogleAcctMsg(d.message || 'Could not start sign-in.');
       }
@@ -39592,6 +41472,21 @@ function App() {
   // bubbles so the chat panel mirrors what was actually said.
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
+  // F3/F6 (voice-mode-diagnosis-and-repair.md): two notices the server sends
+  // at session start that must OUTLIVE the status line, which 'listening' /
+  // 'speaking' overwrite every turn. voiceReach: can the model in this loop
+  // call tools and reach the knowledge graph? voiceEgress: which provider is
+  // receiving the microphone, and at the end, how many bytes it got.
+  const [voiceReach, setVoiceReach] = useState(null);
+  // Clean-sheet HUD (voice-system-clean-sheet.md §8.2): the three stage
+  // lamps, the contract line, the live partial transcript and the
+  // one-per-code degrade notices. All are server frames; nothing here
+  // computes readiness on its own.
+  const [voiceStages, setVoiceStages] = useState({});
+  const [voiceContract, setVoiceContract] = useState(null);
+  const [voicePartial, setVoicePartial] = useState('');
+  const [voiceNotices, setVoiceNotices] = useState([]);
+  const [voiceEgress, setVoiceEgress] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
   const voiceRef = useRef({
     ws: null,
@@ -39710,6 +41605,13 @@ function App() {
     if (!_isReconnect) {
       voiceKeepRef.current.attempts = 0;
       voiceKeepRef.current.fatalTs = 0;
+      // A fresh session starts with no notices; the server re-sends both.
+      setVoiceReach(null);
+      setVoiceStages({});
+      setVoiceContract(null);
+      setVoicePartial('');
+      setVoiceNotices([]);
+      setVoiceEgress(null);
     }
     const _vgen = ++voiceGenRef.current;
     const _stale = () => _vgen !== voiceGenRef.current;
@@ -40350,6 +42252,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         }
         _playAudioChunk(m.data);
       } else if (m.type === 'input_transcript') {
+        setVoicePartial('');
         // The user is actually speaking to the live session — anything else
         // making noise (the Front Page WAV player) yields immediately.
         try {
@@ -40471,6 +42374,35 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         v.playbackCancelled = false;
         v.playCursor = v.audioCtx && v.audioCtx.state !== 'closed' ? v.audioCtx.currentTime : 0;
         setVoiceStatus('listening');
+      } else if (m.type === 'context_reach') {
+        setVoiceReach(m);
+      } else if (m.type === 'stage') {
+        setVoiceStages(p => ({ ...p, [m.stage]: m }));
+      } else if (m.type === 'contract') {
+        setVoiceContract(m);
+      } else if (m.type === 'partial_transcript') {
+        setVoicePartial(m.text || '');
+      } else if (m.type === 'error-nonfatal') {
+        setVoiceNotices(p => p.some(n => n.code === m.code) ? p : p.concat([m]));
+      } else if (m.type === 'manifest' || m.type === 'turn_receipt') {
+        window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: ' + m.type, m);
+        if (m.type === 'turn_receipt') setVoicePartial('');
+      } else if (m.type === 'egress_notice') {
+        setVoiceEgress({
+          active: true,
+          provider: m.provider,
+          label: m.label,
+          text: m.text,
+          bytes: 0
+        });
+      } else if (m.type === 'egress_receipt') {
+        setVoiceEgress({
+          active: false,
+          provider: m.provider,
+          label: m.label,
+          text: m.text,
+          bytes: m.bytes || 0
+        });
       } else if (m.type === 'status') {
         setVoiceStatus(m.text);
       } else if (m.type === 'error') {
@@ -41787,16 +43719,63 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     n.delete(id);
     return n;
   });
+  /* WINDOWS LIVE IN A BAND, NOT ON A LADDER.
+     Raising a window used to hand it an ever-increasing counter starting at
+     42. The dock and the top bar are at 70, quick settings at 68, the chat
+     panel at 65 - so after roughly twenty-three raises, which is an ordinary
+     afternoon, holographic windows silently began painting over the shell.
+     Nothing announced it; the app just started behaving differently the
+     longer it stayed open, which is the worst kind of bug to be handed.
+
+     So the stack is a fixed band below the shell, and raising a window
+     re-ranks rather than climbs: when the top of the band is reached, the
+     open windows are compacted back down in their existing order and the
+     raised one goes on top. Relative order - the only thing a z-stack owes
+     anyone - is preserved, and the band cannot leak into the dock's layer no
+     matter how long the session runs.
+
+     The counter is gone rather than capped. It was never read anywhere but
+     inside itself, and a derived peak cannot drift out of step with the map
+     the way a parallel counter can. */
+  const Z_WIN_BASE = 42;
+  const Z_WIN_TOP = 64;          // chat panel is 65; stay under the shell
   const bringFront = id => {
     setFocusWin(id);
-    setZC(c => {
-      setZMap(m => ({
-        ...m,
-        [id]: c
-      }));
-      return c + 1;
+    setZMap(m => {
+      const keys = Object.keys(m);
+      const peak = keys.reduce((h, k) => Math.max(h, m[k] || 0), Z_WIN_BASE - 1);
+      if (m[id] === peak && peak >= Z_WIN_BASE) return m;   // already on top
+      if (peak + 1 <= Z_WIN_TOP) return { ...m, [id]: peak + 1 };
+      const others = keys
+        .filter(k => k !== id)
+        .sort((a, b) => (m[a] || 0) - (m[b] || 0))
+        .slice(-(Z_WIN_TOP - Z_WIN_BASE));
+      const out = {};
+      others.forEach((k, i) => { out[k] = Z_WIN_BASE + i; });
+      out[id] = Z_WIN_BASE + others.length;
+      return out;
     });
   };
+
+  /* Open a conversation as a window in the holographic UI.
+     Idempotent: asking for a thread that is already open raises it rather
+     than stacking a second copy of the same conversation, which would give
+     two frames writing into one transcript and disagreeing about it. */
+  const openConvWin = React.useCallback((cid, title) => {
+    if (!cid) return;
+    setConvWins(p => p.some(w => w.cid === cid)
+      ? p.map(w => (w.cid === cid ? { ...w, title: title || w.title } : w))
+      : [...p, { cid: cid, title: title || 'Conversation' }]);
+    bringFront('chat:' + cid);
+  }, []);
+
+  /* Exposed the same way fridayOpenWorkspace is, so the conversation
+     switcher, a quick action or a tool result can open a thread as a window
+     without prop-drilling through the whole tree. */
+  useEffect(() => {
+    window.fridayOpenChatWindow = (cid, title) => openConvWin(cid, title);
+    return () => { delete window.fridayOpenChatWindow; };
+  }, [openConvWin]);
 
   // The Friday Edition is the front page: once setup is confirmed done, open
   // it automatically so it's what greets you, same as a real morning paper.
@@ -41832,6 +43811,42 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     return () => {
       if (window.fridayOpenWorkspace) delete window.fridayOpenWorkspace;
     };
+  }, []);
+
+  // The one writer for dock_custom. Settings → Dock lives inside SettingsWS,
+  // which reads through useSettings() — a parallel store over the same POST
+  // endpoint that does not feed agentSettings. Routing the write back here
+  // means the dock reshapes as the panel is edited instead of on the next full
+  // settings load, and means there is a single place that writes the key.
+  useEffect(() => {
+    window.fridaySaveDock = custom => saveAgentSettings({
+      dock_custom: {
+        order: (custom && custom.order) || [],
+        hidden: (custom && custom.hidden) || []
+      }
+    });
+    return () => {
+      if (window.fridaySaveDock) delete window.fridaySaveDock;
+    };
+  }, [agentSettings]);
+
+  /* A WORKSPACE IS ADDRESSABLE BY URL, so any of them can be a tab.
+     ?workspace=code opens that workspace on load, which is all a new Friday
+     tab needs to be: the same app, pointed somewhere else. Runs once, after
+     fridayOpenWorkspace is installed above, and does nothing when the
+     parameter is absent or names a workspace that is not in the dock - a URL
+     someone edited by hand should not leave a window that cannot be closed. */
+  useEffect(() => {
+    let wanted = '';
+    try {
+      wanted = new URLSearchParams(window.location.search).get('workspace') || '';
+    } catch (e) { return; }
+    if (!wanted) return;
+    if (!WS.some(w => w.id === wanted)) {
+      console.warn('[friday] ?workspace=' + wanted + ' is not a workspace');
+      return;
+    }
+    openWs(wanted);
   }, []);
   // Global Workspace Studio opener — the 💬 button on any window (and custom
   // quick-actions) call this to open that workspace's contextual chat, optionally
@@ -42210,6 +44225,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces = agentSettings.show_all_workspaces !== false;
+  // One computation of what the dock is, shared by the dock itself and by
+  // Settings → Dock. Recomputed only when an input changes, because it runs on
+  // every App render otherwise and App re-renders on every chat token.
+  const dockShape = React.useMemo(
+    () => dockArrangement(agentSettings.dock_custom, showAllWorkspaces),
+    [agentSettings.dock_custom, showAllWorkspaces]);
   const wsMap = {
     edition: /*#__PURE__*/React.createElement(EditionWS, null),
     home: /*#__PURE__*/React.createElement(HomeWS, null),
@@ -42593,7 +44614,14 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         headers: { 'Content-Type': 'application/json' },
         // MUST be wrapped in `settings` — the route reads data['settings'].
         body: JSON.stringify({ settings: { capability_routing: { reasoning: { model: m.id, provider: (m.providers || [])[0] } } } })
-      }).then(r => r.json()).then(() => apiFetch('/api/settings'))
+      }).then(r => r.json()).then(res => {
+          // The server refuses a local seat whose weights are not on this
+          // machine (seat_not_installed). Say exactly what it said.
+          if (res && res.status === 'error' && res.detail) {
+            throw new Error(res.detail);
+          }
+          return apiFetch('/api/settings');
+        })
         .then(r => r.json()).then(d => {
           // Confirm against what the SERVER now holds. A 200 means the request
           // was accepted, not that the seat changed.
@@ -42608,7 +44636,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           }
           setAgentSettings(a => ({ ...a, orchestrator_model: m.id }));
           try { fridayInvalidateModelCatalog(); } catch (_) {}
-        }).catch(() => setPendingSeat(null));
+        }).catch(e => {
+          setPendingSeat(null);
+          if (e && e.message) alert(e.message);
+        });
     }
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -42762,7 +44793,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     },
     title: "Settings",
     "aria-label": "Open settings"
-  }, /*#__PURE__*/React.createElement("span", null, "\u2699")), (netState.status === 'offline' || netState.status === 'degraded') && /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "\u2699")), /*#__PURE__*/React.createElement(ArbiterStrip, null), (netState.status === 'offline' || netState.status === 'degraded') && /*#__PURE__*/React.createElement("span", {
     title: netState.status === 'offline' ? netState.ollama_available ? 'Offline — running on local models (Ollama). Cloud tasks are queued until you reconnect.' : 'Offline — no local model available; cloud tasks are queued until you reconnect.' : 'Network degraded — retrying connection',
     style: {
       display: 'inline-flex',
@@ -43068,14 +45099,40 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }, /*#__PURE__*/React.createElement(Safe, {
       name: w.label
     }, wsMap[id] || /*#__PURE__*/React.createElement("div", null, "Coming soon")));
-  }), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
+  }), convWins.map((cw, i) => /*#__PURE__*/React.createElement(ConversationWindow, {
+    key: cw.cid,
+    convId: cw.cid,
+    title: cw.title,
+    offset: i,
+    // Same band as every other window (see bringFront). 132 here predated the
+    // band and would have put a chat window over the dock and the top bar -
+    // harmless only because a chat window is now clamped never to reach them,
+    // which is not a reason to leave a number that says otherwise.
+    zIndex: zMap['chat:' + cw.cid] || Math.min(Z_WIN_TOP, Z_WIN_BASE + i),
+    onFocus: () => bringFront('chat:' + cw.cid),
+    onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid))
+  })), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
     key: wsChat.wsId + ':' + wsChat.key,
     wsId: wsChat.wsId,
     label: wsChat.label,
     emoji: wsChat.emoji,
     seedPrompt: wsChat.seed,
     onClose: () => setWsChat(null)
-  }), /*#__PURE__*/React.createElement("div", {
+  }),
+  /* The sidebar is a SIBLING of the chat panel, not a change to its insides.
+     The panel is a long compiled tree that a dozen features already depend on;
+     adding a column beside it and shifting it over with CSS cannot break any
+     of them, where restructuring its children could. It exists only in a chat
+     tab - `chrome=chat` - because the floating holographic window is a glance
+     at one thread and has no navigation in it. */
+  window.__FRIDAY_CHROME__ === 'chat'
+    ? /*#__PURE__*/React.createElement(ChatSidebar, {
+        convList: convList, projList: projList, convId: convId,
+        onOpenConversation: openConversation, onRefresh: refreshConvs,
+        apiFetch: apiFetch,
+      })
+    : null,
+  /*#__PURE__*/React.createElement("div", {
     className: `chat-panel ${chatOpen ? 'open' : ''}`,
     style: chatH ? {
       width: chatW,
@@ -43169,6 +45226,115 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontFamily: 'Inter'
     }
   }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
+    /* HEARTBEAT, ON ONE CLICK.
+       The heartbeat runs twice a day and checks calendar and inbox for
+       anything time-sensitive. Running it on demand was already possible —
+       Settings, find the schedules list, find this row, Run Now — which is
+       four clicks and knowing where to look, and so it was never used.
+
+       The result lands in the chat as a system line rather than a toast,
+       because the answer to "anything I should know about?" is something you
+       read, not something that fades. 409 is the scheduler refusing to
+       double-fire a run already in progress; that is a real answer and is
+       reported as one. */
+    onClick: () => {
+      const say = t => setChatMsgs(p => [...p, {
+        role: 'system', kind: 'heartbeat', text: t,
+        time: new Date().toLocaleTimeString(),
+      }]);
+      say('Running the heartbeat now — checking calendar and inbox.');
+      apiFetch('/api/schedules/sch_heartbeat/run-now', { method: 'POST' })
+        .then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })))
+        .then(({ ok, status, d }) => {
+          if (ok) return;
+          say(status === 409
+                ? 'The heartbeat is already running — its result will arrive '
+                  + 'on its own.'
+                : 'The heartbeat could not start: '
+                  + ((d && d.message) || ('HTTP ' + status)) + '.');
+        })
+        .catch(e => say('The heartbeat could not start: ' + e + '.'));
+    },
+    title: "Run the heartbeat now (calendar + inbox check)",
+    "aria-label": "Run the heartbeat now",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "♥ Heartbeat"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+    /* THE THREAD AS A WINDOW, inside the holographic UI. This is the one the
+       user actually asked for: several conversations open at once, each on
+       its own seat, managed by Friday rather than by the browser. The tab
+       button beside it is the other thing he asked for and a different
+       gesture - a tab leaves the machine's window manager in charge, a window
+       keeps it here. */
+    onClick: () => {
+      if (!convId) return;
+      const c = (convList || []).find(x => x.id === convId);
+      window.fridayOpenChatWindow
+        && window.fridayOpenChatWindow(convId, (c && c.title) || 'Conversation');
+    },
+    title: "Open this conversation as a window in the workspace",
+    "aria-label": "Open this conversation as a window",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "⧉ Window"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+    /* UNDOCK. This conversation, in its own window, so a second one can be
+       worked alongside it — the point being two MODELS at once, since each
+       conversation carries its own seat binding.
+
+       A real browser window rather than a floating div: Friday is served over
+       HTTP, so the OS already knows how to give a window a position, a size
+       and a place in the alt-tab order, and none of that has to be rebuilt.
+       The undocked window drops the holographic shell (?chrome=chat) because
+       one scene, one HUD and one camera are what the machine has.
+
+       Hidden in an already-undocked window, where it would only ever open a
+       duplicate of itself. */
+    onClick: () => {
+      const cid = convId;
+      if (!cid) return;
+      /* A TAB, NOT A POPUP. Passing a feature string ('width=...,height=...')
+         is what tells Chrome to make a chrome-less popup window; omitting it
+         entirely gives an ordinary tab. The first version of this specified a
+         size, got a popup, and was wrong about what the user wanted in a way
+         only the user could see. */
+      const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
+      const w = window.open(url, '_blank');
+      if (!w) {
+        alert('The browser blocked that tab. Allow pop-ups for Friday and '
+              + 'try again.');
+        return;
+      }
+      try { w.focus(); } catch (e) {}
+    },
+    title: "Open this conversation in a new tab",
+    "aria-label": "Open this conversation in a new tab",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "↗ New tab"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
     title: "Close chat",
     "aria-label": "Close chat",
@@ -43431,7 +45597,35 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       transform: 'scale(' + (1 + Math.min(0.6, micLevel * 4)).toFixed(2) + ')',
       transition: 'background .12s, box-shadow .12s, transform .12s'
     }
-  }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…')), !voiceOn && voiceStatus && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
+    const st = voiceStages[k] && voiceStages[k].state || 'idle';
+    const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
+    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
+  }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
+    title: voiceEgress.text || '',
+    style: {
+      fontSize: 10,
+      color: '#ffb347',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.05em'
+    }
+  }, "\u2601 MIC \u2192 ", voiceEgress.label || voiceEgress.provider), voiceOn && voiceReach && !voiceReach.full_context && voiceReach.notice && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#ffb347',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      lineHeight: 1.4
+    }
+  }, "\u26A0 ", voiceReach.notice), !voiceOn && voiceEgress && !voiceEgress.active && voiceEgress.bytes > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#8a94a6',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u2601 ", voiceEgress.text), !voiceOn && voiceStatus && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: '#ff6699',
@@ -44475,16 +46669,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     style: {
       marginBottom: 8
     }
-  }, "Quick Toggles"), /*#__PURE__*/React.createElement("div", {
-    className: "settings-toggle",
-    onClick: () => saveAgentSettings({
-      show_all_workspaces: !showAllWorkspaces
-    })
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "settings-toggle-label"
-  }, "Show all workspaces"), /*#__PURE__*/React.createElement("div", {
-    className: `settings-toggle-switch ${showAllWorkspaces ? 'on' : ''}`
-  })), /*#__PURE__*/React.createElement("div", {
+  }, "Quick Toggles"),
+  // Once the dock has been shaped by hand, this toggle no longer decides
+  // anything — dockArrangement() ignores show_all_workspaces the moment a
+  // custom arrangement exists. A switch that flips and changes nothing is
+  // worse than one that says why it is off, so it says why.
+  dockShape.configured
+    ? /*#__PURE__*/React.createElement("div", {
+        className: "settings-toggle",
+        style: { opacity: 0.5, cursor: 'default' },
+        title: "Your own dock arrangement is in use, so this no longer applies.",
+        onClick: () => { setSettingsOpen(false); toggle('settings'); window.__fridaySettingsTab = 'dock'; }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "settings-toggle-label"
+      }, "Show all workspaces — set in Settings → Dock"))
+    : /*#__PURE__*/React.createElement("div", {
+        className: "settings-toggle",
+        onClick: () => saveAgentSettings({
+          show_all_workspaces: !showAllWorkspaces
+        })
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "settings-toggle-label"
+      }, "Show all workspaces"), /*#__PURE__*/React.createElement("div", {
+        className: `settings-toggle-switch ${showAllWorkspaces ? 'on' : ''}`
+      })),
+  /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
     onClick: () => saveAgentSettings({
       off_record: !agentSettings.off_record
@@ -44636,15 +46845,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, p)))), /*#__PURE__*/React.createElement("div", {
     className: `dock ${dockHidden ? 'hidden' : ''}`
-  }, DOCK_GROUPS.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
-    key: g.name
+  }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: g.name + ':' + gi
   }, gi > 0 && /*#__PURE__*/React.createElement("div", {
     className: "dock-sep"
   }), /*#__PURE__*/React.createElement("div", {
     className: "dock-group"
   }, /*#__PURE__*/React.createElement("div", {
     className: "dock-group-btns"
-  }, g.items.filter(w => showAllWorkspaces || w.core).map(w => /*#__PURE__*/React.createElement("button", {
+  }, g.items.map(w => /*#__PURE__*/React.createElement("button", {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${suggestedWs.has(w.id) && !openWins.has(w.id) ? 'suggested' : ''}`,
     onClick: () => toggle(w.id),
@@ -44735,7 +46944,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       justifyContent: 'center',
       boxShadow: '0 0 8px rgba(245,158,11,0.7)'
     }
-  }, contentAlerts)))), /*#__PURE__*/React.createElement("div", {
+  }, contentAlerts)))), g.name && /*#__PURE__*/React.createElement("div", {
     className: "dock-group-label"
   }, g.name))))), paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
     onClose: () => setPaletteOpen(false),

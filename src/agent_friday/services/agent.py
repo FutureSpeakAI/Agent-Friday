@@ -1,7 +1,17 @@
-﻿import os
+import os
 import io
 import json
 import glob
+from contextvars import ContextVar
+
+#: The conversation a tool call belongs to, for the duration of that call.
+#:
+#: Set by `_execute_tool` and read by any handler that spawns background work,
+#: so a task knows where to report. Without it everything a background run has
+#: to say - including "I was interrupted by a restart" - is filed in Main, and
+#: the person who started it never sees it. See `_spawn_task`.
+_CURRENT_CONVERSATION: ContextVar = ContextVar("friday_tool_conversation",
+                                               default=None)
 import subprocess
 import shutil
 import base64
@@ -85,8 +95,19 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
                     workspace=None, on_route=None, tools=None,
-                    system_builder=None):
+                    system_builder=None, on_text_delta=None,
+                    conversation_seat=None):
     """Tool-using (agentic) generation via the user's CONFIGURED provider.
+
+    on_text_delta: optional `callable(str)` fired per streamed content
+        fragment on the OpenAI-compatible leg (the local llama-server seat
+        included). Delivered through `model_router.DELTA_SINK` for the
+        duration of this call only, so the voice session's clause chunker
+        hears the reply as it is written (voice-system-clean-sheet.md §4.2)
+        without threading a callback through every leg. Rounds that end in a
+        tool call stream too: the text before the call is the announcement
+        sentence the choreography wants audible before the tool runs; the
+        markup itself is filtered by the consumer.
 
     The agentic analog of _generate_text(). Bare _call_claude_agent() requires
     an Anthropic key and hard-fails with "ANTHROPIC_API_KEY is not set" the
@@ -127,6 +148,25 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     been gated for a different, less restrictive provider. Omit it (the
     default) to keep the previous single-prompt behavior unchanged.
     """
+    # Streaming deltas ride a context variable (see on_text_delta above). Run
+    # the whole call inside a COPIED context with the sink set, so it is
+    # scoped to this call and nothing has to be reset on any of the exits.
+    if on_text_delta is not None:
+        import contextvars as _cv
+        from agent_friday.services.model_router import DELTA_SINK as _DS
+        _kw = dict(system=system, model=model, max_tokens=max_tokens,
+                   temperature=temperature, session_ctx=session_ctx,
+                   pii_lookup=pii_lookup, orb_label=orb_label,
+                   orb_category=orb_category, orb_icon=orb_icon,
+                   workspace=workspace, on_route=on_route, tools=tools,
+                   system_builder=system_builder, on_text_delta=None,
+                   conversation_seat=conversation_seat)
+
+        def _with_sink():
+            _DS.set(on_text_delta)
+            return _generate_agent(messages, **_kw)
+        return _cv.copy_context().run(_with_sink)
+
     # Demo mode: no provider configured (no keys + no local Ollama) → return a
     # labelled placeholder instead of exhausting every primitive and raising
     # RuntimeError("No model provider could run the agent"). This is the agentic
@@ -157,7 +197,22 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         route = get_router(routing_cfg).route(messages, task_context={
             "has_tools": True,
             "workspace": workspace or '',
-            "cloud_model": model or settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+            # `model` is a CLOUD-model hint here, not a binding, which is why
+            # handing this a local id does not pin the turn to it: the router
+            # reads it as "if you go to the cloud, go here". Passing
+            # bonsai2:27b through it got a conversation bound to the local 27B
+            # answered by Sonnet after a 74-second attempt (measured
+            # 2026-09-18) — the router never saw a binding at all.
+            "cloud_model": ((model if model and ':' not in str(model)
+                             else None)
+                            or settings.get('orchestrator_model')
+                            or ANTHROPIC_MODEL_DEFAULT),
+            # The binding. `/api/chat` has always passed this; `/api/chat/send`
+            # never did, so the per-conversation model picker wrote a seat
+            # nothing on the UI's sending path read. This is the key the router
+            # actually honours.
+            "conversation_seat": (conversation_seat
+                                  or ({"model": model} if model else None)),
             # Unattended work is allowed to prefer a local seat. Without this
             # the router cannot tell a scheduled heartbeat from the user typing,
             # and every tool-using turn looks interactive.
@@ -198,7 +253,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
-                   "model. Install or start Ollama (or adjust "
+                   "model. Load one on the Intelligence tab (or adjust "
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
 
@@ -254,6 +309,36 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         # tokens measured on the reference machine) exceeds n_ctx and the
         # turn dies with a 400 — chat.py's dispatch trims, and so must this.
         _sys_out = _system_for('local')
+
+        # PROGRESSIVE DISCLOSURE, when it is switched on.
+        #
+        # Sends an index of every tool plus one `load_tools` call instead of
+        # 13,300 tokens of schema - 41% of this seat's window, measured, to
+        # answer questions that call two tools. The full registry travels
+        # alongside so the loop can hand over real schemas when asked.
+        #
+        # Deliberately BEFORE fit_tools_to_seat: the budget trimmer drops the
+        # most expensive schemas, so on the catalogue path there is almost
+        # nothing left for it to drop, which is the point.
+        from agent_friday.services import tool_catalogue as _TCat
+        if _TCat.enabled() and CLAUDE_TOOLS:
+            _open = _TCat.opening_set(CLAUDE_TOOLS)
+            try:
+                _s = _TCat.savings(CLAUDE_TOOLS)
+                print("  [tools] catalogue on: %d tools -> %d opening tokens "
+                      "(saved %d, %.0f%%)"
+                      % (_s["tools"], _s["opening_tokens"],
+                         _s["saved_tokens"], _s["saved_pct"]), flush=True)
+            except Exception:
+                pass
+            return _call_ollama(
+                messages, system=_sys_out, model=use_model,
+                max_tokens=max_tokens, temperature=temperature,
+                orb_label=orb_label, tools=_open,
+                pii_lookup=pii_lookup, session_ctx=session_ctx,
+                catalogue_all=CLAUDE_TOOLS,
+            )
+
         try:
             from agent_friday.services.tool_budget import fit_tools_to_seat
             # Budget the whole request, not tools in isolation: in-budget
@@ -261,9 +346,14 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             _prompt_cost = (len(_sys_out or "") + sum(
                 len(m.get("content")) for m in (messages or [])
                 if isinstance(m.get("content"), str))) // 4
+            # Hand over the prompt and transcript so the seat can COUNT the
+            # request (prompt and tools) instead of taking chars/4 on faith.
             _fitted, _fit_note = fit_tools_to_seat(
-                use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost)
-            if _fit_note:
+                use_model, CLAUDE_TOOLS, prompt_cost=_prompt_cost,
+                system=_sys_out, messages=messages)
+            # Once only — see the twin of this line in
+            # `model_router._call_openai` for what repeated appends cost.
+            if _fit_note and "\n[SEAT] " not in (_sys_out or ""):
                 _sys_out = (_sys_out or "") + "\n[SEAT] " + _fit_note
         except Exception:
             _fitted = CLAUDE_TOOLS
@@ -400,7 +490,7 @@ ACTION_PERMISSION_POLICY = (
 # Tools Claude can call when answering the user. Each tool has a handler
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 CLAUDE_TOOLS = [
-    {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If the user asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask the user for a detail they would reasonably expect you to find, and never invent one.",
+    {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If the user asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask the user for a detail they would reasonably expect you to find, and never invent one. Backends, tried in order: Firecrawl (preferred; needs FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then a DuckDuckGo scrape that is often blocked by an anti-bot challenge. Firecrawl IS part of this tool — never say it is not wired up; if a search fails, report the backend's own error and what would enable Firecrawl.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
@@ -532,11 +622,21 @@ CLAUDE_TOOLS = [
          "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
       "required": ["workspace"]}},
-    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means.",
+    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means. Each entry names the keys that change touched (`changed_label`) and the keys restoring it would bring back (`keys`) — the customization itself is not returned, so read the entry and revert, don't ask for the contents.",
      "input_schema": {"type": "object", "properties": {
-         "workspace": {"type": "string"}}, "required": ["workspace"]}},
-    {"name": "draft_email", "description": "Compose an email. Needs a write-enabled Gmail connection (native Google integration is read-only). If unavailable, tell the user it needs connecting and offer setup — do NOT say you can't email.",
-     "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+         "workspace": {"type": "string"},
+         "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
+      "required": ["workspace"]}},
+    {"name": "draft_email", "description": "Write an email and put it in front of the user for approval. This NEVER sends on its own — it creates an approval card showing the exact From/To/Subject/body, and the message goes out only when the user approves that card. Say so plainly in your reply: tell them it's waiting for their approval, not that you sent it. Write the full final text in `body`; the user reads what you wrote, and editing it afterwards invalidates the approval. Requires an account connected with sending allowed — if the tool says none is, tell them Settings → Connectors → Google → Add account with \"allow sending\" ticked, and do NOT claim you can't email at all.",
+     "input_schema": {"type": "object", "properties": {
+         "to": {"type": "string", "description": "One address, or several separated by commas."},
+         "subject": {"type": "string"},
+         "body": {"type": "string", "description": "The complete message as it should go out. Not a summary or an outline."},
+         "cc": {"type": "string"},
+         "account_id": {"type": "string", "description": "Which connected account to send as. Required only when more than one account can send; the tool will tell you and list them."}},
+      "required": ["to", "subject", "body"]}},
+    {"name": "list_sending_accounts", "description": "Which connected Google accounts are allowed to send mail. Use this before draft_email when the user has more than one address, or when draft_email asks you which account to use. An account missing from this list was connected read-only — that is a permission the user has to grant, not something to work around.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_career_pipeline", "description": "Get the current job-search pipeline status from the wiki.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_briefing", "description": "Get the most recent daily briefing summary.",
@@ -606,13 +706,27 @@ def _tool_search_web(inp):
 
     results = out.get('results') or []
     if not results:
+        # The backend's own words reach the model. Observed 2026-09-18: the
+        # DuckDuckGo 202 and the "Firecrawl has no key" note were both in
+        # `detail`, and neither was in what the model was told -- so it told
+        # the user Firecrawl was not a tool it had.
+        detail = str(out.get('detail') or '').strip()
         return (f"Search for {q!r} returned no results "
-                f"(backend: {out.get('backend')}).\n{_ws.status_note(out)}")
+                f"(backend: {out.get('backend')}).\n"
+                + (f"Backend detail: {detail}\n" if detail else "")
+                + _ws.status_note(out))
     lines = [f"Search results for '{q}' (backend: {out.get('backend')}, "
              f"{len(results)} results). URLs below are real and fetchable — "
              f"pass one verbatim to browse_web:\n"]
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}")
+        # `.get`, not `[...]`. web_search normalises every backend's rows to
+        # title/url/snippet now, so this should never be missing - but a hard
+        # subscript here is what turned one backend's different field name
+        # into "Tool error (search_web): 'snippet'" on every search for a day.
+        # A renderer should degrade to a blank line, not take down the tool.
+        lines.append(f"{i}. {r.get('title') or r.get('url') or ''}\n"
+                     f"   {r.get('snippet') or r.get('description') or ''}\n"
+                     f"   {r.get('url') or ''}")
     if out.get('detail'):
         lines.append(f"\n[note: {out['detail']}]")
     return '\n'.join(lines)[:100_000]
@@ -936,6 +1050,30 @@ def _summarize_multi_account_errors(result):
     enabled in the GCP project) shows up as its own status/error per
     account, distinct from an account that was never connected at all."""
     by_id = {}
+    # SEED FROM THE STORE, NOT FROM THE FETCH.
+    #
+    # merged_calendar()/merged_inbox() iterate _accounts_with(service), which
+    # SKIPS any account whose status is "needs_reauth" -- it is neither used
+    # nor errored, so it appeared in neither list and vanished from this
+    # summary entirely. The caller then reported `connected: true` (the index
+    # is non-empty) alongside `accounts: []` and `count: 0`, which reads as
+    # "your calendar works and tomorrow is clear". Measured on this machine:
+    # both Google accounts have been needs_reauth since 2026-09-01, and a day
+    # with two interviews on it came back empty and confident.
+    #
+    # An account Friday cannot read must be VISIBLE and must say why.
+    try:
+        from agent_friday.services import google_accounts as _ga
+        for acc in (_ga.list_accounts() or []):
+            _st = acc.get("status") or "connected"
+            by_id[acc.get("id")] = {
+                "label": acc.get("label"), "email": acc.get("email"),
+                "status": _st,
+                "error": ("This account's Google authorization has expired and "
+                          "it was NOT read this turn - reconnect it in Settings "
+                          "-> Connectors.") if _st == "needs_reauth" else None}
+    except Exception:
+        pass
     for acc in (result.get("accounts") or []):
         by_id[acc.get("id")] = {"label": acc.get("label"), "email": acc.get("email"),
                                 "status": "connected", "error": None}
@@ -1046,11 +1184,102 @@ def _tool_revert_workspace(inp):
 
 
 def _tool_list_workspace_history(inp):
+    """Recent customization snapshots for one workspace.
+
+    Bounded by DROPPING ENTRIES, never by slicing the serialised string.
+    This used to end `json.dumps(...)[:2400]`, and history() returns up to 40
+    snapshots plus the full live customization — whose `css` field alone can
+    be 8000 characters. So the model was routinely handed JSON cut off
+    mid-token: unparseable, and unparseable in a way that looks like a model
+    failure rather than a tool one.
+
+    The whole customization blob is not sent at all. A list view needs to know
+    WHICH keys a snapshot would restore and what the change after it moved;
+    the stylesheet itself belongs in the revert, not the listing.
+    """
     from agent_friday.services import workspace_studio as ws
     wsid = ((inp or {}).get("workspace") or "").strip()
     if not wsid:
         return "list_workspace_history error: 'workspace' is required."
-    return json.dumps(ws.history(wsid), default=str)[:2400]
+    try:
+        limit = max(1, min(int((inp or {}).get("limit") or 12), 40))
+    except (TypeError, ValueError):
+        limit = 12
+    full = ws.history(wsid)
+    entries = full.get("entries") or []
+    out = {
+        "workspace": wsid,
+        "current_keys": full.get("current_keys") or [],
+        "total": len(entries),
+        "showing": min(limit, len(entries)),
+        "entries": [
+            {k: e.get(k) for k in
+             ("version_id", "when", "label", "changed_label", "keys")}
+            for e in entries[:limit]
+        ],
+    }
+    if len(entries) > limit:
+        out["note"] = ("%d older snapshots not shown; ask with a larger limit."
+                       % (len(entries) - limit))
+    return json.dumps(out, default=str)
+
+
+# -- Google connectivity, answered honestly ---------------------------------
+# These tools used to gate on ga.has_accounts() -- whether a RECORD EXISTS --
+# and then emit "connected": True. On 2026-09-09 both of Stephen's accounts had
+# been needs_reauth since 2026-09-01, so the calendar tool returned
+# connected:true with zero events, and a day holding two job interviews was
+# reported as an empty schedule.
+#
+# The worse half was the note. When a fetch failed it instructed the model:
+# "do not say Calendar 'needs connecting' (it's already connected)". That
+# instruction was FALSE, and the model repeated it faithfully -- Stephen asked
+# directly whether his Google accounts were connected and was told yes for
+# both. Nothing was fabricated, so no claim-verification layer could catch it:
+# the system told the model something untrue and the model reported it
+# accurately. A note that instructs the model what to assert must therefore be
+# emitted only in the state where that assertion is actually true.
+
+
+def _google_connectivity():
+    """Live connectivity fields for any Google-backed tool payload.
+
+    `connected` is true only when at least one account actually WORKS.
+    `degraded` is carried as its own fact rather than folded into that
+    boolean: a bool cannot express "some of your accounts work and some do
+    not", and flattening it is how an incomplete answer gets presented as a
+    complete one.
+    """
+    from agent_friday.services import google_accounts as ga
+    summary = ga.accounts_summary()
+    return summary, {
+        "connected": summary["connected"],
+        "degraded": summary["degraded"],
+        "accounts_total": summary["total"],
+        "accounts_working": summary["healthy"],
+        "needs_reauth": [a.get("email") or a.get("label")
+                         for a in summary["needs_attention"]],
+        "store": "google_accounts (multi-account)",
+    }
+
+
+def _google_note(summary, what, errored=(), no_items=False):
+    """Compose the model-facing note. Every clause must be true when emitted."""
+    parts = []
+    if summary["note"]:
+        parts.append(summary["note"])
+    if errored and no_items:
+        detail = "; ".join(f"{a['label']}: {a['error']}" for a in errored)
+        if summary["healthy"] and not summary["needs_attention"]:
+            # Only here is "it is already connected" a true statement.
+            parts.append(
+                f"Every account IS authorized, and every one of them had its "
+                f"live {what} fetch fail just now -- this is an API error, not "
+                f"a missing connection. Tell the user these specific errors "
+                f"rather than saying {what} needs connecting: {detail}")
+        else:
+            parts.append(f"Live {what} fetch errors on top of that: {detail}")
+    return " ".join(parts)
 
 
 def _tool_query_calendar(_inp):
@@ -1069,20 +1298,26 @@ def _tool_query_calendar(_inp):
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
     try:
-        has_accounts = ga.has_accounts()
+        summary, state = _google_connectivity()
     except Exception:
-        has_accounts = False
-    if not has_accounts:
+        summary, state = None, None
+    if summary is None:
         return json.dumps({"connected": False, "events": [],
-                           "store": "google_accounts (multi-account)",
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what="Google Calendar", reads="your calendar")})
+    if not summary["connected"]:
+        # Never connected, or connected-then-expired. Those need different
+        # words: one says "connect", the other names the accounts that stopped
+        # working and how long ago they last synced.
+        return json.dumps({**state, "events": [], "count": 0,
+                           "note": summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
     try:
         result = ga.merged_calendar(days=2)
     except Exception as e:
-        return json.dumps({"connected": True, "events": [],
-                           "store": "google_accounts (multi-account)",
-                           "note": f"Calendar fetch error: {e}"})
+        return json.dumps({**state, "events": [], "count": 0,
+                           "note": (_google_note(summary, "Calendar")
+                                    + f" Calendar fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
     events = result.get("events") or []
     out = []
@@ -1096,21 +1331,45 @@ def _tool_query_calendar(_inp):
             "account": ev.get("account_label") or ev.get("account_email"),
         })
     payload = {
-        "connected": True,  # accounts exist and are linked; see "accounts" for per-account detail
-        "store": "google_accounts (multi-account)",
+        **state,
         "accounts": accounts_status,
         "count": len(out),
         "events": out,
     }
-    errored = [a for a in accounts_status if a["status"] == "error"]
-    if errored and not out:
-        payload["note"] = (
-            "Every connected account's live calendar fetch just failed — tell "
-            "the user the SPECIFIC error(s) below, do not say Calendar 'needs "
-            "connecting' (it's already connected): " +
-            "; ".join(f"{a['label']}: {a['error']}" for a in errored)
-        )
+    # needs_reauth accounts are seeded into accounts_status by
+    # _summarize_multi_account_errors but carry that status, not "error",
+    # so filtering on "error" alone silently drops exactly the broken ones.
+    errored = [a for a in accounts_status
+               if a["status"] in ("error", "needs_reauth")]
+    note = _google_note(summary, "Calendar", errored, not out)
+    if note:
+        payload["note"] = note
     return json.dumps(payload, default=str)
+
+
+def _email_query_matches(query: str, blob: str) -> bool:
+    """Word-boundary match for the local email search filter.
+
+    A plain substring test (`query in blob`) makes "test" match "latest",
+    "contest", "protest" -- false positives on top of whatever Gmail's own
+    q= already filtered. \b anchors the match to whole-word boundaries
+    instead. An empty query matches everything (unchanged prior behavior).
+    Multi-word queries (e.g. "budget forecast") require each word to appear
+    somewhere in the blob as its own word, in any order -- this keeps a
+    multi-word natural-language query useful instead of requiring an exact
+    phrase match.
+    """
+    q = (query or "").strip()
+    if not q:
+        return True
+    words = q.lower().split()
+    if not words:
+        return True
+    for word in words:
+        pattern = r"\b" + re.escape(word) + r"\b"
+        if not re.search(pattern, blob):
+            return False
+    return True
 
 
 def _tool_search_email(inp):
@@ -1129,27 +1388,36 @@ def _tool_search_email(inp):
     except Exception:
         ga = None
     has_accounts = False
+    summary = state = None
     if ga is not None:
         try:
             has_accounts = ga.has_accounts()
+            summary, state = _google_connectivity()
         except Exception:
             has_accounts = False
+    # Accounts exist but none work: say so. Do NOT fall through to the legacy
+    # offline cache below -- that hands back cached mail as though it were
+    # current, the same staleness bug wearing a different hat. The cache path
+    # stays reserved for a never-connected install, as the docstring says.
+    if has_accounts and summary is not None and not summary["connected"]:
+        return json.dumps({**state, "source": "gmail", "query": q,
+                           "count": 0, "messages": [],
+                           "note": summary["note"]})
 
-    if has_accounts:
+    if has_accounts and summary is not None:
         try:
             result = ga.merged_gmail(limit_per_account=15)
         except Exception as e:
-            return json.dumps({"connected": True, "messages": [],
-                               "store": "google_accounts (multi-account)",
-                               "note": f"Email fetch error: {e}"})
+            return json.dumps({**state, "messages": [], "count": 0,
+                               "note": (_google_note(summary, "Gmail")
+                                        + f" Email fetch error: {e}").strip()})
         accounts_status = _summarize_multi_account_errors(result)
         cards = result.get("messages") or []
-        ql = q.lower()
         hits = []
         for c in cards:
             blob = " ".join(str(c.get(k) or "") for k in
                             ("sender", "subject", "snippet")).lower()
-            if not ql or ql in blob:
+            if _email_query_matches(q, blob):
                 hits.append({
                     "from": c.get("sender") or "",
                     "subject": c.get("subject") or "",
@@ -1159,22 +1427,21 @@ def _tool_search_email(inp):
                     "account": c.get("account_label") or c.get("account_email"),
                 })
         payload = {
-            "connected": True,
-            "store": "google_accounts (multi-account)",
+            **state,
             "accounts": accounts_status,
             "source": "gmail",
             "query": q,
             "count": len(hits),
             "messages": hits[:25],
         }
-        errored = [a for a in accounts_status if a["status"] == "error"]
-        if errored and not cards:
-            payload["note"] = (
-                "Every connected account's live Gmail fetch just failed — tell "
-                "the user the SPECIFIC error(s) below, do not say Gmail 'needs "
-                "connecting' (it's already connected): " +
-                "; ".join(f"{a['label']}: {a['error']}" for a in errored)
-            )
+        # needs_reauth accounts are seeded into accounts_status by
+        # _summarize_multi_account_errors but carry that status, not "error",
+        # so filtering on "error" alone silently drops exactly the broken ones.
+        errored = [a for a in accounts_status
+                   if a["status"] in ("error", "needs_reauth")]
+        note = _google_note(summary, "Gmail", errored, not cards)
+        if note:
+            payload["note"] = note
         return json.dumps(payload, default=str)
 
     # No account connected at all — preserve the legacy cache-fallback path.
@@ -1205,8 +1472,12 @@ def _tool_search_email(inp):
                 "unread": bool(c.get("unread")),
                 "when": c.get("timestamp") or c.get("date") or "",
             })
-    return json.dumps({"connected": True, "source": source, "query": q,
-                       "count": len(hits), "messages": hits[:25]}, default=str)
+    return json.dumps({"connected": False, "source": source, "query": q,
+                       "count": len(hits), "messages": hits[:25],
+                       "note": "No Google account is connected. These results come "
+                               "from Friday's offline cache and may be out of date "
+                               "-- say so rather than presenting them as current "
+                               "inbox contents."}, default=str)
 
 
 def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, fetch_fn, item_key):
@@ -1222,37 +1493,39 @@ def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, 
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what=has_accounts_note_what, reads=has_accounts_note_reads)})
     try:
-        has_accounts = ga.has_accounts()
+        summary, state = _google_connectivity()
     except Exception:
-        has_accounts = False
-    if not has_accounts:
+        summary, state = None, None
+    if summary is None:
         return json.dumps({"connected": False, item_key: [],
-                           "store": "google_accounts (multi-account)",
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what=has_accounts_note_what, reads=has_accounts_note_reads)})
+    if not summary["connected"]:
+        return json.dumps({**state, item_key: [], "count": 0,
+                           "note": summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what=has_accounts_note_what, reads=has_accounts_note_reads)})
     try:
         result = fetch_fn(ga)
     except Exception as e:
-        return json.dumps({"connected": True, item_key: [],
-                           "store": "google_accounts (multi-account)",
-                           "note": f"{has_accounts_note_what} fetch error: {e}"})
+        return json.dumps({**state, item_key: [], "count": 0,
+                           "note": (_google_note(summary, has_accounts_note_what)
+                                    + f" {has_accounts_note_what} fetch error: {e}").strip()})
     accounts_status = _summarize_multi_account_errors(result)
     items = result.get(item_key) or []
     payload = {
-        "connected": True,
-        "store": "google_accounts (multi-account)",
+        **state,
         "accounts": accounts_status,
         "count": len(items),
         item_key: items,
     }
-    errored = [a for a in accounts_status if a["status"] == "error"]
-    if errored and not items:
-        payload["note"] = (
-            f"Every connected account's live {has_accounts_note_what} fetch just "
-            f"failed — tell the user the SPECIFIC error(s) below, do not say "
-            f"{has_accounts_note_what} 'needs connecting' (it's already connected): " +
-            "; ".join(f"{a['label']}: {a['error']}" for a in errored)
-        )
+    # needs_reauth accounts are seeded into accounts_status by
+    # _summarize_multi_account_errors but carry that status, not "error",
+    # so filtering on "error" alone silently drops exactly the broken ones.
+    errored = [a for a in accounts_status
+               if a["status"] in ("error", "needs_reauth")]
+    note = _google_note(summary, has_accounts_note_what, errored, not items)
+    if note:
+        payload["note"] = note
     return json.dumps(payload, default=str)
 
 
@@ -1283,9 +1556,10 @@ def _tool_read_doc(inp):
         return json.dumps({"connected": False,
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Docs/Sheets", reads="your documents")})
-    if not ga.has_accounts():
-        return json.dumps({"connected": False,
-                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+    _doc_summary, _doc_state = _google_connectivity()
+    if not _doc_summary["connected"]:
+        return json.dumps({**_doc_state,
+                           "note": _doc_summary["note"] or _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Docs/Sheets", reads="your documents")})
     candidate_ids = [account_id] if account_id else [
         a["id"] for a in ga.list_accounts() if a.get("services", {}).get("docs", True)]
@@ -1726,8 +2000,11 @@ def _tool_open_url(inp):
                 action_description=(
                     "Open Google's OAuth consent screen to link Calendar "
                     "(read-only) and Gmail (read-only) to Friday. One-time "
-                    "authorization. Friday never requests the gmail.send "
-                    "scope — it cannot send email on your behalf."
+                    "authorization. This connection does NOT include "
+                    "permission to send mail: sending is a separate scope, "
+                    "asked for only when you tick it yourself in Settings, "
+                    "and every individual message still waits for your "
+                    "approval."
                 ),
                 force_gate=True, payload={"url": url},
             )
@@ -2070,6 +2347,27 @@ def _resolve_workspace(name):
         return None
     low = re.sub(r'\s+', ' ', str(name).lower()).strip().strip('"').strip("'")
     low = re.sub(r'^(the|my|a|an)\s+', '', low).strip()
+    # TRAILING POLITENESS IS AS COMMON AS LEADING POLITENESS, AND USED TO BE FATAL.
+    #
+    # _OPEN_VERB_RE eats a leading "please "; its target group is `(.+?)[\s?.!]*$`,
+    # which does not, so "open workflows please" arrives here as
+    # "workflows please" and resolves to nothing. The request then falls through
+    # to the model, which narrates a navigation it never performed — the exact
+    # failure logged on 2026-09-09 at 16:39:24, where "open workflows please"
+    # was answered with "Navigating you to the Code workspace" and no
+    # navigation occurred.
+    #
+    # Every switch that worked that session had FRONT-loaded politeness
+    # ("Please open settings."); both that failed had it at the back. The
+    # asymmetry was the whole bug. Stripped repeatedly so "please now" and
+    # "for me thanks" both reduce.
+    _tail = (r'\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
+             r'right now|real quick|if you can|would you|will you)$')
+    while True:
+        _stripped = re.sub(_tail, '', low).strip()
+        if _stripped == low:
+            break
+        low = _stripped
     # Try the full phrase first so a legitimate multi-word alias ("front page",
     # "people graph", "trust score") isn't destroyed by the trailing-noise
     # stripper below — "page" would otherwise turn "front page" into "front".
@@ -2252,17 +2550,63 @@ def _tool_switch_model(inp):
 
 
 def _tool_draft_email(inp):
-    """Compose an email. The native Google integration is READ-ONLY, so composing
-    needs a write-enabled Gmail connection (the gmail-mcp connector can send once
-    authenticated). Report accurately and offer setup — never 'not installed'."""
-    to = ((inp or {}).get('to') or '').strip()
-    subject = ((inp or {}).get('subject') or '').strip()
-    return ("Sending/drafting email needs a write-enabled Gmail connection. Gmail is "
-            "built in but currently read-only / not yet authenticated for sending. Tell "
-            "the user you can read and search their mail once connected, and that sending "
-            "needs the Gmail connector authenticated (its `authenticate` tool, or connect "
-            "at /api/google/auth). OFFER to walk them through it — do NOT say you can't "
-            f"email. (Draft was to={to!r}, subject={subject!r}.)")
+    """Queue an email for the owner's approval. Cannot send.
+
+    The tool the model can reach is deliberately the one that ASKS. There is
+    no agent tool that delivers a message: services/gmail_send.send() runs
+    only from the approval hook or an explicit HTTP call, so no amount of
+    tool-calling — by this model, by a subagent, or by the unattended
+    self-improvement loop at 3am — produces a sent message without a human
+    decision in between.
+    """
+    inp = inp or {}
+    try:
+        from agent_friday.services import gmail_send as gs
+    except Exception as e:
+        return json.dumps({"error": f"gmail_send unavailable: {e}"})
+    try:
+        result = gs.request_send(
+            to=(inp.get('to') or '').strip(),
+            subject=(inp.get('subject') or '').strip(),
+            body=inp.get('body') or '',
+            cc=(inp.get('cc') or '').strip() or None,
+            account_id=(inp.get('account_id') or '').strip() or None,
+            requested_by="friday:draft_email",
+        )
+    except gs.SendRefused as e:
+        return json.dumps({"sent": False, "queued": False, "reason": str(e)})
+    except Exception as e:
+        return json.dumps({"sent": False, "queued": False,
+                           "reason": f"could not queue the message: {e}"})
+    appr = result.get("approval") or {}
+    return json.dumps({
+        "sent": False,
+        "queued": True,
+        "approval_id": result.get("approval_id"),
+        "from": (appr.get("payload") or {}).get("from_email"),
+        "note": ("The message is WAITING FOR THE USER'S APPROVAL and has not "
+                 "been sent. Tell them it's queued and that approving the "
+                 "card sends it. Do not say you sent it, and do not call "
+                 "this tool again for the same message."),
+    }, default=str)
+
+
+def _tool_list_sending_accounts(_inp):
+    """Which connected accounts may send. Reports granted scopes, not asked ones."""
+    try:
+        from agent_friday.services import gmail_send as gs
+    except Exception as e:
+        return json.dumps({"error": f"gmail_send unavailable: {e}"})
+    accounts = gs.sendable_accounts()
+    return json.dumps({
+        "accounts": accounts,
+        "can_send": bool(accounts),
+        "note": ("" if accounts else
+                 "No connected account has been granted permission to send. "
+                 "The user grants it at Settings → Connectors → Google → Add "
+                 "account, with \"allow sending\" ticked. This is a "
+                 "permission, not a bug — don't try another route."),
+    }, default=str)
 
 
 def _tool_get_career_pipeline(_inp):
@@ -2927,7 +3271,85 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         try:
             _heartbeat.stop()
         finally:
+            # Defect E: free the seat and promote the next queued task. A
+            # promotion failure must not eat the journal pop, hence the guard.
+            try:
+                _seat_supervisor().on_task_end(task_id)
+            except Exception:
+                pass
             _tj.pop_task()
+
+
+# --- Defect E: seat-supervisor wiring (admission / promotion / watchdog) ---
+# Deferred worker threads live HERE, not on the task record: TASKS records are
+# JSON-serialized into the journal, and a Thread object must never ride along.
+_PENDING_TASK_THREADS = {}
+_PENDING_TASK_THREADS_LOCK = threading.Lock()
+_SEAT_SUPERVISOR = None
+_SEAT_SUPERVISOR_LOCK = threading.Lock()
+
+
+def _resolve_seat_for_model(model):
+    """Map a task's model id to a seat id.
+
+    Router convention (seat_select): a colon in the model id marks a local
+    seat (e.g. 'bonsai2:27b'); cloud model ids carry none.
+    """
+    mid = (model or '').strip()
+    if not mid:
+        return 'cloud/default'
+    return ('local/' + mid) if ':' in mid else ('cloud/' + mid)
+
+
+def _admission_seat_for(model):
+    """Admission-honest seat for a task record (Defect F).
+
+    An undeclared model must queue under the seat it will ACTUALLY run on:
+    the router's real prediction (_predict_route_provider), not the
+    historical hardcoded cloud default that exempted it from local-seat
+    admission. A resolver fault fails LOCAL (seat_admission.FAIL_SAFE_SEAT)
+    -- degradation moves toward the constrained seat, never away from it.
+    Declared models classify via seat_admission's conservative marker list
+    (unrecognized -> cloud, which only ever over-queues).
+    """
+    from agent_friday.services import seat_admission as _sa
+
+    def _router_default_seat():
+        provider = _predict_route_provider(has_tools=True)
+        return 'local/default' if provider == 'local' else 'cloud/default'
+
+    return _sa.resolve_admission_seat(
+        {'model': model}, default_seat_resolver=_router_default_seat)
+
+
+def _start_pending_task_thread(task_id):
+    """Thread factory for FIFO promotion: start a deferred worker thread."""
+    with _PENDING_TASK_THREADS_LOCK:
+        th = _PENDING_TASK_THREADS.pop(task_id, None)
+    if th is None:
+        return False
+    th.start()
+    return True
+
+
+def _seat_supervisor():
+    """The process-wide seat supervisor, created lazily, started once.
+
+    reclaim_seat stays None deliberately: tier-2 process reclaim needs the
+    residency arbiter's cooperation and ships as its own change with its own
+    tests. Tier 1 (mark failed, free seat, promote) is fully live.
+    """
+    global _SEAT_SUPERVISOR
+    with _SEAT_SUPERVISOR_LOCK:
+        if _SEAT_SUPERVISOR is None:
+            from agent_friday.services import seat_supervisor as _ss
+            sup = _ss.SeatSupervisor(
+                thread_factory=_start_pending_task_thread,
+                reclaim_seat=None,
+            )
+            sup.start()
+            _SEAT_SUPERVISOR = sup
+        return _SEAT_SUPERVISOR
 
 
 def _report_task_completion(task_id, name, status, result_text):
@@ -2965,8 +3387,21 @@ def _report_task_completion(task_id, name, status, result_text):
 
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
-                model=None, tools=None):
+                model=None, tools=None, conversation_id=None):
     """Spawn a background task.
+
+    conversation_id: WHERE THIS TASK REPORTS. Without it a task belongs to
+        nobody, and `reconcile.resolve` sends everything it has to say to Main
+        - so a workflow step that dies explains itself in a conversation the
+        user is not reading.
+
+        That is not hypothetical. On 2026-09-19 a workflow step came back
+        "interrupted" twice with no reason, and hours went into theorising
+        about model capability and spec quality. The reason existed the whole
+        time: `reconcile_tasks` writes "Interrupted by a restart - this was a
+        free-form run and its state lived in a process that no longer exists."
+        It went to Main. The person was in a different chat, and the assistant
+        in that chat correctly reported that it could not see why.
 
     tools: optional list of CLAUDE_TOOLS names to narrow this task's registry
         to (see _task_worker). None keeps the default full registry.
@@ -3014,6 +3449,16 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'chain': chain,
             'chain_step': chain_step,
             'model': model,
+            # Who this task answers to. `reconcile` reads this to decide where
+            # an interruption notice goes; None means Main, which is where
+            # explanations go to be unread.
+            'conversation_id': conversation_id,
+            # Defect E: seat-supervisor admission fields. The queue keys on
+            # id + seat; the watchdog view reads tool_calls off the record.
+            'id': task_id,
+            'seat': (_admitted_seat := _admission_seat_for(model)),
+            'seat_is_local': _admitted_seat.startswith('local/'),
+            'tool_calls': 0,
         }
     # Durable from the first instant (TV2): the created event, the state
     # snapshot and the index row exist before the worker thread starts, so
@@ -3061,7 +3506,27 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         for _dead in [k for k, v in TASK_THREADS.items() if not v.is_alive()]:
             TASK_THREADS.pop(_dead, None)
         TASK_THREADS[task_id] = th
-    th.start()
+    # Defect E: admission through the seat supervisor. A busy local seat
+    # queues the task (NO thread start) with an honest status and the
+    # user-facing notice that local AI runs one job at a time; the
+    # supervisor promotes FIFO when the seat frees. FAIL-OPEN: a supervisor
+    # error must never strand a task, so on any exception the thread starts
+    # unconditionally, exactly as before this change.
+    try:
+        _admission = _seat_supervisor().wire_spawn(TASKS[task_id])
+    except Exception as _sup_err:
+        _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
+        _admission = 'running'
+    if _admission == 'queued-for-seat':
+        with _PENDING_TASK_THREADS_LOCK:
+            _PENDING_TASK_THREADS[task_id] = th
+        _task_log(task_id, 'queued-for-seat: local seat busy; this task starts when the seat frees. Local AI runs one job at a time and needs time to run.')
+        try:
+            _journal_state(task_id)
+        except Exception:
+            pass
+    else:
+        th.start()
     return task_id
 
 
@@ -3158,8 +3623,14 @@ def delete_workflow_chain(name):
     return False
 
 
-def run_workflow_chain(name):
-    """Kick off a stored chain at step 0. Returns the first task_id (or None)."""
+def run_workflow_chain(name, conversation_id=None):
+    """Kick off a stored chain at step 0. Returns the first task_id (or None).
+
+    `conversation_id` is where the chain reports. Without it every notice a
+    step has to give - including "I was interrupted by a restart" - is filed
+    in Main, and the person who started the chain never sees it. See
+    `_spawn_task` for the evening that cost.
+    """
     chain = load_workflow_chain(name)
     if not chain:
         return None
@@ -3174,6 +3645,7 @@ def run_workflow_chain(name):
         description=f"Chain '{chain.get('name')}' · step 1/{len(steps)}",
         chain=slug, chain_step=0,
         model=first.get('seat') or chain.get('seat'),
+        conversation_id=conversation_id,
     )
 
 
@@ -3224,6 +3696,15 @@ def chain_run_status(name):
             'ended': (row or {}).get('ended'),
             'result_tail': ((row or {}).get('result') or '')[-400:],
             'log_tail': ((row or {}).get('log') or [])[-3:],
+            # WHY, next to WHAT. A status word with no cause is a dead end,
+            # and a dead end is where invented explanations come from - two
+            # evenings were spent theorising about model capability for a step
+            # that had simply been killed by a restart, with the reason
+            # written down the whole time.
+            'reason': ((row or {}).get('status_reason')
+                       or ((row or {}).get('log') or [None])[-1]
+                       if (row or {}).get('status') in
+                       ('interrupted', 'failed') else None),
         })
     running = any(s['status'] in ('queued', 'running') for s in out_steps)
     failed = any(s['status'] == 'failed' for s in out_steps)
@@ -3264,7 +3745,8 @@ def _tool_run_workflow(inp):
     name = (inp.get('name') or '').strip()
     if not name:
         return "run_workflow error: 'name' is required."
-    tid = run_workflow_chain(name)
+    # The chain reports back where it was started from, not into Main.
+    tid = run_workflow_chain(name, conversation_id=_CURRENT_CONVERSATION.get())
     if not tid:
         return "run_workflow error: no chain named %r (or it has no steps)." % name
     return ("workflow '%s' started (first task %s). Steps auto-advance; check "
@@ -3284,6 +3766,13 @@ def _tool_workflow_status(inp):
     lines = ["%s: %s" % (st['name'], st['state'])]
     for s in st['steps']:
         lines.append("  %d. %s - %s" % (s['index'] + 1, s['name'], s['status']))
+        # THE REASON, WHERE THE STATUS IS. This tool returned a bare status
+        # word, so a step that died gave the model nothing to reason from and
+        # the only honest answer was "I cannot see why" - which is what
+        # happened twice on 2026-09-19, for a step that had been killed by a
+        # server restart with the cause written down each time.
+        if s.get('reason'):
+            lines.append("     reason: %s" % str(s['reason'])[:300])
         if s['status'] == 'failed' and s.get('result_tail'):
             lines.append("     failure tail: %s" % s['result_tail'][-200:])
     return "\n".join(lines)
@@ -3397,6 +3886,12 @@ _CHAIN_FAILURE_SIGNATURES = (
     "http 404",
     "connection refused",
     "no local seat available",
+    # The harness's own empty-response apology: a seat that answered twice
+    # with nothing produced no work product. Advancing it as a completed
+    # step feeds the apology to the next step as context (observed 2026-09-20,
+    # rsi-phase1-implement). Retry it like any other provider failure.
+    "fault on this end, not an answer",
+    "returned an empty response",
 )
 
 
@@ -3487,11 +3982,52 @@ def _tool_spawn_task(inp):
     on_complete = (inp or {}).get('on_complete')
     if on_complete is not None and not isinstance(on_complete, dict):
         on_complete = None
-    tid = _spawn_task(name, prompt, desc, on_complete=on_complete)
+
+    # TIER: which KIND of model should pick this up (spec 3.1). Optional, and
+    # omitting it keeps the previous behaviour exactly - whatever seat the
+    # background worker would have used.
+    #
+    # A TIER THAT CANNOT BE SERVED IS REPORTED, NOT SUBSTITUTED. Asking for
+    # `large_local` when the 27B is not loaded gets a refusal naming what is
+    # loaded, never the cloud with a shrug and never a 4B wearing the 27B's
+    # name. Silent substitution across the local/cloud line is the failure
+    # that cost a day on 2026-09-18: a local model quietly stopped being
+    # local and nothing on screen said so.
+    _tier = ((inp or {}).get('tier') or '').strip().lower()
+    _model = None
+    _tier_note = ''
+    if _tier:
+        from agent_friday.services import tiers as _tiers
+        res = _tiers.resolve(_tier)
+        if not res.ok:
+            return json.dumps({
+                'status': 'refused',
+                'tier': _tier,
+                'message': ("Did not spawn '%s': %s. Say so plainly rather "
+                            "than starting it somewhere else."
+                            % (name, res.reason)),
+            })
+        if not res.is_local:
+            # Escalation off the machine surfaces to the user rather than
+            # spending quietly. The consent record and cost ledger already
+            # exist; this is the seam that makes a tier request use them.
+            _tier_note = (" This one runs on %s, which is off-device and "
+                          "billed." % res.model)
+        elif res.reason:
+            _tier_note = " (%s)" % res.reason
+        _model = res.model
+
+    tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
+                      model=_model)
     return json.dumps({
         'task_id': tid,
         'status': 'running',
-        'message': f"Spawned background task '{name}'. The user can watch progress in the Task Tray (bottom-right) and you can tell them you've started working on it.",
+        'tier': _tier or None,
+        'model': _model,
+        'message': (f"Spawned background task '{name}'." + _tier_note
+                    + " The user can watch progress in the Task Tray "
+                      "(bottom-right) and you can tell them you've started "
+                      "working on it."),
     })
 
 
@@ -3505,6 +4041,22 @@ CLAUDE_TOOLS.append({
             "name": {"type": "string", "description": "Short, human-readable task title (e.g., 'Research Bobby Tahir')."},
             "description": {"type": "string", "description": "Optional one-line subtitle shown in the Task Tray."},
             "prompt": {"type": "string", "description": "The full instruction the background agent should execute."},
+            "tier": {
+                "type": "string",
+                "enum": ["small_local", "large_local", "cloud_frontier"],
+                "description": (
+                    "Optional. Which KIND of model should pick this up, by "
+                    "cost and reach rather than by name. small_local: "
+                    "on-device and fast, for short judgements where latency "
+                    "matters more than depth. large_local: on-device and "
+                    "capable but slow, for real work that must not leave the "
+                    "machine. cloud_frontier: off-device, fastest and most "
+                    "capable, COSTS MONEY and SENDS DATA off the machine — "
+                    "ask for it only when the work genuinely needs it. Omit "
+                    "to use whatever seat is already serving. If the tier "
+                    "cannot be served the task is REFUSED with a reason; "
+                    "nothing is quietly run somewhere else."),
+            },
             "on_complete": {
                 "type": "object",
                 "description": "Optional follow-up to chain after this task finishes. {\"spawn\": \"<next task title>\", \"prompt\": \"<full instruction for the next task>\", \"with_context\": true} — when set, that follow-up auto-starts on success, and (if with_context) this task's result is fed in as its context.",
@@ -3895,9 +4447,48 @@ def _creative_result_summary(res, kind):
         }, default=str)
     if status == "blocked":
         return f"[CONTENT SAFETY] {res.get('reason')}"
+    if status == "refused":
+        # A REFUSAL IS AN ANSWER, AND THIS IS WHERE IT USED TO DIE.
+        #
+        # local_image.generate() returns {"status": "refused", "reason": ...,
+        # "rule_id": ...} when the Arbiter declines the GPU -- and the reason it
+        # hands back is already written for a human, e.g. "not enough VRAM left
+        # for the desktop: 448 MiB free against a 2560 MiB display reserve
+        # (short by 2112) ... free the card or close a display-heavy app first."
+        #
+        # Every branch below read `message`. Nothing ever read `reason`. So a
+        # refusal fell through to the last line and the model was told exactly
+        # four words: "image generation failed." Friday then had to explain a
+        # failure whose cause had been deleted one function earlier, and on
+        # 2026-09-10 she told Stephen she had no visibility into VRAM at all --
+        # which was true, because this line had thrown it away.
+        why = res.get("reason") or res.get("message") or "no reason given"
+        rule = res.get("rule_id")
+        opts = res.get("options") or []
+        blocking = res.get("blocking") or []
+        parts = ["%s generation was REFUSED (not attempted). Why: %s" % (kind, why)]
+        if rule:
+            parts.append("Rule: %s." % rule)
+        if blocking:
+            parts.append("Holding the resource: " + "; ".join(
+                "%s (%s %s)" % (b.get("holder"), b.get("amount"), b.get("unit") or "")
+                for b in blocking if isinstance(b, dict)))
+        if opts:
+            parts.append("Options available: " + "; ".join(
+                str(o.get("description") or o.get("kind"))
+                for o in opts if isinstance(o, dict)))
+        parts.append("Tell the user this was refused rather than broken, give "
+                     "them the reason in plain words, and offer the options. "
+                     "Do not retry blindly and do not claim you lack "
+                     "visibility into it -- the reason is above.")
+        return " ".join(parts)
     if status == "unavailable":
-        return res.get("message") or f"{kind} generation is unavailable (no Gemini key)."
-    return res.get("message") or f"{kind} generation failed."
+        return (res.get("message") or res.get("reason")
+                or f"{kind} generation is unavailable (no Gemini key).")
+    # `reason` is read here too: several engines set it instead of `message`,
+    # and a bare "failed" is the least useful true sentence available.
+    return (res.get("message") or res.get("reason")
+            or f"{kind} generation failed (the engine gave no reason).")
 
 
 def _tool_epistemic_score(inp):
@@ -3951,6 +4542,7 @@ CLAUDE_TOOL_HANDLERS = {
     "navigate": _tool_navigate,
     "switch_model": _tool_switch_model,
     "draft_email": _tool_draft_email,
+    "list_sending_accounts": _tool_list_sending_accounts,
     "get_career_pipeline": _tool_get_career_pipeline,
     "get_briefing": _tool_get_briefing,
     "spawn_task": _tool_spawn_task,
@@ -4321,7 +4913,8 @@ TOOL_RINGS: dict[str, int] = {
     "update_task":          2,
     "delete_task":          2,   # irreversible — also gated by _ALWAYS_CONFIRM
     "search_contacts":      2,
-    "draft_email":          2,
+    "draft_email":          2,   # queues an approval; cannot itself send
+    "list_sending_accounts": 2,
     "open_url":             2,
     "open_path":            2,
     "spawn_task":           2,
@@ -5301,6 +5894,18 @@ def _vault_read_text(path) -> str:
     during rollover). Raises on an encrypted blob with no/incorrect key.
     """
     raw = Path(path).read_bytes()
+    # KEYSTORE FIRST. A file re-sealed under Friday's own root key
+    # (privacy/vault_rekey.py) carries the keystore envelope, and the whole
+    # point of moving it there is that reading it no longer depends on a
+    # passphrase that half the launchers do not set. Tried before the
+    # passphrase path so a rekeyed file opens even when no passphrase exists
+    # at all - which is the state this machine is heading for.
+    try:
+        from agent_friday.services import keystore as _ks
+        if _ks.is_keystore_blob(raw):
+            return _ks.decrypt(raw).decode("utf-8")
+    except ImportError:
+        pass
     key = _get_vault_key()
     if _HAS_VAULT_CRYPTO and _vc.is_encrypted(raw):
         if key is None:
@@ -5630,6 +6235,17 @@ def _task_log_tool(session_ctx, name, args):
     tid = (session_ctx or {}).get("task_id")
     if not tid:
         return
+    # Defect E: tool-call bookkeeping. Without this bump every healthy task
+    # carries tool_calls=0 forever and reads as the zero-tool-call wedge
+    # signature; the watchdog would rule it 'stuck'. This field is the
+    # watchdog's ground truth for liveness.
+    try:
+        with TASKS_LOCK:
+            _rec = TASKS.get(tid)
+            if _rec is not None:
+                _rec['tool_calls'] = int(_rec.get('tool_calls') or 0) + 1
+    except Exception:
+        pass
     try:
         detail = ""
         if isinstance(args, dict) and args:
@@ -5745,7 +6361,19 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         return verdict.reason
 
     try:
-        result = handler(ctx.input)
+        # WHICH CONVERSATION IS ASKING. Handlers take only their input, so a
+        # tool that spawns background work had no way to say where that work
+        # should report - and everything it had to say went to Main, which is
+        # where explanations go to be unread. Set around the call rather than
+        # threaded through sixty handler signatures; a ContextVar because
+        # tasks run in threads and a module global would cross-talk.
+        _tok = _CURRENT_CONVERSATION.set(
+            ((session_ctx or {}).get("conversation_id")
+             or (session_ctx or {}).get("conversation")) or None)
+        try:
+            result = handler(ctx.input)
+        finally:
+            _CURRENT_CONVERSATION.reset(_tok)
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
@@ -7093,7 +7721,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
-                      meter_provider=None, orb_id=None):
+                      meter_provider=None, orb_id=None, seat=None,
+                      catalogue_all=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
     provider — local Ollama (gemma4 et al.) AND cloud OpenAI/OpenRouter.
 
@@ -7125,7 +7754,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # and a single ledger event is recorded at each completion path.
     _led_t0 = _time.time()
     _led_tok = {"in": 0, "out": 0}
-    _led_seat = "local" if provider == "local" else "openai"
+    # `provider` is the loop DIALECT ("openai" for anything OpenAI-shaped),
+    # which is not the same question as WHERE the work ran. Friday's own
+    # llama-server seats reach this loop as provider="openai", so every local
+    # turn was filed in the activity ledger as seat="openai" -- on-device work
+    # displayed as cloud. The caller knows the truth; let it say so.
+    _led_seat = seat or ("local" if provider == "local" else "openai")
 
     def _led_done():
         _ledger_model_invocation(
@@ -7138,6 +7772,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         convo = _compaction.maybe_compact(convo, model=model)
     except Exception:
         pass
+    # The full registry, for `load_tools` to draw from. None means progressive
+    # disclosure is off and the loop behaves exactly as it always has.
+    from agent_friday.services import tool_catalogue as _TC
+    _catalogue_all = catalogue_all
+
     loops = max_iters if oai_tools else 1
     _empty_retried = False
     _tj_loop = _journal()
@@ -7289,6 +7928,43 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
+
+            # ── Progressive disclosure: the model asks for schemas ──────────
+            #
+            # `load_tools` is not a tool in the registry and never reaches
+            # _execute_tool or the vault gate - it hands the model more of the
+            # tool list it was already entitled to, which is a wire-format
+            # concern rather than an action. Handled here because this is the
+            # only place that owns `oai_tools` across rounds: the set sent on
+            # the next call is the set this loop is holding.
+            #
+            # See services/tool_catalogue.py for why. In short: 13,300 tokens
+            # of schema, 41% of a 32,768 window, to answer questions that call
+            # two tools.
+            if tname == _TC.LOADER_NAME:
+                try:
+                    _raw0 = fn.get("arguments")
+                    _a = (json.loads(_raw0) if isinstance(_raw0, str)
+                          else (_raw0 or {}))
+                    _want = _a.get("names") or []
+                except Exception:
+                    _want = []
+                _new, _msg = _TC.expand(_catalogue_all or [], _want, oai_tools)
+                if _new:
+                    try:
+                        from agent_friday.routing.model_router import (
+                            anthropic_to_openai_tools as _a2o)
+                        oai_tools = (oai_tools or []) + _a2o(_new)
+                    except Exception:
+                        # Could not convert: say so rather than leaving the
+                        # model waiting for schemas that will never arrive.
+                        _msg = ("Could not load those schemas on this seat. "
+                                "Answer with the tools you already have.")
+                tool_trace.append({"name": tname, "input": {"names": _want},
+                                   "result": _msg})
+                convo.append({"role": "tool", "tool_call_id": tcid,
+                              "content": _msg})
+                continue
             # Two wire shapes; assuming only one of them silently destroys
             # every local tool call that takes an argument.
             #
@@ -7342,6 +8018,32 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                   "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
                                              f"data — switch to a local model to access it."})
                     continue
+
+            # A TOOL CALLED WITHOUT ITS SCHEMA STILL RUNS - and now arrives
+            # for the next round.
+            #
+            # `_execute_tool` dispatches by name out of CLAUDE_TOOL_HANDLERS
+            # and never consults the list the model was sent, so under
+            # progressive disclosure a model that skips `load_tools` and calls
+            # something directly is not blocked. What it lacks is the argument
+            # shape. Pulling the schema in here means the SECOND attempt is
+            # well-formed, which turns "guessed wrong twice" into "guessed
+            # wrong once".
+            if _catalogue_all and tname != _TC.LOADER_NAME:
+                _known = {(t.get("function") or t).get("name")
+                          for t in (oai_tools or [])}
+                if tname not in _known:
+                    _late, _ = _TC.expand(_catalogue_all, [tname], oai_tools)
+                    if _late:
+                        try:
+                            from agent_friday.routing.model_router import (
+                                anthropic_to_openai_tools as _a2o)
+                            oai_tools = (oai_tools or []) + _a2o(_late)
+                            print("  [tools] %s was called without being "
+                                  "loaded; schema added for the next round"
+                                  % tname, flush=True)
+                        except Exception:
+                            pass
 
             _task_log_tool(session_ctx, tname, targs)
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,

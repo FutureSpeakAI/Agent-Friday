@@ -54,14 +54,14 @@ def test_resolve_tier_cpu_for_local_default():
 
 def test_resolve_tier_gpu_when_ready(monkeypatch):
     eng = LocalVoiceEngine()
-    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda: True)
+    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda **_k: True)
     assert eng.resolve_tier({"voice_engine": "local-gpu"}) == "gpu"
     assert eng.resolve_tier({"voice_engine": "auto"}) == "gpu"
 
 
 def test_resolve_tier_gpu_falls_back_to_cpu_when_not_ready(monkeypatch):
     eng = LocalVoiceEngine()
-    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda: False)
+    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda **_k: False)
     assert eng.resolve_tier({"voice_engine": "local-gpu"}) == "cpu"
     assert eng.resolve_tier({"voice_engine": "auto"}) == "cpu"
 
@@ -115,7 +115,7 @@ def test_ensure_ready_gpu_preflight_fallback_to_cpu(monkeypatch):
     # GPU requested but not runnable → swap to CPU BEFORE importing the heavy
     # stack, then load the CPU backends successfully.
     eng = LocalVoiceEngine()
-    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda: False)
+    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda **_k: False)
     monkeypatch.setattr(lv, "deps_installed", lambda: True)
     monkeypatch.setattr(lv, "WhisperASR", _FakeASR)
     monkeypatch.setattr(lv, "PiperTTS", _FakeTTS)
@@ -130,7 +130,7 @@ def test_ensure_ready_gpu_preflight_fallback_to_cpu(monkeypatch):
 def test_ensure_ready_gpu_load_failure_falls_back_to_cpu(monkeypatch):
     # GPU is "ready" so we try it, but the NeMo load raises → fall back to CPU.
     eng = LocalVoiceEngine()
-    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda: True)
+    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda **_k: True)
     monkeypatch.setattr(nv, "nemo_deps_installed", lambda: True)
     monkeypatch.setattr(nv, "NeMoASR", _ExplodingASR)
     monkeypatch.setattr(nv, "NeMoTTS", _FakeTTS)
@@ -145,7 +145,7 @@ def test_ensure_ready_gpu_load_failure_falls_back_to_cpu(monkeypatch):
 
 def test_ensure_ready_returns_false_when_no_tier_deps(monkeypatch):
     eng = LocalVoiceEngine()
-    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda: False)
+    monkeypatch.setattr(eng, "_gpu_tier_ready", lambda **_k: False)
     monkeypatch.setattr(lv, "deps_installed", lambda: False)
     eng.select_tier("cpu")
     assert eng.ensure_ready() is False

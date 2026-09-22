@@ -37,6 +37,11 @@ def test_benign_query_still_reaches_a_backend(monkeypatch):
     seen = []
     monkeypatch.setattr(ws, "_brave", lambda q, c: seen.append(q) or {"status": ws.SearchStatus.OK, "results": [{"title": "t", "url": "http://x", "snippet": "s"}]})
     monkeypatch.setattr(ws, "_firecrawl_ready", lambda: False)
+    # wigolo answers first and is keyless, so on a machine where it is running
+    # the query reaches IT and never reaches the backend this test is watching.
+    # The assertion is about the gate letting a benign query through, not about
+    # which backend serves it.
+    monkeypatch.setattr(ws, "_wigolo_ready", lambda: False)
     monkeypatch.setattr(ws, "brave_key", lambda: "fake-key")
 
     out = ws.search("what's the weather in Denver")

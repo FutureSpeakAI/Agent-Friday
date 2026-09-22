@@ -1,4 +1,4 @@
-﻿"""
+"""
 FRIDAY Desktop v4.4 — Phase B OS Backend
 Flask server with live data endpoints + Gemini creative API integration.
 Powered by FutureSpeak.AI
@@ -1011,6 +1011,13 @@ def get_genai_client():
 # shape as get_genai_client()/get_anthropic_client() re-checking on first use.
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")  # pragma: allowlist secret
 
+# -- Inworld (cloud voice, Tier-3 sibling) ---------------------------
+# Same lazy shape as ELEVENLABS_API_KEY above: env only at module scope, with
+# the settings.json fallback happening in services/cloud_voice.py:_api_key().
+# Whether Inworld has an ElevenLabs-style key-id trap is UNVERIFIED (spec Q5),
+# so no format assertion is made about this value anywhere.
+INWORLD_API_KEY = os.environ.get("INWORLD_API_KEY", "")  # pragma: allowlist secret
+
 
 # ── Anthropic Claude (text reasoning + chat) ───────────────────
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -1567,6 +1574,14 @@ DEFAULT_SETTINGS = {
     # egress_mode and the top-level vault_local_only (docs/design/
     # security-boundary.md #18).
     "knowledge_graph": {},
+    # Top-level wiki sections whose pages never enter the ambient knowledge
+    # block for a cloud provider and are encrypted at rest with the vault
+    # key (services/wiki_engine._wiki_encrypted_sections, knowledge_graph/
+    # integration.knowledge_context_block). Read by both since 2026-08, but
+    # ABSENT here until 2026-09-17, so the whitelist read above discarded it
+    # on every load: the feature could not be switched on from settings.json
+    # at all. The Privacy tab's checklist writes it (model-soup.md §11.4).
+    "wiki_encrypted_sections": [],
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
@@ -1621,15 +1636,63 @@ DEFAULT_SETTINGS = {
     "voice_engine": "local",
     "local_voice_asr_model": "small",      # Tier-1 faster-whisper size: tiny|base|small|medium
     "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
+    # Which synthesizer the Tier-1 (CPU) path uses. Piper is the default and
+    # stays the default: it is the only local synthesizer that runs acceptably
+    # without a GPU. Kokoro is an ADDITION, selected explicitly, and refuses
+    # rather than silently degrading when it cannot run (see kokoro_voice.py).
+    #   "piper"  — faster-whisper's companion; CPU-capable; GPL-3.0 since Oct 2025
+    #   "kokoro" — Kokoro-82M (Apache-2.0); needs CUDA; higher quality
+    # These three MUST live here. `_load_settings_raw()` drops any persisted key
+    # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
+    # dict does not declare is a control that saves, reports success, and
+    # reverts on the next read — the failure mode recorded in
+    # docs/history/audits/2026-09-04-five-dead-settings.md.
+    "local_voice_tts_engine": "piper",
+    "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
+    "local_voice_kokoro_allow_cpu": False,    # let Kokoro run on CPU (slow; off by design)
     # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
     # tier. Override the ASR id to a sibling (e.g. the English-only streaming
     # model) if desired; the TTS pair (FastPitch+HiFi-GAN) is fixed for v1.
     "local_voice_gpu_asr_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
     "local_voice_gpu_tts": "fastpitch-hifigan",
     "voice_silence_ms": 800,               # trailing silence (ms) that ends a local-voice turn
+    # Clean-sheet voice (docs/design/active/voice-system-clean-sheet.md §8.1):
+    # per-stage GPU policy read by services/voice_manifest.read_selection()
+    # and enforced by its proofs ("required" refuses a CPU engine); idle
+    # unload read by the voice workers' lease TTL. Declared here so they
+    # survive a reload (the dead-settings rule).
+    "voice_ear_gpu": "if_free",            # never | if_free | required
+    "voice_mouth_gpu": "if_free",          # never | if_free | required
+    "voice_idle_unload_s": 600,            # GPU voice worker idle unload (s)
     # These three are written by the Settings→Voice UI. _load_settings_raw()
     # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
     # here silently reverts on every reload even though the save "succeeded".
+    # -- Cloud voice providers (docs/design/active/cloud-voice-providers.md) --
+    # Tier-3 SIBLINGS, never a default. `voice_engine` gains the values
+    # "elevenlabs" and "inworld" (also accepted as "cloud:<name>"), read by
+    # services/cloud_voice.py:resolve_provider(). Every key below has a real
+    # enforcement point in that module or in routes/cloud_voice_routes.py --
+    # none is a prop. They MUST be declared here: _load_settings_raw()
+    # whitelists against this dict, so a key the service layer reads but this
+    # dict does not declare saves, reports success, and reverts on the next
+    # read (docs/decisions/2026-09-04-five-dead-settings.md).
+    #
+    # NOTE: `elevenlabs_api_key`, `elevenlabs_model` and `elevenlabs_voice_id`
+    # were ALREADY read by services/elevenlabs_tools.py and were NOT declared
+    # here -- live instances of that same defect, found while implementing this
+    # spec and fixed below. See the report accompanying this change.
+    "elevenlabs_api_key": "",   # key material, never committed; env wins over this
+    "elevenlabs_model": "eleven_flash_v2_5",       # cloud_voice.selected_model()
+    "elevenlabs_voice_id": "",  # "" = provider default; cloud_voice.selected_voice()
+    "inworld_api_key": "",
+    "inworld_model": "inworld-tts-2-flash",
+    "inworld_voice_id": "",
+    # Q4: Inworld's rate is tier-dependent while ElevenLabs' is flat, so a
+    # single PRICING row over-reports for anyone off On-Demand. Making the tier
+    # an input is the spec's own second option: any value but "on_demand"
+    # meters under an UNPRICED id and renders "not priced" rather than a wrong
+    # number. Enforced in cloud_voice.meter_model_id().
+    "inworld_plan_tier": "on_demand",      # on_demand | growth | enterprise
     "voice_tools": True,                   # let live voice sessions call Friday's tools
     "audio_input_device_id": "",           # preferred mic (browser deviceId); "" = system default
     "audio_output_device_id": "",          # preferred speaker (browser deviceId); "" = system default
@@ -1651,6 +1714,34 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    # Which scorer answers Friday's typed judgments (services/decisions.py).
+    # "keyword" is today's substring scan and stays the default until another
+    # backend is MEASURED to beat it on the log that module now keeps. An
+    # unregistered name falls back to "keyword" loudly rather than raising —
+    # a typo here must not be able to take the approval gate offline.
+    "decision_backend": "keyword",
+    # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.
+    #
+    # NOT `dock_layout`. That name was already taken at line ~2035 by the
+    # distribution preset ("standard" | "journalism" | "developer" | ...), and a
+    # second entry under the same name in this dict literal would have been
+    # silently shadowed by the later one — a control that saves, reports success,
+    # and does nothing, which is the exact defect scripts/check_settings_readers.py
+    # exists to catch. (Separately: grep finds no reader for that preset anywhere,
+    # so it appears to be a sixth dead setting. Not fixed here; noted.)
+    #
+    # Empty means UNCONFIGURED, and show_all_workspaces above governs exactly as
+    # it always has. The moment an arrangement exists it wins outright, because
+    # two switches over one dock is how you get a control that appears to do
+    # nothing. Settings → Dock says so, and the quick toggle disables itself
+    # rather than silently losing the argument.
+    #
+    # `order` is a flat list across all three dock groups. Group separators are
+    # DERIVED from it — a separator renders wherever two adjacent items belong to
+    # different groups — so leaving the default order reproduces today's dock
+    # exactly, and interleaving collapses the groups without needing a second
+    # setting to say so.
+    "dock_custom": {"order": [], "hidden": []},
     # How long the machine must be idle before a parked batch may take the GPU.
     # Present here because a key missing from DEFAULT_SETTINGS is DELETED on
     # every save — the same defect that silently dropped `heavy_hitter` from
@@ -2161,7 +2252,23 @@ def _sync_capability_routing(settings, changed=None):
     if not os.environ.get("FRIDAY_TESTING"):
         try:
             from agent_friday.services.local_seats import heal as _heal_seats
+            import logging as _seatlog
+            _seen_notes = globals().setdefault("_SEAT_NOTES_LOGGED", set())
             for _note in _heal_seats(settings):
+                # print() writes to a console nobody reads, so a seat repair
+                # left no trace anyone could find afterwards. A seat changing
+                # under the user, or an inventory we could not check, is
+                # exactly the state change he is entitled to discover later.
+                #
+                # Once per distinct note, not once per settings load. This runs
+                # on every cache miss, so an unreachable daemon would otherwise
+                # repeat one warning until the log is worth nothing — the same
+                # flood that made the VRAM dispute line useless until it was
+                # made change-triggered.
+                if _note not in _seen_notes:
+                    _seen_notes.add(_note)
+                    _seatlog.getLogger("friday.settings").warning(
+                        "seats: %s", _note)
                 print(f"  [seats] healed settings - {_note}")
         except Exception:
             pass
@@ -2962,12 +3069,13 @@ class FeatureFlags:
         except Exception:
             flags["chromadb"] = False
 
-        try:
-            import requests as _r  # type: ignore
-            _r.get("http://localhost:11434/api/tags", timeout=1)
-            flags["ollama"] = True
-        except Exception:
-            flags["ollama"] = False
+        # NO NETWORK IN A FEATURE PROBE. This used to `requests.get` Ollama's
+        # /api/tags with a one-second timeout, so "which optional subsystems
+        # are available" included a blocking round trip — to a daemon that was
+        # removed from this project on 2026-09-18 (its llama.cpp engine was
+        # kept, the daemon was not). A probe that reaches the network is a
+        # probe that hangs when the network does.
+        flags["ollama"] = False
 
         return cls(**flags)
 
@@ -2975,7 +3083,38 @@ class FeatureFlags:
         return {slot: getattr(self, slot) for slot in self.__slots__}
 
 
-# Singleton — detected once at module-load; refresh via FeatureFlags.detect()
-FEATURE_FLAGS: FeatureFlags = FeatureFlags.detect()
+# Singleton — detected on FIRST USE, not at module load.
+#
+# SIX SECONDS, PER PROCESS, FOR A VALUE NOTHING READ. This used to be
+# `FEATURE_FLAGS = FeatureFlags.detect()` at module scope, so every single
+# import of `agent_friday.core` ran the whole probe: a dozen
+# `importlib.import_module` calls including chromadb, which drags in
+# OpenTelemetry and the OTLP gRPC exporters (~1s measured via -X importtime),
+# plus a network request to Ollama with a one-second timeout — to a service
+# that was deliberately removed from this project.
+#
+# Measured 2026-09-19: `import agent_friday.core` took 6.06s, of which ~2.0s
+# was this function's own body. Test collection alone took 38.5s and the full
+# suite over an hour, which is why several defects that week survived — the
+# gate nobody can afford to run is a gate that stops being run.
+#
+# And `FEATURE_FLAGS` had ZERO consumers. Grepped across src/ and tests/: no
+# route, no test, no caller. The docstring's claim that it is "exposed via
+# GET /api/health" is not true of this tree.
+#
+# Kept rather than deleted, lazily: the name stays importable and the probe
+# still works for anything that ever wants it, but nobody pays for it up
+# front. PEP 562 module-level __getattr__.
+_FEATURE_FLAGS_CACHE = None
+
+
+def __getattr__(name):
+    """Lazy module attributes. See FEATURE_FLAGS above."""
+    if name == "FEATURE_FLAGS":
+        global _FEATURE_FLAGS_CACHE
+        if _FEATURE_FLAGS_CACHE is None:
+            _FEATURE_FLAGS_CACHE = FeatureFlags.detect()
+        return _FEATURE_FLAGS_CACHE
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 

@@ -178,9 +178,18 @@ def reconcile_tasks() -> dict:
                 continue
             t["status"] = "interrupted"
             t["ended"] = now
-            t.setdefault("log", []).append(
-                "Interrupted by a restart — this was a free-form run and its "
-                "state lived in a process that no longer exists.")
+            _why = ("Interrupted by a restart — this was a free-form run and "
+                    "its state lived in a process that no longer exists.")
+            t.setdefault("log", []).append(_why)
+            # ON THE RECORD ITSELF, not only in the log and a notice.
+            #
+            # `chain_run_status` reports a step's STATUS and nothing else, so
+            # "interrupted" reached the assistant as a bare word with no cause
+            # attached. On 2026-09-19 that cost an evening: a workflow step
+            # died twice, the reason was written down both times, and the
+            # assistant reading the status could only say it had no idea why -
+            # which was true, and was the bug.
+            t["status_reason"] = _why
             touched.append(tid)
     for tid in touched:
         owner = (TASKS.get(tid) or {}).get("conversation_id")

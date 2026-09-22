@@ -148,8 +148,12 @@ def test_safety_blocks_empty_and_overlong():
 def test_resolve_image_model_maps_catalog_ids():
     assert ce.resolve_image_model("gemini-nano-banana-pro") == "gemini-3-pro-image"
     assert ce.resolve_image_model("gemini-nano-banana-2") == "gemini-3.1-flash-image"
-    # The ORIGINAL 2.5-era Nano Banana stays reachable via the bare alias.
-    assert ce.resolve_image_model("nano-banana") == "gemini-2.5-flash-image"
+    # The bare alias used to reach the ORIGINAL 2.5-era Nano Banana
+    # (gemini-2.5-flash-image). Google shuts that model down 2026-10-02, so
+    # on 2026-09-22 the unversioned nickname was repointed to the current
+    # Nano Banana. It must NOT resolve to the retiring id.
+    assert ce.resolve_image_model("nano-banana") == "gemini-3.1-flash-image"
+    assert ce.resolve_image_model("nano-banana") != "gemini-2.5-flash-image"
     # Default + None
     assert ce.resolve_image_model(None) == ce.resolve_image_model("gemini-nano-banana-pro")
 
@@ -169,8 +173,17 @@ def test_resolve_video_model_maps_catalog_ids():
     assert ce.resolve_video_model("veo-3") == "veo-3.1-generate-preview"
     assert ce.resolve_video_model(None) == "veo-3.1-generate-preview"
     # Gemini Omni Flash rides the video picker but dispatches via the
-    # Interactions API — resolution must land on the -preview wire id.
-    assert ce.resolve_video_model("gemini-omni-flash") == "gemini-omni-flash-preview"
+    # Interactions API. It used to resolve to gemini-omni-flash-preview;
+    # that model shuts down 2026-09-30 and the alias was repointed to the GA
+    # gemini-omni-1.1-flash on 2026-09-22.
+    assert ce.resolve_video_model("gemini-omni-flash") == "gemini-omni-1.1-flash"
+    # The retired id itself resolves FORWARD rather than 404ing, so a
+    # settings.json or saved creation that still names it keeps working.
+    assert ce.resolve_video_model("gemini-omni-flash-preview") == "gemini-omni-1.1-flash"
+    # Still the Interactions branch, not Veo's long-running-operation path —
+    # a rename that lands in a different dispatch branch is a silent
+    # behaviour change no id assertion would catch.
+    assert ce._is_omni_model("gemini-omni-1.1-flash")
     assert ce._is_omni_model("gemini-omni-flash-preview")
     assert not ce._is_omni_model("veo-3.1-generate-preview")
 

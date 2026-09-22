@@ -286,6 +286,10 @@ def _has_required_tokens(defn: dict, server_cfg: dict | None) -> bool:
 #                      a generic "failed to start")
 _STATUS_COLORS = {
     "connected": "#00ff80",
+    # Connected, and one thing it offers is switched off at the provider - the
+    # Drive case. Amber rather than red: the account works, and colouring it as
+    # a failure would be the opposite lie to the one it replaced.
+    "degraded": "#f59e0b",
     "connecting": "#f59e0b",
     "error": "#ff5470",
     "disconnected": "#7a8699",
@@ -313,9 +317,22 @@ def _status_for_google(defn: dict) -> dict:
             except Exception:
                 ok = False
             any_connected = any_connected or ok
+            # Live probe first (it is the stronger evidence and refreshes the
+            # store), but fall back to the STORED verdict rather than to
+            # optimism: a probe that could not run is not a working account.
+            health = rec.get("health") or {}
+            if ok:
+                acct_state, acct_summary = "connected", "Connected"
+            else:
+                acct_state = health.get("state") or "needs_reauth"
+                acct_summary = health.get("summary") or "Needs reauthorisation"
             accounts_status.append({
                 "id": aid, "label": rec.get("label"), "email": rec.get("email"),
-                "status": "connected" if ok else "needs_reauth",
+                "status": acct_state,
+                "healthy": bool(ok),
+                "summary": acct_summary,
+                "last_sync": rec.get("last_sync"),
+                "stale": bool(health.get("stale")),
             })
     except Exception:
         pass
@@ -330,9 +347,26 @@ def _status_for_google(defn: dict) -> dict:
         pass
 
     if accounts_status:
-        connected_n = sum(1 for a in accounts_status if a["status"] == "connected")
-        status = "connected" if any_connected else "error"
-        detail = f"{connected_n}/{len(accounts_status)} account(s) connected — Gmail + Calendar read-only"
+        connected_n = sum(1 for a in accounts_status if a["healthy"])
+        total_n = len(accounts_status)
+        broken = [a for a in accounts_status if not a["healthy"]]
+        # "any account works" is the wrong question. A badge that reads
+        # `connected` while one of two accounts needs re-auth is the same lie
+        # as a badge that reads `connected` while none of them do -- the user
+        # is told their Google is fine and their calendar silently is not.
+        # The aggregate is only `connected` when EVERY account is.
+        if not broken:
+            status = "connected"
+            detail = f"{connected_n}/{total_n} account(s) connected — Gmail + Calendar"
+        elif any_connected:
+            status = "error"
+            names = ", ".join(a.get("email") or a.get("label") or "?" for a in broken[:3])
+            detail = (f"{connected_n}/{total_n} account(s) connected — "
+                      f"needs reauthorisation: {names}")
+        else:
+            status = "error"
+            detail = (f"0/{total_n} account(s) connected — reconnect in "
+                      f"Settings → Connectors → Google")
     elif client_ok:
         status, detail = "needs_setup", "OAuth client ready — click Connect to approve access"
     else:
@@ -341,6 +375,8 @@ def _status_for_google(defn: dict) -> dict:
         "status": status,
         "detail": detail,
         "token_present": any_connected,
+        "accounts_total": len(accounts_status),
+        "accounts_healthy": sum(1 for a in accounts_status if a["healthy"]),
         "client_configured": client_ok,
         "store": "google_accounts (multi-account)",
         "accounts": accounts_status,
@@ -471,6 +507,34 @@ def list_connectors() -> list[dict]:
             s = _build_status(key)
             if s:
                 out.append(s)
+    # Mechanisms that have no CONNECTOR_DEFS entry, read through the protocol
+    # (phase 3 of docs/design/connector-ecosystem.md). Publishing platforms and
+    # channel bridges have never appeared here, because this module does not
+    # import either package - so a LinkedIn connection that died was a
+    # connection nothing watched, and Telegram was reachable and unseeable at
+    # the same time.
+    #
+    # Appended rather than interleaved so the existing display order is
+    # untouched, and wrapped so a broken adapter costs its own row and not the
+    # page.
+    try:
+        from agent_friday.services.connector_adapters import extra_connectors
+        known = {c["key"] for c in out}
+        for conn in extra_connectors():
+            try:
+                row = conn.to_status_dict()
+            except Exception as e:
+                _log.warning("connector %s could not report: %s", conn.id, e)
+                continue
+            if row["key"] not in known:
+                # The colour mapping stays in this module, so there is one
+                # table rather than two that can drift apart.
+                row["color"] = _STATUS_COLORS.get(row["status"],
+                                                  _STATUS_COLORS["unknown"])
+                out.append(row)
+                known.add(row["key"])
+    except Exception as e:
+        _log.warning("protocol connectors unavailable: %s", e)
     return out
 
 

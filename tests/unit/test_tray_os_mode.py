@@ -58,10 +58,20 @@ class _FakeTray:
 
 
 @pytest.fixture(autouse=True)
-def _reset_fakes():
+def _reset_fakes(monkeypatch):
     _FakeGuardSocket.created.clear()
     _FakeTray.instances.clear()
+    # The named Windows mutex is the one part of the single-instance guard
+    # that reaches the real OS, and on a developer machine the real tray is
+    # usually holding it - which made these tests pass or fail on whether
+    # Friday happened to be running. That is worse than a failing test: it
+    # will eventually pass for the wrong reason. Stubbed here so these tests
+    # stay about OS mode, while the socket half of the guard (which they do
+    # assert on) is still genuinely exercised.
+    monkeypatch.setattr(friday_tray, "_claim_windows_mutex", lambda: True)
+    friday_tray._INSTANCE_HANDLES.clear()
     yield
+    friday_tray._INSTANCE_HANDLES.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -135,3 +145,62 @@ def test_main_runs_tray_when_os_mode_explicitly_off(monkeypatch):
 
     assert len(_FakeTray.instances) == 1
     assert _FakeTray.instances[0].ran is True
+
+
+# ── Single-instance guard ────────────────────────────────────────────────
+#
+# Two trays were found running on 2026-09-18, both created in the same second,
+# each having started its own server. The guard that was supposed to stop that
+# was a bare socket bind, which fails open on Windows. These tests are about
+# the guard itself rather than about OS mode, so they do NOT take the autouse
+# stub above at face value - each drives `_acquire_single_instance` directly.
+
+
+def test_a_second_tray_is_refused_when_the_mutex_is_already_held(monkeypatch):
+    """The whole point. If this returns True twice, Friday runs twice."""
+    monkeypatch.setattr(friday_tray, "_claim_windows_mutex", lambda: False)
+    assert friday_tray._acquire_single_instance() is False
+
+
+def test_the_first_tray_is_allowed_through(monkeypatch):
+    monkeypatch.setattr(friday_tray, "_claim_windows_mutex", lambda: True)
+    friday_tray._INSTANCE_HANDLES.clear()
+    assert friday_tray._acquire_single_instance() is True
+    friday_tray._INSTANCE_HANDLES.clear()
+
+
+def test_the_socket_still_refuses_a_second_tray_without_the_mutex(monkeypatch):
+    """Belt and braces, and it has to stay working.
+
+    The mutex is Windows-only; on any other platform the socket IS the guard.
+    A refactor that quietly made the socket decorative would leave every
+    non-Windows install unprotected and every test still green.
+    """
+    monkeypatch.setattr(friday_tray, "_claim_windows_mutex", lambda: True)
+
+    class _TakenSocket:
+        def __init__(self, *a, **k):
+            pass
+
+        def setsockopt(self, *a, **k):
+            pass
+
+        def bind(self, *a, **k):
+            raise OSError("address already in use")
+
+    monkeypatch.setattr(friday_tray.socket, "socket", _TakenSocket)
+    assert friday_tray._acquire_single_instance() is False
+
+
+def test_the_handle_is_held_for_the_life_of_the_process(monkeypatch):
+    """A mutex handle that falls out of scope is a mutex that is released.
+
+    Held in a module-level list precisely so that garbage collection at the
+    end of main() cannot quietly reopen the door this guard exists to shut.
+    """
+    monkeypatch.setattr(friday_tray, "_claim_windows_mutex", lambda: True)
+    friday_tray._INSTANCE_HANDLES.clear()
+    friday_tray._acquire_single_instance()
+    assert friday_tray._INSTANCE_HANDLES, \
+        "nothing is holding the guard open after it was acquired"
+    friday_tray._INSTANCE_HANDLES.clear()

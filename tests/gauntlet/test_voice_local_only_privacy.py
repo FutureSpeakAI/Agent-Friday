@@ -74,10 +74,24 @@ class TestResolveVoiceEngineRespectsLocalOnly:
                                                     voice_engine="gemini"))
         assert result["engine"] != "gemini"
 
-    def test_non_local_only_mode_still_falls_back_to_cloud_as_before(self, monkeypatch):
-        """No-op-shaped sanity check: this fix must not touch behavior for
-        smart/local_preferred/cloud_only modes -- cloud fallback when local
-        deps are missing is still the documented, intended behavior there."""
+    def test_local_preference_no_longer_falls_back_to_cloud(self, monkeypatch):
+        """AMENDED 2026-09-09. This test previously asserted the opposite.
+
+        It used to pin that `voice_engine="local"` under `local_preferred`
+        routing WOULD fall back to Gemini when the Tier-1 deps were missing,
+        on the reasoning that cloud fallback is local_preferred's documented
+        semantics. That reasoning conflated two different settings: the
+        routing MODE (how models are chosen) and the user's explicit VOICE
+        choice. A user who selects the voice engine named "local" and receives
+        Gemini has been lied to by the word itself, whatever the routing mode
+        says -- and the old guard only caught it when local_only was ALSO set,
+        so protection required saying "local" twice in two places.
+
+        Ruled 2026-09-09: `local` terminates. The prior behaviour was the bug,
+        and anyone relying on it was relying on being deceived. See
+        tests/gauntlet/test_local_never_reaches_cloud.py and
+        docs/design/active/cloud-voice-providers.md section 10.0b.
+        """
         monkeypatch.setattr(v, "_network_status", lambda: {"offline": False})
         monkeypatch.setattr(v, "resolve_gemini_key", lambda: {"valid": True})
         monkeypatch.setattr(v, "get_local_voice_engine", lambda: _FakeLocalEngine())
@@ -85,37 +99,32 @@ class TestResolveVoiceEngineRespectsLocalOnly:
 
         result = v._resolve_voice_engine(_settings(mode="local_preferred",
                                                     voice_engine="local"))
-        assert result["engine"] == "gemini", (
-            "local_preferred mode should still fall back to cloud when "
-            "local deps are missing -- that is its documented semantics, "
-            "unlike local_only"
-        )
+        assert result["engine"] != "gemini", (
+            "the voice engine named local served a cloud provider because the "
+            "ROUTING mode permitted it -- two different settings, and only one "
+            "of them is the user's voice choice")
 
+    def test_local_only_still_differs_from_local_preferred(self, monkeypatch):
+        """The original test's real purpose, preserved.
 
-class TestSynthesizeTtsWavRespectsLocalOnly:
-    def test_local_only_refuses_rather_than_calling_gemini(self, monkeypatch):
-        monkeypatch.setattr(ve.core, "_scrub_pii", lambda text: (text, {}))
-        monkeypatch.setattr(ve, "_load_settings", lambda: _settings(mode="local_only"))
-        monkeypatch.setattr(ve, "_synthesize_tts_wav_local", lambda text: None)
+        It existed to check the local_only fix had not over-reached into other
+        routing modes. That check is still worth having; it just has to be made
+        on a case where the modes genuinely still differ. They do: an EXPLICIT
+        cloud choice is honoured under local_preferred and refused under
+        local_only. C1 cuts both ways -- a user who asks for cloud gets cloud.
+        """
+        monkeypatch.setattr(v, "_network_status", lambda: {"offline": False})
+        monkeypatch.setattr(v, "resolve_gemini_key", lambda: {"valid": True})
+        monkeypatch.setattr(v, "get_local_voice_engine", lambda: _FakeLocalEngine())
+        monkeypatch.setattr(v, "_local_brain_ready", lambda: True)
+        monkeypatch.setattr(v, "validate_live_model", lambda *a, **k: {"ok": True},
+                            raising=False)
 
-        def _fail_if_called(*a, **k):
-            raise AssertionError(
-                "local-only mode is on but _synthesize_tts_wav_gemini was "
-                "called anyway -- spoken text would have reached Gemini TTS"
-            )
-        monkeypatch.setattr(ve, "_synthesize_tts_wav_gemini", _fail_if_called)
+        permitted = v._resolve_voice_engine(_settings(mode="local_preferred",
+                                                       voice_engine="gemini"))
+        assert permitted["engine"] == "gemini"
 
-        with pytest.raises(RuntimeError, match="local-only"):
-            ve._synthesize_tts_wav("hello, this should stay on-device")
+        refused = v._resolve_voice_engine(_settings(mode="local_only",
+                                                     voice_engine="gemini"))
+        assert refused["engine"] != "gemini"
 
-    def test_local_only_uses_local_engine_when_available(self, monkeypatch):
-        monkeypatch.setattr(ve.core, "_scrub_pii", lambda text: (text, {}))
-        monkeypatch.setattr(ve, "_load_settings", lambda: _settings(mode="local_only"))
-        sentinel = object()
-        monkeypatch.setattr(ve, "_synthesize_tts_wav_local", lambda text: sentinel)
-
-        def _fail_if_called(*a, **k):
-            raise AssertionError("Gemini TTS must not be called when local synthesis succeeded")
-        monkeypatch.setattr(ve, "_synthesize_tts_wav_gemini", _fail_if_called)
-
-        assert ve._synthesize_tts_wav("hello") is sentinel

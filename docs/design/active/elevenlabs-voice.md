@@ -3,7 +3,7 @@
 > **Status:** active
 > **Last verified:** 2026-09-06
 > **Implementation:** none (see notes)
-> **Supersedes / superseded by:** —
+> **Supersedes / superseded by:** partially superseded by [`cloud-voice-providers.md`](cloud-voice-providers.md) (2026-09-08) — decision (B) amended: Gemini Live remains the default, cloud providers added as user-selected siblings. (A) and (C) unchanged.
 > **Written:** 2026-08-19
 
 ## Implementation notes
@@ -367,6 +367,15 @@ upgrade.
    native audio. Barge-in and model-native prosody are preserved. §2's cascade
    regression and §3's ~12-day burn of a $99 plan both pointed here; this is
    now closed, not open.
+
+   > **Amendment 2026-09-08.** (B)'s conclusion stands: Gemini Live native audio
+   > remains Friday's *default* speaking voice, and §2's cascade argument is
+   > unrefuted. What changed is scope — [`cloud-voice-providers.md`](cloud-voice-providers.md)
+   > adds ElevenLabs and Inworld as *user-selected* Tier-3 siblings alongside it,
+   > never as a default. §2's architectural objection is preserved there as a
+   > selection-time disclosure (§4.3) and §3's cost objection as live metering
+   > (§7). The cloned-voice question in §5 remains the only thing that reopens
+   > (B) *as a default*, and is now tracked there as Q1.
 3. **(C) Subagent voices — decided: opt-in over a default relay.** Default is
    Friday relaying: one voice, one relationship. Users may opt in to subagents
    speaking for themselves. §4.1 is why cost is no longer the objection.

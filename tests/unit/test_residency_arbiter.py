@@ -459,3 +459,18 @@ def test_a_boot_that_finds_nothing_still_keeps_a_live_foreign_seat(ep_file, monk
 
     assert _written(ep_file["path"]) == {
         "gemma4:e4b": "http://127.0.0.1:8091/v1"}
+
+
+def test_boot_plans_with_the_bindings_it_was_primed_with(arb):
+    """boot() recomputed the plan BARE and loaded from that plan, so the seat
+    the user bound in settings was dropped at the one moment a load could
+    happen. Observed on the reference machine (2026-09-17 17:02 and
+    2026-09-18 04:21 boots): the status page showed the FridayWeaver seat
+    pinned while the boot printed "plan pins no llama.cpp seat" and spawned
+    nothing. server.py primes compute_plan() with the settings overrides
+    right before boot(); a bare recompute must reuse them."""
+    arb.compute_plan({"interactive_brain": "gemma4:e2b"})
+    assert arb.plan["seats"]["interactive_brain"]["model_id"] == "gemma4:e2b"
+    arb.boot(measure_baseline=False)
+    assert arb.plan["seats"]["interactive_brain"]["model_id"] == "gemma4:e2b"
+    assert "gemma4:e2b" in arb.llama.procs

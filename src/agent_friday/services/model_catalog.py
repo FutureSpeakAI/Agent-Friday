@@ -439,14 +439,18 @@ def _model_entries_for(provider: dict, registry) -> list:
 
 
 def _voice_engines(registry) -> list:
-    """The four voice ENGINE choices (settings key `voice_engine`), with live
-    availability. Auto is always selectable — it resolves at session time."""
+    """The voice MODE choices (settings key `voice_engine`), with live
+    availability.
+
+    `auto` is deliberately NOT offered (voice-system-clean-sheet.md §8.1 A):
+    since 2026-09-09 it is a synonym for `local` (it never reaches the cloud),
+    so a picker entry for it is a second name for the same thing. The value
+    is still accepted on write (`_VOICE_ENUMS`) and read as local, so an
+    existing settings.json keeps working."""
     local_ok = bool(registry.is_provider_available("local-voice-lite"))
     gpu_ok = bool(registry.is_provider_available("nvidia-nemo"))
     gemini_ok = bool(registry.is_provider_available("google-gemini"))
     return [
-        {"id": "auto", "label": "Auto", "short": "Auto", "available": True,
-         "hint": "GPU tier when ready, else CPU; local preferred over cloud"},
         {"id": "local", "label": "Local CPU (Whisper + Piper)",
          "short": "Local CPU", "available": local_ok,
          "hint": None if local_ok else
@@ -460,6 +464,49 @@ def _voice_engines(registry) -> list:
          "hint": None if gemini_ok else
          "Add GEMINI_API_KEY in Settings → Providers"},
     ]
+
+
+def _tts_engines() -> list:
+    """The Tier-1 synthesizer choices (settings key `local_voice_tts_engine`).
+
+    Shape matches `_voice_engines()` so the settings UI can render both with the
+    same greyed-with-a-reason control. Availability comes from the engine's own
+    health block, not from a filename: `kokoro_available()` performs the import
+    (see kokoro_voice.kokoro_import_status), because a package that resolves by
+    name and raises on import is exactly the state a `--no-deps` install leaves
+    behind, and reporting it as ready is how a picker starts lying.
+
+    `hint` is the remediation shown on the disabled control. It says what would
+    make the option work, per the spec's rule that an unavailable option must
+    explain itself rather than disappear.
+    """
+    out = [{"id": "piper", "label": "Piper (CPU)", "short": "Piper",
+            "available": True,
+            "hint": "On-device, CPU-capable. GPL-3.0 since October 2025."}]
+    try:
+        from agent_friday.services.kokoro_voice import kokoro_health
+        h = kokoro_health() or {}
+    except Exception as e:  # noqa: BLE001
+        h = {"status": "error", "detail": str(e)[:160], "available": False}
+    _ok = bool(h.get("available")) and h.get("status") == "ok"
+    _hint = h.get("detail") or "Kokoro status unknown"
+    if _ok:
+        # Selectable, deliberately not the default. Kokoro is fast on a GPU
+        # (~12x realtime measured) but it is newer on this path than Piper and
+        # its phonemisation runs third-party code over arbitrary text. Say so
+        # where the choice is made, rather than letting the user infer that
+        # "available" means "as proven as the default".
+        _hint = (_hint + " \u2014 newer than Piper on this path; Piper stays the "
+                 "default. A synthesis failure refuses with a reason and offers "
+                 "Piper rather than substituting it silently.")
+    out.append({
+        "id": "kokoro", "label": "Kokoro-82M (GPU)", "short": "Kokoro",
+        "available": _ok,
+        "status": h.get("status", "error"),
+        "default": False,
+        "hint": _hint,
+    })
+    return out
 
 
 def _arbiter_seat_entries() -> list:
@@ -498,13 +545,33 @@ def _arbiter_seat_entries() -> list:
             p = runtime_dir() / "residency" / "endpoints.json"
             if p.exists():
                 raw = _json.loads(p.read_text(encoding="utf-8")) or {}
-                entries = raw.get("seats") or raw
+                # THE SHAPE THE ARBITER ACTUALLY WRITES IS `endpoints`.
+                #
+                # This read `raw.get("seats") or raw` and then looked for dict
+                # values carrying model_id, or plain strings. The real file is
+                #
+                #   {"pid": ..., "updated_at": ..., "endpoints": {"<model>": "<url>"}}
+                #
+                # so iterating `raw` yields pid (an int), updated_at (a float)
+                # and endpoints (a dict with no model_id) - all three skipped,
+                # and the seat sitting one level down is never seen. The
+                # fallback that exists precisely so a running local model still
+                # reaches the picker extracted ZERO seats from a file naming
+                # one, which is why bonsai2 was absent from the catalogue while
+                # llama-server was serving it on 8090.
+                #
+                # `endpoints` is checked first now, and the older shapes are
+                # still accepted so an Arbiter writing either keeps working.
+                entries = (raw.get("endpoints") or raw.get("seats") or raw)
                 if isinstance(entries, dict):
                     for k, v in entries.items():
+                        if k in ("pid", "updated_at"):
+                            continue
                         if isinstance(v, dict) and v.get("model_id"):
                             seats[k] = v
                         elif isinstance(v, str):
-                            seats[k] = {"model_id": k}
+                            # {model_id: endpoint_url} - the key is the model.
+                            seats[k] = {"model_id": k, "endpoint": v}
         except Exception:
             seats = seats or {}
     if not seats:
@@ -583,19 +650,43 @@ def _friday_store_entries(exclude: set | None = None) -> list:
     except Exception:
         owned_endpoint = lambda _m: None            # noqa: E731
 
+    # The same presence question local_seats._friday_store asks, answered
+    # the same way: through the guarded probe, never `Path.exists()` inline.
+    # Profiled 2026-09-17 with the WSL share wedged: this loop's stat on the
+    # FridayWeaver record cost 25.4 s of a 27.2 s /api/intelligence request,
+    # the endpoint the top-bar model pill reads. Retired records and
+    # fine-tunes without their adapter are not pickable either.
+    try:
+        from agent_friday.services import path_probe as _probe
+    except Exception:
+        _probe = None
+    store_dir = _pl.Path(friday_home(), "runtime", "models", "gguf")
+
+    def _reachable(rec, key):
+        p = rec.get(key)
+        if not p:
+            return True
+        local = (rec.get("local_files") or {}).get(key)
+        cands = [c for c in (local, str(store_dir / _pl.Path(str(p)).name), p)
+                 if c]
+        if _probe is None:
+            return any(_pl.Path(c).exists() for c in cands)
+        return any(_probe.exists(c) for c in cands)
+
     for mid, rec in rows.items():
         if mid in exclude or not isinstance(rec, dict):
             continue
         if rec.get("is_embedding") or rec.get("can_generate") is False:
             continue
-        path = rec.get("path")
-        if path:
-            try:
-                import pathlib as _pl2
-                if not _pl2.Path(path).exists():
-                    continue                        # listed is not present
-            except Exception:
-                pass
+        if rec.get("retired"):
+            continue
+        try:
+            if not _reachable(rec, "path"):
+                continue                            # listed is not present
+            if rec.get("lora") and not _reachable(rec, "lora"):
+                continue                            # base without its adapter
+        except Exception:
+            pass
         try:
             live = bool(owned_endpoint(mid))
         except Exception:
@@ -773,4 +864,5 @@ def build_catalog() -> dict:
     } for p in registry.get_enabled_providers()]
 
     return {"roles": roles, "models": flat, "providers": providers,
-            "voice_engines": _voice_engines(registry)}
+            "voice_engines": _voice_engines(registry),
+            "tts_engines": _tts_engines()}

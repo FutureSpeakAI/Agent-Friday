@@ -89,6 +89,21 @@ def _blank(cid: str, title: str = "New chat") -> dict:
         # per turn". Not a snapshot: see the module docstring.
         "seat": None,
         "status": "active",
+        # Which project folder this thread sits in, or None for loose chats.
+        # The conversation owns this, not the project: see projects.py on why
+        # membership has exactly one writer.
+        "project": None,
+        # When this thread was pinned to the top of the sidebar, or None.
+        #
+        # A TIMESTAMP RATHER THAN A FLAG, and named apart from the `pinned`
+        # below on purpose. `pinned` here is a list of pinned MESSAGE ids - a
+        # different feature that predates thread pinning and still drives
+        # `clear` and `prune`. The list endpoint used to flatten it to a
+        # boolean and hand it to the UI under the name `pinned`, where it read
+        # exactly like "this thread is pinned" and always meant False. Two
+        # features, one word, one of them silently broken; so they get two
+        # words. The timestamp also gives pin ordering for free.
+        "pinned_at": None,
         "pinned": [],
         "totals": {"turns": 0, "cost_usd": 0.0, "tokens": 0},
     }
@@ -153,16 +168,84 @@ def list_all(include_archived: bool = True) -> list[dict]:
 
 
 def patch(cid: str, **fields) -> dict | None:
-    """Rename / archive / rebind seat. Unknown keys are ignored on purpose."""
+    """Rename / archive / rebind seat / refile / pin. Unknown keys ignored."""
     with _LOCK:
         conv = load(cid)
         if conv is None:
             return None
-        for k in ("title", "status", "seat", "pinned", "totals"):
+        for k in ("title", "status", "seat", "pinned", "pinned_at",
+                  "project", "totals"):
             if k in fields:
                 conv[k] = fields[k]
-        conv["last_active_at"] = time.time()
+        # Filing a chat is not working in it. Re-stamping last_active_at on a
+        # refile or a pin would shuffle the whole sidebar every time you
+        # tidied it, and tidying that reorders what you were tidying is worse
+        # than no tidying at all.
+        if any(k in fields for k in ("title", "status", "seat", "totals")):
+            conv["last_active_at"] = time.time()
         return save(conv)
+
+
+def effective_seat(cid: str) -> dict | None:
+    """The seat a turn in this conversation should actually run on.
+
+    The order is global default, then project, then the chat itself, with the
+    most specific winner - and the chat still overrides its project, so
+    pinning one thread in a Bonsai project to Sonnet works.
+
+    RESOLVED PER TURN, NEVER SNAPSHOTTED. That is the existing rule for a null
+    conversation seat, stated at the top of this module, and inserting a
+    project level does not get to change it: renaming a project's default
+    model has to affect the chats inside it immediately, or the default is
+    not a default but a stamp applied at creation time.
+
+    Returns None for "no binding at either level", which the router already
+    reads as "follow the global capability_routing default".
+    """
+    return effective_seat_of(load(cid) or {})
+
+
+def effective_seat_of(conv: dict, project_seats: dict | None = None):
+    """`effective_seat` for a conversation record already in hand.
+
+    The list endpoint summarises every conversation it just read. Going back to
+    disk for each one - and then again for its project - would make listing N
+    chats cost 2N+ file reads on a surface the sidebar polls. Pass a
+    `{project_id: seat}` map built once and it costs none.
+    """
+    seat = (conv or {}).get("seat")
+    if isinstance(seat, dict) and (seat.get("model") or "").strip():
+        return seat
+    pid = (conv or {}).get("project")
+    if not pid:
+        return None
+    if project_seats is not None:
+        pseat = project_seats.get(pid)
+    else:
+        try:
+            from agent_friday.services import projects as _proj
+            pseat = (_proj.load(pid) or {}).get("seat")
+        except Exception:
+            return None
+    if isinstance(pseat, dict) and (pseat.get("model") or "").strip():
+        return pseat
+    return None
+
+
+def project_instructions(cid: str) -> str:
+    """Standing instructions from this chat's project, or ''.
+
+    Charged as input tokens on every turn in the project, which is why
+    projects.MAX_INSTRUCTIONS exists.
+    """
+    pid = (load(cid) or {}).get("project")
+    if not pid:
+        return ""
+    try:
+        from agent_friday.services import projects as _proj
+        return str((_proj.load(pid) or {}).get("instructions") or "")
+    except Exception:
+        return ""
 
 
 # ── Messages ────────────────────────────────────────────────────────────────

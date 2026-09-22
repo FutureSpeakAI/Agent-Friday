@@ -68,7 +68,15 @@ class TestHarmFloorCatchesCategoryOnlyContent:
             content_policies, "get_subscribed_packs",
             lambda: list(content_policies.BUILTIN_PACKS))
 
-        def _fake_scan(content_text):
+        # **kw, not a fixed signature. This stub took only `content_text`
+        # until 2026-09-22, when evaluate_content began passing
+        # apply_packs=False to break the mutual recursion with
+        # moderation.scan. The stub then raised TypeError, which
+        # evaluate_content's `except Exception: pass` swallowed, and the test
+        # failed reporting "not blocked" - describing the stub, not the code.
+        # A double that pins an exact signature breaks on every real
+        # refactor and says nothing true when it does.
+        def _fake_scan(content_text=None, **kw):
             return {"blocked": True, "harm_level": "H1", "reason": "test block"}
 
         import agent_friday.services.moderation as moderation
