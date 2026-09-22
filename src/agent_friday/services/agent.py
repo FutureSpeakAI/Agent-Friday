@@ -6139,28 +6139,81 @@ TOOL_REQUIRES_CONFIRMATION = _ALWAYS_CONFIRM
 _PENDING_CONFIRMATIONS: dict[str, dict] = {}
 _PENDING_LOCK = threading.Lock()
 
-_AFFIRM_RE = re.compile(
-    r"^\s*(?:yes|yep|yeah|yup|ya|sure|ok|okay|kk?|do it|go ahead|go for it|"
-    r"please do|please|sounds good|do that|proceed|confirm(?:ed|s)?|affirmative|"
-    r"absolutely|definitely|yes please|open it|open that|show me|let'?s do it|"
-    r"go|make it so)\b",
-    re.IGNORECASE,
+#: Tokens that mean yes. Matched at the START of a message (after optional
+#: filler) or at its END — see `_is_affirmative` for why both.
+_AFFIRM_WORDS = (
+    r"yes|yep|yeah|yup|ya|sure(?: thing)?|ok|okay|kk?|do it|do that|go ahead|"
+    r"go for it|go on|please do|please|sounds good|proceed|confirm(?:ed|s)?|"
+    r"affirmative|absolutely|definitely|certainly|of course|obviously|"
+    r"open it|open that|show me|let'?s do it|go|make it so|fine|that'?s fine|"
+    r"correct|right|indeed|approved?|i approve|i authoriz(?:e|ed)|"
+    r"i (?:said|already said) yes|you (?:already )?have my permission"
 )
+
+#: Conversational throat-clearing that precedes a real answer. Stephen's "um,
+#: sure" was a clear yes that the old start-anchored pattern could not see,
+#: because "um" was in front of it.
+_FILLER = r"(?:(?:um+|uh+|erm?|ah|well|so|look|dude|i mean|ok(?:ay)?|yeah)\b[\s,.!-]*)*"
+
+_AFFIRM_RE = re.compile(r"^\s*" + _FILLER + r"(?:" + _AFFIRM_WORDS + r")\b",
+                        re.IGNORECASE)
+
+#: The same tokens allowed to CLOSE a message. "I just authorized that, so
+#: yes." is not a sentence any start-anchored pattern will ever match, and it
+#: is not an unusual way to answer a question one has already answered.
+_AFFIRM_TAIL_RE = re.compile(r"\b(?:" + _AFFIRM_WORDS + r")\s*[.!]*\s*$",
+                             re.IGNORECASE)
+
 _NEGATIVE_RE = re.compile(
-    r"^\s*(?:no|nope|nah|don'?t|do not|stop|cancel|never ?mind|not now|skip|"
-    r"leave it|hold off|wait|forget it)\b",
+    r"^\s*" + _FILLER + r"(?:no|nope|nah|don'?t|do not|stop|cancel|"
+    r"never ?mind|not now|skip|leave it|hold off|wait|forget it)\b",
     re.IGNORECASE,
 )
 
 
 def _is_affirmative(message: str) -> bool:
-    """True if `message` reads as the user approving a pending action."""
-    return bool(_AFFIRM_RE.match(message or ""))
+    """True if `message` reads as the user approving a pending action.
+
+    Matches an affirmative at the START (after filler) or at the END. The tail
+    case is not a nicety: on 2026-09-22 Stephen answered "I just authorized
+    that, so yes." and was asked the same question again, because nothing in a
+    start-anchored pattern can see a yes in final position.
+
+    An AMBIGUOUS message - one that reads as both yes and no - is neither, and
+    `_is_ambiguous` is what the gate consults instead of guessing. See there.
+    """
+    m = message or ""
+    if _is_ambiguous(m):
+        return False
+    return bool(_AFFIRM_RE.match(m) or _AFFIRM_TAIL_RE.search(m))
 
 
 def _is_negative(message: str) -> bool:
     """True if `message` reads as the user declining a pending action."""
-    return bool(_NEGATIVE_RE.match(message or ""))
+    m = message or ""
+    if _is_ambiguous(m):
+        return False
+    return bool(_NEGATIVE_RE.match(m))
+
+
+def _is_ambiguous(message: str) -> bool:
+    """True when a message reads as BOTH an approval and a refusal.
+
+    "don't ask again, just do it" is the case that forced this. It opens with
+    "don't", so the old refusal pattern cancelled the action the user was
+    plainly demanding. "wait, yes" and "no, I mean yes" are the same shape.
+
+    Guessing either way here is worse than admitting the tie: an ambiguous
+    reply is treated as NO ANSWER, which routes to the escalation in
+    `_hook_confirmation_gate` rather than to a silent decision. That is the
+    one place in this flow where being unsure is allowed to cost a round trip.
+    """
+    m = message or ""
+    if not m.strip():
+        return False
+    yes = bool(_AFFIRM_RE.match(m) or _AFFIRM_TAIL_RE.search(m))
+    no = bool(_NEGATIVE_RE.match(m))
+    return yes and no
 
 
 def _confirmation_bypassed(session_ctx: dict | None) -> bool:
@@ -6170,13 +6223,92 @@ def _confirmation_bypassed(session_ctx: dict | None) -> bool:
                 or ctx.get("confirm_bypass"))
 
 
-def _record_pending_confirmation(session_id, name, tool_input):
+def _action_fingerprint(name, tool_input) -> str:
+    """A stable id for "the exact thing the user is being asked about".
+
+    THIS IS THE FIX FOR THE 2026-09-22 LOOP. The grant used to be a single
+    session-wide boolean, so it answered no particular question: a yes meant
+    "run whatever gated tool comes next", and the pending record was a single
+    slot that each new gated call overwrote. Two consequences, both reproduced
+    before this change:
+
+      * a yes intended for one action authorised a DIFFERENT one - approving
+        "create bold-panel-prep.md" would have let a write to
+        C:/Windows/System32/drivers/etc/hosts through;
+      * `_current_session_id()` returns the calendar DATE, so every surface
+        open that day - chat tab, front page - shared that one slot and
+        clobbered each other's pending action.
+
+    Fingerprinting the (tool, arguments) pair makes a grant answer exactly the
+    question it was given for, which is the invariant this flow was missing.
+
+    Paths are resolved first so that `x.md` and `./x.md` are one question,
+    while `x.md` and `~/Friday Creations/x.md` stay two - they are two
+    different files, and the user has approved only the one they were shown.
+    """
+    inp = dict(tool_input or {})
+    for key in ("path", "target", "url", "workspace"):
+        v = inp.get(key)
+        if not isinstance(v, str) or not v.strip():
+            continue
+        if key in ("path", "target"):
+            try:
+                inp[key] = str(Path(os.path.expanduser(v)).resolve())
+            except Exception:
+                inp[key] = v.strip()
+        else:
+            inp[key] = v.strip()
+    try:
+        blob = json.dumps({"t": name, "i": inp}, sort_keys=True, default=str)
+    except Exception:
+        blob = "%s:%r" % (name, inp)
+    return _hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _record_pending_confirmation(session_id, name, tool_input, *, turn=None):
+    """Record (or re-stamp) one pending question, and count how often it has
+    been ASKED ACROSS TURNS.
+
+    The ask count is what makes "a gate may not ask the same question twice
+    without new information" enforceable. It only advances when the turn
+    changes, so a model retrying within a single turn does not burn the
+    budget - that is the model being wrong, not the user failing to answer.
+    """
     if not session_id:
-        return
+        return None
+    fp = _action_fingerprint(name, tool_input)
     with _PENDING_LOCK:
-        _PENDING_CONFIRMATIONS[session_id] = {
-            "tool": name, "input": tool_input, "ts": _time.time(),
-        }
+        bucket = _PENDING_CONFIRMATIONS.setdefault(session_id, {})
+        entry = bucket.get(fp)
+        if entry is None:
+            entry = {"tool": name, "input": tool_input, "ts": _time.time(),
+                     "asks": 1, "turn": turn, "granted": False}
+            bucket[fp] = entry
+        else:
+            entry["input"] = tool_input
+            entry["ts"] = _time.time()
+            if turn is None or entry.get("turn") != turn:
+                entry["asks"] = int(entry.get("asks") or 0) + 1
+                entry["turn"] = turn
+        return dict(entry, fingerprint=fp)
+
+
+def _clear_pending(session_id, fingerprint=None):
+    """Drop one pending question, or all of them for a session.
+
+    Removes the session key entirely once empty, because callers and tests
+    read `session_id in _PENDING_CONFIRMATIONS` as "is anything pending".
+    """
+    with _PENDING_LOCK:
+        bucket = _PENDING_CONFIRMATIONS.get(session_id)
+        if bucket is None:
+            return
+        if fingerprint is None:
+            bucket.clear()
+        else:
+            bucket.pop(fingerprint, None)
+        if not bucket:
+            _PENDING_CONFIRMATIONS.pop(session_id, None)
 
 
 def prepare_confirmation_ctx(session_id, message, base_ctx=None):
@@ -6194,14 +6326,33 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     ctx["session_id"] = session_id
     if not session_id:
         return ctx
+    # Every turn gets an id. The gate uses it to tell "the user did not answer
+    # me" from "the model called the same tool twice in one breath".
+    ctx["confirm_turn"] = uuid.uuid4().hex[:12]
+
     with _PENDING_LOCK:
-        pending = _PENDING_CONFIRMATIONS.get(session_id)
-    if pending:
-        if _is_affirmative(message):
-            ctx["confirm_granted"] = True
-        elif _is_negative(message):
-            with _PENDING_LOCK:
-                _PENDING_CONFIRMATIONS.pop(session_id, None)
+        bucket = dict(_PENDING_CONFIRMATIONS.get(session_id) or {})
+    if not bucket:
+        return ctx
+
+    if _is_negative(message):
+        _clear_pending(session_id)
+        return ctx
+
+    if _is_affirmative(message):
+        # A yes answers the question most recently ASKED, and only that one.
+        # It is not a session-wide permission slip: the gate below re-derives
+        # the fingerprint of whatever the model actually tries next and will
+        # refuse to spend this grant on a different action.
+        newest = max(bucket.items(), key=lambda kv: kv[1].get("ts") or 0)
+        fp, entry = newest
+        with _PENDING_LOCK:
+            live = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fp)
+            if live is not None:
+                live["granted"] = True
+        ctx["confirm_granted"] = True          # back-compat for older callers
+        ctx["confirm_granted_fp"] = fp
+        ctx["confirm_granted_tool"] = entry.get("tool")
     return ctx
 
 
@@ -6452,20 +6603,122 @@ def _hook_confirmation_gate(ctx):
         return _hooks.ALLOW
     if (name in _tools_requiring_confirmation() and _sid
             and not _confirmation_bypassed(session_ctx)):
-        if (session_ctx or {}).get("confirm_granted"):
-            # User approved on this turn — clear the marker and allow.
-            with _PENDING_LOCK:
-                _PENDING_CONFIRMATIONS.pop(_sid, None)
+        _fp = _action_fingerprint(name, ctx.input)
+        _turn = (session_ctx or {}).get("confirm_turn")
+
+        # A GRANT SATISFIES THE REQUEST IT WAS GRANTED FOR, AND NO OTHER.
+        # The fingerprint is re-derived here from the arguments the model is
+        # actually about to run with, then matched against the one the user
+        # was shown. Before 2026-09-22 this was a bare session-wide boolean,
+        # so a yes for one file authorised a write to any other.
+        with _PENDING_LOCK:
+            _entry = (_PENDING_CONFIRMATIONS.get(_sid) or {}).get(_fp)
+        if _entry is not None and _entry.get("granted"):
+            # If this question had already been escalated to a card, the card
+            # is now answered - by the same human, in the same breath. Resolve
+            # it so the queue does not accumulate cards for things that
+            # already happened.
+            _resolve_escalated_card(_entry.get("approval_id"))
+            _clear_pending(_sid, _fp)
             return _hooks.ALLOW
-        _record_pending_confirmation(_sid, name, ctx.input)
+
+        _state = _record_pending_confirmation(_sid, name, ctx.input, turn=_turn)
+        _asks = int((_state or {}).get("asks") or 1)
         _q = _confirmation_question(name, ctx.input)
-        return _hooks.DENY(
-            f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
-            f"approval before it runs, so it was NOT executed. Do NOT call "
-            f"this tool again on this turn. Instead, ask the user this exact "
-            f"yes/no question and then stop and wait for their reply: \"{_q}\""
-        )
+
+        if _asks == 1:
+            return _hooks.DENY(
+                f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
+                f"approval before it runs, so it was NOT executed. Do NOT call "
+                f"this tool again on this turn. Instead, ask the user this exact "
+                f"yes/no question and then stop and wait for their reply: \"{_q}\""
+            )
+
+        # ASKED ONCE, ANSWERED, STILL NOT GRANTED. Repeating the identical
+        # question is the defect Stephen hit: he answered yes twice in his own
+        # words and was asked a fourth and fifth time. A user worn down by an
+        # unbreakable loop eventually approves something he has not read, so
+        # the loop is the safety problem, not just the annoyance.
+        #
+        # So the second ask changes mechanism instead of repeating itself: a
+        # durable approval card, decided in the UI, where the answer is a
+        # button and cannot be misparsed. There is no third ask.
+        return _hooks.DENY(_escalate_confirmation(_sid, name, ctx.input, _fp, _q))
     return _hooks.ALLOW
+
+
+def _resolve_escalated_card(approval_id):
+    """Close the card an escalation opened, once the user has answered in chat.
+
+    Best-effort and silent: a dangling pending card is untidy, not dangerous,
+    so nothing here is allowed to interfere with an action the user has just
+    approved.
+    """
+    if not approval_id:
+        return
+    try:
+        from agent_friday.services import approvals as _appr
+        _appr.decide(approval_id, "approve", decided_by="owner",
+                     note="answered in chat before the card was opened")
+    except Exception as e:
+        _log.debug("could not close escalated approval %s: %s", approval_id, e)
+
+
+def _escalate_confirmation(session_id, name, tool_input, fingerprint, question):
+    """Hand a twice-asked question to the durable approval queue.
+
+    Returns the text the model is given INSTEAD of asking again. Never raises
+    and never allows: if the card cannot be created, the action still does not
+    run - it just says so plainly rather than looping.
+    """
+    try:
+        from agent_friday.services import approvals as _appr
+        res = _appr.gate_action(
+            kind="tool_confirm", subject_type="tool_action",
+            subject_id=f"{session_id}:{fingerprint}",
+            title=question,
+            action_description=f"{name} {tool_input!r}",
+            description=("Raised because the chat confirmation for this exact "
+                         "action was asked and not resolved. Decide it here."),
+            force_gate=True, payload={"tool": name, "input": tool_input},
+            requested_by="confirmation_gate",
+        )
+        status = res.get("status")
+        # Remember which card covers this question, so a later chat "yes" can
+        # close it instead of leaving it pending forever.
+        with _PENDING_LOCK:
+            _e = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
+            if _e is not None:
+                _e["approval_id"] = (res.get("approval") or {}).get("approval_id")
+    except Exception as e:
+        _log.warning("confirmation escalation unavailable: %s", e)
+        return (f"[CONFIRMATION UNRESOLVED] '{name}' was NOT executed. You have "
+                f"already asked the user this question once and did not get an "
+                f"answer you could act on. Do NOT ask it again. Tell the user "
+                f"plainly that the confirmation did not go through, say what "
+                f"you were trying to do, and ask them to reply with a single "
+                f"word: yes or no.")
+
+    if status in ("approved", "auto_approved"):
+        # Decided in the UI between the ask and now.
+        with _PENDING_LOCK:
+            entry = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
+            if entry is not None:
+                entry["granted"] = True
+        return (f"[CONFIRMATION GRANTED] The user approved this action in the "
+                f"approvals queue. Call '{name}' once more with exactly the same "
+                f"arguments and it will run.")
+    if status == "denied":
+        _clear_pending(session_id, fingerprint)
+        return (f"[CONFIRMATION DENIED] The user declined this action in the "
+                f"approvals queue, so '{name}' was NOT executed and must not be "
+                f"retried. Tell them it was not done.")
+    return (f"[CONFIRMATION ESCALATED] '{name}' was NOT executed. You already "
+            f"asked this question once, so it has been raised as an approval "
+            f"card instead of being asked again. Do NOT ask it again and do NOT "
+            f"call this tool again. Tell the user there is an approval waiting "
+            f"for them in the Approvals card (System workspace), and what it is "
+            f"for.")
 
 
 def _hook_governance_rings(ctx):
