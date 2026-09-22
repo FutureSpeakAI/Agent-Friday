@@ -107,6 +107,10 @@ _loading = False
 #: and then stops for good.
 _MAX_LOAD_ATTEMPTS = 5
 _RETRY_AFTER_S = 120.0
+#: How long the FIRST load waits for startup to finish importing the same ML
+#: stack. Measured: Friday's boot settles well inside this. Cheap insurance -
+#: the gate is keyword-only meanwhile, which is its pre-Laya behaviour.
+_BOOT_SETTLE_S = 45.0
 _load_attempts = 0
 _last_attempt_ts = 0.0
 
@@ -135,8 +139,45 @@ def status() -> dict:
     }
 
 
+#: The ML stack, in dependency order. Purged together or not at all.
+_ML_ROOTS = ("laya", "transformers", "huggingface_hub", "tokenizers")
+
+
+def _purge_partial_imports() -> None:
+    """Drop half-built ML modules from sys.modules before importing them.
+
+    A PARTIALLY INITIALISED MODULE IS STICKY, and that is what made the first
+    two attempts at this bug insufficient. When two threads import
+    `huggingface_hub` at boot, one can leave a half-built module object in
+    `sys.modules`; every later import returns that same corpse, so the error
+    changes shape - `XetConnectionInfo`, then `logging`, then whatever the
+    next missing attribute is - while never getting better. Retrying cannot
+    help, because retrying is exactly what returns the cached broken object.
+
+    So a retry starts by evicting them. Only modules that are ACTUALLY broken
+    are dropped: a module that finished importing has no reason to be
+    re-imported, and evicting a good one would discard state other callers
+    hold references to.
+    """
+    import sys
+    doomed = []
+    for name, mod in list(sys.modules.items()):
+        if not name.startswith(_ML_ROOTS):
+            continue
+        # `__spec__._initializing` is True while a module is mid-import, and
+        # a module left behind by a failed import keeps it set.
+        spec = getattr(mod, "__spec__", None)
+        if mod is None or (spec is not None and getattr(spec, "_initializing", False)):
+            doomed.append(name)
+    for name in doomed:
+        sys.modules.pop(name, None)
+    if doomed:
+        _log.info("evicted %d half-built ML module(s) before retrying: %s",
+                  len(doomed), ", ".join(sorted(doomed)[:4]))
+
+
 def _load_now():
-    """Import and load. Slow (~42 s cold). Never called on the request path."""
+    """Import and load. Slow (~40 s cold). Never called on the request path."""
     global _agent, _load_error, _loading
     with _agent_lock:
         if _agent is not None:
@@ -157,6 +198,8 @@ def _load_now():
         # inside laya where it is three frames from anything that knows what
         # to do about it.
         with _IMPORT_LOCK:
+            _purge_partial_imports()
+            import huggingface_hub  # noqa: F401,PLC0415
             import transformers  # noqa: PLC0415
             from transformers import AutoTokenizer  # noqa: F401,PLC0415
             import laya  # noqa: PLC0415 - lazy; see module docstring
@@ -232,7 +275,24 @@ def start_warming(force: bool = False) -> None:
             return
     _load_attempts += 1
     _last_attempt_ts = time.time()
-    threading.Thread(target=_load_now, name="laya-warm", daemon=True).start()
+
+    # DO NOT RACE THE BOOT. Prevention, not just recovery: the first attempt
+    # waits for the rest of startup to finish importing the same ML stack,
+    # because two threads building `huggingface_hub` or `transformers` at once
+    # is what poisons sys.modules in the first place. The gate is keyword-only
+    # for those seconds, which is exactly what it was before Laya existed and
+    # what the Settings panel already says.
+    #
+    # Later attempts (a retry, or an operator `?retry=1`) do not wait - boot
+    # is long over by then and the delay would only be dead time.
+    delay = _BOOT_SETTLE_S if _load_attempts == 1 and not force else 0.0
+    if delay:
+        t = threading.Timer(delay, _load_now)
+        t.name = "laya-warm-delayed"
+        t.daemon = True
+        t.start()
+    else:
+        threading.Thread(target=_load_now, name="laya-warm", daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
