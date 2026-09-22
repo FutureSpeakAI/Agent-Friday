@@ -168,3 +168,139 @@ class TestOfflineCacheIsNotAConnection:
         d = json.loads(ag._tool_search_email({"query": ""}))
         assert d["connected"] is False
         assert "cache" in d.get("note", "").lower()
+
+
+class TestTheQueryReachesGmail:
+    """2026-09-22. "Yeah I def see email you did not pick up."
+
+    On "start my day" Friday reported every query coming back 0 unread --
+    is:unread, in:inbox, in:primary, after:2026-09-21 -- while Gmail itself
+    held 50 unread across the two accounts.
+
+    Nothing was broken about OAuth, scopes, routing or pagination. The query
+    was never sent to Gmail. `_tool_search_email` called merged_gmail() with
+    NO query, took back the default unread/recent window, and then filtered
+    those cards with a word-boundary text match over sender+subject+snippet.
+    So `is:unread` was matched as LITERAL TEXT: it looked for the characters
+    "is:unread" in the subject line, found them nowhere, and said 0.
+
+    merged_gmail already took a `query` and already sent it to Gmail's own
+    `q=`. It was simply never passed.
+    """
+
+    def test_the_query_is_handed_to_gmail(self, monkeypatch):
+        """The regression itself: the operator must leave the process."""
+        _write_accounts(_rec(id="a1", label="Personal", status="connected",
+                             services={"gmail": True}))
+        seen = {}
+
+        def _fake(**kw):
+            seen.update(kw)
+            return {"accounts": [], "messages": [], "errors": []}
+
+        monkeypatch.setattr(ga, "merged_gmail", _fake)
+        ag._tool_search_email({"query": "is:unread"})
+        assert seen.get("query") == "is:unread", (
+            "the Gmail query never reached Gmail; it was %r" % seen.get("query"))
+
+    @pytest.mark.parametrize("query", [
+        "is:unread", "in:inbox", "after:2026-09-21", "from:jere",
+        "subject:invoice", "has:attachment", "newer_than:7d",
+    ])
+    def test_gmail_operators_are_not_filtered_out_locally(self, monkeypatch, query):
+        """Gmail did the matching, so every row it returned is a hit.
+
+        The old code re-filtered Gmail's own results with a text match that
+        no operator can satisfy, which zeroed every one of these.
+        """
+        _write_accounts(_rec(id="a1", label="Personal", status="connected",
+                             services={"gmail": True}))
+        monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
+            "accounts": [], "errors": [],
+            "messages": [{"sender": "Jere <j@example.com>",
+                          "subject": "Ready to go live",
+                          "snippet": "let me know", "unread": True,
+                          "timestamp": "2026-09-22T09:00:00"}]})
+        d = json.loads(ag._tool_search_email({"query": query}))
+        assert d["count"] == 1, (
+            "%r returned %d after Gmail had already matched it"
+            % (query, d["count"]))
+
+
+class TestABrokenSearchIsNeverZero:
+    """Friday's honesty law, at the one place that broke it.
+
+    "0 unread" and "the search did not run" are different facts and a user
+    cannot tell them apart from a number. So a failed search does not get to
+    report a number at all.
+    """
+
+    def test_every_account_failing_has_no_count_at_all(self, monkeypatch):
+        """Not `count: 0` - no `count` key. An absent number cannot be
+        misread as zero, which is exactly what a zero invites."""
+        _write_accounts(
+            _rec(id="a1", label="Personal", status="connected",
+                 services={"gmail": True}),
+            _rec(id="a2", label="Work", status="connected",
+                 services={"gmail": True}))
+        monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
+            "accounts": [], "messages": [],
+            "errors": [{"account_id": "a1", "label": "Personal",
+                        "error": "Gmail fetch failed: quota exceeded"},
+                       {"account_id": "a2", "label": "Work",
+                        "error": "Gmail fetch failed: quota exceeded"}]})
+        d = json.loads(ag._tool_search_email({"query": "is:unread"}))
+        assert d.get("search_failed") is True
+        assert "count" not in d, "a failed search reported a count: %r" % d.get("count")
+        assert "messages" not in d
+        assert "quota exceeded" in d["error"]
+        assert "NOT zero" in d["error"]
+
+    def test_an_exception_is_not_zero_either(self, monkeypatch):
+        """merged_gmail raising is the same fact as it erroring."""
+        _write_accounts(_rec(id="a1", label="Personal", status="connected",
+                             services={"gmail": True}))
+
+        def _boom(**kw):
+            raise RuntimeError("token refresh exploded")
+
+        monkeypatch.setattr(ga, "merged_gmail", _boom)
+        d = json.loads(ag._tool_search_email({"query": "is:unread"}))
+        assert d.get("search_failed") is True
+        assert "count" not in d
+        assert "token refresh exploded" in d["error"]
+
+    def test_a_partial_result_says_it_is_partial(self, monkeypatch):
+        """One dead account beside one working account used to report a
+        confident total for both - `_google_note` only speaks when there are
+        no items at all, and here there is one."""
+        _write_accounts(
+            _rec(id="a1", label="Personal", status="connected",
+                 services={"gmail": True}),
+            _rec(id="a2", label="Work", status="connected",
+                 services={"gmail": True}))
+        monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
+            "accounts": [],
+            "messages": [{"sender": "a@example.com", "subject": "hi",
+                          "snippet": "", "unread": True,
+                          "timestamp": "2026-09-22T09:00:00",
+                          "account_label": "Personal"}],
+            "errors": [{"account_id": "a2", "label": "Work",
+                        "error": "Gmail fetch failed: quota exceeded"}]})
+        d = json.loads(ag._tool_search_email({"query": "is:unread"}))
+        assert d["count"] == 1
+        assert d.get("partial") is True
+        assert any(x["account"] == "Work" for x in d["not_searched"])
+        assert "only 1 of 2" in d["error"]
+
+    def test_a_healthy_empty_result_is_still_allowed_to_be_zero(self, monkeypatch):
+        """The law must not make every zero an error. Gmail searching
+        successfully and finding nothing is a real, reportable zero."""
+        _write_accounts(_rec(id="a1", label="Personal", status="connected",
+                             services={"gmail": True}))
+        monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
+            "accounts": [], "messages": [], "errors": []})
+        d = json.loads(ag._tool_search_email({"query": "from:nobody"}))
+        assert d["count"] == 0
+        assert not d.get("search_failed")
+        assert not d.get("partial")
