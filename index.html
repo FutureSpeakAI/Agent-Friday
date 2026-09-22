@@ -22926,7 +22926,16 @@ function NewsWS() {
      + " — so there is no lead note, no section context and no Contrarian Corner. "
      + (function (r) { return r ? r.charAt(0).toUpperCase() + r.slice(1) + '.' : ''; })(fp.editorial_status.reason || '')), fp.editorial_status.detail && /*#__PURE__*/React.createElement("div", {
     className: "fp-degraded-detail"
-  }, fp.editorial_status.detail)), anchorReading && /*#__PURE__*/React.createElement("div", {
+  }, fp.editorial_status.detail),
+  // The ask, on the screen where the answer is. Same handler as the masthead
+  // button — a re-run that does not beat what is on disk now keeps the better
+  // edition (news_engine._was_curated), so pressing this cannot make it worse.
+  /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    style: { fontSize: 11, marginTop: 10 },
+    onClick: genFrontPage,
+    disabled: fpGen
+  }, fpGen ? 'Curating…' : '✨ Run the editor again')), anchorReading && /*#__PURE__*/React.createElement("div", {
     className: "fp-anchor-bar"
   }, /*#__PURE__*/React.createElement("span", {
     className: "fp-anchor-dot"
