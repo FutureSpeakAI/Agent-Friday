@@ -427,3 +427,17 @@ def test_resume_409s_when_there_is_no_checkpoint(client, task):
     r = client.post(f"/api/tasks/{task}/resume", json={})
     assert r.status_code == 409
     assert r.get_json()["reason"] == "no checkpoint was written"
+
+
+def test_a_checkpoint_that_cannot_be_decrypted_is_not_called_missing(task):
+    """Rotating the vault passphrase already left 20+ older task records on
+    this machine failing with "GCM auth tag mismatch". Reporting that as "no
+    checkpoint was written" would describe lost work as absent work."""
+    tr.checkpoint(task, convo=[{"role": "user", "content": "x"}], iteration=3)
+    path = tj.task_dir(task) / tr.BLOB
+    path.write_bytes(b"AGF1" + bytes(64))       # present, undecryptable
+    assert tr.read(task) is None
+    v = tr.resumability(task)
+    assert v["resumable"] is False
+    assert v["unreadable"] is True
+    assert "cannot be read" in v["reason"] and "passphrase" in v["reason"]
