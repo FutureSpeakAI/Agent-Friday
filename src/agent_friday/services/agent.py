@@ -6699,7 +6699,15 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question):
                 f"you were trying to do, and ask them to reply with a single "
                 f"word: yes or no.")
 
-    if status in ("approved", "auto_approved"):
+    # ONLY "approved", NEVER "auto_approved". `gate_action` returns "approved"
+    # the FIRST time a decided card is consumed and "auto_approved" every time
+    # after - and this card is created with force_gate=True, so there is no
+    # other route to auto_approved. Honouring both would turn one decision
+    # into a standing permission for that fingerprint: the card would keep
+    # re-granting the same write on every later attempt, which is the
+    # session-wide boolean all over again, just durable. One decision, one
+    # action - the rule gmail_send already lives by.
+    if status == "approved":
         # Decided in the UI between the ask and now.
         with _PENDING_LOCK:
             entry = (_PENDING_CONFIRMATIONS.get(session_id) or {}).get(fingerprint)
