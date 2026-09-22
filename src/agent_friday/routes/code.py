@@ -227,24 +227,39 @@ def code_logs_emit():
 
 
 # ── REPOS: dashboard ───────────────────────────────────────────
+def _scan_repos(root):
+    """Status cards for every git repo directly under ``root``, in name order.
+
+    Each card is four git processes; eight repos run at once (sequentially,
+    75 repos took 17-31 s)."""
+    from concurrent.futures import ThreadPoolExecutor
+    children = sorted([d for d in root.iterdir() if d.is_dir()], key=lambda p: p.name.lower())
+    paths = [rp for rp in (_repo_path(d.name) for d in children if (d / ".git").exists()) if rp]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return list(pool.map(_git_repo_summary, paths))
+
+
 @code_bp.route('/api/repos/scan')
 def repos_scan():
-    """Scan ~/Projects/ for git repos and return status cards."""
+    """Scan ~/Projects/ for git repos and return status cards.
+
+    Served from a stale-while-revalidate cache (fresh for 20 s; ``as_of`` says
+    when the cards were read). ``?fresh=1`` rescans before answering. Git
+    actions taken from the Code workspace drop the cache (see _git_result).
+    """
+    from agent_friday.services import swr_cache
     root = PROJECTS_DIR
-    repos = []
     if not root.exists():
         return jsonify({"status": "ok", "repos": [], "root": str(root),
                         "message": "~/Projects does not exist yet."})
+    if request.args.get('fresh') in ('1', 'true', 'yes'):
+        swr_cache.invalidate("repos.")
     try:
-        children = sorted([d for d in root.iterdir() if d.is_dir()], key=lambda p: p.name.lower())
+        repos, as_of = swr_cache.get("repos.scan:" + str(root), lambda: _scan_repos(root), fresh_for=20)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-    for d in children:
-        if (d / ".git").exists():
-            rp = _repo_path(d.name)
-            if rp:
-                repos.append(_git_repo_summary(rp))
-    return jsonify({"status": "ok", "repos": repos, "root": str(root), "count": len(repos)})
+    return jsonify({"status": "ok", "repos": repos, "root": str(root), "count": len(repos),
+                    "as_of": datetime.fromtimestamp(as_of).isoformat(timespec="seconds")})
 
 
 @code_bp.route('/api/repos/<name>/status')

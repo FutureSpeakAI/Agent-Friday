@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from agent_friday.services.calendar_engine import (
     CALENDAR_WRITE_SCOPE,
     GOOGLE_TOKEN_PATH,
+    _drop_calendar_cache,
     _google_credentials,
 )
 
@@ -268,6 +269,7 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
         try:
             svc.events().patch(calendarId="primary", eventId=t["id"],
                                body=patch).execute()
+            _drop_calendar_cache()
         except Exception as e:
             skipped.append({"id": t["id"], "title": t.get("title"),
                             "why": "patch failed: %s" % e})
@@ -338,6 +340,7 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
         ev = svc.events().insert(calendarId="primary", body=body).execute()
     except Exception as e:
         return {"error": "could not create the event: %s" % e}
+    _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "html_link": ev.get("htmlLink"), "start": start, "end": end}
 
@@ -393,6 +396,7 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                                 body=patch).execute()
     except Exception as e:
         return {"error": "could not update the event: %s" % e}
+    _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "set": patch,
             "before": {"summary": before.get("summary"),
