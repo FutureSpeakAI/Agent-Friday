@@ -28,6 +28,17 @@ CONFIG_PATH = FRIDAY_DIR / "channels.json"
 _LOCK = threading.Lock()
 _ADAPTERS: Dict[str, Any] = {}   # name -> adapter instance (lazy)
 
+#: The channels that exist. One tuple, declared once.
+#:
+#: This was the literal ("telegram", "discord") written out inside
+#: `configure_channel`, `_make_adapter` and `status`, so adding a third channel
+#: meant finding three places and the compiler could not help. The publishing
+#: platforms next door solved the same problem with a declared module table
+#: (`platforms/__init__.py:ADAPTER_MODULES`) and that package's own header says
+#: it "mirrors services/channels/manager.py" - the mirror only ever went one
+#: way. See docs/design/connector-ecosystem.md §2.4.
+CHANNELS: tuple = ("telegram", "discord")
+
 _SYSTEM_HINT = (
     "You are replying to the user over a messaging channel. Keep replies concise "
     "and plain-text friendly (no huge code dumps unless asked)."
@@ -70,7 +81,7 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 def configure_channel(name: str, opts: Dict[str, Any], *, token: Optional[str] = None) -> Dict[str, Any]:  # pragma: allowlist secret
     """Set a channel's non-secret options; store its token in the credential store."""
     name = _norm(name)
-    if name not in ("telegram", "discord"):
+    if name not in CHANNELS:
         return {"ok": False, "error": f"unknown channel: {name}"}
     cfg = load_config()
     ch = cfg.get(name) or {}
@@ -162,27 +173,71 @@ def test_channel(name: str, chat_id: str, text: str = "Friday here — channel t
     return a.send(str(chat_id), text)
 
 
+def _channel_health(name: str, running: bool, cfg: Dict[str, Any]):
+    """One verdict for one channel, whether or not its adapter is instantiated.
+
+    THERE WERE TWO IMPLEMENTATIONS OF THIS IN ONE PACKAGE. `ChannelAdapter.
+    status()` returned `running` / `has_token` / `dependency_ok` / `enabled`
+    as four loose booleans with no verdict, and `manager.status()` had a second
+    code path for the not-yet-instantiated case that used
+    `provider_key_status` for `has_token` and dropped `dependency_ok`
+    entirely - so the same channel answered differently depending on which
+    function you asked and whether a background thread had started yet.
+
+    Derived here, once, so both paths agree. The token question is asked of
+    the credential store either way, which is also what distinguishes a token
+    that is MISSING from one that is present and undecryptable - the
+    distinction that cost four provider keys their visibility.
+    """
+    from agent_friday.services import connector_health as _ch
+    from agent_friday.services import credential_store
+
+    ch = cfg.get(name) or {}
+    if not ch.get("enabled", False):
+        return _ch.Health(state=_ch.ABSENT, source="channels",
+                          source_state="disabled",
+                          summary="%s is switched off" % name.title())
+    try:
+        key_state = credential_store.provider_key_status("channel_%s" % name)
+    except Exception as e:
+        return _ch.unknown(detail="%s: %s" % (type(e).__name__, e),
+                           source="channels")
+    h = _ch.from_provider_key_status(key_state, name)
+    if not h.healthy:
+        return h
+    if not running:
+        # Configured, credential readable, nothing listening. Not a user
+        # problem and not a failure - it has simply not been started.
+        return _ch.Health(state=_ch.ABSENT, source="channels",
+                          source_state="not-running", action="start",
+                          summary="%s has a token but is not running"
+                                  % name.title())
+    return _ch.Health(state=_ch.WORKING, source="channels",
+                      source_state="running",
+                      summary="%s is running" % name.title())
+
+
 def status() -> Dict[str, Any]:
     cfg = load_config()
     out = {"enabled": cfg.get("enabled", False), "channels": {}}
-    for name in ("telegram", "discord"):
+    for name in CHANNELS:
         a = _ADAPTERS.get(name)
-        if a is not None:
-            out["channels"][name] = a.status()
-        else:
-            # not yet instantiated — report config + token presence only
-            token_present = False
-            try:
-                from agent_friday.services import credential_store
-                token_present = credential_store.provider_key_status(
-                    f"channel_{name}") == "connected"
-            except Exception:
-                pass
-            ch = cfg.get(name) or {}
-            out["channels"][name] = {
-                "name": name, "running": False, "has_token": token_present,
-                "enabled": ch.get("enabled", False), "last_error": None,
-            }
+        base = a.status() if a is not None else {
+            "name": name, "running": False, "last_error": None,
+        }
+        base.setdefault("enabled", (cfg.get(name) or {}).get("enabled", False))
+        health = _channel_health(name, bool(base.get("running")), cfg)
+        # Asked of the credential store either way, so the instantiated and
+        # not-yet-instantiated paths cannot disagree - which they did.
+        try:
+            from agent_friday.services import credential_store
+            base["has_token"] = credential_store.provider_key_status(
+                "channel_%s" % name) == "connected"
+        except Exception:
+            base["has_token"] = False
+        base["health"] = health.as_dict()
+        base["connected"] = health.healthy
+        out["channels"][name] = base
     return out
 
 

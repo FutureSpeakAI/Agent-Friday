@@ -150,7 +150,34 @@ def briefing_status():
     Drives the colored status indicators (✅ / ⚠️ / ❌). Static segment so it
     ranks above the /api/briefing/<filename> rule in Werkzeug's matcher.
     """
-    google_connected = _google_credentials() is not None
+    # PER SERVICE, NOT PER CREDENTIAL. This used to be one
+    # `_google_credentials() is not None` - the PRIMARY account's credentials -
+    # reported as the status of both Gmail and Calendar. It answered none of
+    # the three questions that decide whether a service works: is any account
+    # configured for it, are those accounts usable, and is it switched on at
+    # Google. Measured 2026-09-19: both accounts connected, `drive: true` on
+    # both, and every Drive call returning 403 because the API had never been
+    # enabled on the Cloud project - reported here as a green tick.
+    from agent_friday.services.google_accounts import service_health
+
+    def _svc(key, label, icon):
+        h = service_health(key)
+        return {
+            "key": key, "label": label, "icon": icon,
+            # The indicator vocabulary this endpoint has always spoken, derived
+            # rather than guessed. `degraded` is new and is the honest word for
+            # "connected, and this particular thing is off at the provider".
+            "status": ("connected" if h.state == "working" else
+                       "degraded" if h.state == "degraded" else
+                       "disconnected" if h.state == "absent" else "error"),
+            # The provider's own words reach the user. Every incident this
+            # month was made harder by a surface that replaced a specific
+            # error with a generic one.
+            "detail": h.summary + ((" — " + h.detail) if h.detail else ""),
+            "action": h.action,
+        }
+
+    google_connected = service_health("gmail").healthy
     try:
         import feedparser  # noqa: F401
         from bs4 import BeautifulSoup  # noqa: F401
@@ -159,16 +186,8 @@ def briefing_status():
         news_ok = False
     brave_on = bool((os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip())
     connectors = [
-        {
-            "key": "gmail", "label": "Gmail", "icon": "📧",
-            "status": "connected" if google_connected else "disconnected",
-            "detail": "Live read-only" if google_connected else "Not linked — using local cache if present",
-        },
-        {
-            "key": "calendar", "label": "Calendar", "icon": "📅",
-            "status": "connected" if google_connected else "disconnected",
-            "detail": "Live read-only" if google_connected else "Not linked",
-        },
+        _svc("gmail", "Gmail", "📧"),
+        _svc("calendar", "Calendar", "📅"),
         {
             "key": "news", "label": "News (RSS)", "icon": "📰",
             "status": "connected" if news_ok else "disconnected",

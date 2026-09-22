@@ -355,8 +355,19 @@ def list_models():
     the UI can show—but disable—models the user hasn't configured yet.
     """
     try:
+        # SERVED FROM THE WARM CACHE, not rebuilt per request.
+        #
+        # build_catalog() was measured at 18.9 s for 598 models on 2026-09-22,
+        # called synchronously here, which is why the model picker timed out
+        # and could not be used to switch seats at all. The value is now
+        # warmed at boot, persisted across restarts, and refreshed behind the
+        # request - `compute_if_cold` means the very first call on a machine
+        # with no cache still gets a real answer rather than an empty picker.
+        from agent_friday.services import warm_cache
         from agent_friday.services.model_catalog import build_catalog
-        cat = build_catalog()
+        warm_cache.register("model_catalog", build_catalog, ttl_s=900.0)
+        cached = warm_cache.get("model_catalog", compute_if_cold=True)
+        cat = cached.get("value") or {"roles": {}, "models": [], "providers": []}
         settings = _load_settings()
         # Catalog freshness per hosted/discovery provider — lets the UI say
         # "catalog stale, showing cached" honestly (spec A2). stale=True when
@@ -381,7 +392,14 @@ def list_models():
             "models": cat["models"],
             "providers": cat["providers"],
             "voice_engines": cat.get("voice_engines", []),
+            "tts_engines": cat.get("tts_engines", []),
             "catalog_meta": cat_meta,
+            # Provenance, so the picker can say "showing a list from 4 minutes
+            # ago, refreshing" instead of pretending it is live. A cache that
+            # silently serves old data is worse than a slow endpoint, because
+            # the slow endpoint is at least honest about what it is doing.
+            "cache": {k: cached.get(k) for k in
+                      ("ready", "age_s", "stale", "refreshing", "error")},
             "selected": {
                 "orchestrator_model": settings.get("orchestrator_model"),
                 "subagent_model": settings.get("subagent_model"),
@@ -393,6 +411,7 @@ def list_models():
                                          or {}).get("model"),
                 "voice_model": settings.get("voice_model"),
                 "voice_engine": settings.get("voice_engine"),
+                "local_voice_tts_engine": settings.get("local_voice_tts_engine"),
             },
         })
     except Exception as e:
@@ -789,6 +808,40 @@ def api_setup_complete():
 
 
 # ── Agent Settings endpoints ──────────────────────────────────
+#: Settings whose value must come from a fixed set, with the set. An
+#: out-of-range value here is not a harmless typo: `voice_engine` and
+#: `local_voice_tts_engine` are both read with `or <default>` fallbacks at the
+#: consumption site, so an unrecognised string silently resolves to something
+#: other than what was written -- a control that reports success and does
+#: something else. Rejecting the write is how the setting keeps its meaning.
+_VOICE_ENUMS = {
+    "voice_engine": ("local", "local-gpu", "gemini", "auto"),
+    "local_voice_tts_engine": ("piper", "kokoro"),
+    # Clean-sheet §8.1: per-stage GPU policy, read by voice_manifest.
+    "voice_ear_gpu": ("never", "if_free", "required"),
+    "voice_mouth_gpu": ("never", "if_free", "required"),
+}
+
+
+def _check_voice_enums(new_settings):
+    """Return an error dict when a voice enum is written out of range, else None.
+
+    Availability is deliberately NOT checked here. A user may select an engine
+    that cannot run right now; the settings UI greys it with a reason and the
+    engine refuses at load with an actionable code. Refusing the *write* would
+    stop someone configuring a machine before installing on it.
+    """
+    for key, allowed in _VOICE_ENUMS.items():
+        if key not in new_settings:
+            continue
+        val = new_settings.get(key)
+        if not isinstance(val, str) or val.strip().lower() not in allowed:
+            return {"status": "error",
+                    "message": ("%s must be one of: %s (got %r)"
+                                % (key, ", ".join(allowed), val))}
+    return None
+
+
 def _check_local_model_seat_gate(new_settings):
     """No-op. The seat gate is REMOVED (maintainer decision).
 
@@ -810,6 +863,82 @@ def _check_local_model_seat_gate(new_settings):
     honest about the fact that nothing is checked here any more, rather than
     the call quietly disappearing.
     """
+    return None
+
+
+@core_bp.route('/api/capabilities/state', methods=['GET'])
+def api_capabilities_state():
+    """The live capability picture the model reads every turn, for any UI or
+    health surface that wants the same truth (services/capability_state.py).
+    Absent and unconfigured are distinct, and unconfigured names its key."""
+    try:
+        from agent_friday.services import capability_state as _cs
+        return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
+                        "states": list(_cs.STATES)})
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"{type(e).__name__}: {e}"}), 500
+
+
+_LOCAL_SEAT_PROVIDERS = frozenset({"ollama-local", "llama-cpp-local", "arbiter-local",
+                                   "local", "local-comfyui"})
+
+
+def _check_seat_installed(new_settings):
+    """Refuse to bind a LOCAL seat to a model that is not on this machine.
+
+    This is not the removed conformance gate above: it asks nothing about
+    quality, only whether the weights exist. Observed 2026-09-18: the picker
+    wrote `capability_routing.reasoning = gemma4:12b` (Ollama held zero
+    models; the only local weights were the FridayWeaver e2b set), the save
+    returned 200, the UI announced success, and `local_seats.resolve()`
+    substituted e2b at INFO in a log nobody reads. A seat change that cannot
+    be served must fail here, out loud, naming what is missing and what is
+    installed -- not succeed on paper and be quietly rewritten at dispatch.
+
+    Returns an error dict (HTTP 400 at the call site) or None. When the
+    installed list cannot be read at all (daemon down AND an empty store)
+    the save is allowed: refusing on an unknown would lock the user out of a
+    control that may be perfectly valid.
+    """
+    if not isinstance(new_settings, dict):
+        return None
+    wanted = []
+    cr = new_settings.get("capability_routing")
+    if isinstance(cr, dict):
+        for cap, entry in cr.items():
+            if not isinstance(entry, dict):
+                continue
+            model = str(entry.get("model") or "").strip()
+            prov = str(entry.get("provider") or "").strip().lower()
+            if model and prov in _LOCAL_SEAT_PROVIDERS:
+                wanted.append((f"capability_routing.{cap}", model, prov))
+    mr = new_settings.get("model_routing")
+    if isinstance(mr, dict) and str(mr.get("local_model") or "").strip():
+        wanted.append(("model_routing.local_model",
+                       str(mr["local_model"]).strip(), "local"))
+    if not wanted:
+        return None
+    try:
+        from agent_friday.services import local_seats
+        installed = sorted({n for n, _ in local_seats.installed(force=True)})
+    except Exception:
+        installed = []
+    if not installed:
+        return None
+    for key, model, prov in wanted:
+        if model in installed:
+            continue
+        return {
+            "status": "error",
+            "error": "seat_not_installed",
+            "key": key, "model": model, "provider": prov,
+            "installed": installed,
+            "detail": (f"{model} is not installed on this machine, so it cannot "
+                       f"take the {key.split('.')[-1]} seat. Installed local "
+                       f"models: {', '.join(installed)}. Pull it first (for "
+                       f"example `ollama pull {model}`) or pick one of the "
+                       f"installed models. Nothing was changed."),
+        }
     return None
 
 
@@ -839,6 +968,14 @@ def api_settings():
         seat_error = _check_local_model_seat_gate(new_settings)
         if seat_error is not None:
             return jsonify(seat_error), 400
+
+        installed_error = _check_seat_installed(new_settings)
+        if installed_error is not None:
+            return jsonify(installed_error), 400
+
+        enum_error = _check_voice_enums(new_settings)
+        if enum_error is not None:
+            return jsonify(enum_error), 400
 
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting

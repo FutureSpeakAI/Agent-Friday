@@ -25,7 +25,16 @@ def get_cloud_consent_status():
     decide which of the two screens to show without a second round trip.
     """
     try:
-        return jsonify({"status": "ok", **cloud_consent.status()})
+        payload = cloud_consent.status()
+        # `?assess=1` is the Model Soup card's "Re-answer" control
+        # (model-soup.md §10.2 step 5): a fresh capability assessment of the
+        # machine as it is now, so the question can be asked again against a
+        # measured local seat rather than the snapshot that said local was
+        # incapable because nothing had been measured. Read-only; the answer
+        # is still recorded only through POST.
+        if request.args.get("assess") and "capability" not in payload:
+            payload["capability"] = cloud_consent.assess_local_capability()
+        return jsonify({"status": "ok", **payload})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

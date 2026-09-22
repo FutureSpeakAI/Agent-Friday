@@ -180,7 +180,17 @@ def run_review_route():
 #  General approval queue (services/approvals.py)
 # ═══════════════════════════════════════════════════════════════════════════
 
+# AN APPROVAL CARD IS NOT AN ORDINARY READ.
+#
+# The module header's "reads are open" split is right for goals and routines -
+# a status list is not sensitive. An approval is different: it is the full
+# description of an action Friday is waiting to take, including whatever
+# argument it carries, and the queue is a map of what this machine is about to
+# do next. `/decide` was already gated; reading the card was not, so the
+# contents were available to any non-loopback caller while the decision was
+# protected. Loopback - the desktop app - is unaffected either way.
 @goals_bp.route("/api/approvals", methods=["GET"])
+@login_required
 def list_approvals_route():
     status = request.args.get("status")
     subject_type = request.args.get("subject_type")
@@ -192,6 +202,7 @@ def list_approvals_route():
 
 
 @goals_bp.route("/api/approvals/<approval_id>", methods=["GET"])
+@login_required
 def get_approval_route(approval_id):
     appr = _approvals.get_approval(approval_id)
     if not appr:

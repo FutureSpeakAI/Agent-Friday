@@ -110,6 +110,10 @@ ABSENT = "absent"
 PRESENT_FAILING = "present_but_failing"
 WORKING = "working"
 UNVERIFIED = "present_unverified"
+#: A missing key is NOT absence. This vocabulary used to return ABSENT for
+#: "no key configured", which is how a built, wired-in backend reached the
+#: model as "not a tool" (2026-09-18). See services/capability_state.py.
+UNCONFIGURED = "unconfigured"
 
 _HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
                  "checked_at": 0.0}
@@ -125,8 +129,11 @@ def health_state() -> dict:
     on every page load would be its own problem.
     """
     if not brave_key():
-        return {"state": ABSENT, "proven_on": None,
-                "detail": "No Brave key is configured.", "checked_at": 0.0}
+        return {"state": UNCONFIGURED, "proven_on": None,
+                "needs": ["BRAVE_SEARCH_API_KEY", "brave_search_api_key"],
+                "detail": "Brave web search is wired in but no key is configured "
+                          "(BRAVE_SEARCH_API_KEY, or brave_search_api_key in "
+                          "settings.json).", "checked_at": 0.0}
     return dict(_HEALTH)
 
 
@@ -134,8 +141,11 @@ def firecrawl_health() -> dict:
     """Same three states for Firecrawl. `working` only after a real query
     returned real results — never on the strength of a stored string."""
     if not _firecrawl_ready():
-        return {"state": ABSENT, "proven_on": None,
-                "detail": "No Firecrawl key is configured.", "checked_at": 0.0}
+        return {"state": UNCONFIGURED, "proven_on": None,
+                "needs": ["FIRECRAWL_API_KEY", "firecrawl_api_key"],
+                "detail": "Firecrawl is wired in but no key is configured "
+                          "(FIRECRAWL_API_KEY, or firecrawl_api_key in "
+                          "settings.json).", "checked_at": 0.0}
     return dict(_FC_HEALTH)
 
 
@@ -291,6 +301,99 @@ def active_backend() -> str:
     return "brave" if brave_key() else "duckduckgo-scrape"
 
 
+#: wigolo — a local-first web layer for agents (search, fetch, crawl) that
+#: runs on this machine with no API key and no per-query cost. Started with
+#: `npx wigolo serve`; it listens on loopback only unless a bearer token is
+#: configured, so nothing here is reachable from off the machine.
+#:
+#: WHY IT GOES FIRST. Every other backend in this chain can fail for a reason
+#: the user has to go and fix with a credit card. On 2026-09-18 neither
+#: Firecrawl nor Brave had a key on this machine, so every search fell to the
+#: DuckDuckGo scrape, which answered HTTP 202 anti-bot walls — a working
+#: internet and no way to read it. A keyless local backend removes that whole
+#: class of failure rather than reporting it better.
+_WIGOLO_URL = "http://127.0.0.1:3333"
+_WIGOLO_PROBE_TTL_S = 30.0
+_wigolo_seen: dict = {"at": 0.0, "up": False}
+
+
+def _wigolo_ready() -> bool:
+    """Is wigolo serving on loopback? Cached briefly; never raises.
+
+    A connect check rather than a request: it answers in about a millisecond
+    when nothing is listening, and this sits in front of every search.
+    """
+    import socket
+    now = time.time()
+    if now - (_wigolo_seen.get("at") or 0) < _WIGOLO_PROBE_TTL_S:
+        return bool(_wigolo_seen.get("up"))
+    up = False
+    try:
+        with socket.create_connection(("127.0.0.1", 3333), 0.35):
+            up = True
+    except OSError:
+        up = False
+    except Exception:
+        up = False
+    _wigolo_seen.update({"at": now, "up": up})
+    return up
+
+
+def _wigolo_search(query: str, count: int) -> dict:
+    """Search via the local wigolo engine.
+
+    Its response carries far more than this chain's contract needs — per-engine
+    telemetry, score decomposition, verbatim evidence spans. Only the results
+    are taken here, because `search()`'s contract is a list of real fetchable
+    urls and quietly widening that shape would break every caller that trusts
+    it. The richer surface is worth wiring to deliberately, later, not by
+    accident now.
+    """
+    import requests          # local, as every other backend here does
+    try:
+        r = requests.post(
+            f"{_WIGOLO_URL}/v1/search",
+            json={"query": query, "max_results": max(1, int(count or 5))},
+            timeout=45,
+        )
+    except Exception as e:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": f"wigolo unreachable ({type(e).__name__})"}
+    if r.status_code >= 400:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": f"wigolo HTTP {r.status_code}"}
+    try:
+        body = r.json() or {}
+    except Exception:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": "wigolo returned a body that is not JSON"}
+    rows = body.get("results") or []
+    out = []
+    for row in rows:
+        url = (row.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            # The contract is a REAL fetchable href. A row without one is
+            # dropped rather than passed on to be clicked.
+            continue
+        out.append({
+            "title": (row.get("title") or url)[:300],
+            "url": url,
+            "description": (row.get("snippet") or row.get("description")
+                            or "")[:1000],
+        })
+    if not out:
+        return {"status": SearchStatus.NO_RESULTS,
+                "detail": "wigolo answered with no usable results"}
+    # wigolo reports its own degradation; pass that on rather than presenting
+    # a partial answer as a whole one.
+    warn = body.get("engine_warnings") or []
+    detail = "local, keyless"
+    if warn:
+        detail += "; wigolo reported: " + "; ".join(str(w) for w in warn[:2])
+    return {"status": SearchStatus.OK, "results": out[:count],
+            "detail": detail}
+
+
 def _firecrawl_search(query: str, count: int) -> dict:
     from agent_friday.services import firecrawl
     out = firecrawl.search(query, count)
@@ -425,11 +528,55 @@ def _gate_search_query(query: str, provider: str) -> tuple[str, str]:
     return gated, ""
 
 
+#: The row shape every caller is entitled to assume, whichever backend answered.
+_ROW_KEYS = ("title", "url", "snippet")
+
+
+def _normalise_rows(rows) -> list:
+    """Force every backend's rows into one shape: title, url, snippet.
+
+    THE WHOLE POINT IS THAT CALLERS STOP GUESSING. Four backends each invented
+    their own field name for the same string - Brave and DuckDuckGo and
+    Firecrawl say `snippet`, wigolo says `description` - and
+    `services/agent.py` renders results with a hard `r['snippet']`. So the
+    moment wigolo became the first runner on 2026-09-18, every single web
+    search raised `KeyError: 'snippet'` and the model was handed
+    "Tool error (search_web): 'snippet'". Search was 100% dead for a day, on
+    the one backend that always answers because it is local and keyless.
+
+    Reported 2026-09-19 as DuckDuckGo choking on an anti-bot wall, which was a
+    reasonable theory and the wrong one: DuckDuckGo returns `snippet` and
+    degrades cleanly. Measured before fixing - wigolo ready, wigolo answering,
+    three results, row keys ['description', 'title', 'url'].
+
+    Normalising HERE rather than teaching agent.py a second key name is the
+    difference between fixing this bug and fixing this class of bug. A fifth
+    backend that calls it `abstract` now costs nothing.
+    """
+    out = []
+    for r in (rows or []):
+        if not isinstance(r, dict):
+            continue
+        url = str(r.get("url") or "").strip()
+        if not url:
+            continue                  # the contract is a real fetchable href
+        out.append({
+            "title": str(r.get("title") or url)[:300],
+            "url": url,
+            "snippet": str(r.get("snippet") or r.get("description")
+                           or r.get("abstract") or r.get("text") or "")[:1000],
+        })
+    return out
+
+
 def search(query: str, count: int = 10) -> dict:
     """Search the web. Returns {status, results[], backend, detail, query}.
 
     `results[i]["url"]` is always a real, fetchable, clickable href — that is
     this function's contract and the thing the old one got wrong.
+
+    Rows are always `{title, url, snippet}` whatever backend answered; see
+    `_normalise_rows` for the day that cost.
     """
     q = (query or "").strip()
     if not q:
@@ -439,7 +586,14 @@ def search(query: str, count: int = 10) -> dict:
     # attempt records what it learned, so health cannot drift from reality and
     # the caller is always told which backend ACTUALLY answered — a result
     # labelled with the backend we hoped for would be its own small lie.
-    runners = [("firecrawl", _firecrawl_search)] if _firecrawl_ready() else []
+    # wigolo first when it is running: it is local, keyless and costs nothing
+    # per query, which makes it the only backend in this chain that cannot
+    # fail for a reason the user has to go and fix with a credit card. The
+    # keyed services stay behind it and are still tried when it is absent —
+    # this is an addition to the ladder, not a replacement for it.
+    runners = [("wigolo", _wigolo_search)] if _wigolo_ready() else []
+    if _firecrawl_ready():
+        runners.append(("firecrawl", _firecrawl_search))
     if brave_key():
         runners.append(("brave", _brave))
     runners.append(("duckduckgo-scrape", _duckduckgo))
@@ -461,7 +615,7 @@ def search(query: str, count: int = 10) -> dict:
                    "detail": f"{type(e).__name__}: {e}"}
         _note_backend_health(name, out)
         if out.get("status") == SearchStatus.OK:
-            out.setdefault("results", [])
+            out["results"] = _normalise_rows(out.get("results"))
             out["query"] = q
             out["backend"] = name
             if tried:
@@ -474,7 +628,39 @@ def search(query: str, count: int = 10) -> dict:
     last["query"] = q
     last["backend"] = runners[-1][0] if runners else "none"
     last["detail"] = "; ".join(tried)
+    # Observed 2026-09-18: with no Firecrawl key, every query fell to the
+    # DuckDuckGo scrape, which answered HTTP 202 anti-bot walls, and the
+    # model told the user "I don't have Firecrawl wired up as a tool right
+    # now, nothing in my toolkit is named that" -- false; it is the first
+    # backend in this chain. A failure that hides the fix is half a lie.
+    try:
+        from agent_friday.services import capability_state as _cs
+        note = _cs.unconfigured_backends_note()
+    except Exception:
+        note = FIRECRAWL_UNCONFIGURED_NOTE if not _firecrawl_ready() else ""
+    if note:
+        last["detail"] = (last["detail"] + " " + note).strip()
+    if not _firecrawl_ready():
+        last["firecrawl"] = {"configured": False, "how": FIRECRAWL_KEY_HOWTO}
+    if not brave_key():
+        last["brave"] = {"configured": False,
+                         "how": "Set BRAVE_SEARCH_API_KEY in your environment or "
+                                "brave_search_api_key in settings.json, then restart Friday."}
     return last
+
+
+#: Where the key goes. Read by firecrawl.api_key() in this order: the
+#: FIRECRAWL_API_KEY environment variable (start.bat sets Friday's keys),
+#: the credential store, then `firecrawl_api_key` in settings.json.
+FIRECRAWL_KEY_HOWTO = (
+    "Set FIRECRAWL_API_KEY in your environment (start.bat, beside the other "
+    "keys) or `firecrawl_api_key` in settings.json, then restart Friday.")
+
+FIRECRAWL_UNCONFIGURED_NOTE = (
+    "Firecrawl is wired in as the PREFERRED search backend but has no API key "
+    "on this machine, so it was not tried. " + FIRECRAWL_KEY_HOWTO +
+    " Do not tell the user that Firecrawl is unavailable or not a tool: it "
+    "exists and is unconfigured.")
 
 
 def _firecrawl_ready() -> bool:

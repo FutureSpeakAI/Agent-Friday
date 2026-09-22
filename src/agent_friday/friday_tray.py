@@ -23,6 +23,29 @@ from PIL import Image
 
 from agent_friday.paths import friday_home
 
+# No console windows from anything this process spawns. The tray outlives the
+# server — it is what starts Friday and what keeps running after Friday is
+# closed — so the popups Stephen reported "when Friday is closed" come from
+# here. Installed before anything can shell out. See services/no_console.py.
+try:
+    from agent_friday.services.no_console import install as _install_no_console
+    _install_no_console()
+except Exception:
+    pass
+
+# Same reasoning, one layer up. The tray is the ROOT of Friday's process tree,
+# so setting HF_HUB_DISABLE_XET here is inherited by the server and by every
+# child the server spawns - which matters because the two hf_xet aborts on
+# 2026-09-22 were in child processes, not in the server itself. Arming
+# faulthandler here additionally covers the tray, which outlives the server
+# and was previously the one process that could die with no record at all.
+try:
+    from agent_friday.services import crash_forensics as _crash
+    _crash.disable_hf_xet()
+    _crash.install()
+except Exception:
+    pass
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
@@ -290,6 +313,92 @@ class FridayTray:
         self.icon.run()
 
 
+#: Held for the life of the process. A module global rather than a local,
+#: because a mutex handle that falls out of scope is a mutex that is released,
+#: and a guard released at the end of main() guards nothing.
+_INSTANCE_HANDLES: list = []
+
+
+def _claim_windows_mutex() -> bool:
+    """False only when another tray demonstrably holds the named mutex.
+
+    Split out from `_acquire_single_instance` so tests can stub the one part
+    of the guard that reaches out to the real operating system. Everything
+    else - the socket, the bind, the failure path - stays exercised, which is
+    what the existing tray tests assert on.
+
+    True on any platform without this mechanism, and true on any error:
+    failing to claim is not the same as finding it taken, and a guard that
+    cannot run must not be the reason Friday will not start.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ERROR_ALREADY_EXISTS = 183
+        _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _k32.CreateMutexW.restype = wintypes.HANDLE
+        _k32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL,
+                                      wintypes.LPCWSTR]
+        # Local\ scopes the name to this logon session, which is the boundary
+        # we actually want: one tray per signed-in user.
+        handle = _k32.CreateMutexW(None, True, r"Local\AgentFridayTray")
+        if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            return False
+        if handle:
+            _INSTANCE_HANDLES.append(handle)
+    except Exception:
+        pass
+    return True
+
+
+def _acquire_single_instance() -> bool:
+    """True when this process is the only tray. False when another holds it.
+
+    2026-09-18: the previous guard did not hold. Two trays were found running,
+    both created in the same second (7:56:24), each having started its own
+    server.py - so Friday was running twice, and both copies' schedulers and
+    health probes were hitting one single-slot llama-server. The seat log
+    showed four-token requests taking seven to twenty seconds, which is what
+    queueing behind another Friday looks like from the inside.
+
+    A bare bind() is not a reliable mutex on Windows. Without
+    SO_EXCLUSIVEADDRUSE the OS will let a second socket take the same loopback
+    address under conditions that are easy to hit and hard to reproduce on
+    purpose, and a guard that fails open is worse than none: it reads as
+    protection in the source while the duplicate it was meant to stop runs
+    anyway. A named kernel mutex has no such ambiguity - CreateMutexW either
+    creates it or tells you it already existed.
+
+    A FUNCTION RATHER THAN A BLOCK INSIDE main(), and that is not tidying.
+    Inline, this made two OS-mode tests depend on whether a tray happened to
+    be running on the machine executing them: they called main(), the real
+    mutex was already held by the real tray, and main() exited before reaching
+    what they were testing. A test that passes or fails on the state of the
+    developer's desktop is worse than one that fails, because it will
+    eventually pass for the wrong reason. Named and separate, it can be
+    stubbed by the tests that are not about it.
+    """
+    if not _claim_windows_mutex():
+        return False
+
+    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if sys.platform == "win32":
+        try:
+            # SO_EXCLUSIVEADDRUSE (~SO_REUSEADDR as a signed int) is the
+            # option that makes a Windows bind actually exclusive.
+            guard.setsockopt(socket.SOL_SOCKET, ~socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+    try:
+        guard.bind(("127.0.0.1", 51847))
+    except OSError:
+        return False
+    _INSTANCE_HANDLES.append(guard)
+    return True
+
+
 def main() -> None:
     # Kiosk image (FRIDAY_OS_MODE=1): there is no desktop to put a tray icon
     # on — see core/os_mode.py. The sealed Linux image starts server.py
@@ -301,13 +410,8 @@ def main() -> None:
               "(no desktop to put it on in kiosk mode).")
         return
 
-    # Single-instance guard: bind a loopback port to ensure only one tray runs.
-    guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        guard.bind(("127.0.0.1", 51847))
-    except OSError:
-        # Another tray instance is already running.
-        sys.exit(0)
+    if not _acquire_single_instance():
+        return
 
     def _on_signal(_sig, _frm):
         sys.exit(0)

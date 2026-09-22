@@ -53,12 +53,15 @@ ROLE_SPEC = [
     # seat that runs your conversation.
     ("reasoning",      "Everyday conversation", "orchestrator", "tools",
      "The model that answers you in chat and can use tools."),
-    ("heavy_hitter",   "Heavy thinking",        "orchestrator", "tools",
-     "Long, hard problems where you will wait for a better answer."),
+    ("heavy_hitter",   "Deep thinking (on demand)", "orchestrator", "tools",
+     "Long, hard problems where you will wait for a better answer. Loaded "
+     "only while it works, and it replaces the everyday model on this card."),
     ("local",          "Quick reflexes",        "orchestrator", "tools",
      "The small local model that stays awake for fast replies."),
-    ("subagent",       "Research & background", "subagent",     "tools",
+    ("subagent",       "Background & research", "subagent",     "tools",
      "Runs commissions and background work while you do other things."),
+    ("memory_manager", "Memory keeper",         "orchestrator", "tools",
+     "Reads the day and decides what is worth keeping. Local only."),
     ("creative_image", "Images",                "creative",     "image",
      "Generates pictures."),
     ("creative_video", "Video",                 "creative",     "video",
@@ -66,30 +69,20 @@ ROLE_SPEC = [
     ("creative_music", "Music",                 "creative",     "music",
      "Generates audio compositions."),
     ("voice",          "Live voice",            "voice",        "live",
-     "Real-time spoken conversation."),
-    ("asr",            "Voice in",              None,           "audio",
-     "Turns what you say into text."),
-    ("tts",            "Voice out",             None,           "audio",
-     "Speaks Friday's replies aloud."),
-    ("embedding",      "Memory",                None,           "text",
-     "Turns text into vectors so Friday can recall it later."),
-
-    # THE WORKING ROLES (roles contract 1). Rule R11: these are chosen by
-    # the user, never inferred, and an unassigned one is an empty seat awaiting
-    # a choice -- not an error. They were unassignable until seat_binding got
-    # capability keys for them, so "chosen by the user" described a choice the
-    # UI offered no way to make.
-    ("orchestrator",     "Routing your work",   "orchestrator", "tools",
-     "Decides which model handles what. Empty until you pick one."),
-    ("sidekick_fast",    "Fast sidekick",       "orchestrator", "tools",
-     "The quickest local model, for work that should not make you wait."),
-    ("function_manager", "Tool calling",        "orchestrator", "tools",
-     "Turns your request into the right tool call."),
-    ("memory_manager",   "Memory keeper",       "orchestrator", "tools",
-     "Reads the day and decides what is worth keeping."),
-    ("researcher",       "Deep research",       "subagent",     "tools",
-     "Runs long commissions end to end."),
+     "Real-time spoken conversation. Chosen on the Voice tab."),
+    # REMOVED 2026-09-17 (docs/design/active/model-soup.md §11.2 C):
+    # orchestrator, sidekick_fast, function_manager, researcher, asr, tts and
+    # embedding. `services/role_consumers.py` finds no reader for the first
+    # six, and `embedding` is read only for a badge: the embedder is the
+    # module constant all-MiniLM-L6-v2, in-process on CPU. A picker with no
+    # reader is a lie about control (docs/decisions/2026-09-04-five-dead-
+    # settings.md); the card renders embeddings as one fixed line instead.
 ]
+
+#: The seats that stay resident on the card. Everything else is leased or
+#: wakes on demand.
+DEAD_ROLE_KEYS = ("orchestrator", "sidekick_fast", "function_manager",
+                  "researcher", "asr", "tts", "embedding")
 
 # capability key -> residency class, from the contract's 3.
 #
@@ -99,14 +92,11 @@ ROLE_SPEC = [
 # fit in three or four models. Sent to the client so the page can group by it
 # rather than listing thirteen equal-looking seats.
 _RESIDENCY_FOR_ROLE = {
-    "reasoning": "resident", "local": "resident", "orchestrator": "resident",
-    "sidekick_fast": "resident", "function_manager": "resident",
-    "embedding": "resident",
-    "heavy_hitter": "leased", "subagent": "leased", "researcher": "leased",
+    "reasoning": "resident", "local": "resident",
+    "heavy_hitter": "leased", "subagent": "leased",
     "creative_image": "leased", "creative_video": "leased",
     "creative_music": "leased",
-    "memory_manager": "on-demand", "asr": "on-demand", "tts": "on-demand",
-    "voice": "on-demand",
+    "memory_manager": "on-demand", "voice": "on-demand",
 }
 
 RESIDENCY_HELP = {
@@ -122,9 +112,6 @@ _SEAT_FOR_ROLE = {
     "local": "sidekick",
     "subagent": "sidekick_heavy",
     "creative_image": "image",
-    "embedding": "embedder",
-    "asr": "stt",
-    "tts": "tts",
 }
 
 
@@ -208,10 +195,41 @@ def _humanise_refusal(r: dict, role_label) -> dict:
             "severity": "problem",
         }
     if rid == "R5":
+        # R5 is the exclusive-GPU-lease rule, and BOTH the image seat and the
+        # video seat refuse under it. This branch used to render the image
+        # sentence for either one, so the video refusal -- which
+        # residency_policy emits unconditionally on every profile, because no
+        # local video backend exists anywhere in the tree -- displayed as
+        # "Image generation cannot run on this machine" on a machine with a
+        # perfectly good 12GB card. Stephen reported exactly that on
+        # 2026-09-10. Read the role before writing the sentence.
+        role = str(r.get("role") or "").lower()
+        if role == "video":
+            return {
+                "title": "Video generation runs in the cloud",
+                "why": ("Friday has no local video generator — there is no "
+                        "such backend in the build, on any machine. This is "
+                        "not about your hardware."),
+                "action": "Nothing to do. Video requests go to a cloud provider.",
+                "severity": "info",
+            }
+        if role == "image":
+            return {
+                "title": "Image generation cannot be placed on the GPU right now",
+                "why": ("No GPU budget was free for an exclusive image lease. "
+                        "Image models need the card to themselves, so a seat "
+                        "already holding video memory blocks them."
+                        + (" It needs about %s and about %s is free."
+                           % (need, have) if need and have else "")),
+                "action": ("Free the card — unload the model holding it — or "
+                           "let this image render in the cloud."),
+                "severity": "info",
+            }
         return {
-            "title": "Image generation cannot run on this machine",
-            "why": "There is no GPU available to hold an image model.",
-            "action": "Images will be generated in the cloud instead.",
+            "title": "%s needs the GPU to itself" % (who[:1].upper() + who[1:]),
+            "why": raw or ("This job takes an exclusive GPU lease and the card "
+                           "is not free."),
+            "action": "Free the card, or run this job in the cloud.",
             "severity": "info",
         }
     if rid == "R2":
@@ -296,6 +314,16 @@ def _humanise_monitor_verdict(resource: str, v: dict) -> dict | None:
     return None
 
 
+#: Ledger provider names that mean "ran on this machine". The ledger's
+#: provider column is coarse ("local", "arbiter-local", "fridayweaver-seat")
+#: and does not line up with catalogue names, so the test is by shape.
+def _ledger_provider_is_local(prov) -> bool:
+    p = str(prov or "").lower()
+    return (p in ("local", "arbiter-local", "ollama-local", "ollama",
+                  "local-voice-lite", "local-voice")
+            or "local" in p or p.endswith("-seat"))
+
+
 def _costs_rollup():
     """What has actually been served, per provider and per model.
 
@@ -336,6 +364,39 @@ def _costs_rollup():
             "ORDER BY ts DESC LIMIT 1").fetchone()
         if row:
             out["serving"] = {"model": row[0], "provider": row[1], "at": row[2]}
+        # The Model Soup card's ledger row (model-soup.md §11.2 A): how many
+        # model calls ran here and how many left, over the last day and the
+        # last month, and what the cloud share cost. This is the acceptance
+        # test for the whole local lineup, so it is computed from the ledger
+        # every time rather than estimated.
+        out["ledger"] = {}
+        now = time.time()
+        for label, span in (("24h", 86400), ("30d", 30 * 86400)):
+            acc = {"calls": 0, "local": 0, "cloud": 0, "cost_usd": 0.0}
+            for prov, calls, cost in con.execute(
+                    "SELECT provider, COUNT(*), COALESCE(SUM(cost_usd),0) "
+                    "FROM cost_calls WHERE ts > ? AND kind IN "
+                    "('chat','text','scheduled','voice','creative') "
+                    "GROUP BY provider", (now - span,)):
+                acc["calls"] += calls
+                if _ledger_provider_is_local(prov):
+                    acc["local"] += calls
+                else:
+                    acc["cloud"] += calls
+                    acc["cost_usd"] += float(cost or 0.0)
+            acc["cost_usd"] = round(acc["cost_usd"], 2)
+            out["ledger"][label] = acc
+        # Typical price of one cloud chat turn: the 30-day median, which is
+        # what "Think in the cloud" quotes before the click.
+        costs_30d = [float(r[0] or 0.0) for r in con.execute(
+            "SELECT cost_usd FROM cost_calls WHERE ts > ? AND kind='chat' "
+            "AND COALESCE(cost_usd,0) > 0 ORDER BY cost_usd",
+            (now - 30 * 86400,))]
+        if costs_30d:
+            mid = len(costs_30d) // 2
+            med = (costs_30d[mid] if len(costs_30d) % 2 else
+                   (costs_30d[mid - 1] + costs_30d[mid]) / 2.0)
+            out["ledger"]["cloud_turn_median_usd"] = round(med, 4)
     except Exception:
         pass
     finally:
@@ -713,6 +774,248 @@ def build_starter_set(profile: dict) -> dict:
     }
 
 
+# ── The Model Soup card ───────────────────────────────────────────────────────
+#
+# One object that answers the question the Intelligence tab is for: what is
+# about to answer me, where does it run, what will it cost. Every state here
+# is derived, never asserted: "proven" means a live endpoint answered just
+# now, "cold" means the files are here and nothing serves them, "refused"
+# carries the reason the machine gave. docs/design/active/model-soup.md §11.2.
+
+_LOCAL_PROVIDER_HINTS = ("local", "arbiter", "ollama", "seat", "llama")
+
+
+def _provider_is_local(provider) -> bool:
+    p = str(provider or "").lower()
+    return any(h in p for h in _LOCAL_PROVIDER_HINTS)
+
+
+def _seat_state(model_id: str, serving: dict, seat: dict, store_avail: dict,
+                store_missing: dict, costs: dict) -> dict:
+    """The manifest vocabulary for one local seat: proven / loading / cold /
+    refused, with the reason and the evidence."""
+    if not model_id:
+        return {"state": "refused", "reason": "no model is bound to this seat"}
+    base = serving.get(model_id)
+    used = (costs.get("models") or {}).get(model_id) or {}
+    if base:
+        port = None
+        try:
+            port = int(base.rsplit(":", 1)[1].split("/")[0])
+        except Exception:
+            pass
+        return {"state": "proven", "base": base, "port": port,
+                "proven_at": time.time(), "last_served": used.get("last_ts"),
+                "reason": ""}
+    if seat and (seat.get("absent") or seat.get("pin_unenforced")):
+        return {"state": "refused",
+                "reason": seat.get("pin_unenforced") or "seat is absent"}
+    if model_id in store_avail:
+        return {"state": "cold",
+                "reason": "weights are on this machine; nothing is serving "
+                          "them right now"}
+    gone = store_missing.get(model_id)
+    if gone:
+        return {"state": "refused", "reason": gone.get("why") or "not reachable"}
+    return {"state": "refused",
+            "reason": "not in Friday's model store and not served by the "
+                      "daemon"}
+
+
+def _weights_rows(store_all: dict, store_avail: dict) -> list:
+    """Every local seat's files: where they are, whether that is a network
+    share, and whether they are reachable right now (§11.2 D)."""
+    from agent_friday.services import model_store as ms
+    from agent_friday.services import path_probe
+    rows = []
+    for mid, rec in sorted(store_all.items()):
+        if not isinstance(rec, dict) or rec.get("is_embedding"):
+            continue
+        files = ms.seat_files(rec)
+        recorded = rec.get("path") or ""
+        remote = path_probe.is_remote(recorded)
+        served_from = files.get("gguf")
+        rows.append({
+            "model_id": mid,
+            "label": rec.get("label") or mid,
+            "path": recorded,
+            "served_from": served_from,
+            "remote": bool(remote and served_from and
+                           path_probe.is_remote(served_from)),
+            "recorded_remote": bool(remote),
+            "present": bool(served_from),
+            "available": mid in store_avail,
+            "retired": rec.get("retired") or None,
+            "size_bytes": rec.get("size_bytes"),
+            "sha256_short": (rec.get("sha256") or "")[:12] or None,
+            "lora": rec.get("lora"),
+            "lora_present": bool(files.get("lora")),
+            "mmproj": rec.get("mmproj"),
+            "mmproj_present": bool(files.get("mmproj")),
+            "probe": path_probe.probe_state(recorded) if remote else None,
+            "local_dir": str(ms.store_dir()),
+        })
+    return rows
+
+
+def _model_soup(settings: dict, routing: dict, costs: dict, seats: dict,
+                providers: list, labels: dict) -> dict:
+    from agent_friday.services import local_seats
+    mr = settings.get("model_routing") or {}
+    mode = str(mr.get("mode") or "local_preferred").lower()
+    if mode == "smart":
+        # `smart` is gone from the picker (§11.2 B); an existing value reads
+        # as local_preferred until the router's branches are deleted.
+        mode = "local_preferred"
+
+    try:
+        serving = local_seats.serving()
+    except Exception:
+        serving = {}
+    try:
+        from agent_friday.services import model_store as ms
+        store_all = ms.all_models()
+        store_avail = ms.available()
+        store_missing = ms.missing()
+    except Exception:
+        store_all, store_avail, store_missing = {}, {}, {}
+
+    def _binding(key):
+        b = routing.get(key) or {}
+        return str(b.get("model") or ""), str(b.get("provider") or "")
+
+    def _label(model_id):
+        # A local seat's own registry label first ("FridayWeaver-1.0"), then
+        # the catalogue's, then the id. The catalogue humanises ids it did
+        # not get from the store, which mangles a name chosen on purpose.
+        rec = store_all.get(model_id) if isinstance(store_all, dict) else None
+        if isinstance(rec, dict) and rec.get("label"):
+            return rec["label"]
+        return labels.get(model_id) or model_id
+
+    reasoning_model, reasoning_prov = _binding("reasoning")
+    heavy_model, heavy_prov = _binding("heavy_hitter")
+    local_default = str(mr.get("local_model") or "")
+    cloud_default = str(mr.get("default_cloud_model") or "")
+
+    # The local seat that answers everyday turns: the reasoning binding when
+    # it names something local, else `model_routing.local_model`.
+    if reasoning_model and _provider_is_local(reasoning_prov):
+        local_model = reasoning_model
+    else:
+        local_model = local_default
+    # The cloud model: the reasoning binding when it is cloud, else default.
+    if reasoning_model and not _provider_is_local(reasoning_prov):
+        cloud_model, cloud_prov = reasoning_model, reasoning_prov
+    else:
+        cloud_model, cloud_prov = cloud_default, str(
+            mr.get("cloud_provider") or "anthropic")
+
+    seat_local = _seat_state(local_model, serving,
+                             (seats.get("interactive_brain") or {})
+                             if isinstance(seats, dict) else {},
+                             store_avail, store_missing, costs)
+    seat_local.update({"model": local_model,
+                       "label": _label(local_model),
+                       "where": "local",
+                       "num_ctx": ((seats.get("interactive_brain") or {})
+                                   .get("num_ctx")
+                                   if isinstance(seats, dict) else None)})
+
+    key_present = None
+    for p in providers or []:
+        if p.get("name") == cloud_prov:
+            key_present = p.get("key_present")
+            break
+    cloud = {"model": cloud_model, "label": labels.get(cloud_model) or
+             cloud_model, "provider": cloud_prov, "where": "cloud",
+             "key_present": key_present,
+             "state": "ready" if key_present in (True, None) else "refused",
+             "reason": "" if key_present in (True, None)
+             else "no API key for %s" % cloud_prov,
+             "cost_per_turn_usd": (costs.get("ledger") or {}).get(
+                 "cloud_turn_median_usd")}
+
+    if heavy_model and _provider_is_local(heavy_prov):
+        deep = _seat_state(heavy_model, serving,
+                           (seats.get("heavy_hitter") or {})
+                           if isinstance(seats, dict) else {},
+                           store_avail, store_missing, costs)
+        deep.update({"model": heavy_model,
+                     "label": _label(heavy_model),
+                     "where": "local", "on_demand": True,
+                     "displaces": "replaces the everyday model while it runs"})
+    elif heavy_model:
+        deep = {"model": heavy_model, "label": labels.get(heavy_model) or
+                heavy_model, "where": "cloud", "provider": heavy_prov,
+                "state": "cloud", "reason": ""}
+    else:
+        deep = {"model": "", "label": "", "state": "absent",
+                "reason": "no deep model is bound; the everyday model takes "
+                          "hard turns too"}
+
+    # What takes the NEXT turn, given the mode and the states above.
+    if mode == "cloud_only":
+        now = dict(cloud)
+        now["why"] = "routing mode is Cloud only"
+    elif mode == "local_only":
+        now = dict(seat_local)
+        now["why"] = ("routing mode is Local only"
+                      if now.get("state") == "proven"
+                      else "routing mode is Local only and the local seat is "
+                           "not serving: the next turn will be refused with "
+                           "an offer to use the cloud")
+    else:
+        if seat_local.get("state") == "proven":
+            now = dict(seat_local)
+            now["why"] = "local first; the local seat is up"
+        else:
+            now = dict(cloud)
+            now["why"] = ("local first, but the local seat is %s (%s), so the "
+                          "next turn goes to the cloud and the reply will say "
+                          "so" % (seat_local.get("state"),
+                                  seat_local.get("reason") or "no reason given"))
+
+    # Posture: the three settings that decide what leaves the machine, read
+    # from where the code reads them, never from the flag the UI used to show.
+    try:
+        from agent_friday.privacy import cloud_consent as cc
+        cs = cc.resolve(mr)
+        snap = cs.capability_snapshot or {}
+        consent = {"answered": cs.answered, "choice": cs.choice, "at": cs.at,
+                   "source": cs.source, "unrestricted": cs.unrestricted,
+                   "snapshot_capable": snap.get("capable"),
+                   "snapshot_why": snap.get("why") or
+                   (((snap.get("roles") or {}).get("text") or {}).get("why")
+                    if isinstance(snap.get("roles"), dict) else None)
+                   or snap.get("chain_why")}
+    except Exception as e:
+        consent = {"answered": None, "error": str(e)}
+    kg = str(((settings.get("knowledge_graph") or {}).get("indexing_mode"))
+             or "local").lower()
+    posture = {
+        "mode": mode,
+        "vault_local_only": bool(mr.get("vault_local_only", False)),
+        "kg_indexing_mode": kg,
+        "kg_local_possible": bool(serving),
+        "egress_mode": str(settings.get("egress_mode") or "audit"),
+        "consent": consent,
+        "deep_seat_keep_warm_s": int(mr.get("deep_seat_keep_warm_s") or 300),
+    }
+
+    return {
+        "now": now,
+        "local": seat_local,
+        "deep": deep,
+        "cloud": cloud,
+        "posture": posture,
+        "ledger": costs.get("ledger") or {},
+        "serving": serving,
+        "embeddings": "all-MiniLM-L6-v2 on this CPU, always",
+        "weights": _weights_rows(store_all, store_avail),
+    }
+
+
 @intelligence_bp.route("/api/intelligence")
 def api_intelligence():
     from agent_friday.services.model_catalog import build_catalog
@@ -1054,7 +1357,19 @@ def api_intelligence():
     # as the seats: it decides whether a seat may be substituted at all, and
     # dropping it from the rebuilt picker was a regression.
     routing_mode = str(((settings.get("model_routing") or {}).get("mode")
-                        or "smart")).lower()
+                        or "local_preferred")).lower()
+    if routing_mode == "smart":
+        # Removed from the picker 2026-09-17 (model-soup.md §11.2 B). The
+        # router's `smart` branches stay for one release; the UI reads the
+        # value as local_preferred, which is what it does for tool turns.
+        routing_mode = "local_preferred"
+
+    labels = {m["id"]: (m.get("label") or m["id"]) for m in models
+              if m.get("id")}
+    try:
+        soup = _model_soup(settings, routing, costs, seats, providers, labels)
+    except Exception as exc:
+        soup = {"error": "%s: %s" % (type(exc).__name__, exc)}
 
     return jsonify({
         "status": "ok",
@@ -1067,34 +1382,25 @@ def api_intelligence():
         # reading the logs. `degraded` is true when gating is off.
         "vault_policy": _vault_policy_status(),
         "routing_modes": [
-            # ── Label honesty ────────────────────────────────────────────
-            # These four strings are the only description of the privacy
-            # posture most users will ever read, and every one of them
-            # described CHAT ROUTING ONLY while implying total coverage.
-            # Embeddings never consult this setting at all: EMBED_MODEL is a
-            # module constant pinned to all-MiniLM-L6-v2, running in-process on
-            # CPU. That is a defensible design -- local embeddings are what a
-            # sovereignty posture wants -- but "Cloud only" silently not
-            # covering them is a promise problem whichever behaviour is right.
-            # Say what each mode governs, and what it does not.
+            # Three modes, and each sentence describes what the code does.
+            # `smart` was removed: its help promised a quality split and the
+            # router split by tool presence (model-soup.md §4.1 U4).
             {"id": "local_only", "label": "Local only",
-             "help": "Never leaves the machine. If a local model cannot answer, "
-                     "I say so rather than using the cloud.",
+             "help": "Every turn runs on this machine. If the local model "
+                     "cannot answer, Friday says so and offers the cloud for "
+                     "that turn. Nothing leaves without that click.",
              "covers": _MODE_SCOPE_NOTE},
             {"id": "local_preferred", "label": "Local preferred",
-             "help": "Try local first, fall back to the cloud when local is "
-                     "busy or unavailable.",
-             "covers": _MODE_SCOPE_NOTE},
-            {"id": "smart", "label": "Smart",
-             "help": "Choose per task: local for routine work, cloud when it "
-                     "will clearly be better.",
+             "help": "Local first. When the local model fails or is busy, the "
+                     "turn goes to the cloud model on the card and the reply "
+                     "is marked cloud. Vault content still stays local.",
              "covers": _MODE_SCOPE_NOTE},
             {"id": "cloud_only", "label": "Cloud only",
-             "help": "Always use a cloud model for chat. Fastest, costs money, "
-                     "and every chat turn leaves the machine. Embeddings still "
-                     "run locally on this machine -- see below.",
+             "help": "Every chat, voice and background turn goes to the cloud "
+                     "model. Embeddings still run here.",
              "covers": _MODE_SCOPE_NOTE},
         ],
+        "soup": soup,
         "roles": roles,
         "models": models,
         "machine": machine,

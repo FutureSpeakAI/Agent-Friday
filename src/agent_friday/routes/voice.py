@@ -55,10 +55,18 @@ from agent_friday.services.agent import (
     _voice_actions_for,
 )  # noqa: E501
 from agent_friday.services.local_voice import (
+    ASR_RATE,
     VADEndpointer,
     get_local_voice_engine,
     split_sentences,
 )  # noqa: E501
+from agent_friday.services import voice_manifest as _vm
+
+#: The local voice path's log channel. Named `friday.local_voice` so the
+#: /ws/voice-local handler's records interleave with the engine's own in
+#: ~/.friday/friday.log — one channel for one subsystem, rather than a route
+#: log and a service log that have to be correlated by timestamp.
+_vlog = logging.getLogger("friday.local_voice")
 from agent_friday.services.model_router import (
     _build_emotional_tone_block,
     _build_session_continuity_block,
@@ -70,6 +78,7 @@ from agent_friday.services.model_router import (
 from agent_friday.services.voice_engine import (
     LIVE_MODEL_FALLBACK,
     LIVE_MODEL_FALLBACK2,
+    LIVE_MODEL_FALLBACK3,
     _VOICE_LIVE_TOOLS,
     _build_voice_live_tools,
     _voice_tool_names,
@@ -78,12 +87,17 @@ from agent_friday.services.voice_engine import (
     _get_voice_language,
     _get_voice_style_prompt,
     _local_tts_available,
+    _model_rejects_thinking_config,
+    _model_requires_non_blocking_tools,
+    _model_requires_thinking_config,
     _model_supports_affective_dialog,
+    _model_supports_proactivity_config,
     _persist_voice_turn,
     _spawn_voice_distill,
     _synthesize_tts_wav,
     _voice_tool_run,
     resolve_gemini_key,
+    resolve_live_thinking_level,
     validate_gemini_key,
 )  # noqa: E501
 
@@ -846,6 +860,105 @@ def _local_brain_ready() -> bool:
         return False
 
 
+#: Tool names that put the user's OWN context in reach of the voice model.
+#: The local path exposes the core surface (knowledge_query among ~75); the
+#: cloud path's fixed table has neither. Checked by name so the answer tracks
+#: the tables rather than a comment about them.
+_KG_TOOL_NAMES = ("knowledge_query",)
+_MEMORY_TOOL_NAMES = ("memory_recall", "recall_memory", "search_memory",
+                      "memory_search", "remember")
+
+
+def _local_mind_proven() -> bool:
+    """Is the local mind PROVEN right now (clean-sheet §3.1), not merely
+    configured? The `ask_friday` relay only reaches the user's context when
+    there is a local model to relay to. Never raises; unknown reads as not
+    proven, because a relay that may not exist is not reach."""
+    try:
+        from agent_friday.services import voice_manifest as _vm
+        return bool(_vm.get_manifest().snapshot_stage("mind").get("ready"))
+    except Exception:
+        return False
+
+
+def _voice_context_reach(engine, tool_names=None, local_mind_ready=None):
+    """F3 of voice-mode-diagnosis-and-repair.md: can the model in this voice
+    loop call tools and reach the knowledge graph / memory? Said at session
+    start, in one line, instead of letting a cloud session run a degraded loop
+    that triages email fine and then cannot answer a question about the
+    user's own notes. Never raises.
+
+    `local_mind_ready` lets a caller (or a test) state whether the local mind
+    is proven; None asks the manifest. The relay through `ask_friday` is real
+    reach ONLY when that is true -- on 2026-09-16 this function said "full
+    context via the local model" in the same payload whose manifest said the
+    local model was not available, which is the self-description lie §3.1
+    exists to make impossible.
+    """
+    engine = str(engine or "local").strip().lower()
+    if engine == "gemini":
+        names = tool_names
+        if names is None:
+            try:
+                names = list(_voice_tool_names())
+            except Exception:
+                names = []
+        names = [str(n) for n in names]
+        kg = any(n in names for n in _KG_TOOL_NAMES)
+        mem = any(n in names for n in _MEMORY_TOOL_NAMES)
+        # Clean-sheet §4.5 (D7): `ask_friday` reaches the knowledge graph and
+        # memory THROUGH the local model. That is real reach, said honestly:
+        # the line names the relay rather than claiming the tools directly.
+        relay = "ask_friday" in names
+        full = bool(names) and ((kg and mem) or relay)
+        if not names:
+            notice = ("Cloud voice (Gemini Live) is running with NO tools this "
+                      "session: it can talk, but cannot check email, search, or "
+                      "reach your knowledge graph or memory.")
+        elif relay and not (kg and mem):
+            mind_ok = (bool(local_mind_ready) if local_mind_ready is not None
+                       else _local_mind_proven())
+            if mind_ok:
+                return {"engine": "gemini", "tool_capable": True,
+                        "tools": len(names), "knowledge_graph": True, "memory": True,
+                        "full_context": True, "via_local": True,
+                        "line": (f"{len(names) - 1} native tools + ask_friday → your "
+                                 "context is reached through Friday's local model"),
+                        "notice": ""}
+            # The relay exists but has nothing to relay to. Say that, in the
+            # same words the manifest's describe_for_model() uses, so the
+            # HUD and the model agree.
+            return {"engine": "gemini", "tool_capable": True,
+                    "tools": len(names), "knowledge_graph": False, "memory": False,
+                    "full_context": False, "via_local": False,
+                    "line": (f"{len(names) - 1} native tools + ask_friday, but "
+                             "Friday's local model is not proven right now — "
+                             "your notes, memory and knowledge graph are out of "
+                             "reach"),
+                    "notice": ("Cloud voice (Gemini Live) is running, but Friday's "
+                               "local model is not available right now, so it "
+                               "cannot reach your knowledge graph or memory. Open "
+                               "Settings → Voice to prove the local model, or "
+                               "switch to local voice.")}
+        elif not full:
+            missing = [w for w, ok in (("knowledge graph", kg), ("memory", mem)) if not ok]
+            notice = (f"Cloud voice (Gemini Live) runs with {len(names)} fixed "
+                      f"tools and cannot reach your {' or '.join(missing)}. "
+                      "For questions about your own context, switch to local voice.")
+        else:
+            notice = ""
+        return {"engine": "gemini", "tool_capable": bool(names),
+                "tools": len(names), "knowledge_graph": kg, "memory": mem,
+                "full_context": full, "notice": notice}
+    if engine == "local":
+        return {"engine": "local", "tool_capable": True, "tools": None,
+                "knowledge_graph": True, "memory": True, "full_context": True,
+                "notice": ""}
+    return {"engine": engine, "tool_capable": False, "tools": 0,
+            "knowledge_graph": False, "memory": False, "full_context": False,
+            "notice": "No model is in the voice loop; nothing can call tools."}
+
+
 def _resolve_voice_engine(settings=None):
     """Resolve which voice engine a session should use, honoring the ethos:
     LOCAL is the default, cloud (Gemini Live) is the opt-in.
@@ -936,12 +1049,15 @@ def _resolve_voice_engine(settings=None):
                      else "Local (private, on-device)")
             return {"engine": "local", "ws_url": "/ws/voice-local",
                     "label": label, "tier": tier,
-                    "models_ready": models_ready}
+                    "models_ready": models_ready,
+                    "context_reach": _voice_context_reach("local")}
         if engine == "gemini":
             return {"engine": "gemini", "ws_url": "/ws/live",
-                    "label": "Cloud (Gemini Live)", "models_ready": True}
+                    "label": "Cloud (Gemini Live)", "models_ready": True,
+                    "context_reach": _voice_context_reach("gemini")}
         return {"engine": "demo", "ws_url": None,
-                "label": "Text only", "models_ready": False}
+                "label": "Text only", "models_ready": False,
+                "context_reach": _voice_context_reach("demo")}
 
     # Explicit opt-in to cloud.
     if pref == "gemini":
@@ -955,16 +1071,233 @@ def _resolve_voice_engine(settings=None):
             "local-only mode is on and no local voice engine is ready"
             if _local_only else "no voice engine available")}
 
-    # Default + auto both prefer local (the ethos).
+    # `auto` means LOCAL ONLY, and says so. Settled 2026-09-09 (R4.1 of
+    # local-voice-repair-and-native-audio.md 4.5; voice-mode.md open item 1).
+    #
+    # voice-system-spec.md 7.2 used to permit `auto` to reach Tier 3 "(cloud
+    # only if key present AND not local-only)". That parenthetical is deleted:
+    # it contradicted cloud-voice-providers.md 6.3, which forbids promoting to
+    # cloud on a LOCAL failure without consent. A mode that can silently send a
+    # user's voice to a third party is precisely the failure the transparency
+    # commitment exists to prevent, and "auto" is the friendliest possible name
+    # for it. The label states the scope: "Automatic (local only)".
+    #
+    # `auto` therefore terminates at text-only rather than crossing to cloud.
+    # The cloud path stays reachable -- by the user selecting it, which is C1 --
+    # and the local failure surfaces with its reason, which is C2.
+    if pref == "auto":
+        if local_ok:
+            return {**_pick("local"), "reason": "automatic (local only)"}
+        return {**_pick("demo"), "reason": (
+            "Automatic mode uses only the local voice, and it is not ready. "
+            "Friday will not send your voice to the cloud without you "
+            "choosing it -- pick a cloud provider in Settings if you want one.")}
+
+    # `local` TERMINATES. It does not fall through to the cloud. Settled
+    # 2026-09-09, and this is the more important half of the `auto` fix above.
+    #
+    # What used to happen: a user who selected the mode named "local", with the
+    # Tier-1 deps not installed (a separate opt-in step that is easy to skip)
+    # and a Gemini key present, had their microphone audio and Friday's spoken
+    # replies streamed to Gemini Live. Silently. The guard that existed caught
+    # this only when Local-Only Mode was ALSO on, so the protection required the
+    # user to say "local" twice in two different places, and the plain reading
+    # of the word they did select bought them nothing.
+    #
+    # A user who picks a mode called "local" and receives a cloud provider has
+    # been lied to by the word itself. That is worse than the `auto` case, which
+    # at least admits ambiguity in its name. The honest failure is strictly
+    # better than the dishonest success, so this terminates at text-only and
+    # says what happened and what the user can do about it.
+    #
+    # This is a deliberate behaviour change for existing users. Anyone relying
+    # on the old path was relying on being deceived.
+    #
+    # Note on cloud voice providers (cloud-voice-providers.md 3.3): when `pref`
+    # names an ElevenLabs/Inworld provider, the recommended configuration is
+    # "Local listening, cloud voice" -- STT stays local, so the LOCAL session is
+    # the correct transport here and synthesis is served separately by
+    # routes/cloud_voice_routes.py. The provider indicator is written from that
+    # served path, never from this label.
     if local_ok:
         return {**_pick("local"), "reason": "local default"}
-    if cloud_ok:
-        return {**_pick("gemini"), "reason": "local deps missing, using cloud"}
+    if _local_only:
+        return {**_pick("demo"), "reason": (
+            "local-only mode is on and no local voice engine is ready; "
+            "voice will not use the cloud. Install .[voice-local-lite]")}
     return {**_pick("demo"), "reason": (
-        "local-only mode is on and no local voice engine is ready — voice "
-        "will not use the cloud; install .[voice-local-lite]"
-        if _local_only else
-        "install .[voice-local-lite] or connect a cloud key")}
+        "Friday's local voice is not ready, so it cannot speak on this "
+        "machine. It will not send your voice to the cloud unless you choose "
+        "that. Install .[voice-local-lite] to fix the local voice, or pick a "
+        "cloud provider in Settings if you would rather use one.")}
+
+
+def _build_voice_system_prompt(settings=None, description=None):
+    """The LOCAL voice system prompt, assembled prefix-stable (clean-sheet §4.4).
+
+    Order: (1) the manifest's self-description — changes only when a proof
+    changes; (2) persona + the voice rules + tool choreography, constant;
+    (3) the stable context from ``_get_friday_system_prompt`` whose clock
+    block is ORDERED LAST and is where ``prompt_cache.VOLATILE_MARKER``
+    splits; (4) everything volatile after it. Returns ``(prompt, meta)`` where
+    ``meta`` carries ``is_local_brain``/``provider`` for the turn's session_ctx.
+
+    Used by the ws handler AND registered as the manifest's prompt builder so
+    the capability contract (§3.3) is measured against the prompt actually
+    served, not a stand-in.
+    """
+    settings = settings if settings is not None else (_load_settings() or {})
+    try:
+        from agent_friday.routing.model_router import provider_family
+        _brain_family = provider_family(settings.get("orchestrator_model"))
+    except Exception:
+        _brain_family = None
+    _is_local_brain = _brain_family == "local"
+    _prov = "local" if _is_local_brain else "cloud"
+    _vault_control = None if _is_local_brain else (
+        _get_vault_control() if _vault_local_only() else None)
+    if description is None:
+        try:
+            description = _vm.get_manifest().describe_for_model()
+        except Exception:
+            description = ""
+    voice_prefix = (
+        "You are Agent Friday, a sovereign personal AI assistant in a LIVE "
+        "VOICE conversation. " + (description or "") + "\n"
+        "Speak like a person: natural, warm, contractions.\n"
+        "NEVER use markdown — no asterisks, headers, or bullets; this is read "
+        "aloud. An asterisk is SPOKEN as 'asterisk', so a bulleted list is "
+        "unlistenable. Numbered points must be said the way a person says "
+        "them: 'first … second …', inside ordinary sentences.\n"
+        # LENGTH. This is the local path's ONLY brevity control that the
+        # model itself can honour, and it has to be concrete: "reasonably
+        # concise" produced 183-word answers to "how does your vault work"
+        # — over a minute of uninterruptible speech for
+        # one question. Even frontier speech-to-speech models still need an
+        # explicit "avoid long answers" line; no model choice removes this.
+        "LENGTH — THIS IS SPOKEN, SO LENGTH IS TIME. Answer in ONE to THREE "
+        "short sentences, under about 60 spoken words. That is the DEFAULT "
+        "for every turn, including questions about yourself, your systems, "
+        "the vault, or how you work. Give the single most useful answer, "
+        "then STOP and let him respond — a voice reply is a turn in a "
+        "conversation, not a briefing. Never deliver a list, a walkthrough, "
+        "or a multi-paragraph explanation unless he explicitly asks you to "
+        "go deep ('walk me through', 'give me the full version', 'go on'), "
+        "and even then deliver it in chunks and stop for his reply between "
+        "them. If the honest answer is genuinely long, say the headline in "
+        "one sentence and offer the detail: 'The short version is X — want "
+        "the long one?'\n"
+        + ("Your reasoning also runs locally, so you CAN discuss private "
+           "vault content — it never leaves the machine.\n\n"
+           if _is_local_brain else "\n")
+        + VOICE_TOOL_CHOREOGRAPHY
+    )
+    try:
+        full_ctx = _get_friday_system_prompt(
+            provider=_prov, vault_control=_vault_control,
+            vault_fallback=_vault_cloud_fallback())
+    except Exception as e:
+        full_ctx = f"(context load failed: {e})"
+    # Volatile blocks go AFTER the context (whose clock block is its last
+    # section), so the byte-identical prefix survives across turns.
+    try:
+        full_ctx += _build_session_continuity_block() + _build_emotional_tone_block()
+    except Exception:
+        pass
+    # THE VOLATILE TAIL LEAVES THE SYSTEM MESSAGE.
+    #
+    # Measured against the FridayWeaver seat on 2026-09-18: with its chat
+    # template, ANY change to the system message -- 54 characters at the very
+    # end -- re-prefills the whole prompt (17,203 of 17,203 tokens in the
+    # probe; 27,480 on a real session), while a changed user message costs
+    # ~10. The clock, auto-context, continuity and tone blocks after
+    # `VOLATILE_MARKER` change between builds, so every session's first
+    # turn paid ~8 s and a warm could never help. They now ride in the user
+    # turn instead (`_voice_user_message`), which keeps the system text
+    # byte-identical across proofs, warms and sessions -- and gives the
+    # model a fresh clock every turn instead of the one frozen at session
+    # start. ~500 tokens per turn is the whole cost.
+    try:
+        from agent_friday.services.prompt_cache import VOLATILE_MARKER
+        idx = full_ctx.find(VOLATILE_MARKER)
+    except Exception:
+        idx = -1
+    volatile = ""
+    if idx >= 0:
+        volatile = full_ctx[idx:]
+        full_ctx = full_ctx[:idx]
+    return voice_prefix + full_ctx, {"is_local_brain": _is_local_brain,
+                                     "provider": _prov, "volatile": volatile}
+
+
+def _voice_user_message(user_text, settings=None, volatile=None):
+    """The user turn: the volatile context block (clock, auto-context,
+    continuity, tone), rebuilt fresh (~45 ms), then what was said."""
+    if volatile is None:
+        try:
+            volatile = _build_voice_system_prompt(settings)[1].get("volatile") or ""
+        except Exception:
+            volatile = ""
+    volatile = (volatile or "").strip()
+    if not volatile:
+        return user_text
+    return volatile + "\n\n== THE USER JUST SAID ==\n" + user_text
+
+
+def _voice_prompt_for_contract():
+    return _build_voice_system_prompt()[0]
+
+
+_vm.set_prompt_builder(_voice_prompt_for_contract)
+
+
+def _warm_seat_prefix() -> dict:
+    """F5 / clean-sheet §4.4: put the session's prompt prefix into the seat's
+    KV cache right after the proofs, through the SAME call a turn makes.
+
+    Measured 2026-09-18: the first utterance after arming prefilled 27,460
+    tokens and took ~8 s to first audio; the second prefilled 15 and took
+    ~1.5 s. The proofs themselves cannot warm it, because the manifest's
+    self-description is the prompt's first line and it changes when the
+    proofs land. A one-token completion with the post-proof prompt, the
+    resolved seat and the voice session context makes turn one warm.
+    """
+    t0 = _time.time()
+    settings = _load_settings() or {}
+    try:
+        system_prompt, _pmeta = _build_voice_system_prompt(settings)
+        from agent_friday.services import local_seats as _seats
+        _brain = _seats.resolve("brain")
+        from agent_friday.services.model_router import TIMINGS_SINK
+        timings = {}
+        _tok = TIMINGS_SINK.set(lambda t: timings.update(t or {}))
+        try:
+            _generate_agent(
+                [{"role": "user",
+                  "content": _voice_user_message("OK.", settings,
+                                                 volatile=_pmeta.get("volatile"))}],
+                system=system_prompt, model=_brain, max_tokens=1,
+                temperature=settings.get("temperature"),
+                session_ctx={"authenticated": True, "provider": _pmeta["provider"],
+                             "is_voice": True, "prefix_warm": True},
+                workspace=settings.get("active_workspace") or "",
+            )
+        finally:
+            TIMINGS_SINK.reset(_tok)
+        out = {"warmed": True, "seat": _brain, "prompt_n": timings.get("prompt_n"),
+               "ms": int((_time.time() - t0) * 1000)}
+        _log.info("voice prefix warm: seat=%s prompt_n=%s in %d ms",
+                  _brain, timings.get("prompt_n"), out["ms"])
+        return out
+    except Exception as e:  # noqa: BLE001
+        _log.warning("voice prefix warm failed: %s: %s", type(e).__name__, e)
+        return {"warmed": False, "reason": f"{type(e).__name__}: {e}"}
+
+
+try:
+    _vm.get_manifest().after_prove = _warm_seat_prefix
+except Exception:
+    pass
 
 
 @voice_bp.route('/api/voice/session-info')
@@ -973,9 +1306,160 @@ def voice_session_info():
 
     The mic button reads ``ws_url`` and connects there — ``/ws/voice-local``
     (default) or ``/ws/live`` (cloud opt-in). One toggle, one branch; the audio
-    plumbing and event contract are identical on both paths."""
+    plumbing and event contract are identical on both paths.
+
+    ``manifest`` is the Voice Manifest snapshot (clean-sheet §3.1 rule 4): the
+    same object the Settings card, the HUD and the model's self-description
+    render. Reading it never runs a proof; ``/api/voice/arm`` does that."""
     info = _resolve_voice_engine()
+    try:
+        m = _vm.get_manifest()
+        m.refresh_selection()
+        info["manifest"] = m.snapshot()
+    except Exception as e:
+        info["manifest"] = {"error": f"{type(e).__name__}: {e}"}
     return jsonify({"status": "ok", **info})
+
+
+@voice_bp.route('/api/voice/arm', methods=['GET', 'POST'])
+@login_required
+def voice_arm():
+    """POST: run the three proofs (single-flight, background) and return the
+    snapshot. GET: the snapshot with per-stage progress. Clean-sheet §6.3.
+
+    Proofs that are still fresh (inside their TTL) are not re-run unless
+    ``?force=1`` (the Settings "Prove voice now" button uses /api/voice/prove).
+    ``/api/voice/warm`` is kept as the engine pre-loader (F5); arming proves.
+    """
+    m = _vm.get_manifest()
+    m.refresh_selection()
+    started = False
+    if request.method == 'POST':
+        force = str(request.args.get("force") or
+                    (request.get_json(silent=True) or {}).get("force") or "").lower() in ("1", "true")
+        stale = [k for k in _vm.STAGES if force or m.is_stale(k)]
+        if m.mode == "gemini":
+            stale = [k for k in stale if k == "mind"]
+        if stale:
+            started = m.prove_async(tuple(stale))
+    snap = m.snapshot()
+    snap["started"] = started
+    return jsonify({"status": "ok", **snap})
+
+
+@voice_bp.route('/api/voice/prove', methods=['POST'])
+@login_required
+def voice_prove():
+    """Force a re-proof of every stage regardless of TTL."""
+    m = _vm.get_manifest()
+    m.refresh_selection()
+    stages = ("mind",) if m.mode == "gemini" else _vm.STAGES
+    started = m.prove_async(stages)
+    snap = m.snapshot()
+    snap["started"] = started
+    return jsonify({"status": "ok", **snap})
+
+
+# ── F5: pre-warm the local voice engine ─────────────────────────────────────
+# Measured 2026-09-10: a cold KokoroTTS load is 39-56 s, and it was paid on
+# the first spoken turn. Warm it when the Voice panel opens or voice is armed;
+# the /ws/voice-local handler's ensure_ready() then returns immediately.
+_WARM_LOCK = threading.Lock()
+_WARM = {"state": "idle", "progress": "", "started": 0.0, "finished": 0.0,
+         "tier": None, "error": "", "engine": None}
+
+
+def _warm_snapshot():
+    with _WARM_LOCK:
+        snap = dict(_WARM)
+    now = _time.time()
+    if snap["state"] == "loading" and snap["started"]:
+        snap["elapsed_s"] = round(now - snap["started"], 1)
+    elif snap["finished"] and snap["started"]:
+        snap["elapsed_s"] = round(snap["finished"] - snap["started"], 1)
+    else:
+        snap["elapsed_s"] = 0.0
+    try:
+        snap["running"] = get_local_voice_engine().running_status()
+    except Exception:
+        snap["running"] = None
+    return snap
+
+
+def _warm_local_voice_async():
+    """Start loading the selected local engine on a background thread.
+    Returns the snapshot; a second call while loading is a no-op."""
+    with _WARM_LOCK:
+        if _WARM["state"] == "loading":
+            return None
+        try:
+            eng = get_local_voice_engine()
+            if eng._ready:
+                _WARM.update(state="ready", progress="already loaded",
+                             tier=eng.active_tier(), error="",
+                             engine=(eng.running_status() or {}).get("tts_engine"))
+                return None
+        except Exception:
+            pass
+        _WARM.update(state="loading", progress="starting", started=_time.time(),
+                     finished=0.0, error="", tier=None, engine=None)
+
+    def _run():
+        eng = get_local_voice_engine()
+
+        def _prog(msg):
+            with _WARM_LOCK:
+                _WARM["progress"] = str(msg or "")
+        try:
+            eng.select_tier(eng.resolve_tier())
+            ok = eng.ensure_ready(progress=_prog)
+            with _WARM_LOCK:
+                _WARM["finished"] = _time.time()
+                _WARM["tier"] = eng.active_tier()
+                if ok:
+                    _WARM["state"] = "ready"
+                    _WARM["progress"] = "ready"
+                    _WARM["engine"] = (eng.running_status() or {}).get("tts_engine")
+                else:
+                    _WARM["state"] = "failed"
+                    _WARM["error"] = getattr(eng, "last_error", "") or "load failed"
+        except Exception as e:
+            with _WARM_LOCK:
+                _WARM.update(state="failed", finished=_time.time(),
+                             error=f"{type(e).__name__}: {str(e)[:160]}")
+            _log.warning("voice warm failed: %s", e)
+
+    threading.Thread(target=_run, name="voice-warm", daemon=True).start()
+    return None
+
+
+@voice_bp.route('/api/voice/warm', methods=['GET', 'POST'])
+@login_required
+def voice_warm():
+    """GET: warm state. POST: start loading the selected local engine now.
+
+    POST is a no-op (200, state reported) when cloud voice is selected, when a
+    load is already running, or when the engine is already loaded. A local
+    engine that is not installed reports ``skipped`` with the reason rather
+    than spawning a thread that would fail.
+    """
+    if request.method == 'POST':
+        info = _resolve_voice_engine()
+        if info.get("engine") != "local":
+            return jsonify({"status": "ok", "state": "skipped",
+                            "reason": f"{info.get('engine')} voice selected; "
+                                      "nothing local to warm",
+                            **{k: v for k, v in _warm_snapshot().items()
+                               if k not in ("state",)}})
+        if info.get("models_ready") is False:
+            return jsonify({"status": "ok", "state": "skipped",
+                            "reason": "local voice models are not ready; the "
+                                      "first session downloads them",
+                            **{k: v for k, v in _warm_snapshot().items()
+                               if k not in ("state",)}})
+        _warm_local_voice_async()
+    snap = _warm_snapshot()
+    return jsonify({"status": "ok", **snap})
 
 
 @voice_bp.route('/api/voice/setup/status')
@@ -1211,7 +1695,6 @@ def _meter_gemini_live_chunk(chunk, model_name: str) -> bool:
 
 if sock is not None:
 
-    @sock.route('/ws/voice-local')
     def ws_voice_local(ws):
         """Tier-1 LOCAL voice: mic → VAD → faster-whisper → LLM brain → Piper → speaker.
 
@@ -1305,261 +1788,144 @@ if sock is not None:
             except Exception:
                 return False
 
-        engine = get_local_voice_engine()
-        if not engine.available():
-            # Deps not installed — degrade to text with an actionable message so
-            # the client can fall back instead of hanging on a dead socket.
-            _send({"type": "error",
-                   "error": "local_voice_unavailable",
-                   "detail": "Local voice needs the Tier-1 deps. Install with "
-                             "`pip install -e .[voice-local-lite]`, then reload."})
-            return
+        # ── Clean-sheet Phase 2: the route is thin. Everything about the turn
+        # lives in services/voice_session.VoiceSession; this handler does auth
+        # (above), picks the PROVEN engines the manifest holds, binds the mind
+        # to the prefix-stable prompt, and pumps frames. ──
+        from agent_friday.services import voice_workers as _vw
+        from agent_friday.services.voice_session import VoiceSession
+        from agent_friday.services.voice_receipt import TurnReceipt, log_route
 
-        # Resolve + select the tier for this session (cpu Tier-1 / gpu Tier-2).
-        # Hot-swaps backends without a server restart; a gpu pick that can't run
-        # gracefully degrades to cpu inside ensure_ready below.
-        tier = engine.select_tier_from_settings()
-        if getattr(engine, "last_downgrade", ""):
-            # The user explicitly picked the GPU tier and is getting CPU —
-            # announce the downgrade with the reason instead of running silent.
-            _send({"type": "status", "text": engine.last_downgrade})
-        _send({"type": "status",
-               "text": ("starting local GPU voice (NeMo)" if tier == "gpu"
-                        else "starting local voice")})
-        # A GPU tier that RUNS but displaces the resident brain is not a
-        # downgrade, so the block above stays silent for it -- and the user
-        # would otherwise meet the cost as "why did Friday get slow?" (holding
-        # the ASR working set can take local replies from ~0.3s to ~3s). Say
-        # it at the point of use, once per session.
-        if tier == "gpu":
-            try:
-                from agent_friday.services.nemo_voice import gpu_status
-                _g = gpu_status()
-                if _g.get("contended"):
-                    _send({"type": "status", "text": _g.get("contention_detail") or
-                           "GPU voice is sharing VRAM with the loaded model; "
-                           "replies may be slower while voice is active."})
-            except Exception:
-                pass
-
-        # Lazy, one-time model download/load with a visible progress orb.
-        if tier == "gpu":
-            _send({"type": "status",
-                   "text": "Downloading NeMo voice models… (one-time setup, ~1.5GB)"})
-        elif not engine.models_ready():
-            _send({"type": "status", "text": "Downloading voice models… (one-time setup)"})
-        if not engine.ensure_ready(progress=lambda m: _send({"type": "status", "text": m})):
-            _cause = getattr(engine, "last_error", "") or "unknown error"
-            _send({"type": "error", "error": "local_voice_load_failed",
-                   "detail": f"Could not load the local voice models ({_cause}). "
-                             f"Check your network/disk and retry, or reset the "
-                             f"voice settings in Settings → Voice."})
-            return
-        # The tier may have changed (gpu → cpu fallback) during ensure_ready.
-        _send({"type": "status",
-               "text": ("live (GPU/NeMo)" if engine.active_tier() == "gpu" else "live")})
-
-        # ── Brain wiring: build the spoken-style system prompt once. Vault
-        # gating follows the brain's provider (a LOCAL Ollama brain keeps full
-        # vault fidelity; a cloud brain redacts TIER_2/3 exactly like text).
-        # The brain dispatches via provider_family(orchestrator_model) — gate on
-        # that SAME source of truth, not capability_routing's provider field
-        # (which historically went stale and could diverge from real dispatch).
-        # Unknown/empty family fails CLOSED (cloud → redact): the router's
-        # fallback chain may pick a cloud model, so full vault fidelity is only
-        # safe when the brain is definitively local. ──
         settings = _load_settings() or {}
-        try:
-            from agent_friday.routing.model_router import provider_family
-            _brain_family = provider_family(settings.get("orchestrator_model"))
-        except Exception:
-            _brain_family = None
-        _is_local_brain = _brain_family == "local"
-        _prov = "local" if _is_local_brain else "cloud"
-        _vault_control = None if _is_local_brain else (
-            _get_vault_control() if _vault_local_only() else None)
+        _manifest = _vm.get_manifest()
+        _manifest.refresh_selection(settings)
+        _msnap = _manifest.snapshot()
+        # A stage the manifest has PROVEN to fail refuses the session with the
+        # taxonomy's message and action (§7); an unproven stage is loaded now
+        # with visible progress (arming before the click is the client's job).
+        _refused = [k for k, st in (_msnap.get("stages") or {}).items()
+                    if (st.get("proof") or {}).get("state") == "refused"]
+        if _refused:
+            _k = _refused[0]
+            _st = _msnap["stages"][_k]
+            _send({"type": "manifest", **_msnap})
+            _send({"type": "error",
+                   "error": (_st.get("proof") or {}).get("code") or "voice_stage_unproven",
+                   "detail": _st.get("reason") or
+                   f"Friday couldn't prove her {_vm.VoiceManifest._noun(_k)} works right now.",
+                   "action": _st.get("action")})
+            return
 
-        voice_prefix = (
-            "You are Agent Friday, a sovereign personal AI assistant in a LIVE "
-            "VOICE conversation with ON-DEVICE speech-to-text and "
-            "text-to-speech. Speak like a person: natural, warm, contractions.\n"
-            "NEVER use markdown — no asterisks, headers, or bullets; this is read "
-            "aloud. An asterisk is SPOKEN as 'asterisk', so a bulleted list is "
-            "unlistenable. Numbered points must be said the way a person says "
-            "them: 'first … second …', inside ordinary sentences.\n"
-            # LENGTH. This is the local path's ONLY brevity control that the
-            # model itself can honour, and it has to be concrete: "reasonably
-            # concise" produced 183-word answers to "how does your vault work"
-            # — over a minute of uninterruptible speech for
-            # one question. Even frontier speech-to-speech models still need an
-            # explicit "avoid long answers" line; no model choice removes this.
-            "LENGTH — THIS IS SPOKEN, SO LENGTH IS TIME. Answer in ONE to THREE "
-            "short sentences, under about 60 spoken words. That is the DEFAULT "
-            "for every turn, including questions about yourself, your systems, "
-            "the vault, or how you work. Give the single most useful answer, "
-            "then STOP and let him respond — a voice reply is a turn in a "
-            "conversation, not a briefing. Never deliver a list, a walkthrough, "
-            "or a multi-paragraph explanation unless he explicitly asks you to "
-            "go deep ('walk me through', 'give me the full version', 'go on'), "
-            "and even then deliver it in chunks and stop for his reply between "
-            "them. If the honest answer is genuinely long, say the headline in "
-            "one sentence and offer the detail: 'The short version is X — want "
-            "the long one?'\n"
-            + ("Your reasoning also runs locally, so you CAN discuss private "
-               "vault content — it never leaves the machine.\n\n"
-               if _is_local_brain else "\n")
-            + VOICE_TOOL_CHOREOGRAPHY
-        )
+        _vsession = uuid.uuid4().hex[:8]
+        _sel = _vm.read_selection(settings)
+        _prog = lambda m: _send({"type": "status", "text": str(m)})  # noqa: E731
         try:
-            full_ctx = _get_friday_system_prompt(
-                provider=_prov, vault_control=_vault_control,
-                vault_fallback=_vault_cloud_fallback())
-        except Exception as e:
-            full_ctx = f"(context load failed: {e})"
+            _send({"type": "status", "text": "starting local voice"})
+            ear = _vw.held("ear") or _vw.build_ear(_sel["ear"], progress=_prog)
+            mouth = _vw.held("mouth") or _vw.build_mouth(_sel["mouth"], progress=_prog)
+        except _vw.GpuRefused as _ge:
+            _send({"type": "error", "error": _ge.code, "detail": _ge.message})
+            return
+        except Exception as _le:
+            _vlog.error("session aborted: engine load failed: %s: %s",
+                        type(_le).__name__, _le)
+            _send({"type": "error", "error": "local_voice_load_failed",
+                   "detail": f"Could not load the local voice engines "
+                             f"({type(_le).__name__}: {str(_le)[:160]}). Check "
+                             f"Settings → Voice → Voice Stack for the refused row."})
+            return
+        # The clause-fallback floor (§4.3): Piper speaks any clause the primary
+        # mouth fails on. Loaded lazily on first failure so a Kokoro session
+        # does not pay for it up front.
+        _fallback = None
+        if getattr(mouth, "name", "") != "piper":
+            try:
+                _fallback = _vw.PiperMouth(settings.get("local_voice_tts_voice")
+                                           or "en_US-amy-medium")
+            except Exception:
+                _fallback = None
+        # Admission / eviction notices raised while building (one each).
+        for _n in list(_vw.NOTICES):
+            _send({"type": "error-nonfatal", "code": _n.get("code"),
+                   "message": _n.get("message"), "action": None})
+        del _vw.NOTICES[:]
         try:
-            full_ctx += _build_session_continuity_block() + _build_emotional_tone_block()
+            log_route(_vsession,
+                      requested=settings.get("voice_engine") or "local",
+                      selected=f"ear={ear.describe().get('device')} "
+                               f"mouth={mouth.describe().get('engine')}/"
+                               f"{mouth.describe().get('device')}",
+                      reason="; ".join(st.get("reason", "") for st in
+                                       (_msnap.get("stages") or {}).values()
+                                       if st.get("reason")))
         except Exception:
             pass
-        system_prompt = voice_prefix + full_ctx
 
+        # ── Mind: the agentic pipeline on the resident seat, streamed, under
+        # the prefix-stable prompt (§4.4). ──
+        system_prompt, _pmeta = _build_voice_system_prompt(settings)
+        _prov = _pmeta["provider"]
+        _brain = None
+        try:
+            from agent_friday.services import local_seats as _seats
+            _brain = _seats.resolve("brain")
+        except Exception:
+            pass
+        _timings = {}
+
+        def _generate(user_text, on_delta, cancel):
+            from agent_friday.services.model_router import TIMINGS_SINK
+            _timings.clear()
+            _tok = TIMINGS_SINK.set(lambda t: _timings.update(t or {}))
+            try:
+                reply, _trace = _generate_agent(
+                    [{"role": "user",
+                      "content": _voice_user_message(user_text, settings)}],
+                    system=system_prompt,
+                    model=_brain,
+                    max_tokens=_voice_reply_cap(settings),
+                    temperature=settings.get("temperature"),
+                    session_ctx={"authenticated": _ws_authenticated,
+                                 "provider": _prov,
+                                 "is_voice": True},
+                    workspace=settings.get("active_workspace") or "",
+                    on_text_delta=on_delta,
+                )
+            finally:
+                TIMINGS_SINK.reset(_tok)
+            return reply
+
+        def _receipt():
+            try:
+                return TurnReceipt(session_id=_vsession,
+                                   tier=("gpu" if ear.describe().get("device") == "cuda" else "cpu"),
+                                   asr_model=ear.describe().get("model"),
+                                   tts_voice=mouth.describe().get("voice"),
+                                   brain_seat=_brain or "unresolved")
+            except Exception:
+                return None
+
+        hooks = {
+            "persist": lambda u, a, cid: _persist_voice_turn(u, a, conversation_id=cid),
+            "distill": _spawn_voice_distill,
+            "actions": _voice_actions_for,
+            "receipt": _receipt,
+            "timings": lambda: dict(_timings),
+        }
         vad = VADEndpointer(silence_ms=int(settings.get("voice_silence_ms") or 800))
-        turn_log = []
-        _turn_lock = threading.Lock()
-        # ── Barge-in on the LOCAL path ──────────────────────────────────────
-        # The client sends {"type":"barge"} when the user hits Escape or talks
-        # over her; /ws/live acts on it, and this handler must too. If
-        # _handle_turn ran INLINE in the receive loop, nothing would call
-        # ws.receive() for the whole think-and-speak window (20s+ on a local
-        # seat) and local voice would be structurally uninterruptible — which
-        # reads as droning next to Gemini, whose prompt actually asks for
-        # LONGER answers.
-        #
-        # Two pieces, both needed: this flag, which _speak checks between
-        # sentences, and running each turn on its own thread (below) so the loop
-        # stays free to receive the barge that sets it.
-        _barge = threading.Event()
-
-        def _speak(text):
-            """Synthesize `text` sentence-by-sentence → 24 kHz PCM16 → audio frames.
-
-            Per-sentence so Friday starts speaking the first sentence while later
-            ones are still being synthesized (the key latency mitigation). The
-            per-sentence boundary is also the barge-in checkpoint: one sentence
-            is the worst-case delay between the user interrupting and silence."""
-            for sentence in split_sentences(text):
-                if done.is_set() or _barge.is_set():
-                    return
-                try:
-                    pcm = engine.synthesize(sentence)
-                except Exception as e:
-                    print(f"[voice-local] TTS failed: {e}")
-                    continue
-                if not pcm:
-                    continue
-                # Chunk to keep frames small (the worklet ring buffer absorbs bursts).
-                step = PLAYBACK_CHUNK_BYTES
-                for off in range(0, len(pcm), step):
-                    if done.is_set():
-                        return
-                    _send({"type": "audio",
-                           "data": base64.b64encode(pcm[off:off + step]).decode("ascii")})
-
-        def _handle_turn(user_text):
-            user_text = (user_text or "").strip()
-            if not user_text or done.is_set():
-                return
-            # A new turn clears the previous turn's barge. Without this the
-            # first interruption would mute every reply that followed it.
-            _barge.clear()
-            with _turn_lock:
-                _send({"type": "input_transcript", "text": user_text})
-                _send({"type": "status", "text": "thinking"})
-                # The brain — same agentic dispatcher as text chat. Blocking call
-                # in this worker thread; no fake amplitude is emitted during the
-                # gap, so the cube color-shifts (processing) without motion.
-                try:
-                    # Pin the brain to a seat that is ACTUALLY RESIDENT.
-                    #
-                    # This call used to pass no model at all, so the router
-                    # picked — and picked a seat that was not loaded. The turn
-                    # transcribed, emitted status:thinking, 404'd inside the
-                    # router, and never spoke. Whisper and Piper both worked
-                    # perfectly, which is why this read as a voice bug for
-                    # weeks: the two ends of the cascade were fine and the
-                    # middle was absent. Same defect as the wiki distillation
-                    # loss and the `friday doctor` model check — resolving a
-                    # NAME instead of asking what is loaded.
-                    #
-                    # local_seats.resolve() returns only installed seats and
-                    # returns the caller's preference unchanged when the daemon
-                    # is unreachable, so a transient blip cannot silently
-                    # rewrite which model answers.
-                    _brain = None
-                    try:
-                        from agent_friday.services import local_seats as _seats
-                        # Same fix as _local_brain_ready() above: "brain" is
-                        # the role token, not "reasoning" (the capability it
-                        # maps to) -- the wrong token silently fell through
-                        # to the smallest installed model instead of the
-                        # user's configured orchestrator model.
-                        _brain = _seats.resolve("brain")
-                    except Exception:
-                        pass
-                    reply, _trace = _generate_agent(
-                        [{"role": "user", "content": user_text}],
-                        system=system_prompt,
-                        model=_brain,
-                        max_tokens=_voice_reply_cap(settings),
-                        temperature=settings.get("temperature"),
-                        session_ctx={"authenticated": _ws_authenticated,
-                                     "provider": _prov,
-                                     # Lets classify_task() reach TaskType.VOICE
-                                     # so a user's task_overrides.voice config
-                                     # actually takes effect.
-                                     "is_voice": True},
-                        workspace=settings.get("active_workspace") or "",
-                    )
-                except Exception as e:
-                    reply = f"Sorry, I hit an error thinking that through: {e}"
-                reply = (reply or "").strip()
-                if reply:
-                    _send({"type": "text", "text": reply})
-                    _speak(reply)
-                _send({"type": "turn_end"})
-                _send({"type": "voice_turn_done",
-                       "user_text": user_text, "agent_text": reply})
-                turn_log.append((user_text, reply))
-                try:
-                    _persist_voice_turn(user_text, reply,
-                                        conversation_id=_open_cid[0])
-                except Exception:
-                    pass
-                # Deterministic voice actions (open/navigate), same as the Gemini path.
-                try:
-                    _vacts = _voice_actions_for(user_text)
-                    if _vacts:
-                        _send({"type": "action", "actions": _vacts})
-                except Exception:
-                    pass
-
-        def _spawn_turn(user_text):
-            """Run a turn OFF the receive loop so the socket stays readable.
-
-            Calling _handle_turn inline blocked ws.receive() for the entire
-            think-and-speak window, so a barge sent while she was talking was
-            not merely ignored — it could not be delivered until she had already
-            finished. _turn_lock still serialises turns, so this changes the
-            ordering of nothing; it only stops the loop from going deaf.
-            """
-            threading.Thread(target=_handle_turn, args=(user_text,),
-                             daemon=True).start()
+        sess = VoiceSession(_send, ear=ear, mouth=mouth, fallback_mouth=_fallback,
+                            vad=vad, generate=_generate, hooks=hooks,
+                            manifest_snapshot=_msnap,
+                            contract=_msnap.get("contract") or {},
+                            gpu_queue=_vw.gpu_queue(), session_id=_vsession)
+        sess.conversation_id = _open_cid[0]
+        _sub = lambda snap: _send({"type": "manifest", **snap})  # noqa: E731
+        _manifest.subscribe(_sub)
+        sess.start()
 
         _last_hb = _time.time()
         try:
-            while not done.is_set():
-                # Heartbeat: same contract as /ws/live. Lets the client's stall
-                # watchdog detect a half-open socket on the LOCAL path too, and
-                # surfaces a dead browser socket here via the failed send.
+            while not done.is_set() and not sess.done.is_set():
                 if _time.time() - _last_hb >= 15.0:
                     _last_hb = _time.time()
                     _send({"type": "hb", "ts": int(_last_hb)})
@@ -1580,62 +1946,31 @@ if sock is not None:
                     msg = json.loads(raw)
                 except Exception:
                     continue
-                t = msg.get("type")
-                if t == "audio" and msg.get("data"):
-                    try:
-                        pcm = base64.b64decode(msg["data"])
-                    except Exception:
-                        continue
-                    utterance = vad.feed(pcm)
-                    if utterance:
-                        text = ""
-                        try:
-                            text = engine.transcribe(utterance)
-                        except Exception as e:
-                            print(f"[voice-local] ASR failed: {e}")
-                        if text:
-                            _spawn_turn(text)
-                elif t == "barge":
-                    # Escape, or talking over her. The client has always sent
-                    # this; this path never listened for it. Stop speaking at
-                    # the next sentence boundary and tell the client, using the
-                    # SAME {"type":"interrupted"} frame /ws/live sends, because
-                    # that is what re-opens the browser's playback gate. Sending
-                    # anything else here leaves the gate shut and the next reply
-                    # inaudible.
-                    _barge.set()
-                    _send({"type": "interrupted"})
-                    _send({"type": "status", "text": "listening"})
-                elif t == "conversation":
-                    # He switched threads while the mic was live. Voice follows
-                    # the conversation on screen, so retarget from here on.
-                    _open_cid[0] = (msg.get("id") or "").strip() or None
-                elif t == "text" and msg.get("text"):
-                    # Typed/queued turn (e.g. News Anchor "read me the Front Page").
-                    _spawn_turn(msg["text"])
-                elif t == "end":
-                    # Flush any buffered speech, then close.
-                    utterance = vad.flush()
-                    if utterance:
-                        try:
-                            text = engine.transcribe(utterance)
-                            if text:
-                                _handle_turn(text)
-                        except Exception:
-                            pass
-                    done.set()
-                    break
+                try:
+                    sess.handle(msg)
+                except Exception as _he:
+                    _vlog.error("voice frame failed: %s: %s", type(_he).__name__, _he)
         finally:
             done.set()
-            if turn_log:
-                try:
-                    _spawn_voice_distill(turn_log)
-                except Exception:
-                    pass
+            _manifest.unsubscribe(_sub)
+            sess.close()
             try:
                 ws.close()
             except Exception:
                 pass
+
+    # Clean-sheet §6.3: `/ws/voice` is the local route; `/ws/voice-local` is
+    # kept as an alias for one release. ONE implementation, two paths.
+    #
+    # flask-sock's `route` decorator returns None, so a decorated
+    # `ws_voice_local` was None by the time an alias function called it:
+    # every /ws/voice connect answered HTTP 500 ("'NoneType' object is not
+    # callable", observed 2026-09-18) while /ws/voice-local -- the URL
+    # session-info hands the mic -- kept working. Register the undecorated
+    # implementation under both paths, with distinct endpoint names so
+    # Flask does not see one endpoint mapped to two view functions.
+    sock.route('/ws/voice-local', endpoint='ws_voice_local')(ws_voice_local)
+    sock.route('/ws/voice', endpoint='ws_voice')(ws_voice_local)
 
     @sock.route('/ws/live')
     def ws_live(ws):
@@ -1799,9 +2134,22 @@ if sock is not None:
             _vlog(f'voice memory/tone context skipped: {_mc_err}')
         if _vault_control is not None:
             _vlog('voice system prompt gated for cloud provider=gemini (vault local-only)')
+        # Clean-sheet §3.1 rule 3 / §4.5: the first paragraph is the manifest's
+        # self-description for the CLOUD path -- "You are Gemini Live; the
+        # microphone audio is sent to Google. Questions about Stephen's own
+        # context are answered by his local model through `ask_friday`" (or,
+        # with no resident seat, that there is NO such path). Gemini has no
+        # other source for what it is.
+        try:
+            _cm = _vm.get_manifest()
+            _cm.refresh_selection(_load_settings() or {})
+            _cloud_self = _cm.describe_for_model() if _cm.mode == "gemini" else ""
+        except Exception:
+            _cloud_self = ""
         voice_prefix = (
             "You are Agent Friday, a sovereign personal AI assistant.\n"
-            "You are having a LIVE VOICE conversation — be natural and speak like a person.\n"
+            + (_cloud_self + "\n" if _cloud_self else "")
+            + "You are having a LIVE VOICE conversation — be natural and speak like a person.\n"
             "CRITICAL LENGTH RULE: When the user asks you to explain something in detail, "
             "go deep. Give thorough, multi-paragraph spoken responses. Do not cut yourself "
             "short. The user will tell you when they've heard enough. Default to comprehensive "
@@ -2027,6 +2375,45 @@ if sock is not None:
         if not live_voice_tools:
             _log.warning("voice live tools DISABLED by settings['voice_tools'] - "
                          "Friday will have no callable tools this session")
+        # F3: one line, at session start, from the names the API is actually
+        # given -- not from a comment about them. The client keeps it on
+        # screen for the session; it is not a transient status.
+        try:
+            _reach_names = list(_voice_tool_names()) if live_voice_tools else []
+        except Exception:
+            _reach_names = []
+        try:
+            _reach = _voice_context_reach("gemini", _reach_names)
+            ws.send(json.dumps({"type": "context_reach", **_reach}))
+            # Clean-sheet §6.2/§7: the `contract` frame for a cloud session and
+            # the persistent `cloud_voice_context_via_local` line. Neither is
+            # a transient status; the client keeps both on screen.
+            ws.send(json.dumps({"type": "contract", "engine": "gemini",
+                                "tools": list(_reach_names),
+                                "native_tools": len([n for n in _reach_names
+                                                     if n != "ask_friday"]),
+                                "ask_friday": "ask_friday" in _reach_names,
+                                "knowledge_graph": bool(_reach.get("knowledge_graph")),
+                                "memory": bool(_reach.get("memory")),
+                                "line": _reach.get("line") or
+                                (f"{len(_reach_names)} native tools; no path to your context")}))
+            if "ask_friday" in _reach_names:
+                ws.send(json.dumps({
+                    "type": "error-nonfatal", "code": "cloud_voice_context_via_local",
+                    "message": ("Gemini Live is speaking; questions about your own "
+                                "context are answered by Friday's local model and "
+                                "relayed after the privacy gate."),
+                    "action": None}))
+        except Exception:
+            pass
+        # F6: a new session's byte total starts at zero here; the legs that
+        # follow only add to it.
+        try:
+            from agent_friday.services import voice_indicator as _vi0
+            _vi0.record_cloud_session(provider="google-gemini", label="Gemini Live",
+                                      event="start")
+        except Exception:
+            pass
         if live_voice_tools:
             try:
                 _vtools = _build_voice_live_tools(types)
@@ -2099,10 +2486,18 @@ if sock is not None:
                     attempts.append(key)
 
             _primary_affective = live_affective and _model_supports_affective_dialog(configured_live_model)
-            if _primary_affective or live_proactive:
+            # v1alpha exists in this list ONLY to carry affective/proactive.
+            # A 3.8 model takes neither (affective is not its feature,
+            # proactivity is not a field it has), so asking for v1alpha on its
+            # behalf spends an attempt — and a possible 1008 "Expected OAuth 2
+            # access token" — to deliver nothing.
+            _primary_proactive = live_proactive and _model_supports_proactivity_config(
+                configured_live_model)
+            if _primary_affective or _primary_proactive:
                 _add_attempt("v1alpha", configured_live_model)
             _add_attempt(None, configured_live_model)
-            for _fallback in (LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2):
+            for _fallback in (LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2,
+                              LIVE_MODEL_FALLBACK3):
                 _add_attempt(None, _fallback)
 
             # Lazily create (and cache) a client per API version.
@@ -2201,14 +2596,50 @@ if sock is not None:
                 # fail with 1011 (unsupported field) or 1008 (auth).
                 use_affective = (api_version == "v1alpha" and live_affective
                                  and _model_supports_affective_dialog(model_name))
-                use_proactive = (api_version == "v1alpha" and live_proactive)
+                use_proactive = (api_version == "v1alpha" and live_proactive
+                                 and _model_supports_proactivity_config(model_name))
                 per_model_kwargs = dict(live_cfg_kwargs)
                 if not use_affective:
                     per_model_kwargs.pop("enable_affective_dialog", None)
                 if not use_proactive:
                     per_model_kwargs.pop("proactivity", None)
+                # Gemini 3.8 Live: thinking_config is mandatory on the
+                # extended-thinking variant and fatal on the plain one, so it
+                # is decided per attempt rather than once for the session —
+                # the fallback chain can hand this loop either kind.
+                _think_level = None
+                if _model_requires_thinking_config(model_name):
+                    _think_level = resolve_live_thinking_level(
+                        live_settings.get("voice_thinking_level"))
+                    try:
+                        per_model_kwargs["thinking_config"] = types.ThinkingConfig(
+                            thinking_level=_think_level)
+                    except Exception as _tce:
+                        # No ThinkingConfig in this SDK means this model cannot
+                        # be connected at all. Skip it rather than send a bare
+                        # config the server rejects with a message about
+                        # thinking levels, which reads like a model outage.
+                        _vlog(f'{model_name} needs thinking_config and this '
+                              f'google-genai cannot build one ({_tce}); skipping')
+                        continue
+                elif _model_rejects_thinking_config(model_name):
+                    per_model_kwargs.pop("thinking_config", None)
+                # Same shape for tools: extended-thinking refuses BLOCKING
+                # function calls, so its declarations are re-rendered
+                # NON_BLOCKING. Only done when required — rebuilding the whole
+                # tool surface for every attempt would be wasted work, and
+                # plain 3.8-live accepts either mode.
+                if (per_model_kwargs.get("tools")
+                        and _model_requires_non_blocking_tools(model_name)):
+                    try:
+                        _nb_tools = _build_voice_live_tools(types, behavior="NON_BLOCKING")
+                        if _nb_tools:
+                            per_model_kwargs["tools"] = _nb_tools
+                    except Exception as _nbe:
+                        _vlog(f'NON_BLOCKING tool rebuild failed for {model_name}: {_nbe}')
                 _vlog(f'connecting to model: {model_name} (api={api_version or "default(v1beta)"}, '
-                      f'affective={use_affective}, proactive={use_proactive})')
+                      f'affective={use_affective}, proactive={use_proactive}'
+                      + (f', thinking={_think_level}' if _think_level else '') + ')')
                 try:
                     # Config/client construction stays INSIDE the per-attempt
                     # try: LiveConnectConfig is a pydantic model that raises
@@ -2809,6 +3240,22 @@ if sock is not None:
                         _leg_started = _time.time()
                         _leg_bytes_at_start = _audio_bytes_to_gemini
                         _record_mic_audio_egress("open")
+                        # F6: name the provider receiving the microphone, on
+                        # screen, for as long as the leg is open. Written from
+                        # the served path (this leg just connected), never
+                        # from the engine setting.
+                        try:
+                            from agent_friday.services import voice_indicator as _vi
+                            _vi.record_cloud_session(
+                                provider="google-gemini", label="Gemini Live",
+                                event="open", model=model_name)
+                        except Exception:
+                            pass
+                        _safe_send({"type": "egress_notice",
+                                    "provider": "google-gemini",
+                                    "label": "Google (Gemini Live)",
+                                    "field": "mic_audio",
+                                    "text": "Microphone audio is streaming to Google (Gemini Live)."})
                         try:
                             if leg == 0 and _use_handle:
                                 _vlog(f'session resumed with {model_name} from stored handle')
@@ -2906,9 +3353,26 @@ if sock is not None:
                                 await session_cm.__aexit__(None, None, None)
                             except Exception as _xe:
                                 _vlog(f'leg close error (ignored): {_xe}')
-                            _record_mic_audio_egress(
-                                "close",
-                                byte_len=max(0, _audio_bytes_to_gemini - _leg_bytes_at_start))
+                            _leg_bytes = max(0, _audio_bytes_to_gemini - _leg_bytes_at_start)
+                            _record_mic_audio_egress("close", byte_len=_leg_bytes)
+                            # F6: the receipt names the byte count. Cumulative
+                            # for the session so a renewed leg does not reset
+                            # what the user is told left the machine.
+                            try:
+                                from agent_friday.services import voice_indicator as _vi
+                                _vi.record_cloud_session(
+                                    provider="google-gemini", label="Gemini Live",
+                                    event="close", model=model_name,
+                                    bytes_sent=_leg_bytes)
+                            except Exception:
+                                pass
+                            _safe_send({"type": "egress_receipt",
+                                        "provider": "google-gemini",
+                                        "label": "Google (Gemini Live)",
+                                        "field": "mic_audio",
+                                        "bytes": int(_audio_bytes_to_gemini),
+                                        "text": (f"Sent {_audio_bytes_to_gemini / 1e6:.1f} MB "
+                                                 "of microphone audio to Google this session.")})
 
                         if done.is_set():
                             break

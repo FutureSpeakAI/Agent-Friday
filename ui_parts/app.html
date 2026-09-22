@@ -58,6 +58,51 @@ const DOCK_GROUPS=[
   ]},
 ];
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
+const WS_BY_ID=WS.reduce((m,w)=>(m[w.id]=w,m),{});
+const WS_GROUP_OF=DOCK_GROUPS.reduce((m,g)=>(g.items.forEach(w=>{m[w.id]=g.name}),m),{});
+
+// ═══ DOCK ARRANGEMENT ═══
+// The owner's dock, computed from three inputs in one place so the dock render,
+// the Dock settings panel and its live preview cannot disagree about what the
+// dock is. Returns the SAME {name, items[]} shape DOCK_GROUPS has, so the render
+// body is untouched by any of this.
+//
+// `custom` is settings.dock_custom = {order:[id...], hidden:[id...]}. Empty means
+// the owner has never shaped the dock, and `show_all_workspaces` governs exactly
+// as it always has. A non-empty arrangement wins outright — two switches over one
+// dock is how you get a control that silently does nothing.
+//
+// GROUPS ARE DERIVED, never configured. Adjacent items sharing a group name form
+// a group, so the default order reproduces today's three-group dock precisely.
+// Interleaving would otherwise produce a confetti of one-item labelled groups, so
+// the moment the arrangement stops being group-contiguous the dock goes flat and
+// unlabelled. One rule the owner can predict, rather than a second setting asking
+// a question they did not ask to be asked.
+function dockArrangement(custom,showAll){
+  const cust=(custom&&typeof custom==='object')?custom:{};
+  const rawOrder=Array.isArray(cust.order)?cust.order:[];
+  const hidden=new Set(Array.isArray(cust.hidden)?cust.hidden:[]);
+  const configured=rawOrder.length>0||hidden.size>0;
+  // Explicit order first, real ids only, then every workspace the order never
+  // mentioned in its registry position — so a workspace added by a later version
+  // of Friday APPEARS rather than vanishing because a saved order predates it.
+  const seen=new Set(); const ids=[];
+  rawOrder.forEach(id=>{if(WS_BY_ID[id]&&!seen.has(id)){seen.add(id);ids.push(id)}});
+  WS.forEach(w=>{if(!seen.has(w.id)){seen.add(w.id);ids.push(w.id)}});
+  const visible=ids.filter(id=>configured?!hidden.has(id):(showAll||WS_BY_ID[id].core));
+  const groups=[];
+  visible.forEach(id=>{
+    const name=WS_GROUP_OF[id]||'More';
+    const last=groups[groups.length-1];
+    if(last&&last.name===name)last.items.push(WS_BY_ID[id]);
+    else groups.push({name:name,items:[WS_BY_ID[id]]});
+  });
+  const flat=groups.length>DOCK_GROUPS.length;
+  return{
+    groups:flat?[{name:'',items:visible.map(id=>WS_BY_ID[id])}]:groups,
+    ids:ids,visible:visible,hidden:hidden,configured:configured,flattened:flat};
+}
+
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
 // ═══ CONNECTOR HEALTH BUS ═══
@@ -334,9 +379,22 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
   if(cust.density==='compact')custCss+=`${scope} .card{padding:7px 9px!important;margin-bottom:4px!important}${scope}{font-size:12px}\n`;
   if(cust.accent)custCss+=`${scope}{--ws-accent:${cust.accent}}${scope} .card-title{color:${cust.accent}}${scope}>.ws-accent-bar{background:${cust.accent}}\n`;
   const openWsChat=(seed)=>window.fridayOpenWorkspaceChat&&window.fridayOpenWorkspaceChat(id,title,emoji,seed);
+  // The history overlay is local to THIS window rather than App-level, so two
+  // open workspaces each get their own. Two arrival paths, because the window
+  // may or may not already exist: a flag read on mount covers "Settings opened
+  // this workspace just now", an event covers "the window was already open, so
+  // nothing is going to mount." Both clear the flag, or it would sit there and
+  // fire on some unrelated open later.
+  const[histOpen,setHistOpen]=useState(false);
+  useEffect(()=>{
+    if(window.__fridayOpenHistoryFor===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}
+    const onOpen=e=>{if(e&&e.detail&&e.detail.workspace===id){delete window.__fridayOpenHistoryFor;setHistOpen(true)}};
+    window.addEventListener('friday:open-ws-history',onOpen);
+    return()=>window.removeEventListener('friday:open-ws-history',onOpen);
+  },[id]);
   return(<div className="fwin" style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button onClick={onClose}>×</button></div>
+      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
@@ -344,6 +402,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
       {cust.actions&&cust.actions.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>{cust.actions.map((a,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>openWsChat(a.prompt)}>{a.label}</button>)}</div>}
       {children}
     </div></div>
+    {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
   </div>);
 }
@@ -5437,7 +5496,13 @@ function MessagesWS(){
     if(action==='archive'){setMsgs(x=>x.filter(z=>z.id!==m.id));if(expanded===m.id){setExpanded(null);setThread(null)}}
     else setMsgs(x=>x.map(z=>z.id===m.id?{...z,flagged:action==='flag'?true:action==='unflag'?false:z.flagged,unread:action==='read'?false:action==='unread'?true:z.unread}:z));
     if(!silent)flash(action.charAt(0).toUpperCase()+action.slice(1)+'d');loadStats()}catch(e){}};
-  const reclassify=async(m,newLane)=>{try{await fetch('/api/messages/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,lane:newLane})});setMsgs(x=>x.map(z=>z.id===m.id?{...z,lane:newLane}:z));flash('Moved to '+(MSG_LANE_META[newLane]?.label||newLane));loadStats()}catch(e){}};
+  // Reclassifying TEACHES now - the route calls message_triage.record_signal,
+  // which it never used to, so every correction before today moved one message
+  // and taught nothing (sender_signals.json sat at 38 bytes for months). Show
+  // that it learned, and the engine's own countdown to that sender outranking
+  // the configured rules; otherwise a correction still feels like a chore
+  // rather than training.
+  const reclassify=async(m,newLane)=>{try{const r=await fetch('/api/messages/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,lane:newLane})});const d=await r.json().catch(()=>({}));setMsgs(x=>x.map(z=>z.id===m.id?{...z,lane:newLane}:z));const label=MSG_LANE_META[newLane]?.label||newLane;const L=d&&d.learned;if(L&&L.ok&&L.authoritative){flash('Moved to '+label+' — learned: '+L.sender+' now goes here')}else if(L&&L.ok){flash('Moved to '+label+' — '+L.needed_for_authority+' more from '+L.sender+' and I stop asking')}else{flash('Moved to '+label)}loadStats()}catch(e){}};
   const draft=async(m)=>{setDraftFor(m.id);setDraftBusy(true);setDraftText('');
     try{const r=await fetch('/api/messages/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,sender:m.sender_email||m.sender,subject:m.subject,snippet:m.snippet,lane:m.lane,instructions:draftInstr})});const d=await r.json();setDraftText(d.draft||('[Error: '+(d.message||'draft failed')+']'))}catch(e){setDraftText('[Error generating draft]')}setDraftBusy(false)};
 
@@ -5764,16 +5829,24 @@ const CREATIVE_MODELS=[
   {id:'veo-3',label:'Google Veo (video)',short:'Veo'},
   {id:'gemini-omni-flash',label:'Gemini Omni Flash (video)',short:'Omni'},
 ];
+// Offline fallback for the voice picker; /api/models supplies the real list
+// from services/provider_registry.py. Keep the two in sync — this array is
+// what the user picks from when the catalogue cannot be read, and an id here
+// that the backend no longer offers is a silent fallback to another model.
 const VOICE_MODELS=[
   {id:'gemini-2.5-flash-native-audio-latest',label:'Gemini 2.5 Flash Native Audio (latest)',short:'Gemini Live'},
   {id:'gemini-2.5-flash-native-audio-preview-09-2025',label:'Gemini 2.5 Flash Audio Preview (09-2025)',short:'Gemini 2.5 09'},
   {id:'gemini-3.1-flash-live-preview',label:'Gemini 3.1 Flash Live Preview',short:'3.1 Live'},
   {id:'gemini-2.5-flash-native-audio-preview-12-2025',label:'Gemini 2.5 Flash Audio Preview (12-2025)',short:'Gemini 2.5 12'},
+  // Both verified by a real bidiGenerateContent connect 2026-09-22.
+  {id:'gemini-3.8-live',label:'Gemini 3.8 Live',short:'3.8 Live'},
+  {id:'gemini-3.8-live-extended-thinking',label:'Gemini 3.8 Live (extended thinking)',short:'3.8 Live+T'},
   {id:'gemini-2.5-flash',label:'Gemini 2.5 Flash',short:'Flash'},
 ];
 // Voice ENGINE choices (settings key `voice_engine`): Auto / Local CPU / Local
 // GPU / Gemini Live. Live availability comes from /api/models (voice_engines);
 // this const is the offline fallback only.
+const TTS_ENGINES_FALLBACK=[{id:'piper',label:'Piper (CPU)',short:'Piper',available:true,hint:'On-device, CPU-capable.'},{id:'kokoro',label:'Kokoro-82M (GPU)',short:'Kokoro',available:false,status:'unknown',hint:'Availability unknown \u2014 the model catalogue could not be read.'}];
 const VOICE_ENGINES=[
   {id:'auto',label:'Auto',short:'Auto'},
   {id:'local',label:'Local CPU (Whisper + Piper)',short:'Local CPU'},
@@ -5833,6 +5906,7 @@ function useModelCatalog(){
   const out={loaded:!!cat,error:err,orchestrator:pick('orchestrator'),subagent:pick('subagent'),
              creative:pick('creative'),voice:pick('voice'),
              voiceEngines:(cat&&cat.voice_engines&&cat.voice_engines.length)?cat.voice_engines:VOICE_ENGINES,
+    ttsEngines:(cat&&cat.tts_engines&&cat.tts_engines.length)?cat.tts_engines:TTS_ENGINES_FALLBACK,
              providers:(cat&&cat.providers)||[]};
   const byId={};
   // Role lists first (curated copies win), then the FLAT catalog — role lists
@@ -8205,6 +8279,62 @@ function VoiceSetupWizard({onClose}){
     </div>}
   </div>);
 }
+// Which synthesizer is CHOSEN comes from settings; which one is SERVING comes
+// from /api/health/full -> local_voice.running, which is null until something
+// is actually loaded. Two separate lines on purpose: conflating them is how a
+// user ends up certain they are hearing Kokoro while Piper speaks.
+function TtsEngineRows({s,save,mc}){
+  const[live,setLive]=useState(null);
+  const[liveErr,setLiveErr]=useState('');
+  const refresh=useCallback(()=>{
+    fetch('/api/health/full').then(r=>r.json()).then(d=>{setLive((d&&d.local_voice)||null);setLiveErr('')}).catch(()=>setLiveErr('Could not read live voice status.'));
+  },[]);
+  useEffect(()=>{refresh();const t=setInterval(refresh,6000);return()=>clearInterval(t)},[refresh]);
+  const engines=(mc&&mc.ttsEngines)||TTS_ENGINES_FALLBACK;
+  const sel=s.local_voice_tts_engine||'piper';
+  const selMeta=engines.filter(o=>o.id===sel)[0]||null;
+  const running=(live&&live.running)||null;
+  const servingEngine=(running&&running.tts_engine)||null;
+  const mismatch=servingEngine&&servingEngine!==sel&&!(sel==='piper'&&servingEngine==='nemo');
+  const engineIcon={piper:'\u25CF ',kokoro:'\u25C6 '};
+  return <>
+    <StRow label="Local Voice Engine" desc="Which synthesizer the on-device path uses. Piper runs on CPU. Kokoro needs a CUDA GPU and refuses rather than quietly running slowly.">
+      <div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {engines.map(o=>{
+            const off=o.available===false;
+            return <button key={o.id} className={`settings-btn ${sel===o.id?'active':''}`}
+              style={{fontSize:12,padding:'7px 14px',opacity:off?0.4:1,cursor:off?'not-allowed':'pointer'}}
+              aria-disabled={off} title={o.hint||o.label}
+              onClick={off?undefined:()=>save({local_voice_tts_engine:o.id})}>{(engineIcon[o.id]||'')+(o.short||o.label)}</button>;
+          })}
+        </div>
+        {engines.filter(o=>o.available===false).map(o=>
+          <div key={'why-'+o.id} style={{fontSize:11,opacity:0.75,marginTop:6,lineHeight:1.45}}>
+            <b>{(o.short||o.label)} unavailable:</b> {o.hint||'no reason given'}
+          </div>)}
+      </div>
+    </StRow>
+    {sel==='kokoro'&&<StRow label="Kokoro Voice" desc="Kokoro's built-in speakers.">
+      <select className="input" style={{width:'100%'}} value={s.local_voice_kokoro_voice||'af_heart'} onChange={e=>save({local_voice_kokoro_voice:e.target.value})}>
+        {[['af_heart','Heart \u2014 US English (female)'],['af_bella','Bella \u2014 US English (female)'],['af_nicole','Nicole \u2014 US English (female)'],['am_michael','Michael \u2014 US English (male)'],['am_puck','Puck \u2014 US English (male)'],['bf_emma','Emma \u2014 UK English (female)'],['bm_george','George \u2014 UK English (male)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+      </select>
+    </StRow>}
+    {sel==='kokoro'&&<StRow label="Allow Kokoro on CPU" desc="Off by design. Kokoro synthesizes at roughly realtime on CPU, which is too slow to hold a conversation, so Friday refuses instead of quietly being slow. Turning this on accepts that trade.">
+      <button className={`settings-btn ${s.local_voice_kokoro_allow_cpu?'active':''}`} style={{fontSize:12,padding:'7px 14px'}}
+        onClick={()=>save({local_voice_kokoro_allow_cpu:!s.local_voice_kokoro_allow_cpu})}>{s.local_voice_kokoro_allow_cpu?'Allowed (slow)':'Refused (default)'}</button>
+    </StRow>}
+    <StRow label="Serving now" desc="What is actually loaded, read from the running engine \u2014 not what is selected above.">
+      <div style={{fontSize:12,lineHeight:1.5}}>
+        {liveErr?<span style={{opacity:0.7}}>{liveErr}</span>
+          :!running?<span style={{opacity:0.7}}>Nothing loaded yet. The engine is resolved when a voice session starts; this line will name it then.</span>
+          :<span><b>{running.tts_engine||running.tts_class||'unknown'}</b>{running.tts_voice?' \u00B7 '+running.tts_voice:''}{running.tier?' \u00B7 tier '+running.tier:''}{running.tts_device?' \u00B7 '+running.tts_device:''}</span>}
+        {mismatch&&<div style={{marginTop:6,fontSize:11,color:'var(--warn, #e0a030)'}}>You selected <b>{sel}</b> but <b>{servingEngine}</b> is serving. The change takes effect on the next voice session, or {sel} could not load \u2014 check the reason above.</div>}
+        {selMeta&&selMeta.available===false&&sel!=='piper'&&<div style={{marginTop:6,fontSize:11,color:'var(--warn, #e0a030)'}}>The selected engine is not available right now, so a voice session will refuse rather than substitute another voice.</div>}
+      </div>
+    </StRow>
+  </>;
+}
 function SettingsTabVoice({s,save}){
   const[showWizard,setShowWizard]=useState(false);
   const mc=useModelCatalog();
@@ -8243,7 +8373,8 @@ function SettingsTabVoice({s,save}){
           {['Aoede','Puck','Charon','Kore','Fenrir','Leda','Orus','Zephyr'].map(v=><option key={v}>{v}</option>)}
         </select>
       </StRow>}
-      {((s.voice_engine||'local')!=='gemini')&&<StRow label="Local TTS Voice (Piper)" desc="On-device voice used by the local engines.">
+      {((s.voice_engine||'local')!=='gemini')&&<TtsEngineRows s={s} save={save} mc={mc}/>}
+      {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Local TTS Voice (Piper)" desc="On-device voice used by the local engines.">
         <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
           {[['en_US-amy-medium','Amy \u2014 US English (medium)'],['en_US-lessac-medium','Lessac \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
@@ -8375,6 +8506,187 @@ function SettingsTabOrchestrator(){
     <div style={{marginTop:24}}><StSection title="WORK LOG"><WorkLogPanel/></StSection></div>
   </div>;
 }
+// Account state is read from the STORE's verdict (acc.health, derived server-side
+// from status + last_sync), never from the account record merely existing. An
+// account with no health block is treated as unknown-and-broken, not as fine:
+// on 2026-09-09 this surface showed two needs_reauth accounts as "connected"
+// for nine days because it rendered presence instead of function.
+const GA_STATE_COLORS={connected:'#00ff80',needs_reauth:'#ff8c42',error:'#ff5470',disconnected:'#7a8699',unknown:'#888888'};
+function gaHealth(acc){
+  const h=(acc&&acc.health)||null;
+  if(!h)return{state:'unknown',label:'Status unknown',summary:'Status unknown — Friday could not read this account’s state',healthy:false,actionable:true,stale:false,color:GA_STATE_COLORS.unknown};
+  return Object.assign({},h,{color:GA_STATE_COLORS[h.state]||GA_STATE_COLORS.unknown});
+}
+function gaSyncTitle(acc){
+  if(!acc||!acc.last_sync)return'This account has never completed a sync.';
+  try{return'Last successful sync: '+new Date(acc.last_sync).toLocaleString();}catch(e){return'Last successful sync: '+acc.last_sync;}
+}
+// ═════════════════════════════════════════════════════════════════════════════
+//  WORKSPACE HISTORY — the 40 snapshots that were already being kept
+// ═════════════════════════════════════════════════════════════════════════════
+// services/workspace_studio.py has kept a snapshot before every customization
+// since it shipped — undo, revert-to-version and restore-as-of all work, and the
+// ONLY way to reach any of it was to ask Friday out loud. This is that history,
+// on screen.
+//
+// Snapshots hold the state BEFORE a change, which is why each row reads "undo X"
+// rather than "restore X": restoring entry N undoes the change labelled N and
+// everything after it. Reverting is itself snapshotted server-side, so nothing
+// here is a one-way door — worth SAYING, because a list of destructive-looking
+// buttons that are all reversible still reads as dangerous until someone says so.
+function WorkspaceHistory({wsId,label,onClose}){
+  const[data,setData]=useState(null);
+  const[busy,setBusy]=useState('');
+  const[err,setErr]=useState('');
+  const load=()=>apiFetch('/api/workspace/'+encodeURIComponent(wsId)+'/history')
+    .then(r=>r.json())
+    .then(d=>setData(d&&d.entries?d:{entries:[],current_keys:[]}))
+    .catch(()=>setErr('Could not read the history for this workspace.'));
+  useEffect(()=>{load()},[wsId]);
+  const act=async(path,body,what)=>{
+    setBusy(what);setErr('');
+    try{
+      const r=await apiFetch('/api/workspace/'+encodeURIComponent(wsId)+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+      const d=await r.json();
+      if(d&&(d.ok===false||d.status==='error'))setErr(d.error||d.message||'That did not work.');
+      try{window.dispatchEvent(new CustomEvent('friday:ws-custom-changed',{detail:{workspace:wsId}}))}catch(e){}
+      await load();
+    }catch(e){setErr('That did not work: '+e.message)}
+    setBusy('');
+  };
+  const _dim={fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.5};
+  const _btn={background:'none',border:'1px solid rgba(0,212,255,0.3)',borderRadius:4,color:'#7dd3fc',cursor:'pointer',fontSize:11,padding:'4px 9px',fontFamily:'JetBrains Mono'};
+  const when=ts=>{try{return new Date(ts).toLocaleString()}catch(e){return String(ts||'')}};
+  const entries=(data&&data.entries)||[];
+  // `current_keys`, `changed_label` and per-entry `keys` were added to history()
+  // alongside this panel, so a server that has not restarted yet answers in the
+  // older shape. Deriving the key list from `current` — which the old shape DOES
+  // carry — is the difference between degrading and lying: the first version of
+  // this read `data.current_keys||[]` and cheerfully told a workspace with four
+  // live customizations that it was at its baseline. Where the old shape
+  // genuinely lacks the data, the line is omitted rather than guessed.
+  const currentKeys=(data&&data.current_keys)||Object.keys((data&&data.current)||{}).sort();
+  return(
+    // Starts BELOW the title bar on purpose. Covering it would take the window's
+    // own move, close and 🕒 buttons with it, so the one way out would be the
+    // Close button inside — and a modal you can only leave through its own
+    // affordance is how you strand someone.
+    <div onClick={e=>e.stopPropagation()} style={{position:'absolute',left:0,right:0,bottom:0,top:37,zIndex:6,background:'rgba(6,10,20,0.96)',backdropFilter:'blur(8px)',display:'flex',flexDirection:'column',padding:'14px 16px',overflowY:'auto'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+        <span className="card-title">{'History — '+(label||wsId)}</span>
+        <span style={{flex:1}}/>
+        <button style={_btn} onClick={onClose}>Close</button>
+      </div>
+      <div style={{..._dim,marginBottom:10}}>{currentKeys.length
+        ?'Friday has customized this workspace: '+currentKeys.join(', ')+'. Every step below is reversible — reverting is snapshotted too.'
+        :'This workspace is at its baseline. Nothing has been customized.'}</div>
+      {err&&<div style={{..._dim,color:'rgba(255,120,120,0.85)',marginBottom:8}}>{err}</div>}
+      <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+        <button style={_btn} disabled={!!busy||!entries.length} onClick={()=>act('/undo',{},'undo')}>{busy==='undo'?'…':'Undo the last change'}</button>
+        <button style={{..._btn,borderColor:'rgba(255,255,255,0.18)',color:'rgba(255,255,255,0.6)'}} disabled={!!busy||!currentKeys.length} onClick={()=>act('/reset',{},'reset')}>{busy==='reset'?'…':'Back to baseline'}</button>
+      </div>
+      {!data&&!err&&<div style={_dim}>Reading the history…</div>}
+      {data&&!entries.length&&<div style={_dim}>No changes recorded yet. Friday snapshots this workspace before every change it makes, so the first one will show up here.</div>}
+      {entries.map((e,i)=>(
+        <div key={e.version_id||i} style={{borderLeft:'2px solid rgba(0,212,255,0.3)',paddingLeft:10,marginBottom:12}}>
+          <div style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{e.label||(e.describes||'a change').replace(/^state BEFORE: /,'')}</div>
+          <div style={_dim}>{when(e.when)+(e.changed_label?' · touched '+e.changed_label:'')}</div>
+          {Array.isArray(e.keys)&&<div style={{..._dim,fontSize:10,opacity:.8}}>{e.keys.length?'Going back here restores: '+e.keys.join(', '):'Going back here returns the workspace to its baseline.'}</div>}
+          <button style={{..._btn,marginTop:5}} disabled={!!busy} title={e.undo_hint||''} onClick={()=>act('/revert',{version_id:e.version_id},e.version_id)}>{busy===e.version_id?'…':'Undo this and everything after'}</button>
+        </div>))}
+    </div>);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  SETTINGS → DOCK — shape the dock, one workspace at a time
+// ═════════════════════════════════════════════════════════════════════════════
+// Writes through window.fridaySaveDock rather than useSettings' own save(), so
+// there is exactly ONE writer for dock_custom and the dock updates as you edit
+// rather than on the next full settings load. useSettings and App's
+// agentSettings are parallel stores over the same POST endpoint (see the comment
+// in useSettings.save), and a second writer here is how they would drift.
+function DockSettingsPanel(){
+  const[custom,setCustom]=useState({order:[],hidden:[]});
+  const[showAll,setShowAll]=useState(true);
+  const[loaded,setLoaded]=useState(false);
+  const[msg,setMsg]=useState('');
+  useEffect(()=>{
+    apiFetch('/api/settings').then(r=>r.json()).then(d=>{
+      const s=(d&&d.settings)||{};
+      const c=s.dock_custom;
+      setCustom(c&&typeof c==='object'?{order:c.order||[],hidden:c.hidden||[]}:{order:[],hidden:[]});
+      setShowAll(s.show_all_workspaces!==false);
+      setLoaded(true);
+    }).catch(()=>setLoaded(true));
+  },[]);
+  const shape=dockArrangement(custom,showAll);
+  // Every edit writes a COMPLETE arrangement, seeded from what is on screen right
+  // now. Otherwise the first click on a dock that show_all_workspaces had trimmed
+  // would hide one workspace and simultaneously reveal seven, because the moment
+  // an arrangement exists show_all stops applying.
+  const commit=next=>{
+    setCustom(next);setMsg('Saved ✓');setTimeout(()=>setMsg(''),1600);
+    try{window.fridaySaveDock&&window.fridaySaveDock(next)}catch(e){}
+  };
+  const seeded=()=>({
+    order:shape.ids.slice(),
+    hidden:shape.configured?(custom.hidden||[]).slice()
+                           :WS.filter(w=>!shape.visible.includes(w.id)).map(w=>w.id)});
+  const toggleVisible=id=>{
+    const base=seeded();const hid=new Set(base.hidden);
+    if(hid.has(id))hid.delete(id);else hid.add(id);
+    commit({order:base.order,hidden:[...hid]});
+  };
+  const move=(id,delta)=>{
+    const base=seeded();const order=base.order.slice();
+    const i=order.indexOf(id);const j=i+delta;
+    if(i<0||j<0||j>=order.length)return;
+    order[i]=order[j];order[j]=id;
+    commit({order:order,hidden:base.hidden});
+  };
+  const _card={background:'rgba(0,212,255,0.05)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,padding:'12px 14px',marginBottom:12};
+  const _dim={fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.5};
+  const _mini={background:'none',border:'1px solid rgba(255,255,255,0.15)',borderRadius:4,color:'rgba(255,255,255,0.65)',cursor:'pointer',fontSize:11,lineHeight:1,padding:'3px 6px'};
+  if(!loaded)return <div style={_dim}>Reading your dock…</div>;
+  return (
+    <div>
+      <div style={_card}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Your dock</div>
+        <div style={_dim}>{shape.configured
+          ?'This is your own arrangement, so “Show all workspaces” no longer applies. Reset below to hand it back.'
+          :'Untouched, so “Show all workspaces” still governs. Your first change here takes over from it, starting from exactly what you see now.'}</div>
+        {shape.flattened&&<div style={{..._dim,marginTop:6,color:'rgba(255,200,120,0.75)'}}>Your order interleaves the groups, so the dock is rendering flat and unlabelled. Keep each group together to get the labels back.</div>}
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(0,0,0,0.35)'}}>
+          {shape.visible.length
+            ?shape.visible.map(id=><span key={id} style={{fontSize:10,fontFamily:'JetBrains Mono',padding:'3px 7px',borderRadius:4,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.25)'}}>{WS_BY_ID[id].ico+' '+WS_BY_ID[id].label}</span>)
+            :<span style={{..._dim,color:'rgba(255,120,120,0.8)'}}>Nothing is showing. An empty dock is allowed — Ctrl+K still opens anything.</span>}
+        </div>
+        <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
+          <button className="settings-btn" style={{fontSize:11}} onClick={()=>commit({order:[],hidden:[]})}>Reset to default</button>
+          {msg&&<span style={{fontSize:11,color:'#00d4ff'}}>{msg}</span>}
+        </div>
+      </div>
+      <div style={{..._dim,marginBottom:8}}>Untick to hide. Arrows reorder. Group labels are derived from the order, not set separately.</div>
+      {shape.ids.map((id,idx)=>{
+        const w=WS_BY_ID[id];const visible=shape.visible.indexOf(id)!==-1;
+        return (
+          <div key={id} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 8px',borderRadius:6,background:visible?'rgba(255,255,255,0.03)':'transparent',opacity:visible?1:0.45}}>
+            <input type="checkbox" checked={visible} onChange={()=>toggleVisible(id)} title={visible?'Hide from the dock':'Show in the dock'}/>
+            <span style={{width:20,textAlign:'center'}}>{w.ico}</span>
+            <span style={{flex:1,fontSize:12,fontFamily:'JetBrains Mono'}}>{w.label}</span>
+            <span style={{..._dim,fontSize:10,minWidth:44}}>{WS_GROUP_OF[id]}</span>
+            {/* The settings half of "launched from the settings menu or the
+                workspace in question": open the workspace with its history
+                already showing, rather than a second copy of the panel that
+                could drift from the one in FWin. */}
+            <button style={_mini} title={'Earlier versions of '+w.label} onClick={()=>{try{window.__fridayOpenHistoryFor=id;window.fridayOpenWorkspace&&window.fridayOpenWorkspace({workspace:id});window.dispatchEvent(new CustomEvent('friday:open-ws-history',{detail:{workspace:id}}))}catch(e){}}}>🕒</button>
+            <button style={_mini} disabled={idx===0} onClick={()=>move(id,-1)} title="Move up">↑</button>
+            <button style={_mini} disabled={idx===shape.ids.length-1} onClick={()=>move(id,1)} title="Move down">↓</button>
+          </div>);
+      })}
+    </div>);
+}
+
 function GoogleAccountsPanel(){
   const[accounts,setAccounts]=useState([]);
   const[msg,setMsg]=useState('');
@@ -8382,7 +8694,23 @@ function GoogleAccountsPanel(){
   const[loading,setLoading]=useState(false);
   const[oauth,setOauth]=useState(null);
   const[copied,setCopied]=useState(false);
+  const[reconnecting,setReconnecting]=useState(null);
   const refresh=()=>apiFetch('/api/google/accounts').then(r=>r.json()).then(d=>{if(d.status==='ok'){setAccounts(d.accounts||[]);setOauth(d.oauth&&d.oauth.redirect_uri?d.oauth:null)}}).catch(()=>{});
+  // A status display that is honest about failure and stale about recovery is
+  // only half fixed. The consent flow completes in a popup this panel never
+  // hears from, so re-poll while a reconnect is in flight and whenever the
+  // window regains focus -- the verdict on screen is never a cached one.
+  useEffect(()=>{
+    if(!reconnecting)return;
+    const t=setInterval(()=>{refresh()},4000);
+    const stop=setTimeout(()=>{setReconnecting(null)},180000);
+    return()=>{clearInterval(t);clearTimeout(stop)};
+  },[reconnecting]);
+  useEffect(()=>{
+    const onFocus=()=>{refresh()};
+    window.addEventListener('focus',onFocus);
+    return()=>window.removeEventListener('focus',onFocus);
+  },[]);
   // NOTE: refresh is a concise arrow returning the fetch Promise; passing it
   // straight to useEffect makes React call that Promise as the cleanup fn on
   // unmount (TypeError, crashed the Settings window). Wrap it so the effect
@@ -8392,16 +8720,24 @@ function GoogleAccountsPanel(){
     if(!oauth)return;
     navigator.clipboard?.writeText(oauth.redirect_uri).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1800)}).catch(()=>{});
   };
-  const addAccount=async()=>{
+  const startConnect=async(opts)=>{
+    const o=opts||{};
     setLoading(true);
     try{
-      const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});
+      const body=o.account?{account_id:o.account.id,email:o.account.email}:{label};
+      const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
-      if(d.status==='ok'&&d.auth_url){window.open(d.auth_url,'_blank','width=600,height=700');setMsg('Complete the OAuth flow in the popup, then click ↻.');setLabel('');}
-      else setMsg(d.message||'Failed to start OAuth.');
+      if(d.status==='ok'&&d.auth_url){
+        window.open(d.auth_url,'_blank','width=600,height=700');
+        if(o.account){setReconnecting(o.account.id);setMsg('Sign in as '+(o.account.email||o.account.label||'this account')+' in the window that opened. This page updates on its own once you are done.');}
+        else{setReconnecting('new');setMsg('Complete the sign-in in the window that opened.');setLabel('');}
+      }
+      else setMsg(d.message||'Could not start sign-in.');
     }catch(e){setMsg('Error: '+e.message);}
     setLoading(false);
   };
+  const addAccount=()=>startConnect({});
+  const reconnectAccount=(acc)=>startConnect({account:acc});
   const removeAccount=async(id,email)=>{
     if(!window.confirm('Remove '+email+'? This revokes access.'))return;
     try{await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});setAccounts(a=>a.filter(x=>x.id!==id));setMsg('Removed.');}
@@ -8423,17 +8759,32 @@ function GoogleAccountsPanel(){
       {oauth.client_type==='web'&&<div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:6,lineHeight:1.4}}>This exact URI must be registered under "Authorized redirect URIs" for this OAuth client in the Google Cloud Console, or consent will fail with Error 400 (invalid_request).</div>}
     </div>}
     {accounts.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:12}}>No Google accounts connected yet.</div>}
-    {accounts.map(acc=>(
+    {accounts.length>0&&accounts.some(a=>!gaHealth(a).healthy)&&<div style={{background:'rgba(255,140,66,0.08)',border:'1px solid rgba(255,140,66,0.3)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
+      <div style={{color:'#ff8c42',fontSize:12,fontWeight:600,marginBottom:4}}>{accounts.filter(a=>!gaHealth(a).healthy).length} of {accounts.length} account(s) are not working</div>
+      <div style={{color:'rgba(255,255,255,0.6)',fontSize:11,lineHeight:1.5}}>Friday cannot read mail or calendar for these accounts, and anything it says about them is out of date. Reconnecting signs you back in to Google &mdash; nothing is deleted and your settings are kept.</div>
+    </div>}
+    {accounts.map(acc=>{const h=gaHealth(acc);return(
       <div key={acc.id} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:8,padding:14,marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div style={{display:'flex',gap:10,alignItems:'center'}}>
             <div style={{width:32,height:32,borderRadius:16,background:acc.color||'#00d4ff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'#000',flexShrink:0}}>{(acc.email||acc.label||'G').charAt(0).toUpperCase()}</div>
             <div>
               <div style={{color:'#fff',fontSize:13,fontWeight:600}}>{acc.email||acc.label||'Unknown'}</div>
-              <div style={{color:'rgba(255,255,255,0.4)',fontSize:11}}>{acc.label||''}{acc.last_sync?' · synced '+new Date(acc.last_sync).toLocaleTimeString():''}</div>
+              <div style={{display:'flex',gap:6,alignItems:'center',marginTop:3,flexWrap:'wrap'}}>
+                <span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:10,fontWeight:700,letterSpacing:'0.04em',textTransform:'uppercase',color:h.color,background:'rgba(255,255,255,0.05)',border:'1px solid '+h.color+'55',borderRadius:20,padding:'2px 8px'}}>
+                  <span style={{width:6,height:6,borderRadius:3,background:h.color,display:'inline-block'}}/>{h.label}
+                </span>
+                {acc.label&&<span style={{color:'rgba(255,255,255,0.35)',fontSize:11}}>{acc.label}</span>}
+              </div>
+              {/* The date matters, not the clock time: 'synced 12:25 AM' reads
+                  as this morning even when it is nine days old. */}
+              <div title={gaSyncTitle(acc)} style={{color:h.stale?'#ff8c42':'rgba(255,255,255,0.4)',fontSize:11,marginTop:3}}>{h.summary}</div>
             </div>
           </div>
-          <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
+          <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+            {!h.healthy&&<button className="settings-btn" style={{fontSize:11,padding:'4px 12px',color:'#ff8c42',borderColor:'#ff8c42',whiteSpace:'nowrap'}} onClick={()=>reconnectAccount(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect'}</button>}
+            <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
+          </div>
         </div>
         <div style={{display:'flex',gap:6,marginTop:10}}>
           {['gmail','calendar','drive'].map(svc=>{const on=acc.services?.[svc]!==false;return(
@@ -8443,7 +8794,7 @@ function GoogleAccountsPanel(){
           );})}
         </div>
       </div>
-    ))}
+    );})}
     <div style={{display:'flex',gap:8,marginTop:8,alignItems:'center'}}>
       <input className="input" style={{flex:1,fontSize:12}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="Label (e.g. Personal, Work)"/>
       <button className="settings-btn" style={{padding:'6px 14px',color:'#00d4ff',fontSize:12,whiteSpace:'nowrap'}} onClick={addAccount} disabled={loading}>{loading?'…':'+ Add Account'}</button>
@@ -8928,6 +9279,10 @@ function SettingsWS(){
   const{s,save,msg}=useSettings();
   const TABS=[
     {id:'general',label:'General',ico:'⚡️'},
+    // Two edits, always: an entry here with no branch below gives a rail item
+    // that selects a blank pane, and a branch with no entry gives a panel
+    // nothing can reach.
+    {id:'dock',label:'Dock',ico:'\u{1F39B}️'},
     {id:'models',label:'Models',ico:'🧠'},
     {id:'work',label:'Work',ico:'\u{1F4CB}'},
     {id:'providers',label:'Providers',ico:'🧩'},
@@ -8954,6 +9309,7 @@ function SettingsWS(){
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'24px 26px',minWidth:0}}>
         {tab==='general'&&<SettingsTabGeneral s={s} save={save}/>}
+        {tab==='dock'&&<StSection title="Dock"><DockSettingsPanel/></StSection>}
         {tab==='models'&&<SettingsTabModels s={s} save={save}/>}
         {tab==='work'&&<SettingsTabWork/>}
         {tab==='providers'&&<SettingsTabProviders s={s} save={save}/>}
@@ -8970,6 +9326,68 @@ function SettingsWS(){
   );
 }
 
+
+// ── AE-0: the resource strip ────────────────────────────────────────────────
+// Shows what is claimed, by what, and what is free, so Stephen can look at his
+// machine and see WHY something is unavailable rather than watching an
+// operation fail with no cause attached.
+//
+// Every number here comes from /api/arbiter/status, which computes it from a
+// live machine read plus the lease ledger. Nothing on this strip is invented:
+// when a reading cannot be taken the server sets verifiable=false and this
+// renders an em dash, never a number. That is the whole point of the strip; a
+// resource display that guessed would be worse than no display at all.
+function fmtUnits(v,unit){
+  if(v===null||v===undefined)return '\u2014';
+  if(unit==='MiB')return v>=1024?(v/1024).toFixed(1)+'G':v+'M';
+  return String(v);
+}
+function ArbiterStrip(){
+  const[arb,setArb]=useState(null);
+  useEffect(()=>{
+    let cancelled=false;
+    const poll=async()=>{
+      try{
+        const r=await fetch('/api/arbiter/status',{cache:'no-store'});
+        if(cancelled)return;
+        const d=await r.json();
+        if(!cancelled&&d&&d.status==='ok')setArb(d.arbiter);
+      }catch{if(!cancelled)setArb(null)}
+    };
+    poll();const iv=setInterval(poll,5000);
+    return()=>{cancelled=true;clearInterval(iv)};
+  },[]);
+  if(!arb)return null;
+  const excl=arb.gpu_exclusive_held_by;
+  const SHORT={'GPU VRAM':'VRAM','System RAM':'RAM','CPU cores':'CPU','Disk':'DISK'};
+  return <span style={{display:'inline-flex',alignItems:'center',gap:5,fontFamily:'JetBrains Mono',fontSize:10,letterSpacing:'0.04em'}}>
+    {excl&&<span title={'The GPU is held exclusively by '+excl+'. Friday will refuse GPU work rather than add contention, and cannot preempt a process it did not start.'}
+      style={{padding:'3px 8px',borderRadius:10,fontWeight:700,background:'rgba(245,158,11,0.16)',border:'1px solid rgba(245,158,11,0.5)',color:'#f59e0b'}}>
+      GPU HELD &middot; {excl}</span>}
+    {arb.resources.filter(r=>r.resource!=='gpu_exclusive').map(r=>{
+      const ok=r.verifiable;
+      const holders=(r.holders||[]).map(h=>h.holder+' '+fmtUnits(h.amount,r.unit)+(h.holder_kind==='foreign'?' (foreign, not Friday\u2019s to unload)':'')).join(', ');
+      const tip=r.label+'\n'
+        +'reading: '+r.basis+'\n'
+        +'total on this machine: '+fmtUnits(r.total_units,r.unit)+'\n'
+        +'reserved for the desktop: '+fmtUnits(r.reserve_units,r.unit)+'\n'
+        +'claimed by leases: '+fmtUnits(r.claimed_units,r.unit)+'\n'
+        +'measured free right now: '+fmtUnits(r.measured_free,r.unit)+'\n'
+        +'available to new work: '+(ok?fmtUnits(r.available_units,r.unit):'cannot verify \u2014 Friday will refuse rather than guess')+'\n'
+        +(r.unexplained_units?('in use with no declared hold: '+fmtUnits(r.unexplained_units,r.unit)+'\n'):'')
+        +'holders: '+(holders||'none');
+      const claimed=r.claimed_units>0;
+      return <span key={r.resource} title={tip}
+        style={{padding:'3px 7px',borderRadius:9,whiteSpace:'nowrap',
+          background:claimed?'rgba(0,212,255,0.12)':'rgba(139,147,167,0.10)',
+          border:'1px solid '+(ok?(claimed?'rgba(0,212,255,0.45)':'rgba(139,147,167,0.30)'):'rgba(245,158,11,0.5)'),
+          color:ok?(claimed?'#00d4ff':'#8b93a7'):'#f59e0b'}}>
+        {SHORT[r.label]||r.label} {ok?fmtUnits(r.available_units,r.unit):'\u2014'}
+        {claimed&&<span style={{opacity:0.8}}> &middot; {fmtUnits(r.claimed_units,r.unit)} held</span>}
+      </span>;
+    })}
+  </span>;
+}
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -9118,7 +9536,16 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
+  // These model ids are the OFFLINE default only: /api/settings overwrites
+  // them on load. They still have to match core/__init__.py's DEFAULT_SETTINGS,
+  // because until that response lands this object is what the settings panel
+  // displays — and it had drifted to claude-opus-4-8 / claude-sonnet-4-6 /
+  // gemini-3.1-flash-live-preview, three ids the backend had already moved off,
+  // so a user opening Settings was shown a model that was not answering them.
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-sonnet-5',subagent_model:'claude-sonnet-5',creative_model:'gemini-nano-banana-2',voice_model:'gemini-2.5-flash-native-audio-latest',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true,
+    // The owner's own dock arrangement. Empty = never shaped, and
+    // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
+    dock_custom:{order:[],hidden:[]}};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -10873,6 +11300,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // Global workspace opener — lets any child component (e.g. NewsWS "Share to
   // Draft") open + deep-link a workspace without prop-drilling openWs.
   useEffect(()=>{window.fridayOpenWorkspace=(t)=>{if(!t||!t.workspace)return;openWs(t.workspace);fridayNavigate(t)};return()=>{if(window.fridayOpenWorkspace)delete window.fridayOpenWorkspace}},[]);
+  // The one writer for dock_custom. Settings → Dock lives inside SettingsWS,
+  // which reads through useSettings() — a parallel store over the same POST
+  // endpoint that does not feed agentSettings. Routing the write back here means
+  // the dock reshapes as the panel is edited instead of on the next full settings
+  // load, and means there is a single place that writes the key.
+  useEffect(()=>{window.fridaySaveDock=(custom)=>saveAgentSettings({dock_custom:{order:(custom&&custom.order)||[],hidden:(custom&&custom.hidden)||[]}});return()=>{if(window.fridaySaveDock)delete window.fridaySaveDock}},[agentSettings]);
   // Global Workspace Studio opener — the 💬 button on any window (and custom
   // quick-actions) call this to open that workspace's contextual chat, optionally
   // seeding a prompt to send immediately.
@@ -10994,6 +11427,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
+  // One computation of what the dock is, shared by the dock itself and by
+  // Settings → Dock. Memoised because App re-renders on every chat token.
+  const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces]);
   const wsMap={edition:<EditionWS/>,home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,knowledge:<KnowledgeGraphWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
@@ -11343,6 +11779,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           title="Settings" aria-label="Open settings">
           <span>&#x2699;</span>
         </button>
+        <ArbiterStrip/>
         {/* Offline-first badge — appears only when the network monitor reports
             we're offline or degraded; shows whether local inference is up. */}
         {(netState.status==='offline'||netState.status==='degraded')&&
@@ -11835,10 +12272,18 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           ⚙️️ Open Full Settings
         </button>
         <div className="settings-section-title" style={{marginBottom:8}}>Quick Toggles</div>
-        <div className="settings-toggle" onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
-          <span className="settings-toggle-label">Show all workspaces</span>
-          <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
-        </div>
+        {/* Once the dock has been shaped by hand this toggle no longer decides
+            anything — dockArrangement() ignores show_all_workspaces the moment a
+            custom arrangement exists. A switch that flips and changes nothing is
+            worse than one that says why it is off, so it says why. */}
+        {dockShape.configured
+          ? <div className="settings-toggle" style={{opacity:0.5,cursor:'default'}} title="Your own dock arrangement is in use, so this no longer applies." onClick={()=>{setSettingsOpen(false);toggle('settings');window.__fridaySettingsTab='dock';}}>
+              <span className="settings-toggle-label">Show all workspaces — set in Settings → Dock</span>
+            </div>
+          : <div className="settings-toggle" onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
+              <span className="settings-toggle-label">Show all workspaces</span>
+              <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
+            </div>}
         <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
           <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record</span>
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
@@ -11877,18 +12322,18 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 
     {/* Dock — grouped (Life / Work / System) */}
     <div className={`dock ${dockHidden?'hidden':''}`}>
-      {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
+      {dockShape.groups.map((g,gi)=>(<React.Fragment key={g.name+':'+gi}>
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.filter(w=>showAllWorkspaces||w.core).map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} onClick={()=>toggle(w.id)} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} onClick={()=>toggle(w.id)} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
               {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
               {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
               {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}
             </button>)}
           </div>
-          <div className="dock-group-label">{g.name}</div>
+          {g.name&&<div className="dock-group-label">{g.name}</div>}
         </div>
       </React.Fragment>))}
     </div>

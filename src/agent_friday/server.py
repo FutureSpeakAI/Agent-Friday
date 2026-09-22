@@ -1,4 +1,4 @@
-﻿"""
+"""
 FRIDAY Desktop v4.4 — Phase B OS Backend (slim entry point).
 
 The 18k-line monolith was decomposed into:
@@ -14,6 +14,40 @@ import os
 import sys
 import threading
 import logging
+
+# No console windows from child processes. Friday shells out constantly — git,
+# powershell, ffmpeg, nvidia-smi, the credential helpers, the MCP clients — and
+# on Windows each one flashes a console unless told otherwise. An audit on
+# 2026-09-18 found 46 subprocess calls in this tree with no `creationflags` at
+# all. This sets the default once, before `core` imports anything that can
+# spawn, rather than editing 46 call sites and missing the 47th.
+try:
+    from agent_friday.services.no_console import install as _install_no_console
+    _install_no_console()
+except Exception:
+    pass
+
+# Crash forensics, armed before anything heavy is imported.
+#
+# 2026-09-22: seven Python crashes in 24 hours - five access violations in
+# python313.dll, two Rust aborts in hf_xet.pyd - each one surfacing as a
+# WerFault console window on the desktop, which is what the "popups" turned
+# out to be. WER could name a fault offset in a DLL and nothing about which
+# of Friday's several dozen Python processes it was, or what it was doing.
+#
+# Both halves must run before `core` imports: faulthandler so a crash during
+# the heavy import chain is still caught, and HF_HUB_DISABLE_XET because
+# huggingface_hub reads it at import time and core pulls it in transitively
+# (transformers, sentence-transformers, faster-whisper, kokoro, nemo).
+#
+# Wrapped, because a diagnostic that can stop the app from booting is worse
+# than the silence it replaces.
+try:
+    from agent_friday.services import crash_forensics as _crash
+    _crash.disable_hf_xet()
+    _crash.install()
+except Exception:
+    pass
 
 import agent_friday.core as core
 
@@ -75,12 +109,13 @@ from flask import Blueprint as _Blueprint
 # is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
-    'activity',
-    'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'code',
+    'activity', 'arbiter',
+    'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code',
     'compute', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations',
     'control', 'core_routes',
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
+    'gmail_send',
     'google', 'google_accounts', 'hooks', 'insights', 'intelligence', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'memory_proposals', 'messages',
     'news', 'notifications', 'orchestrator', 'ownership',
@@ -186,6 +221,40 @@ def _discover_and_register_blueprints(flask_app):
     return _registered
 
 _discover_and_register_blueprints(app)
+
+
+def _register_warm_caches():
+    """Declare the slow reads worth having ready before anyone asks.
+
+    Measured on 2026-09-22: build_catalog() is 18.9 s for 598 models, and
+    GET /api/models called it synchronously - the model picker timed out and
+    could not be used to change seats. Warmed here, persisted across restarts
+    by services/warm_cache, refreshed behind the request.
+
+    Registration is cheap and synchronous; WARMING is a background thread, so
+    this cannot delay the server binding its port. That distinction is the
+    whole ask: "running in the background so it doesn't stop the UI from
+    launching".
+
+    Add slow workspace reads here as they are measured. Deliberately NOT a
+    blanket sweep of every endpoint: a cache over something already fast buys
+    nothing and costs a staleness bug.
+    """
+    try:
+        from agent_friday.services import warm_cache
+    except Exception as _e:
+        _log.warning("warm cache unavailable: %s", _e)
+        return
+    try:
+        from agent_friday.services.model_catalog import build_catalog
+        warm_cache.register("model_catalog", build_catalog, ttl_s=900.0)
+    except Exception as _e:
+        _log.warning("model catalog not registered for warming: %s", _e)
+    if not _TESTING:
+        warm_cache.start_warming()
+
+
+_register_warm_caches()
 
 
 # ── Back-compat facade (PEP 562) ──────────────────────────────────
@@ -384,6 +453,37 @@ if not _TESTING:
     if _notif_engine:
         threading.Thread(target=_notification_trigger_loop, daemon=True).start()
 
+    # THE EMBEDDER IS LOADED AT BOOT, NOT ON THE USER'S FIRST SENTENCE.
+    #
+    # `sensitivity_classifier._load_embedder` imports sentence-transformers and
+    # builds the exemplar matrix the first time anything asks for an egress
+    # classification. Every chat turn asks, through
+    # `routing.model_router.needs_vault_access`, so the FIRST turn after a
+    # restart was paying for a torch import inline, on the request thread,
+    # while the user watched an empty chat box. Caught with py-spy on
+    # 2026-09-18: a turn sitting in `<frozen importlib._bootstrap>` under
+    # `sentence_transformers/__init__.py`, and cold turns measured at 104 to
+    # 166 seconds against 46 for a warm one.
+    #
+    # Nothing about that work needs to happen then. It is the same import
+    # either way; doing it here means it overlaps the rest of boot and is
+    # finished before anyone types. Daemon and best-effort: a machine without
+    # sentence-transformers logs its warning here instead of mid-turn, which is
+    # also the better place for it.
+    def _warm_sensitivity_embedder():
+        try:
+            import time as _time
+            from agent_friday.services import sensitivity_classifier as _sc
+            _t = _time.time()
+            if _sc._load_embedder() is not None:
+                print("  Sensitivity embedder: ready (%.1fs)"
+                      % (_time.time() - _t))
+        except Exception as _we:
+            print(f"  Sensitivity embedder: unavailable ({_we})")
+
+    threading.Thread(target=_warm_sensitivity_embedder, daemon=True,
+                     name="warm-embedder").start()
+
     # Persistent news archive: grow the per-day article store on the RSS cadence.
     threading.Thread(target=_news_archiver_loop, daemon=True).start()
 
@@ -403,6 +503,19 @@ if not _TESTING:
     # MCP) and push a notification on a connected->down edge.
     from agent_friday.services.connectors import connector_health_monitor_loop
     threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
+
+    # Credential sweep: read every credential Friday holds and say what is
+    # wrong, hourly and locally.
+    #
+    # On 2026-09-19 seven credentials were found stranded, and not one was
+    # found by anybody noticing a symptom - every one turned up because
+    # something finally enumerated a whole class at once. Firecrawl presented
+    # as "no API key set" while the key sat there undecryptable; GitHub
+    # presented as a broken MCP server; Drive presented as working. The
+    # enumeration that found them was a one-off migration helper. This is the
+    # standing version of it.
+    from agent_friday.services.credential_sweep import sweep_loop
+    threading.Thread(target=sweep_loop, daemon=True).start()
 
     # Residency: compute the placement plan, bind it into capability_routing,
     # and bring the GPU to that plan (decision Q9).

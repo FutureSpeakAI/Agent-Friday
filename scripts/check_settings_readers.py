@@ -128,6 +128,25 @@ ALLOWLIST: dict[str, str] = {
     "creative_model": "(c) same drift as orchestrator_model.",
 }
 
+# Keys where index.html and ui_parts/app.html are KNOWN to disagree because
+# index.html changed on purpose and the mirror was left alone, per
+# docs/design/active/model-soup.md's authority note ("a hand-maintained
+# mirror nothing builds from; it is not edited"). Exempt from the
+# two-copies rule ONLY: the DEFAULT_SETTINGS and reader rules above still
+# apply to them, which is the difference from ALLOWLIST.
+MIRROR_LAG: dict[str, str] = {
+    "model_routing.unrestricted_cloud": "the Unrestricted Cloud toggle was "
+        "DELETED from index.html 2026-09-17 (model-soup.md §4.1 U2): the key "
+        "is read by cloud_consent.resolve() only when no consent is recorded, "
+        "so the toggle could not change the posture. app.html still has it.",
+    "temperature": "written by SettingsTabModels, which SettingsWS never "
+        "rendered; that dead tab was deleted from index.html 2026-09-17 "
+        "(model-soup.md §4.1 U8). app.html still carries the copy.",
+    "wiki_encrypted_sections": "NEW checklist on the index.html Privacy tab "
+        "2026-09-17 (model-soup.md §11.4), with its DEFAULT_SETTINGS key "
+        "added in the same change; app.html has no counterpart.",
+}
+
 
 def _err(msg: str = "") -> None:
     print(f"{TAG} {msg}".rstrip(), file=sys.stderr)
@@ -356,8 +375,8 @@ def check() -> list[str]:
     written_sets = {rel: set(keys) for rel, keys in per_file.items()}
     if len(written_sets) == 2:
         (rel_a, keys_a), (rel_b, keys_b) = written_sets.items()
-        only_a = sorted((keys_a - keys_b) - set(ALLOWLIST))
-        only_b = sorted((keys_b - keys_a) - set(ALLOWLIST))
+        only_a = sorted((keys_a - keys_b) - set(ALLOWLIST) - set(MIRROR_LAG))
+        only_b = sorted((keys_b - keys_a) - set(ALLOWLIST) - set(MIRROR_LAG))
         for key in only_a:
             violations.append(
                 f"'{key}' is written by {rel_a} but not by {rel_b} -- the "

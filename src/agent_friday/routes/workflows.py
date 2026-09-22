@@ -30,6 +30,7 @@ from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
 from agent_friday.core import (
+    login_required,
     VIBE_TERMINALS,
     _POPEN_FLAGS,
     get_genai_client,
@@ -73,6 +74,7 @@ workflows_bp = Blueprint('workflows', __name__)
 
 
 @workflows_bp.route('/api/draft', methods=['POST'])
+@login_required
 def draft_generate():
     """Generate a draft via Claude — spawns as a background task, returns task_id immediately."""
     try:
@@ -89,6 +91,7 @@ def draft_generate():
 
 
 @workflows_bp.route('/api/draft/deploy', methods=['POST'])
+@login_required
 def draft_deploy():
     """Deploy a draft to clipboard or other destination."""
     data = request.get_json(silent=True) or {}
@@ -156,6 +159,7 @@ def serve_content_draft(filename):
 
 
 @workflows_bp.route('/api/flow', methods=['POST'])
+@login_required
 def data_flow():
     """Central data flow endpoint — routes content to multiple destinations.
 
@@ -209,6 +213,7 @@ def flow_queue():
 
 
 @workflows_bp.route('/api/flow/draft/confirm', methods=['POST'])
+@login_required
 def confirm_draft():
     """Mark a queued gmail draft as deployed/sent."""
     data = request.get_json(silent=True) or {}
@@ -249,6 +254,7 @@ def list_routines():
 
 
 @workflows_bp.route('/api/routines/<routine_id>/run', methods=['POST'])
+@login_required
 def run_routine(routine_id):
     """Trigger a routine on demand. Launches a background Vibe-Code task and records status."""
     reg = next((r for r in ROUTINE_REGISTRY if r['id'] == routine_id), None)
@@ -347,6 +353,7 @@ def outreach_suggestions():
 
 
 @workflows_bp.route('/api/outreach/draft', methods=['POST'])
+@login_required
 def outreach_draft():
     """Draft outreach message. Uses Gemini if available, else templated fallback."""
     data = request.get_json(silent=True) or {}
@@ -405,6 +412,7 @@ def outreach_draft():
 
 
 @workflows_bp.route('/api/outreach/log', methods=['POST'])
+@login_required
 def outreach_log():
     """Append an outreach event to the log."""
     data = request.get_json(silent=True) or {}
@@ -477,6 +485,7 @@ def content_pipeline():
 
 
 @workflows_bp.route('/api/content/idea', methods=['POST'])
+@login_required
 def content_idea():
     """Add a new content idea to the pipeline."""
     data = request.get_json(silent=True) or {}
@@ -507,6 +516,7 @@ def content_idea():
 
 
 @workflows_bp.route('/api/content/draft', methods=['POST'])
+@login_required
 def content_draft():
     """Draft content from a pipeline item (or ad-hoc title). Optionally advances stage."""
     data = request.get_json(silent=True) or {}
@@ -592,6 +602,7 @@ def content_templates():
 
 
 @workflows_bp.route('/api/content/from-template', methods=['POST'])
+@login_required
 def content_from_template():
     """Create a pipeline idea pre-filled from a template."""
     data = request.get_json(silent=True) or {}
@@ -619,6 +630,7 @@ def content_from_template():
 
 
 @workflows_bp.route('/api/content/item/<item_id>', methods=['POST'])
+@login_required
 def content_item_update(item_id):
     """Update a pipeline item in place: draft, title, notes, stage, tags,
     scheduled_for. Used for inline editing, manual stage moves, scheduling."""
@@ -640,6 +652,7 @@ def content_item_update(item_id):
 
 
 @workflows_bp.route('/api/content/item/<item_id>', methods=['DELETE'])
+@login_required
 def content_item_delete(item_id):
     """Remove a pipeline item."""
     pipe = _load_content_pipeline()
@@ -652,6 +665,7 @@ def content_item_delete(item_id):
 
 
 @workflows_bp.route('/api/content/item/<item_id>/export', methods=['POST'])
+@login_required
 def content_item_export(item_id):
     """Materialize an item's draft as a saved HTML doc so it shows in Saved
     Drafts and can be opened / published."""
@@ -687,6 +701,7 @@ def workflow_chains_list():
 
 
 @workflows_bp.route('/api/workflows/chains', methods=['POST'])
+@login_required
 def workflow_chains_create():
     """Create/update a chain. Body: {name, description?, steps:[{name?, prompt,
     with_context?}, ...]}."""
@@ -710,6 +725,7 @@ def workflow_chain_get(name):
 
 
 @workflows_bp.route('/api/workflows/chains/<name>', methods=['DELETE'])
+@login_required
 def workflow_chain_delete(name):
     ok = delete_workflow_chain(name)
     return jsonify({"status": "ok" if ok else "not_found"}), (200 if ok else 404)
@@ -726,6 +742,7 @@ def workflow_chain_status(name):
 
 
 @workflows_bp.route('/api/workflows/chains/<name>/run', methods=['POST'])
+@login_required
 def workflow_chain_run(name):
     """Kick off a chain at step 0. Each step auto-advances on completion."""
     chain = load_workflow_chain(name)

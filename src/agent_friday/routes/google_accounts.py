@@ -90,11 +90,29 @@ def list_google_accounts():
                 }
         except Exception:
             pass
+        # Presence is not function. `count` says how many records exist;
+        # `healthy`/`needs_attention` say how many actually work. A caller that
+        # only reads `count` (or only reads that the list is non-empty) is
+        # asking the wrong question -- these fields exist so it does not have to.
+        needs_attention = [
+            {"id": a.get("id"), "email": a.get("email"),
+             "label": a.get("label"), "health": a.get("health")}
+            for a in accounts
+            if not (a.get("health") or {}).get("healthy")
+        ]
+        healthy = [a for a in accounts
+                   if (a.get("health") or {}).get("healthy")]
+        stale = [a.get("id") for a in accounts
+                 if (a.get("health") or {}).get("stale")]
         return jsonify({
             "status": "ok",
             "accounts": accounts,
             "protection": cs.protection_method(),
             "count": len(accounts),
+            "healthy_count": len(healthy),
+            "needs_attention": needs_attention,
+            "stale": stale,
+            "all_healthy": bool(accounts) and not needs_attention,
             "oauth": oauth_info,
         })
     except Exception as e:
@@ -111,13 +129,34 @@ def connect_google_account():
     """
     body = request.get_json(silent=True) or {}
     label = (body.get("label") or "").strip()[:60]
+    # Reconnecting an existing account: carry its address through as a
+    # login_hint so Google preselects it, and inherit its label. Without this a
+    # user fixing a broken account has to remember which of their addresses was
+    # the broken one and pick it out of an account chooser -- the exact moment
+    # the fix is most likely to be abandoned.
+    account_id = (body.get("account_id") or "").strip()
+    login_hint = (body.get("email") or "").strip()
+    # Sending mail is asked for only when the caller explicitly ticked the box.
+    # A reconnect does NOT inherit it from the existing account: re-granting a
+    # capability has to be as deliberate as granting it was, and someone fixing
+    # a broken token is not in a state to read a consent screen carefully.
+    include_send = bool(body.get("include_send"))
+    if account_id:
+        existing = ga.get_account(account_id)
+        if existing:
+            login_hint = login_hint or (existing.get("email") or "")
+            label = label or (existing.get("label") or "")
     try:
-        flow, redirect_uri, client_type = ga.build_auth_flow()
-        auth_url, state = flow.authorization_url(
-            access_type="offline",
-            include_granted_scopes="true",
-            prompt="consent",  # force a refresh_token
-        )
+        flow, redirect_uri, client_type = ga.build_auth_flow(
+            include_send=include_send)
+        auth_kwargs = {
+            "access_type": "offline",
+            "include_granted_scopes": "true",
+            "prompt": "consent",  # force a refresh_token
+        }
+        if login_hint:
+            auth_kwargs["login_hint"] = login_hint
+        auth_url, state = flow.authorization_url(**auth_kwargs)
         with _PENDING_LOCK:
             # PKCE: authorization_url() just auto-generated a
             # code_verifier on THIS flow instance and sent its challenge to
@@ -127,7 +166,12 @@ def connect_google_account():
             # persist this one now or the token exchange has nothing to
             # replay and Google refuses with invalid_grant.
             _PENDING[state] = {"label": label, "ts": _time.time(),
-                               "verifier": flow.code_verifier}
+                               "verifier": flow.code_verifier,
+                               # The callback rebuilds the flow from nothing;
+                               # if it rebuilds it without send, the token is
+                               # exchanged for a different scope set than the
+                               # one the person just approved.
+                               "include_send": include_send}
             # prune stale (>15 min) pending entries
             for s in [k for k, v in _PENDING.items() if _time.time() - v["ts"] > 900]:
                 _PENDING.pop(s, None)
@@ -137,11 +181,13 @@ def connect_google_account():
         _kind = ga.active_client_kind()
         resp = {"status": "ok", "auth_url": auth_url, "state": state,
                 "client_type": client_type, "redirect_uri": redirect_uri,
+                "reconnecting": bool(account_id), "login_hint": login_hint,
                 # Say what is coming BEFORE they meet it. The unverified-app
                 # screen reads as a phishing warning to anyone who was not
                 # told to expect it, and that single paragraph is probably
                 # worth more than the rest of this feature.
                 "client_kind": _kind,
+                "requesting_send": include_send,
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (
@@ -195,17 +241,29 @@ def google_account_callback():
         ), 400
     label = pending.get("label") or session.get("ga_oauth_label") or ""
     try:
-        flow, _, _ = ga.build_auth_flow(state=state)
+        flow, _, _ = ga.build_auth_flow(
+            state=state, include_send=bool(pending.get("include_send")))
         # Replay the verifier the START leg generated — the freshly rebuilt
         # flow above has none of its own (it never called authorization_url()).
         flow.code_verifier = pending["verifier"]
         flow.fetch_token(authorization_response=request.url)
         creds = flow.credentials
         rec = ga.upsert_account(creds, label=label)
+        # Report what was actually granted, not what was asked for. Google
+        # lets a person decline individual permissions, so "you asked for
+        # send" is not evidence that sending will work — and finding that out
+        # at the moment a message fails to go is the worst time to find out.
+        can_send = ga.GMAIL_SEND in (rec.get("scopes") or [])
+        send_line = (
+            "<p>This account <b>can send mail</b> — each message still waits "
+            "for your approval.</p>" if can_send else
+            "<p>This account is <b>read-only for mail</b>. Friday cannot send "
+            "from it.</p>")
         return (
             "<h2>✅ Google account connected</h2>"
             f"<p><b>{rec.get('email','')}</b> ({rec.get('label','')}) is now linked "
             "to Friday — Gmail, Calendar, and Drive. You can close this tab.</p>"
+            + send_line
         )
     except Exception as e:
         return f"<h2>Token exchange failed</h2><p>{e}</p>", 500

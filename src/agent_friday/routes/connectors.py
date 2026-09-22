@@ -52,6 +52,44 @@ def api_connectors_list():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@connectors_bp.route('/api/connectors/catalogue', methods=['GET'])
+def api_connectors_catalogue():
+    """What Friday CAN connect to, next to what it IS connected to.
+
+    Those two questions were never askable together. `/api/connectors`
+    answered the second, and for six of eighteen things; nothing answered the
+    first at all, which is how twelve connectors stayed invisible for months
+    without anyone being able to notice by reading a list.
+
+    Phase 4 of docs/design/connector-ecosystem.md.
+    """
+    try:
+        from agent_friday.services import connector_registry as _reg
+        return jsonify({"status": "ok", **_reg.catalogue()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@connectors_bp.route('/api/credentials/inventory', methods=['GET'])
+def api_credentials_inventory():
+    """Every credential Friday holds, and whether each one actually opens.
+
+    Never returns secret material - only whether a credential decrypts, when
+    it expires, and what the user can do about it.
+
+    The enumeration that found seven stranded credentials on 2026-09-19 was a
+    one-off migration helper whose FIRST RUN found five dead. This is the
+    standing version, because a function that valuable should not run once.
+    """
+    try:
+        from agent_friday.services import credential_sweep as _cs
+        return jsonify({"status": "ok", **_cs.inventory()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @connectors_bp.route('/api/connectors/health', methods=['GET'])
 def api_connectors_health():
     """Ambient health snapshot — drives the connector status strip + monitoring."""

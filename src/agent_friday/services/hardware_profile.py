@@ -317,8 +317,14 @@ def live_display_mib(os_family: str) -> int | None:
     )
     try:
         out = subprocess.run(
+            # Explicit, not relying on services/no_console's global patch.
+            # That patch only exists in a process that called install(), and
+            # this module is imported by test workers and tooling that never
+            # do — where the omission costs a console window per probe, on a
+            # timer. The flag here is three characters wider than the bug.
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, timeout=15,
+            creationflags=_POPEN_FLAGS)
         val = int((out.stdout or "").strip())
     except Exception:
         return None
@@ -805,7 +811,8 @@ def detect_displays() -> dict:
     try:
         raw = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=20).stdout.strip()
+            capture_output=True, text=True, timeout=20,
+            creationflags=_POPEN_FLAGS).stdout.strip()
         data = json.loads(raw) if raw else {}
     except Exception:
         return out

@@ -55,6 +55,23 @@ from agent_friday.services.model_router import (
 calendar_bp = Blueprint('calendar', __name__)
 
 
+def _calendar_health():
+    """Whether Calendar is usable, across every account that has it switched on.
+
+    Imported lazily and guarded: this is a status field on a route that is
+    otherwise about events, and a health helper that can take the page down is
+    worse than no health helper. A failure here reads as UNKNOWN, which is not
+    healthy - failing closed, per services/connector_health.py.
+    """
+    try:
+        from agent_friday.services.google_accounts import service_health
+        return service_health("calendar")
+    except Exception as e:
+        from agent_friday.services import connector_health as _ch
+        return _ch.unknown(detail="%s: %s" % (type(e).__name__, e),
+                           source="routes.calendar")
+
+
 
 @calendar_bp.route('/api/calendar/today')
 def api_calendar_today():
@@ -68,7 +85,11 @@ def api_calendar_today():
         "events": events,
         "gaps": gaps,
         "annotation": _day_annotation(today, events),
-        "google_connected": _google_credentials() is not None,
+        # Was `_google_credentials() is not None`, which asks whether the
+        # PRIMARY account can produce a credential - not whether Calendar is
+        # usable across the accounts that have it switched on. See
+        # google_accounts.service_health.
+        "google_connected": _calendar_health().healthy,
     })
 
 

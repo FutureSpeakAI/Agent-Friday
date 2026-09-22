@@ -39,8 +39,20 @@ import time
 from pathlib import Path
 
 from agent_friday.core import runtime_dir
+from agent_friday.services import path_probe
 
 REGISTRY_VERSION = 1
+
+
+def present(path) -> bool:
+    """`Path(path).exists()` that cannot stall on a wedged network share.
+
+    Every existence check in this module goes through here. See
+    `path_probe` for why: a UNC path into a hung `\\\\wsl.localhost` share
+    held `available()` for the SMB timeout, and `available()` sits under the
+    chat path, the residency plan and `/api/intelligence`.
+    """
+    return path_probe.exists(path)
 
 SOURCE_OLLAMA = "ollama-import"
 SOURCE_DOWNLOAD = "download"
@@ -192,21 +204,135 @@ def all_models() -> dict:
     return (_load().get("models") or {})
 
 
+def _usable(rec: dict) -> bool:
+    """On disk (or reachable), and not retired."""
+    if not isinstance(rec, dict) or rec.get("retired"):
+        return False
+    files = seat_files(rec)
+    return bool(files.get("gguf"))
+
+
 def available() -> dict:
-    """Only models whose file is actually on disk.
+    """Only models whose file is actually on disk and which are not retired.
 
     The distinction matters: a registry entry whose file was deleted must not
     make the planner believe it has a seat to fill, and it must not be silently
     forgotten either — `missing()` names it so the reason a seat vanished is
     answerable.
+
+    A record that carries a `lora` whose file cannot be found is also not
+    available: serving the base under the fine-tune's name is the silent
+    wrong-model failure `Friday-Models/docs/DECISIONS.md` refused on
+    2026-09-09, and the planner must not be handed that seat.
+
+    A `retired` record is never available, whatever is on disk. That is how
+    `gemma4:e2b-friday-v1` (the possibly no-op 2026-09-02 merge) is kept out
+    of `local_seats.resolve()`'s smallest-candidate fallback while its file
+    stays where it is.
     """
-    return {k: v for k, v in all_models().items()
-            if v.get("path") and Path(v["path"]).exists()}
+    out = {}
+    for k, v in all_models().items():
+        if _usable(v):
+            files = seat_files(v)
+            if v.get("lora") and not files.get("lora"):
+                continue
+            out[k] = v
+    return out
 
 
 def missing() -> dict:
-    return {k: v for k, v in all_models().items()
-            if not (v.get("path") and Path(v["path"]).exists())}
+    """Every record `available()` declines, with the reason in `why`."""
+    out = {}
+    for k, v in all_models().items():
+        if not isinstance(v, dict):
+            continue
+        if v.get("retired"):
+            out[k] = dict(v, why="retired: %s" % v["retired"])
+            continue
+        files = seat_files(v)
+        if not files.get("gguf"):
+            st = path_probe.probe_state(v.get("path"))
+            why = ("weights not reachable: %s" % (st.get("reason") or "absent"))
+            out[k] = dict(v, why=why)
+        elif v.get("lora") and not files.get("lora"):
+            out[k] = dict(v, why="adapter file not reachable: %s" % v["lora"])
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  A seat is up to three files, and each may live in two places
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Record keys that name a file, and the seat-file name each maps to.
+_FILE_KEYS = (("path", "gguf"), ("lora", "lora"), ("mmproj", "mmproj"))
+
+
+def _candidates(rec: dict, key: str) -> list:
+    """Where to look for one of a record's files, best first.
+
+    1. an explicit local copy named in `rec["local_files"][key]`;
+    2. a file of the same name under `store_dir()` (`~/.friday/runtime/
+       models/gguf/`), which is where the weights are meant to live and the
+       only path `residency_arbiter._llama_server_pids()` recognises as
+       Friday's own;
+    3. the recorded path itself, which today is the WSL share.
+
+    The moment a copy lands under `store_dir()` it is preferred; nothing has
+    to be re-registered. The share is only consulted when no local copy
+    exists, and then only through the guarded probe.
+    """
+    recorded = rec.get(key)
+    out = []
+    local = (rec.get("local_files") or {}).get(key)
+    if local:
+        out.append(str(local))
+    if recorded:
+        try:
+            out.append(str(store_dir() / Path(str(recorded)).name))
+        except Exception:
+            pass
+        out.append(str(recorded))
+    seen, uniq = set(), []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+def seat_files(rec: dict) -> dict:
+    """`{"gguf": path|None, "lora": path|None, "mmproj": path|None}` for a
+    record, each resolved to the first candidate that is present.
+
+    `None` for a file means "not reachable right now", never "the record
+    did not name one"; `rec.get("lora")` says whether one was named.
+    """
+    out = {"gguf": None, "lora": None, "mmproj": None}
+    if not isinstance(rec, dict):
+        return out
+    for key, name in _FILE_KEYS:
+        for cand in _candidates(rec, key):
+            if present(cand):
+                out[name] = cand
+                break
+    return out
+
+
+def seat_files_for(model_id: str) -> dict:
+    return seat_files(get(model_id) or {})
+
+
+def retire(model_id: str, reason: str) -> dict:
+    """Keep the record, keep the file, take the model out of every picker
+    and every fallback. Reversible by clearing `retired`."""
+    data = _load()
+    rec = (data.get("models") or {}).get(model_id)
+    if rec is None:
+        return {"ok": False, "error": "not in the store: %s" % model_id}
+    rec["retired"] = str(reason)
+    rec["retired_at"] = time.time()
+    _save(data)
+    return {"ok": True, "entry": rec}
 
 
 def get(model_id: str) -> dict | None:
@@ -214,25 +340,35 @@ def get(model_id: str) -> dict | None:
 
 
 def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
-             mmproj=None, chat_template=None, sha256: str | None = None,
-             origin: dict | None = None, verify: bool = False,
-             label: str | None = None) -> dict:
+             mmproj=None, lora=None, chat_template=None,
+             sha256: str | None = None, origin: dict | None = None,
+             verify: bool = False, label: str | None = None,
+             local_files: dict | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
+
+    A seat is up to three files: the weights (`path`), an adapter (`lora`)
+    that `llama-server` applies at serve time with `--lora`, and a projector
+    (`mmproj`) for vision and audio. Recording all three on one entry is what
+    lets the Arbiter own a fine-tuned seat instead of spawning the base under
+    the fine-tune's name. `local_files` names where each of those lives on
+    local disk when the recorded path is a network share; see `seat_files`.
 
     `verify=True` hashes the file, which on a 9 GB artifact is not free — so it
     is opt-in for imports of files we just copied ourselves, and on by default
     for anything that arrived over a network.
     """
     path = Path(path)
-    if not path.exists():
+    if not present(path):
         raise FileNotFoundError("no such file: %s" % path)
+    if lora and not present(lora):
+        raise FileNotFoundError("no such adapter: %s" % lora)
     facts = describe(path)
     # A borrowed template counts. gemma4:e2b and e4b ship with none, so the
     # file alone says "no chat template, no tool support" — which was true of
     # the weights and false of the seat, since gguf_extract borrows the 12b's.
     # Recording the file's answer here would have the store report that two
     # working tool-calling seats cannot call tools.
-    if chat_template and Path(chat_template).exists():
+    if chat_template and present(chat_template):
         try:
             tmpl_text = Path(chat_template).read_text(encoding="utf-8")
             facts["has_chat_template"] = True
@@ -250,9 +386,13 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         "source": source,
         "origin": origin or {},
         "mmproj": str(mmproj) if mmproj else None,
+        "lora": str(lora) if lora else None,
         "chat_template": str(chat_template) if chat_template else None,
         "added_at": time.time(),
     })
+    if local_files:
+        entry["local_files"] = {str(k): str(v) for k, v in local_files.items()
+                                if v}
     # A human-assigned display name (e.g. "FutureSpeakAI-FridayWeaver-SM-1.0")
     # that the picker shows verbatim instead of humanizing model_id — the
     # humanizer turns hyphens into spaces and title-cases only the first
@@ -285,9 +425,9 @@ def forget(model_id: str, *, delete_file: bool = False) -> dict:
     _save(data)
     removed = []
     if delete_file:
-        for key in ("path", "mmproj", "chat_template"):
+        for key in ("path", "mmproj", "lora", "chat_template"):
             p = entry.get(key)
-            if p and Path(p).exists():
+            if p and present(p):
                 try:
                     Path(p).unlink()
                     removed.append(p)
@@ -301,8 +441,8 @@ def verify(model_id: str) -> dict:
     e = get(model_id)
     if not e:
         return {"ok": False, "error": "not in the store"}
-    p = Path(e.get("path") or "")
-    if not p.exists():
+    p = Path(seat_files(e).get("gguf") or e.get("path") or "")
+    if not present(p):
         return {"ok": False, "error": "file is gone: %s" % p, "missing": True}
     size = p.stat().st_size
     if e.get("size_bytes") and size != e["size_bytes"]:
@@ -361,14 +501,25 @@ def import_all_from_ollama(model_ids=None, *, progress=None) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def gguf_paths() -> dict:
-    """model_id -> weights path, for the Arbiter. Present files only."""
-    return {k: v["path"] for k, v in available().items()}
+    """model_id -> weights path, for callers that only want the weights.
+    Present files only, local copy preferred."""
+    return {k: seat_files(v)["gguf"] for k, v in available().items()}
+
+
+def seat_file_map() -> dict:
+    """model_id -> {"gguf", "lora", "mmproj"} for every available model.
+
+    This is what the Arbiter loads seats from. A model whose record names a
+    `lora` only appears here when the adapter is reachable, so the Arbiter
+    can never spawn a fine-tune's base under the fine-tune's name.
+    """
+    return {k: seat_files(v) for k, v in available().items()}
 
 
 def chat_template_for(model_id: str) -> str | None:
     e = get(model_id) or {}
     p = e.get("chat_template")
-    return p if p and Path(p).exists() else None
+    return p if p and present(p) else None
 
 
 def summary() -> dict:

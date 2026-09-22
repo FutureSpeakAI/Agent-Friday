@@ -46,9 +46,12 @@ _MODE_MEANING = {
     "cloud_only": "all turns go to the cloud orchestrator",
     "local_only": "ALL turns go to the local seat — the cloud orchestrator "
                   "is not consulted",
-    "smart": "the router picks local or cloud per turn (vault-touching "
-             "turns go local)",
-    "local_preferred": "local seat first; cloud only as fallback",
+    # `smart` reads as local_preferred: it was removed from the picker on
+    # 2026-09-17 (model-soup.md §11.2 B) and the old sentence about
+    # vault-touching turns was only true with vault_local_only on.
+    "smart": "local first; cloud when local fails, and the reply says so",
+    "local_preferred": "local first; cloud when local fails, and the reply "
+                       "says so",
 }
 
 

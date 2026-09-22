@@ -122,7 +122,18 @@ def test_credentials_round_trip_and_status(audit_calls):
     assert a.load_credentials() is None
     assert a.status()["connected"] is False
 
-    blob = {"account": "@friday", "scopes": ["write"], "expires_at": "2026-09-01T00:00:00Z"}
+    # A LIVE token, not an expired one.
+    #
+    # This fixture used to hardcode `expires_at: 2026-09-01`, which went into
+    # the past on that date and then asserted `connected is True` anyway - so
+    # the test was pinning the defect in place: a token that expired in August
+    # reporting as connected in September. `PlatformAdapter.status()` computed
+    # `connected` from whether a credential EXISTED and never once consulted
+    # the `expires_at` it stored and displayed. Fixed 2026-09-19; this test
+    # asserted the old behaviour and had to move with it.
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    blob = {"account": "@friday", "scopes": ["write"],
+            "expires_at": future.isoformat()}
     res = a.save_credentials(blob)
     assert res["ok"] is True and res["protection"]
     assert a.load_credentials() == blob
@@ -130,6 +141,19 @@ def test_credentials_round_trip_and_status(audit_calls):
     st = a.status()
     assert st["connected"] is True
     assert st["account"] == "@friday" and st["scopes"] == ["write"]
+
+    # And the case the old fixture was accidentally exercising: an expired
+    # credential is stored, readable, and NOT connected.
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    a.save_credentials({"account": "@friday", "scopes": ["write"],
+                        "expires_at": past.isoformat()})
+    expired = a.status()
+    assert expired["connected"] is False, \
+        "an expired token still reports as connected"
+    assert expired["health"]["action"] == "reconnect"
+
+    # Back to a live credential for the rest of the test.
+    a.save_credentials(blob)
     # nothing tokenish in status
     assert "access_token" not in json.dumps(st)
 

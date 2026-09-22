@@ -138,17 +138,130 @@ def _gate_vision_prompt(text: str) -> str:
 
 
 
-def _fit_tools(model_id, tools, prompt_cost=0):
+def _fit_tools(model_id, tools, prompt_cost=0, intent=None,
+               system=None, messages=None):
     """As much of the tool registry as this seat can hold. Never raises.
 
-    `prompt_cost` — estimated tokens of system prompt + transcript, so the
-    budget covers the request as a whole, not the tool preamble in isolation.
+    THE SINGLE AUTHORITY on what fits. `_via_ollama` and `_call_openai` also
+    used to fit, independently, against a prompt this call had already grown
+    with its own `[SEAT]` note — so one turn was budgeted three times and the
+    trims compounded (75 -> 10 -> 8, observed). They now pass a `FittedTools`
+    result straight through; this is where the decision is made.
+
+    `system`/`messages` let the budget MEASURE the rendered prompt against the
+    seat's own tokenizer instead of estimating it. `intent` is the user's
+    message, so the tool the turn is obviously about outranks cheap schemas.
     """
     try:
         from agent_friday.services.tool_budget import fit_tools_to_seat
-        return fit_tools_to_seat(model_id, tools, prompt_cost=prompt_cost)
+        return fit_tools_to_seat(model_id, tools, prompt_cost=prompt_cost,
+                                 intent=intent, system=system,
+                                 messages=messages)
     except Exception:
         return list(tools or []), None
+
+#: The transcript is budgeted in TOKENS, not messages, and the window is only
+#: allowed to move in whole steps.
+#:
+#: Counting messages was the original mistake. A hundred messages is anywhere
+#: between 10,000 and 20,000 tokens depending on whether they are one-line
+#: questions or multi-paragraph answers, and an ordinary conversation moves
+#: through that whole range as short old messages age out and long new ones
+#: arrive. Measured on 2026-09-18: consecutive turns carrying prompts of
+#: 10,209 and then 20,092 tokens. The larger one cost forty seconds of prompt
+#: evaluation on its own, and the swing between them crossed several tool
+#: budget steps, which changed the tool list, which broke the prefix cache as
+#: well. One unbudgeted number was doing both kinds of damage at once.
+#: 8,000, and the tighter 5,000 was tried first and is worse. A smaller budget
+#: means a smaller window, and a smaller window is exhausted sooner, so the
+#: start index has to move more often: simulated over 200 turns, 5,000 moved
+#: the window 53 times against 18 at 8,000, and left the worst turn-to-turn
+#: cost swing higher rather than lower (1.59x against 1.39x).
+#:
+#: Which matters more is settled by measurement, not taste. The fast turns on
+#: this machine were fast because the cache HIT, not because the prompt was
+#: small — 3.8 seconds on a ~20,000-token prompt. A miss costs about forty
+#: seconds whatever the size. So 18 misses at ~45s beats 53 at ~39s, by a
+#: factor of two and a half, and the extra 3,000 tokens the larger budget
+#: carries are free on every turn that hits.
+_HISTORY_TOKEN_BUDGET = 8000
+
+#: Never carry fewer than this many messages, whatever they cost. A budget that
+#: can starve the transcript to nothing would answer a follow-up question with
+#: no idea what it follows.
+_HISTORY_MIN_MESSAGES = 12
+
+#: Chars per token. The same rough figure `tool_budget` uses; exactness is not
+#: the point here, stability is.
+_CHARS_PER_TOKEN = 4
+
+#: The window's start index moves in multiples of this and no less.
+_HISTORY_STEP = 20
+
+
+def _history_start(history) -> int:
+    """Where this turn's transcript begins — by token cost, in whole steps.
+
+    A SLIDING WINDOW AND A PROMPT CACHE CANNOT BOTH WORK.
+
+    This was `CHAT_HISTORY[-100:]`. Each turn appends a user message and an
+    assistant message, so the window slid by two and EVERY message changed
+    position. A seat's prefix cache can only reuse text that is byte-identical
+    from the first token, so a transcript where message one is a different
+    message than it was last turn matches nothing — and nothing after it can
+    match either.
+
+    Measured by recording what Friday actually sent: ninety-five messages per
+    turn, none of them in the same place twice, and the seat dutifully
+    reprocessing the entire ~21,000-token prompt at about 500 tokens a second.
+    Forty-three seconds, every turn, to rebuild something it already had. The
+    same seat, given a prompt that genuinely repeated, answered in 0.43s.
+
+    Two rules, and they do different jobs:
+
+    The BUDGET bounds what the transcript costs. Walking back from the newest
+    message until `_HISTORY_TOKEN_BUDGET` is spent gives a transcript of
+    roughly constant size in the only unit the seat cares about, instead of one
+    that doubles because the last few answers happened to be long.
+
+    The STEP bounds how often the window moves. Rounding the start index UP to
+    a multiple of `_HISTORY_STEP` keeps it inside the budget while letting it
+    sit still for several turns at a time; when it does move it jumps, and one
+    turn pays for a cache miss instead of every turn paying for one. That is
+    the bargain compaction makes, and the same one
+    `tool_budget._BUDGET_QUANTUM` makes for the tool list.
+
+    Accepts the history itself rather than a count, because a count cannot be
+    weighed.
+    """
+    rows = list(history or [])
+    total = len(rows)
+    if total <= _HISTORY_MIN_MESSAGES:
+        return 0
+
+    # Walk back from the newest message until the budget is spent.
+    spent = 0
+    kept = 0
+    for msg in reversed(rows):
+        if (msg or {}).get("role") == "system":
+            # Never model context (B2/B5), so it must not be charged for
+            # either — otherwise the budget shrinks the real transcript to pay
+            # for lines the model will never see.
+            kept += 1
+            continue
+        cost = len((msg or {}).get("text") or "") // _CHARS_PER_TOKEN
+        if kept >= _HISTORY_MIN_MESSAGES and spent + cost > _HISTORY_TOKEN_BUDGET:
+            break
+        spent += cost
+        kept += 1
+
+    start = max(0, total - kept)
+    # UP, not down: rounding down would admit more than the budget allows,
+    # which is the failure this function exists to prevent.
+    start = min(total, -(-start // _HISTORY_STEP) * _HISTORY_STEP)
+    # ...but never past the floor.
+    return max(0, min(start, total - _HISTORY_MIN_MESSAGES))
+
 
 def _conv_id_from(data):
     """The conversation this request addresses; Main when unaddressed.
@@ -202,6 +315,46 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
             pass
     CHAT_HISTORY.append(user_msg)
     CHAT_HISTORY.append(friday_msg)
+
+
+_SEAT_NOTICES_SENT = set()
+
+
+def _announce_seat_notice(conversation_id, text):
+    """Put a seat discrepancy where the user reads: a system line in the
+    transcript and a notification, once per conversation and wording.
+    Never raises; a notice that could break the turn is worse than none."""
+    key = (conversation_id, text)
+    if key in _SEAT_NOTICES_SENT:
+        return
+    _SEAT_NOTICES_SENT.add(key)
+    try:
+        import logging as _nlog
+        _nlog.getLogger("friday.routing").warning("seat notice: %s", text)
+    except Exception:
+        pass
+    try:
+        sys_msg = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now().isoformat(),
+            "role": "system",
+            "kind": "seat_notice",
+            "text": "⚙ " + text,
+            "pinned": False,
+        }
+        if conversation_id:
+            sys_msg["conversation_id"] = conversation_id
+        CHAT_HISTORY.append(sys_msg)
+        _save_chat_history(CHAT_HISTORY)
+    except Exception:
+        pass
+    try:
+        from agent_friday.notifications_engine import push
+        push(title="Answered by a different model than you chose", body=text,
+             priority="high", source="routing", kind="seat_notice",
+             dedupe_key="seat_notice:" + text[:80])
+    except Exception:
+        pass
 
 
 @chat_bp.route('/api/chat/stream', methods=['POST'])
@@ -542,7 +695,17 @@ def chat():
         # let two open chats contaminate each other's context.
         raw_history = _conv_context(_conversation_id, 100)
         messages = _compress_trajectory(raw_history)
-        messages.append({"role": "user", "content": message})
+        # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
+        # memory too -- including this assistant's own earlier answers -- so a
+        # live-state question carries its live reading here, adjacent to the
+        # turn being answered, where nothing sits between them. No-op for
+        # every other kind of question. See services/live_state.py.
+        try:
+            from agent_friday.services import live_state as _live_state
+            _final_user = _live_state.annotate_user_turn(message)
+        except Exception:
+            _final_user = message
+        messages.append({"role": "user", "content": _final_user})
 
         # ── Semantic context pruning (RAG over our own history) ──
         # When the conversation is long, keep the turns most relevant to the
@@ -624,10 +787,13 @@ def chat():
             _router = get_router(_routing_cfg)
             # The conversation's own binding, if it has one. A null seat
             # means "follow the global default", resolved per turn.
+            # `effective_seat`, not `.seat`: a chat with no binding of its own
+            # inherits its project's default, and reading the raw field here
+            # would drop that on the floor at the one point it matters.
             _conv_seat = None
             try:
                 from agent_friday.services import conversations as _convs
-                _conv_seat = (_convs.load(_conversation_id) or {}).get("seat")
+                _conv_seat = _convs.effective_seat(_conversation_id)
             except Exception:
                 pass
             # A conversation bound to a model that is GONE.
@@ -649,14 +815,34 @@ def chat():
                 _known = False
                 try:
                     from agent_friday.services.model_catalog import build_catalog
-                    _known = any(m.get('id') == _want
-                                 for m in (build_catalog().get('models') or []))
-                    if not _known:
-                        from agent_friday.services import local_seats
-                        _known = any(n == _want for n, _ in local_seats.installed())
-                    if not _known:
-                        from agent_friday.services.local_call import seat_endpoint
-                        _known = bool(seat_endpoint(_want))
+                    from agent_friday.services import local_seats
+                    # Catalogue membership is not presence, for a LOCAL id.
+                    #
+                    # build_catalog() lists what Friday KNOWS OF, which includes
+                    # local models that were never pulled: on 2026-09-18 it
+                    # listed gemma4:12b, gemma4:26b and gemma4:e4b on a machine
+                    # whose Ollama store was empty. Asking it first set _known
+                    # True for an absent model, so this guard never fired and
+                    # the turn fell through to the cloud — the silent
+                    # substitution §3.8 forbids, defeated by the one check
+                    # written to prevent it.
+                    #
+                    # So for a local id, ask the machine: the daemon's own
+                    # inventory, then a live seat endpoint, which is what keeps
+                    # the gemma4:e2b case above working when the catalogue has
+                    # forgotten a model that is answering two ports away. A
+                    # cloud id keeps the catalogue as its authority, because it
+                    # is not "installed" anywhere and absence from a local
+                    # inventory says nothing about it.
+                    if local_seats._is_local_name(_want):
+                        _known = any(n == _want
+                                     for n, _ in local_seats.installed())
+                        if not _known:
+                            from agent_friday.services.local_call import seat_endpoint
+                            _known = bool(seat_endpoint(_want))
+                    else:
+                        _known = any(m.get('id') == _want
+                                     for m in (build_catalog().get('models') or []))
                 except Exception:
                     _known = True          # cannot check → do not block the turn
                 if not _known:
@@ -790,9 +976,48 @@ def chat():
         # vault — vault data must never leave the device, so privacy wins there.
         if _CC_PERMISSION.is_set() and _routed_local and not _vault_access:
             print("  [ROUTER] Computer Control enabled — routing to cloud for the tool-use loop")
+            import logging as _rlog
+            _rlog.getLogger("friday.routing").warning(
+                "Computer Control is on: routed-local turn (%s) sent to the cloud "
+                "for the tool-use loop", _route_info.get('model'))
             _routed_local = False
             _provider = 'cloud'
+            _route_info['override'] = 'computer_control'
+            _route_info['overridden_local_model'] = _route_info.get('model')
             _route_info['model'] = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
+
+        # ── SAY WHEN THE SEAT THAT ANSWERS IS NOT THE SEAT THAT WAS CHOSEN ──
+        #
+        # Observed 2026-09-18 (persisted chat records + friday.log): the picker
+        # held gemma4:12b, which is not installed; the router substituted the
+        # FridayWeaver seat at INFO; Computer Control was on, so the override
+        # above then sent every turn to claude-sonnet-5 with a print() to a
+        # stdout nobody reads. The user asked three times for the local model
+        # and was told "Done" each time. Both facts now reach the user in the
+        # turn itself: a system line in the transcript, a notification, and
+        # `seat_notice` on the response.
+        _seat_notice = None
+        try:
+            _chosen_m, _chosen_p = _router._chosen_seat(
+                {"conversation_seat": _conv_seat})
+        except Exception:
+            _chosen_m, _chosen_p = None, None
+        if _route_info.get('override') == 'computer_control':
+            _seat_notice = (
+                "Computer Control is on, and only a cloud model can drive it, so "
+                f"this turn ran on the cloud model instead of your local seat"
+                + (f" ({_route_info.get('overridden_local_model')})"
+                   if _route_info.get('overridden_local_model') else "")
+                + ". Turn Computer Control off to be answered by the local model.")
+        elif (_chosen_m and _routed_local
+              and (_route_info.get('model') or '') != _chosen_m):
+            _seat_notice = (
+                f"You chose {_chosen_m} for the reasoning seat, but it is not "
+                f"installed on this machine; this turn was answered by "
+                f"{_route_info.get('model')} instead. Install {_chosen_m} or pick "
+                f"an installed model in the seat picker.")
+        if _seat_notice:
+            _announce_seat_notice(_conversation_id, _seat_notice)
 
         # ── Build the (vault-gated) system prompt + scrub PII for the provider. ──
         # Cloud: vault TIER_2/TIER_3 content is gated out and PII is scrubbed.
@@ -998,6 +1223,7 @@ def chat():
         # ── Dispatch. ──
         reply, tool_trace = None, []
         _fell_back_from_local = None
+        _tool_surface = None
         if _routed_local:
             # As much of the tool registry as this seat can physically hold.
             # 112 tools cost ~46k tokens; his seat's window is 32,768, so
@@ -1011,16 +1237,74 @@ def chat():
             _prompt_cost = (len(system_prompt or '') + sum(
                 len(m.get('content')) for m in messages
                 if isinstance(m.get('content'), str))) // 4
-            _local_tools, _tool_note = _fit_tools(
-                _route_info.get('model'), CLAUDE_TOOLS,
-                prompt_cost=_prompt_cost)
+            # The user's own words decide which tools survive a trim. The
+            # reported failure was a calendar question that trimmed away
+            # query_calendar and then narrated the answer.
+            _intent = ''
+            for _m in reversed(messages or []):
+                if _m.get('role') == 'user' and isinstance(_m.get('content'), str):
+                    _intent = _m['content']
+                    break
+            # THE CATALOGUE HAS TO REACH THIS PATH TOO.
+            #
+            # `services/tool_catalogue.py` was wired into
+            # `agent._generate_agent -> _via_ollama`, which is what
+            # /api/chat/send uses. THIS is /api/chat, the streaming path the
+            # UI actually talks to, and it assembles its own tool payload -
+            # so the measured 15,930 -> 3,311 token cut never applied to the
+            # surface the person uses. That is the "one registry, one
+            # assembler" rule in docs/design/active/one-tool-registry.md
+            # breaking the day after it was written about: two builders, two
+            # answers.
+            #
+            # Caught 2026-09-19 by a survey of the spec backlog, not by
+            # anything failing - which is the whole argument for the survey.
+            _catalogue_all = None
+            try:
+                from agent_friday.services import tool_catalogue as _TCat
+                if _TCat.enabled() and CLAUDE_TOOLS:
+                    _local_tools = _TCat.opening_set(CLAUDE_TOOLS)
+                    _catalogue_all = CLAUDE_TOOLS
+                    _tool_note = ''
+            except Exception:
+                _catalogue_all = None
+            if _catalogue_all is None:
+                _local_tools, _tool_note = _fit_tools(
+                    _route_info.get('model'), CLAUDE_TOOLS,
+                    prompt_cost=_prompt_cost, intent=_intent,
+                    system=system_prompt, messages=messages)
             if _tool_note:
                 system_prompt = (system_prompt or '') + "\n\n[SEAT] " + _tool_note
+                # Make the loss legible to the person, not only to the model.
+                try:
+                    _kept_n = {str(t.get('name')) for t in (_local_tools or [])}
+                    _lost = sorted(str(t.get('name')) for t in CLAUDE_TOOLS
+                                   if str(t.get('name')) not in _kept_n)
+                    _tool_surface = {
+                        "kept": len(_kept_n),
+                        "registry": len(CLAUDE_TOOLS),
+                        "dropped": _lost,
+                        "window": _route_info.get('model'),
+                    }
+                except Exception:
+                    _tool_surface = None
+            try:
+                from agent_friday.services.model_router import _trace_outgoing
+                _trace_outgoing("chat.dispatch_local", "local",
+                                _route_info.get('model'),
+                                {"messages": messages},
+                                {"registry": len(CLAUDE_TOOLS),
+                                 "fitted": len(_local_tools or []),
+                                 "prompt_cost": _prompt_cost,
+                                 "note": bool(_tool_note)})
+            except Exception:
+                pass
             try:
                 reply, tool_trace = _call_ollama(
                     messages, system=system_prompt,
                     model=_route_info['model'],
                     temperature=settings.get('temperature'),
+                    catalogue_all=_catalogue_all,
                     orb_label=f"🏠 {_orb_label}",
                     orb_icon='🏠',
                     # Local models drive the full agent loop too: same
@@ -1401,6 +1685,8 @@ def chat():
             'model': _seat_model,
             'seat': _seat_class,
         }
+        if _seat_notice:
+            friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
         _persist_turn(_conversation_id, user_msg, friday_msg,
@@ -1496,10 +1782,47 @@ def chat():
         except Exception:
             pass
 
+        # The same rule for claims that name no tool. Most of the fabrications
+        # in the 2026-09-09 session did not name one: an asserted workspace
+        # switch with no navigate call, "I'll remove it from your active task
+        # list now" on a turn where nothing ran, a cited wiki path that does
+        # not exist. Checked here, after `actions` is built, so the navigation
+        # check reads the same receipts the UI move depends on.
+        _unsupported = []
+        try:
+            _unsupported = _receipts.unsupported_actions(reply)
+            if _unsupported:
+                reply = (reply or "") + _receipts.action_correction_note(_unsupported)
+                print("  [receipts] UNSUPPORTED ACTION CLAIM in reply: %s"
+                      % ", ".join(c["kind"] for c in _unsupported))
+        except Exception:
+            pass
+
         return jsonify({
             "response": reply,
+            # WHO ACTUALLY ANSWERED. Every refusal path here already reports
+            # the model (seat_missing, cloud_only_no_key, local_only_refused) —
+            # the SUCCESS path did not, which left the only way to find out
+            # being to ask the model, and a model answers that from its system
+            # prompt. On 2026-09-22 Stephen was told twice by Sonnet 5 that it
+            # was Bonsai2. Nothing had lied to him at the routing layer: the
+            # picker could not load (18.9 s catalogue) and bonsai2 was missing
+            # from the catalogue entirely, so the turn ran on the configured
+            # default exactly as asked — and then the prompt supplied an
+            # identity the transport never contradicted.
+            #
+            # Routing already refuses rather than substitutes (§3.8). This is
+            # the other half: say what served, every time, from the server's
+            # own record of the call rather than from the model's opinion.
+            "served_by": {
+                "model": _route_info.get('model'),
+                "provider": _route_info.get('provider'),
+                "local": bool(_route_info.get('is_local')),
+                "override": _route_info.get('override'),
+            },
             "tools_ran": _receipts.summary(),
             "unbacked_claims": _unbacked,
+            "unsupported_actions": _unsupported,
             "user_msg": user_msg,
             "friday_msg": friday_msg,
             "sources": sources,
@@ -1512,6 +1835,7 @@ def chat():
             "session_id": session_id,
             "model": _seat_model,
             "seat": _seat_class,
+            "seat_notice": _seat_notice,
             "seat_events": _seat_events,
             # An image reaching a cloud provider, or being withheld because the
             # mode forbids it, is disclosed in the turn. Empty on every turn
@@ -1523,6 +1847,11 @@ def chat():
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
             "local_fallback": _fell_back_from_local,
+            # A capability loss the user did not ask for and cannot otherwise
+            # see. When the seat could not carry the whole toolbox, say so in
+            # the turn — same principle as local_fallback above. Absent on
+            # every turn that kept its tools, which is the normal case.
+            "tool_surface": _tool_surface,
         })
     except Exception as e:
         traceback.print_exc()  # console launches; a no-op loss under pythonw
@@ -1692,13 +2021,42 @@ def chat_send():
                 print(f"  [MEMORY] /chat/send recall skipped: {_mb_err}")
             return prompt
 
+        # THE CONVERSATION'S OWN SEAT, ON THE PATH THE UI ACTUALLY USES.
+        #
+        # `/api/chat` has honoured a per-conversation seat binding for a long
+        # time. `/api/chat/send` — which is what index.html posts to, and
+        # therefore what every real turn goes through — never read it. So the
+        # model picker in the conversation switcher wrote a binding that
+        # nothing on the sending path ever looked at: choosing a model for one
+        # chat appeared to work, persisted correctly, and changed nothing.
+        #
+        # Caught 2026-09-18 by binding one conversation to bonsai2:27b and
+        # another to claude-sonnet-5 and watching both answer on Sonnet. It is
+        # the difference between multiple chat windows being a feature and
+        # being decoration: two windows are only worth having if they can be
+        # two models.
+        #
+        # Resolved through `effective_seat` so a project's default model
+        # reaches the turn. A chat filed under a project and never bound
+        # itself has an empty `.seat`, and reading the raw field here would
+        # have made project defaults decoration in exactly the way per-chat
+        # bindings were before 2026-09-18.
+        _conv_seat_model = ''
+        try:
+            from agent_friday.services import conversations as _cv
+            _cs = _cv.effective_seat(_conversation_id)
+            if isinstance(_cs, dict):
+                _conv_seat_model = (_cs.get('model') or '').strip()
+        except Exception as _cse:
+            print(f"  [chat/send] could not read the conversation seat: {_cse}")
+
         _send_provider = _predict_route_provider(
             keywords=message, workspace=workspace, has_tools=True)
         system_prompt = _sys_for(_send_provider)
 
         # Anthropic-format message history
         messages = []
-        for msg in CHAT_HISTORY[-100:]:
+        for msg in CHAT_HISTORY[_history_start(CHAT_HISTORY):]:
             if msg.get('role') == 'system':
                 # B2/B5: transparency system lines are never model context.
                 continue
@@ -1706,7 +2064,17 @@ def chat_send():
             text = msg.get('text', '')
             if text:
                 messages.append({"role": role, "content": text})
-        messages.append({"role": "user", "content": message})
+        # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
+        # memory too -- including this assistant's own earlier answers -- so a
+        # live-state question carries its live reading here, adjacent to the
+        # turn being answered, where nothing sits between them. No-op for
+        # every other kind of question. See services/live_state.py.
+        try:
+            from agent_friday.services import live_state as _live_state
+            _final_user = _live_state.annotate_user_turn(message)
+        except Exception:
+            _final_user = message
+        messages.append({"role": "user", "content": _final_user})
 
         _sess_ctx = {
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
@@ -1725,6 +2093,8 @@ def chat_send():
         reply, tool_trace = _generate_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
             session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
+            conversation_seat=({"model": _conv_seat_model}
+                               if _conv_seat_model else None),
         )
 
         # ── FR-2/A7 on this endpoint too: pseudo-tool-call leaks and
@@ -1736,6 +2106,12 @@ def chat_send():
                 messages + [{"role": "user", "content": corrective_note}],
                 system=system_prompt, temperature=settings.get('temperature'),
                 session_ctx=_sess_ctx, workspace=workspace, system_builder=_sys_for,
+                # The corrective retry stays on the seat the conversation
+                # chose. A retry that silently moves model is how a chat bound
+                # to a local seat ends up answered by the cloud halfway
+                # through its own turn.
+                conversation_seat=({"model": _conv_seat_model}
+                                   if _conv_seat_model else None),
             )
 
         reply, tool_trace, _send_integrity = validate_toolcall_integrity(

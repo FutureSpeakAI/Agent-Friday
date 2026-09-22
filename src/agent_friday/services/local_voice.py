@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import array
 import io
+import logging
 import math
 import os
 import threading
@@ -41,6 +42,13 @@ import wave
 from pathlib import Path
 
 from agent_friday.paths import friday_home, voice_assets_dir
+
+# Local voice had no logger at all — its entire diagnostic output was two bare
+# print() calls landing in an unrotated server_stderr.log the repo elsewhere
+# describes as lost. This joins the convention every other subsystem already
+# uses, so records land in ~/.friday/friday.log under its existing rotation.
+# See services/voice_receipt.py for the per-turn receipt built on top of it.
+log = logging.getLogger("friday.local_voice")
 
 # Where downloaded checkpoints live. Honors $HOME redirection used by tests.
 
@@ -568,6 +576,7 @@ class LocalVoiceEngine:
         self._tier = None          # "cpu" | "gpu" | None (unselected → cpu)
         self._lock = threading.Lock()
         self.last_error = ""       # last model-load failure, surfaced in health()
+        self.last_error_code = ""  # structured code when one is available
         self.last_downgrade = ""   # why an explicit GPU preference got CPU instead
         # Rolling perf so users can compare Tier-1 vs Tier-2 (spec §"Performance
         # Monitoring"). Surfaced in health() + /api/health/full.
@@ -588,11 +597,16 @@ class LocalVoiceEngine:
     def active_tier(self) -> str:
         return self._tier or "cpu"
 
-    def _gpu_tier_ready(self) -> bool:
-        """True when the Tier-2 GPU stack can actually run (NeMo+torch+CUDA+VRAM)."""
+    def _gpu_tier_ready(self, fresh: bool = False) -> bool:
+        """True when the Tier-2 GPU stack can actually run (NeMo+torch+CUDA+VRAM).
+
+        ``fresh=True`` re-measures VRAM instead of taking the cached reading;
+        it is for the one call that decides whether to LOAD (ensure_ready),
+        not for the advisory tier resolution that precedes it.
+        """
         try:
             from agent_friday.services.nemo_voice import gpu_tier_ready
-            return gpu_tier_ready()
+            return gpu_tier_ready(fresh=fresh)
         except Exception:
             return False
 
@@ -613,12 +627,87 @@ class LocalVoiceEngine:
             # getting it so the session can announce the downgrade instead of
             # silently running CPU voice (auto mode stays quiet by design).
             self.last_downgrade = self._gpu_unready_reason()
+            # Degradation point 1 of 3 (pre-flight).
+            log.warning("degrade gpu->cpu at=resolve_tier requested=%s reason=%s",
+                        pref, self.last_downgrade)
             return "cpu"
         if pref == "auto":
             self.last_downgrade = ""
-            return "gpu" if self._gpu_tier_ready() else "cpu"
+            _tier = "gpu" if self._gpu_tier_ready() else "cpu"
+            if _tier == "cpu":
+                # `auto` stays quiet to the USER by design, but staying quiet to
+                # the LOG is what left an auto-mode user on CPU with no receipt
+                # at all — the exact "voice was worse tonight and nothing says
+                # why" case. Silent in the UI, never silent in friday.log.
+                log.info("auto selected cpu (gpu tier not ready) reason=%s",
+                         self._gpu_unready_reason())
+            return _tier
         self.last_downgrade = ""
         return "cpu"
+
+    def peek_tier(self, settings=None) -> str:
+        """The tier ``resolve_tier`` WOULD pick, with no side effects.
+
+        ``resolve_tier`` records the downgrade reason and logs a warning every
+        time it runs; that is right at session start and wrong on a 20-second
+        health poll. Health reads this one.
+        """
+        s = settings if settings is not None else self._settings()
+        pref = str(s.get("voice_engine") or "local").strip().lower()
+        if pref in ("local-gpu", "gpu", "nemo", "nvidia-nemo", "auto"):
+            return "gpu" if self._gpu_tier_ready() else "cpu"
+        return "cpu"
+
+    def effective_tts(self, settings=None) -> dict:
+        """Which synthesizer a session started NOW would actually run, and why
+        that differs from the selection when it does.
+
+        Mirrors the decisions ``_build_cpu_tier_tts`` + ``KokoroTTS.load`` make
+        (F4 of voice-mode-diagnosis-and-repair.md): Kokoro's device is decided
+        by whether torch sees CUDA, not by the NeMo ASR tier, so Kokoro can
+        serve on the GPU while the tier reads "cpu". When Kokoro cannot run the
+        session REFUSES and offers Piper -- it does not substitute -- and this
+        says so, so the settings panel shows the refusal before the mic click.
+        """
+        s = settings if settings is not None else self._settings()
+        sel = str(s.get("local_voice_tts_engine") or "piper").strip().lower()
+        out = {"selected": sel, "engine": sel, "device": "cpu",
+               "will_refuse": False, "reason": ""}
+        if sel != "kokoro":
+            if sel not in self.TTS_ENGINES:
+                out["engine"] = "piper"
+                out["reason"] = f"unknown engine {sel!r}; Piper serves"
+            return out
+        try:
+            from agent_friday.services.kokoro_voice import (
+                kokoro_available, kokoro_gpu_status)
+            if not kokoro_available():
+                out.update(engine=None, device=None, will_refuse=True,
+                           reason="Kokoro is selected but not importable in the "
+                                  "server environment; the session will refuse "
+                                  "and offer Piper.")
+                return out
+            g = kokoro_gpu_status()
+        except Exception as e:
+            out.update(engine=None, device=None, will_refuse=True,
+                       reason=f"Kokoro readiness could not be checked ({type(e).__name__}).")
+            return out
+        if g.get("cuda"):
+            out["device"] = "cuda"
+            if not g.get("sufficient_for_kokoro"):
+                out["reason"] = ("Kokoro will load on the GPU, but only "
+                                 f"{g.get('kokoro_headroom_basis_gb')}GB is "
+                                 "genuinely free -- it will share the card with "
+                                 "whatever is resident.")
+            return out
+        if s.get("local_voice_kokoro_allow_cpu"):
+            out["reason"] = ("Kokoro on CPU by explicit opt-in: roughly realtime "
+                             "synthesis, too slow to converse.")
+            return out
+        out.update(engine=None, device=None, will_refuse=True,
+                   reason="Kokoro needs a CUDA GPU and this environment's PyTorch "
+                          "reports none; the session will refuse and offer Piper.")
+        return out
 
     def _gpu_unready_reason(self) -> str:
         """One-line, actionable reason the GPU tier can't run right now."""
@@ -675,8 +764,37 @@ class LocalVoiceEngine:
                 from agent_friday.services.nemo_voice import NeMoTTS
                 self._tts = NeMoTTS(s.get("local_voice_gpu_tts") or "fastpitch-hifigan")
             else:
-                self._tts = PiperTTS(s.get("local_voice_tts_voice") or DEFAULT_PIPER_VOICE)
+                self._tts = self._build_cpu_tier_tts(s)
         return self._tts
+
+    #: Which synthesizer the CPU tier uses. Piper is the default and stays the
+    #: default: it is the only local synthesizer that runs acceptably without a
+    #: GPU, which is most machines. Kokoro is an ADDITION, selected explicitly.
+    TTS_ENGINES = ("piper", "kokoro")
+
+    def _build_cpu_tier_tts(self, settings):
+        """Build the Tier-1 synthesizer, honouring `local_voice_tts_engine`.
+
+        Kokoro's unavailability is deliberately NOT swallowed here. If the user
+        selected Kokoro and it cannot run, the KokoroUnavailable propagates out
+        of the eventual load() with its reason and its offer, so the session can
+        surface it and let the user choose Piper. Catching it here and
+        substituting Piper would give the user a different voice than they
+        picked with no way to notice — the silent substitution C2 forbids.
+        """
+        engine = str(settings.get("local_voice_tts_engine") or "piper").strip().lower()
+        if engine == "kokoro":
+            from agent_friday.services.kokoro_voice import (
+                DEFAULT_KOKORO_VOICE, KokoroTTS)
+            voice = settings.get("local_voice_kokoro_voice") or DEFAULT_KOKORO_VOICE
+            log.info("tier1 tts engine=kokoro voice=%s", voice)
+            return KokoroTTS(voice, allow_cpu=bool(
+                settings.get("local_voice_kokoro_allow_cpu")))
+        if engine not in self.TTS_ENGINES:
+            # An unrecognised value is a settings bug, not a reason to be
+            # silent about which voice is actually running.
+            log.warning("unknown local_voice_tts_engine=%r — using piper", engine)
+        return PiperTTS(settings.get("local_voice_tts_voice") or DEFAULT_PIPER_VOICE)
 
     def available(self) -> bool:
         """Tier-1 deps importable — the universal floor for *any* local voice.
@@ -695,17 +813,53 @@ class LocalVoiceEngine:
         never disturbs this answer. GPU-tier readiness is reported separately by
         ``services.nemo_voice.nemo_models_ready`` / ``nemo_health``.
         """
+        from agent_friday.services.voice_receipt import log_readiness
+        whisper_root = WHISPER_DIR
         try:
-            whisper_ok = WHISPER_DIR.exists() and any(WHISPER_DIR.iterdir())
+            whisper_root = self._get_asr_download_root()
+            whisper_ok = whisper_root.exists() and any(whisper_root.iterdir())
         except Exception:
             whisper_ok = False
-        try:
-            voice = self._settings().get("local_voice_tts_voice") or DEFAULT_PIPER_VOICE
-            vp = PiperTTS(voice)._voice_path()
-            piper_ok = vp.exists() and vp.with_suffix(vp.suffix + ".json").exists()
-        except Exception:
-            piper_ok = False
+        vp = None
+        _s = self._settings()
+        _tts_engine = str(_s.get("local_voice_tts_engine") or "piper").strip().lower()
+        if _tts_engine == "kokoro":
+            # Ask the question that matches the SELECTED synthesizer. Checking
+            # for a Piper .onnx while Kokoro is selected would report ready
+            # against a file the run will never open.
+            try:
+                from agent_friday.services.kokoro_voice import kokoro_available
+                piper_ok = kokoro_available()
+                vp = "kokoro (package import)"
+            except Exception:
+                piper_ok = False
+        else:
+            try:
+                voice = _s.get("local_voice_tts_voice") or DEFAULT_PIPER_VOICE
+                vp = PiperTTS(voice)._voice_path()
+                piper_ok = vp.exists() and vp.with_suffix(vp.suffix + ".json").exists()
+            except Exception:
+                piper_ok = False
+        # Name the ROOT THAT WAS ACTUALLY CONSULTED, not the default constant.
+        # The asset root is overridable (voice_assets_dir() under OS mode), so
+        # "voice models not downloaded" without the path is the message that
+        # made this subsystem undiagnosable: it is true of a directory the
+        # reader cannot identify.
+        log_readiness("tier1.asr", whisper_ok, checked_path=whisper_root,
+                      missing=None if whisper_ok else "no checkpoint under this root")
+        log_readiness("tier1.tts", piper_ok, checked_path=vp,
+                      missing=None if piper_ok else "voice .onnx and/or .onnx.json absent")
         return bool(whisper_ok and piper_ok)
+
+    def _get_asr_download_root(self) -> Path:
+        """The whisper root readiness should check — the same one the loader
+        will use, including the OS-mode override. Asking a different question
+        than the loader asks is how readiness and reality drift apart."""
+        try:
+            voice_model = self._settings().get("local_voice_asr_model") or DEFAULT_WHISPER_MODEL
+            return WhisperASR(voice_model)._download_root()
+        except Exception:
+            return WHISPER_DIR
 
     def ensure_ready(self, progress=None) -> bool:
         """Lazily load/download the active tier's ASR + TTS. True when usable.
@@ -722,9 +876,12 @@ class LocalVoiceEngine:
                 return True
             # GPU tier requested but not actually runnable → fall back to CPU
             # before we even try to import the heavy stack.
-            if self.active_tier() == "gpu" and not self._gpu_tier_ready():
+            if self.active_tier() == "gpu" and not self._gpu_tier_ready(fresh=True):
                 if progress:
                     progress("GPU voice not ready — using local CPU voice")
+                # Degradation point 2 of 3 (pre-import gate).
+                log.warning("degrade gpu->cpu at=ensure_ready.pre_import reason=%s",
+                            self._gpu_unready_reason())
                 self._swap_tier("cpu")
             if not self._active_tier_deps_ok():
                 self.last_error = ("Tier-1 voice dependencies not installed "
@@ -747,12 +904,32 @@ class LocalVoiceEngine:
                 self._ready = True
                 self.last_error = ""
             except Exception as e:  # pragma: no cover - real model load only
+                # Kokoro refusing to run on CPU is a DELIBERATE, explained
+                # refusal, not a crash. It carries its own reason and its own
+                # offer, and it must reach the user intact rather than being
+                # flattened into "could not load the local voice models" — the
+                # generic message would send someone to check their network for
+                # a problem that is entirely about which device is available.
+                from agent_friday.services.kokoro_voice import KokoroUnavailable
+                if isinstance(e, KokoroUnavailable):
+                    self.last_error = f"{e.message} {e.offer}"
+                    self.last_error_code = e.code
+                    log.warning("kokoro unavailable: code=%s %s", e.code, e.message)
+                    self._ready = False
+                    return False
                 self.last_error = f"{type(e).__name__}: {e}"
-                print(f"[local_voice] {self.active_tier()} model load failed: {e}")
+                log.error("model load failed tier=%s: %s: %s",
+                          self.active_tier(), type(e).__name__, e, exc_info=True)
                 # GPU load failed → one graceful retry on the CPU tier.
                 if self.active_tier() == "gpu" and deps_installed():
                     if progress:
                         progress("GPU voice failed to load — falling back to CPU voice")
+                    # Degradation point 3 of 3 (post-load-failure retry). All
+                    # three now leave a record; previously only resolve_tier
+                    # recorded anything, and only when the user had explicitly
+                    # chosen GPU.
+                    log.warning("degrade gpu->cpu at=ensure_ready.post_load_failure "
+                                "reason=%s", self.last_error)
                     self._swap_tier("cpu")
                     try:
                         self._get_asr().load(progress=progress)
@@ -761,7 +938,8 @@ class LocalVoiceEngine:
                         self.last_error = ""
                     except Exception as e2:  # pragma: no cover
                         self.last_error = f"{type(e2).__name__}: {e2}"
-                        print(f"[local_voice] CPU fallback load failed: {e2}")
+                        log.error("CPU fallback load failed after GPU degrade: "
+                                  "%s: %s", type(e2).__name__, e2, exc_info=True)
                         self._ready = False
                 else:
                     self._ready = False
@@ -785,15 +963,62 @@ class LocalVoiceEngine:
         return out
 
     def synthesize(self, text: str) -> bytes:
-        """Text → 24 kHz PCM16 mono bytes (ready for the playback worklet)."""
+        """Text → 24 kHz PCM16 mono bytes (ready for the playback worklet).
+
+        A synthesis-time refusal is recorded on ``last_error_code`` before it is
+        re-raised, because that is the channel the voice session already reads
+        to turn a failure into a coded error frame. Without this the code exists
+        on the exception and nothing ever looks at it -- a receipt written where
+        nobody reads it. The exception still propagates: this records, it does
+        not swallow, and it never substitutes a different voice.
+        """
         t0 = time.perf_counter()
-        out = self._get_tts().synthesize(text)
+        try:
+            out = self._get_tts().synthesize(text)
+        except Exception as e:
+            code = getattr(e, "code", "")
+            if code:
+                self.last_error_code = code
+                self.last_error = getattr(e, "message", None) or str(e)[:200]
+                log.error("tts refusal code=%s %s", code, self.last_error)
+            raise
         self._record("tts", (time.perf_counter() - t0) * 1000.0)
         return out
 
     def synthesize_b64(self, text: str) -> str:
         import base64
         return base64.b64encode(self.synthesize(text)).decode("ascii")
+
+    #: Class name -> the engine id the settings UI uses. Kept here rather than
+    #: inferred in the UI so there is one place that knows the mapping.
+    _TTS_CLASS_IDS = {"PiperTTS": "piper", "KokoroTTS": "kokoro",
+                      "NeMoTTS": "nemo"}
+
+    def running_status(self):
+        """What is loaded and serving RIGHT NOW, or None when nothing is.
+
+        Deliberately never falls back to settings. Every other field in
+        ``health()`` is read from settings by design, which makes them a report
+        of *intent*; intent and reality diverge exactly where this subsystem's
+        bugs have lived (a tier that degraded silently, an engine that was
+        selected but refused to load). A UI that cannot tell "Kokoro is
+        serving" from "Kokoro is selected" is the UI that tells the user the
+        wrong thing, so reality gets its own block and is allowed to be empty.
+        """
+        tts, asr = self._tts, self._asr
+        if tts is None and asr is None:
+            return None
+        tts_cls = type(tts).__name__ if tts is not None else None
+        return {
+            "tier": self._tier or None,
+            "ready": bool(self._ready),
+            "asr_class": type(asr).__name__ if asr is not None else None,
+            "asr_model": getattr(asr, "model_size", None),
+            "tts_class": tts_cls,
+            "tts_engine": self._TTS_CLASS_IDS.get(tts_cls or "", None),
+            "tts_voice": getattr(tts, "voice", None),
+            "tts_device": getattr(tts, "device", None),
+        }
 
     def health(self) -> dict:
         """Status block for /api/health/full + provider_health.
@@ -823,12 +1048,45 @@ class LocalVoiceEngine:
             "models_ready": ready,
             "deps": deps,
             "asr_model": s.get("local_voice_asr_model") or DEFAULT_WHISPER_MODEL,
+            "tts_engine": str(s.get("local_voice_tts_engine") or "piper").lower(),
             "tts_voice": s.get("local_voice_tts_voice") or DEFAULT_PIPER_VOICE,
             "active_tier": self.active_tier(),
             "perf": self.perf_stats(),
             "last_error": self.last_error,
             "downgrade": self.last_downgrade,
         }
+        # What is ACTUALLY loaded, as distinct from what settings ask for.
+        # None when nothing is loaded yet -- an empty answer, never an echo of
+        # the request dressed up as an observation.
+        out["running"] = self.running_status()
+        # F4: what a session started NOW would resolve to, next to what is
+        # selected, with the reason when they differ. Side-effect free.
+        try:
+            out["resolved_tier"] = self.peek_tier(s)
+            _pref = str(s.get("voice_engine") or "local").strip().lower()
+            out["tier_reason"] = (
+                self._gpu_unready_reason()
+                if out["resolved_tier"] == "cpu"
+                and _pref in ("local-gpu", "gpu", "nemo", "nvidia-nemo", "auto")
+                else "")
+        except Exception as e:
+            out["resolved_tier"] = self.active_tier()
+            out["tier_reason"] = f"could not resolve ({type(e).__name__})"
+        try:
+            out["effective_tts"] = self.effective_tts(s)
+        except Exception as e:
+            out["effective_tts"] = {"selected": out["tts_engine"], "engine": None,
+                                    "will_refuse": True,
+                                    "reason": f"could not resolve ({type(e).__name__})"}
+        # Kokoro readiness — reported ALWAYS, not only when selected, so the
+        # settings UI can offer it (or grey it with a reason) rather than
+        # presenting a control whose availability is unknown until it fails.
+        try:
+            from agent_friday.services.kokoro_voice import kokoro_health
+            out["kokoro"] = kokoro_health()
+        except Exception as e:
+            out["kokoro"] = {"engine": "local-kokoro", "status": "error",
+                             "detail": str(e)[:120], "available": False}
         # Tier-2 (GPU/NeMo) readiness — best-effort, never fatal to this block.
         try:
             from agent_friday.services.nemo_voice import nemo_health

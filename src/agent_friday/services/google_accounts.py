@@ -1,4 +1,4 @@
-﻿"""
+"""
 google_accounts — secure multi-account Google integration (Gmail / Calendar / Drive).
 
 Extends Friday's single-account Google support to N accounts, each with its own
@@ -71,6 +71,21 @@ USERINFO_EMAIL = "https://www.googleapis.com/auth/userinfo.email"
 GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, DOCS_READ, SHEETS_READ,
                        TASKS_RW, CONTACTS_READ, USERINFO_EMAIL]
 
+# Sending mail is NOT in the list above, and that is the whole design.
+#
+# Every other scope here is one Friday needs to be useful at all, so they are
+# requested together and the account is connected or it isn't. Sending is the
+# one capability whose mistakes are unrecoverable and visible to other people,
+# so it is asked for separately, per account, only when the owner ticks the box
+# — `build_auth_flow(include_send=True)`. An account connected the ordinary way
+# cannot send, and services/gmail_send.py checks the granted scopes rather than
+# assuming.
+#
+# gmail.send, not gmail.compose: compose would additionally let Friday create,
+# read, alter and delete drafts in the real mailbox. The review copy belongs on
+# the approval card, where the owner already is.
+GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+
 # Legacy single-account scopes (what google_token.json was consented for).
 _LEGACY_SCOPES = [GMAIL_READ, "https://www.googleapis.com/auth/calendar.readonly"]
 
@@ -122,13 +137,135 @@ def _save_index(data: dict) -> None:
     cs.harden_permissions(ACCOUNTS_INDEX)
 
 
+# ── health: what the STORED STATUS says, not whether a record exists ─────────
+# A record existing in accounts.json means Friday once held a grant for that
+# address. It says nothing about whether that grant still works. Every surface
+# that renders account state must ask the second question, so the derivation
+# lives here once and is attached to every public record.
+#
+# 2026-09-09: both of Stephen's accounts sat at status="needs_reauth" with a
+# last_sync of 2026-09-01 while the connectors page said "connected", because
+# the page rendered the presence of the record. Nine days of confidently wrong
+# calendar answers, including a day with two job interviews reported as empty.
+
+STALE_AFTER_DAYS = 2
+
+# stored status -> (state, human label, is the account usable, needs the user)
+_STATUS_PRESENTATION = {
+    "connected":    ("connected",    "Connected",                True,  False),
+    "needs_reauth": ("needs_reauth", "Needs reauthorisation",    False, True),
+    "revoked":      ("needs_reauth", "Access revoked at Google", False, True),
+    "error":        ("error",        "Error",                    False, True),
+    "disconnected": ("disconnected", "Disconnected",             False, True),
+    # A LOCAL PROBLEM, NOT A GOOGLE ONE. The token is on disk and Google has
+    # revoked nothing; Friday cannot decrypt it, because the vault key this
+    # process derived is not the key the token was written with.
+    #
+    # This had to stop being filed as needs_reauth. Reconnecting does appear
+    # to fix it - it rewrites the token under whatever key the current process
+    # has - which is the worst possible property for a wrong diagnosis to
+    # have, because the remedy that hides the fault buys exactly one day.
+    # Measured 2026-09-19 in Stephen's audit log: 11,508 of these on Sept 4th,
+    # 9,517 on the 11th, 8,109 on the 17th, every one recorded as if Google
+    # had pulled the grant, and a reconnect every morning to clear it.
+    "unreadable":   ("unreadable",   "Stored credential unreadable",
+                     False, True),
+}
+
+#: Exception names that mean "this is a local storage or key problem", not
+#: "the user's grant is gone". Matched by NAME rather than by class so this
+#: module does not have to import the vault crypto just to classify an error.
+_LOCAL_STORAGE_ERRORS = ("IntegrityError", "VaultCryptoError", "RuntimeError",
+                         "InvalidTag", "PermissionError", "FileNotFoundError")
+
+
+def _classify_credential_error(exc: BaseException) -> str:
+    """Stored status for a credential that would not load.
+
+    The distinction that matters to the user is whether the remedy is theirs
+    at Google (reconnect) or Friday's on this machine (fix the key). Getting
+    it wrong in the safe-looking direction - calling everything needs_reauth -
+    is what produced the daily reconnect ritual.
+    """
+    return ("unreadable" if type(exc).__name__ in _LOCAL_STORAGE_ERRORS
+            else "needs_reauth")
+
+# Fail closed. An unrecognised or absent status is NOT evidence of health.
+_UNKNOWN_PRESENTATION = ("unknown", "Status unknown", False, True)
+
+
+def _sync_age_days(last_sync: str | None) -> float | None:
+    if not last_sync:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(last_sync).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - ts).total_seconds() / 86400.0)
+
+
+def account_health(rec: dict) -> dict:
+    """Derive an account's real state from its STORED status + last sync.
+
+    Never infers health from the record existing. The only input that can make
+    `healthy` true is an explicit stored status of "connected"; everything else
+    -- including a missing, empty or unrecognised status -- is unhealthy and
+    actionable.
+
+    `stale` is a second, independent signal: an account can be nominally
+    connected and still not have synced for days, and "connected on September
+    1st" tells a very different story from "connected".
+    """
+    raw = (rec or {}).get("status")
+    key = str(raw).strip().lower() if raw else ""
+    state, label, healthy, actionable = _STATUS_PRESENTATION.get(
+        key, _UNKNOWN_PRESENTATION)
+    last_sync = (rec or {}).get("last_sync")
+    age = _sync_age_days(last_sync)
+    stale = age is not None and age >= STALE_AFTER_DAYS
+    if age is None:
+        sync_phrase = "never synced"
+    elif age < 1:
+        sync_phrase = "last synced today"
+    elif age < 2:
+        sync_phrase = "last synced yesterday"
+    else:
+        sync_phrase = f"last synced {int(age)} days ago"
+    if healthy and stale:
+        summary = f"Connected, but {sync_phrase}"
+    elif healthy:
+        summary = f"Connected \u2014 {sync_phrase}"
+    else:
+        summary = f"{label} \u2014 {sync_phrase}"
+    return {
+        "state": state,
+        "label": label,
+        "healthy": bool(healthy),
+        "actionable": bool(actionable),
+        "action": "reconnect" if actionable else None,
+        "stored_status": raw,
+        "last_sync": last_sync,
+        "stale": bool(stale),
+        "stale_after_days": STALE_AFTER_DAYS,
+        "sync_age_days": None if age is None else round(age, 2),
+        "sync_phrase": sync_phrase,
+        "summary": summary,
+    }
+
+
 def _public_record(rec: dict) -> dict:
     """A copy of an account record safe to send to the frontend. Defensive — the
     index never holds token material, but this guarantees nothing secret leaks
     even if the schema grows."""
     safe_keys = {"id", "email", "label", "status", "services", "color",
                  "created", "last_sync", "scopes", "enc_method"}
-    return {k: rec.get(k) for k in safe_keys if k in rec}
+    out = {k: rec.get(k) for k in safe_keys if k in rec}
+    # Every consumer of a public record gets the derived verdict alongside the
+    # raw status, so no surface has to (or gets to) invent its own answer.
+    out["health"] = account_health(rec)
+    return out
 
 
 # ── google credential helpers ────────────────────────────────────────────────
@@ -163,8 +300,74 @@ def _persist_token(account_id: str, creds) -> str:
 
 # ── public API ───────────────────────────────────────────────────────────────
 def has_accounts() -> bool:
+    """Whether any account RECORD exists. Not whether any account WORKS.
+
+    Callers that report a user-facing "connected" state must use
+    has_working_accounts() instead -- this answers a storage question, and
+    answering a health question with it is what produced the 2026-09-09
+    incident (see account_health above). Kept because the legacy fallback
+    paths genuinely want "was this install ever connected".
+    """
     _migrate_legacy_if_needed()
     return bool(_load_index().get("accounts"))
+
+
+def _health_of(rec: dict) -> dict:
+    """Health for a record from any source. Records built by hand (callers,
+    tests, older code paths) have no `health` key; derive it rather than
+    assuming, and never treat a missing key as healthy."""
+    h = (rec or {}).get("health")
+    return h if isinstance(h, dict) else account_health(rec)
+
+
+def has_working_accounts() -> bool:
+    """Whether at least one account is actually usable right now."""
+    return any(_health_of(a)["healthy"] for a in list_accounts())
+
+
+def accounts_summary() -> dict:
+    """One honest snapshot for anything that reports Google connectivity.
+
+    {total, healthy, connected, degraded, needs_attention:[{email,label,state,
+    summary}], note} -- `connected` is true only when something works, and
+    `degraded` marks the case a boolean cannot express: some accounts work and
+    some do not.
+    """
+    accts = list_accounts()
+    broken = [a for a in accts if not _health_of(a)["healthy"]]
+    healthy_n = len(accts) - len(broken)
+    if not accts:
+        # Deliberately empty. "Never connected" is not an anomaly to warn the
+        # model about -- it is the caller's ordinary not-connected case, and
+        # the caller's own note explains how to connect. Emitting text here
+        # would override that with something less useful.
+        note = ""
+    elif not healthy_n:
+        note = ("Every Google account needs reauthorisation. Do NOT report "
+                "Google as connected, and do not present any calendar or mail "
+                "result as complete. Say which accounts need reconnecting: "
+                + "; ".join(f"{a.get('email') or a.get('label')} "
+                            f"({_health_of(a)['sync_phrase']})" for a in broken))
+    elif broken:
+        note = ("Some Google accounts work and some do not, so any calendar or "
+                "mail answer is INCOMPLETE. Say so, and name the accounts that "
+                "need reconnecting: "
+                + "; ".join(f"{a.get('email') or a.get('label')} "
+                            f"({_health_of(a)['sync_phrase']})" for a in broken))
+    else:
+        note = ""
+    return {
+        "total": len(accts),
+        "healthy": healthy_n,
+        "connected": healthy_n > 0,
+        "degraded": bool(broken) and healthy_n > 0,
+        "needs_attention": [
+            {"email": a.get("email"), "label": a.get("label"),
+             "state": _health_of(a)["state"], "summary": _health_of(a)["summary"]}
+            for a in broken
+        ],
+        "note": note,
+    }
 
 
 def list_accounts() -> list:
@@ -329,11 +532,22 @@ def credentials_for(account_id: str):
     try:
         creds = _raw_credentials(account_id)
     except Exception as e:
-        _mark_status(account_id, "needs_reauth")
+        # A decryption failure is not a revoked grant. See
+        # `_classify_credential_error` and the "unreadable" entry above.
+        _mark_status(account_id, _classify_credential_error(e))
         cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
-                       success=False, error=type(e).__name__)
+                       success=False, error=type(e).__name__,
+                       detail=str(e)[:200])
         return None
     if creds is None:
+        # NO TOKEN ON DISK, and the index still claiming whatever it last
+        # claimed. Returning None while leaving the stored status alone is how
+        # "connected" survived an account that could not produce a credential
+        # at all - the settings page said fine, every fetch came back empty,
+        # and nothing wrote down that they disagreed.
+        _mark_status(account_id, "disconnected")
+        cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
+                       success=False, error="NoStoredToken")
         return None
     if creds.refresh_token and (creds.expired or not creds.valid):
         try:
@@ -348,9 +562,36 @@ def credentials_for(account_id: str):
                            success=False, error=type(e).__name__)
             return None
     if not creds or not creds.valid:
+        # Expired with no refresh token to spend: the grant really is gone and
+        # reconnecting really is the remedy. This branch used to return None
+        # silently, leaving the index saying "connected" for an account that
+        # could not answer a single call.
+        _mark_status(account_id, "needs_reauth")
+        cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id,
+                       success=False, error="NoUsableCredential")
         return None
+    # SUCCESS CLEARS A STALE FAILURE. Only a successful *refresh* used to write
+    # "connected" back, so an account marked bad by one transient failure stayed
+    # bad for as long as its token remained valid - no refresh was due, so
+    # nothing ever said otherwise, and every fetch skipped it. Observed
+    # 2026-09-19: both accounts reading fine, audit full of success=true, and
+    # the connectors page insisting they needed reauthorising.
+    #
+    # This is the other half of "the status is a live check, not a remembered
+    # claim". A verdict that can only ever get worse is not a health check.
+    try:
+        if (_load_index_status(account_id) or "") != "connected":
+            _mark_status(account_id, "connected", touch_sync=True)
+    except Exception:
+        pass
     cs.audit_event(_AUDIT_CATEGORY, "access", account_id=account_id, success=True)
     return creds
+
+
+def _load_index_status(account_id: str) -> str | None:
+    rec = next((r for r in _load_index().get("accounts", [])
+                if r.get("id") == account_id), None)
+    return (rec or {}).get("status")
 
 
 def _mark_status(account_id: str, status: str, touch_sync: bool = False) -> None:
@@ -418,10 +659,25 @@ def _migrate_legacy_if_needed() -> None:
 
 # ── merged / per-account data fetches (token-free output) ────────────────────
 def _accounts_with(service: str) -> list:
+    """Accounts that have `service` switched on AND are actually usable.
+
+    FAIL CLOSED, via the one derivation. This used to read
+    `status != "needs_reauth"`, which is a deny-list of exactly one value in
+    a module whose header says health is never inferred from a record
+    existing. Every other unhealthy state - "error", "disconnected",
+    "revoked", a missing status, and the "unreadable" state added on
+    2026-09-19 - passed straight through it as usable. `account_health` is
+    where usability is decided for every other surface; a fetch path that
+    decides it a second way is how the connectors page and the data end up
+    telling the user different stories.
+    """
     out = []
     for r in _load_index().get("accounts", []):
-        if r.get("services", {}).get(service, True) and r.get("status") != "needs_reauth":
-            out.append(r)
+        if not r.get("services", {}).get(service, True):
+            continue
+        if not account_health(r).get("healthy"):
+            continue
+        out.append(r)
     return out
 
 
@@ -437,6 +693,117 @@ def _accounts_with(service: str) -> list:
 # Settable rather than merely widened: the right window depends on how much
 # mail an account gets, which is not a thing this module can know.
 _DEFAULT_GMAIL_WINDOW_DAYS = 7
+
+
+# ── per-service condition at the provider ───────────────────────────────────
+#
+# AN ACCOUNT BEING HEALTHY DOES NOT MEAN EVERY SERVICE ON IT WORKS. Measured
+# 2026-09-19: both of Stephen's accounts were connected, their tokens valid,
+# their `services` maps carrying `drive: true` - and every Drive call returned
+# `403 Google Drive API has not been used in project 449982820564 before or it
+# is disabled`. The Drive API had never been switched on for the Cloud project.
+# Nothing recorded that, so the connectors page reported Drive as on, the model
+# was told Drive was available, and the only evidence was a 403 thrown away
+# inside an errors list nobody surfaced.
+#
+# A CONDITION AT THE PROVIDER IS STICKY UNTIL IT ISN'T. It is not a transient:
+# enabling an API is a deliberate act in a console, so the condition persists
+# until someone performs it. It is therefore worth recording - but cleared the
+# instant a call succeeds, because a verdict that can only get worse is not a
+# health check (the lesson from `credentials_for` the same day).
+
+_SERVICE_STATE_FILE = ACCOUNTS_DIR / "service_state.json"
+
+#: Substrings that mean "the provider has turned this off", as opposed to a
+#: network blip. Matched conservatively: anything not recognised here is left
+#: alone rather than recorded as a provider condition, because wrongly marking
+#: a service degraded is the same class of mistake as wrongly marking an
+#: account revoked.
+_PROVIDER_OFF_SIGNS = (
+    "has not been used in project",
+    "is disabled",
+    "accessnotconfigured",
+    "insufficient authentication scopes",
+    "insufficientpermissions",
+)
+
+
+def _load_service_state() -> dict:
+    try:
+        return json.loads(_SERVICE_STATE_FILE.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _save_service_state(state: dict) -> None:
+    try:
+        ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _SERVICE_STATE_FILE.with_name(_SERVICE_STATE_FILE.name + ".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp.replace(_SERVICE_STATE_FILE)
+    except Exception:
+        pass
+
+
+def note_service_result(service: str, ok: bool, detail: str = "") -> None:
+    """Record whether `service` is switched on at the provider.
+
+    Only a RECOGNISED provider-side refusal is recorded. A timeout, a 500 or an
+    unfamiliar message leaves the state untouched: "I could not check" is not
+    "it is off", the same rule the seat probes and the credential classifier
+    already follow.
+    """
+    state = _load_service_state()
+    cur = state.get(service) or {}
+    if ok:
+        if cur.get("blocked"):
+            state[service] = {"blocked": False, "detail": "",
+                              "at": _now_iso()}
+            _save_service_state(state)
+        return
+    low = (detail or "").lower()
+    if not any(sign in low for sign in _PROVIDER_OFF_SIGNS):
+        return
+    if cur.get("blocked") and cur.get("detail") == detail:
+        return
+    state[service] = {"blocked": True, "detail": (detail or "")[:400],
+                      "at": _now_iso()}
+    _save_service_state(state)
+
+
+def service_health(service: str):
+    """Whether `service` can actually be used right now, across all accounts.
+
+    Three questions, in order, because they have different answers and the
+    surfaces that ask only the first are the ones that lie:
+
+      1. Is any account configured for it at all?      -> ABSENT
+      2. Are those accounts usable?                    -> NEEDS_USER / UNREADABLE
+      3. Is the service switched on at the provider?   -> DEGRADED
+
+    `routes/news.py` reported Gmail AND Calendar as connected from one check of
+    the primary account's credentials, which answers none of these three.
+    """
+    from agent_friday.services import connector_health as _ch
+    recs = [r for r in _load_index().get("accounts", [])
+            if r.get("services", {}).get(service, True)]
+    if not recs:
+        return _ch.Health(state=_ch.ABSENT, source="google_accounts",
+                          source_state="no-account",
+                          summary="No Google account has %s switched on" % service)
+    healths = [_ch.from_google_account(r) for r in recs]
+    worst = _ch.worst(healths)
+    if not worst.healthy:
+        return worst
+    cur = (_load_service_state().get(service) or {})
+    if cur.get("blocked"):
+        return _ch.Health(
+            state=_ch.DEGRADED, source="google_accounts",
+            source_state="provider-off", action="enable_api",
+            detail=str(cur.get("detail") or ""),
+            summary="Your Google account is connected, but %s is switched off "
+                    "at Google for this project" % service)
+    return worst
 
 
 def _gmail_window_days(override: int | None = None) -> int:
@@ -456,13 +823,17 @@ def _gmail_window_days(override: int | None = None) -> int:
     return _DEFAULT_GMAIL_WINDOW_DAYS
 
 
-def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
-    """Recent Gmail across all gmail-enabled accounts, each thread badged with the
+def merged_gmail(limit_per_account: int = 15, days: int | None = None,
+                  query: str | None = None) -> dict:
+    """Gmail across all gmail-enabled accounts, each thread badged with the
     account it came from. Returns {accounts:[...], messages:[...], errors:[...]}.
 
-    `days` overrides the configured window (see `_gmail_window_days`)."""
+    `days` overrides the configured window (see `_gmail_window_days`).
+    `query` is a real Gmail search string (from:, subject:, quotes, booleans,
+    newer_than:, etc.). When given, it is sent to Gmail's own `q=` parameter
+    instead of the fixed unread/recent-window default -- Gmail does the
+    matching, not a local substring filter over a tiny fetched window."""
     _migrate_legacy_if_needed()
-    from agent_friday.services.calendar_engine import _fetch_gmail_recent  # legacy single-account
     messages, errors, used = [], [], []
     for rec in _accounts_with("gmail"):
         aid = rec["id"]
@@ -472,7 +843,7 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
                            "error": "needs_reauth"})
             continue
         used.append(_public_record(rec))
-        for m in _gmail_for_creds(creds, limit_per_account, days=days):
+        for m in _gmail_for_creds(creds, limit_per_account, days=days, query=query):
             if "error" in m:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": m["error"]})
                 continue
@@ -485,7 +856,16 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None) -> dict:
     return {"accounts": used, "messages": messages, "errors": errors}
 
 
-def _gmail_for_creds(creds, limit: int, days: int | None = None) -> list:
+def _gmail_for_creds(creds, limit: int, days: int | None = None,
+                      query: str | None = None) -> list:
+    """Fetch messages for one account's credentials.
+
+    When `query` is given (a real Gmail search string), it is sent directly
+    as Gmail's own `q=` -- Gmail's server-side search already understands
+    from:/subject:/quotes/booleans/newer_than: etc., so there is no local
+    re-filtering to do here for the live-API path. With no query, falls back
+    to the previous unread/recent-window default so unrelated callers (the
+    daily briefing, notifications, etc.) keep their existing behavior."""
     try:
         from googleapiclient.discovery import build
     except Exception as e:
@@ -493,9 +873,14 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None) -> list:
     try:
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         seen, out = set(), []
-        window = "newer_than:%dd" % _gmail_window_days(days)
-        for q in (f"is:unread {window}", window):
-            resp = svc.users().messages().list(userId="me", q=q, maxResults=limit).execute()
+        q = (query or "").strip()
+        if q:
+            queries = (q,)
+        else:
+            window = "newer_than:%dd" % _gmail_window_days(days)
+            queries = (f"is:unread {window}", window)
+        for qs in queries:
+            resp = svc.users().messages().list(userId="me", q=qs, maxResults=limit).execute()
             for ref in resp.get("messages", []):
                 mid = ref.get("id")
                 if not mid or mid in seen:
@@ -618,8 +1003,13 @@ def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) ->
                 "modified": f.get("modifiedTime"), "size": f.get("size"),
                 "link": f.get("webViewLink"), "icon": f.get("iconLink"),
             })
+        note_service_result("drive", True)
         return {"account": _public_record(rec), "folder_id": folder_id, "files": files}
     except Exception as e:
+        # A 403 saying the API is off at the Cloud project is the difference
+        # between "Drive is broken" and "Drive was never switched on", and the
+        # user can only act on the second if someone writes it down.
+        note_service_result("drive", False, str(e))
         return {"error": f"Drive fetch failed: {e}", "account_id": account_id}
 
 
@@ -638,10 +1028,16 @@ def merged_drive_search(query: str = "", max_results: int = 20) -> dict:
             errors.append({"account_id": aid, "label": rec.get("label"), "error": "needs_reauth"})
             continue
         used.append(_public_record(rec))
+        _saw_result = False
         for f in _drive_search_for_creds(creds, query, max_results):
             if "error" in f:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": f["error"]})
+                # The 403 that was being thrown away. See note_service_result.
+                note_service_result("drive", False, str(f["error"]))
+                _saw_result = True
                 continue
+            _saw_result = True
+            note_service_result("drive", True)
             f["account_id"] = aid
             f["account_label"] = rec.get("label")
             f["account_email"] = rec.get("email")
@@ -1042,9 +1438,17 @@ def active_client_kind() -> str:
         return "none"
 
 
-def build_auth_flow(state: str | None = None):
+def build_auth_flow(state: str | None = None, include_send: bool = False):
     """Construct an OAuth Flow for a new account connection. Returns
-    (flow, redirect_uri, client_type) or raises with a clear message."""
+    (flow, redirect_uri, client_type) or raises with a clear message.
+
+    `include_send` adds GMAIL_SEND. Off by default so the ordinary connect
+    path never asks for it: a person reconnecting a broken account should not
+    have "Send email on your behalf" appear in the consent screen they are
+    clicking through at speed. BOTH legs of the OAuth round-trip must pass the
+    same value — the callback rebuilds this flow from scratch, and a mismatch
+    changes what the token is exchanged for.
+    """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
     from agent_friday.services import google_oauth_client as goc
@@ -1062,7 +1466,10 @@ def build_auth_flow(state: str | None = None):
     from google_auth_oauthlib.flow import Flow
     client_type = _google_client_type(cfg) or "installed"
     redirect_uri = multi_redirect_uri(cfg, client_type)
+    scopes = list(GOOGLE_MULTI_SCOPES)
+    if include_send:
+        scopes.append(GMAIL_SEND)
     flow = Flow.from_client_config(
-        cfg, scopes=GOOGLE_MULTI_SCOPES, redirect_uri=redirect_uri, state=state
+        cfg, scopes=scopes, redirect_uri=redirect_uri, state=state
     )
     return flow, redirect_uri, client_type

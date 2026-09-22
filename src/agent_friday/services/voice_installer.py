@@ -120,7 +120,58 @@ TARGETS = {
         "disk_gb": 0.5,
         "stages": [],
     },
+    # voice-system-clean-sheet.md §2.5 / §4.3: the CPU-mouth CANDIDATE. The
+    # `kokoro-onnx` wheel (< 5 MB) plus the int8 model (~80 MB) and the
+    # voices file (~27 MB) from the wrapper's own release assets. It becomes
+    # the CPU default only if Phase 2's measurement says first-chunk <= 500 ms
+    # on this CPU; until then it is an option with its measured number.
+    # Budget (§2.5): the wheel (< 5 MB) and the voices file (~27 MB) only. The
+    # model is the `model_q8f16.onnx` (86 MB) ALREADY on disk under
+    # runtime/kokoro-onnx/; the 88 MB int8 release model is not downloaded
+    # unless the on-disk export proves not to load (then it is a separate,
+    # sized decision, not this target's).
+    "kokoro-onnx": {
+        "label": "Kokoro-82M via kokoro-onnx (CPU int8 candidate, ~32 MB)",
+        "disk_gb": 0.1,
+        # --no-deps: the wheel declares `phonemizer`, which shares its import
+        # name with the `phonemizer-fork` the Kokoro torch path already uses;
+        # letting pip resolve it would overwrite a working mouth's g2p.
+        # onnxruntime and numpy are already present.
+        "stages": [["install", "--no-deps", "kokoro-onnx>=0.4"]],
+        "downloads": [
+            ("https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+             "kokoro-onnx/voices-v1.0.bin", 27),
+        ],
+        "verify": ["kokoro_onnx"],
+    },
 }
+
+
+def _download(url: str, dest, size_mb: int) -> None:
+    """Stream one allowlisted asset to disk with a size line in the log.
+    Skips a file that already exists at a plausible size."""
+    import urllib.request
+    from pathlib import Path
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.stat().st_size > size_mb * 1024 * 1024 * 0.8:
+        _append_log(f"present: {dest.name} ({dest.stat().st_size // (1024 * 1024)} MB)")
+        return
+    _append_log(f"downloading {dest.name} (~{size_mb} MB)…")
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    req = urllib.request.Request(url, headers={"User-Agent": "friday-voice-installer"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+        got = 0
+        while True:
+            if _CANCEL.is_set():
+                raise RuntimeError("cancelled")
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+            got += len(chunk)
+    tmp.replace(dest)
+    _append_log(f"downloaded {dest.name}: {got // (1024 * 1024)} MB")
 
 _LOCK = threading.Lock()
 _JOB = {
@@ -274,6 +325,14 @@ def _run_job(target: str):
                     raise RuntimeError("cancelled")
                 if rc != 0:
                     raise RuntimeError(f"pip exited with code {rc} — see log")
+            # Allowlisted asset downloads (clean-sheet §5.5): fixed URLs,
+            # sizes shown, under ~/.friday/runtime/. Never on a path the mic
+            # click can block on.
+            if spec.get("downloads"):
+                from agent_friday.services.local_voice import LOCAL_VOICE_DIR
+                _runtime = LOCAL_VOICE_DIR.parent / "runtime"
+                for _url, _rel, _mb in spec["downloads"]:
+                    _download(_url, _runtime / _rel, _mb)
         # VERIFY BEFORE CLAIMING SUCCESS.
         _verify = spec.get("verify") or []
         if _verify:

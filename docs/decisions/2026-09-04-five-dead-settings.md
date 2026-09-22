@@ -1,7 +1,7 @@
 # Five settings that persist and redraw but drive nothing — five decisions
 
 > **Status:** active
-> **Last verified:** 2026-09-06
+> **Last verified:** 2026-09-09 (addendum: three more found, tally now 8)
 > **Implementation:** none yet — `scene_name` removed, with proof test `tests/gauntlet/test_dead_scene_name_setting_removed.py`; the other four are ruled but unbuilt
 > **Supersedes / superseded by:** —
 > **Written:** 2026-09-04
@@ -126,3 +126,62 @@ real "how much are we actually building" question, worth more than five
 minutes). That combination is fixable in one small, low-risk batch
 whenever you're ready to greenlight it — say the word and it can be this
 run's next fix, proven the same way as everything else tonight.
+
+---
+
+## Addendum 2026-09-09 — three more, found while building cloud voice
+
+This document is becoming the honest running record of this defect class rather
+than a snapshot of one night, so new instances are appended here as they are
+found instead of accumulating in commit messages.
+
+**The three.** `elevenlabs_api_key`, `elevenlabs_model` and
+`elevenlabs_voice_id` were read by `services/elevenlabs_tools.py:_settings()`
+and were **not declared in `DEFAULT_SETTINGS`**. Because `_load_settings_raw()`
+whitelists against that dict —
+
+```python
+merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+```
+
+— each one wrote to `settings.json` successfully, reported success, and was
+discarded on the very next read. A user who set an ElevenLabs voice in settings
+got their choice back exactly once, from the in-memory dict, and never again.
+
+**Why this variant is worse than the original five.** The five were controls
+that drove nothing. These three *did* have a consumer — `elevenlabs_tools.py`
+genuinely reads them — so the failure was not "nothing happens" but "it works,
+then silently stops working." That is harder to notice and harder to
+attribute: the user concludes the feature is flaky rather than that the setting
+is dead. The env-var and `core.ELEVENLABS_API_KEY` paths kept working
+throughout, which masked the key case entirely for anyone who had set the env
+var.
+
+**Disposition: (A) build, not (C) leave-and-note.** All three are now declared
+in `DEFAULT_SETTINGS` and read at real enforcement points in
+`services/cloud_voice.py` (`selected_model()`, `selected_voice()`,
+`_api_key()`). Four further cloud-voice keys (`inworld_api_key`,
+`inworld_model`, `inworld_voice_id`, `inworld_plan_tier`) were declared the same
+way in the same change, so the new surface does not repeat the pattern it was
+built alongside.
+
+**Pinned.** `tests/gauntlet/test_cloud_voice_egress_and_cost.py::TestSettingsAreLive`
+asserts both halves for all seven keys: that each is declared in
+`DEFAULT_SETTINGS`, and that changing it changes behaviour at the enforcement
+point. Verified by mutation — undeclaring `inworld_plan_tier` turns the test
+red. This is the "test that fails without it" bar rather than a test that
+merely passes today.
+
+**Running tally: 5 + 3 = 8.**
+
+**The generalisable check, for whoever finds number nine.** Every one of these
+eight was findable by the same two-line audit, which is cheap enough to run on
+any change that adds a setting:
+
+1. Grep for the key across `src/` and both HTML files. If the only hits are the
+   save path and the redraw, it is dead in the original sense.
+2. Grep for the key in `DEFAULT_SETTINGS`. If it is absent but read anywhere,
+   it is dead in this new sense — it will work once and then revert.
+
+A setting ships only with its enforcement and a test that fails without it.
+
