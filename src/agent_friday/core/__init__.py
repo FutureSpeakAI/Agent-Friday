@@ -1434,9 +1434,125 @@ PROCESSES = {}
 PROCESSES_LOCK = threading.Lock()
 
 
+# ═══ TURN LIVENESS ═══════════════════════════════════════════════
+# "Is this chat turn still working, or has it gone silent?" — two conditions
+# that a stopwatch cannot tell apart and that must not be treated the same.
+#
+# The UI used to release a chat after fifteen minutes of no reply and tell the
+# user to go look somewhere else. A long agent run is NORMAL here: the
+# reference machine has turns of 25+ tool calls, and every one of them is a
+# perfectly healthy turn that a wall clock calls dead. Meanwhile the condition
+# the release was built for — the recurring silent hang, process alive and
+# friday.log completely dark — can happen at ninety seconds and the clock has
+# nothing to say about it.
+#
+# So: a turn is alive while its worker thread is alive AND something has petted
+# it. Every process_register/update/log pets the turn running on that thread,
+# which means every iteration of both agent loops and every tool call reports
+# progress without a single call site having to know this exists.
+_TURNS = {}
+_TURNS_LOCK = threading.Lock()
+_TURN_LOCAL = threading.local()
+
+#: How long a turn may go with no orb activity before it is *reported* as
+#: quiet. Reported, not killed: a single model call legitimately runs minutes
+#: with nothing to say, so this is a fact the UI may show, never a verdict.
+TURN_QUIET_AFTER_S = 180.0
+
+
+def turn_begin(turn_id, conversation_id=None):
+    """Mark the start of a chat turn on THIS thread. Returns the turn id."""
+    if not turn_id:
+        return None
+    now = _time.time()
+    rec = {"turn_id": turn_id, "conversation_id": conversation_id,
+           "thread": threading.current_thread(), "started": now,
+           "last_progress": now, "label": None, "step": None, "model": None,
+           "pets": 0}
+    with _TURNS_LOCK:
+        _TURNS[turn_id] = rec
+        # Bound the registry. A turn that never ended because its thread died
+        # mid-flight would otherwise sit here forever; a dead thread is
+        # detectable, so drop those rather than expiring live ones on a clock.
+        if len(_TURNS) > 64:
+            for tid, r in list(_TURNS.items()):
+                th = r.get("thread")
+                if tid != turn_id and th is not None and not th.is_alive():
+                    _TURNS.pop(tid, None)
+    _TURN_LOCAL.turn_id = turn_id
+    return turn_id
+
+
+def turn_end(turn_id=None):
+    tid = turn_id or getattr(_TURN_LOCAL, "turn_id", None)
+    _TURN_LOCAL.turn_id = None
+    if not tid:
+        return
+    with _TURNS_LOCK:
+        _TURNS.pop(tid, None)
+
+
+def turn_pet(label=None, step=None, model=None):
+    """Record progress on the turn running on this thread. Never raises."""
+    tid = getattr(_TURN_LOCAL, "turn_id", None)
+    if not tid:
+        return
+    try:
+        with _TURNS_LOCK:
+            rec = _TURNS.get(tid)
+            if rec is None:
+                return
+            rec["last_progress"] = _time.time()
+            rec["pets"] += 1
+            if label:
+                rec["label"] = str(label)[:120]
+            if step is not None:
+                rec["step"] = step
+            if model:
+                rec["model"] = model
+    except Exception:
+        pass
+
+
+def turn_liveness(turn_id, now=None):
+    """What the chat UI asks instead of looking at a clock.
+
+    ``state`` is one of:
+      * ``working``  — the worker thread is alive. NEVER release the chat.
+      * ``quiet``    — alive, but nothing has reported progress for a while.
+                       Still not a reason to release: say so and keep waiting.
+      * ``gone``     — the thread is dead or the turn was never registered.
+                       This is the real failure, and the only honest release.
+    """
+    now = now or _time.time()
+    with _TURNS_LOCK:
+        rec = dict(_TURNS.get(turn_id) or {})
+    if not rec:
+        return {"turn_id": turn_id, "state": "gone", "alive": False}
+    th = rec.get("thread")
+    alive = bool(th is not None and th.is_alive())
+    quiet_for = now - float(rec.get("last_progress") or now)
+    state = "working" if alive else "gone"
+    if alive and quiet_for > TURN_QUIET_AFTER_S:
+        state = "quiet"
+    return {
+        "turn_id": turn_id,
+        "conversation_id": rec.get("conversation_id"),
+        "state": state,
+        "alive": alive,
+        "elapsed_s": round(now - float(rec.get("started") or now), 1),
+        "quiet_for_s": round(quiet_for, 1),
+        "quiet_after_s": TURN_QUIET_AFTER_S,
+        "label": rec.get("label"),
+        "step": rec.get("step"),
+        "model": rec.get("model"),
+        "progress_events": rec.get("pets", 0),
+    }
+
+
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
-                     task_id=None, eta_s=None):
+                     task_id=None, eta_s=None, step_total=None):
     """Register a new process for the holographic orb display.
 
     `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
@@ -1454,7 +1570,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "model": model,
             "color": color,
             "status": "running",
-            "progress": 0,
+            "progress": None,
             "steps": steps or [],
             "log": [],
             "task_id": task_id,
@@ -1463,12 +1579,33 @@ def process_register(pid, *, name="Task", label=None, category="default",
             # no scale, and says "longer than usual" rather than parking at
             # 99% — a warning without a number is just an apology.
             "eta_s": eta_s,
+            # HOW FAR ALONG, HONESTLY.
+            #
+            # `progress` is a fraction and a fraction needs a denominator. An
+            # agent loop does not have one: it runs until the model stops
+            # asking for tools, and `max_iters` is 999, which is a ceiling and
+            # not an expectation. The Anthropic loop used to report
+            # `0.05 + 0.1 * (iteration - 1)` — a straight line to 90% that
+            # silently asserts "about ten steps" — and the local loop reported
+            # nothing at all, so a local task sat at 0% for its entire life no
+            # matter how well it was going.
+            #
+            # So: `step_n` is what we actually know, `step_total` is None when
+            # we do not know the total, and `progress` stays None unless
+            # something can compute a real fraction (image generation can;
+            # an agent loop cannot). A reader showing "step 7" is telling the
+            # truth. A bar at 0% is not.
+            "step_n": 0,
+            "step_total": step_total,
             "started": _time.time(),
+            "updated": _time.time(),
         }
+    turn_pet(label=label or name, model=model)
 
 
 def process_update(pid, *, status=None, progress=None, label=None,
-                   step=None, steps=None, task_id=None, result=None):
+                   step=None, steps=None, task_id=None, result=None,
+                   step_n=None, step_total=None):
     """Update an existing process entry.
 
     `result` attaches the process's final output (e.g. a local model's reply)
@@ -1483,6 +1620,10 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["status"] = status
         if progress is not None:
             p["progress"] = max(0.0, min(1.0, progress))
+        if step_n is not None:
+            p["step_n"] = int(step_n)
+        if step_total is not None:
+            p["step_total"] = int(step_total)
         if label is not None:
             p["label"] = label
         if step is not None:
@@ -1493,8 +1634,10 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["task_id"] = task_id
         if result is not None:
             p["result"] = str(result)[:4000]
+        p["updated"] = _time.time()
         if status in ("completed", "error"):
             p["ended"] = _time.time()
+    turn_pet(label=label, step=step)
 
 
 def process_log(pid, line: str):
@@ -1503,8 +1646,10 @@ def process_log(pid, line: str):
         p = PROCESSES.get(pid)
         if p is not None:
             p.setdefault("log", []).append(str(line))
+            p["updated"] = _time.time()
             if len(p["log"]) > 200:
                 p["log"] = p["log"][-200:]
+    turn_pet()
 
 
 def process_remove(pid):

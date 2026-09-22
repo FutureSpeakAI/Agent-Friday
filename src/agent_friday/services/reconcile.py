@@ -158,19 +158,146 @@ def reconcile_research(resume: bool = True) -> dict:
             "unreadable": sorted(UNREADABLE)}
 
 
-def reconcile_tasks() -> dict:
-    """Free-form agentic work cannot resume; it can only be admitted.
+def _tasks():
+    """The live task ledger and its lock.
 
-    A task left `running` in the ledger by a process that no longer exists is
-    not running. Marking it interrupted — and saying so in the conversation
-    that started it — is the honest outcome. Silently leaving it `running`
-    produces stuck orbs in the UI.
+    They live in ``services/agent``, NOT in ``core``. This module imported them
+    from ``core`` inside a ``try/except ImportError`` that returned an empty
+    result, so ``reconcile_tasks`` has never marked a single task interrupted
+    in production — it raised ImportError on every boot, swallowed it, and
+    reported "0 items adopted". A function whose whole purpose is "a job that
+    stopped must say it stopped" was itself stopping silently.
+
+    Its test did not catch it because it created the attribute the production
+    code was looking for:
+
+        monkeypatch.setattr(core, "TASKS", {...}, raising=False)
+
+    ``raising=False`` on a name that does not exist builds the world the code
+    wants instead of the one it runs in, and the test then passes in that
+    world. Resolved in one place now, so there is one thing to get wrong and
+    the tests patch the same thing production reads.
+    """
+    from agent_friday.services.agent import TASKS, TASKS_LOCK
+    return TASKS, TASKS_LOCK
+
+
+def _resumability(task_id):
+    """What services/task_resume says about this task. Never raises."""
+    try:
+        from agent_friday.services import task_resume as _tr
+        return _tr.resumability(task_id)
+    except Exception:
+        return {"resumable": False, "reason": "resume support unavailable"}
+
+
+def readmit_queued() -> dict:
+    """Tasks that were WAITING for a local seat when the process died.
+
+    These never ran. Nothing was spent on them and no side effect was taken,
+    so re-admitting them is lossless — the honest opposite of the mid-flight
+    case below, where the question is delicate.
+
+    They also cannot simply be re-wired: ``_spawn_task`` parks the worker
+    Thread OBJECT in ``_PENDING_TASK_THREADS`` while a task waits, and a thread
+    object does not survive the process that made it. So re-admission means
+    spawning the task again from its recorded prompt and pointing the old
+    record at the new one.
+
+    Without this a ``queued-for-seat`` task is worse off than a running one:
+    ``task_journal.reconcile_on_boot`` only looks at ``running``/``queued``, so
+    a queued-for-seat record is not even marked interrupted. It keeps a status
+    that says it is about to start, forever, with nothing left that could start
+    it. That is a silent stall, which is the one outcome this codebase refuses.
+    """
+    out = {"readmitted": [], "failed": []}
+    try:
+        TASKS, TASKS_LOCK = _tasks()
+        from agent_friday.services.agent import _spawn_task
+        from agent_friday.services import task_journal as _tj
+    except Exception as e:
+        print(f"  [reconcile] seat-queue re-admission unavailable: {e}")
+        return out
+    with TASKS_LOCK:
+        waiting = [(tid, dict(t)) for tid, t in TASKS.items()
+                   if (t or {}).get("status") == "queued-for-seat"]
+    for tid, t in waiting:
+        prompt = (t.get("prompt") or "").strip()
+        if not prompt:
+            out["failed"].append(tid)
+            with TASKS_LOCK:
+                rec = TASKS.get(tid)
+                if rec is not None:
+                    rec["status"] = "interrupted"
+                    rec["status_reason"] = (
+                        "Was waiting for a local seat when Friday restarted, and "
+                        "no prompt was recorded, so it cannot be re-queued.")
+            continue
+        try:
+            new_id = _spawn_task(t.get("name") or "Task", prompt,
+                                 description=t.get("description") or "",
+                                 chain=t.get("chain"),
+                                 chain_step=int(t.get("chain_step") or 0),
+                                 model=t.get("model"))
+        except Exception as e:
+            out["failed"].append(tid)
+            print(f"  [reconcile] could not re-queue {tid}: {e}")
+            continue
+        with TASKS_LOCK:
+            rec = TASKS.get(tid)
+            if rec is not None:
+                rec["status"] = "superseded"
+                rec["ended"] = time.time()
+                rec["status_reason"] = (
+                    f"Was waiting for a local seat when Friday restarted. It had "
+                    f"not started, so nothing was lost — re-queued as {new_id}.")
+        try:
+            _tj.append(tid, "decision", point="readmit", chosen=new_id,
+                       reason="was queued for a local seat when the process died; "
+                              "nothing had run, so it was re-queued")
+        except Exception:
+            pass
+        out["readmitted"].append({"task_id": tid, "new_task_id": new_id})
+    for item in out["readmitted"]:
+        t = TASKS.get(item["task_id"]) or {}
+        _report(t.get("conversation_id"),
+                f"**{t.get('name') or item['task_id']}** was still waiting for the "
+                f"local seat when Friday restarted. It had not started yet, so "
+                f"nothing was lost — I have put it back in the queue.",
+                {"kind": "requeue_notice", "task_id": item["task_id"],
+                 "new_task_id": item["new_task_id"]})
+    return out
+
+
+def reconcile_tasks() -> dict:
+    """Free-form agentic work that was mid-flight: resume it if we can, and
+    say plainly when we cannot.
+
+    This function used to be unconditional — "its state lived in a process
+    that no longer exists... I cannot pick it up mid-way". That was true when
+    it was written and is no longer true for a task that got far enough to
+    leave a checkpoint: services/task_resume saves the transcript at every
+    tool boundary, and a restored transcript carries every completed tool's
+    result with it, so resuming re-buys nothing.
+
+    Three outcomes, and the difference between the last two is the whole
+    reason this is careful:
+
+      * a checkpoint exists and nothing was in flight -> offer to resume
+        (or resume outright, if task_resume_auto is on),
+      * a checkpoint exists but a side-effecting tool was RUNNING when the
+        process died -> offer, and say what re-running it would risk,
+      * no checkpoint -> the original message, unchanged, because it is still
+        the honest one.
     """
     touched = []
     try:
-        from agent_friday.core import TASKS, TASKS_LOCK
-    except Exception:
-        return {"interrupted": []}
+        TASKS, TASKS_LOCK = _tasks()
+    except Exception as e:
+        # LOUD. This used to be a bare `return` and it is why this function
+        # was dead for its whole life.
+        print(f"  [reconcile] cannot reach the task ledger: {e}")
+        return {"interrupted": [], "resumable": [], "error": str(e)}
     now = time.time()
     with TASKS_LOCK:
         for tid, t in list(TASKS.items()):
@@ -191,14 +318,103 @@ def reconcile_tasks() -> dict:
             # which was true, and was the bug.
             t["status_reason"] = _why
             touched.append(tid)
+    resumable = []
     for tid in touched:
-        owner = (TASKS.get(tid) or {}).get("conversation_id")
-        name = (TASKS.get(tid) or {}).get("name") or tid
-        _report(owner, f"**{name}** was interrupted when Friday restarted. "
-                       f"It was a free-form run, so I cannot pick it up mid-way — "
-                       f"say the word and I will start it again.",
-                {"kind": "interruption_notice", "task_id": tid})
-    return {"interrupted": touched}
+        t = TASKS.get(tid) or {}
+        owner = t.get("conversation_id")
+        name = t.get("name") or tid
+        v = _resumability(tid)
+        if not v.get("resumable"):
+            # Unchanged, and still correct: with no checkpoint there is
+            # genuinely nothing to pick up.
+            _report(owner, f"**{name}** was interrupted when Friday restarted. "
+                           f"It was a free-form run with no checkpoint, so I "
+                           f"cannot pick it up mid-way — say the word and I "
+                           f"will start it again.",
+                    {"kind": "interruption_notice", "task_id": tid,
+                     "resumable": False, "why": v.get("reason")})
+            continue
+        with TASKS_LOCK:
+            rec = TASKS.get(tid)
+            if rec is not None:
+                rec["resumable"] = True
+                rec["resume_reason"] = v.get("reason")
+                rec["status_reason"] = (
+                    f"Interrupted by a restart at step {v.get('iteration')}. "
+                    f"Its work is checkpointed and can be resumed.")
+        resumable.append(tid)
+        if v.get("needs_confirmation"):
+            _report(owner,
+                    f"**{name}** was interrupted at step {v.get('iteration')} "
+                    f"and its work is saved — but {v.get('reason')} "
+                    f"Tell me to resume it and I will, and I will re-run that "
+                    f"tool; or start it over instead.",
+                    {"kind": "interruption_notice", "task_id": tid,
+                     "resumable": True, "needs_confirmation": True})
+            continue
+        auto = False
+        try:
+            from agent_friday.services import task_resume as _tr
+            auto = _tr.auto_enabled()
+        except Exception:
+            auto = False
+        if auto:
+            _report(owner,
+                    f"**{name}** was interrupted at step {v.get('iteration')}. "
+                    f"Its work is saved, so I am picking it back up rather than "
+                    f"starting over — nothing already done gets redone.",
+                    {"kind": "resume_notice", "task_id": tid})
+            _resume_in_background(tid)
+        else:
+            _report(owner,
+                    f"**{name}** was interrupted at step {v.get('iteration')} "
+                    f"when Friday restarted — but its work is saved. "
+                    f"{v.get('reason')} Say the word and I will pick it up "
+                    f"where it stopped instead of starting over.",
+                    {"kind": "interruption_notice", "task_id": tid,
+                     "resumable": True, "needs_confirmation": False})
+    return {"interrupted": touched, "resumable": resumable}
+
+
+def _resume_in_background(task_id: str) -> None:
+    """Auto-resume, off the boot thread.
+
+    Off the boot thread because a resumed turn can run for many minutes and
+    boot must not block on it, and because one task that fails to resume must
+    not take the rest of reconciliation with it.
+    """
+    def _run():
+        TASKS, TASKS_LOCK = _tasks()
+        from agent_friday.services import task_resume as _tr
+        from agent_friday.services import task_journal as _tj
+        _tj.push_task(task_id)
+        try:
+            with TASKS_LOCK:
+                rec = TASKS.get(task_id)
+                if rec is not None:
+                    rec["status"] = "running"
+                    rec["ended"] = None
+            text, _trace = _tr.resume(task_id)
+            with TASKS_LOCK:
+                rec = TASKS.get(task_id)
+                if rec is not None:
+                    rec["status"] = "complete"
+                    rec["result"] = text
+                    rec["ended"] = time.time()
+        except Exception as e:
+            with TASKS_LOCK:
+                rec = TASKS.get(task_id)
+                if rec is not None:
+                    rec["status"] = "interrupted"
+                    rec["status_reason"] = f"Resume failed: {e}"
+            print(f"  [reconcile] resume of {task_id} failed: {e}")
+        finally:
+            try:
+                _tj.pop_task()
+            except Exception:
+                pass
+    threading.Thread(target=_run, daemon=True,
+                     name=f"resume-{task_id}").start()
 
 
 def run_at_boot() -> dict:
@@ -214,7 +430,18 @@ def run_at_boot() -> dict:
     except Exception as e:
         print(f"  [reconcile] task reconciliation failed: {e}")
         out["tasks"] = {"error": str(e)}
+    # AFTER the mid-flight pass, not before: re-queuing spawns new tasks, and
+    # a task spawned by this boot must not then be swept up as a casualty of
+    # the previous one.
+    try:
+        out["queued"] = readmit_queued()
+    except Exception as e:
+        print(f"  [reconcile] seat-queue re-admission failed: {e}")
+        out["queued"] = {"error": str(e)}
     n = len(out.get("research", {}).get("resumed") or []) \
         + len(out.get("tasks", {}).get("interrupted") or [])
-    print(f"  Reconciliation: {n} item(s) adopted after restart")
+    n += len(out.get("queued", {}).get("readmitted") or [])
+    _res = len(out.get("tasks", {}).get("resumable") or [])
+    print(f"  Reconciliation: {n} item(s) adopted after restart"
+          + (f" ({_res} can be resumed from a checkpoint)" if _res else ""))
     return out

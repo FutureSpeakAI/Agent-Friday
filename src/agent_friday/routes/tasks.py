@@ -66,6 +66,17 @@ def list_tasks():
                 t.update(_tj.liveness(t['task_id'], t.get('status')))
     except Exception:
         pass
+    # Tray lifecycle (services/tray_lifecycle): a finished card is a receipt
+    # and ages out; a failure keeps longer; an INTERRUPTED task still holding
+    # a resume checkpoint never expires on a clock, because that card is a
+    # handle on unfinished work and sweeping it would throw away the thing
+    # the resume path exists to offer. Nothing is deleted here — only the
+    # card is hidden; the record and its journal stay reachable.
+    try:
+        from agent_friday.services import tray_lifecycle as _tl
+        tasks = [_tl.annotate(t) for t in tasks if _tl.visible(t)]
+    except Exception:
+        pass
     seen = {t.get('task_id') for t in tasks if t.get('task_id')}
     _status_map = {'completed': 'complete', 'error': 'failed', 'running': 'running'}
     now = _time.time()
@@ -84,7 +95,13 @@ def list_tasks():
                 'task_id': pid,
                 'name': p.get('label') or p.get('name') or 'Process',
                 'status': _status_map.get(p.get('status', 'running'), 'running'),
-                'progress': p.get('progress', 0),
+                # `progress` is passed through as-is, INCLUDING None. It
+                # used to default to 0, which turned "nobody can compute a
+                # fraction for this" into "0% done" — a claim made on behalf
+                # of a task that was working perfectly well.
+                'progress': p.get('progress'),
+                'step_n': p.get('step_n'),
+                'step_total': p.get('step_total'),
                 'icon': p.get('icon'),
                 'model': p.get('model'),
                 'category': p.get('category'),
@@ -539,6 +556,108 @@ def stop_after_step(task_id):
     _tj.request_stop(task_id)
     _tj.steer("stop after this step", source="user", task_id=task_id)
     return jsonify({"ok": True, "task_id": task_id, "stop_requested": True})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/resumable')
+@login_required
+def task_resumability(task_id):
+    """What a restart left behind, and the honest caveat on picking it up.
+
+    Separate from /rerun on purpose: rerun starts the task over from its
+    prompt and repeats every side effect; this says whether the work itself
+    survived. The UI needs both answers before it can offer the right button.
+    """
+    from agent_friday.services import task_resume as _tr
+    return jsonify({"task_id": task_id, **_tr.resumability(task_id)})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/resume', methods=['POST'])
+@login_required
+def resume_task(task_id):
+    """Continue an interrupted task from its saved transcript, in a worker.
+
+    Completed tool calls are NOT re-run: they are already answered in the
+    transcript the model gets back. A tool that was mid-flight at the crash is
+    the exception, and it is refused with 409 and the reason unless the caller
+    passes ``confirm_pending`` — the user saying they know whether it landed.
+    """
+    from agent_friday.services import task_resume as _tr
+    from agent_friday.services.agent import _task_set
+    body = request.get_json(silent=True) or {}
+    confirm = bool(body.get('confirm_pending'))
+    verdict = _tr.resumability(task_id)
+    if not verdict['resumable']:
+        return jsonify({"error": "cannot resume", "reason": verdict['reason'],
+                        **verdict}), 409
+    if verdict['needs_confirmation'] and not confirm:
+        return jsonify({"error": "confirmation required",
+                        "reason": verdict['reason'], **verdict}), 409
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        running = bool(t) and t.get('status') in ('queued', 'running')
+    if running:
+        return jsonify({"error": "task is still running"}), 409
+
+    _task_set(task_id, status='running', result=None, ended=None)
+
+    def _run():
+        from agent_friday.services import task_journal as _tj
+        _tj.push_task(task_id)
+        try:
+            text, _trace = _tr.resume(task_id, confirm_pending=confirm)
+            _task_set(task_id, status='completed', result=text,
+                      ended=_time.time())
+        except _tr.ResumeRefused as e:
+            _task_set(task_id, status='interrupted', result=f"[Not resumed] {e}")
+        except Exception as e:
+            # A resume that dies leaves the task interrupted, not failed: its
+            # checkpoint is still on disk and the attempt counter is what stops
+            # this becoming a loop.
+            _task_set(task_id, status='interrupted',
+                      result=f"[Resume failed] {e}")
+        finally:
+            _tj.pop_task()
+
+    threading.Thread(target=_run, name=f"resume-{task_id}", daemon=True).start()
+    return jsonify({"ok": True, "task_id": task_id, "resuming": True,
+                    "from_iteration": verdict['iteration'],
+                    "reason": verdict['reason']})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/dismiss', methods=['POST'])
+@login_required
+def dismiss_task_card(task_id):
+    """Hide a finished card from the tray. NOT a delete.
+
+    The ✕ on a card used to appear only while a task was running, where it
+    meant "cancel". A finished card had no control at all, which is why 81 of
+    them accumulated with no way to clear any. This is the tidy-up gesture:
+    the record, the journal and the result all stay exactly where they are.
+    `DELETE /api/tasks/<id>` is still the one that destroys things, and it
+    still lives behind a deliberate click in the drawer.
+    """
+    from agent_friday.services import tray_lifecycle as _tl
+    if _tl.dismiss(task_id):
+        return jsonify({"ok": True, "task_id": task_id, "dismissed": True})
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+    if not t:
+        return jsonify({"error": "Task not found"}), 404
+    return jsonify({"error": "this task is still running — cancel it instead",
+                    "status": t.get('status')}), 409
+
+
+@tasks_bp.route('/api/tasks/dismiss-all', methods=['POST'])
+@login_required
+def dismiss_all_task_cards():
+    """Clear the finished cards in one gesture.
+
+    Live work is skipped, and so is anything still holding a resume
+    checkpoint: a "clear all" that silently discarded unfinished work would
+    be the same loss this codebase keeps removing, dressed as tidiness.
+    """
+    from agent_friday.services import tray_lifecycle as _tl
+    return jsonify({"ok": True, "dismissed": _tl.dismiss_all()})
 
 
 @tasks_bp.route('/api/tasks/<task_id>/rerun', methods=['POST'])

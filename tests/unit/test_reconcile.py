@@ -74,36 +74,50 @@ def test_the_report_is_a_system_report_not_a_model_turn(env):
 def test_an_interrupted_task_is_marked_and_announced(env, monkeypatch):
     rec, conv = env
     owner = conv.create(title="owner")
-    import agent_friday.core as core
+    # The ledger lives in services.agent. Patching agent_friday.core with
+    # raising=False (what this used to do) CREATED the name the code was
+    # importing, so the test exercised a world production never ran in — and
+    # reconcile_tasks raised ImportError on every real boot for its whole life
+    # while this stayed green.
+    import agent_friday.services.agent as ag
     tid = "task-abc"
-    monkeypatch.setattr(core, "TASKS", {
-        tid: {"status": "running", "name": "Draft the memo",
-              "conversation_id": owner["id"], "log": []}}, raising=False)
-    import threading
-    monkeypatch.setattr(core, "TASKS_LOCK", threading.Lock(), raising=False)
+    with ag.TASKS_LOCK:
+        ag.TASKS.clear()
+        ag.TASKS[tid] = {"status": "running", "name": "Draft the memo",
+                         "conversation_id": owner["id"], "log": []}
+    try:
+        out = rec.reconcile_tasks()
 
-    out = rec.reconcile_tasks()
-
-    assert out["interrupted"] == [tid]
-    assert core.TASKS[tid]["status"] == "interrupted"
-    said = " ".join(m["text"] for m in conv.messages(owner["id"]))
-    assert "Draft the memo" in said
-    assert "interrupted" in said.lower()
-    assert "start it again" in said.lower(), (
-        "an interruption notice has to offer a way forward, not just report a "
-        "death")
+        assert out["interrupted"] == [tid]
+        assert ag.TASKS[tid]["status"] == "interrupted"
+        said = " ".join(m["text"] for m in conv.messages(owner["id"]))
+        assert "Draft the memo" in said
+        assert "interrupted" in said.lower()
+        assert "start it again" in said.lower(), (
+            "an interruption notice has to offer a way forward, not just "
+            "report a death")
+    finally:
+        with ag.TASKS_LOCK:
+            ag.TASKS.clear()
 
 
 def test_a_task_that_was_not_running_is_left_alone(env, monkeypatch):
     rec, conv = env
-    import agent_friday.core as core
-    import threading
-    monkeypatch.setattr(core, "TASKS", {
-        "done": {"status": "complete", "name": "finished thing", "log": []}},
-        raising=False)
-    monkeypatch.setattr(core, "TASKS_LOCK", threading.Lock(), raising=False)
-    assert rec.reconcile_tasks()["interrupted"] == []
-    assert core.TASKS["done"]["status"] == "complete"
+    # Patch where production READS, not where it wishes it could. This file
+    # used to patch agent_friday.core with raising=False, which invented the
+    # attribute the code was asking for and hid the fact that reconcile_tasks
+    # raised ImportError on every real boot.
+    import agent_friday.services.agent as ag
+    with ag.TASKS_LOCK:
+        ag.TASKS.clear()
+        ag.TASKS["done"] = {"status": "complete", "name": "finished thing",
+                            "log": []}
+    try:
+        assert rec.reconcile_tasks()["interrupted"] == []
+        assert ag.TASKS["done"]["status"] == "complete"
+    finally:
+        with ag.TASKS_LOCK:
+            ag.TASKS.clear()
 
 
 # ── structured work resumes ─────────────────────────────────────────────────
