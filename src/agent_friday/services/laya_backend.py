@@ -84,6 +84,29 @@ _agent_lock = threading.Lock()
 _load_error: Optional[str] = None
 _loading = False
 
+#: A FAILED load is retried, a few times, slowly. It used to be terminal.
+#:
+#: On 2026-09-22 the machine rebooted, Friday autostarted, and the boot-time
+#: load raised `ImportError: cannot import name 'AutoTokenizer' from
+#: 'transformers'`. A fresh interpreter imported it fine forty seconds later,
+#: so the failure was a boot-time race and nothing more. But `_load_error` was
+#: set, the no-retry guard in `union_backend` is keyed on it, and the gate
+#: therefore ran keyword-only for the rest of the process's life. The panel
+#: said so honestly, which is the only reason it was caught at all.
+#:
+#: That is the wrong shape of failure. A missing checkpoint SHOULD stay
+#: refused - retrying it per approval would be a thread per decision. A
+#: transient one should heal on its own, because the alternative is a feature
+#: that is silently off until a human happens to read a status line.
+#:
+#: Bounded on both axes: at most `_MAX_LOAD_ATTEMPTS`, never closer together
+#: than `_RETRY_AFTER_S`. A genuinely absent model costs five slow attempts
+#: and then stops for good.
+_MAX_LOAD_ATTEMPTS = 5
+_RETRY_AFTER_S = 120.0
+_load_attempts = 0
+_last_attempt_ts = 0.0
+
 
 # ---------------------------------------------------------------------------
 #  LOADING
@@ -137,12 +160,18 @@ def _load_now():
         _loading = False
 
 
-def start_warming() -> None:
+def start_warming(force: bool = False) -> None:
     """Kick the load on a background thread. Safe to call more than once.
 
-    Called from the server's warm-up alongside the other caches, so the ~42 s
+    Called from the server's warm-up alongside the other caches, so the ~40 s
     is spent while Friday is starting rather than in front of Stephen's first
     approval card.
+
+    RETRIES AFTER A FAILURE, within limits - see `_MAX_LOAD_ATTEMPTS`. A
+    transient failure heals on its own; a genuinely absent checkpoint costs a
+    few slow attempts and then stops. `force=True` ignores both the cooldown
+    and the attempt budget, for the operator path where a human has just fixed
+    whatever was broken and should not have to restart the server.
 
     INERT UNDER FRIDAY_TESTING=1, like every other daemon in this codebase.
     Without that guard the self-healing call in `union_backend` fires inside
@@ -152,10 +181,18 @@ def start_warming() -> None:
     an unrelated test. The tests that care about warming monkeypatch this
     function, so they are unaffected.
     """
+    global _load_attempts, _last_attempt_ts
     if os.environ.get("FRIDAY_TESTING") == "1":
         return
     if _agent is not None or _loading:
         return
+    if _load_error is not None and not force:
+        if _load_attempts >= _MAX_LOAD_ATTEMPTS:
+            return
+        if (time.time() - _last_attempt_ts) < _RETRY_AFTER_S:
+            return
+    _load_attempts += 1
+    _last_attempt_ts = time.time()
     threading.Thread(target=_load_now, name="laya-warm", daemon=True).start()
 
 
@@ -279,10 +316,12 @@ def union_backend(question: str, state: str, **kw):
         # that never loads until the next restart, and the panel would sit on
         # "still loading" forever.
         #
-        # Guarded on `_load_error`: a checkpoint that failed to load is not
-        # retried on every approval, which would turn one missing download
-        # into a thread per decision.
-        if not _loading and _load_error is None:
+        # `start_warming` owns the retry policy now, so a previous failure is
+        # no longer terminal here. It was: this call was guarded on
+        # `_load_error is None`, so one boot-time blip left the gate
+        # keyword-only for the life of the process. The budget and cooldown
+        # live in one place rather than being re-decided at each call site.
+        if not _loading:
             start_warming()
         return kw_answer, None, dict(kw_detail, union="keyword-only",
                                      reason="laya still loading"

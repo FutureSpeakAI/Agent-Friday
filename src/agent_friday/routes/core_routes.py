@@ -193,6 +193,13 @@ def decisions_gate_status():
 
     try:
         from agent_friday.services import laya_backend as _laya
+        # `?retry=1` forces a reload attempt, ignoring the backoff and the
+        # attempt budget. For the case where the model failed at boot for a
+        # reason since fixed - a transformers import that lost a race on
+        # 2026-09-22, say - and the alternative is restarting the server to
+        # clear one cached string.
+        if str(request.args.get("retry", "")).lower() in ("1", "true", "yes"):
+            _laya.start_warming(force=True)
         out["mode"] = _laya.current_mode()
         out["laya"] = _laya.status()
         # The settings delta behind each switch position, served rather than
