@@ -226,3 +226,16 @@ def test_the_card_shows_a_step_number_rather_than_a_percentage(rel):
     text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
     assert "task.step_n" in text, f"{rel}: the honest step count is not rendered"
     assert "step_total" in text, f"{rel}: 'of N' is not rendered when known"
+
+
+def test_the_processes_route_is_the_orb_path_and_must_not_zero_it(client):
+    """/api/processes, not /api/tasks, is what feeds the 3-D orb ring — and
+    the ring is where "0% complete" was actually visible. It copies the record
+    wholesale, so this pins that nobody adds a `.get('progress', 0)` here
+    later and quietly reintroduces the claim."""
+    core.process_register("p-orb", label="Working", category="monitoring")
+    core.process_update("p-orb", step_n=4)
+    procs = client.get("/api/processes").get_json()["processes"]
+    row = next(p for p in procs if p["id"] == "p-orb")
+    assert row["progress"] is None
+    assert row["step_n"] == 4
