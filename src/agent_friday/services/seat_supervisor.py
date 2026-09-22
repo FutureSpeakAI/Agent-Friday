@@ -104,6 +104,7 @@ class SeatSupervisor:
         reclaim_seat: Optional[Callable[[str], None]] = None,
         assess: Callable[..., str] = DEFAULT_ASSESS,
         cadence_seconds: float = DEFAULT_CADENCE_SECONDS,
+        on_queued_wait: Optional[Callable[[Dict[str, Any], float], None]] = None,
     ) -> None:
         self.queue = queue if queue is not None else _seat_queue_mod.SeatQueue()
         self.thread_factory = thread_factory
@@ -111,6 +112,12 @@ class SeatSupervisor:
         self.reclaim_seat = reclaim_seat
         self.assess = assess
         self.cadence_seconds = cadence_seconds
+        # Called once per pass for each record still WAITING for a seat, with
+        # how long it has waited. Injected rather than imported so this module
+        # keeps knowing nothing about approvals or money: the policy (ask
+        # before paying a cloud provider) lives at the wiring site, and this
+        # file keeps its one job, which is who runs next.
+        self.on_queued_wait = on_queued_wait
         self._records: Dict[str, Dict[str, Any]] = {}
         self._started: set = set()
         self._lock = threading.RLock()
@@ -134,6 +141,10 @@ class SeatSupervisor:
             record["status"] = status
             if status == QUEUED_STATUS:
                 record["user_notice"] = USER_NOTICE
+                # When the wait STARTED. Without it "how long has this been
+                # waiting" would be measured from task creation, which counts
+                # time the task spent running somewhere else.
+                record["queued_at"] = time.time()
                 return status
             self._start(record)
             return status
@@ -146,6 +157,26 @@ class SeatSupervisor:
             return  # never start the same task twice
         self._started.add(task_id)
         self.thread_factory(record)
+
+    def _notify_waiting(self, now: float) -> None:
+        """Tell the wiring site about every task still waiting, and for how long.
+
+        Best-effort and outside the lock: the callback may raise an approval
+        card or touch disk, and none of that may stall promotion or take the
+        supervisor loop down with it.
+        """
+        cb = self.on_queued_wait
+        if cb is None:
+            return
+        with self._lock:
+            waiting = [r for r in self._records.values()
+                       if r.get("status") == QUEUED_STATUS]
+        for record in waiting:
+            since = record.get("queued_at") or record.get("created") or now
+            try:
+                cb(record, max(0.0, now - float(since)))
+            except Exception:
+                pass
 
     # ------------------------------------------------------------ completion
 
@@ -183,6 +214,7 @@ class SeatSupervisor:
         if now is None:
             now = time.time()
         events: List[Dict[str, Any]] = []
+        self._notify_waiting(now)
         with self._lock:
             for task_id, record in list(self._records.items()):
                 if record.get("status") != "running":
