@@ -117,6 +117,65 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Camera indicator: only visible when holo mode active */
         #camera-indicator.holo-active { background: #00ff66; box-shadow: 0 0 8px #00ff66; }
 
+        /* ── HOLOGRAPHIC DEPTH CUES ──────────────────────────────────────
+           Driven from the render loop as CSS variables off HEAD ANGLE, never
+           from a clock: a cue that animates on its own reads as decoration,
+           one that answers your head reads as depth.
+
+           The HUD is glass in FRONT of the scene, so it has to move MORE than
+           the scene behind it — that difference is the whole depth cue. All
+           of it degrades to nothing when the variables are unset, so a browser
+           that never sets them looks exactly like it did before. */
+        :root {
+            --holo-par-x: 0px; --holo-par-y: 0px;
+            --holo-tilt-x: 0deg; --holo-tilt-y: 0deg;
+            --holo-depth: 1; --holo-sheen: 0deg;
+            --holo-sheen-a: 0; --holo-rim: 0;
+        }
+        #hud-overlay {
+            transform: translate3d(var(--holo-par-x), var(--holo-par-y), 0)
+                       scale(var(--holo-depth));
+            transition: none;
+            will-change: transform;
+        }
+        /* Corners sit nearest the glass, so they travel furthest. */
+        #hud-overlay .hud-corner {
+            transform: translate3d(calc(var(--holo-par-x) * 0.55),
+                                   calc(var(--holo-par-y) * 0.55), 0);
+        }
+        /* A sheen that sweeps with head angle — the giveaway that a surface
+           is being lit from somewhere rather than painted. */
+        #hud-overlay::after {
+            content: ''; position: absolute; inset: 0; pointer-events: none;
+            background: linear-gradient(var(--holo-sheen),
+                        rgba(0,212,255,0) 35%,
+                        rgba(0,212,255,calc(var(--holo-sheen-a) * 0.5)) 50%,
+                        rgba(0,212,255,0) 65%);
+            mix-blend-mode: screen; opacity: 1;
+        }
+        /* Rim light on the leading edge as the head turns. */
+        #hud-overlay::before {
+            content: ''; position: absolute; inset: 0; pointer-events: none;
+            box-shadow: inset 0 0 120px rgba(0,212,255,var(--holo-rim));
+        }
+
+        /* ── TRACKING DEBUG OVERLAY ──────────────────────────────────────
+           Off unless Settings turns it on. Stephen tests with the camera
+           himself, and "it feels wrong" is much easier to act on when the
+           tracked point and the cursor path are visible. */
+        #tracking-debug { display: none; }
+        body.tracking-debug #tracking-debug {
+            display: block; position: fixed; inset: 0; z-index: 99998;
+            pointer-events: none;
+        }
+        body.tracking-debug #tracking-debug-readout {
+            position: fixed; left: 12px; bottom: 12px; z-index: 99999;
+            font: 10.5px/1.5 'JetBrains Mono', monospace; color: #00d4ff;
+            background: rgba(0,8,20,0.72); border: 1px solid rgba(0,212,255,0.28);
+            border-radius: 6px; padding: 8px 10px; white-space: pre;
+            pointer-events: none;
+        }
+
         /* MINORITY REPORT HAND CURSOR */
         #hand-cursor {
             position: fixed; top: -50px; left: -50px; width: 24px; height: 24px;
@@ -2415,6 +2474,8 @@ window.addEventListener('DOMContentLoaded',function(){
     body.net-degraded #friday-scene-canvas{filter:saturate(0.78) brightness(0.93)}
     </style>
     <!-- Hand Cursor -->
+    <canvas id="tracking-debug"></canvas>
+    <div id="tracking-debug-readout"></div>
     <div id="hand-cursor" class="hidden">
         <svg id="pinch-progress">
             <circle class="pinch-circle" cx="17" cy="17" r="15" />
@@ -2508,6 +2569,356 @@ window.addEventListener('DOMContentLoaded',function(){
             mouseY = (e.clientY / window.innerHeight - 0.5) * 1.0;
         });
 
+        // ════════════════════════════════════════════════════════════════
+        //  TRACKING ENGINE — head-coupled perspective, and a pointer that
+        //  answers to small movements.
+        // ════════════════════════════════════════════════════════════════
+        //
+        // WHAT WAS WRONG, MEASURED BEFORE ANYTHING CHANGED
+        //
+        //   Head: a fixed per-FRAME lerp (alpha 0.08 on X/Y, 0.05 on Z, with
+        //   Z already smoothed 0.1 upstream, so it was filtered twice). At
+        //   60fps that is a ~200 ms time constant — 95% of a step took about
+        //   600 ms — and because it was per frame rather than per second, the
+        //   feel changed with the frame rate.
+        //
+        //   Head parallax: the camera was TRANSLATED and then re-aimed with
+        //   lookAt. Moving the camera and turning it back toward the same
+        //   point is an orbit, not a window. A window into a box needs the
+        //   projection itself to shear — an off-axis (asymmetric) frustum —
+        //   while the view direction stays put. That is the whole "it has
+        //   depth" effect, and it was the one piece missing.
+        //
+        //   Hand: the full camera frame mapped 1:1 onto the full screen with
+        //   no gain, so crossing the screen meant sweeping an arm across the
+        //   camera's entire field of view. That is the "not sensitive"
+        //   complaint, and it is a mapping problem, not a smoothing one.
+        //
+        //   Pinch: one threshold (dist < 0.06). A single threshold chatters
+        //   whenever the hand rests near it.
+        window.FridayTracking = (function () {
+            const DEFAULTS = {
+                parallax_strength: 1.0, depth_strength: 1.0, head_smoothing: 0.35,
+                holo_cues: 0.6, hand_gain: 2.2, hand_accel: 0.6, hand_region: 0.45,
+                hand_deadzone: 0.006, hand_smoothing: 0.30, click_method: 'pinch',
+                pinch_enter: 0.050, pinch_exit: 0.075, dwell_ms: 700,
+                debug_overlay: false
+            };
+            const cfg = Object.assign({}, DEFAULTS);
+
+            // ── One Euro filter ──────────────────────────────────────────
+            // Low cutoff while still (kills jitter), cutoff rises with speed
+            // (kills lag). A plain lerp must choose one or the other, which
+            // is why the old head filter had to be slow enough to see.
+            function LowPass() { this.y = null; this.s = null; }
+            LowPass.prototype.filter = function (x, a) {
+                this.s = (this.y === null) ? x : a * x + (1 - a) * this.s;
+                this.y = x; return this.s;
+            };
+            function OneEuro(minCutoff, beta, dCutoff) {
+                this.minCutoff = minCutoff; this.beta = beta;
+                this.dCutoff = dCutoff || 1.0;
+                this.x = new LowPass(); this.dx = new LowPass();
+                this.last = null; this.prev = null;
+            }
+            OneEuro.prototype.alpha = function (cutoff, dt) {
+                const tau = 1.0 / (2 * Math.PI * cutoff);
+                return 1.0 / (1.0 + tau / dt);
+            };
+            OneEuro.prototype.filter = function (v, t) {
+                if (this.last === null) {
+                    this.last = t; this.prev = v; this.x.filter(v, 1); return v;
+                }
+                let dt = t - this.last; this.last = t;
+                if (!(dt > 0) || dt > 0.25) dt = 1 / 60;
+                const dv = (v - this.prev) / dt; this.prev = v;
+                const edv = this.dx.filter(dv, this.alpha(this.dCutoff, dt));
+                const cutoff = this.minCutoff + this.beta * Math.abs(edv);
+                return this.x.filter(v, this.alpha(cutoff, dt));
+            };
+            OneEuro.prototype.reset = function () {
+                this.x = new LowPass(); this.dx = new LowPass();
+                this.last = null; this.prev = null;
+            };
+
+            // head_smoothing 0..1 is a feel dial, not a cutoff. Map it onto a
+            // sane One Euro range: 0 responsive, 1 steady.
+            const clamp01 = (v) => Math.max(0, Math.min(1, v));
+            const fx = new OneEuro(1.0, 0.2), fy = new OneEuro(1.0, 0.2), fz = new OneEuro(0.8, 0.1);
+            const hxF = new OneEuro(1.5, 0.4), hyF = new OneEuro(1.5, 0.4);
+            function retune() {
+                const s = clamp01(cfg.head_smoothing);
+                const hMin = 2.4 - 2.1 * s, hBeta = 0.35 * (1 - s) + 0.02;
+                fx.minCutoff = fy.minCutoff = hMin; fx.beta = fy.beta = hBeta;
+                fz.minCutoff = hMin * 0.7; fz.beta = hBeta * 0.5;
+                const d = clamp01(cfg.hand_smoothing);
+                const dMin = 3.2 - 2.8 * d, dBeta = 0.60 * (1 - d) + 0.02;
+                hxF.minCutoff = hyF.minCutoff = dMin; hxF.beta = hyF.beta = dBeta;
+            }
+            retune();
+
+            // ── head state ───────────────────────────────────────────────
+            // x,y in [-1,1] screen-relative; z is lean, >0 nearer.
+            const head = { x: 0, y: 0, z: 0, raw: { x: 0, y: 0, z: 0 },
+                           seen: false, baseline: null };
+
+            function pushFace(nx, ny, boxW, tSec) {
+                head.raw.x = nx; head.raw.y = ny;
+                // DEPTH FROM FACE SIZE. Apparent head width is a usable
+                // distance proxy: twice as wide is half as far. A ratio
+                // against a CALIBRATED baseline — rather than the old fixed
+                // 0.18 constant — works for whoever is sitting there and
+                // wherever their camera happens to be.
+                const base = head.baseline || 0.18;
+                const ratio = Math.max(0.35, Math.min(2.5, boxW / base));
+                head.raw.z = Math.log(ratio) / Math.LN2;   // octaves nearer
+                head.x = fx.filter(nx, tSec);
+                head.y = fy.filter(ny, tSec);
+                head.z = fz.filter(head.raw.z, tSec);
+                head.seen = true;
+            }
+            function pushMouseFallback(mx, my, tSec) {
+                head.raw.x = mx; head.raw.y = my; head.raw.z = 0;
+                head.x = fx.filter(mx, tSec);
+                head.y = fy.filter(my, tSec);
+                head.z = fz.filter(0, tSec);
+                head.seen = false;
+            }
+            function calibrate(boxW) {
+                head.baseline = (boxW && boxW > 0.02) ? boxW : null;
+                fx.reset(); fy.reset(); fz.reset();
+                return head.baseline;
+            }
+
+            // ── OFF-AXIS (ASYMMETRIC) FRUSTUM ────────────────────────────
+            // The window effect. The eye moves relative to a virtual screen
+            // plane a fixed distance ahead of the camera; the frustum shears
+            // so that plane stays nailed to the display while everything
+            // behind it swings. The camera's AIM is untouched — shearing the
+            // projection instead of turning the camera is exactly the
+            // difference between a window and an orbit.
+            function applyFrustum(cam, ex, ey, ez, screenDist) {
+                const n = cam.near, f = cam.far;
+                const halfH = Math.tan((cam.fov * Math.PI / 180) / 2) * screenDist;
+                const halfW = halfH * cam.aspect;
+                const d = Math.max(0.35 * screenDist, screenDist - ez);
+                const k = n / d;
+                const l = (-halfW - ex) * k, r = (halfW - ex) * k;
+                const b = (-halfH - ey) * k, t = (halfH - ey) * k;
+                cam.projectionMatrix.makePerspective(l, r, t, b, n, f);
+                if (cam.projectionMatrixInverse) {
+                    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+                }
+            }
+
+            // ── hand pointer ─────────────────────────────────────────────
+            const hand = { x: window.innerWidth / 2, y: window.innerHeight / 2,
+                           seen: false, pinching: false, raw: { x: 0, y: 0 },
+                           trail: [] };
+            let lastHandT = 0;
+            let prevU = 0.5, prevV = 0.5;
+
+            function pushHand(nx, ny, pinchDist, tSec) {
+                const W = window.innerWidth, H = window.innerHeight;
+                const dt = lastHandT ? Math.max(1e-3, tSec - lastHandT) : 1 / 30;
+                lastHandT = tSec;
+
+                // Filter in FRAME space, before any mapping, so the dials do
+                // not change how much jitter gets through.
+                const sx = hxF.filter(nx, tSec), sy = hyF.filter(ny, tSec);
+
+                // ── 1. ACTIVE REGION → absolute position ─────────────────
+                // A centred box of the camera frame maps onto the WHOLE
+                // screen. This is the sensitivity that matters: at 45% a hand
+                // movement covers 2.2x the screen it used to, and the old
+                // code used the entire frame, which is why it felt dead.
+                //
+                // ABSOLUTE, not relative. A relative pointer reaches further
+                // but drifts — a circular hand motion does not return to the
+                // same screen point, and it ends up pinned against an edge.
+                const reg = Math.max(0.15, Math.min(1.0, cfg.hand_region));
+                let ex = (sx - 0.5) * 2 / reg;          // -1..1 at region edge
+                let ey = (sy - 0.5) * 2 / reg;
+                ex = Math.max(-1, Math.min(1, ex));
+                ey = Math.max(-1, Math.min(1, ey));
+
+                // ── 2. RESPONSE CURVE ────────────────────────────────────
+                // gamma < 1 expands the middle: small movements near centre
+                // travel further, while the edges still reach the corners.
+                // This is the precision-versus-reach trade, and it is a curve
+                // rather than a multiplier so it cannot overshoot the screen.
+                const gamma = 1 - 0.45 * Math.max(0, Math.min(1, cfg.hand_accel / 2));
+                const curve = (e) => (e < 0 ? -1 : 1) * Math.pow(Math.abs(e), gamma);
+                let tx = (0.5 + curve(ex) * 0.5) * W;
+                let ty = (0.5 + curve(ey) * 0.5) * H;
+
+                // ── 3. VELOCITY LEAD ─────────────────────────────────────
+                // A transient nudge along the direction of travel, so a flick
+                // arrives sooner without changing where the hand rests. It
+                // decays to nothing the moment you stop, which is why it can
+                // be strong without causing drift.
+                const du = sx - prevU, dv = sy - prevV;
+                prevU = sx; prevV = sy;
+                const speed = Math.hypot(du, dv) / dt;
+                const lead = Math.min(0.22, speed * 0.16) * (cfg.hand_gain - 1);
+                tx += du / reg * W * lead;
+                ty += dv / reg * H * lead;
+
+                if (!hand.seen) {
+                    hand.x = tx; hand.y = ty; hand.seen = true;
+                } else {
+                    // DEAD ZONE, in screen pixels: below this the hand is not
+                    // moving, it is shaking. Holding still should hold still.
+                    const dz = cfg.hand_deadzone * Math.min(W, H);
+                    if (Math.hypot(tx - hand.x, ty - hand.y) >= dz) {
+                        hand.x = tx; hand.y = ty;
+                    }
+                }
+                hand.x = Math.max(0, Math.min(W, hand.x));
+                hand.y = Math.max(0, Math.min(H, hand.y));
+                hand.raw.x = nx; hand.raw.y = ny;
+
+                // PINCH WITH HYSTERESIS: close tighter than pinch_enter to
+                // engage, open wider than pinch_exit to release. The gap is
+                // what stops a hand resting near the threshold from firing
+                // clicks over and over.
+                if (hand.pinching) {
+                    if (pinchDist > cfg.pinch_exit) hand.pinching = false;
+                } else {
+                    if (pinchDist < cfg.pinch_enter) hand.pinching = true;
+                }
+
+                if (cfg.debug_overlay) {
+                    hand.trail.push({ x: hand.x, y: hand.y });
+                    if (hand.trail.length > 140) hand.trail.shift();
+                }
+            }
+            function handLost() {
+                // Dropping the relative anchor matters: keeping it would
+                // make the next sighting compute a delta against a stale
+                // position and fling the cursor across the screen.
+                hand.seen = false; hand.pinching = false;
+                hand.trail.length = 0; lastHandT = 0;
+            }
+
+            function apply(next) {
+                Object.assign(cfg, next || {});
+                retune();
+                document.body.classList.toggle('tracking-debug', !!cfg.debug_overlay);
+            }
+            function reset() {
+                apply(Object.assign({}, DEFAULTS));
+                return Object.assign({}, DEFAULTS);
+            }
+
+            return {
+                DEFAULTS: DEFAULTS, cfg: cfg, apply: apply, reset: reset,
+                get: function () { return Object.assign({}, cfg); },
+                head: head, hand: hand,
+                pushFace: pushFace, pushMouseFallback: pushMouseFallback,
+                pushHand: pushHand, handLost: handLost,
+                applyFrustum: applyFrustum, calibrate: calibrate, OneEuro: OneEuro
+            };
+        })();
+
+        // Persisted tracking settings on boot; the Settings panel pushes live
+        // updates through window.FridayTracking.apply().
+        (function loadTrackingCfg() {
+            try {
+                fetch('/api/settings').then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        const t = d && d.settings && d.settings.tracking;
+                        if (t) window.FridayTracking.apply(t);
+                    }).catch(function () {});
+            } catch (e) { /* settings are a nicety here, never a blocker */ }
+        })();
+
+        // ── TRACKING DEBUG OVERLAY ──────────────────────────────────────
+        // Drawn only while Settings has it on. Shows where the head is being
+        // tracked, where the hand cursor has been, and the live numbers — so
+        // "it feels wrong" can become "the dot lags" or "the region is too
+        // big" without guessing.
+        (function trackingDebugOverlay() {
+            const cv = document.getElementById('tracking-debug');
+            const out = document.getElementById('tracking-debug-readout');
+            if (!cv || !out) return;
+            const ctx = cv.getContext('2d');
+
+            function fit() {
+                const r = Math.min(window.devicePixelRatio || 1, 2);
+                cv.width = Math.floor(window.innerWidth * r);
+                cv.height = Math.floor(window.innerHeight * r);
+                cv.style.width = window.innerWidth + 'px';
+                cv.style.height = window.innerHeight + 'px';
+                ctx.setTransform(r, 0, 0, r, 0, 0);
+            }
+            fit();
+            window.addEventListener('resize', fit);
+
+            function draw() {
+                requestAnimationFrame(draw);
+                const TK = window.FridayTracking;
+                if (!TK || !TK.cfg.debug_overlay) return;
+                const W = window.innerWidth, H = window.innerHeight;
+                ctx.clearRect(0, 0, W, H);
+
+                // Head: filtered position as a crosshair, raw as a faint dot,
+                // so the distance between them IS the filter lag, visibly.
+                const hx = (0.5 + TK.head.x * 0.5) * W;
+                const hy = (0.5 + TK.head.y * 0.5) * H;
+                const rx = (0.5 + TK.head.raw.x * 0.5) * W;
+                const ry = (0.5 + TK.head.raw.y * 0.5) * H;
+                ctx.strokeStyle = 'rgba(0,212,255,0.85)'; ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(hx - 16, hy); ctx.lineTo(hx + 16, hy);
+                ctx.moveTo(hx, hy - 16); ctx.lineTo(hx, hy + 16);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(hx, hy, 10 + TK.head.z * 8, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(255,255,255,0.28)';
+                ctx.beginPath(); ctx.arc(rx, ry, 3, 0, Math.PI * 2); ctx.fill();
+
+                // Active region: the slice of camera frame that reaches the
+                // whole screen. Seeing it is the fastest way to understand
+                // why the cursor does or does not reach the corners.
+                const reg = Math.max(0.15, Math.min(1, TK.cfg.hand_region));
+                ctx.strokeStyle = 'rgba(0,255,128,0.35)';
+                ctx.setLineDash([6, 6]);
+                ctx.strokeRect((0.5 - reg / 2) * W, (0.5 - reg / 2) * H, reg * W, reg * H);
+                ctx.setLineDash([]);
+
+                // Hand cursor path.
+                const tr = TK.hand.trail;
+                if (tr.length > 1) {
+                    ctx.strokeStyle = 'rgba(0,255,200,0.55)'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.moveTo(tr[0].x, tr[0].y);
+                    for (let i = 1; i < tr.length; i++) ctx.lineTo(tr[i].x, tr[i].y);
+                    ctx.stroke();
+                }
+                if (TK.hand.seen) {
+                    ctx.fillStyle = TK.hand.pinching ? '#fff' : 'rgba(0,255,200,0.9)';
+                    ctx.beginPath(); ctx.arc(TK.hand.x, TK.hand.y, 5, 0, Math.PI * 2); ctx.fill();
+                }
+
+                out.textContent =
+                    'head  x ' + TK.head.x.toFixed(3) + '  y ' + TK.head.y.toFixed(3) +
+                    '  z ' + TK.head.z.toFixed(3) + (TK.head.seen ? '  [face]' : '  [mouse]') +
+                    '\nlag   ' + Math.round(Math.hypot(hx - rx, hy - ry)) + ' px raw->filtered' +
+                    '\nhand  ' + (TK.hand.seen
+                        ? Math.round(TK.hand.x) + ',' + Math.round(TK.hand.y) +
+                          (TK.hand.pinching ? '  PINCH' : '')
+                        : 'not seen') +
+                    '\ngain ' + TK.cfg.hand_gain.toFixed(2) +
+                    '  accel ' + TK.cfg.hand_accel.toFixed(2) +
+                    '  region ' + TK.cfg.hand_region.toFixed(2) +
+                    '\npar  ' + TK.cfg.parallax_strength.toFixed(2) +
+                    '  depth ' + TK.cfg.depth_strength.toFixed(2) +
+                    '  smooth ' + TK.cfg.head_smoothing.toFixed(2);
+            }
+            requestAnimationFrame(draw);
+        })();
+
         // --- COMPUTER VISION ENGINE (MediaPipe Shared Camera) ---
         let cameraMP = null;
         let videoElement = document.createElement('video');
@@ -2516,8 +2927,9 @@ window.addEventListener('DOMContentLoaded',function(){
         // Hologram (Face) State
         let isHologramMode = false;
         let faceDetectionMP = null;
-        let rawFaceX = 0, rawFaceY = 0, rawFaceZ = 0; 
-        let currFaceX = 0, currFaceY = 0, currFaceZ = 0; 
+        let rawFaceX = 0, rawFaceY = 0, rawFaceZ = 0;
+        let currFaceX = 0, currFaceY = 0, currFaceZ = 0;
+        let lastFaceBoxW = 0;   // for the calibrate button and the debug overlay
         let isFaceVisible = false;
         let faceLostTimeout = null;
 
@@ -2530,6 +2942,8 @@ window.addEventListener('DOMContentLoaded',function(){
         let pinchStartTime = 0;
         let rightClickFired = false;
         let handVisible = false;
+        // Dwell-click state (click_method === 'dwell').
+        let dwellAnchorX = 0, dwellAnchorY = 0, dwellStart = 0, dwellFired = false;
         const PINCH_HOLD_TIME = 1000; // ms for right click
 
         async function startSharedCamera() {
@@ -2567,26 +2981,22 @@ window.addEventListener('DOMContentLoaded',function(){
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
                 const indexTip = landmarks[8]; const thumbTip = landmarks[4];
-                const targetX = (1.0 - (indexTip.x + thumbTip.x) / 2) * window.innerWidth;
-                const targetY = ((indexTip.y + thumbTip.y) / 2) * window.innerHeight;
+                // NORMALISED, not pre-multiplied to pixels. The pointer model
+                // owns the mapping now — active region, gain, acceleration and
+                // dead zone all need the raw 0..1 frame position, and the old
+                // code threw that away by converting to pixels here.
+                const nx = 1.0 - (indexTip.x + thumbTip.x) / 2;   // mirror
+                const ny = (indexTip.y + thumbTip.y) / 2;
                 const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
-                isPinching = dist < 0.06;
-                const isApproachingPinch = dist < 0.1;
-                if (!handVisible) {
-                    currHandX = targetX; currHandY = targetY;
-                    rawHandX = targetX; rawHandY = targetY;
-                    handVisible = true;
-                    cursor.classList.remove('hidden');
-                } else {
-                    if (!isApproachingPinch) {
-                        rawHandX = targetX; rawHandY = targetY;
-                    } else {
-                        rawHandX += (targetX - rawHandX) * 0.05;
-                        rawHandY += (targetY - rawHandY) * 0.05;
-                    }
-                }
+                window.FridayTracking.pushHand(nx, ny, dist, performance.now() / 1000);
+                // Hysteresis lives in the pointer model; read its verdict.
+                isPinching = window.FridayTracking.hand.pinching;
+                if (!handVisible) { handVisible = true; cursor.classList.remove('hidden'); }
+                rawHandX = window.FridayTracking.hand.x;
+                rawHandY = window.FridayTracking.hand.y;
             } else {
                 isPinching = false; handVisible = false;
+                window.FridayTracking.handLost();
                 cursor.classList.add('hidden');
             }
         }
@@ -2617,11 +3027,18 @@ window.addEventListener('DOMContentLoaded',function(){
         function onFaceResults(results) {
             if (results.detections.length > 0) {
                 const bbox = results.detections[0].boundingBox;
-                rawFaceX = (bbox.xCenter - 0.5) * 2.0; 
+                // Mirror X: the camera sees you flipped, so leaning LEFT must
+                // move the window left, not right. The old code did not, which
+                // made the parallax fight the head instead of following it.
+                rawFaceX = -(bbox.xCenter - 0.5) * 2.0;
                 rawFaceY = (bbox.yCenter - 0.5) * 2.0;
-                let fw = Math.max(0.05, Math.min(bbox.width, 0.4)); 
-                let targetZ = (fw - 0.18) * 3.0; 
-                rawFaceZ += (targetZ - rawFaceZ) * 0.1;
+                lastFaceBoxW = Math.max(0.05, Math.min(bbox.width, 0.6));
+                // One Euro does the smoothing now, timestamped in seconds, so
+                // it is frame-rate independent. rawFaceZ is kept only for the
+                // debug overlay; nothing downstream reads it any more.
+                window.FridayTracking.pushFace(rawFaceX, rawFaceY, lastFaceBoxW,
+                                               performance.now() / 1000);
+                rawFaceZ = window.FridayTracking.head.raw.z;
                 isFaceVisible = true; updateCameraIndicator(true);
                 clearTimeout(faceLostTimeout);
                 faceLostTimeout = setTimeout(() => { isFaceVisible = false; updateCameraIndicator(false); }, 2000); 
@@ -3609,11 +4026,41 @@ window.addEventListener('DOMContentLoaded',function(){
             const cursor = document.getElementById('hand-cursor');
             const pRing = document.querySelector('.pinch-circle');
             if (isHandTrackingMode) {
-                currHandX += (rawHandX - currHandX) * 0.25; 
-                currHandY += (rawHandY - currHandY) * 0.25; 
+                // The pointer model already filtered and shaped this; a second
+                // lerp here would just add the lag the model exists to avoid.
+                currHandX = rawHandX; currHandY = rawHandY;
                 cursor.style.left = `${currHandX}px`; cursor.style.top = `${currHandY}px`;
-                
-                if (isPinching) {
+
+                // DWELL CLICK: hold still inside a small radius and it fires.
+                // For anyone whose pinch is unreliable, or who would rather not
+                // hold a pinch at all.
+                if (window.FridayTracking.cfg.click_method === 'dwell' && handVisible) {
+                    const moved = Math.hypot(currHandX - dwellAnchorX, currHandY - dwellAnchorY);
+                    if (moved > 26) {
+                        dwellAnchorX = currHandX; dwellAnchorY = currHandY;
+                        dwellStart = performance.now(); dwellFired = false;
+                        document.getElementById('pinch-progress').style.opacity = 0;
+                    } else {
+                        const held = performance.now() - dwellStart;
+                        const need = Math.max(200, window.FridayTracking.cfg.dwell_ms);
+                        if (held > 150) {
+                            document.getElementById('pinch-progress').style.opacity = 1;
+                            pRing.style.strokeDashoffset = 95 * (1.0 - Math.min(1, held / need));
+                        }
+                        if (held >= need && !dwellFired) {
+                            dwellFired = true;
+                            document.getElementById('pinch-progress').style.opacity = 0;
+                            pRing.style.strokeDashoffset = 95;
+                            spawnRipple(currHandX, currHandY, '#00ffff');
+                            cursor.style.display = 'none';
+                            const el = document.elementFromPoint(currHandX, currHandY);
+                            cursor.style.display = 'flex';
+                            if (el && typeof el.click === 'function') el.click();
+                        }
+                    }
+                }
+
+                if (isPinching && window.FridayTracking.cfg.click_method !== 'dwell') {
                     if(!wasPinching) { pinchStartTime = performance.now(); rightClickFired = false; cursor.classList.add('pinching'); }
                     const duration = performance.now() - pinchStartTime;
                     if (duration > 200) {
@@ -3642,15 +4089,15 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             // --- STABILIZED TRUE 3D HOLOGRAPHIC PARALLAX OFFSET ---
-            if (isHologramMode && isFaceVisible) {
-                currFaceX += (rawFaceX - currFaceX) * 0.08; 
-                currFaceY += (rawFaceY - currFaceY) * 0.08;
-                currFaceZ += (rawFaceZ - currFaceZ) * 0.05; 
-            } else {
-                currFaceX += (mouseX - currFaceX) * 0.04; 
-                currFaceY += (mouseY - currFaceY) * 0.04; 
-                currFaceZ += (0 - currFaceZ) * 0.04;
+            // One Euro replaces the fixed per-frame lerps. The mouse fallback
+            // runs through the same filter so the two input paths cannot drift
+            // apart in feel.
+            if (!(isHologramMode && isFaceVisible)) {
+                window.FridayTracking.pushMouseFallback(mouseX, mouseY, performance.now() / 1000);
             }
+            currFaceX = window.FridayTracking.head.x;
+            currFaceY = window.FridayTracking.head.y;
+            currFaceZ = window.FridayTracking.head.z;
 
             // --- TIME LAPSE LOGIC ---
             if (timeLapseActive) {
@@ -3749,22 +4196,58 @@ window.addEventListener('DOMContentLoaded',function(){
 
                 baseCamPos.lerp(targetCamPos, delta * 0.8);
 
-                const parallaxX = currFaceX * 5.0; 
-                const parallaxY = currFaceY * -5.0; 
-                const parallaxZ = currFaceZ * -8.0; 
+                // ── HEAD-COUPLED PERSPECTIVE ────────────────────────────
+                // The cinematic move still decides where the camera IS and
+                // what it looks at. The head only decides where the EYE sits
+                // relative to that view, and the frustum shears to match.
+                //
+                // The old code added the head offset to the camera position
+                // and then re-aimed with lookAt, which cancels most of the
+                // parallax: translate right, turn left, net almost nothing
+                // but a slow swim. Shearing the projection instead is what
+                // makes the scene sit behind the glass.
+                const TK = window.FridayTracking;
+                const pStr = TK.cfg.parallax_strength, dStr = TK.cfg.depth_strength;
 
-                camera.position.x = baseCamPos.x + parallaxX;
-                camera.position.y = baseCamPos.y + parallaxY;
-                camera.position.z = baseCamPos.z + parallaxZ;
-
-                const lookTarget = targetCamLook.clone();
-                lookTarget.x += parallaxX * 0.15; 
-                lookTarget.y += parallaxY * 0.15;
-
+                // Aim first, from the cinematic target only — head-free.
+                camera.position.copy(baseCamPos);
                 const currentLook = new THREE.Vector3(); camera.getWorldDirection(currentLook);
-                const idealLook = lookTarget.sub(camera.position).normalize();
-                currentLook.lerp(idealLook, delta * 2.0); 
+                const idealLook = targetCamLook.clone().sub(camera.position).normalize();
+                currentLook.lerp(idealLook, delta * 2.0);
                 camera.lookAt(camera.position.clone().add(currentLook));
+
+                // Then offset the eye in the camera's OWN basis, so the effect
+                // is the same whichever way the cinematic camera is facing.
+                const eyeX = currFaceX * 3.2 * pStr;
+                const eyeY = -currFaceY * 2.4 * pStr;
+                const eyeZ = currFaceZ * 4.5 * dStr;        // lean in / out
+                const right = new THREE.Vector3(), up = new THREE.Vector3();
+                right.setFromMatrixColumn(camera.matrixWorld, 0);
+                up.setFromMatrixColumn(camera.matrixWorld, 1);
+                camera.position.addScaledVector(right, eyeX);
+                camera.position.addScaledVector(up, eyeY);
+                camera.position.addScaledVector(currentLook, eyeZ);
+                camera.updateMatrixWorld();
+
+                // The virtual glass sits at the scene's centre of interest.
+                const screenDist = Math.max(4, baseCamPos.distanceTo(targetCamLook));
+                TK.applyFrustum(camera, eyeX, eyeY, eyeZ, screenDist);
+
+                // ── DEPTH-LAYERED PARALLAX + HOLOGRAPHIC CUES ───────────
+                // The DOM HUD floats in front of the glass, so it must move
+                // MORE than the scene behind it or the illusion breaks at the
+                // edges. Cues are driven off head angle, not a clock, so they
+                // read as a response rather than an animation.
+                const cue = Math.max(0, Math.min(1, TK.cfg.holo_cues));
+                const rootStyle = document.documentElement.style;
+                rootStyle.setProperty('--holo-par-x', (currFaceX * 18 * pStr).toFixed(2) + 'px');
+                rootStyle.setProperty('--holo-par-y', (currFaceY * 12 * pStr).toFixed(2) + 'px');
+                rootStyle.setProperty('--holo-tilt-x', (-currFaceY * 5.0 * pStr).toFixed(2) + 'deg');
+                rootStyle.setProperty('--holo-tilt-y', (currFaceX * 7.0 * pStr).toFixed(2) + 'deg');
+                rootStyle.setProperty('--holo-depth', (1 + currFaceZ * 0.05 * dStr).toFixed(3));
+                rootStyle.setProperty('--holo-sheen', (Math.atan2(currFaceY, currFaceX) * 57.2958).toFixed(1) + 'deg');
+                rootStyle.setProperty('--holo-sheen-a', (cue * (0.10 + 0.38 * Math.min(1, Math.hypot(currFaceX, currFaceY)))).toFixed(3));
+                rootStyle.setProperty('--holo-rim', (cue * (0.18 + 0.5 * Math.min(1, Math.abs(currFaceX)))).toFixed(3));
             }
 
             // --- ANIMATE ACTIVE STRUCTURES ---
@@ -33735,6 +34218,11 @@ function SettingsTabGeneral({
     onChange: () => save({
       auto_open_chat: !s.auto_open_chat
     })
+  })), /*#__PURE__*/React.createElement(StSection, {
+    title: "TRACKING"
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save
   })));
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
@@ -37573,6 +38061,226 @@ function ApprovalScannerPanel({
       marginTop: 4
     }
   }, String(laya.error).slice(0, 160))));
+}
+// ── TRACKING SETTINGS ───────────────────────────────────────────────────
+// Live controls for the head-coupled perspective and the hand pointer.
+//
+// Every control applies IMMEDIATELY through window.FridayTracking.apply()
+// and is persisted on release. Tracking is the one settings group you
+// cannot evaluate by reading it — you have to move your head and see —
+// so a value that only took effect after a save would be untunable.
+function TrackingSlider({
+  label,
+  desc,
+  value,
+  min,
+  max,
+  step,
+  fmt,
+  onLive,
+  onCommit
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.78)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, (fmt || (v => v.toFixed(2)))(value))), /*#__PURE__*/React.createElement("input", {
+    type: "range",
+    min: min,
+    max: max,
+    step: step,
+    value: value,
+    style: {
+      width: '100%',
+      marginTop: 4
+    },
+    onChange: e => onLive(parseFloat(e.target.value)),
+    onMouseUp: e => onCommit(parseFloat(e.target.value)),
+    onTouchEnd: e => onCommit(parseFloat(e.target.value))
+  }), desc && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'rgba(255,255,255,0.36)',
+      marginTop: 2,
+      lineHeight: 1.5
+    }
+  }, desc));
+}
+function TrackingPanel({
+  s,
+  save
+}) {
+  const TK = typeof window !== 'undefined' ? window.FridayTracking : null;
+  const defaults = TK ? TK.DEFAULTS : {};
+  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, s && s.tracking || {}));
+  const [calib, setCalib] = useState(null);
+
+  // Push to the engine on mount so a reload matches what is stored.
+  useEffect(() => {
+    if (TK) TK.apply(cfg);
+  }, []);
+  const live = patch => {
+    const next = Object.assign({}, cfg, patch);
+    setCfg(next);
+    if (TK) TK.apply(next); // immediate, before any save round-trip
+  };
+  const commit = patch => {
+    const next = Object.assign({}, cfg, patch);
+    setCfg(next);
+    if (TK) TK.apply(next);
+    save({
+      tracking: next
+    });
+  };
+  const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
+    label: label,
+    desc: desc,
+    value: cfg[key],
+    min: min,
+    max: max,
+    step: step,
+    fmt: fmt,
+    onLive: v => live({
+      [key]: v
+    }),
+    onCommit: v => commit({
+      [key]: v
+    })
+  });
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.45)',
+      marginBottom: 12,
+      lineHeight: 1.6
+    }
+  }, "Head tracking moves the view like a window onto the scene — lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: '#00d4ff',
+      letterSpacing: '.12em',
+      margin: '4px 0 10px'
+    }
+  }, "HEAD / PARALLAX"), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. This is a One Euro filter, so low values are still calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: '#00d4ff',
+      letterSpacing: '.12em',
+      margin: '18px 0 10px'
+    }
+  }, "HAND CURSOR"), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. SMALLER means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: '#00d4ff',
+      letterSpacing: '.12em',
+      margin: '18px 0 10px'
+    }
+  }, "CLICKING"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 8
+    }
+  }, [{
+    k: 'pinch',
+    l: 'Pinch'
+  }, {
+    k: 'dwell',
+    l: 'Dwell (hover to click)'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    className: `settings-btn ${cfg.click_method === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 11
+    },
+    onClick: () => commit({
+      click_method: o.k
+    })
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two is what stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: '#00d4ff',
+      letterSpacing: '.12em',
+      margin: '18px 0 10px'
+    }
+  }, "TUNING"), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Debug overlay",
+    value: !!cfg.debug_overlay,
+    onChange: () => commit({
+      debug_overlay: !cfg.debug_overlay
+    }),
+    desc: "Draws the tracked head position, the filter lag, the active region and the cursor path on screen."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      flex: 1,
+      fontSize: 12
+    },
+    onClick: () => {
+      const TKx = window.FridayTracking;
+      const w = typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
+      const got = TKx ? TKx.calibrate(w) : null;
+      setCalib(got ? 'Set from your current distance.' : 'No face seen — turn the hologram on and look at the camera.');
+      setTimeout(() => setCalib(null), 4000);
+    }
+  }, "◎ Calibrate distance"), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      flex: 1,
+      fontSize: 12
+    },
+    onClick: () => {
+      const next = Object.assign({}, defaults);
+      setCfg(next);
+      if (TK) TK.apply(next);
+      save({
+        tracking: next
+      });
+    }
+  }, "↺ Reset to defaults")), calib && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: '#00d4ff',
+      marginTop: 6,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, calib), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'rgba(255,255,255,0.34)',
+      marginTop: 8,
+      lineHeight: 1.6
+    }
+  }, "Calibrate tells the depth effect what “normal distance” looks like for you and your camera. Sit where you usually sit, then press it."));
 }
 function SettingsTabFederation() {
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
