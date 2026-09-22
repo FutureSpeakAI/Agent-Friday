@@ -349,3 +349,75 @@ class TestNothingElseMoved:
             v = _gate("write_file", {"path": "brief.md"}, ctx)
             assert _text(v).startswith("[CONFIRMATION REQUIRED]"), (
                 "an intra-turn retry escalated: %s" % _text(v)[:80])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  5. THROUGH THE REAL DISPATCH PATH
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestThroughExecuteTool:
+    """Everything above drives `_hook_confirmation_gate`. That is the unit
+    that was wrong, but it is not what Stephen touched.
+
+    `_execute_tool` is the entry the model's tool call actually arrives at,
+    with the hook chain, the governance rings and the dispatch behind it. A
+    fix that worked in the hook and not here would be worth nothing, and the
+    difference is invisible from the tests above.
+
+    The filesystem sandbox is stood down for these, and ONLY these. It is a
+    separate guard with its own tests, it correctly refuses a write into
+    pytest's tmp_path, and leaving it armed here would mean every assertion
+    below passed for the wrong reason - the file would be absent because the
+    sandbox stopped it, not because confirmation did.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _allow_tmp_writes(self, monkeypatch):
+        monkeypatch.setattr(agent, "_sandbox_policy",
+                            lambda name, inp: (True, ""))
+
+    def test_stephens_transcript_ends_with_the_file_on_disk(self, tmp_path):
+        target = tmp_path / "bold-panel-prep.md"
+        replies = []
+        for msg in TestTheLoopItself.TRANSCRIPT:
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"authenticated": True})
+            replies.append(agent._execute_tool(
+                "write_file",
+                {"path": str(target), "content": "# Bold panel prep\n"},
+                session_ctx=ctx))
+
+        assert target.exists(), (
+            "five turns, two plain approvals, and the file still does not "
+            "exist on disk:\n  " + "\n  ".join(r[:70] for r in replies))
+
+    def test_the_question_is_not_repeated_through_dispatch(self, tmp_path):
+        target = tmp_path / "x.md"
+        asked = 0
+        for msg in ["write it", "what?", "huh?", "???"]:
+            ctx = agent.prepare_confirmation_ctx(SID, msg, {"authenticated": True})
+            out = agent._execute_tool(
+                "write_file", {"path": str(target), "content": "x"},
+                session_ctx=ctx)
+            if out.startswith("[CONFIRMATION REQUIRED]"):
+                asked += 1
+        assert asked <= 1, "the identical question reached the model %d times" % asked
+        assert not target.exists(), "an unapproved write reached the disk"
+
+    def test_an_unapproved_write_never_reaches_the_disk(self, tmp_path):
+        target = tmp_path / "never.md"
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"authenticated": True})
+        agent._execute_tool("write_file", {"path": str(target), "content": "x"},
+                            session_ctx=ctx)
+        assert not target.exists()
+
+    def test_a_yes_for_one_path_does_not_write_another_through_dispatch(self, tmp_path):
+        approved = tmp_path / "approved.md"
+        sneaky = tmp_path / "sneaky.md"
+        ctx = agent.prepare_confirmation_ctx(SID, "write it", {"authenticated": True})
+        agent._execute_tool("write_file", {"path": str(approved), "content": "a"},
+                            session_ctx=ctx)
+        yes = agent.prepare_confirmation_ctx(SID, "yes", {"authenticated": True})
+        agent._execute_tool("write_file", {"path": str(sneaky), "content": "b"},
+                            session_ctx=yes)
+        assert not sneaky.exists(), (
+            "a yes for %s wrote %s" % (approved.name, sneaky.name))
