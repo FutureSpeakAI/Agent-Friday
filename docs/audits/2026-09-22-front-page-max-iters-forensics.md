@@ -156,3 +156,64 @@ gap" for checkpointing. This change does not close that gap. It fixes the
 loop's tool-less leg, which has no partial transcript to checkpoint — one
 round, one answer — and the work that was being lost there was being lost at
 the transport, which is where it is now kept.
+
+## Verification, and what could not be verified
+
+**Reproduced, before any change** — three times against the live
+`bonsai2:27b` seat, each ending in the fallback. The third run was
+instrumented at the loop's send seam and produced the `ROUND 1` line quoted
+above.
+
+**The mechanism, measured at the wire** — a direct probe of
+`http://localhost:8090/v1/chat/completions` with a one-line prompt returned
+`{'role': 1, 'content': 16, 'reasoning_content': 49}`. That is the whole
+diagnosis in one line: the seat splits its output, `max_tokens` covers both
+halves, and the reassembler was reading one.
+
+**Tests** — 26 across the three seams, each shown able to fail:
+
+| revert | result |
+| --- | --- |
+| the one-line repair-round grant | 6 of 7 loop tests fail, and the failure text reproduces the original `[Agent hit its 1-step tool limit …]` shape |
+| the `reasoning_content` capture | 3 of 4 transport tests fail |
+| the `degraded` marking + the re-run guard | 5 of 12 front-page tests fail |
+
+The tests that survive each revert are the guards — "a good round is still
+one round", "no reasoning means no key", "a better re-run still replaces a
+degraded edition" — which are about *not* changing behaviour and should
+survive.
+
+**Regression** — the 98 test files under `tests/` that import any of the
+three changed modules, run in three batches: all green except
+`tests/api/test_creative_pipeline_routes.py::test_project_crud_and_bible`
+and `::test_create_project_requires_name`, which fail identically at
+`25ddfbf` (the commit this branch starts from) and are unrelated to this
+change.
+
+**The UI** — the real markup and CSS rendered against four edition shapes:
+degraded with a seat and a timing, degraded with neither, curated, and an
+edition written before `editorial_status` existed. Only the two degraded
+cases render anything; the re-run button dispatches.
+
+**The honest failure fired live**, in `~/.friday/friday.log`, a line that
+did not exist before this change:
+
+```
+WARNING friday.news_engine — front page (morning): no editorial — the
+editorial call failed. model=? after 237.7s. RuntimeError: No model provider
+could generate text (tried local (bonsai2:27b): Connection broken…
+```
+
+Note `model=?`: nothing had recorded a generation, so it declined to name a
+seat rather than printing the configured default.
+
+**NOT verified: a live curated Front Page.** Three attempts after the fix
+all died the same way — the llama-server seat dropped the connection
+mid-generation and restarted. That is a condition of the machine at the
+time, not of this change: `machine_monitor` logged `display breached --
+1528 MiB free against a 2560 MiB display reserve` at 11:31:05 and `thrash
+breached` at 11:32:20, the system volume had been driven to 259 MiB free at
+11:13 by a concurrent test run, and `friday.server` logged repeated
+single-instance-lock collisions. The seat needs to be stable before the
+success path can be demonstrated end to end; until then the claim here is
+"the failure path is now honest", not "the editorial works".
