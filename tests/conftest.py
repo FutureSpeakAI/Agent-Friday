@@ -284,3 +284,16 @@ def friday_dir():
     d = _TEST_HOME / ".friday"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+@pytest.fixture(autouse=True)
+def _fresh_swr_cache():
+    """Cached panel data must not carry from one test into the next."""
+    try:
+        from agent_friday.services import swr_cache
+    except Exception:
+        yield
+        return
+    swr_cache.invalidate("")
+    yield
+    swr_cache.invalidate("")

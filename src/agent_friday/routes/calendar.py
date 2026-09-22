@@ -32,6 +32,7 @@ from agent_friday.services.calendar_engine import (
     _CALENDAR_LOCK,
     _classify_event,
     _day_annotation,
+    _drop_calendar_cache,
     _enrich_events,
     _events_for_day,
     _gap_analysis,
@@ -275,6 +276,7 @@ def api_calendar_quick_add():
                     "end": {"dateTime": (_parse_dt(end_time) or sdt + timedelta(hours=1)).isoformat()},
                 }
                 gev = svc.events().insert(calendarId="primary", body=body).execute()
+                _drop_calendar_cache()
                 event["id"] = gev.get("id", event["id"])
                 event["source"] = "google"
                 created_in_google = True

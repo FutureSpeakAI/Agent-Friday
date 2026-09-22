@@ -325,7 +325,12 @@ def _dev_git(repo_path, *args, timeout=40):
 
 
 def _git_repo_summary(repo_path):
-    """Build a status card dict for one repo."""
+    """Build a status card dict for one repo.
+
+    Read-only. `status` runs with --no-optional-locks: the dashboard sweeps
+    every repo in the background, and the index refresh `status` otherwise
+    performs takes index.lock, which would fail a commit made at that moment.
+    """
     name = os.path.basename(repo_path)
     card = {"name": name, "path": repo_path, "branch": "?", "dirty": 0,
             "ahead": 0, "behind": 0, "last_commit": "", "last_when": "",
@@ -334,7 +339,7 @@ def _git_repo_summary(repo_path):
         b = _dev_git(repo_path, "rev-parse", "--abbrev-ref", "HEAD", timeout=10)
         if b.returncode == 0:
             card["branch"] = b.stdout.strip() or "?"
-        st = _dev_git(repo_path, "status", "--porcelain", timeout=15)
+        st = _dev_git(repo_path, "--no-optional-locks", "status", "--porcelain", timeout=15)
         if st.returncode == 0:
             lines = [l for l in st.stdout.splitlines() if l.strip()]
             card["dirty"] = len(lines)
@@ -363,6 +368,10 @@ def _git_repo_summary(repo_path):
 
 # ── GIT: operations ────────────────────────────────────────────
 def _git_result(rp, cp, action):
+    # Every git mutation from the Code workspace reports through here, so the
+    # cached repo dashboard is dropped here: the next scan shows the change.
+    from agent_friday.services import swr_cache
+    swr_cache.invalidate("repos.")
     ok = cp.returncode == 0
     out = (cp.stdout or "").strip()
     err = (cp.stderr or "").strip()

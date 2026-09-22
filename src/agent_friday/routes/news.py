@@ -821,9 +821,7 @@ def news_archive_stats():
     })
 
 
-@news_bp.route('/api/news/clusters')
-def news_clusters():
-    """Trending clusters: stories covered by 3+ sources within the last 24h."""
+def _compute_news_clusters():
     try:
         pool, _ = _gather_front_page_pool(per_cat=16)
     except Exception:
@@ -836,12 +834,26 @@ def news_clusters():
     now = _time.time()
     recent = [it for it in pool
               if not it.get("ts") or (now - it["ts"]) <= 24 * 3600]
-    clusters = _cluster_articles(recent)
+    return _cluster_articles(recent)
+
+
+@news_bp.route('/api/news/clusters')
+def news_clusters():
+    """Trending clusters: stories covered by 3+ sources within the last 24h.
+
+    Building them is a live crawl of every feed (over a minute), so they come
+    from a stale-while-revalidate cache: fresh for 10 minutes, rebuilt in the
+    background after that, never served older than 2 hours.
+    ``generated_at`` is when the clusters were built, not when they were
+    served."""
+    from agent_friday.services import swr_cache
+    clusters, built = swr_cache.get("news.clusters", _compute_news_clusters,
+                                    fresh_for=600, max_age=7200)
     return jsonify({
         "status": "ok",
         "clusters": clusters,
         "total": len(clusters),
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": datetime.fromtimestamp(built).isoformat(timespec="seconds"),
     })
 
 

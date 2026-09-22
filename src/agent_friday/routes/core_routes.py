@@ -579,25 +579,52 @@ def refresh_models_catalog():
 #  SYSTEM INFO
 # ═══════════════════════════════════════════════════════════════
 
+def _system_disks():
+    """Per-volume usage in GB. psutil answers in microseconds; the PowerShell
+    Get-PSDrive fallback costs a process launch (~1.5 s)."""
+    try:
+        import psutil
+        disks = []
+        for part in psutil.disk_partitions(all=False):
+            if not part.fstype or 'cdrom' in part.opts:
+                continue
+            try:
+                u = psutil.disk_usage(part.mountpoint)
+            except OSError:
+                continue
+            disks.append({"Name": part.mountpoint.rstrip(':\\/') or part.mountpoint,
+                          "UsedGB": round(u.used / 2**30, 2),
+                          "FreeGB": round(u.free / 2**30, 2),
+                          "TotalGB": round(u.total / 2**30, 2)})
+        return disks
+    except ImportError:
+        pass
+    disk_cmd = 'Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{N="UsedGB";E={[math]::Round($_.Used/1GB,2)}},@{N="FreeGB";E={[math]::Round($_.Free/1GB,2)}},@{N="TotalGB";E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} | ConvertTo-Json'
+    disk_result = subprocess.run(['powershell', '-Command', disk_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
+    disks = json.loads(disk_result.stdout) if disk_result.stdout.strip() else []
+    return [disks] if isinstance(disks, dict) else disks
+
+
+def _system_top_processes():
+    """Top processes by CPU time. Reading CPU time for every process takes
+    ~1.4 s on Windows however it is asked for, so callers go through the
+    stale-while-revalidate cache."""
+    proc_cmd = 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Name,@{N="CPU_s";E={[math]::Round($_.CPU,1)}},@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'
+    proc_result = subprocess.run(['powershell', '-Command', proc_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
+    procs = json.loads(proc_result.stdout) if proc_result.stdout.strip() else []
+    return [procs] if isinstance(procs, dict) else procs
+
+
 @core_bp.route('/api/system')
 def system_info():
-    """Get real system info via PowerShell."""
+    """Disk usage (live) and top processes (cached up to 15 s, with the time
+    they were read in ``processes_as_of``)."""
+    from agent_friday.services import swr_cache
     try:
-        # Disk usage
-        disk_cmd = 'Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{N="UsedGB";E={[math]::Round($_.Used/1GB,2)}},@{N="FreeGB";E={[math]::Round($_.Free/1GB,2)}},@{N="TotalGB";E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} | ConvertTo-Json'
-        disk_result = subprocess.run(['powershell', '-Command', disk_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
-        disks = json.loads(disk_result.stdout) if disk_result.stdout.strip() else []
-        if isinstance(disks, dict):
-            disks = [disks]
-
-        # Top processes
-        proc_cmd = 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Name,@{N="CPU_s";E={[math]::Round($_.CPU,1)}},@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'
-        proc_result = subprocess.run(['powershell', '-Command', proc_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
-        procs = json.loads(proc_result.stdout) if proc_result.stdout.strip() else []
-        if isinstance(procs, dict):
-            procs = [procs]
-
-        return jsonify({"status": "ok", "disks": disks, "processes": procs})
+        disks = _system_disks()
+        procs, as_of = swr_cache.get("system.processes", _system_top_processes, fresh_for=15)
+        return jsonify({"status": "ok", "disks": disks, "processes": procs,
+                        "processes_as_of": datetime.fromtimestamp(as_of).isoformat(timespec="seconds")})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 

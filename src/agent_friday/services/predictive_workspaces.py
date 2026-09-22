@@ -241,16 +241,13 @@ def predict_workspaces(dow=None, hour=None, top=6):
 # `globals()` lookup on this module's own namespace (which nothing populates,
 # so every warm attempt would silently return False for every workspace).
 # messages/wiki/contacts/trust have a real cache-touching function.
-# "news" and "calendar" are left as documented no-ops: neither has
-# a warmable cache. Calendar has none at all -- `_events_for_day()` (the
-# route's own render path) calls Google's API live on every read with no
-# caching layer to warm, so "warming" it would just be an extra, unused
-# Google Calendar API call every prewarm cycle. News already renders from an
-# on-disk cache directly (`_list_front_pages`/`_read_front_page`, already
-# fast); the only slow step is `_generate_front_page()`, which does real
-# (costed) generation work and runs on its own schedule -- calling it
-# opportunistically from an hourly best-effort prewarm loop risks duplicate
-# generation and unbudgeted spend for no render-speed benefit.
+# calendar, code and news warm the stale-while-revalidate cache
+# (services/swr_cache.py) their slow routes read from: calendar the per-day
+# Google reads for today through the next week, code the git sweep behind
+# /api/repos/scan, news the trending-clusters feed crawl. None of these
+# spend money. The news front page is NOT warmed: `_generate_front_page()`
+# does real (costed) generation on its own schedule, and calling it from an
+# hourly best-effort loop risks duplicate generation and unbudgeted spend.
 def _resolve_warmer(*import_specs):
     for module_path, fn_name in import_specs:
         try:
@@ -277,9 +274,26 @@ def _warm_workspace(ws):
                 fn()
                 return True
         elif ws == "news":
-            return False  # no warmable cache -- see module note above
+            fn = _resolve_warmer(("agent_friday.routes.news", "_compute_news_clusters"))
+            if fn:
+                from agent_friday.services import swr_cache
+                swr_cache.get("news.clusters", fn, fresh_for=600, max_age=7200)
+                return True
         elif ws == "calendar":
-            return False  # no cache exists to warm -- see module note above
+            fn = _resolve_warmer(("agent_friday.services.calendar_engine", "_events_for_day"))
+            if fn:
+                for i in range(8):
+                    fn(date.today() + timedelta(days=i))
+                return True
+        elif ws == "code":
+            fn = _resolve_warmer(("agent_friday.routes.code", "_scan_repos"))
+            if fn:
+                from agent_friday.services.code_engine import PROJECTS_DIR
+                from agent_friday.services import swr_cache
+                if PROJECTS_DIR.exists():
+                    swr_cache.get("repos.scan:" + str(PROJECTS_DIR),
+                                  lambda: fn(PROJECTS_DIR), fresh_for=20)
+                    return True
         elif ws == "wiki":
             fn = _resolve_warmer(
                 ("agent_friday.services.model_router", "_generate_wiki_indexes"),

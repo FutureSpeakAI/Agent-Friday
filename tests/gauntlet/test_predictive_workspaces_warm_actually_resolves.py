@@ -8,11 +8,10 @@ real target functions into that namespace, so every lookup returned None
 and every single warm attempt silently returned False, forever, for
 every workspace, since the function was written.
 
-This probe proves the fix for the three branches with a real, importable
-warmer (messages, wiki, contacts/trust), and proves "news" and "calendar"
-are now honest, documented no-ops rather than dead references to
-functions (_load_front_page, _get_cached_news, _collect_calendar_events,
-_get_calendar_events) that do not exist anywhere in the codebase.
+This probe proves each branch resolves a real, importable warmer
+(messages, wiki, contacts/trust), and that calendar, news and code warm the
+stale-while-revalidate cache their routes read: a warmed workspace's next
+read makes no live call.
 """
 from __future__ import annotations
 
@@ -56,16 +55,38 @@ class TestWarmWorkspaceActuallyResolvesRealFunctions:
         assert result is True
         assert calls == ["called"]
 
-    def test_news_warm_is_an_honest_no_op_not_a_dead_reference(self):
-        # No cache exists for news to warm (routes/news.py reads the on-disk
-        # front-page cache directly); this must report False, not crash, and
-        # must not reference a function that doesn't exist anywhere.
-        assert pw._warm_workspace("news") is False
+    def test_news_warm_builds_the_clusters_the_route_serves(self, monkeypatch):
+        import agent_friday.routes.news as news
+        from agent_friday.services import swr_cache
+        calls = []
+        monkeypatch.setattr(news, "_compute_news_clusters",
+                            lambda: calls.append(1) or [{"title": "t"}])
 
-    def test_calendar_warm_is_an_honest_no_op_not_a_dead_reference(self):
-        # The calendar workspace has no cache either -- _events_for_day()
-        # calls Google's API live on every read.
-        assert pw._warm_workspace("calendar") is False
+        assert pw._warm_workspace("news") is True
+        assert calls == [1]
+        assert swr_cache.peek("news.clusters")[0] == [{"title": "t"}]
+
+    def test_calendar_warm_fills_the_cache_the_route_reads(self, monkeypatch):
+        import agent_friday.services.calendar_engine as ce
+        live = []
+        monkeypatch.setattr(ce, "_fetch_calendar_range_live",
+                            lambda start, end: live.append(start) or [])
+
+        assert pw._warm_workspace("calendar") is True
+        assert len(live) == 8                      # today + the next seven days
+        ce._events_for_day(__import__("datetime").date.today())
+        assert len(live) == 8                      # served from the warmed cache
+
+    def test_code_warm_runs_the_repo_sweep_once(self, monkeypatch, tmp_path):
+        import agent_friday.routes.code as code
+        import agent_friday.services.code_engine as code_engine
+        calls = []
+        monkeypatch.setattr(code_engine, "PROJECTS_DIR", tmp_path)
+        monkeypatch.setattr(code, "_scan_repos", lambda root: calls.append(root) or [])
+
+        assert pw._warm_workspace("code") is True
+        assert pw._warm_workspace("code") is True
+        assert calls == [tmp_path]
 
     def test_resolve_warmer_returns_none_for_a_genuinely_missing_function(self):
         fn = pw._resolve_warmer(

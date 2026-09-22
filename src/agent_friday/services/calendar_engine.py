@@ -739,10 +739,35 @@ def _save_local_events(events):
     return events
 
 
+def _drop_calendar_cache():
+    """Forget cached Google Calendar reads; call after any write to Google."""
+    from agent_friday.services import swr_cache
+    swr_cache.invalidate("calendar.")
+
+
 def _fetch_calendar_range(start, end):
-    """Live Calendar events in [start, end) as dicts incl. stable id.
+    """Calendar events in [start, end) as dicts incl. stable id.
+
+    Each range is one Google round trip, and a Calendar open asks for nine of
+    them (today, tomorrow, seven week-strip days), so answers are kept in a
+    stale-while-revalidate cache: fresh for 60 s, refreshed in the background
+    after that, never served older than 30 minutes. Writes made through
+    Friday drop the cache (_drop_calendar_cache); a change made elsewhere
+    shows on the first open after its entry goes stale.
     Returns [] (not an error sentinel) when Google isn't linked, so callers can
     merge with local events transparently."""
+    from agent_friday.services import swr_cache
+    try:
+        events, _ = swr_cache.get("calendar.range:%s/%s" % (start.isoformat(), end.isoformat()),
+                                  lambda: _fetch_calendar_range_live(start, end),
+                                  fresh_for=60, max_age=1800)
+    except Exception:
+        return []
+    return [dict(e) for e in events]
+
+
+def _fetch_calendar_range_live(start, end):
+    """One live Google Calendar list call for [start, end)."""
     creds = _google_credentials()
     if not creds:
         return []
@@ -772,8 +797,10 @@ def _fetch_calendar_range(start, end):
                 "source": "google",
             })
         return out
-    except Exception:
-        return []
+    except Exception as e:
+        # Raised, not swallowed: the cache must not remember a failed call
+        # as "no events". _fetch_calendar_range turns it back into [].
+        raise RuntimeError("calendar fetch failed: %s" % type(e).__name__) from e
 
 
 def _parse_dt(s):
