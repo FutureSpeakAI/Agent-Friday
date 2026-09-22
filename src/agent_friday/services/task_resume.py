@@ -241,9 +241,23 @@ def resumability(task_id) -> Dict[str, Any]:
     """
     blob = read(task_id)
     if not blob:
-        return {"resumable": False, "reason": "no checkpoint was written",
+        # "Missing" and "there but unreadable" are different answers and the
+        # user deserves the right one. A vault passphrase rotation on this
+        # machine already left 20+ older task records failing to decrypt; a
+        # checkpoint in that state is lost work, not absent work, and saying
+        # "no checkpoint was written" about it would be a lie.
+        unreadable = False
+        try:
+            unreadable = _journal().blob_exists(task_id, BLOB)
+        except Exception:
+            pass
+        return {"resumable": False,
+                "reason": ("a checkpoint exists but cannot be read - most "
+                           "likely written under a previous vault passphrase"
+                           if unreadable else "no checkpoint was written"),
                 "iteration": 0, "pending_tool": None,
-                "needs_confirmation": False, "attempts": 0}
+                "needs_confirmation": False, "attempts": 0,
+                "unreadable": unreadable}
     out = {
         "resumable": True,
         "reason": "",

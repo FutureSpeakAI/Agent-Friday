@@ -281,6 +281,23 @@ def read_blob(task_id: str, name: str) -> Optional[Any]:
         return None
 
 
+def blob_exists(task_id: str, name: str) -> bool:
+    """Is the file there, regardless of whether it can be READ?
+
+    The distinction is not academic. ``read_blob`` returns None both when
+    nothing was ever written and when at-rest protection cannot open what was
+    — and on this machine the second case is real: rotating the vault
+    passphrase left 20+ older ``state.json`` files failing with "GCM auth tag
+    mismatch". A caller that cannot tell those apart reports "nothing was
+    saved" about work that was saved and is now unreachable, which is the
+    silent loss the journal exists to prevent.
+    """
+    try:
+        return (task_dir(task_id) / name).exists()
+    except Exception:
+        return False
+
+
 def delete_blob(task_id: str, name: str) -> bool:
     p = task_dir(task_id) / name
     try:
