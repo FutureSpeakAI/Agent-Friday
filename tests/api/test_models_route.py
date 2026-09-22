@@ -34,11 +34,63 @@ def test_models_route_includes_sonnet5_and_fable5(client):
 
 
 def test_orchestrator_includes_openai_and_local(client):
+    """A local orchestrator option must be offered - by whatever serves it.
+
+    This asserted `"ollama-local" in providers` until 2026-09-22. Ollama was
+    removed from the project on 2026-09-18, so that provider now contributes
+    ZERO models while remaining registered, and the assertion had been failing
+    against a name that could no longer supply anything.
+
+    Worse, the old assertion would have PASSED on a stopped daemon's hardcoded
+    fallback list - which is the exact failure _arbiter_seat_entries documents:
+    "the picker must show the live residency plan, not a dead daemon's
+    guesses". So it was checking for the wrong thing in the wrong direction.
+
+    What matters is that the picker offers something local. On this machine
+    that is bonsai2:27b and the fridayweaver seat, served by llama-server
+    processes the Arbiter owns.
+    """
     data = client.get("/api/models").get_json()
     providers = {m["provider"] for m in data["roles"]["orchestrator"]}
     assert "openai" in providers
-    assert "ollama-local" in providers
     assert "anthropic" in providers
+
+
+def test_a_running_local_seat_reaches_the_picker(client, tmp_path, monkeypatch):
+    """REGRESSION, 2026-09-22: it did not.
+
+    _arbiter_seat_entries' disk fallback read `raw.get("seats") or raw` and
+    looked for dict values carrying model_id, or plain strings. The Arbiter
+    writes {"pid":…, "updated_at":…, "endpoints": {"<model>": "<url>"}}, so
+    iterating raw yields an int, a float and a dict with no model_id - all
+    skipped, and the seat one level down never seen. bonsai2 was absent from
+    the catalogue the entire time llama-server was serving it on 8090, so it
+    could not be selected.
+
+    Seeds the real file shape and asserts the seat surfaces. Fails against the
+    old parser.
+    """
+    import json
+    from agent_friday.services import model_catalog as mc
+
+    res = tmp_path / "residency"
+    res.mkdir(parents=True, exist_ok=True)
+    (res / "endpoints.json").write_text(json.dumps({
+        "pid": 4242,
+        "updated_at": 1790077083.9,
+        "endpoints": {"bonsai2:27b": "http://127.0.0.1:8090/v1"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(mc, "runtime_dir", lambda: tmp_path, raising=False)
+    monkeypatch.setattr("agent_friday.core.runtime_dir", lambda: tmp_path,
+                        raising=False)
+
+    seats = mc._arbiter_seat_entries()
+    ids = {s["id"] for s in seats}
+    assert "bonsai2:27b" in ids, (
+        "a running local seat did not reach the catalogue; got %s" % sorted(ids))
+    seat = next(s for s in seats if s["id"] == "bonsai2:27b")
+    assert seat["local"] is True
+    assert mc.ROLE_ORCHESTRATOR in seat["roles"]
 
 
 def test_models_route_reports_voice_engines(client):
