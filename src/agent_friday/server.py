@@ -27,6 +27,28 @@ try:
 except Exception:
     pass
 
+# Crash forensics, armed before anything heavy is imported.
+#
+# 2026-09-22: seven Python crashes in 24 hours - five access violations in
+# python313.dll, two Rust aborts in hf_xet.pyd - each one surfacing as a
+# WerFault console window on the desktop, which is what the "popups" turned
+# out to be. WER could name a fault offset in a DLL and nothing about which
+# of Friday's several dozen Python processes it was, or what it was doing.
+#
+# Both halves must run before `core` imports: faulthandler so a crash during
+# the heavy import chain is still caught, and HF_HUB_DISABLE_XET because
+# huggingface_hub reads it at import time and core pulls it in transitively
+# (transformers, sentence-transformers, faster-whisper, kokoro, nemo).
+#
+# Wrapped, because a diagnostic that can stop the app from booting is worse
+# than the silence it replaces.
+try:
+    from agent_friday.services import crash_forensics as _crash
+    _crash.disable_hf_xet()
+    _crash.install()
+except Exception:
+    pass
+
 import agent_friday.core as core
 
 _log = logging.getLogger("friday.server")
