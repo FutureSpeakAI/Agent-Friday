@@ -829,7 +829,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
         _resp = _oai_agentic_loop(
             convo, oai_tools, _send, provider='local', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
-            max_iters=max_iters, orb=_orb,
+            max_iters=max_iters, max_tokens=max_tokens, orb=_orb,
             # B3/B4: hand the orb pid to the shared loop so the enriched thread
             # view (process_log + timed steps) and the activity ledger's
             # model_invocation/tool_call events carry exact correlation ids.
@@ -959,6 +959,27 @@ def _consume_sse_completion(resp, on_delta=None):
     `on_delta(text)` fires per content fragment for progressive rendering.
     """
     content_parts = []
+    # REASONING DELTAS WERE BEING THROWN ON THE FLOOR.
+    #
+    # A reasoning seat splits its output across two delta fields and
+    # `max_tokens` is spent on BOTH. Measured against the live bonsai2:27b
+    # llama-server seat on 2026-09-22 with a one-line prompt: 16 `content`
+    # deltas and 49 `reasoning_content` deltas. This reassembler read only
+    # `content`, so the thinking was discarded before anything upstream could
+    # see it.
+    #
+    # On a long prompt that is not a cosmetic loss. The Front Page editorial
+    # (25,410 prompt tokens, max_tokens=1800) spent its entire budget in
+    # `reasoning_content`, came back finish_reason="length" with content="",
+    # and every layer above reported it as an EMPTY reply — 320s of real work
+    # reduced to silence, then mislabelled "Max iters".
+    #
+    # Kept OUT of `content` deliberately: a scratchpad is not an answer and
+    # must not reach a chat bubble or a transcript. It rides alongside, in the
+    # same `reasoning_content` field the non-streamed body uses, so the loop's
+    # journal line and the failure messages can read it and nothing else
+    # changes.
+    reasoning_parts = []
     tool_calls = {}          # index -> partial tool call
     finish_reason = None
     served_model = None
@@ -1022,6 +1043,12 @@ def _consume_sse_completion(resp, on_delta=None):
                         on_delta(piece)
                     except Exception:
                         pass
+            # `reasoning_content` is llama.cpp's and DeepSeek's spelling,
+            # `reasoning` is OpenRouter's. No on_delta: progressive rendering
+            # shows the answer, not the scratchpad.
+            _think = delta.get("reasoning_content") or delta.get("reasoning")
+            if _think:
+                reasoning_parts.append(_think)
             # Tool calls arrive fragmented: the id/name land on the first
             # chunk for an index, the arguments accrete character-wise after.
             for tc in delta.get("tool_calls") or []:
@@ -1038,6 +1065,8 @@ def _consume_sse_completion(resp, on_delta=None):
                     slot["function"]["arguments"] += fn["arguments"]
 
     message = {"role": "assistant", "content": "".join(content_parts)}
+    if reasoning_parts:
+        message["reasoning_content"] = "".join(reasoning_parts)
     if tool_calls:
         message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
     out = {"choices": [{"message": message,
@@ -1610,7 +1639,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             # speaks. Without this the ledger files it as cloud.
             seat=('local' if local_bypass else 'openai'),
             pii_lookup=pii_lookup, session_ctx=session_ctx,
-            max_iters=max_iters, orb=_orb,
+            max_iters=max_iters, max_tokens=max_tokens, orb=_orb,
             meter_provider=pname,
             catalogue_all=catalogue_all,
         )

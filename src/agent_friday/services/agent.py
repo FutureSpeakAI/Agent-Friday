@@ -8159,7 +8159,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
                       meter_provider=None, orb_id=None, seat=None,
-                      catalogue_all=None):
+                      catalogue_all=None, max_tokens=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
     provider — local Ollama (gemma4 et al.) AND cloud OpenAI/OpenRouter.
 
@@ -8177,6 +8177,9 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
       meter_provider — REGISTRY provider name ("openrouter", "groq", …) for
                        cost-ledger attribution; defaults to `provider` so
                        existing call sites are unchanged
+      max_tokens     — the per-call output ceiling the transport sent, for
+                       the failure message only; None means "unknown", and
+                       the message says so rather than inventing a number
       orb(**kw)      — optional process-orb updater (no-op if omitted)
       orb_id         — the caller's process-orb pid (B3): enables the enriched
                        thread view (process_log lines + timed steps) and exact
@@ -8216,9 +8219,34 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
 
     loops = max_iters if oai_tools else 1
     _empty_retried = False
+    # THE EMPTY-RETRY THAT NEVER RETRIED.
+    #
+    # The empty-completion guard below says "one retry that tells the model
+    # what happened, then an honest failure". On a tool-less call that was a
+    # promise the loop could not keep: `loops` is 1, and the guard's `continue`
+    # spent the only round. Control fell straight to the bottom and returned
+    # "[Agent hit max tool iterations without completing.]" — on a call with
+    # no iterations to exhaust.
+    #
+    # Measured on the reference machine, 2026-09-22 09:55:45: the Front Page
+    # editorial (`_generate_text`, tools=None) ran 1,741s on bonsai2:27b,
+    # produced one empty completion, never retried, and handed the caller that
+    # string. `news_engine._extract_json_block` could not parse it, so the
+    # edition silently fell back to the un-curated deterministic pick, and the
+    # orb Stephen was looking at read "Max iters".
+    #
+    # The repair round is not an iteration of the tool loop — it is the loop
+    # asking again for the answer it was owed — so it is granted on top of
+    # `loops` rather than deducted from it, for the tool path too.
+    _rounds_left = loops
     _tj_loop = _journal()
     _round = 0
-    for _ in range(loops):
+    # The provider's own word for why the last completion stopped
+    # ("length", "stop", …). Carried into the empty-response message so a
+    # truncation reads as a truncation instead of as silence.
+    _last_finish = None
+    while _rounds_left > 0:
+        _rounds_left -= 1
         _round += 1
         # Stop-after-step (TV10), same contract as the Anthropic loop.
         if _tj_loop.stop_requested(_tj_loop.resolve_task_id(session_ctx)) and _round > 1:
@@ -8271,6 +8299,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         choices = resp.get("choices", [])
         msg = (choices[0].get("message", {}) if choices else {}) or {}
         tool_calls = msg.get("tool_calls") or []
+        _last_finish = (choices[0].get("finish_reason") if choices else None)
         # Task journal (TV3/TV4): the call, then the model's words.
         try:
             _tj_loop.model_call(model=_meter_model, provider=_meter_as, seat=_led_seat,
@@ -8321,16 +8350,65 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             # failure — never silence dressed up as a reply.
             if not text and not _empty_retried:
                 _empty_retried = True
+                # Grant the repair round rather than spend the last one on it
+                # (see the note where `_rounds_left` is set up).
+                _rounds_left += 1
                 convo.append({"role": "assistant", "content": ""})
-                convo.append({"role": "user", "content":
-                              "(Automated check — this is not from the user. "
+                # Tell the model what went wrong, not just THAT something did.
+                # A reasoning seat that hit the ceiling mid-thought does not
+                # need "answer in words" — it needs to stop thinking and
+                # start writing, because a second round of the same length
+                # ends the same way. The two causes are distinguishable from
+                # finish_reason + whether a scratchpad came back, so
+                # distinguish them.
+                if (_last_finish == "length"
+                        and (msg.get("reasoning_content")
+                             or msg.get("reasoning") or "").strip()):
+                    _nudge = ("(Automated check — this is not from the user. "
+                              "You spent your entire output budget reasoning "
+                              "and never wrote a reply. Do not deliberate "
+                              "further: answer now, immediately and in the "
+                              "exact format the user asked for.)")
+                else:
+                    _nudge = ("(Automated check — this is not from the user. "
                               "Your previous response was empty. Answer the "
-                              "user's message directly, in words.)"})
+                              "user's message directly, in words.)")
+                convo.append({"role": "user", "content": _nudge})
                 continue
             if not text:
-                text = ("[Friday returned an empty response twice in a row. "
-                        "That is a fault on this end, not an answer — please "
-                        "try again, and switch seats if it repeats.]")
+                # Name the seat and the provider's stop reason. A caller that
+                # parses this reply (the Front Page editorial does) can then
+                # log something a person can act on instead of "not JSON".
+                #
+                # The case worth separating is a REASONING seat that hit its
+                # output ceiling while still thinking. That is not silence and
+                # not a fault in the usual sense — the model worked for the
+                # whole budget and never reached the answer — and the remedy
+                # (more budget, or a seat that thinks less) is nothing like
+                # the remedy for a genuinely blank reply. Measured on the
+                # Front Page editorial, 2026-09-22: 1,800 tokens of
+                # reasoning_content, zero content, finish_reason=length,
+                # reported for days as "empty" and then as "Max iters".
+                _think = (msg.get("reasoning_content")
+                          or msg.get("reasoning") or "").strip()
+                if _last_finish == "length" and _think:
+                    _budget = (f"its entire {max_tokens}-token output budget"
+                               if max_tokens else "its whole output budget")
+                    text = (f"[{model} used {_budget} thinking and never began "
+                            f"the answer ({len(_think)} characters of "
+                            f"reasoning, no reply). Raise max_tokens for this "
+                            f"call, shorten the prompt, or use a seat that "
+                            f"reasons less.]")
+                else:
+                    _why = ({"length": "it ran out of output budget mid-answer",
+                             "content_filter": "the provider filtered it"}
+                            .get(_last_finish)
+                            or (f"the provider reported finish_reason={_last_finish}"
+                                if _last_finish else "it sent no words at all"))
+                    text = (f"[{model} returned an empty response twice in a "
+                            f"row — {_why}. That is a fault on this end, not "
+                            f"an answer — please try again, and switch seats "
+                            f"if it repeats.]")
             # Even with nothing to call, channel markup must not reach the
             # transcript — the thought channel is a scratchpad, not an answer.
             if text and "channel" in text:
@@ -8500,9 +8578,16 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             tool_trace.append({"name": tname, "input": targs, "result": result[:2000]})
             convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
 
-    _orb(status='error', label='Max iters', progress=1.0)
+    # Reached only when a tool loop really did spend its whole budget: a
+    # tool-less call always returns from the final-answer branch above, and
+    # since the repair round is granted rather than deducted it can no longer
+    # fall through to here. Say which budget, and how much of it was used, so
+    # "max iters" is a fact about this run rather than a label for any ending.
+    _orb(status='error', label=f'Max iters ({_round})', progress=1.0)
     _led_done()
-    return "[Agent hit max tool iterations without completing.]", tool_trace
+    return (f"[Agent hit its {loops}-step tool limit on {model} after "
+            f"{_round} steps without completing. Raise max_iters, or narrow "
+            f"the task.]"), tool_trace
 
 
 # ══════════════════════════════════════════════════════════════
