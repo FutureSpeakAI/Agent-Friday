@@ -24090,7 +24090,7 @@ function MessagesWS() {
   };
   const reclassify = async (m, newLane) => {
     try {
-      await fetch('/api/messages/classify', {
+      const r = await fetch('/api/messages/classify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -24100,11 +24100,29 @@ function MessagesWS() {
           lane: newLane
         })
       });
+      const d = await r.json().catch(() => ({}));
       setMsgs(x => x.map(z => z.id === m.id ? {
         ...z,
         lane: newLane
       } : z));
-      flash('Moved to ' + (MSG_LANE_META[newLane]?.label || newLane));
+      // SAY THAT IT LEARNED, and say how far the learning has got.
+      //
+      // The correction used to move one message and teach nothing — the route
+      // never called record_signal, so sender_signals.json sat at 38 bytes
+      // after months. Now that it does teach, the person doing the teaching
+      // has to be able to see it, or a correction still feels like a one-off
+      // chore rather than training. `needed_for_authority` is the engine's
+      // own countdown to a learned sender outranking the configured rules.
+      const label = MSG_LANE_META[newLane]?.label || newLane;
+      const L = d && d.learned;
+      if (L && L.ok && L.authoritative) {
+        flash('Moved to ' + label + ' — learned: ' + L.sender + ' now goes here');
+      } else if (L && L.ok) {
+        flash('Moved to ' + label + ' — ' + L.needed_for_authority +
+              ' more from ' + L.sender + ' and I stop asking');
+      } else {
+        flash('Moved to ' + label);
+      }
       loadStats();
     } catch (e) {}
   };

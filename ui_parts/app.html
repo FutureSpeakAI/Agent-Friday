@@ -5496,7 +5496,13 @@ function MessagesWS(){
     if(action==='archive'){setMsgs(x=>x.filter(z=>z.id!==m.id));if(expanded===m.id){setExpanded(null);setThread(null)}}
     else setMsgs(x=>x.map(z=>z.id===m.id?{...z,flagged:action==='flag'?true:action==='unflag'?false:z.flagged,unread:action==='read'?false:action==='unread'?true:z.unread}:z));
     if(!silent)flash(action.charAt(0).toUpperCase()+action.slice(1)+'d');loadStats()}catch(e){}};
-  const reclassify=async(m,newLane)=>{try{await fetch('/api/messages/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,lane:newLane})});setMsgs(x=>x.map(z=>z.id===m.id?{...z,lane:newLane}:z));flash('Moved to '+(MSG_LANE_META[newLane]?.label||newLane));loadStats()}catch(e){}};
+  // Reclassifying TEACHES now - the route calls message_triage.record_signal,
+  // which it never used to, so every correction before today moved one message
+  // and taught nothing (sender_signals.json sat at 38 bytes for months). Show
+  // that it learned, and the engine's own countdown to that sender outranking
+  // the configured rules; otherwise a correction still feels like a chore
+  // rather than training.
+  const reclassify=async(m,newLane)=>{try{const r=await fetch('/api/messages/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,lane:newLane})});const d=await r.json().catch(()=>({}));setMsgs(x=>x.map(z=>z.id===m.id?{...z,lane:newLane}:z));const label=MSG_LANE_META[newLane]?.label||newLane;const L=d&&d.learned;if(L&&L.ok&&L.authoritative){flash('Moved to '+label+' — learned: '+L.sender+' now goes here')}else if(L&&L.ok){flash('Moved to '+label+' — '+L.needed_for_authority+' more from '+L.sender+' and I stop asking')}else{flash('Moved to '+label)}loadStats()}catch(e){}};
   const draft=async(m)=>{setDraftFor(m.id);setDraftBusy(true);setDraftText('');
     try{const r=await fetch('/api/messages/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,sender:m.sender_email||m.sender,subject:m.subject,snippet:m.snippet,lane:m.lane,instructions:draftInstr})});const d=await r.json();setDraftText(d.draft||('[Error: '+(d.message||'draft failed')+']'))}catch(e){setDraftText('[Error generating draft]')}setDraftBusy(false)};
 
