@@ -49,6 +49,13 @@ param(
     # wrong. See requirements/recommended.txt.
     [switch] $SkipMemory,
 
+    # Skip the judgment tier (laya) — the second opinion on whether an action
+    # needs the owner's sign-off. Rarely needed explicitly: the step already
+    # no-ops when torch is absent, so declining the memory tier declines this
+    # one too. Exists for test runs, and so the ~808 MB checkpoint can be
+    # refused on a metered connection without refusing memory as well.
+    [switch] $SkipJudgment,
+
     # Skip Ollama entirely. For test runs and for machines that already have
     # a managed Ollama the installer should not touch.
     [switch] $SkipOllama,
@@ -762,6 +769,64 @@ if (-not $SkipMemory) {
     Write-Log 'Memory tier skipped by request (-SkipMemory).'
     Say-Step 'Skipping Friday''s memory'
     Say-Detail 'Requested. Friday will not remember between conversations.'
+}
+
+# ── Judgment tier: a second opinion on what needs your sign-off ─────────────
+#
+# Deliberately gated on torch ALREADY being importable. laya requires
+# torch>=2.0, which on Windows is ~2.5 GB — the same 2.5 GB the memory tier
+# above may have just installed. Running this unconditionally would quietly
+# make torch mandatory on an install that explicitly declined it, which is the
+# opposite of what -SkipMemory means.
+#
+# So: if torch is here, this costs a small wheel plus an ~808 MB checkpoint.
+# If it is not, we skip and say why. Friday then decides exactly the way it did
+# before Laya existed — the keyword scan alone — and the Settings panel says so
+# rather than showing a switch that claims otherwise.
+if (-not $SkipJudgment) {
+    if (Test-ModulesImportable -InstallRoot $InstallRoot -Modules @('torch')) {
+        Say-Step 'Installing Friday''s second opinion'
+        Say-Detail 'It double-checks whether an action needs your approval before it runs.'
+        Say-Detail 'About 800 MB.'
+        $null = Invoke-Step -Id 'deps.judgment' -Title 'Installing Friday''s second opinion' -Quiet `
+            -Optional `
+            -VerifyDescription 'laya imports' `
+            -Action {
+                Install-RequirementSet -InstallRoot $InstallRoot `
+                                       -RequirementsFile (Join-Path $ReqDir 'judgment.txt') `
+                                       -WheelhouseDir $WheelhouseDir `
+                                       -ExtraFlags (Get-HealExtraPipFlags) `
+                                       -TimeoutSeconds 3600
+            } `
+            -Verify {
+                Test-ModulesImportable -InstallRoot $InstallRoot -Modules @('laya')
+            }
+        if (Test-ModulesImportable -InstallRoot $InstallRoot -Modules @('laya')) {
+            # Prefetch the checkpoint while the user is already watching an
+            # install, rather than in front of their first approval card.
+            # Always exits 0: no network must never fail an install here.
+            try {
+                $pyExe = Get-PythonExe $InstallRoot
+                $pre   = Join-Path $InstallRoot 'scripts\prefetch_laya.py'
+                if ((Test-Path -LiteralPath $pyExe) -and (Test-Path -LiteralPath $pre)) {
+                    Say-Working 'Fetching the model.'
+                    & $pyExe $pre | ForEach-Object { Write-Log $_ 'INFO' }
+                }
+            } catch {
+                Write-Log "laya checkpoint prefetch skipped: $_" 'WARN'
+            }
+            Say-Ok 'Done. Friday will double-check before doing anything outward.'
+        } else {
+            Say-Note 'That part did not install. Friday will still ask before outward actions, using the simpler keyword check.'
+        }
+    } else {
+        Write-Log 'Judgment tier skipped: torch not present (memory tier declined or failed).' 'INFO'
+        Say-Step 'Skipping Friday''s second opinion'
+        Say-Detail 'It needs the same large library as Friday''s memory, which is not installed.'
+        Say-Detail 'Friday will still ask before outward actions, using the simpler keyword check.'
+    }
+} else {
+    Write-Log 'Judgment tier skipped by request (-SkipJudgment).' 'INFO'
 }
 
 if ($DepsOnly) {

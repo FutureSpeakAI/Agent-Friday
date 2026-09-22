@@ -8477,11 +8477,76 @@ function SettingsTabPrivacy({s,save}){
       </StRow>
       <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
     </StSection>
+    <StSection title="WHAT NEEDS YOUR SIGN-OFF">
+      <ApprovalScannerPanel s={s} save={save}/>
+    </StSection>
     <StSection title="COMPUTER CONTROL">
       <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Once granted, permission persists across restarts until you revoke it.</div>
       <StToggle label="Enable Computer Control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
       <CcGrantPanel enabled={!!s.computer_control_enabled}/>
     </StSection>
+  </div>;
+}
+// WHICH SCANNER DECIDES WHETHER AN ACTION NEEDS HIS SIGN-OFF.
+//
+// Three states rather than two, because shadow is the whole point of the
+// rollout and a bare on/off hides it. The state lives in two generic settings
+// keys (decision_backend / decision_shadow) so that decisions.py stays
+// backend-agnostic; the mapping between those keys and these three buttons is
+// defined ONCE, in services/laya_backend.MODES, and this panel asks the server
+// which mode it is in rather than deriving it a second time here.
+//
+// The live line underneath is not decoration. The setting says which scanner
+// is SELECTED; /api/decisions/gate_status says whether it is actually running,
+// which is a different question and the one that matters when the answer is
+// "still loading" or "the download is missing". A switch reading ON while the
+// gate is in fact keyword-only would be the same class of lie the approval log
+// exists to stop.
+function ApprovalScannerPanel({s,save}){
+  const [st,setSt]=useState(null);
+  const load=()=>apiFetch('/api/decisions/gate_status').then(r=>r.json()).then(setSt).catch(()=>setSt(null));
+  useEffect(()=>{load();},[s.decision_backend,s.decision_shadow]);
+  // Poll only while a load is in flight, so the panel resolves from "loading"
+  // to "serving" on its own instead of needing a reopen.
+  useEffect(()=>{
+    if(!st||!st.laya||!st.laya.loading) return;
+    const t=setInterval(load,3000); return ()=>clearInterval(t);
+  },[st&&st.laya&&st.laya.loading]);
+  const mode=(st&&st.mode)||'on';
+  const opts=[
+    {k:'off',l:'Off',d:'The keyword scan alone decides. This is how Friday behaved before Laya.'},
+    {k:'shadow',l:'Shadow',d:'The keyword scan still decides. Laya scores the same actions alongside it and both answers are logged — no verdict changes.'},
+    {k:'on',l:'On',d:'Both scanners vote. An action waits for you when EITHER says it should — so this can add approval cards, never remove one.'}
+  ];
+  const cur=opts.find(o=>o.k===mode);
+  const laya=(st&&st.laya)||{};
+  const degraded=!!(st&&st.degraded);
+  return <div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:10,lineHeight:1.6}}>
+      Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise MORE approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught.
+    </div>
+    <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+      {opts.map(o=>(
+        <button key={o.k} className={`settings-btn ${mode===o.k?'active':''}`} style={{fontSize:11}}
+          onClick={()=>{const m=((st&&st.modes)||{})[o.k]||{};
+            // Literal key names, dynamic values: scripts/check_settings_readers.py
+            // reads the key set out of this call, and cannot see through
+            // save(someObject). The VALUES come from the server so the
+            // off/shadow/on mapping has exactly one definition.
+            save({decision_backend:m.decision_backend||'keyword',decision_shadow:m.decision_shadow||''});}}>{o.l}</button>
+      ))}
+      {mode==='custom'&&<span style={{fontSize:11,color:'#ffb347',alignSelf:'center'}}>custom (set by hand)</span>}
+    </div>
+    {cur&&<div style={{fontSize:11,color:'rgba(255,255,255,0.38)',lineHeight:1.6,marginBottom:10}}>{cur.d}</div>}
+    <div style={{fontSize:10.5,fontFamily:'JetBrains Mono',lineHeight:1.6,padding:'8px 10px',borderRadius:6,
+      background:degraded?'rgba(255,179,71,0.08)':'rgba(255,255,255,0.03)',
+      border:`1px solid ${degraded?'rgba(255,179,71,0.25)':'rgba(255,255,255,0.06)'}`}}>
+      <span style={{color:degraded?'#ffb347':'rgba(255,255,255,0.55)'}}>
+        {laya.loading?'◌ Laya is loading':degraded?'▲ Laya is not answering':(laya.ready?'● Both scanners serving':'● Keyword scan serving')}
+      </span>
+      {st&&st.explain&&<div style={{color:'rgba(255,255,255,0.42)',marginTop:4}}>{st.explain}</div>}
+      {laya.error&&!laya.ready&&<div style={{color:'rgba(255,255,255,0.3)',marginTop:4}}>{String(laya.error).slice(0,160)}</div>}
+    </div>
   </div>;
 }
 function SettingsTabFederation(){

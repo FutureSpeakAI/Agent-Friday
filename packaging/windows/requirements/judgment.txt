@@ -1,0 +1,32 @@
+# Agent Friday - Windows installer :: JUDGMENT tier
+#
+# A second opinion on the one decision that cannot be taken back: whether an
+# action needs your sign-off before it runs. `dissent_gate.classify_severity`
+# is a scan for ~40 marker substrings, and since 2026-09-20 it is what stands
+# between a model and sending mail as you.
+#
+# Laya is a 421M typed-decision encoder that answers the same question on CPU
+# in ~400 ms. Measured on a 27-case adversarial set (2026-09-22): the keyword
+# scan missed 5 outward actions, Laya missed 1, and their misses were DISJOINT
+# - so gating when EITHER votes to gate missed none. That union is the shipped
+# default, and it is safe for a structural reason rather than a statistical
+# one: the keyword scan is still one of the two votes, so this can only ever
+# ADD approval cards, never remove one.
+#
+# COST, and why this is its own tier rather than part of `recommended`:
+#
+#   * laya itself is small, but it requires torch>=2.0 and transformers>=4.48.
+#     On Windows torch alone is roughly 2.5 GB. That is the SAME torch the
+#     memory tier already installs, which is why install.ps1 runs this step
+#     only when torch is already importable - it never makes torch mandatory
+#     on an install that declined it.
+#   * the checkpoint is a further ~808 MB, fetched into
+#     %USERPROFILE%\.cache\huggingface. The installer prefetches it (see
+#     scripts/prefetch_laya.py) so the first approval on a fresh machine is
+#     not answered by the keyword scan alone while 808 MB downloads.
+#
+# NEVER FATAL. Declining this tier, or failing it, leaves Friday deciding
+# exactly the way it did before Laya existed: the keyword scan alone, with the
+# Settings panel saying so out loud.
+
+laya>=0.3.5
