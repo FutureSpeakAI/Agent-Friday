@@ -541,6 +541,72 @@ def stop_after_step(task_id):
     return jsonify({"ok": True, "task_id": task_id, "stop_requested": True})
 
 
+@tasks_bp.route('/api/tasks/<task_id>/resumable')
+@login_required
+def task_resumability(task_id):
+    """What a restart left behind, and the honest caveat on picking it up.
+
+    Separate from /rerun on purpose: rerun starts the task over from its
+    prompt and repeats every side effect; this says whether the work itself
+    survived. The UI needs both answers before it can offer the right button.
+    """
+    from agent_friday.services import task_resume as _tr
+    return jsonify({"task_id": task_id, **_tr.resumability(task_id)})
+
+
+@tasks_bp.route('/api/tasks/<task_id>/resume', methods=['POST'])
+@login_required
+def resume_task(task_id):
+    """Continue an interrupted task from its saved transcript, in a worker.
+
+    Completed tool calls are NOT re-run: they are already answered in the
+    transcript the model gets back. A tool that was mid-flight at the crash is
+    the exception, and it is refused with 409 and the reason unless the caller
+    passes ``confirm_pending`` — the user saying they know whether it landed.
+    """
+    from agent_friday.services import task_resume as _tr
+    from agent_friday.services.agent import _task_set
+    body = request.get_json(silent=True) or {}
+    confirm = bool(body.get('confirm_pending'))
+    verdict = _tr.resumability(task_id)
+    if not verdict['resumable']:
+        return jsonify({"error": "cannot resume", "reason": verdict['reason'],
+                        **verdict}), 409
+    if verdict['needs_confirmation'] and not confirm:
+        return jsonify({"error": "confirmation required",
+                        "reason": verdict['reason'], **verdict}), 409
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        running = bool(t) and t.get('status') in ('queued', 'running')
+    if running:
+        return jsonify({"error": "task is still running"}), 409
+
+    _task_set(task_id, status='running', result=None, ended=None)
+
+    def _run():
+        from agent_friday.services import task_journal as _tj
+        _tj.push_task(task_id)
+        try:
+            text, _trace = _tr.resume(task_id, confirm_pending=confirm)
+            _task_set(task_id, status='completed', result=text,
+                      ended=_time.time())
+        except _tr.ResumeRefused as e:
+            _task_set(task_id, status='interrupted', result=f"[Not resumed] {e}")
+        except Exception as e:
+            # A resume that dies leaves the task interrupted, not failed: its
+            # checkpoint is still on disk and the attempt counter is what stops
+            # this becoming a loop.
+            _task_set(task_id, status='interrupted',
+                      result=f"[Resume failed] {e}")
+        finally:
+            _tj.pop_task()
+
+    threading.Thread(target=_run, name=f"resume-{task_id}", daemon=True).start()
+    return jsonify({"ok": True, "task_id": task_id, "resuming": True,
+                    "from_iteration": verdict['iteration'],
+                    "reason": verdict['reason']})
+
+
 @tasks_bp.route('/api/tasks/<task_id>/rerun', methods=['POST'])
 @login_required
 def rerun_task(task_id):
