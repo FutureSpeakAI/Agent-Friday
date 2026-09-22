@@ -528,7 +528,14 @@ class TestChatCompletionGraceful:
 
         assert not any("/v1/chat" in p for p in call_paths), \
             "/v1 discards num_ctx; it must never carry a seating request"
-        path, payload = bodies[-1]
+        # The CHAT call, not the last call. chat_completion may fire a
+        # seat-release /api/generate (keep_alive:0, no `options`) afterwards
+        # when display_at_risk() finds the card under the desktop's reserve -
+        # which is the normal state of a machine with a model resident. Taking
+        # bodies[-1] made a busy GPU look like a dispatch regression.
+        chat_calls = [b for b in bodies if b[0] == "/api/chat"]
+        assert chat_calls, f"no /api/chat request was made; saw {[b[0] for b in bodies]}"
+        path, payload = chat_calls[-1]
         assert path == "/api/chat"
         assert payload["options"]["num_ctx"] == om.DEFAULT_NUM_CTX
         assert payload["keep_alive"] == om.DEFAULT_KEEP_ALIVE
@@ -543,7 +550,10 @@ class TestChatCompletionGraceful:
             {"message": {"content": "ok"}})[1])
         mgr.chat_completion(self._make_messages(), "gemma4:26b",
                             num_ctx=32768, keep_alive="15m")
-        _, payload = bodies[-1]
+        # As above: the chat call, not a trailing seat-release.
+        chat_calls = [b for b in bodies if b[0] == "/api/chat"]
+        assert chat_calls, f"no /api/chat request was made; saw {[b[0] for b in bodies]}"
+        _, payload = chat_calls[-1]
         assert payload["options"]["num_ctx"] == 32768
         assert payload["keep_alive"] == "15m"
 

@@ -190,6 +190,12 @@ def test_num_ctx_forces_the_native_endpoint(monkeypatch):
     seen = {}
 
     def _post(path, body, timeout=30):
+        # Record the CHAT call only. chat_completion may fire a trailing
+        # seat-release /api/generate (keep_alive:0, no `options`) when the card
+        # is under the desktop's reserve, and overwriting `seen` with it made a
+        # busy GPU look like a dispatch regression.
+        if path != "/api/chat" and seen.get("path") == "/api/chat":
+            return {"message": {"content": "ok"}}
         seen["path"] = path
         seen["options"] = body.get("options")
         seen["tools"] = body.get("tools")
