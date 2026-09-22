@@ -1,6 +1,6 @@
 # The Front Page that "hit max iterations" — what actually happened
 
-Status: DIAGNOSED and FIXED (2026-09-22). Reproduced live against the running
+Status: DIAGNOSED, FIXED and VERIFIED LIVE (2026-09-22). Reproduced against the running
 bonsai2:27b seat three times before anything was changed.
 
 The report: *"Bonsai2 churned on putting together a new front page for nearly
@@ -207,13 +207,42 @@ could generate text (tried local (bonsai2:27b): Connection broken…
 Note `model=?`: nothing had recorded a generation, so it declined to name a
 seat rather than printing the configured default.
 
-**NOT verified: a live curated Front Page.** Three attempts after the fix
-all died the same way — the llama-server seat dropped the connection
-mid-generation and restarted. That is a condition of the machine at the
-time, not of this change: `machine_monitor` logged `display breached --
-1528 MiB free against a 2560 MiB display reserve` at 11:31:05 and `thrash
-breached` at 11:32:20, the system volume had been driven to 259 MiB free at
-11:13 by a concurrent test run, and `friday.server` logged repeated
-single-instance-lock collisions. The seat needs to be stable before the
-success path can be demonstrated end to end; until then the claim here is
-"the failure path is now honest", not "the editorial works".
+**Verified live: a curated Front Page, on the fourth attempt.** The first
+three after the fix all died to the same connection reset — the llama seat
+dropped mid-generation and restarted — while `machine_monitor` was logging
+`display breached -- 1528 MiB free against a 2560 MiB display reserve` and
+`thrash breached`, and after a concurrent test run had driven the system
+volume to 259 MiB free. Run once more on a settled machine (38.9 GB free, no
+test run, the seat alone on the GPU), the real
+`_editorialize_front_page` against the real seat returned:
+
+```
+ROUND 1 {"secs": 170.2, "finish": "stop", "content_len": 2100,
+         "reasoning_len": 14914}
+degraded: null
+headline: The AI Newsroom Reckoning
+section_context: ['AI/Tech', 'Business', 'Media', 'Politics', 'Science']
+contrarian: True
+```
+
+Every number in that line is the diagnosis restated as a fix:
+
+* **`reasoning_len: 14914`** — about 3,700 tokens of scratchpad, twice the
+  old 1,800 ceiling. Under the old budget this call could not have reached
+  its answer no matter how long it ran. It is also a number that did not
+  exist before this change: a streamed message had nowhere to carry it.
+* **`content_len: 2100`** — a real JSON editorial, where the same call
+  produced zero characters three hours earlier.
+* **`finish: "stop"`**, not `"length"`. It finished because it was done.
+* **`degraded: null`** — nothing to report, so nothing reported. The honest
+  failure path stays quiet when there is no failure.
+* **170.2 s**, against 1,741 s.
+* Five section contexts and a Contrarian Corner — the parts that had been
+  missing from nine consecutive editions.
+
+The lead note it wrote ("the story that lives in the intersection of both
+halves of your identity — journalist and AI architect") is the thing that
+had been replaced by a canned sentence since 2026-09-18.
+
+No edition file was written by this run: `_editorialize_front_page` does not
+persist, so the verification could not clobber what was on disk.
