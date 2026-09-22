@@ -52,8 +52,11 @@ class TestPriceTiers:
         p = pricing.price("anthropic", "claude-sonnet-5")
         assert p is not None
         assert p["source"] == "dataset"
-        assert p["in_per_1m"] == pytest.approx(3.0)   # 0.003/1K → 3/1M
-        assert p["out_per_1m"] == pytest.approx(15.0)
+        # 2/10, not 3/15: the published page states the launch price is now
+        # the standard price. This surface derives from cost_meter.PRICING,
+        # so correcting that table corrected this one for free.
+        assert p["in_per_1m"] == pytest.approx(2.0)   # 0.002/1K → 2/1M
+        assert p["out_per_1m"] == pytest.approx(10.0)
 
     def test_unknown_is_none_not_zero(self):
         """Unknown ≠ free — the cost meter logs tokens with cost=None rather

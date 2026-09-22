@@ -48,9 +48,20 @@ PRICING = {
     # page 2026-08-28. These rows must track the published page exactly: every
     # spend figure downstream inherits any error here, and the default model's
     # row is the one most often wrong.
+    # Fable 5.1 was already selectable (it is in the live /v1/models list)
+    # and was in none of these tables, so it metered at exactly $0.00 --
+    # the most expensive model in the lineup, billed as if it were local.
+    "claude-fable-5-1":           {"in": 0.010, "out": 0.050},   # $10 / $50
     "claude-fable-5":             {"in": 0.010, "out": 0.050},   # $10 / $50
+    # Opus 5.5 is CHEAPER than the Opus 5 it supersedes, which is why it takes
+    # the Opus tier outright: more capable and 20% less per token.
+    "claude-opus-5-5":            {"in": 0.004, "out": 0.020},   # $4  / $20
     "claude-opus-5":              {"in": 0.005, "out": 0.025},   # $5  / $25
-    "claude-sonnet-5":            {"in": 0.003, "out": 0.015},   # $3  / $15
+    # $2 / $10. Announced as introductory pricing to 2026-08-31; the published
+    # page now states it IS the standard price and the scheduled rise to $3/$15
+    # will not happen. This row said 3/15 -- a 50% overcharge on the model
+    # DEFAULT_CLOUD_MODEL points at, i.e. the most-billed row in the table.
+    "claude-sonnet-5":            {"in": 0.002, "out": 0.010},   # $2  / $10
     # `claude-haiku-4-5` is the model id. The dated form is a legacy alias, and
     # keying ONLY on it meant a canonical-id call missed the table, fell through
     # the registry fallback (Haiku has no cost_per_1k there) and metered $0 --
@@ -225,7 +236,8 @@ UNPRICED_MODELS = frozenset({
 #: today: this is the meter being right in advance rather than a bug being
 #: fixed, so that the first caller to want it cannot silently under-bill.
 FAST_PRICING = {
-    "claude-opus-5": {"in": 0.010, "out": 0.050},   # $10 / $50
+    "claude-opus-5-5": {"in": 0.008, "out": 0.040},   # $8  / $40
+    "claude-opus-5":   {"in": 0.010, "out": 0.050},   # $10 / $50
 }
 
 
@@ -276,6 +288,22 @@ def price_for(model, speed=None):
 CACHE_READ_MULT = 0.1
 CACHE_WRITE_MULT = 1.25
 
+#: ...except where the published page says otherwise, and it now does. The
+#: multiplier is per-model: Opus 5.5 reads at 0.05x ($0.20 on a $4 base) and
+#: Fable 5.1 / Mythos 5.1 at 0.025x. Applying the flat tenth to Opus 5.5 would
+#: overstate every cached read by 2x -- and cache reads are not a rounding
+#: error here: the 4.09M-token turn audited on 2026-09-22 was 96.4% cache
+#: reads, so this multiplier decides almost the whole bill.
+CACHE_READ_MULT_BY_MODEL = {
+    "claude-opus-5-5": 0.05,
+    "claude-fable-5-1": 0.025,
+}
+
+
+def cache_read_mult(model) -> float:
+    """The cache-read multiplier for `model`, defaulting to the standard tenth."""
+    return CACHE_READ_MULT_BY_MODEL.get(model or "", CACHE_READ_MULT)
+
 
 def cost_for(model, input_tokens, output_tokens,
              cache_read_tokens=0, cache_write_tokens=0, speed=None):
@@ -285,7 +313,7 @@ def cost_for(model, input_tokens, output_tokens,
     if p is None:
         return None
     return round((input_tokens / 1000.0) * p["in"]
-                 + (cache_read_tokens / 1000.0) * p["in"] * CACHE_READ_MULT
+                 + (cache_read_tokens / 1000.0) * p["in"] * cache_read_mult(model)
                  + (cache_write_tokens / 1000.0) * p["in"] * CACHE_WRITE_MULT
                  + (output_tokens / 1000.0) * p["out"], 6)
 

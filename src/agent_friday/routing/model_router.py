@@ -68,6 +68,9 @@ DEFAULT_CLOUD_MODEL = "claude-sonnet-5"
 CLOUD_MODEL_FALLBACK_CHAIN = (
     "claude-sonnet-5",
     "claude-fable-5",
+    # Opus 5.5 ahead of Opus 5: a fallback is Friday's own choice rather than
+    # anyone's saved pick, and the newer model is both more capable and cheaper.
+    "claude-opus-5-5",
     "claude-opus-5",
     "claude-haiku-4-5-20251001",
 )
@@ -79,9 +82,11 @@ CLOUD_MODEL_FALLBACK_CHAIN = (
 # much routing locally has saved. cost_meter.PRICING is the source of truth;
 # tests/unit/test_cost_meter.py pins these to it.
 CLOUD_COST_PER_1K = {
+    "claude-fable-5-1": 0.030,
     "claude-fable-5": 0.030,
+    "claude-opus-5-5": 0.012,
     "claude-opus-5": 0.015,
-    "claude-sonnet-5": 0.009,
+    "claude-sonnet-5": 0.006,
     "claude-haiku-4-5": 0.003,
     "claude-haiku-4-5-20251001": 0.003,
 }

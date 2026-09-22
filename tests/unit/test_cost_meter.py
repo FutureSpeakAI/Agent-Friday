@@ -98,7 +98,9 @@ def test_record_and_summary():
               workspace="studio", kind="task")
     summ = cm.summary("today")
     assert summ["total_calls"] == 2
-    assert summ["total_usd"] == pytest.approx(0.03 + 0.018)
+    # Opus 5: 0.005 + 0.025. Sonnet 5: 0.002 + 0.010 -- this was 0.018,
+    # which was the old 3/15 rate the published page no longer charges.
+    assert summ["total_usd"] == pytest.approx(0.03 + 0.012)
     assert summ["by_workspace"]["research"]["calls"] == 1
     assert "anthropic" in summ["by_provider"]
     assert set(summ["by_kind"].keys()) == {"chat", "task"}
@@ -146,16 +148,22 @@ def test_budget_set_get():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Published rates (2026-08-28)
+#  Published rates (verified against the published price page 2026-09-22)
 # ─────────────────────────────────────────────────────────────────────────────
 #: USD per 1M tokens, as published. The table in cost_meter is per 1K, so these
 #: are divided by 1000 on comparison — keeping this in the published unit is
 #: deliberate, because that is the unit a reader can check against the price
 #: page without doing arithmetic in their head first.
 PUBLISHED_PER_MTOK = {
+    "claude-fable-5-1": (10.00, 50.00),
     "claude-fable-5":   (10.00, 50.00),
+    "claude-opus-5-5":  (4.00, 20.00),
     "claude-opus-5":    (5.00, 25.00),
-    "claude-sonnet-5":  (3.00, 15.00),
+    # Was pinned at 3/15 here and in all three tables. The published page says
+    # the 2/10 launch price is now the standard price and the rise to 3/15 will
+    # not occur -- so the pin was enforcing a 50% overcharge on the model
+    # DEFAULT_CLOUD_MODEL points at.
+    "claude-sonnet-5":  (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
 }
 
@@ -210,9 +218,13 @@ def test_fast_mode_bills_at_the_premium_rate():
     # An unknown speed is not a licence to invent a rate — fall back to standard.
     assert cm.cost_for("claude-opus-5", 1_000_000, 0,
                        speed="warp") == pytest.approx(5.00)
-    # Fast mode is Opus-5/4.8 only; asking for it on Sonnet changes nothing.
+    # Fast mode is Opus-only; asking for it on Sonnet changes nothing.
     assert (cm.cost_for("claude-sonnet-5", 1_000_000, 0, speed="fast")
             == cm.cost_for("claude-sonnet-5", 1_000_000, 0))
+    # Opus 5.5 has its own fast rate (8/40), not Opus 5's (10/50).
+    assert cm.cost_for("claude-opus-5-5", 1_000_000, 0) == pytest.approx(4.00)
+    assert cm.cost_for("claude-opus-5-5", 1_000_000, 0,
+                       speed="fast") == pytest.approx(8.00)
 
 
 def test_the_other_two_price_tables_agree_with_this_one():
@@ -247,3 +259,99 @@ def test_the_other_two_price_tables_agree_with_this_one():
             f"{mid}: savings tracker disagrees with the meter")
         assert registry_rates[mid] == pytest.approx(midpoint(mid)), (
             f"{mid}: registry blended rate disagrees with the meter")
+
+
+
+def test_opus_5_5_cache_reads_bill_at_a_twentieth_not_a_tenth():
+    """The cache-read multiplier is per-model now, because the page says so.
+
+    Opus 5.5 reads cache at 0.05x ($0.20 against a $4 base); every other model
+    here reads at the standard 0.1x. Cache reads are not a minor term: the
+    4.09M-token turn audited on 2026-09-22 was 96.4% cache reads, so this one
+    multiplier decides nearly the whole bill. A flat tenth would overstate
+    every cached Opus 5.5 read by exactly 2x.
+    """
+    assert cm.cache_read_mult("claude-opus-5-5") == pytest.approx(0.05)
+    assert cm.cache_read_mult("claude-sonnet-5") == pytest.approx(0.1)
+    assert cm.cache_read_mult("claude-opus-5") == pytest.approx(0.1)
+    # An unknown model gets the standard multiplier, not a guess.
+    assert cm.cache_read_mult("acme-whatever-1") == pytest.approx(0.1)
+
+    # $4/MTok base, 1M cached read tokens -> $0.20, not $0.40.
+    got = cm.cost_for("claude-opus-5-5", 0, 0, cache_read_tokens=1_000_000)
+    assert got == pytest.approx(0.20)
+    # Sonnet 5 at $2/MTok base still reads at a tenth -> $0.20.
+    assert cm.cost_for("claude-sonnet-5", 0, 0,
+                       cache_read_tokens=1_000_000) == pytest.approx(0.20)
+
+
+def test_opus_5_5_is_offered_and_is_cheaper_than_the_opus_it_supersedes():
+    """It goes in the picker, and the reason it takes the tier is the price.
+
+    Opus 5.5 is both more capable and cheaper than Opus 5, which is why it
+    leads the Opus entries. Opus 5 must stay listed and priced: a model
+    somebody already selected does not vanish underneath them.
+    """
+    from agent_friday.services.provider_registry import get_provider_registry
+    prov = next(p for p in get_provider_registry().list_providers()
+                if p.get("name") == "anthropic")
+    assert "claude-opus-5-5" in prov["models"], "Opus 5.5 is not offered"
+    assert "claude-opus-5" in prov["models"], "Opus 5 was dropped, not kept"
+    assert prov["model_meta"]["claude-opus-5-5"]["context_window"] == 1_000_000
+    assert prov["model_meta"]["claude-opus-5-5"]["max_output"] == 128_000
+
+    new_p = cm.price_for("claude-opus-5-5")
+    old_p = cm.price_for("claude-opus-5")
+    assert new_p["in"] < old_p["in"] and new_p["out"] < old_p["out"]
+
+
+def test_the_default_cloud_model_was_not_repointed():
+    """Opus 5.5 replaces the older OPUS. It does not become the default.
+
+    Promoting it to DEFAULT_CLOUD_MODEL would double the cost of every
+    unrouted cloud turn ($2/$10 -> $4/$20) without anyone asking for that.
+    """
+    from agent_friday.routing.model_router import (
+        DEFAULT_CLOUD_MODEL, CLOUD_MODEL_FALLBACK_CHAIN)
+    from agent_friday.core import DEFAULT_SETTINGS
+    assert DEFAULT_CLOUD_MODEL == "claude-sonnet-5"
+    cr = DEFAULT_SETTINGS["capability_routing"]
+    assert cr["reasoning"]["model"] == "claude-sonnet-5"
+    assert cr["subagent"]["model"] == "claude-sonnet-5"
+    # But in the chain Friday walks on its own, the newer Opus comes first.
+    chain = list(CLOUD_MODEL_FALLBACK_CHAIN)
+    assert chain.index("claude-opus-5-5") < chain.index("claude-opus-5")
+
+
+def test_fable_5_1_is_not_metered_free():
+    """It was already selectable, and it was already billing at zero.
+
+    Fable 5.1 is in the live /v1/models list, so the picker already offered it,
+    and it was in none of the price tables -- so price_for fell through to the
+    anthropic provider's cost_per_1k, found no row there either, and returned
+    0/0. Measured 2026-09-22: 1M input tokens on the most expensive model in
+    the lineup metered $0.00. A silent zero reads as "local, on-device, free",
+    which is the one thing a cloud call is not. Same defect as the
+    canonical-Haiku-id bug above, found the same way.
+    """
+    p = cm.price_for("claude-fable-5-1")
+    assert p["in"] > 0 and p["out"] > 0, "Fable 5.1 meters free"
+    assert cm.cost_for("claude-fable-5-1", 1_000_000, 0) == pytest.approx(10.00)
+    assert cm.cost_for("claude-fable-5-1", 0, 1_000_000) == pytest.approx(50.00)
+    # Its cache reads are 0.025x, not the standard tenth and not Opus 5.5's 0.05x.
+    assert cm.cache_read_mult("claude-fable-5-1") == pytest.approx(0.025)
+    assert cm.cost_for("claude-fable-5-1", 0, 0,
+                       cache_read_tokens=1_000_000) == pytest.approx(0.25)
+
+
+def test_the_derived_pricing_surface_agrees_with_the_meter():
+    """services/pricing.py reads cost_meter.PRICING as its "dataset" tier, so
+    it is a fourth place these numbers show up. It must not report None for a
+    model the picker offers -- None means "unknown", and unknown is what let
+    Fable 5.1 bill at nothing."""
+    from agent_friday.services import pricing
+    for mid, (want_in, want_out) in PUBLISHED_PER_MTOK.items():
+        got = pricing.price("anthropic", mid)
+        assert got is not None, mid + " is unknown to the derived price surface"
+        assert got["in_per_1m"] == pytest.approx(want_in), mid
+        assert got["out_per_1m"] == pytest.approx(want_out), mid

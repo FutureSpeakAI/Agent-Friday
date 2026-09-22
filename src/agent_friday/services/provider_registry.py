@@ -67,7 +67,8 @@ DEFAULT_PROVIDERS = [
         # what the product actually uses (a launch script pinning
         # ANTHROPIC_MODEL to a retired id overrides the configured model on
         # every launch).
-        "models": ["claude-sonnet-5", "claude-opus-5", "claude-fable-5",
+        "models": ["claude-sonnet-5", "claude-opus-5-5", "claude-opus-5",
+                   "claude-fable-5-1", "claude-fable-5",
                    "claude-haiku-4-5-20251001"],
         "capabilities": ["tools", "vision"],
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
@@ -76,22 +77,48 @@ DEFAULT_PROVIDERS = [
         # displays and cost_meter.price_for's fallback, so a stale number here
         # is visible in two places at once.
         "cost_per_1k": {
+            "claude-fable-5-1": 0.030,
             "claude-fable-5": 0.030,
+            "claude-opus-5-5": 0.012,
             "claude-opus-5": 0.015,
-            "claude-sonnet-5": 0.009,
+            "claude-sonnet-5": 0.006,
             "claude-haiku-4-5": 0.003,
             "claude-haiku-4-5-20251001": 0.003,
         },
         "model_meta": {
+            # Declared windows matter: model_catalog.context_window_for returns
+            # None without them and the context layer falls back to a documented
+            # constant -- which for the DEFAULT model meant the 1M window was
+            # never actually known. Only verified figures go here; legacy
+            # Fable 5 is left undeclared rather than guessed at.
             "claude-sonnet-5": {"label": "Claude Sonnet 5", "short": "Sonnet 5",
+                                "context_window": 1_000_000,
+                                "max_output": 128_000,
+                                "modalities": ["text", "vision", "tools"]},
+            # Opus 5.5 supersedes Opus 5 at a LOWER price ($4/$20 against
+            # $5/$25), so there is no reason to prefer the older one. Opus 5
+            # stays listed and priced: a model someone already chose does not
+            # disappear underneath them.
+            "claude-opus-5-5": {"label": "Claude Opus 5.5", "short": "Opus 5.5",
+                                "context_window": 1_000_000,
+                                "max_output": 128_000,
                                 "modalities": ["text", "vision", "tools"]},
             "claude-opus-5": {"label": "Claude Opus 5", "short": "Opus 5",
+                              "context_window": 1_000_000,
+                              "max_output": 128_000,
                               "modalities": ["text", "vision", "tools"]},
             # Fable is the one to reach for on writing and spec work.
+            "claude-fable-5-1": {"label": "Claude Fable 5.1",
+                                 "short": "Fable 5.1",
+                                 "context_window": 1_000_000,
+                                 "max_output": 128_000,
+                                 "modalities": ["text", "vision", "tools"]},
             "claude-fable-5": {"label": "Claude Fable 5", "short": "Fable 5",
                                "modalities": ["text", "vision", "tools"]},
             "claude-haiku-4-5-20251001": {"label": "Claude Haiku 4.5",
                                           "short": "Haiku 4.5",
+                                          "context_window": 200_000,
+                                          "max_output": 64_000,
                                           "modalities": ["text", "vision", "tools"]},
         },
         "enabled": True,
