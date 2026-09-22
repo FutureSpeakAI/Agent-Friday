@@ -3271,7 +3271,64 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         try:
             _heartbeat.stop()
         finally:
+            # Defect E: free the seat and promote the next queued task. A
+            # promotion failure must not eat the journal pop, hence the guard.
+            try:
+                _seat_supervisor().on_task_end(task_id)
+            except Exception:
+                pass
             _tj.pop_task()
+
+
+# --- Defect E: seat-supervisor wiring (admission / promotion / watchdog) ---
+# Deferred worker threads live HERE, not on the task record: TASKS records are
+# JSON-serialized into the journal, and a Thread object must never ride along.
+_PENDING_TASK_THREADS = {}
+_PENDING_TASK_THREADS_LOCK = threading.Lock()
+_SEAT_SUPERVISOR = None
+_SEAT_SUPERVISOR_LOCK = threading.Lock()
+
+
+def _resolve_seat_for_model(model):
+    """Map a task's model id to a seat id.
+
+    Router convention (seat_select): a colon in the model id marks a local
+    seat (e.g. 'bonsai2:27b'); cloud model ids carry none.
+    """
+    mid = (model or '').strip()
+    if not mid:
+        return 'cloud/default'
+    return ('local/' + mid) if ':' in mid else ('cloud/' + mid)
+
+
+def _start_pending_task_thread(task_id):
+    """Thread factory for FIFO promotion: start a deferred worker thread."""
+    with _PENDING_TASK_THREADS_LOCK:
+        th = _PENDING_TASK_THREADS.pop(task_id, None)
+    if th is None:
+        return False
+    th.start()
+    return True
+
+
+def _seat_supervisor():
+    """The process-wide seat supervisor, created lazily, started once.
+
+    reclaim_seat stays None deliberately: tier-2 process reclaim needs the
+    residency arbiter's cooperation and ships as its own change with its own
+    tests. Tier 1 (mark failed, free seat, promote) is fully live.
+    """
+    global _SEAT_SUPERVISOR
+    with _SEAT_SUPERVISOR_LOCK:
+        if _SEAT_SUPERVISOR is None:
+            from agent_friday.services import seat_supervisor as _ss
+            sup = _ss.SeatSupervisor(
+                thread_factory=_start_pending_task_thread,
+                reclaim_seat=None,
+            )
+            sup.start()
+            _SEAT_SUPERVISOR = sup
+        return _SEAT_SUPERVISOR
 
 
 def _report_task_completion(task_id, name, status, result_text):
@@ -3375,6 +3432,12 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
             'conversation_id': conversation_id,
+            # Defect E: seat-supervisor admission fields. The queue keys on
+            # id + seat; the watchdog view reads tool_calls off the record.
+            'id': task_id,
+            'seat': _resolve_seat_for_model(model),
+            'seat_is_local': ':' in (model or ''),
+            'tool_calls': 0,
         }
     # Durable from the first instant (TV2): the created event, the state
     # snapshot and the index row exist before the worker thread starts, so
@@ -3422,7 +3485,27 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         for _dead in [k for k, v in TASK_THREADS.items() if not v.is_alive()]:
             TASK_THREADS.pop(_dead, None)
         TASK_THREADS[task_id] = th
-    th.start()
+    # Defect E: admission through the seat supervisor. A busy local seat
+    # queues the task (NO thread start) with an honest status and the
+    # user-facing notice that local AI runs one job at a time; the
+    # supervisor promotes FIFO when the seat frees. FAIL-OPEN: a supervisor
+    # error must never strand a task, so on any exception the thread starts
+    # unconditionally, exactly as before this change.
+    try:
+        _admission = _seat_supervisor().wire_spawn(TASKS[task_id])
+    except Exception as _sup_err:
+        _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
+        _admission = 'running'
+    if _admission == 'queued-for-seat':
+        with _PENDING_TASK_THREADS_LOCK:
+            _PENDING_TASK_THREADS[task_id] = th
+        _task_log(task_id, 'queued-for-seat: local seat busy; this task starts when the seat frees. Local AI runs one job at a time and needs time to run.')
+        try:
+            _journal_state(task_id)
+        except Exception:
+            pass
+    else:
+        th.start()
     return task_id
 
 
@@ -6131,6 +6214,17 @@ def _task_log_tool(session_ctx, name, args):
     tid = (session_ctx or {}).get("task_id")
     if not tid:
         return
+    # Defect E: tool-call bookkeeping. Without this bump every healthy task
+    # carries tool_calls=0 forever and reads as the zero-tool-call wedge
+    # signature; the watchdog would rule it 'stuck'. This field is the
+    # watchdog's ground truth for liveness.
+    try:
+        with TASKS_LOCK:
+            _rec = TASKS.get(tid)
+            if _rec is not None:
+                _rec['tool_calls'] = int(_rec.get('tool_calls') or 0) + 1
+    except Exception:
+        pass
     try:
         detail = ""
         if isinstance(args, dict) and args:
