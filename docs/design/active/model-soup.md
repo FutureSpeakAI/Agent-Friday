@@ -317,7 +317,7 @@ The `.ollama/models/.studio_links` directory holds another ≈47 GB of GGUFs, mo
 
 ### 9.4 The copy itself
 
-The WSL share is unresponsive as this is written and **must not be restarted while any seat is mmapped from it** (no seat is, today). The copy is done from *inside* WSL to `/mnt/c/Users/you/.friday/runtime/models/gguf/` once WSL answers again (`cp` with a checksum), or with `robocopy` from Windows if the 9p share comes back first. SHA-256 of each file is recorded in `models.json` (`model_store.register(..., sha256=)`). The WSL originals are left in place until the Arbiter has served the seat from C: for one full session; then they are Stephen's to delete.
+The WSL share is unresponsive as this is written and **must not be restarted while any seat is mmapped from it** (no seat is, today). The copy is done from *inside* WSL to `/mnt/c/Users/<you>/.friday/runtime/models/gguf/` once WSL answers again (`cp` with a checksum), or with `robocopy` from Windows if the 9p share comes back first. SHA-256 of each file is recorded in `models.json` (`model_store.register(..., sha256=)`). The WSL originals are left in place until the Arbiter has served the seat from C: for one full session; then they are Stephen's to delete.
 
 ### 9.5 Code changes tied to storage
 
