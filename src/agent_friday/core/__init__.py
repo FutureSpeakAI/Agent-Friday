@@ -1714,6 +1714,12 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    # Which scorer answers Friday's typed judgments (services/decisions.py).
+    # "keyword" is today's substring scan and stays the default until another
+    # backend is MEASURED to beat it on the log that module now keeps. An
+    # unregistered name falls back to "keyword" loudly rather than raising —
+    # a typo here must not be able to take the approval gate offline.
+    "decision_backend": "keyword",
     # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.
     #
     # NOT `dock_layout`. That name was already taken at line ~2035 by the
