@@ -197,15 +197,24 @@ NEWS_CATEGORIES = {
     },
     "Local": {
         "color": "local",
-        # General/national news by default — new installs have no city set. To
-        # make this a true local feed, replace these with your local public
-        # radio / newspaper RSS (and update the query) in Settings or source.
-        "query": "top US news today",
+        # The Local beat is wired to Denver, TX: the maintainer's metro.
+        # Every feed below is a live RSS/Atom source verified to return
+        # same-day Denver stories:
+        #   - KUT (Denver NPR, UT-Denver's Moody College) — index.rss
+        #   - KXAN (NBC Denver affiliate) — /feed/
+        #   - KVUE (ABC Denver affiliate) — local-desk syndication feed
+        #   - The Texas Tribune (statewide, HQ'd in Denver) — main feed
+        # Denver Monitor is deliberately absent: it stopped publishing in
+        # 2025 and is not a live source.
+        # If this ever needs to move to a different city, replace the four
+        # feeds below and the query string; nothing else in the pipeline
+        # assumes Denver.
+        "query": "Denver Texas local news today",
         "feeds": [
-            "https://feeds.npr.org/1003/rss.xml",
-            "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml",
-            _GOOGLE_NEWS + "when:24h+source:apnews.com",
-            _GOOGLE_NEWS + "when:24h+source:usatoday.com",
+            "https://www.kut.org/index.rss",
+            "https://www.kxan.com/feed/",
+            "https://www.kvue.com/feeds/syndication/rss/news/local",
+            "https://feeds.texastribune.org/feeds/main/",
         ],
     },
     "Business": {
@@ -1007,9 +1016,11 @@ _PROFILE_KEYWORDS = [
 _PROFILE_KEYWORDS = [(w, re.compile(p, re.I)) for w, p in _PROFILE_KEYWORDS]
 
 # Category baseline weights — how central each beat is to the default profile.
+# The Local beat carries weight 4, tied with Politics/Media: local
+# news is a first-class beat here, not a footnote.
 _CATEGORY_WEIGHT = {
     "AI/Tech": 5, "Politics": 4, "Media": 4,
-    "Local": 3, "Business": 3, "Science": 2,
+    "Local": 4, "Business": 3, "Science": 2,
 }
 
 # Central-time scheduling. The two daily editions and the hour each fires.
@@ -1153,6 +1164,144 @@ def _gather_front_page_pool(per_cat=14):
              "sources": len({p["source"] for p in pool}),
              "categories": len({p["category"] for p in pool})}
     return pool, stats
+
+
+# ================================================================
+#  BRUTALIST REPORT SCRAPER
+#  brutalist.report aggregates ~80 tech/news sources with no public RSS/Atom
+#  feed (every feed route 404s, confirmed 2026-09-22) so this pulls the
+#  rendered HTML directly. Structure (verified live): each source name is an
+#  <h3> header immediately followed by sibling <a href> headline links, one
+#  block per source repeated ~80 times down the page. Scraped twice daily
+#  and classified into the same news
+#  lanes as the RSS pipeline (AI/Tech, Politics, Local, Business, Media) and
+#  folded into the same persistent archive so results show up in the News
+#  workspace feed like any other source, with the same ban/boost/trust
+#  plumbing already in place.
+# ================================================================
+_BRUTALIST_URL = "https://brutalist.report/"
+
+# Best-effort category classification for a scraped headline. Reuses the same
+# signal buckets as _PROFILE_KEYWORDS but maps to a single category (these
+# links need one to satisfy the archive record schema). Checked top to
+# bottom; first match wins.
+_BRUTALIST_CATEGORY_RULES = [
+    ("Local", re.compile(r"\b(denver|texas|travis county|atx)\b", re.I)),
+    ("Media", re.compile(r"\b(journalism|journalist|newsroom|press freedom|"
+                          r"media industry|reporter|editor|publisher|"
+                          r"disinformation|misinformation)\b", re.I)),
+    ("Politics", re.compile(r"\b(democra(t|cy|tic)|republican|\bGOP\b|election|"
+                             r"congress|voting rights|legislation|supreme court|"
+                             r"senate|white house|administration)\b", re.I)),
+    ("Business", re.compile(r"\b(ipo|series [a-d]|fundrais|venture|acquisition|"
+                             r"earnings|revenue|stock|nasdaq|nyse|\bceo\b|startup)\b", re.I)),
+    ("AI/Tech", re.compile(r"\b(artificial intelligence|\bA\.?I\.?\b|machine "
+                            r"learning|\bLLM\b|chatgpt|openai|anthropic|claude|"
+                            r"gemini|nvidia|software|firmware|programming|"
+                            r"github|linux|kernel|browser|chip|robot)\b", re.I)),
+]
+
+
+def _classify_brutalist_headline(title):
+    """Best-effort category for one scraped headline. Defaults to AI/Tech —
+    brutalist.report's own source mix (Hacker News, The Verge, ArsTechnica,
+    LWN, Techmeme, etc.) is overwhelmingly tech, so an unmatched headline is
+    more likely tech than anything else."""
+    for cat, rx in _BRUTALIST_CATEGORY_RULES:
+        if rx.search(title or ""):
+            return cat
+    return "AI/Tech"
+
+
+def _fetch_brutalist_links(limit=200):
+    """Scrape brutalist.report's rendered HTML for every source's headline
+    links. No RSS/Atom feed exists for this site (every feed route 404s) so
+    this parses the DOM directly: each source name is an <h3>, immediately
+    followed by a sibling block of <a href> headline links. Fails soft to an
+    empty list on any network/parse error — a dead scrape must never break
+    the rest of the news pipeline."""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except Exception as e:
+        print(f"  [brutalist] missing dependency: {e}")
+        return []
+    try:
+        resp = requests.get(_BRUTALIST_URL, timeout=15,
+                             headers={"User-Agent": "Mozilla/5.0 (FridayNewsBot)"})
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  [brutalist] fetch failed: {e}")
+        return []
+    try:
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception as e:
+        print(f"  [brutalist] parse failed: {e}")
+        return []
+
+    out = []
+    seen_urls = set()
+    for h3 in soup.find_all("h3"):
+        source_name = h3.get_text(strip=True)
+        if not source_name:
+            continue
+        node = h3.find_next_sibling()
+        hops = 0
+        while node is not None and getattr(node, "name", None) != "h3" and hops < 4:
+            links = node.find_all("a", href=True) if hasattr(node, "find_all") else []
+            for a in links:
+                href = a["href"].strip()
+                title = a.get_text(strip=True)
+                if not href.startswith("http") or len(title) < 8:
+                    continue
+                if href in seen_urls:
+                    continue
+                seen_urls.add(href)
+                out.append({
+                    "title": title,
+                    "snippet": f"Via {source_name} (brutalist.report aggregation).",
+                    "url": href,
+                    "source": _extract_domain(href),
+                    "category": _classify_brutalist_headline(title),
+                    "color": "tech",
+                    "ts": _time.time(),
+                })
+                if len(out) >= limit:
+                    return out
+            node = node.find_next_sibling()
+            hops += 1
+    return out
+
+
+def _brutalist_scraper_tick():
+    """One scrape pass: pull brutalist.report, score + archive anything new.
+
+    Mirrors _news_archiver_tick's shape so the same archive schema, ban/boost
+    filtering, and trust badges apply. The difference is the source (a raw
+    HTML scrape instead of RSS) and the schedule (twice daily, not ~5 min)."""
+    banned = set(_load_banned_sources())
+    boosted = set(_load_boosted_sources())
+    raw = _fetch_brutalist_links(limit=200)
+    if not raw:
+        return 0
+    pool = []
+    for r in raw:
+        domain = r["source"]
+        if not domain or domain in banned:
+            continue
+        item = dict(r)
+        item.update(_source_trust_meta(domain, banned, boosted))
+        item["boosted"] = domain in boosted
+        item["reading_time"] = _estimate_reading_time(item["snippet"])
+        item["breaking"] = False
+        item["sentiment"] = _article_sentiment(item["title"])
+        item["score"] = _score_article(item)
+        pool.append(item)
+    added = _archive_articles(pool)
+    if added:
+        print(f"  [brutalist] +{added} new article(s) from brutalist.report")
+    return added
+
 
 
 # ═══════════════════════════════════════════════════════════════

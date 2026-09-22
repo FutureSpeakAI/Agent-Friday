@@ -847,6 +847,21 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] news front-page unavailable: {e}")
 
+    # brutalist.report scraper, twice daily. The aggregator publishes no RSS
+    # (every feed route 404s), so this scrapes the rendered page; results
+    # feed into the same persistent news archive as every other source, so
+    # they surface in the News workspace/Feed like any RSS-sourced item.
+    try:
+        from agent_friday.services.news_engine import _brutalist_scraper_tick
+        register_builtin_task("brutalist_morning", _brutalist_scraper_tick,
+                              label="Brutalist Report scrape (AM)", default_trigger="daily",
+                              default_spec={"hour": 6, "minute": 45})
+        register_builtin_task("brutalist_evening", _brutalist_scraper_tick,
+                              label="Brutalist Report scrape (PM)", default_trigger="daily",
+                              default_spec={"hour": 16, "minute": 45})
+    except Exception as e:
+        print(f"  [scheduler] brutalist scraper unavailable: {e}")
+
     # afternoon-briefing — synthesized daily briefing (markdown).
     try:
         register_builtin_task("afternoon_briefing", _afternoon_briefing_job,
