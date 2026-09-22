@@ -39982,6 +39982,10 @@ function App() {
   const chatEpoch = useRef(0);
   const inFlightEpoch = useRef(-1);
   const inFlightSince = useRef(0);
+  /* The id this turn was sent under, so the client can ASK whether it is
+     still working instead of inferring from a stopwatch that it is not. */
+  const inFlightTurn = useRef(null);
+  const [turnStatus, setTurnStatus] = useState(null);
   // ── Resizable chat panel ── drag the left edge for width, the top edge for
   // height. Clamped to 300–80vw × 200–80vh, persisted across sessions.
   const CHAT_MINW = 300,
@@ -41176,25 +41180,77 @@ function App() {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [sceneMenuOpen]);
-  /* No wait without an end. "Friday is thinking" with nothing behind it is
-     the same never-resolving state as the Intelligence spinner: if a turn has
-     been in flight far longer than any real reply takes, release the composer
-     and say so rather than spinning silently. */
+  /* No wait without an end — but "long" is not "dead", and this used to
+     confuse the two. It released the chat after fifteen minutes with "check
+     the work view to see whether it is still going", which on this machine
+     lands on perfectly healthy work: a routine turn here runs 25 tool calls
+     over five minutes and the long ones run far past that.
+
+     A clock cannot tell a working turn from a wedged one. The server can, so
+     ASK it (GET /api/chat/turn/<id>/liveness):
+
+       working / quiet -> the worker thread is alive. NEVER release. Say what
+                          it is doing and keep waiting, however long it takes.
+       gone            -> the thread died without answering. A real failure,
+                          and the only honest release.
+       hang.stalled    -> services/hang_watchdog says the process itself is
+                          wedged. Different condition, different sentence.
+       no answer at all-> if the interpreter is frozen this request cannot be
+                          served either, so sustained silence IS the hang
+                          signature. Four consecutive misses, not one, so a
+                          dropped packet never masquerades as a hang. */
   useEffect(() => {
-    if (!chatLoad) return;
-    const iv = setInterval(() => {
-      if (!inFlightSince.current) return;
-      if (Date.now() - inFlightSince.current < 15 * 60 * 1000) return;
+    if (!chatLoad) { setTurnStatus(null); return; }
+    let misses = 0, stop = false;
+    const release = (text) => {
       setChatLoad(false);
       inFlightSince.current = 0;
-      setChatMsgs(p => [...p, {
-        role: 'system', kind: 'stalled',
-        text: 'That turn has been running for over fifteen minutes with no reply. '
-          + 'I have released this chat so you can keep talking — check the work '
-          + 'view to see whether it is still going.',
-      }]);
-    }, 30000);
-    return () => clearInterval(iv);
+      inFlightTurn.current = null;
+      setTurnStatus(null);
+      setChatMsgs(p => [...p, { role: 'system', kind: 'stalled', text }]);
+    };
+    const iv = setInterval(async () => {
+      if (stop || !inFlightSince.current || !inFlightTurn.current) return;
+      const elapsed = Date.now() - inFlightSince.current;
+      /* Short turns are the overwhelming majority and need no supervision. */
+      if (elapsed < 90 * 1000) return;
+      let live = null;
+      try {
+        const r = await fetch('/api/chat/turn/'
+          + encodeURIComponent(inFlightTurn.current) + '/liveness');
+        if (r.ok) live = await r.json();
+      } catch (_) {/* counted below, never thrown */}
+      if (!live) {
+        if (++misses < 4) return;
+        release('Friday has stopped answering — the server is not responding '
+          + 'at all, which is what a hang looks like from here. Your turn may '
+          + 'not have finished. The chat is yours again.');
+        return;
+      }
+      misses = 0;
+      if (live.hang && live.hang.stalled) {
+        release('The Friday process has gone silent — the hang watchdog says '
+          + 'its heartbeat stopped ' + Math.round(live.hang.stale_for_s)
+          + 's ago, so this is a hang and not a long turn. A stack dump was '
+          + 'written to ~/.friday/logs. The chat is yours again.');
+        return;
+      }
+      if (live.state === 'gone') {
+        release('That turn ended without producing a reply — its worker is no '
+          + 'longer running. Nothing is still going in the background. The '
+          + 'chat is yours again.');
+        return;
+      }
+      /* working or quiet: the turn is HIS. Report, never release. */
+      setTurnStatus({
+        elapsed_s: live.elapsed_s,
+        label: live.label,
+        quiet: live.state === 'quiet',
+        quiet_for_s: live.quiet_for_s,
+        model: live.model,
+      });
+    }, 15000);
+    return () => { stop = true; clearInterval(iv); };
   }, [chatLoad]);
 
   const modelCatalog = useModelCatalog();
@@ -44103,6 +44159,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     setPausePending(null);
     inFlightEpoch.current = chatEpoch.current;
     inFlightSince.current = Date.now();
+    /* Minted here, sent with the turn, and the handle the liveness poll above
+       uses. Without it the client can only guess, which is how a stopwatch
+       ended up making this decision. */
+    inFlightTurn.current = 'turn-' + Date.now().toString(36) + '-'
+      + Math.random().toString(36).slice(2, 8);
+    setTurnStatus(null);
     setChatLoad(true);
     try {
       const body = {
@@ -44110,7 +44172,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         voice_mode: voiceOn,
         cite_sources: !!agentSettings.cite_sources,
         // Without this every turn lands in Main and the transcripts merge again.
-        conversation_id: convId || undefined
+        conversation_id: convId || undefined,
+        turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
       if (focusWin) body.workspace = focusWin;
@@ -45561,7 +45624,21 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     className: "typing-indicator"
   }, /*#__PURE__*/React.createElement("span", {
     className: "label"
-  }, "Friday is thinking"), /*#__PURE__*/React.createElement("span", {
+  },
+  /* A long turn stays his and says what it is doing. The alternative this
+     replaced was handing the chat back and pointing at another view. */
+  (() => {
+    if (!turnStatus) return "Friday is thinking";
+    const m = Math.floor((turnStatus.elapsed_s || 0) / 60);
+    const el = m >= 1 ? m + "m" : Math.round(turnStatus.elapsed_s) + "s";
+    if (turnStatus.quiet) {
+      return "Still working (" + el + ") — nothing reported for "
+        + Math.round(turnStatus.quiet_for_s) + "s. A single model call can "
+        + "run this long in silence; still holding the thread.";
+    }
+    return "Still working (" + el + ")"
+      + (turnStatus.label ? " — " + turnStatus.label : "");
+  })()), /*#__PURE__*/React.createElement("span", {
     className: "dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "dot"

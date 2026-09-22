@@ -93,6 +93,30 @@ class HangWatchdog:
                               f"(threshold {self.stall_threshold_s}s)")
         return None
 
+    def status(self) -> dict:
+        """Queryable stall state, so callers can READ the hang signal instead
+        of reinventing it with a stopwatch.
+
+        The chat UI's fifteen-minute release was the reinvention: a wall-clock
+        number standing in for this. A long agent turn and a wedged interpreter
+        look identical to a clock and completely different here.
+
+        Note the honest limit: if the interpreter really is frozen, an HTTP
+        caller never gets this answer at all — and that silence is itself the
+        signal. ``stalled`` catches the case where the monitor thread still
+        runs and the heartbeat does not.
+        """
+        now = time.time()
+        stale_for = now - self._last_beat
+        return {
+            "armed": self._started,
+            "last_beat": self._last_beat,
+            "stale_for_s": round(stale_for, 1),
+            "threshold_s": self.stall_threshold_s,
+            "stalled": bool(self._started and stale_for > self.stall_threshold_s),
+            "dumped_this_stall": self._dumped_this_stall,
+        }
+
     def pet(self) -> None:
         """Record a successful heartbeat — resets staleness tracking."""
         self._last_beat = time.time()
@@ -165,3 +189,12 @@ def start(**kwargs) -> HangWatchdog:
 
 def get() -> HangWatchdog | None:
     return _default
+
+
+def status() -> dict:
+    """Module-level convenience. An unarmed watchdog reports itself as such
+    rather than as healthy: "we are not looking" is not "nothing is wrong"."""
+    wd = _default
+    if wd is None:
+        return {"armed": False, "stalled": False, "reason": "watchdog not armed"}
+    return wd.status()

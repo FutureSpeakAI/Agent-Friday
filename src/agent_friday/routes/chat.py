@@ -446,6 +446,16 @@ def chat():
         # Resolve the addressed conversation FIRST: the context build below reads
         # from it, and everything downstream persists into it.
         _conversation_id = _conv_id_from(data)
+        # Turn liveness (core.turn_begin). The client sends a turn_id and can
+        # then ask "is my turn still working?" instead of assuming from a
+        # stopwatch that it is not. Registered on THIS thread, which is the
+        # thread the agent loop runs on, so every process_update inside it
+        # pets this record with no plumbing. Released in the finally below —
+        # if it were not, a turn whose thread died would read as alive
+        # forever, which is the same lie in the other direction.
+        _turn_id = (str(data.get('turn_id') or '').strip() or
+                    f"turn-{uuid.uuid4().hex[:12]}")
+        core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
@@ -1857,11 +1867,52 @@ def chat():
         traceback.print_exc()  # console launches; a no-op loss under pythonw
         _LOG.exception("chat turn failed")
         return jsonify({"response": f"[Friday offline] {str(e)}"})
+    finally:
+        try:
+            core.turn_end()
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════
 #  PERSISTENT CHAT HISTORY ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
+
+@chat_bp.route('/api/chat/turn/<turn_id>/liveness', methods=['GET'])
+def chat_turn_liveness(turn_id):
+    """Is this turn still working? The question the chat UI must ask before
+    it gives up on a reply.
+
+    It used to ask a stopwatch: fifteen minutes with no response and the
+    composer was released with "check the work view to see whether it is
+    still going." On this machine a healthy turn runs 25 tool calls over five
+    minutes and longer runs are routine, so the clock was calling live work
+    dead. Meanwhile the condition that release was actually built for - the
+    recurring silent hang, process up and friday.log dark - can arrive in
+    ninety seconds, and a clock has nothing to say about it.
+
+    Three states, and only one of them is a reason to let go:
+
+      * ``working`` - the worker thread is alive. Keep the chat. Always.
+      * ``quiet``   - alive, but no orb activity for a while. Still keep it:
+                      one model call can legitimately run minutes in silence.
+                      Say so; do not release.
+      * ``gone``    - the thread is dead, or this turn was never registered.
+                      That is a real failure and the only honest release.
+
+    ``hang`` carries services/hang_watchdog's own verdict rather than a second
+    invented threshold. If the interpreter is truly wedged this request never
+    answers at all, and a client treating repeated no-answer as the hang
+    signal is correct - that silence IS the signature.
+    """
+    out = core.turn_liveness(turn_id)
+    try:
+        from agent_friday.services import hang_watchdog as _hw
+        out["hang"] = _hw.status()
+    except Exception:
+        out["hang"] = {"armed": False, "stalled": False}
+    return jsonify(out)
+
 
 @chat_bp.route('/api/chat/history', methods=['GET'])
 def chat_history():
@@ -1910,6 +1961,16 @@ def chat_send():
         data = request.get_json(silent=True) or {}
         # Same addressing rule as /api/chat: unaddressed callers reach Main.
         _conversation_id = _conv_id_from(data)
+        # Turn liveness (core.turn_begin). The client sends a turn_id and can
+        # then ask "is my turn still working?" instead of assuming from a
+        # stopwatch that it is not. Registered on THIS thread, which is the
+        # thread the agent loop runs on, so every process_update inside it
+        # pets this record with no plumbing. Released in the finally below —
+        # if it were not, a turn whose thread died would read as alive
+        # forever, which is the same lie in the other direction.
+        _turn_id = (str(data.get('turn_id') or '').strip() or
+                    f"turn-{uuid.uuid4().hex[:12]}")
+        core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
@@ -2189,6 +2250,11 @@ def chat_send():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        try:
+            core.turn_end()
+        except Exception:
+            pass
 
 
 @chat_bp.route('/api/chat/pin/<msg_id>', methods=['POST'])
