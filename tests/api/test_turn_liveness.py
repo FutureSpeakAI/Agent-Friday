@@ -253,3 +253,34 @@ def test_a_chat_turn_registers_and_releases_itself(client, monkeypatch):
         "the route never registered the turn it was handed"
     assert core.turn_liveness("t-route")["state"] == "gone", \
         "the route never released the turn"
+
+
+def test_a_streamed_turn_is_visible_to_the_liveness_poll(client, monkeypatch):
+    """The seam the UI actually uses.
+
+    Chat does not post to /api/chat. It posts to /api/chat/stream, which runs
+    chat() on a worker thread and delivers the reply as it is written. The
+    liveness poll therefore has to find the turn registered by THAT path --
+    and the poll is the only thing standing between a six-minute tool run and
+    the composer being released underneath it.
+
+    Measured 2026-09-22: "Please start my day" ran 15:12:16 -> 15:18:19 with
+    search_email and open_url calls throughout, streamed its 3,043-character
+    reply correctly, and was still declared dead by the poll.
+    """
+    seen = {}
+    import agent_friday.routes.chat as chat_routes
+
+    def _fake(*a, **kw):
+        # Asked from inside the turn, exactly as the poll asks it from outside.
+        seen["live"] = core.turn_liveness("t-stream")
+        raise RuntimeError("stop here -- registration is what is under test")
+
+    monkeypatch.setattr(chat_routes, "_conv_context", _fake)
+    r = client.post("/api/chat/stream",
+                    json={"message": "hello", "turn_id": "t-stream"})
+    r.get_data()          # drain the SSE body so the worker thread finishes
+    assert seen, "the streamed turn never reached the point under test"
+    assert seen["live"]["state"] == "working", (
+        "a turn sent the way the UI sends every turn is invisible to the "
+        "liveness poll, so the poll releases the chat on a healthy turn")
