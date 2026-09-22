@@ -81,6 +81,9 @@ SEVERITY_QUESTION: Dict[str, Dict[str, Any]] = {
 
 _agent = None
 _agent_lock = threading.Lock()
+#: Serialises the ML-stack import against any other thread doing the same.
+#: See `_load_now` - transformers 5.x lazy namespace + concurrent boot import.
+_IMPORT_LOCK = threading.Lock()
 _load_error: Optional[str] = None
 _loading = False
 
@@ -140,7 +143,23 @@ def _load_now():
             return _agent
         _loading = True
     try:
-        import laya  # noqa: PLC0415 - deliberately lazy; see module docstring
+        # IMPORT transformers FROM THIS THREAD, BEFORE laya DOES, AND UNDER A
+        # LOCK. transformers 5.x builds its namespace lazily, so two threads
+        # touching it during boot can leave one of them holding a half-built
+        # module - which surfaces as `cannot import name 'AutoTokenizer' from
+        # 'transformers'` and looks, wrongly, like a broken install. The
+        # memory tier imports the same stack on the main thread while this
+        # runs on a warm-up thread, and on 2026-09-22 that race cost the
+        # approval gate its second opinion across two consecutive boots.
+        #
+        # Doing the import here, eagerly, means the expensive namespace build
+        # happens once where its failure is caught and retried, instead of
+        # inside laya where it is three frames from anything that knows what
+        # to do about it.
+        with _IMPORT_LOCK:
+            import transformers  # noqa: PLC0415
+            from transformers import AutoTokenizer  # noqa: F401,PLC0415
+            import laya  # noqa: PLC0415 - lazy; see module docstring
         t0 = time.time()
         agent = laya.load(MODEL_ID, device="cpu")
         with _agent_lock:
@@ -151,6 +170,26 @@ def _load_now():
     except Exception as e:
         with _agent_lock:
             _load_error = "%s: %s" % (type(e).__name__, e)
+        # SCHEDULE THE NEXT ATTEMPT RATHER THAN WAITING FOR A DECISION.
+        #
+        # The boot-time failure on 2026-09-22 was an import race, not a
+        # missing model: this load runs on a background thread while the
+        # memory tier is importing the same ML stack on the main one, and
+        # transformers 5.x lazy-loads its submodules, so a concurrent
+        # `from transformers import AutoTokenizer` can see a half-built
+        # module and raise ImportError. Sequentially it never fails, which is
+        # why it reproduced in the server and nowhere else.
+        #
+        # Retrying only when a decision arrives was not enough: on an idle
+        # machine no decision arrives, so the second opinion stayed off with
+        # nobody to notice. A timer makes the recovery independent of traffic.
+        try:
+            if _load_attempts < _MAX_LOAD_ATTEMPTS:
+                t = threading.Timer(_RETRY_AFTER_S, lambda: start_warming())
+                t.daemon = True
+                t.start()
+        except Exception:
+            pass
         # A missing model is a degraded feature, never a broken gate. The
         # caller falls back to keyword and the UI reports why.
         _log.warning("laya unavailable (%s) - decisions stay on keyword",
