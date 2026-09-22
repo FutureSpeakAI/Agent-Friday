@@ -1552,7 +1552,7 @@ def turn_liveness(turn_id, now=None):
 
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
-                     task_id=None, eta_s=None):
+                     task_id=None, eta_s=None, step_total=None):
     """Register a new process for the holographic orb display.
 
     `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
@@ -1570,7 +1570,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "model": model,
             "color": color,
             "status": "running",
-            "progress": 0,
+            "progress": None,
             "steps": steps or [],
             "log": [],
             "task_id": task_id,
@@ -1579,6 +1579,24 @@ def process_register(pid, *, name="Task", label=None, category="default",
             # no scale, and says "longer than usual" rather than parking at
             # 99% — a warning without a number is just an apology.
             "eta_s": eta_s,
+            # HOW FAR ALONG, HONESTLY.
+            #
+            # `progress` is a fraction and a fraction needs a denominator. An
+            # agent loop does not have one: it runs until the model stops
+            # asking for tools, and `max_iters` is 999, which is a ceiling and
+            # not an expectation. The Anthropic loop used to report
+            # `0.05 + 0.1 * (iteration - 1)` — a straight line to 90% that
+            # silently asserts "about ten steps" — and the local loop reported
+            # nothing at all, so a local task sat at 0% for its entire life no
+            # matter how well it was going.
+            #
+            # So: `step_n` is what we actually know, `step_total` is None when
+            # we do not know the total, and `progress` stays None unless
+            # something can compute a real fraction (image generation can;
+            # an agent loop cannot). A reader showing "step 7" is telling the
+            # truth. A bar at 0% is not.
+            "step_n": 0,
+            "step_total": step_total,
             "started": _time.time(),
             "updated": _time.time(),
         }
@@ -1586,7 +1604,8 @@ def process_register(pid, *, name="Task", label=None, category="default",
 
 
 def process_update(pid, *, status=None, progress=None, label=None,
-                   step=None, steps=None, task_id=None, result=None):
+                   step=None, steps=None, task_id=None, result=None,
+                   step_n=None, step_total=None):
     """Update an existing process entry.
 
     `result` attaches the process's final output (e.g. a local model's reply)
@@ -1601,6 +1620,10 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["status"] = status
         if progress is not None:
             p["progress"] = max(0.0, min(1.0, progress))
+        if step_n is not None:
+            p["step_n"] = int(step_n)
+        if step_total is not None:
+            p["step_total"] = int(step_total)
         if label is not None:
             p["label"] = label
         if step is not None:

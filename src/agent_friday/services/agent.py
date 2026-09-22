@@ -7587,9 +7587,15 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     pass
 
             # Update orb: reasoning step
+            # `progress` deliberately NOT reported: this loop has no
+            # denominator. It used to send 0.05 + 0.1*(iter-1), a straight
+            # line to 90% that quietly asserts "about ten steps" and then
+            # parks — and the local loop sent nothing, so a local task showed
+            # 0% however well it was going. The step number is what is
+            # actually known, so that is what is said.
             _orb_safe(process_update, orb_id,
                       label="Reasoning…" if iter_count == 1 else f"Reasoning (step {iter_count})",
-                      progress=min(0.05 + (iter_count - 1) * 0.1, 0.9),
+                      step_n=iter_count,
                       step={"type": "reason", "iter": iter_count, "ts": _time.time()})
             # Task journal (TV3): the checkpoint is a step of the loop, written
             # BEFORE the model call so a crash mid-call still records the
@@ -7965,6 +7971,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # Anthropic loop; the coverage test counts these against rounds.
         _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
                             session_ctx=session_ctx)
+        # Every round reports, not only the ones that call tools — a local
+        # model that reasons for three rounds before picking a tool was
+        # previously indistinguishable from one that had not started.
+        _orb(label="Reasoning…" if _round == 1 else f"Reasoning (step {_round})",
+             step_n=_round)
         _t_round = _time.time()
         resp = send_fn(convo, oai_tools)
 
@@ -8089,7 +8100,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         })
         try:
             _first = (tool_calls[0].get("function") or {}).get("name") or "tool"
-            _orb(label=f"{_first}…",
+            _orb(label=f"{_first}…", step_n=_round,
                  step={"type": "tool", "name": _first, "ts": _time.time()})
         except Exception:
             pass

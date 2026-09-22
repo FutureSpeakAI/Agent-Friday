@@ -367,13 +367,13 @@
                 labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
                 this.labelContainer.appendChild(labelEl);
                 this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
-                    oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
+                    oAngle,oRadius,oHeight,oSpeed, /* null = nobody can compute a fraction for this yet; 0 would be a claim */ progress:null, status:'running',
                     birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
                     hoverScale:1.0, baseGlowOpacity:0.4, snapping:false});
             }
             updateOrb(id, upd) {
                 const o = this.orbs.get(id); if (!o) return;
-                if (upd.progress !== undefined) o.progress = Math.max(0,Math.min(1,upd.progress));
+                if (upd.progress !== undefined) o.progress = (upd.progress === null) ? null : Math.max(0,Math.min(1,upd.progress));
                 if (upd.status !== undefined) o.status = upd.status;
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
                 if (upd.status === 'completed') { o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e); }
@@ -533,12 +533,37 @@
                     }
                     o.glow.material.opacity = o.baseGlowOpacity-0.1 + amp*0.3 + Math.sin(elapsed*3+o.oAngle)*0.1 + ((isHovered || o.snapping) ? 0.45 : 0);
 
-                    const segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
+                    /* An UNKNOWN fraction is not zero. An agent loop has no
+                       denominator - it runs until the model stops asking for
+                       tools - so `progress` is now null for those, and a ring
+                       drawn from null sat empty for the whole run: the orb
+                       said "0% complete" about a task that was going fine.
+                       Unknown draws a travelling arc instead, which reports
+                       activity without claiming an amount. A real fraction
+                       (image generation knows its step count) still fills. */
+                    const known = (o.progress !== null && o.progress !== undefined && o.progress > 0);
+                    const running = (o.status === 'running' || o.status === undefined);
+                    let segs, arcFrom = 0;
+                    if (known) {
+                        segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
+                    } else if (running) {
+                        const span = Math.max(3, Math.floor(o.ringSegs*0.18));
+                        arcFrom = Math.floor((elapsed*0.45 + o.oAngle) * o.ringSegs / (Math.PI*2)) % o.ringSegs;
+                        segs = span;
+                    } else {
+                        segs = Math.max(2, Math.floor(o.ringSegs*(o.progress||0)));
+                    }
                     const pos = o.ringGeo.attributes.position.array;
                     for (let i=0;i<o.ringSegs;i++) {
                         const th = (i/o.ringSegs)*Math.PI*2, r=0.55;
-                        if (i<segs) { pos[i*3]=Math.cos(th)*r; pos[i*3+1]=Math.sin(th)*r; pos[i*3+2]=0; }
-                        else { const lt=((segs-1)/o.ringSegs)*Math.PI*2; pos[i*3]=Math.cos(lt)*r; pos[i*3+1]=Math.sin(lt)*r; pos[i*3+2]=0; }
+                        const on = (known || !running) ? (i<segs)
+                            : (((i - arcFrom + o.ringSegs) % o.ringSegs) < segs);
+                        if (on) { pos[i*3]=Math.cos(th)*r; pos[i*3+1]=Math.sin(th)*r; pos[i*3+2]=0; }
+                        else {
+                            const anchor = (known || !running) ? (segs-1) : arcFrom;
+                            const lt=((anchor+o.ringSegs)%o.ringSegs)/o.ringSegs*Math.PI*2;
+                            pos[i*3]=Math.cos(lt)*r; pos[i*3+1]=Math.sin(lt)*r; pos[i*3+2]=0;
+                        }
                     }
                     o.ringGeo.attributes.position.needsUpdate = true;
                     o.ring.lookAt(this.camera.position);
