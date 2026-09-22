@@ -1386,6 +1386,31 @@ def _extract_json_block(text):
     return None
 
 
+# The deterministic lead note used when the editor does not answer. A module
+# constant because two places must agree on it forever: the fallback that
+# writes it, and `_was_curated`, which reads it back off an edition written
+# before `editorial_status` existed to decide whether that edition had a real
+# editorial. If they ever drift, a failed re-run silently eats a good page.
+_FALLBACK_LEAD_NOTE = ("Friday's top pick for you right now — highest signal "
+                       "against your AI, politics, media, and current-affairs beats.")
+
+
+def _answering_model():
+    """The model that actually generated on this thread, or None.
+
+    services/attribution is thread-local and every provider primitive records
+    into it at the moment it produces text, so this is the one place that
+    knows whether the routed seat or a ladder fallback answered. Never raises
+    and never guesses: None means nobody recorded, which is itself a fact
+    worth printing rather than papering over with the configured default.
+    """
+    try:
+        from agent_friday.services import attribution
+        return (attribution.last_generation() or {}).get("model")
+    except Exception:
+        return None
+
+
 def _editorialize_front_page(pool, slot="morning", prev_stories=None,
                              calendar_events=None):
     """Ask Claude to pick the lead + write editorial context. Fails soft to a
@@ -1399,12 +1424,25 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
     Returns {lead_index, lead_note, section_context, headline, day_in_context,
     contrarian_corner, competitor_watch, thread_updates}. thread_updates is
     keyed by story URL.
+
+    On the soft-fail path it ALSO returns `degraded`: {reason, detail, model,
+    seconds}. The page still renders — that part was right — but the caller
+    stamps it onto the edition and the notification says so, because a page
+    that quietly loses its editor looks exactly like a page that has one.
+
+    THE SILENCE THIS REPLACES. Between 2026-09-19 and 2026-09-22 every single
+    edition on disk was this fallback — nine consecutive, the last curated one
+    being 2026-09-18 morning — and nothing said a word. The 09-22 morning run
+    spent 1,741s on bonsai2:27b, got back
+    "[Agent hit max tool iterations without completing.]" (see the loop fix in
+    services/agent.py), failed `_extract_json_block`, returned here, and the
+    user was then sent a "📰 Friday's Front Page — Morning edition" notice.
     """
     top = pool[:28]
+    _t_started = _time.time()
     fallback = {
         "lead_index": 0,
-        "lead_note": ("Friday's top pick for you right now — highest signal "
-                      "against your AI, politics, media, and current-affairs beats."),
+        "lead_note": _FALLBACK_LEAD_NOTE,
         "section_context": {},
         "headline": "Your Front Page",
         "day_in_context": "",
@@ -1412,8 +1450,21 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         "competitor_watch": [],
         "thread_updates": {},
     }
+
+    def _degraded(reason, detail, model=None):
+        """The fallback, marked — and said out loud exactly once."""
+        secs = round(_time.time() - _t_started, 1)
+        _log.warning("front page (%s): no editorial — %s. model=%s after %ss. %s",
+                     slot, reason, model or "?", secs, detail)
+        out = dict(fallback)
+        out["degraded"] = {"reason": reason, "detail": detail[:600],
+                           "model": model, "seconds": secs}
+        return out
+
     if not top:
-        return fallback
+        return _degraded(
+            "no candidate stories",
+            "the story pool was empty, so there was nothing to editorialise")
     try:
         lines = []
         for i, it in enumerate(top):
@@ -1500,12 +1551,40 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             keywords=prompt, workspace='briefing',
             provider=_predict_route_provider(keywords=prompt, workspace='briefing'),
             vault_control=_gated_vault_control())
+        # OUTPUT BUDGET, and why it is not 1800 any more.
+        #
+        # The old 1800 was sized against the JSON alone. It is not the JSON's
+        # budget: on an OpenAI-compatible endpoint `max_tokens` covers the
+        # model's reasoning channel too. Measured on the live bonsai2:27b seat
+        # on 2026-09-22 with this exact prompt (25,410 prompt tokens): 1,800
+        # tokens spent entirely in `reasoning_content`, finish_reason="length",
+        # zero characters of answer, 320s. A reasoning seat cannot reach the
+        # reply through a ceiling that small.
+        #
+        # Sized to the request instead of guessed: the shape asks for a lead
+        # note, a headline, one sentence per category present, a contrarian
+        # note, a competitor list and a thread update per carried story. That
+        # is ~900 tokens of JSON at the top end; the rest is headroom for the
+        # scratchpad, which is what actually varies by seat. A ceiling that
+        # is still reached now fails LOUDLY (see `_degraded` below and the
+        # truncation message in _oai_agentic_loop) rather than silently.
+        _budget = 900 + 120 * max(1, len(cats_present)) + (400 if prev_block else 0)
         raw = _generate_text([{"role": "user", "content": prompt}],
-                             system=system, max_tokens=1800,
+                             system=system, max_tokens=max(2400, _budget * 3),
                              orb_label="📰 Front Page", workspace='news')
+        # Who ANSWERED, not who the router aimed at — the ladder can move the
+        # call between legs, and naming the intended seat in a failure report
+        # sends the reader to look at the wrong model.
+        _model_used = _answering_model()
         data = _extract_json_block(raw)
         if not isinstance(data, dict):
-            return fallback
+            # The editor answered with something that is not the requested
+            # object. Quote it — truncated — rather than discarding the only
+            # evidence of why. A reply that IS the loop's own failure string
+            # is the common case and reads as such.
+            _snip = (raw or "").strip().replace("\n", " ")[:300] or "(nothing)"
+            return _degraded("the editor's reply was not the JSON it was asked for",
+                             f"reply was: {_snip}", _model_used)
         li = data.get("lead_index")
         if not isinstance(li, int) or not (0 <= li < len(top)):
             li = 0
@@ -1564,8 +1643,13 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             "competitor_watch": watch,
             "thread_updates": thread_updates,
         }
-    except Exception:
-        return fallback
+    except Exception as e:
+        # Includes the case every provider leg refused: _generate_text raises
+        # RuntimeError with the chain it tried, and that chain is the whole
+        # diagnosis. Swallowing it was how "no provider is up" and "the model
+        # answered badly" became the same blank page.
+        return _degraded("the editorial call failed",
+                         f"{type(e).__name__}: {e}", _answering_model())
 
 def _front_page_story_urls(edition):
     """Every article URL in an edition (lead + all section articles)."""
@@ -1727,12 +1811,74 @@ def _generate_front_page(slot="morning"):
         "competitor_watch": editorial.get("competitor_watch") or [],
         "continuing_threads": continuing_threads,
         "prev_edition_id": (prev or {}).get("id") if prev else None,
+        # "curated" when the editor answered, otherwise the reason it did not.
+        # Stored ON the edition so the page can say what it is and a later
+        # reader (or a re-run) can tell an un-curated edition from a curated
+        # one without re-deriving it from the absence of section context.
+        "editorial_status": (
+            {"state": "degraded", **editorial["degraded"]}
+            if editorial.get("degraded") else {"state": "curated"}),
     }
 
     FRONT_PAGES_DIR.mkdir(parents=True, exist_ok=True)
-    (FRONT_PAGES_DIR / f"{edition_id}.json").write_text(
-        json.dumps(edition, indent=2), encoding="utf-8")
+    _path = FRONT_PAGES_DIR / f"{edition_id}.json"
+
+    # A FAILED RE-RUN MUST NOT EAT A GOOD EDITION.
+    #
+    # Generation is idempotent per (date, slot) and overwrites in place. That
+    # is right when the re-run is better and catastrophic when it is worse:
+    # click Generate on a curated edition, have the seat time out, and the
+    # curated one is gone — thirty minutes of the model's work replaced by a
+    # ranked list, with nothing said. Keep what exists and report that the
+    # re-run did not beat it; the stories under a curated editorial are at
+    # most one cycle stale, which is a far smaller loss than the editorial.
+    if edition["editorial_status"]["state"] == "degraded":
+        _prev_same = _read_front_page(edition_id)
+        if _was_curated(_prev_same):
+            _log.warning(
+                "front page (%s): keeping the curated %s already on disk - "
+                "this run produced no editorial (%s)", slot, edition_id,
+                edition["editorial_status"].get("reason"))
+            _prev_same["editorial_status"] = {
+                "state": "curated",
+                "kept_through_failed_rerun": edition["editorial_status"],
+            }
+            _atomic_write_json(_path, _prev_same)
+            return _prev_same
+
+    _atomic_write_json(_path, edition)
     return edition
+
+
+def _atomic_write_json(path, obj):
+    """Write JSON via temp file + replace, so an interrupted write cannot
+    leave a half-edition where a whole one used to be."""
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _was_curated(edition):
+    """Did an edition already on disk have a real editorial?
+
+    Reads `editorial_status` when it is there. Editions written before that
+    field existed are judged on the evidence instead: a lead note that is not
+    the verbatim fallback string, or any section carrying context. Both are
+    things ONLY the editor produces, so a false positive would need the
+    fallback to have written them, which it cannot.
+    """
+    if not isinstance(edition, dict):
+        return False
+    state = (edition.get("editorial_status") or {}).get("state")
+    if state:
+        return state == "curated"
+    note = ((edition.get("lead") or {}).get("editorial_note") or "").strip()
+    if note and not note.startswith(_FALLBACK_LEAD_NOTE[:40]):
+        return True
+    return any((sec.get("context") or "").strip()
+               for sec in edition.get("sections") or [])
+
+
 def _list_front_pages():
     """All saved editions, newest first, as light summaries for the index."""
     if not FRONT_PAGES_DIR.exists():
@@ -1784,7 +1930,15 @@ def _read_front_page(edition_id):
 # already pushed one. Best-effort — a notify failure never breaks generation.
 
 def _notify_front_page(edition, slot, manual=False):
-    """Push the 'Front Page ready' notification for a generated edition."""
+    """Push the notification for a generated edition — 'ready' when the editor
+    answered, and what went wrong when it did not.
+
+    A degraded edition used to push the identical cheerful notice as a curated
+    one, which is how nine consecutive un-curated editions went unremarked.
+    The page still renders and the notice still links to it — the stories are
+    real — but it says which part is missing, names the seat, and offers the
+    re-run instead of leaving it to be discovered by refreshing localhost.
+    """
     if not (_notif_engine and edition):
         return
     try:
@@ -1793,17 +1947,46 @@ def _notify_front_page(edition, slot, manual=False):
         dk = f"front-page:{edition.get('id')}"
         if manual:
             dk += f":manual:{datetime.now().strftime('%H%M%S')}"
+        deg = (edition.get("editorial_status") or {})
+        degraded = deg.get("state") == "degraded"
+        if degraded:
+            seat = deg.get("model") or "the editorial seat"
+            secs = deg.get("seconds")
+            took = f" after {secs:.0f}s" if isinstance(secs, (int, float)) else ""
+            title = f"📰 Front Page — {label} edition, without the editor"
+            body = (f"The stories are here and ranked, but {seat} did not "
+                    f"return an editorial{took}, so there is no lead note, no "
+                    f"section context and no Contrarian Corner. Reason: "
+                    f"{deg.get('reason') or 'unknown'}. Hit Generate in the "
+                    f"News workspace to re-run it, or switch the seat in "
+                    f"Settings → Models.")
+            # One action, and it is the one the panel can actually perform.
+            # The notification panel only reads actions[0] for its deep link
+            # (index.html, the `tgt` resolver) — a second entry describing a
+            # POST would render as a button that does nothing, which is a
+            # worse lie than the silence this replaces. The re-run lives in
+            # the body as an instruction until the panel can dispatch verbs.
+            actions = [{"label": "View Front Page", "workspace": "news",
+                        "tab": "frontpage"}]
+        else:
+            title = f"📰 Friday's Front Page — {label} edition"
+            body = (f"{edition.get('headline','Your Front Page')} · Lead: "
+                    f"{lead.get('title','(no stories)')}")
+            actions = [{"label": "View Front Page", "workspace": "news",
+                        "tab": "frontpage"}]
         _notif_engine.push(
-            title=f"📰 Friday's Front Page — {label} edition",
-            body=(f"{edition.get('headline','Your Front Page')} · Lead: "
-                  f"{lead.get('title','(no stories)')}"),
-            priority="medium",
+            title=title,
+            body=body,
+            # A degraded edition is the one the user most needs to know about,
+            # and 'medium' is the level the reader has learned to skim.
+            priority="high" if degraded else "medium",
             source="front-page",
             kind="front_page",
-            actions=[{"label": "View Front Page", "workspace": "news", "tab": "frontpage"}],
+            actions=actions,
             target={"workspace": "news", "tab": "frontpage"},
             dedupe_key=dk,
-            meta={"edition_id": edition.get("id"), "slot": slot, "manual": manual},
+            meta={"edition_id": edition.get("id"), "slot": slot, "manual": manual,
+                  "editorial_status": deg or {"state": "curated"}},
         )
     except Exception as e:
         print(f"  [front-page:{slot}] notification failed: {e}")
