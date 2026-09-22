@@ -128,7 +128,7 @@ def _fingerprint(text) -> str:
 
 def checkpoint(task_id, *, convo, tool_trace=None, iteration=0, model=None,
                max_tokens=None, system=None, orb_label=None,
-               orb_category="default", orb_icon="brain", loop="anthropic") -> bool:
+               orb_category="default", orb_icon="🧠", loop="anthropic") -> bool:
     """Save the transcript at a consistent boundary. Never raises.
 
     Call this ONLY where every ``tool_use`` in ``convo`` has its matching
@@ -388,7 +388,7 @@ def resume(task_id, *, confirm_pending: bool = False,
         session_ctx=ctx,
         orb_label=blob.get("orb_label"),
         orb_category=blob.get("orb_category") or "default",
-        orb_icon=blob.get("orb_icon") or "brain",
+        orb_icon=blob.get("orb_icon") or "🧠",
         resumed_tool_trace=tool_trace,
     )
 
