@@ -3450,11 +3450,11 @@ def _offer_cloud_while_waiting(record, wait_s):
     if not out:
         return
     tid = record.get("id") or record.get("task_id")
-    _task_log(tid, "local seat busy for %ds — asked whether to run this on "
-                   "%s instead. Still queued locally either way."
-              % (int(wait_s), record.get("cloud_spill_id") and
-                 (out.get("approval") or {}).get("payload", {}).get("cloud_model")
-                 or "a cloud model"))
+    cloud = ((out.get("approval") or {}).get("payload") or {}).get(
+        "cloud_model") or "a cloud model"
+    _task_log(tid, "local seat busy for %ds — asked whether to run this on %s "
+                   "instead. Still queued locally either way."
+              % (int(wait_s), cloud))
 
 
 def _seat_supervisor():
