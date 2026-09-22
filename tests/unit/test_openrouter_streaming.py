@@ -91,3 +91,65 @@ def test_malformed_chunk_is_skipped_not_fatal():
     lines = ["data: {not json", ""] + _sse({"choices": [{"delta": {"content": "x"}}]})
     out = _consume_sse_completion(_FakeResp(lines))
     assert out["choices"][0]["message"]["content"] == "x"
+
+
+# ── Reasoning deltas (2026-09-22) ───────────────────────────────────────────
+#
+# A reasoning seat splits its output across `content` and `reasoning_content`,
+# and `max_tokens` is spent on both. The reassembler read only `content`, so a
+# turn that spent its whole budget thinking arrived as an EMPTY message — and
+# every layer above called it empty, then "Max iters", then silently served an
+# un-curated Front Page. Measured against the live bonsai2:27b llama-server
+# seat: 16 content deltas, 49 reasoning_content deltas, for one short prompt.
+
+def test_reasoning_deltas_are_kept_and_not_mixed_into_content():
+    r = _FakeResp(_sse(
+        {"choices": [{"delta": {"reasoning_content": "They want "}}]},
+        {"choices": [{"delta": {"reasoning_content": "only JSON."}}]},
+        {"choices": [{"delta": {"content": '{"ok":'}}]},
+        {"choices": [{"delta": {"content": " 1}"}, "finish_reason": "stop"}]},
+    ))
+    msg = _consume_sse_completion(r)["choices"][0]["message"]
+    # The scratchpad survives the transport …
+    assert msg["reasoning_content"] == "They want only JSON."
+    # … and stays out of the answer, which is what reaches chat bubbles.
+    assert msg["content"] == '{"ok": 1}'
+
+
+def test_openrouter_spells_it_reasoning_and_that_is_kept_too():
+    r = _FakeResp(_sse(
+        {"choices": [{"delta": {"reasoning": "thinking…"}}]},
+        {"choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}]},
+    ))
+    msg = _consume_sse_completion(r)["choices"][0]["message"]
+    assert msg["reasoning_content"] == "thinking…"
+    assert msg["content"] == "hi"
+
+
+def test_a_turn_that_only_thought_is_distinguishable_from_a_blank_one():
+    """The exact 2026-09-22 Front Page shape: budget spent thinking, no answer.
+
+    Before the fix this was byte-identical to a model that said nothing at
+    all, which is why the failure was reported for days as 'empty'."""
+    thought_only = _consume_sse_completion(_FakeResp(_sse(
+        {"choices": [{"delta": {"reasoning_content": "a" * 400}}]},
+        {"choices": [{"delta": {}, "finish_reason": "length"}]},
+    )))["choices"][0]
+    truly_blank = _consume_sse_completion(_FakeResp(_sse(
+        {"choices": [{"delta": {}, "finish_reason": "length"}]},
+    )))["choices"][0]
+
+    assert thought_only["message"]["content"] == ""
+    assert truly_blank["message"]["content"] == ""
+    assert thought_only["finish_reason"] == truly_blank["finish_reason"] == "length"
+    # The only thing that tells them apart — and now it is there.
+    assert thought_only["message"].get("reasoning_content")
+    assert "reasoning_content" not in truly_blank["message"]
+
+
+def test_no_reasoning_means_no_key_so_existing_callers_see_no_change():
+    r = _FakeResp(_sse(
+        {"choices": [{"delta": {"content": "plain"}, "finish_reason": "stop"}]},
+    ))
+    assert _consume_sse_completion(r)["choices"][0]["message"] == {
+        "role": "assistant", "content": "plain"}

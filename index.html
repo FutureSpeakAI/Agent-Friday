@@ -2091,6 +2091,23 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fp-daycontext-body { font-size:13px; line-height:1.55; color:#d6d9e3; }
 
+        /* Ranked, not curated — the editor did not answer for this edition.
+           Amber, not red: the page is usable, a part of it is missing. */
+        .fp-degraded {
+            margin-bottom:18px; padding:14px 16px; border-radius:11px;
+            background:linear-gradient(135deg,rgba(245,158,11,0.12),rgba(245,158,11,0.04));
+            border:1px solid rgba(245,158,11,0.34);
+        }
+        .fp-degraded-head {
+            font-family:'Orbitron',monospace; font-size:12px; font-weight:600;
+            letter-spacing:0.05em; color:#f59e0b; margin-bottom:6px;
+        }
+        .fp-degraded-body { font-size:13px; line-height:1.55; color:#e6d9c3; }
+        .fp-degraded-detail {
+            margin-top:8px; font-family:'JetBrains Mono',monospace; font-size:11px;
+            line-height:1.5; color:#b9a888; word-break:break-word;
+        }
+
         /* Contrarian Corner */
         .fp-contrarian {
             position:relative; margin-bottom:20px; padding:16px 18px; border-radius:11px;
@@ -22890,7 +22907,35 @@ function NewsWS() {
   }, fpList.map(e => /*#__PURE__*/React.createElement("option", {
     key: e.id,
     value: e.id
-  }, e.date + ' · ' + (e.slot === 'evening' ? 'PM' : 'AM'))))), anchorReading && /*#__PURE__*/React.createElement("div", {
+  }, e.date + ' · ' + (e.slot === 'evening' ? 'PM' : 'AM'))))),
+  // An edition whose editor never answered is still a real page of real
+  // stories — it is just ranked, not curated. Saying so here is the whole
+  // point: this is the screen he refreshes, and for nine consecutive
+  // editions it looked identical to a curated one.
+  fp.editorial_status && fp.editorial_status.state === 'degraded' && /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-head"
+  }, "⚠️ Ranked, not curated"), /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-body"
+  }, "The stories below are real and scored against your profile, but "
+     + (fp.editorial_status.model || 'the editorial seat')
+     + " did not return an editorial"
+     + (typeof fp.editorial_status.seconds === 'number'
+        ? ' after ' + Math.round(fp.editorial_status.seconds) + 's' : '')
+     + " — so there is no lead note, no section context and no Contrarian Corner. "
+     + (function (r) { return r ? r.charAt(0).toUpperCase() + r.slice(1) + '.' : ''; })(fp.editorial_status.reason || '')), fp.editorial_status.detail && /*#__PURE__*/React.createElement("div", {
+    className: "fp-degraded-detail"
+  }, fp.editorial_status.detail),
+  // The ask, on the screen where the answer is. Same handler as the masthead
+  // button — a re-run that does not beat what is on disk now keeps the better
+  // edition (news_engine._was_curated), so pressing this cannot make it worse.
+  /*#__PURE__*/React.createElement("button", {
+    className: "btn active",
+    style: { fontSize: 11, marginTop: 10 },
+    onClick: genFrontPage,
+    disabled: fpGen
+  }, fpGen ? 'Curating…' : '✨ Run the editor again')), anchorReading && /*#__PURE__*/React.createElement("div", {
     className: "fp-anchor-bar"
   }, /*#__PURE__*/React.createElement("span", {
     className: "fp-anchor-dot"
