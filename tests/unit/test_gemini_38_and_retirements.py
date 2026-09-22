@@ -430,3 +430,115 @@ def test_every_allowlist_entry_names_a_file_that_exists():
     for rel, model_id in chk.GOOGLE_ALLOWED:
         assert (root / rel).exists(), rel
         assert model_id in chk.GOOGLE_MODEL_SHUTDOWNS, model_id
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  7. The retirement that was announced and then taken back
+# ══════════════════════════════════════════════════════════════════════════
+# A repo comment asserted that gemini-2.5-pro and gemini-2.5-flash shut down
+# 2026-10-16. Checked against ai.google.dev/gemini-api/docs/deprecations on
+# 2026-09-22 (page's own "last updated" that same day): both rows read "No
+# shutdown date announced", under a note saying the 2.5 models are not
+# deprecated and are served until further notice. Google did publish that
+# date around 2026-07-28 and then removed it with no changelog entry.
+#
+# Both ids also still resolve via models.get, probed 2026-09-22 in a batch
+# containing a deliberately fake id (404) and a genuinely shut-down one,
+# gemini-2.5-pro-preview-03-25 (404) — so "200" meant something.
+#
+# Those two facts answer different questions and are kept apart deliberately:
+# the probe is authoritative for EXISTS TODAY and says nothing about any
+# future date; the docs page is authoritative for the DATE and says nothing
+# about whether the endpoint is up this minute. The claim being refuted here
+# is a date, so the docs page is what refutes it.
+
+def test_the_25_pair_carries_no_shutdown_date():
+    chk = _checker()
+    for model_id in ("gemini-2.5-pro", "gemini-2.5-flash"):
+        assert model_id not in chk.GOOGLE_MODEL_SHUTDOWNS, (
+            "%s has a shutdown date again - if Google re-announced one, cite "
+            "it; if this is the withdrawn 2026-10-16 date coming back, it is "
+            "the bug this section exists to stop" % model_id)
+        assert model_id in chk.GOOGLE_NO_SHUTDOWN_ANNOUNCED, model_id
+
+
+def test_reinstating_the_withdrawn_date_would_fire_the_check():
+    """Proves the assertion above could have failed.
+
+    Without this, "2.5 Flash is not in the shutdown table" is satisfied just
+    as well by a checker that cannot see the model at all. Putting the old
+    value back in memory shows the machinery really is pointed at the files
+    that dispatch to it — so the absence of a complaint is a finding, not a
+    blind spot.
+    """
+    chk = _checker()
+    assert chk.find_google_problems(today=_dt.date(2026, 9, 22)) == []
+    chk.GOOGLE_MODEL_SHUTDOWNS["gemini-2.5-flash"] = (
+        "2026-10-16", "gemini-3.8-flash", "the withdrawn date")
+    problems = chk.find_google_problems(today=_dt.date(2026, 9, 22))
+    assert any("gemini-2.5-flash" in p for p in problems), \
+        "the check cannot see gemini-2.5-flash at all - the real test is vacuous"
+    assert any("provider_registry.py" in p for p in problems)
+
+
+def test_25_flash_is_still_a_pickable_voice_model():
+    """The user-visible consequence of getting this wrong.
+
+    Acting on the retracted date means deleting this entry, and the first
+    anyone would know is a voice seat that silently stopped being offered.
+    """
+    cat = build_catalog()
+    voice_ids = {e["id"] for e in cat["roles"]["voice"]}
+    assert "gemini-2.5-flash" in voice_ids
+    # Not vacuous: the same lookup does not hand back arbitrary ids.
+    assert "gemini-2.5-pro" not in voice_ids
+
+
+def test_lyria_pro_is_not_flagged_on_a_date_google_never_published():
+    """`lyria-3-pro-preview` was briefly carried as shutting down 2027-05-07.
+
+    The deprecations page recommends lyria-3.5 for it but announces no
+    shutdown date, and a recommendation is not a deadline. Left uncorrected,
+    the build would have broken in April 2027 demanding a migration nobody
+    asked for. Checked on a date inside the old warn window, so a tree that
+    still believed the invented date would fail here.
+    """
+    chk = _checker()
+    inside_old_window = _dt.date(2027, 4, 20)
+    assert (_dt.date.fromisoformat("2027-05-07") - inside_old_window).days \
+        <= chk.WARN_WINDOW_DAYS, "test date is outside the window - proves nothing"
+    # Scoped to lyria on purpose: by April 2027 gemini-3.1-flash-lite really
+    # is inside its (Google-published) window, so the tree is legitimately
+    # noisy on that date and a bare `== []` would be asserting the wrong thing.
+    assert not [p for p in chk.find_google_problems(today=inside_old_window)
+                if "lyria" in p]
+    # ...and it WOULD have fired with the invented date restored, which is
+    # what makes the line above evidence rather than a coincidence.
+    chk.GOOGLE_MODEL_SHUTDOWNS["lyria-3-pro-preview"] = (
+        "2027-05-07", "lyria-3.5", "the invented date")
+    problems = chk.find_google_problems(today=inside_old_window)
+    assert any("lyria-3-pro-preview" in p and "music_engine.py" in p
+               for p in problems)
+
+
+def test_the_two_google_tables_never_disagree():
+    """An id cannot both have a shutdown date and have none. This is how the
+    withdrawn date would come back: added to one table without the other
+    being cleaned up."""
+    chk = _checker()
+    assert chk.find_table_conflicts() == []
+    chk.GOOGLE_MODEL_SHUTDOWNS["gemini-2.5-pro"] = (
+        "2026-10-16", "gemini-3.1-pro-preview", "the withdrawn date")
+    conflicts = chk.find_table_conflicts()
+    assert conflicts and "gemini-2.5-pro" in conflicts[0]
+
+
+def test_every_no_shutdown_entry_records_when_it_was_checked():
+    """A negative result with no date on it decays into a rumour. These are
+    read off a page that changed its mind once already."""
+    chk = _checker()
+    assert chk.GOOGLE_NO_SHUTDOWN_ANNOUNCED, "table is empty"
+    for model_id, (checked, note) in chk.GOOGLE_NO_SHUTDOWN_ANNOUNCED.items():
+        _dt.date.fromisoformat(checked)  # raises if not a real ISO date
+        assert note.strip(), model_id
+    assert chk.GOOGLE_DEPRECATIONS_URL.startswith("https://ai.google.dev/")

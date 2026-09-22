@@ -423,11 +423,27 @@ DEFAULT_PROVIDERS = [
         #                 preview variants, and the Gemini 3.8 Live pair.
         #                 NOT text/creative models.
         #   * TEXT      — Gemini 3.8 Flash / 3.5 Flash / 3.1 Pro / 3.1 Flash-Lite
-        #                 plus the 2.5 generation (2.5 Pro/Flash sunset
-        #                 2026-10-16). NOT creative/generative. (Gemini 3.5 Pro
-        #                 is not yet in the public API as of 2026-07.)
+        #                 plus the 2.5 generation. NOT creative/generative.
+        #                 (Gemini 3.5 Pro is not yet in the public API as of
+        #                 2026-07.)
         #   * CREATIVE  — image generation (Nano Banana Pro / Nano Banana 2) and
         #                 video generation (Google Veo + Gemini Omni Flash).
+        #
+        # The TEXT line above used to end "(2.5 Pro/Flash sunset 2026-10-16)".
+        # That is WRONG and was corrected 2026-09-22. Google did announce that
+        # date around 2026-07-28 and then withdrew it without a changelog
+        # entry: ai.google.dev/gemini-api/docs/deprecations now lists both ids
+        # as "No shutdown date announced" under a standing note that the 2.5
+        # models "are not deprecated and will continue to be served until
+        # further notice". Both still resolve via models.get (probed
+        # 2026-09-22, alongside a deliberately fake control id that 404s).
+        # The live caveat is capacity, not retirement: Google is limiting 2.5
+        # to projects with prior usage, so a brand-new key can get "no longer
+        # available to new users" on a model that is very much alive. Do not
+        # delete these ids on the strength of that message, and do not
+        # reinstate the date without re-reading the page — the record of it
+        # having been retracted lives in check_stale_model_names.py's
+        # GOOGLE_NO_SHUTDOWN_ANNOUNCED.
         "models": [
             "gemini-3.8-flash",
             "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite",
