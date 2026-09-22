@@ -2102,6 +2102,41 @@ DEFAULT_SETTINGS = {
     # and that is why "open all nine of these" stopped after none of them: the
     # gate denies the call and instructs the model to stop and wait for a yes.
     "confirm_before_opening": False,
+    # ── Camera tracking: how the hologram reacts to your head and hand ──
+    #
+    # Read by the browser, not by Python - the scene and the cursor both live
+    # in index.html. They are declared here because that is the only way a
+    # setting survives `_load_settings_raw()`, which whitelists top-level keys
+    # against this dict and silently drops anything else.
+    #
+    # Defaults chosen by measuring the previous hard-coded behaviour and then
+    # fixing what felt wrong:
+    #   * head_smoothing 0.35 - the old filter was a fixed per-FRAME lerp of
+    #     0.08, about a 200 ms lag that also changed with frame rate. A One
+    #     Euro filter is steady when still and quick when moving, so this can
+    #     be much lower without the jitter that used to justify it.
+    #   * hand_gain 2.2 and hand_region 0.45 - the old cursor mapped the WHOLE
+    #     camera frame to the whole screen at 1:1, so crossing the screen meant
+    #     sweeping your arm across the camera's entire view. A smaller active
+    #     region with gain is what makes small movements cover the screen.
+    #   * pinch_enter/pinch_exit differ on purpose. One threshold chatters at
+    #     the boundary; the gap is the hysteresis.
+    "tracking": {
+        "parallax_strength": 1.0,
+        "depth_strength": 1.0,
+        "head_smoothing": 0.35,
+        "holo_cues": 0.6,
+        "hand_gain": 2.2,
+        "hand_accel": 0.6,
+        "hand_region": 0.45,
+        "hand_deadzone": 0.006,
+        "hand_smoothing": 0.30,
+        "click_method": "pinch",
+        "pinch_enter": 0.050,
+        "pinch_exit": 0.075,
+        "dwell_ms": 700,
+        "debug_overlay": False,
+    },
     # ── Which scanner decides whether an action needs your sign-off ──
     #
     # `dissent_gate.classify_severity` - a scan for ~40 substrings - decides
