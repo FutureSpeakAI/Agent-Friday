@@ -211,8 +211,33 @@ def scan(
     content_path: Optional[str] = None,
     content_type: str = "text",
     metadata: Optional[Dict[str, Any]] = None,
+    apply_packs: bool = True,
 ) -> Dict[str, Any]:
-    """Scan content for harm. Returns verdict dict."""
+    """Scan content for harm. Returns verdict dict.
+
+    `apply_packs=False` runs the harm floor, NSFW detection and the family-mode
+    block, then stops — it skips the subscribed-pack evaluation at the end.
+
+    It exists to break a mutual recursion, measured 2026-09-22. This function
+    called `content_policies.evaluate_content` for pack rules; that function
+    called this one back for the H1-H4 floor; neither had a depth guard, and
+    both call sites are wrapped in `except Exception: pass`. So a single
+    approval card cost **250 round-trips** terminating in a swallowed
+    RecursionError, and that swallowing is why nobody noticed.
+
+    It was never a Law-1 hole: harmful content blocks at stack depth 2,
+    because the floor runs before the pack step. Verified by instrumenting
+    both functions — a doxxing string returned `blocked` at depth 2 while a
+    benign string went 250 deep and returned `clean`. Only the benign path
+    recursed. Waste, not a gap.
+
+    Fixed by removing the edge rather than guarding the depth: a guard leaves
+    the cycle in place and merely survives it. `evaluate_content` is about to
+    evaluate packs itself, so it never wanted that half — and the recursive
+    call re-entered with a *synthesised* meta (categories=[], severity 0.5 or
+    0.0) rather than the caller's, so it was not even re-checking the same
+    content.
+    """
     scan_id = str(uuid.uuid4())
     tags: List[str] = []
     try:
@@ -264,7 +289,20 @@ def scan(
                 "scan_id": scan_id,
             }
 
-        # Content policy pack evaluation (additive tags/warnings, can block)
+        # Content policy pack evaluation (additive tags/warnings, can block).
+        # Skipped when the caller is content_policies.evaluate_content, which
+        # does this step itself — see the docstring on `apply_packs`.
+        if not apply_packs:
+            return {
+                "ok": True,
+                "blocked": False,
+                "verdict": "nsfw_flagged" if is_nsfw else "clean",
+                "harm_level": None,
+                "tags": tags,
+                "reason": None,
+                "scan_id": scan_id,
+            }
+
         try:
             from agent_friday.services.content_policies import evaluate_content, get_subscribed_packs
             packs = get_subscribed_packs()
