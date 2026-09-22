@@ -137,25 +137,51 @@ GOOGLE_MODEL_SHUTDOWNS = {
         "the original Nano Banana; reached via the bare nano-banana alias"),
     "gemini-3.1-flash-lite": (
         "2027-05-07", "gemini-3.5-flash-lite", "cheap high-volume text tier"),
-    "lyria-3-pro-preview": (
-        "2027-05-07", "lyria-3.5", "full-song music generation"),
 }
 
-#: NOT in the table above, and deliberately so — written here instead of
-#: being encoded as if it were checked.
+#: The other half of the table, and the more surprising one: ids Google's
+#: deprecations page explicitly lists with NO shutdown date.
 #:
-#: `gemini-2.5-pro` and `gemini-2.5-flash` are asserted to sunset 2026-10-16
-#: by a comment in provider_registry.py itself. That date was NOT re-verified
-#: against ai.google.dev in the 2026-09-22 pass that built this section, and
-#: `gemini-2.5-flash` in particular is load-bearing: it carries ROLE_VOICE and
-#: is a pickable voice model, so acting on an unconfirmed date would remove a
-#: working model from a user's picker. Confirm the date, then move both ids
-#: into GOOGLE_MODEL_SHUTDOWNS — at which point this check will fail until
-#: the catalogue is updated, which is the intended outcome.
-GOOGLE_UNVERIFIED_SHUTDOWNS = {
-    "gemini-2.5-pro": "2026-10-16?",
-    "gemini-2.5-flash": "2026-10-16?",
+#: This exists because a retirement can be UN-announced. On 2026-07-28
+#: Google's deprecations page gave gemini-2.5-pro, gemini-2.5-flash and
+#: gemini-2.5-flash-lite a shutdown date of 2026-10-16. By early August those
+#: dates were gone from the page, replaced by "No shutdown date announced"
+#: and a standing note that the 2.5 models "are not deprecated and will
+#: continue to be served until further notice" — with no changelog entry
+#: marking the reversal. The withdrawn date is what the provider_registry.py
+#: comment had captured and what the first pass at this section flagged as
+#: unverified.
+#:
+#: Recording the negative result is the point. Without it the next person to
+#: read "2.5 Pro/Flash sunset 2026-10-16" anywhere — an old comment, a cached
+#: blog post, a vendor changelog that never caught the reversal — re-opens a
+#: question that has already been settled, and the cheapest wrong move is to
+#: "act on" it by pulling a working model out of the user's picker.
+#: `gemini-2.5-flash` carries ROLE_VOICE and is pickable; removing it on a
+#: retracted date would break voice for no reason at all.
+#:
+#: id -> (date this was read off the page, note)
+GOOGLE_NO_SHUTDOWN_ANNOUNCED = {
+    "gemini-2.5-pro": (
+        "2026-09-22",
+        "date 2026-10-16 was announced then WITHDRAWN; page now says not "
+        "deprecated, served until further notice. New projects are steered "
+        "to 3.5 Flash-Lite / 3.8 Flash, and access is capacity-limited to "
+        "projects with prior usage — a new install may see 'not available "
+        "to new users', which is NOT a shutdown"),
+    "gemini-2.5-flash": (
+        "2026-09-22",
+        "same withdrawn 2026-10-16 date, same standing note. Load-bearing: "
+        "carries ROLE_VOICE and is user-pickable"),
+    "lyria-3-pro-preview": (
+        "2026-09-22",
+        "page recommends lyria-3.5 as a replacement but announces no "
+        "shutdown date. A recommendation is not a deadline; this was "
+        "briefly carried here as 2027-05-07, which Google never said"),
 }
+
+#: Source of truth for both tables above, re-read 2026-09-22.
+GOOGLE_DEPRECATIONS_URL = "https://ai.google.dev/gemini-api/docs/deprecations"
 
 #: Files that actually DISPATCH to a Gemini wire id — the ones where a dead
 #: id is a runtime 404 rather than stale prose. Kept deliberately to the
@@ -238,6 +264,22 @@ def find_google_problems(today: _dt.date | None = None) -> list:
     return problems
 
 
+def find_table_conflicts() -> list:
+    """An id cannot both have a shutdown date and have none.
+
+    Cheap, but it is the exact shape of the mistake this section keeps
+    making: a date gets written down in one place, withdrawn or corrected in
+    another, and both survive. If the two tables ever disagree the build
+    should say so rather than let whichever one `find_google_problems` reads
+    win silently.
+    """
+    both = sorted(set(GOOGLE_MODEL_SHUTDOWNS) & set(GOOGLE_NO_SHUTDOWN_ANNOUNCED))
+    return ["%r is in BOTH GOOGLE_MODEL_SHUTDOWNS (%s) and "
+            "GOOGLE_NO_SHUTDOWN_ANNOUNCED (checked %s) - one of them is stale"
+            % (m, GOOGLE_MODEL_SHUTDOWNS[m][0], GOOGLE_NO_SHUTDOWN_ANNOUNCED[m][0])
+            for m in both]
+
+
 def find_problems() -> list:
     problems = []
     for rel in CHECKED_FILES:
@@ -282,6 +324,16 @@ def main() -> int:
     else:
         print("[check-stale-model-names] OK - no dispatch path names a Gemini "
               "model shutting down within %d days" % WARN_WINDOW_DAYS)
+
+    conflicts = find_table_conflicts()
+    if conflicts:
+        failed = True
+        print("[check-stale-model-names] the two Gemini tables contradict "
+              "each other:")
+        for c in conflicts:
+            print("  -", c)
+        print("[check-stale-model-names] re-read %s and delete the entry that "
+              "is no longer what the page says." % GOOGLE_DEPRECATIONS_URL)
     return 1 if failed else 0
 
 
