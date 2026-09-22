@@ -223,6 +223,40 @@ def _discover_and_register_blueprints(flask_app):
 _discover_and_register_blueprints(app)
 
 
+def _register_warm_caches():
+    """Declare the slow reads worth having ready before anyone asks.
+
+    Measured on 2026-09-22: build_catalog() is 18.9 s for 598 models, and
+    GET /api/models called it synchronously - the model picker timed out and
+    could not be used to change seats. Warmed here, persisted across restarts
+    by services/warm_cache, refreshed behind the request.
+
+    Registration is cheap and synchronous; WARMING is a background thread, so
+    this cannot delay the server binding its port. That distinction is the
+    whole ask: "running in the background so it doesn't stop the UI from
+    launching".
+
+    Add slow workspace reads here as they are measured. Deliberately NOT a
+    blanket sweep of every endpoint: a cache over something already fast buys
+    nothing and costs a staleness bug.
+    """
+    try:
+        from agent_friday.services import warm_cache
+    except Exception as _e:
+        _log.warning("warm cache unavailable: %s", _e)
+        return
+    try:
+        from agent_friday.services.model_catalog import build_catalog
+        warm_cache.register("model_catalog", build_catalog, ttl_s=900.0)
+    except Exception as _e:
+        _log.warning("model catalog not registered for warming: %s", _e)
+    if not _TESTING:
+        warm_cache.start_warming()
+
+
+_register_warm_caches()
+
+
 # ── Back-compat facade (PEP 562) ──────────────────────────────────
 # The star-import cascade used to make every app symbol addressable as
 # `server.<name>`; the test suite and user scripts rely on that. Resolve
