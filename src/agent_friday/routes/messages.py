@@ -80,7 +80,9 @@ def api_messages():
         limit = max(5, min(100, int(request.args.get("limit", 40))))
     except (TypeError, ValueError):
         limit = 40
-    result = message_triage.collect(limit_per_account=limit)
+    # ?q= is a Gmail search, sent to Gmail's own q= across every account.
+    gmail_q = (request.args.get("q") or "").strip() or None
+    result = message_triage.collect(limit_per_account=limit, query=gmail_q)
     cards, source = result["messages"], result["source"]
     now_iso = datetime.now().isoformat(timespec="seconds")
     if not include_archived:
@@ -115,14 +117,32 @@ def api_messages():
                 c["related_event"] = hit[0]
     except Exception:
         pass
-    return jsonify({
+    out = {
         "status": "ok",
         "messages": cards,
         "total": len(cards),
         "source": source,
         "lanes": MESSAGE_LANES,
         "generated_at": now_iso,
-    })
+        "query": gmail_q,
+        "errors": result.get("errors") or [],
+        "partial": bool(result.get("partial")),
+        "rate_limited": bool(result.get("rate_limited")),
+    }
+    if result.get("search_failed"):
+        # Nothing could be read: a failure, never "no mail". No total.
+        out.update(status="error", search_failed=True, total=None,
+                   error=_failure_text(result.get("errors") or []))
+    return jsonify(out)
+
+
+def _failure_text(errors):
+    parts = []
+    for e in errors:
+        who = e.get("label") or "An account"
+        parts.append("%s: %s" % (who, e.get("error") or "unknown error"))
+    return "Couldn't read mail. " + " ".join(parts) if parts else "Couldn't read mail."
+
 
 
 @messages_bp.route('/api/messages/stats')
@@ -139,7 +159,7 @@ def api_messages_stats():
     actionable_lanes = {l["id"] for l in MESSAGE_LANES if l["actionable"]}
     actionable = sum(1 for c in active
                      if c["lane"] in actionable_lanes and c["unread"])
-    return jsonify({
+    out = {
         "status": "ok",
         "counts": counts,
         "total": len(active),
@@ -147,57 +167,67 @@ def api_messages_stats():
         "source": source,
         "lanes": MESSAGE_LANES,
         "per_account": message_triage.account_summary(active),
-    })
+        "errors": result.get("errors") or [],
+        "partial": bool(result.get("partial")),
+        "rate_limited": bool(result.get("rate_limited")),
+    }
+    if result.get("search_failed"):
+        # The dock badge must not read a failure as "0 to do".
+        out.update(status="error", search_failed=True, counts=None, total=None,
+                   actionable=None, error=_failure_text(result.get("errors") or []))
+    return jsonify(out)
+
+
+@messages_bp.route('/api/messages/attachment')
+def api_message_attachment():
+    """One attachment's bytes (read-only). Images and PDFs display inline;
+    everything else downloads. Never rendered as a page on Friday's origin."""
+    from agent_friday.services import gmail_api, gmail_read
+    a = request.args
+    aid, mid, att = a.get("account", ""), a.get("message", ""), a.get("id", "")
+    if not (aid and mid and att):
+        return jsonify({"status": "error", "error": "account, message and id are required"}), 400
+    try:
+        data = gmail_read.get_attachment(aid, mid, att)
+    except gmail_api.GmailError as e:
+        return jsonify({"status": "error", "kind": e.kind, "error": e.message}), 502
+    name = re.sub(r'[\r\n"\\]', '_', a.get("name") or "attachment")
+    mime = (a.get("mime") or "application/octet-stream").lower()
+    inline = mime.startswith("image/") and mime != "image/svg+xml" or mime == "application/pdf"
+    resp = Response(data, mimetype=mime if inline else "application/octet-stream")
+    resp.headers["Content-Disposition"] = ('inline' if inline else 'attachment') + '; filename="%s"' % name
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    if mime != "application/pdf":
+        resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self' data:"
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
 
 
 @messages_bp.route('/api/messages/<thread_id>')
 def api_message_thread(thread_id):
-    """Full thread for a message. Pulls the whole Gmail thread when linked,
-    otherwise returns the single cached message body."""
-    rules = _load_message_rules()
-    state = _load_message_state()
-    creds = _google_credentials()
-    if creds is not None:
-        try:
-            from googleapiclient.discovery import build
-            svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
-            thread = svc.users().threads().get(
-                userId="me", id=thread_id, format="full").execute()
-            out = []
-            for msg in thread.get("messages", []):
-                headers = {h["name"].lower(): h["value"]
-                           for h in msg.get("payload", {}).get("headers", [])}
-                body = _extract_gmail_body(msg.get("payload", {}))
-                ts = msg.get("internalDate")
-                try:
-                    ts_iso = (datetime.fromtimestamp(int(ts) / 1000).isoformat()
-                              if ts else headers.get("date", ""))
-                except Exception:
-                    ts_iso = headers.get("date", "")
-                out.append({
-                    "id": msg.get("id"),
-                    "sender": headers.get("from", "unknown"),
-                    "to": headers.get("to", ""),
-                    "subject": headers.get("subject", "(no subject)"),
-                    "timestamp": ts_iso,
-                    "body": body or (msg.get("snippet") or ""),
-                    "snippet": msg.get("snippet", ""),
-                })
-            return jsonify({"status": "ok", "thread_id": thread_id,
-                            "messages": out, "source": "gmail"})
-        except Exception as e:
-            # fall through to cache on any API error
-            pass
-    # Cache fallback — find by id/thread.
-    for r in _load_cached_messages():
-        if str(_message_id(r)) == str(thread_id) or str(r.get("thread_id")) == str(thread_id):
-            card = _normalize_message(r, rules, state)
-            return jsonify({"status": "ok", "thread_id": thread_id, "messages": [{
-                "id": card["id"], "sender": card["sender"],
-                "subject": card["subject"], "timestamp": card["timestamp"],
-                "body": r.get("body") or card["snippet"], "snippet": card["snippet"],
-            }], "source": "cache"})
-    return jsonify({"status": "not_found", "thread_id": thread_id, "messages": []}), 404
+    """A whole Gmail thread from the account it belongs to (?account=<id>;
+    without one, every connected account is tried). A Gmail error is
+    reported as an error, not as "not found"; the offline cache answers
+    only when no account is connected at all."""
+    from agent_friday.services import gmail_read
+    res = gmail_read.get_thread(thread_id, request.args.get("account") or None)
+    if res.get("status") == "ok":
+        return jsonify({**res, "source": "gmail"})
+    if res.get("kind") in ("auth",) or res.get("kind") == "not_found":
+        rules = _load_message_rules()
+        state = _load_message_state()
+        for r in _load_cached_messages():
+            if str(_message_id(r)) == str(thread_id) or str(r.get("thread_id")) == str(thread_id):
+                card = _normalize_message(r, rules, state)
+                return jsonify({"status": "ok", "thread_id": thread_id, "messages": [{
+                    "id": card["id"], "sender": card["sender"],
+                    "subject": card["subject"], "timestamp": card["timestamp"],
+                    "body": r.get("body") or card["snippet"], "snippet": card["snippet"],
+                    "html": "", "attachments": [], "to": "", "cc": "",
+                }], "source": "cache", "note": res.get("error")})
+    code = 404 if res.get("kind") == "not_found" else 502
+    return jsonify({"status": "error", "thread_id": thread_id, "messages": [],
+                    "kind": res.get("kind"), "error": res.get("error")}), code
 
 
 @messages_bp.route('/api/messages/classify', methods=['POST'])
