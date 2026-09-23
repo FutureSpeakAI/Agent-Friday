@@ -3230,6 +3230,8 @@ function StudioWS(){
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
   useNavTarget('studio',t=>{
     if(!t)return;
+    // {view:'files', root, path} opens that folder in the 3D file browser.
+    if(t.view==='files'){if(t.root)window.__files3dOpen={root:t.root,path:t.path||''};setView('files');window.dispatchEvent(new Event('friday-files3d-open'));return;}
     if(t.creation){loadCreations();openCreation({name:t.creation});return;}
     // Older daily-creation notifications carry only a title/date — resolve that
     // to the materialized file in the gallery, then open it.
@@ -3289,13 +3291,15 @@ function StudioWS(){
       <button className={'btn '+(view==='production'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('production')}>🎬 Production</button>
       <button className={'btn '+(view==='gallery'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
       <button className={'btn '+(view==='projects'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
+      <button className={'btn '+(view==='files'?'':'btn-magenta')} style={{fontSize:11}} title="Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters" onClick={()=>setView('files')}>🧊 Files 3D</button>
     </div>
     {view==='projects'&&<ProjectsPanel/>}
+    {view==='files'&&(window.Files3DPanel?<window.Files3DPanel/>:<div style={{color:'#888',fontSize:12,padding:20}}>The 3D file browser did not load.</div>)}
     {view==='generate'&&<GeneratePanel onCreated={loadCreations}/>}
     {view==='music'&&<MusicPanel onCreated={loadCreations}/>}
     {view==='timeline'&&<TimelinePanel onCreated={loadCreations}/>}
     {view==='production'&&<ProductionPanel onCreated={loadCreations}/>}
-    {view!=='projects'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
+    {view!=='projects'&&view!=='files'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
     <StudioPromptBar onCreated={loadCreations}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
       {creationLog&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}

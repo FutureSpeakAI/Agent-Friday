@@ -1,0 +1,106 @@
+"""The Studio 3D file browser's browser-side pieces, run under node, and its
+wiring into both UI files.
+
+The thumbnail slot pool is the part a bug in hides well: tiles look fine
+until two items share a slot and one card shows another file's picture.
+"""
+import json
+import pathlib
+import shutil
+import subprocess
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "static" / "studio_files3d.js"
+node = shutil.which("node")
+
+HARNESS = r"""
+globalThis.window = {};
+globalThis.React = { createElement() {}, useState() {}, useEffect() {}, useRef() {}, useCallback() {} };
+SCRIPT
+const { createSlotPool, buildItems } = window.__files3dInternals;
+const out = {};
+
+// Several tiles landing in one frame each get their own slot.
+{
+  const p = createSlotPool(4, 10), wanted = new Uint8Array(10).fill(1);
+  const got = [0, 1, 2, 3].map(i => p.claim(i, wanted, 1).slot);
+  out.batch_slots = got;
+  out.batch_consistent = [0, 1, 2, 3].every(i => p.itemIn[p.slotOf[i]] === i);
+  // Full, and everyone still wanted: nothing is evicted.
+  out.full_claim = p.claim(4, wanted, 2).slot;
+  out.full_owners = Array.from(p.itemIn);
+}
+// Only unwanted items are evicted, least recently wanted first.
+{
+  const p = createSlotPool(3, 10), wanted = new Uint8Array(10).fill(1);
+  p.claim(0, wanted, 1); p.claim(1, wanted, 2); p.claim(2, wanted, 3);
+  wanted[0] = 0; wanted[2] = 0; p.touch(0, 10);
+  const r = p.claim(5, wanted, 11);
+  out.evicted = r.evicted;
+  out.evicted_slot_cleared = p.slotOf[2];
+  out.claim_again = p.claim(5, wanted, 12);
+  out.used = p.used();
+}
+// The item table links folders to their files and skips the scanned folder itself.
+{
+  const items = buildItems({ path: 'base', entries: [
+    ['base/a', 1, 30, 1], ['base/a/x.png', 0, 10, 2], ['base/a/b', 1, 20, 3],
+    ['base/a/b/y.py', 0, 20, 4], ['base/z.mp4', 0, 5, 5]] });
+  out.items = items.map(it => [it.name, it.parent, it.depth, it.cat, it.kids]);
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _run():
+    src = HARNESS.replace("SCRIPT", SCRIPT.read_text(encoding="utf-8"))
+    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+def test_slot_pool_gives_each_tile_its_own_slot():
+    out = _run()
+    assert sorted(out["batch_slots"]) == [0, 1, 2, 3]
+    assert out["batch_consistent"] is True
+    assert out["full_claim"] == -1
+    assert out["full_owners"] == [0, 1, 2, 3]
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+def test_slot_pool_evicts_only_unwanted_least_recent():
+    out = _run()
+    assert out["evicted"] == 2
+    assert out["evicted_slot_cleared"] == -1
+    assert out["claim_again"]["evicted"] == -1
+    assert out["used"] == 3
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+def test_item_table_links_folders():
+    items = _run()["items"]
+    assert items == [
+        ["a", -1, 1, "folder", [1, 2]],
+        ["x.png", 0, 2, "image", []],
+        ["b", 0, 2, "folder", [3]],
+        ["y.py", 2, 3, "code", []],
+        ["z.mp4", -1, 1, "video", []],
+    ]
+
+
+@pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
+def test_studio_offers_the_3d_browser(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert "setView('files')" in text
+    assert "window.Files3DPanel" in text
+    assert "view !== 'files'" in text or "view!=='files'" in text
+
+
+@pytest.mark.parametrize("path", ["index.html", "ui_parts/styles_and_scene.html"])
+def test_page_loads_the_browser_and_honours_the_backdrop_hold(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert '<script src="/static/studio_files3d.js"></script>' in text
+    assert "if (composer && !(window.__fridayBackdropHold > 0)) composer.render();" in text
