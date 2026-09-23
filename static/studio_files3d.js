@@ -627,8 +627,9 @@
       for (let i = 0; i < n; i++) { delayMs[i] = dist[i] / far * spread; diss[i] = 1; }
       materialize = { t0: performance.now(), delayMs, dur: 420 };
       if (intro !== 'center') {
-        // the cards travel in as they light up
-        const up = layout.cam.r * 0.45, deck = [c[0], c[1] - layout.cam.r * 0.35, c[2] + layout.cam.r * 0.5];
+        // The cards travel in as they light up. Every start point is inside
+        // the frame and the moves are short: an entrance is seen, not waited for.
+        const up = layout.cam.r * 0.14, deck = [c[0], c[1] - layout.cam.r * 0.12, c[2] + layout.cam.r * 0.12];
         const delays = new Float32Array(n);
         fP.set(tP); fQ.set(tQ); fS.set(tS); fBP.set(tBP); fBS.set(tBS);
         for (const i of o) {
@@ -641,7 +642,7 @@
           else if (intro === 'spiral') { fP[i3] *= 0.05; fP[i3 + 2] *= 0.05; fS[i * 2] *= 0.45; fS[i * 2 + 1] *= 0.45; }
         }
         P.set(fP); S.set(fS);
-        flight = { t0: performance.now(), dur: intro === 'deal' ? 460 : 560, delays };
+        flight = { t0: performance.now(), dur: intro === 'deal' ? 460 : 560, delays, flat: true };
       }
       const step = Math.max(1, Math.ceil(o.length / (dz >= 1 ? 420 : 200)));
       for (let k = 0; k < o.length; k += step) {
@@ -1217,7 +1218,7 @@
         t = t < 0 ? 0 : t > 1 ? 1 : t;
         const e = ease(t), i3 = i * 3;
         const dx = tP[i3] - fP[i3], dy = tP[i3 + 1] - fP[i3 + 1], dz = tP[i3 + 2] - fP[i3 + 2];
-        const lift = Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.16 * Math.sin(Math.PI * e);
+        const lift = flight.flat ? 0 : Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.16 * Math.sin(Math.PI * e);
         P[i3] = fP[i3] + dx * e; P[i3 + 1] = fP[i3 + 1] + dy * e + lift; P[i3 + 2] = fP[i3 + 2] + dz * e;
         THREE.Quaternion.slerpFlat(Q, i * 4, fQ, i * 4, tQ, i * 4, e);
         S[i * 2] = fS[i * 2] + (tS[i * 2] - fS[i * 2]) * e; S[i * 2 + 1] = fS[i * 2 + 1] + (tS[i * 2 + 1] - fS[i * 2 + 1]) * e;
