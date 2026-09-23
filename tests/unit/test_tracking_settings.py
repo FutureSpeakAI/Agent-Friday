@@ -31,8 +31,19 @@ def js_engine_defaults() -> set:
 
 
 def python_defaults() -> set:
+    import agent_friday
     from agent_friday.core import DEFAULT_SETTINGS
 
+    # The venv pins the primary checkout's src on sys.path, so a worktree can
+    # end up comparing its own index.html against another tree's Python. That
+    # reads as a mysterious mismatch, or worse, as a pass against the wrong
+    # file. Say so plainly instead.
+    imported = pathlib.Path(agent_friday.__file__).resolve()
+    assert REPO in imported.parents, (
+        "agent_friday was imported from %s, which is not this checkout (%s). "
+        "The comparison below would be against another tree's settings."
+        % (imported, REPO)
+    )
     return set(DEFAULT_SETTINGS["tracking"])
 
 
