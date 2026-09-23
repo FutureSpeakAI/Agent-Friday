@@ -117,20 +117,66 @@
   }
 
   // ── a message body in a sandboxed frame ─────────────────────────────────
-  function MailBody({ html, text, showImages }) {
+  // ── links in a message ──────────────────────────────────────────────────
+  // Only web and mail links do anything. A web link opens in a new browser
+  // tab from Friday's own page, with no opener and no referrer, so the page
+  // it leads to cannot reach back into Friday. (A tab spawned from inside
+  // the sandboxed message frame inherits the frame's restrictions and never
+  // loads, which is why the frame itself opens nothing.) A mail link starts
+  // a message in Friday's composer, which sends nothing without approval.
+  const openLink = (href, onMailto) => {
+    const u = String(href || '').trim();
+    if (/^https?:\/\//i.test(u)) { window.open(u, '_blank', 'noopener,noreferrer'); return true; }
+    if (/^mailto:/i.test(u) && onMailto) { onMailto(u); return true; }
+    return false;
+  };
+  const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/gi;
+  function Linkified({ text, onMailto }) {
+    const out = [];
+    let last = 0, m, k = 0;
+    const src = String(text || '');
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(src))) {
+      if (m.index > last) out.push(src.slice(last, m.index));
+      const url = m[0];
+      out.push(h('a', { key: k++, href: url, rel: 'noopener noreferrer', style: { color: '#7dd3fc' },
+        onClick: e => { e.preventDefault(); openLink(url, onMailto); } }, url));
+      last = m.index + url.length;
+    }
+    out.push(src.slice(last));
+    return h('div', { className: 'fm-text' }, out);
+  }
+
+  // ── a message body in a sandboxed frame ─────────────────────────────────
+  function MailBody({ html, text, showImages, onMailto }) {
     const ref = useRef(null);
     const [height, setHeight] = useState(120);
-    if (!html) return h('div', { className: 'fm-text' }, text || '');
+    if (!html) return h(Linkified, { text, onMailto });
     const origin = window.location.origin;
     const csp = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data: " + origin + (showImages ? ' https: http:' : '');
     const doc = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
-      '<base target="_blank"><style>body{margin:12px;font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;color:#1b1f24;word-wrap:break-word}img{max-width:100%;height:auto}</style></head><body>' + html + '</body></html>';
-    const fit = () => {
-      try { const d = ref.current.contentDocument; setHeight(Math.min(4000, Math.max(80, d.documentElement.scrollHeight + 4))); } catch (_) { /* cross-origin: keep default */ }
+      '<base target="_blank"><style>body{margin:12px;font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;color:#1b1f24;word-wrap:break-word}img{max-width:100%;height:auto}a{cursor:pointer}</style></head><body>' + html + '</body></html>';
+    const onLoad = () => {
+      let d;
+      try { d = ref.current.contentDocument; } catch (_) { return; }
+      if (!d) return;
+      setHeight(Math.min(4000, Math.max(80, d.documentElement.scrollHeight + 4)));
+      // Friday's page listens inside the frame (the frame is same-origin
+      // but runs no scripts of its own) and opens the link itself.
+      const onClick = e => {
+        const a = e.target && e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        e.preventDefault();
+        openLink(a.getAttribute('href'), onMailto);
+      };
+      d.addEventListener('click', onClick, true);
+      d.addEventListener('auxclick', e => { if (e.button === 1) onClick(e); }, true);
+      d.querySelectorAll('a[href]').forEach(a => { if (!a.title) a.title = a.getAttribute('href'); });
     };
     // allow-same-origin WITHOUT allow-scripts: nothing in the mail can run,
-    // and Friday can still measure the frame to size it.
-    return h('iframe', { ref, className: 'fm-body', title: 'Message', sandbox: 'allow-same-origin allow-popups allow-popups-to-escape-sandbox', srcDoc: doc, onLoad: fit, style: { height } });
+    // and Friday can size the frame and handle its links. No allow-popups:
+    // the frame opens nothing itself.
+    return h('iframe', { ref, className: 'fm-body', title: 'Message', sandbox: 'allow-same-origin', srcDoc: doc, onLoad, style: { height } });
   }
 
   // ── compose / reply / forward ───────────────────────────────────────────
@@ -396,6 +442,17 @@
     };
     const bodyOf = msg => msg.html ? quotable(msg.html) : esc(msg.body).replace(/\n/g, '<br>');
     const quoteOf = msg => '<br><br><div>On ' + esc(msg.date || '') + ', ' + esc(msg.sender) + ' wrote:</div><blockquote>' + bodyOf(msg) + '</blockquote>';
+    // a mailto: link in a message starts a new message (sent only on approval)
+    const mailtoCompose = href => {
+      let to = '', subject = '', body = '';
+      try {
+        const u = new URL(href);
+        to = decodeURIComponent(u.pathname || '');
+        subject = u.searchParams.get('subject') || '';
+        body = u.searchParams.get('body') || '';
+      } catch (_) { to = String(href).replace(/^mailto:/i, '').split('?')[0]; }
+      setCompose({ mode: 'new', account_id: open && open.res && open.res.account_id, to, subject, html: esc(body).replace(/\n/g, '<br>') });
+    };
     const startReply = mode => {
       const msgs = open && open.res && open.res.messages;
       if (!msgs || !msgs.length) return;
@@ -560,7 +617,7 @@
           T && (T.messages || []).map(msg => h('div', { key: msg.id, className: 'fm-msg' },
             h('div', { className: 'fm-hdr' }, h('b', null, msg.sender), ' · ', msg.date || fmtWhen(msg.timestamp), h('br'),
               msg.to && ['to ', msg.to], msg.cc && [h('br', { key: 'b' }), 'cc ', msg.cc]),
-            h(MailBody, { html: msg.html, text: msg.body, showImages }),
+            h(MailBody, { html: msg.html, text: msg.body, showImages, onMailto: mailtoCompose }),
             (msg.attachments || []).length > 0 && h('div', { className: 'fm-atts' }, msg.attachments.map(a => h('span', { key: a.attachment_id, style: { display: 'inline-flex', gap: 4 } },
               (/^image\/(png|jpe?g|gif|webp)$/.test(a.mime) || a.mime === 'application/pdf') && h('button', { className: 'fm-att', onClick: () => setPreview(a) }, '👁 ' + a.filename),
               h('a', { className: 'fm-att', href: a.url + '&dl=1', download: a.filename, title: 'Download' }, '⬇ ' + (/^image|pdf/.test(a.mime) ? '' : a.filename + ' ') + '· ' + Math.max(1, Math.round((a.size || 0) / 1024)) + ' KB')))))))),
