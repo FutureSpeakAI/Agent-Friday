@@ -422,6 +422,8 @@
       '  float held = vState.z;',
       '  if (held > 0.0) { float pulse = 0.7 + 0.3*sin(t*4.0); float hb = 1.0 - smoothstep(0.02, 0.1, edge);',
       '    col = mix(col, uAmber*1.35, hb*held*pulse*0.95); col += uAmber*0.09*held*pulse; }',
+      '  if (vState.y > 0.5) { float mb = 1.0 - smoothstep(0.02, 0.085, edge);',   // marked: one of several selected
+      '    col = mix(col, uMagenta*1.3, mb*0.9); col += uMagenta*0.07; }',
       '  col += mix(uCyan, uMagenta, burn)*burn*1.6;',
       '  float f = 1.0 - exp(-uFogDensity*uFogDensity*vDepth*vDepth);',
       '  col = mix(col, uFog, f);',
@@ -455,7 +457,7 @@
     // ── per-item state ──
     let items = [], n = 0;
     let cards = null, boxes = null, lines = null, lineGeo = null, edges = null, refl = null;
-    let heldArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
+    let heldArr = new Uint8Array(1), markArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
     let aTile, aColor, aState;
     let P, Q, S, fP, fQ, fS, tP, tQ, tS, delay;           // cards: current / from / to
     let BP, BS, fBP, fBS, tBP, tBS;                        // boxes (city): position / size
@@ -508,7 +510,7 @@
       refl.instanceMatrix = cards.instanceMatrix;
       refl.count = n; refl.frustumCulled = false; refl.matrixAutoUpdate = false; refl.visible = false;
       scene.add(refl);
-      heldArr = new Uint8Array(cap); diss = new Float32Array(cap);
+      heldArr = new Uint8Array(cap); markArr = new Uint8Array(cap); diss = new Float32Array(cap);
       boxes = new THREE.InstancedMesh(boxGeo, boxMat, cap);
       boxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       boxes.frustumCulled = false; boxes.count = n;
@@ -1240,7 +1242,7 @@
     function setStates() {
       for (let i = 0; i < n; i++) {
         const fx = fxOf.size ? fxOf.get(i) : null;
-        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, 0, heldArr[i], diss[i]);
+        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, markArr[i], heldArr[i], diss[i]);
       }
       aState.needsUpdate = true;
       dirty = true;
@@ -1378,7 +1380,10 @@
     el.addEventListener('pointerdown', e => {
       el.setPointerCapture(e.pointerId);
       lastPointerDown = performance.now();
-      drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.button === 1 || e.shiftKey };
+      drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.button === 1 || e.shiftKey, item: -1, itemOn: false };
+      // a panel that can act on cards lets them be picked up: a left drag
+      // that starts on a card carries the card instead of orbiting
+      if (cb.onItemDrag && e.button === 0 && !e.shiftKey && !(e.ctrlKey || e.metaKey)) drag.item = pickAt(e.clientX, e.clientY);
       el.style.cursor = 'grabbing';
       cb.onInteract && cb.onInteract();
     });
@@ -1389,6 +1394,11 @@
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
       drag.moved = true; drag.x = e.clientX; drag.y = e.clientY;
+      if (drag.item >= 0) {
+        cb.onItemDrag(drag.itemOn ? 'move' : 'start', drag.item, e.clientX, e.clientY);
+        drag.itemOn = true; el.style.cursor = 'grabbing';
+        return;
+      }
       if (drag.pan) {
         const s = cam.r * 0.0016;
         tmpV.set(-dx * s, dy * s, 0).applyQuaternion(camera.quaternion);
@@ -1401,11 +1411,17 @@
     });
     el.addEventListener('pointerup', e => {
       el.style.cursor = 'grab';
-      const wasDrag = drag && drag.moved;
+      const wasDrag = drag && drag.moved, carried = drag && drag.itemOn ? drag.item : -1;
       drag = null;
+      if (carried >= 0) { cb.onItemDrag('end', carried, e.clientX, e.clientY); return; }
       if (wasDrag) return;
       const i = pickAt(e.clientX, e.clientY);
-      cb.onPick && cb.onPick(i >= 0 ? i : -1, false);
+      cb.onPick && cb.onPick(i >= 0 ? i : -1, false, { add: e.ctrlKey || e.metaKey, range: e.shiftKey });
+    });
+    el.addEventListener('pointercancel', () => {
+      const carried = drag && drag.itemOn ? drag.item : -1;
+      drag = null; el.style.cursor = 'grab';
+      if (carried >= 0) cb.onItemDrag('cancel', carried, 0, 0);
     });
     el.addEventListener('pointerleave', () => { pointer = null; if (!handPos()) setHover(-1); });
     el.addEventListener('dblclick', e => {
@@ -1793,7 +1809,9 @@
       },
       setView(v) { if (v === view) return; view = v; skipFx(); applyLayout(false); },
       setDazzle(level) { dz = DAZZLE[level] != null ? DAZZLE[level] : DAZZLE.full; applyDazzle(); },
-      setHeld(i, on) { if (i >= 0 && i < n) { heldArr[i] = on ? 1 : 0; setStates(); } },
+      setHeld(i, on) { if (aState && i >= 0 && i < n) { heldArr[i] = on ? 1 : 0; setStates(); } },
+      // several cards selected at once (ctrl/shift click); indices into the data
+      setMarked(list) { if (!aState) return; markArr.fill(0); (list || []).forEach(i => { if (i >= 0 && i < n) markArr[i] = 1; }); setStates(); },
       fx: playFx,
       skipFx,
       isAnimating: () => fxOf.size > 0,
@@ -1847,6 +1865,7 @@
         return best >= 0 ? best : i;
       },
       resetCamera() { if (layout) setCamGoal(layout.cam); },
+      pickAt: (x, y) => pickAt(x, y),   // client coordinates -> card index or -1 (tests)
       screenPos(i) {
         if (i < 0) return null;
         tmpV.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]).project(camera);
