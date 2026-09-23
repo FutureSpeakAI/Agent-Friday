@@ -1018,6 +1018,7 @@ function OutreachPanel(){
 const KG_PALETTE=['#00d4ff','#ff00aa','#00ff80','#8a2be2','#ff6600','#5fa8ff','#ff8bcb','#4ecdc4','#feca57','#ff6b6b','#7de1ff','#b0ffc8'];
 const KG_LOD_THRESHOLD=2500; // above this, render community super-nodes first
 const KG_EDGE_OPACITY = 0.32; // additive: dense clusters wash out above this
+const KG_ASSET_DIR = '/static/galaxy/'; // generated art, see CREDITS.md
 const KG_ARRANGE_SECS = 1.7; // one node's flight between arrangements
 const KG_ARRANGE_STAGGER = 0.55; // launch spread across nodes, seconds
 const KG_ARRANGEMENTS = [{
@@ -1216,7 +1217,7 @@ function KnowledgeGraphWS(){
         if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{if(m.map)m.map.dispose();m.dispose()})}
       });
       grp.remove(content);content=new THREE.Group();grp.add(content);
-      S.outline=null;S.nodeMat=null;S.flashSprite=null;S.layoutLabels=[];S.emphIdx=undefined;  // disposed with content — drop stale refs
+      S.outline=null;S.nodeMat=null;S.layoutLabels=[];S.emphIdx=undefined;  // disposed with content — drop stale refs
     };
 
     // Soft radial disc texture so nebula points glow instead of rendering
@@ -1232,6 +1233,150 @@ function KnowledgeGraphWS(){
       const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;return t;
     })();
 
+    // ── generated art (static/galaxy; provenance in CREDITS.md) ──
+    // Every piece is optional: a texture that fails to load leaves its
+    // decoration hidden and the graph exactly as it was. None of these
+    // objects live in `content`, so a graph rebuild never disposes them.
+    const deco = S.deco = {};
+    const texLoader = new THREE.TextureLoader();
+    const loadTex = (file, onLoad) => texLoader.load(KG_ASSET_DIR + file, tex => {
+      if (disposed) {
+        tex.dispose();
+        return;
+      }
+      onLoad(tex);
+    }, undefined, () => {});
+    const additive = map => ({
+      map,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    // Big Bang flash (a star burst once its texture loads) and shockwave.
+    deco.flash = new THREE.Sprite(new THREE.SpriteMaterial(Object.assign(additive(softDisc), {
+      color: 0xdff6ff
+    })));
+    deco.flash.visible = false;
+    grp.add(deco.flash);
+    loadTex('star_glow.png', tex => {
+      deco.starTex = tex;
+      deco.flash.material.map = tex;
+      deco.flash.material.needsUpdate = true;
+    });
+    loadTex('shockwave.png', tex => {
+      deco.shock = new THREE.Sprite(new THREE.SpriteMaterial(Object.assign(additive(tex), {
+        color: 0xbfe8ff
+      })));
+      deco.shock.visible = false;
+      grp.add(deco.shock);
+    });
+    // Nebula backdrop on an inside-out sphere, far behind the starfield.
+    loadTex('nebula_backdrop.jpg', tex => {
+      const m = new THREE.MeshBasicMaterial({
+        map: tex,
+        side: THREE.BackSide,
+        fog: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0,
+        color: 0x9aa0b8
+      });
+      deco.backdrop = new THREE.Mesh(new THREE.SphereGeometry(2400, 48, 24), m);
+      deco.backdrop.renderOrder = -2;
+      scene.add(deco.backdrop);
+    });
+    // Rings: a gas giant (shaded toward its limb; the texture alone is very
+    // bright) and a dust plane textured with a radial ring profile.
+    loadTex('gas_giant.jpg', tex => {
+      const m = new THREE.ShaderMaterial({
+        uniforms: {
+          map: {
+            value: tex
+          },
+          uOpacity: {
+            value: 0
+          }
+        },
+        transparent: true,
+        vertexShader: `
+          varying vec2 vUv; varying float vNdv;
+          void main(){
+            vUv = uv;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vNdv = clamp(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)), 0.0, 1.0);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          uniform sampler2D map; uniform float uOpacity;
+          varying vec2 vUv; varying float vNdv;
+          void main(){
+            vec3 c = texture2D(map, vUv).rgb * (0.08 + 0.4 * pow(vNdv, 0.7));
+            gl_FragColor = vec4(c, uOpacity);
+          }`
+      });
+      deco.planet = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), m);
+      deco.planet.visible = false;
+      grp.add(deco.planet);
+    });
+    loadTex('ring_profile.png', tex => {
+      deco.ringTex = tex;
+    });
+    // Spiral: a soft face-on galaxy glow under the disc.
+    loadTex('spiral_haze.png', tex => {
+      deco.haze = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial(Object.assign(additive(tex), {
+        side: THREE.DoubleSide,
+        fog: false
+      })));
+      deco.haze.visible = false;
+      grp.add(deco.haze);
+    });
+    // The ring plane is rebuilt to each Rings layout's radii, with UVs that
+    // run radially so the profile's bands become concentric rings.
+    const setRingPlane = (inner, outer, tilt) => {
+      if (!deco.ringTex) return;
+      if (!deco.ring) {
+        deco.ring = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial(Object.assign(additive(deco.ringTex), {
+          side: THREE.DoubleSide,
+          fog: false
+        })));
+        deco.ring.visible = false;
+        grp.add(deco.ring);
+      }
+      const g = new THREE.RingGeometry(inner, outer, 160, 1),
+        P = g.attributes.position,
+        U = g.attributes.uv;
+      for (let i = 0; i < P.count; i++) U.setXY(i, (Math.hypot(P.getX(i), P.getY(i)) - inner) / (outer - inner), 0.5);
+      deco.ring.geometry.dispose();
+      deco.ring.geometry = g;
+      deco.ring.rotation.set(-Math.PI / 2 + tilt, 0, 0);
+    };
+    // Star map: a glow on every star, coloured by its community.
+    const ensureHalo = () => {
+      const n = S.entities.length;
+      if (!deco.starTex) return;
+      if (deco.halo && deco.halo.userData.n === n && deco.halo.userData.for === S.entities) return;
+      if (!deco.halo) {
+        deco.halo = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial(Object.assign(additive(deco.starTex), {
+          size: 30,
+          sizeAttenuation: true,
+          vertexColors: true,
+          fog: false
+        })));
+        deco.halo.visible = false;
+        deco.halo.frustumCulled = false;
+        grp.add(deco.halo);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(Float32Array.from(S.baseColor), 3));
+      deco.halo.geometry.dispose();
+      deco.halo.geometry = g;
+      deco.halo.userData = {
+        n,
+        for: S.entities
+      };
+    };
     const makeLabel=(text,color,scale)=>{
       const c=document.createElement('canvas');const px=64;
       const ctx=c.getContext('2d');ctx.font='700 '+px+'px Orbitron, sans-serif';
@@ -1547,7 +1692,8 @@ function KnowledgeGraphWS(){
         cam = null,
         depth = null,
         edge = null,
-        frame = 1.9;
+        frame = 1.9,
+        art = null;
       const put = (e, x, y, z) => {
         to[e.__idx * 3] = x;
         to[e.__idx * 3 + 1] = y;
@@ -1732,6 +1878,10 @@ function KnowledgeGraphWS(){
           r += lanes * 5.5 + 6;
         });
         edge = 0.07;
+        art = {
+          ring: [22, r + 4],
+          tilt
+        };
       } else if (mode === 'sphere') {
         // Nested shells by importance: the most-connected tenth of the pages
         // is the core, the next 30% the inner shell, the rest the outer
@@ -1816,6 +1966,11 @@ function KnowledgeGraphWS(){
         });
         edge = 0.08;
         frame = 1.45;
+        let ext = 0;
+        for (let i = 0; i < n; i++) ext = Math.max(ext, Math.hypot(to[i * 3], to[i * 3 + 2]));
+        art = {
+          haze: ext * 2.4
+        };
       } else if (mode === 'star') {
         // Planetarium: the camera sits inside a dome and each page is placed
         // in the direction it lies from the centre of the linked galaxy, so
@@ -1885,7 +2040,8 @@ function KnowledgeGraphWS(){
         cam,
         depth,
         edge,
-        frame
+        frame,
+        art
       };
     };
     const clearLayoutLabels = () => {
@@ -2154,6 +2310,10 @@ function KnowledgeGraphWS(){
         edge: L.edge != null ? L.edge : 0.12
       };
       S.depth = L.depth;
+      S.decoTilt = L.art && L.art.ring ? L.art.tilt : 0;
+      if (L.art && L.art.ring) setRingPlane(L.art.ring[0], L.art.ring[1], L.art.tilt);
+      if (L.art && L.art.haze && S.deco.haze) S.deco.haze.scale.set(L.art.haze, L.art.haze, 1);
+      if (L.star) ensureHalo();
       S.layout = mode;
       setArrangement(mode);
       if (L.cam) {
@@ -2372,27 +2532,66 @@ function KnowledgeGraphWS(){
         S.edgeGeo.setDrawRange(0, Math.floor(S.drawIn.total * k / 2) * 2);
         if (k >= 1) S.drawIn = null;
       }
-      // Big Bang flash: a bloom spike and an expanding shell of light.
+      // Big Bang flash: a bloom spike, a star burst and a shockwave ring.
       if (S.flashT != null) {
-        const age = t - S.flashT;
+        const age = t - S.flashT,
+          at = S.flashAt || [0, 0, 0],
+          F = S.deco.flash,
+          W = S.deco.shock;
         if (bloomPass) bloomPass.strength = 0.55 + 2.6 * Math.exp(-age * 2.5);
-        if (!S.flashSprite) {
-          S.flashSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: softDisc,
-            color: 0xdff6ff,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-          }));
-          content.add(S.flashSprite);
+        F.position.set(at[0], at[1], at[2]);
+        F.visible = age < 1.4;
+        F.scale.setScalar(20 + age * 320);
+        F.material.opacity = Math.max(0, 1 - age / 1.4);
+        if (W && !(window.__kgDecoOff || {}).shock) {
+          W.position.set(at[0], at[1], at[2]);
+          W.visible = age < 1.8;
+          W.scale.setScalar(10 + age * 480);
+          W.material.opacity = 0.9 * Math.max(0, 1 - age / 1.8);
         }
-        if (S.flashAt) S.flashSprite.position.set(S.flashAt[0], S.flashAt[1], S.flashAt[2]);
-        S.flashSprite.visible = age < 1.4;
-        S.flashSprite.scale.setScalar(20 + age * 320);
-        S.flashSprite.material.opacity = Math.max(0, 1 - age / 1.4);
         if (age > 2.5) {
           if (bloomPass) bloomPass.strength = 0.55;
           S.flashT = null;
+        }
+      }
+      // Generated art: fade each decoration toward its target for the current
+      // arrangement and keep the moving ones on their nodes.
+      // window.__kgDecoOff = {backdrop: true, ...} switches pieces off (for
+      // measuring what each one costs).
+      if (S.deco && S.entities) {
+        const D = S.deco,
+          off = window.__kgDecoOff || {},
+          kd = 1 - Math.pow(0.05, dt),
+          mode = S.bangHold ? '' : S.layout;
+        const fade = (obj, target, setOp) => {
+          if (!obj) return 0;
+          const m = obj.material,
+            cur = m.uniforms ? m.uniforms.uOpacity.value : m.opacity,
+            next = cur + (target - cur) * kd;
+          if (m.uniforms) m.uniforms.uOpacity.value = next;else m.opacity = next;
+          obj.visible = next > 0.01;
+          return next;
+        };
+        fade(D.backdrop, off.backdrop ? 0 : 1);
+        if (S.soulFor !== S.entities) {
+          S.soulFor = S.entities;
+          S.soulIdx = S.entities.findIndex(e => e.type === 'soul');
+        }
+        const soul = S.entities[S.soulIdx];
+        if (fade(D.planet, mode === 'rings' && soul && !off.planet ? 1 : 0) > 0.01 && soul) {
+          D.planet.position.set(soul.x, soul.y, soul.z);
+          D.planet.scale.setScalar(S.baseScale[S.soulIdx] * (S.curScale ? S.curScale[S.soulIdx] : 1) * 1.16);
+          D.planet.rotation.set(S.decoTilt || 0, D.planet.rotation.y + dt * 0.05, 0);
+        }
+        fade(D.ring, mode === 'rings' && !off.ring ? 0.13 : 0);
+        if (fade(D.haze, mode === 'spiral' && !off.haze ? 0.2 : 0) > 0.01) {
+          D.haze.rotation.set(-Math.PI / 2, 0, S.motion ? S.motion.rates[0] * S.motion.T : 0);
+        }
+        if (D.halo && fade(D.halo, mode === 'star' && !off.halo ? 0.9 : 0) > 0.01) {
+          const P = D.halo.geometry.attributes.position,
+            E = S.entities;
+          for (let i = 0; i < E.length; i++) P.setXYZ(i, E[i].x, E[i].y, E[i].z);
+          P.needsUpdate = true;
         }
       }
       if (S.tour) camGoal.theta += dt * 0.09;

@@ -34,5 +34,19 @@ code written specifically for Agent Friday's architecture. No code was copied.
 - **Asimov's cLaws** — Governance framework inspired by Asimov's Laws of
   Robotics, adapted into a formal specification for AI agent constraints.
 
+## Generated Art
+
+### Knowledge Galaxy textures (`static/galaxy/`)
+Generated with Higgsfield (Google Nano Banana), 2026-09-22, from a written
+brief; resized, edge-blended and compressed for the app. No photographs,
+logos or third-party artwork.
+
+- `nebula_backdrop.jpg` — equirectangular deep-space backdrop
+- `star_glow.png` — star burst sprite (star map, Big Bang flash)
+- `gas_giant.jpg` — planet surface (Rings arrangement)
+- `ring_profile.png` — radial ring-dust profile (Rings arrangement)
+- `shockwave.png` — Big Bang shock ring
+- `spiral_haze.png` — face-on galaxy glow (Spiral arrangement)
+
 ## Open Source Dependencies
 See requirements.txt for the full dependency list.
