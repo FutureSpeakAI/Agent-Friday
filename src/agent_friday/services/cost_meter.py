@@ -294,7 +294,43 @@ def price_for(model, speed=None):
                 return {"in": float(rate), "out": float(rate)}
     except Exception:
         pass
+    # A GATEWAY-PREFIXED ID IS THE SAME MODEL AT THE SAME PRICE.
+    #
+    # Friday's own seats are bound through OpenRouter, so the ids actually in
+    # use are `anthropic/claude-opus-5.5` and `anthropic/claude-sonnet-5` -- a
+    # vendor prefix, and a DOT where Anthropic's canonical id has a dash.
+    # Neither is in PRICING, openrouter declares no `cost_per_1k` at all, and so
+    # both fell through to the zero below. Audited 2026-09-23: the reasoning,
+    # subagent and heavy_hitter seats -- the models Friday was actually thinking
+    # with -- metered at exactly $0.00. Every cost figure downstream inherits
+    # that, and `services/spend_guard` is denominated in dollars, so a $0 rate
+    # quietly disables the one stop that stops.
+    #
+    # A `:` suffix is deliberately NOT normalised: `:batch` and `:free` are
+    # different prices, and mapping them onto the standard row would trade a
+    # visible zero for an invisible wrong number.
+    canon = _canonical_gateway_id(model)
+    if canon and canon in PRICING:
+        return PRICING[canon]
     return {"in": 0.0, "out": 0.0}
+
+
+def _canonical_gateway_id(model) -> str | None:
+    """`anthropic/claude-opus-5.5` -> `claude-opus-5-5`, else None.
+
+    Only for gateway ids shaped ``vendor/model`` with no ``:`` variant suffix.
+    The dot-to-dash rewrite targets a version number specifically, so an id that
+    merely contains a dot elsewhere is not mangled.
+    """
+    import re as _re
+
+    mid = str(model or "")
+    if "/" not in mid or ":" in mid:
+        return None
+    tail = mid.rsplit("/", 1)[-1].strip()
+    if not tail:
+        return None
+    return _re.sub(r"(\d)\.(\d)", r"\1-\2", tail)
 
 
 #: Anthropic prompt-cache multipliers on the INPUT rate. A cache read bills at

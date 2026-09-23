@@ -49,7 +49,7 @@ def test_a_slow_probe_returns_unknown_instead_of_blocking():
 
     t0 = time.time()
     value, at, state = mp.snapshot("t:slow", slow, fresh_for=60, budget=0.2,
-                                   default="placeholder")
+                                   default="placeholder", allow_blocking=False)
     elapsed = time.time() - t0
     assert elapsed < 2.0, "waited %.1fs on a probe with a 0.2s budget" % elapsed
     assert state == mp.STATE_UNKNOWN
@@ -77,10 +77,12 @@ def test_later_callers_do_not_each_pay_the_budget():
         time.sleep(30)
         return "x"
 
-    mp.snapshot("t:once", slow, fresh_for=60, budget=0.2, default=None)
+    mp.snapshot("t:once", slow, fresh_for=60, budget=0.2, default=None,
+                allow_blocking=False)
     t0 = time.time()
     for _ in range(5):
-        mp.snapshot("t:once", slow, fresh_for=60, budget=0.2, default=None)
+        mp.snapshot("t:once", slow, fresh_for=60, budget=0.2, default=None,
+                allow_blocking=False)
     elapsed = time.time() - t0
     assert elapsed < 0.3, "five later callers took %.2fs" % elapsed
     assert len(started) == 1, "spawned %d probes for one key" % len(started)
@@ -120,7 +122,7 @@ def test_a_failing_probe_does_not_poison_the_key_forever():
 
     for _ in range(3):
         v, _at, st = mp.snapshot("t:boom", boom, fresh_for=60, budget=1.0,
-                                 default="none")
+                                 default="none", allow_blocking=False)
         assert (v, st) == ("none", mp.STATE_UNKNOWN)
     assert len(calls) >= 1
 
