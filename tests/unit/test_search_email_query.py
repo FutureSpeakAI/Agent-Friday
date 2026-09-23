@@ -83,6 +83,20 @@ class _FakeGmailService:
     def users(self):
         return self._users
 
+    def new_batch_http_request(self, callback):
+        # The real client's batch: run each queued request, report through callback.
+        class _Batch:
+            def __init__(self):
+                self._items = []
+
+            def add(self, request, request_id):
+                self._items.append((request_id, request))
+
+            def execute(self):
+                for rid, req in self._items:
+                    callback(rid, req.execute(), None)
+        return _Batch()
+
 
 # Fake message ids -> subject text, so a test can tell which message a query
 # actually surfaced.

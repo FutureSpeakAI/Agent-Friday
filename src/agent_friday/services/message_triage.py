@@ -70,7 +70,11 @@ LEARN_CONFIDENT_AT = 3
 # load. 45s keeps it feeling live without re-fetching on every click.
 _COLLECT_CACHE_TTL_SECONDS = 45
 _collect_cache_lock = threading.Lock()
-_collect_cache: Dict[str, Any] = {"result": None, "fetched_monotonic": 0.0, "limit": None}
+# One slot per (limit, query): the 30-second dock-badge poll (limit 80) and
+# the workspace list (limit 40) used to evict each other on every call.
+_collect_cache: Dict[Any, Dict[str, Any]] = {}
+_COLLECT_CACHE_PARTIAL_TTL_SECONDS = 20   # a result with errors is still reused briefly, so a
+                                          # rate-limited account is not hammered by every poll
 
 # Scoring weights. Higher wins. These are deliberately spread out so that a
 # single strong signal cannot be out-voted by an accumulation of weak ones.
@@ -352,8 +356,7 @@ def invalidate_cache() -> None:
     immediately instead of waiting out the TTL.
     """
     with _collect_cache_lock:
-        _collect_cache["result"] = None
-        _collect_cache["fetched_monotonic"] = 0.0
+        _collect_cache.clear()
 
 
 def record_signal(sender_email: str, lane_id: str, weight: int = 1) -> Dict[str, Any]:
@@ -440,7 +443,8 @@ def learned_senders() -> List[Dict[str, Any]]:
 # Collection — multi-account
 # --------------------------------------------------------------------------
 
-def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dict[str, Any]:
+def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
+            query: Optional[str] = None) -> Dict[str, Any]:
     """
     Fetch messages across ALL connected Google accounts.
 
@@ -457,17 +461,21 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
     Degrades honestly: merged fan-out first, then the legacy single-account
     path, then cache. ``source`` always says which one produced the result, so
     the UI can tell the user it is showing stale data instead of pretending.
+
+    ``query`` is a Gmail search string sent to Gmail's own ``q=``. A search
+    never falls back to the legacy path or the offline cache: those are not
+    results of the search. If no account could be searched the result has
+    ``search_failed`` set, and ``partial`` when only some could.
     """
+    query = (query or "").strip() or None
+    key = (limit_per_account, query)
     now = time.monotonic()
     with _collect_cache_lock:
-        cached_entry = _collect_cache.get("result")
-        cached_age = now - float(_collect_cache.get("fetched_monotonic") or 0.0)
-        cached_limit = _collect_cache.get("limit")
-    if (
-        cached_entry is not None
-        and cached_limit == limit_per_account
-        and cached_age < _COLLECT_CACHE_TTL_SECONDS
-    ):
+        slot = _collect_cache.get(key) or {}
+    cached_entry = slot.get("result")
+    cached_age = now - float(slot.get("fetched_monotonic") or 0.0)
+    ttl = _COLLECT_CACHE_PARTIAL_TTL_SECONDS if (cached_entry or {}).get("errors") else _COLLECT_CACHE_TTL_SECONDS
+    if cached_entry is not None and cached_age < ttl:
         stale_copy = dict(cached_entry)
         stale_copy["source"] = f"{cached_entry.get('source', 'merged')}-cached"
         stale_copy["cache_age_seconds"] = round(cached_age, 1)
@@ -484,7 +492,7 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
 
     try:
         from agent_friday.services import google_accounts as ga
-        merged = ga.merged_gmail(limit_per_account=limit_per_account) or {}
+        merged = ga.merged_gmail(limit_per_account=limit_per_account, query=query) or {}
         raw_messages = list(merged.get("messages") or [])
         for err in merged.get("errors") or []:
             if isinstance(err, dict):
@@ -492,14 +500,16 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
                     "account_id": err.get("account_id"),
                     "label": err.get("label"),
                     "error": str(err.get("error") or "unknown error"),
+                    "kind": err.get("kind") or "other",
+                    "partial": bool(err.get("partial")),
                 })
     except Exception as exc:
         log.warning("message_triage: merged fan-out failed (%s), trying legacy", exc)
         errors.append({"account_id": None, "label": "merged fetch", "error": str(exc)})
         raw_messages = []
 
-    # Fallback 1: legacy single-account path.
-    if not raw_messages:
+    # Fallback 1: legacy single-account path (never for a search).
+    if not raw_messages and not query:
         try:
             # _collect_messages returns (cards, source), source being
             # 'gmail' | 'cache' | 'empty'; the cards are the messages.
@@ -511,8 +521,8 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
             log.warning("message_triage: legacy collect failed: %s", exc)
             errors.append({"account_id": None, "label": "legacy fetch", "error": str(exc)})
 
-    # Fallback 2: cache.
-    if not raw_messages and use_cache_on_error:
+    # Fallback 2: cache (never for a search).
+    if not raw_messages and use_cache_on_error and not query:
         try:
             cached = ce._load_cached_messages() or []
             if cached:
@@ -531,6 +541,7 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
             log.debug("message_triage: skipped a malformed message: %s", exc)
 
     cards.sort(key=lambda c: c.get("_sort_ts") or 0, reverse=True)
+    cards = _one_row_per_conversation(cards)
     for card in cards:
         card.pop("_sort_ts", None)
 
@@ -539,13 +550,22 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
         "accounts": _summarise_accounts(cards, account_meta),
         "errors": errors,
         "source": source,
+        "query": query,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
-    if source == "merged" and not errors:
+    # An account that returned nothing but an error was not read at all.
+    if errors:
+        result["partial"] = bool(raw_messages)
+        result["rate_limited"] = any(e.get("kind") == "rate_limited" for e in errors)
+    if not raw_messages and errors and (query or source == "merged"):
+        # nothing came back and something failed: this is a failure, not "0"
+        result["search_failed"] = True
+    if source == "merged":
         with _collect_cache_lock:
-            _collect_cache["result"] = result
-            _collect_cache["fetched_monotonic"] = time.monotonic()
-            _collect_cache["limit"] = limit_per_account
+            _collect_cache[key] = {"result": result, "fetched_monotonic": time.monotonic()}
+            if len(_collect_cache) > 24:
+                oldest = min(_collect_cache, key=lambda k: _collect_cache[k]["fetched_monotonic"])
+                _collect_cache.pop(oldest, None)
     return result
 
 
@@ -636,6 +656,12 @@ def _build_card(
     card["account_label"] = raw.get("label") or raw.get("account_label") or meta.get("label") or "Unknown account"
     card["account_color"] = raw.get("account_color") or meta.get("color") or "#7c8aa5"
     card["account_email"] = meta.get("email_masked") or ""
+    # What the thread view, reply and download need from Gmail itself.
+    card["gmail_id"] = raw.get("gmail_id") or ""
+    card["to"] = raw.get("to") or ""
+    card["cc"] = raw.get("cc") or ""
+    if raw.get("has_attachment"):
+        card["has_attachment"] = True
 
     # --- scored classification -------------------------------------------
     lane, confidence, why = classify(card, rules=rules, signals=signals)
@@ -656,6 +682,29 @@ def _build_card(
     card["_sort_ts"] = dt.timestamp() if dt else 0
     card["age_hours"] = round((time.time() - dt.timestamp()) / 3600.0, 1) if dt else None
     return card
+
+
+def _one_row_per_conversation(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Gmail lists every message, so a conversation with three messages came
+    back as three cards sharing one id (the thread's). Keep the newest (cards
+    arrive newest first) as the conversation's row, the way Gmail's inbox
+    does, and carry what the others add: unread, attachment, message count."""
+    out: List[Dict[str, Any]] = []
+    seen: Dict[tuple, Dict[str, Any]] = {}
+    for card in cards:
+        key = (card.get("account_id"), card.get("id"))
+        head = seen.get(key)
+        if head is None:
+            card["thread_count"] = 1
+            seen[key] = card
+            out.append(card)
+            continue
+        head["thread_count"] += 1
+        if card.get("unread") and not head.get("unread"):
+            head["unread"] = True
+        if card.get("has_attachment"):
+            head["has_attachment"] = True
+    return out
 
 
 def _summarise_accounts(

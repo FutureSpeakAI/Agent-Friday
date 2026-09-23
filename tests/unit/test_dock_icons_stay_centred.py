@@ -54,42 +54,41 @@ def dock_button_rules():
     return out
 
 
-# Deliberately blunt. An earlier version tried to allow translate3d with a
-# zero Z and could not cross the nested parens of a var() fallback, so it
-# passed against the very code it was written to catch. The dock has no use
-# for a 3D translate at all now, so anything that could carry Z is a failure.
-Z = re.compile(r"translateZ\s*\(|translate3d\s*\(|perspective\s*\(|--mag-z")
+# A button's OWN transform must stay two-dimensional. Its children may carry
+# z — that is where the dock's depth comes from, and each button gives its own
+# raised layers their own vanishing point through a perspective PROPERTY.
+# What a button must never do is carry perspective() or a z translate in its
+# own transform: an element that does paints in one place and hit-tests in
+# another. Measured on the dock this replaced, a click on the centre of the
+# Studio icon landed on the document body, and wiki, trust and marketplace
+# went the same way at the default depth.
+BUTTON_3D = re.compile(r"perspective\s*\(|translateZ\s*\(|translate3d\s*\(")
+
+BUTTON_SELECTORS = (".dock-btn", ".dock-btn:hover", ".dock-btn.active")
 
 
-def test_nothing_in_a_dock_button_carries_z():
+def test_a_dock_button_keeps_its_own_transform_flat():
     offenders = []
     for sel, body in dock_button_rules():
+        if sel.strip() not in BUTTON_SELECTORS:
+            continue
         for decl in re.findall(r"transform\s*:\s*([^;]+)", body):
-            if Z.search(decl):
-                offenders.append((sel, decl.strip()))
+            if BUTTON_3D.search(decl):
+                offenders.append((sel.strip(), decl.strip()))
     assert not offenders, (
-        "a dock button or one of its layers carries Z again, which is what "
-        "pulled icons out of their tiles:\n"
+        "a dock button carries 3D in its own transform again, which makes it "
+        "hit-test somewhere other than where it is drawn:\n"
         + "\n".join("  %s -> %s" % o for o in offenders)
     )
 
 
-def test_the_icon_itself_has_no_transform():
-    """The exact rule that broke it. A transform here separates icon from tile."""
-    for sel, body in dock_button_rules():
-        if re.fullmatch(r"\.dock-btn\s+\.ico", sel.strip()):
-            assert "transform" not in body, (
-                ".dock-btn .ico declares a transform (%r). The icon moves with "
-                "its tile only while it has none of its own." % body.strip()
-            )
-
-
-def test_dock_keyframes_do_not_reintroduce_z():
+def test_the_press_animation_keeps_the_button_flat():
     css = re.sub(r"/\*.*?\*/", "", stylesheet(), flags=re.S)
     m = re.search(r"@keyframes\s+dockPress3d\s*\{(.*?)\n\s*\}\s*\n", css, re.S)
     assert m, "the dock press keyframes are gone or renamed"
-    assert not Z.search(m.group(1)), (
-        "the press animation moves the button in Z again: %r" % m.group(1)
+    assert not BUTTON_3D.search(m.group(1)), (
+        "the press animation puts the button back into 3D, so it cannot be "
+        "clicked while the animation runs: %r" % m.group(1)
     )
 
 

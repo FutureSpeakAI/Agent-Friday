@@ -294,12 +294,21 @@ def test_decorative_dock_layers_take_no_clicks():
         (sel.strip(), body)
         for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
     )
-    for sel in (".dock-btn > *", ".dock-group-label, .dock-sep, .dock-divider"):
-        assert sel in rules, "the rule for %r is gone" % sel
-        assert "pointer-events" in rules[sel] and "none" in rules[sel], (
-            "%r no longer sets pointer-events:none, so a decorative layer can "
-            "take a click meant for a button" % sel
-        )
+    sel = ".dock-group-label, .dock-sep, .dock-divider"
+    assert sel in rules, "the rule for %r is gone" % sel
+    assert "pointer-events" in rules[sel] and "none" in rules[sel], (
+        "%r no longer sets pointer-events:none, so a decorative layer can "
+        "take a click meant for a button" % sel
+    )
+    # The icon must stay clickable. It is raised toward the viewer, so it is
+    # the thing drawn where the pointer is; making it click-through would send
+    # the click to whatever lies behind it. The event bubbles to the button.
+    for sel, body in rules.items():
+        if sel in (".dock-btn .ico", ".dock-btn > *"):
+            assert "pointer-events: none" not in body, (
+                "%r is click-through, but a raised icon is exactly what the "
+                "pointer is over: %r" % (sel, body.strip())
+            )
     for sel in (".dock::before", ".dock::after", ".dock-btn::before"):
         assert sel in rules, "the rule for %r is gone" % sel
         assert "pointer-events: none" in rules[sel], (

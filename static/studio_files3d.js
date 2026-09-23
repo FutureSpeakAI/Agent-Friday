@@ -174,7 +174,35 @@
   }
 
   // ── engine ──────────────────────────────────────────────────────────────
+  // Building an engine is mostly GPU work: compiling its shaders (~200 ms)
+  // and allocating its texture atlas (~100 ms), all on the main thread, all
+  // before the first card can show. So one engine is kept parked when a view
+  // closes and revived by the next one that opens, and prewarm() builds it
+  // ahead of time (when the pointer reaches a "View in 3D" button, or at idle
+  // for someone who uses 3D). A parked engine draws nothing and holds only
+  // its first atlas; its cards and labels are freed.
+  let parked = null, warming = null, live = 0;
   function createEngine(mount, cb) {
+    live++;
+    if (parked) { const e = parked; parked = null; e._revive(mount, cb); return e; }
+    return buildEngine(mount, cb);
+  }
+  // Never while a view is open or opening: a second build then would only
+  // compete with the one being looked at.
+  function prewarm() {
+    if (parked || warming || live > 0 || typeof THREE === 'undefined') return;
+    try {
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:-4000px;top:0;width:96px;height:64px;pointer-events:none;visibility:hidden';
+      document.body.appendChild(box);
+      warming = buildEngine(box, {});
+      warming._compileAll();
+      const e = warming; warming = null;
+      e.dispose();                       // parks it
+      box.remove();
+    } catch (_) { warming = null; }
+  }
+  function buildEngine(mount, cb) {
     const THREE = window.THREE;
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -422,6 +450,8 @@
       '  float held = vState.z;',
       '  if (held > 0.0) { float pulse = 0.7 + 0.3*sin(t*4.0); float hb = 1.0 - smoothstep(0.02, 0.1, edge);',
       '    col = mix(col, uAmber*1.35, hb*held*pulse*0.95); col += uAmber*0.09*held*pulse; }',
+      '  if (vState.y > 0.5) { float mb = 1.0 - smoothstep(0.02, 0.085, edge);',   // marked: one of several selected
+      '    col = mix(col, uMagenta*1.3, mb*0.9); col += uMagenta*0.07; }',
       '  col += mix(uCyan, uMagenta, burn)*burn*1.6;',
       '  float f = 1.0 - exp(-uFogDensity*uFogDensity*vDepth*vDepth);',
       '  col = mix(col, uFog, f);',
@@ -455,13 +485,13 @@
     // ── per-item state ──
     let items = [], n = 0;
     let cards = null, boxes = null, lines = null, lineGeo = null, edges = null, refl = null;
-    let heldArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
+    let heldArr = new Uint8Array(1), markArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
     let aTile, aColor, aState;
     let P, Q, S, fP, fQ, fS, tP, tQ, tS, delay;           // cards: current / from / to
     let BP, BS, fBP, fBS, tBP, tBS;                        // boxes (city): position / size
     let visMask = null, hoverIdx = -1, selIdx = -1;
     let pool = null, wanted, failed;
-    let view = 'wall', groupBy = 'type', layout = null;
+    let view = 'wall', groupBy = 'type', layout = null, hasOrd = false, intro = 'center';
     let flight = null, bbCur = 0, bbFrom = 0, bbTo = 0;
     let decor = null, oldDecor = [];
     let gen = 0;
@@ -508,7 +538,7 @@
       refl.instanceMatrix = cards.instanceMatrix;
       refl.count = n; refl.frustumCulled = false; refl.matrixAutoUpdate = false; refl.visible = false;
       scene.add(refl);
-      heldArr = new Uint8Array(cap); diss = new Float32Array(cap);
+      heldArr = new Uint8Array(cap); markArr = new Uint8Array(cap); diss = new Float32Array(cap);
       boxes = new THREE.InstancedMesh(boxGeo, boxMat, cap);
       boxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       boxes.frustumCulled = false; boxes.count = n;
@@ -520,6 +550,8 @@
         else c.multiplyScalar(0.55);
         boxes.setColorAt(i, c);
       }
+      // an empty set still needs the colour buffer its shader reads
+      if (!boxes.instanceColor) boxes.setColorAt(0, c.setHex(0));
       scene.add(boxes);
       // tree edges: one segment per item with a parent (root-level items join the root at the origin)
       edges = new Int32Array(n);
@@ -534,6 +566,7 @@
       BP = f(3); BS = f(3); fBP = f(3); fBS = f(3); tBP = f(3); tBS = f(3);
       for (let i = 0; i < n; i++) { Q[i * 4 + 3] = 1; delay[i] = ((i * 2654435761) % 1000) / 1000 * 0.35; }
       visMask = null; hoverIdx = -1; selIdx = -1;
+      hasOrd = n > 0 && typeof items[0].ord === 'number';
       pool = createSlotPool(SLOTS, cap);
       wanted = new Uint8Array(cap); failed = new Uint8Array(cap);
       loadQueue.length = 0; uploads.length = 0;
@@ -568,17 +601,49 @@
 
     // Opening a folder: the cards assemble from light, nearest the centre
     // first, while sparks converge on them.
+    // Entrances. 'center' assembles from light, nearest the middle first.
+    // The others also move the cards in, in a way that says what the
+    // workspace is: 'rain' (a feed arriving from above), 'sweep' (time,
+    // left to right), 'deal' (piles dealt from one deck), 'spiral' (rings
+    // opening out from the centre), 'rise' (standing up off the floor).
     function startMaterialize() {
       materialize = null;
       if (!n || dz <= 0 || reduced || !layout) { diss.fill(0); return; }
       const o = layout.order, c = layout.cam.t;
       let far = 1;
       const dist = new Float32Array(n);
-      for (const i of o) { dist[i] = Math.hypot(P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]); if (dist[i] > far) far = dist[i]; }
-      const spread = 380 + 320 * dz;
+      const key = i => {
+        if (intro === 'rain') return -P[i * 3 + 1];
+        if (intro === 'sweep') return P[i * 3];
+        if (intro === 'spiral') return Math.hypot(P[i * 3], P[i * 3 + 2]);
+        if (intro === 'deal') return o.indexOf(i);
+        return Math.hypot(P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]);
+      };
+      let lo = Infinity;
+      for (const i of o) { dist[i] = key(i); if (dist[i] < lo) lo = dist[i]; }
+      for (const i of o) { dist[i] -= lo; if (dist[i] > far) far = dist[i]; }
+      const spread = intro === 'center' ? 380 + 320 * dz : 260 + 200 * dz;   // motion entrances stay under ~1 s
       const delayMs = new Float32Array(n);
       for (let i = 0; i < n; i++) { delayMs[i] = dist[i] / far * spread; diss[i] = 1; }
       materialize = { t0: performance.now(), delayMs, dur: 420 };
+      if (intro !== 'center') {
+        // The cards travel in as they light up. Every start point is inside
+        // the frame and the moves are short: an entrance is seen, not waited for.
+        const up = layout.cam.r * 0.14, deck = [c[0], c[1] - layout.cam.r * 0.12, c[2] + layout.cam.r * 0.12];
+        const delays = new Float32Array(n);
+        fP.set(tP); fQ.set(tQ); fS.set(tS); fBP.set(tBP); fBS.set(tBS);
+        for (const i of o) {
+          const i3 = i * 3;
+          delays[i] = delayMs[i] / 1000;
+          if (intro === 'rain') fP[i3 + 1] += up;
+          else if (intro === 'rise') fP[i3 + 1] -= up * 0.6;
+          else if (intro === 'sweep') fP[i3] -= up * 0.8;
+          else if (intro === 'deal') { fP[i3] = deck[0]; fP[i3 + 1] = deck[1]; fP[i3 + 2] = deck[2]; }
+          else if (intro === 'spiral') { fP[i3] *= 0.05; fP[i3 + 2] *= 0.05; fS[i * 2] *= 0.45; fS[i * 2 + 1] *= 0.45; }
+        }
+        P.set(fP); S.set(fS);
+        flight = { t0: performance.now(), dur: intro === 'deal' ? 460 : 560, delays, flat: true };
+      }
       const step = Math.max(1, Math.ceil(o.length / (dz >= 1 ? 420 : 200)));
       for (let k = 0; k < o.length; k += step) {
         const i = o[k], s0 = Math.max(0.6, S[i * 2]), life = 0.45 + delayMs[i] / 1000;
@@ -614,6 +679,9 @@
       return a;
     };
     const byPath = (a, b) => items[a].rel.localeCompare(items[b].rel, undefined, { numeric: true, sensitivity: 'base' });
+    // A workspace that sorts its records hands the order over as item.ord;
+    // files keep their path order.
+    const byOrd = (a, b) => hasOrd ? items[a].ord - items[b].ord : byPath(a, b);
 
     function computeLayout(v) {
       const act = active();
@@ -632,19 +700,54 @@
       const m = act.length;
       const fovT = Math.tan(camera.fov * Math.PI / 360);
       if (v === 'wall') {
-        const ord = act.slice().sort(byPath);
+        const ord = act.slice().sort(byOrd);
         const R = Math.max(1, Math.min(60, Math.round(Math.sqrt(m / 2.2))));
-        const cols = Math.max(1, Math.ceil(m / R)), s = 1.18;
+        // Records arrive group by group: each group starts a new column with
+        // a gap before it and its name over it, so the wall reads as sections.
+        const cats = new Set(ord.map(i => items[i].cat));
+        const sections = hasOrd && cats.size > 1 && cats.size <= 24;
+        const cell = [], starts = [];
+        let cx = 0, r = 0, prev = null, count = 0;
+        ord.forEach(i => {
+          const cat = items[i].cat;
+          if (sections && prev !== null && cat !== prev) { starts[starts.length - 1].n = count; cx += (r > 0 ? 1 : 0) + 0.7; r = 0; count = 0; }
+          if (sections && cat !== prev) starts.push({ cx, cat });
+          cell.push([cx, r]); count++;
+          if (++r >= R) { r = 0; cx++; }
+          prev = cat;
+        });
+        if (starts.length) starts[starts.length - 1].n = count;
+        const cols = Math.max(1, (r > 0 ? cx + 1 : cx)), s = 1.18;
         const rad = Math.max(24, cols * s / (Math.PI * 0.85));
+        const ang = c => (c - (cols - 1) / 2) * s / rad;
         ord.forEach((i, k) => {
-          const c = Math.floor(k / R), r = k % R;
-          const a = (c - (cols - 1) / 2) * s / rad;
-          put(i, rad * Math.sin(a), ((R - 1) / 2 - r) * s, rad * (1 - Math.cos(a)), yawQ(-a), 1);
+          const a = ang(cell[k][0]);
+          put(i, rad * Math.sin(a), ((R - 1) / 2 - cell[k][1]) * s, rad * (1 - Math.cos(a)), yawQ(-a), 1);
+        });
+        // A narrow section's name can be wider than the section; when it would
+        // run into the previous name it steps up a line instead.
+        let prevEnd = -Infinity, lift = 0;
+        starts.forEach(st => {
+          const a = ang(st.cx), c = catInfo(st.cat);
+          let text = (c.label || st.cat) + ' · ' + st.n;
+          if (text.length > 24) text = text.slice(0, 23) + '…';
+          const wCols = Math.min(5.5, text.length * 0.36) / s;          // label width, in columns
+          lift = st.cx < prevEnd ? (lift ? 0 : 0.85) : 0;
+          prevEnd = lift ? Math.max(prevEnd, st.cx + wCols) : st.cx + wCols;
+          L.labels.push({ text, pos: [rad * Math.sin(a) + 0.4, (R - 1) / 2 * s + 1.15 + lift, rad * (1 - Math.cos(a))], color: c.color || 0x9fd0ff, size: 0.62, maxW: 5.5 });
         });
         L.order = ord;
-        L.cam = { t: [0, 0, 0], theta: 0, phi: Math.PI / 2, r: Math.max(8, (R * s / 2 + 1) / fovT * 1.05) };
+        // frame the height, and the width too when that is not much further
+        // back: a wall of sections reads as a whole; a huge one stays legible
+        // headroom for the section names over the top row, which the curve
+        // brings nearer (and so higher on screen) at the ends
+        const head = starts.length ? 2.6 : 0;
+        const rH = Math.max(8, (R * s / 2 + 1 + head) / fovT * 1.05);
+        const halfW = rad * Math.sin(Math.min(Math.PI / 2, ang(cols - 1))) + 1;
+        const rW = halfW / (fovT * Math.max(0.5, camera.aspect)) * 1.05 + rad * (1 - Math.cos(Math.min(Math.PI / 2, ang(cols - 1))));
+        L.cam = { t: [0, head * 0.45, 0], theta: 0, phi: Math.PI / 2, r: Math.max(rH, Math.min(rW, rH * 1.9)) };
       } else if (v === 'ring') {
-        const ord = act.slice().sort(byPath);
+        const ord = act.slice().sort(byOrd);
         const per = Math.max(8, Math.min(48, m)), rr = Math.max(6, per * 2.3 / (2 * Math.PI)), pitch = 2.9;
         ord.forEach((i, k) => {
           const a = k * 2 * Math.PI / per;
@@ -923,7 +1026,7 @@
       let r = 5;
       const order = [];
       keys.forEach((k, gi) => {
-        const mem = groups.get(k).sort((a, b) => items[b].size - items[a].size || items[a].mtime - items[b].mtime);
+        const mem = groups.get(k).sort(hasOrd ? byOrd : (a, b) => items[b].size - items[a].size || items[a].mtime - items[b].mtime);
         const S0 = 2.1;
         r = Math.max(r, mem.length * S0 * 1.12 / (2 * Math.PI));
         mem.forEach((i, j) => {
@@ -947,11 +1050,12 @@
     function stackLayout(L, act, put) {
       const groups = new Map();
       act.forEach(i => { const k = items[i].cat; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
-      const keys = Array.from(groups.keys()).sort((a, b) => groups.get(b).length - groups.get(a).length);
+      const rank = k => (catInfo(k).rank != null ? catInfo(k).rank : 50);
+      const keys = Array.from(groups.keys()).sort((a, b) => rank(a) - rank(b) || groups.get(b).length - groups.get(a).length);
       const slots = stackSlots(keys.length);
       const order = [];
       keys.forEach((k, gi) => {
-        const mem = groups.get(k).sort((a, b) => items[b].mtime - items[a].mtime);
+        const mem = groups.get(k).sort(hasOrd ? byOrd : (a, b) => items[b].mtime - items[a].mtime);
         const sl = slots[gi], cy = Math.cos(sl.yaw), sy = Math.sin(sl.yaw);
         mem.forEach((i, j) => {
           const d = Math.min(j, 24);                         // the pile is shallow after 24
@@ -1005,7 +1109,7 @@
       const order = [];
       keys.forEach((k, gi) => {
         const cx = centres[gi][0], cy = centres[gi][1], cz = 0;
-        const mem = groups.get(k).slice().sort((a, b) => items[b].size - items[a].size);
+        const mem = groups.get(k).slice().sort(hasOrd ? byOrd : (a, b) => items[b].size - items[a].size);
         mem.forEach((i, j) => {
           const rr = rads[gi] * Math.cbrt((j + 0.5) / mem.length);
           const yy = 1 - 2 * (j + 0.5) / mem.length, th = j * GOLD, sr = Math.sqrt(1 - yy * yy);
@@ -1080,7 +1184,12 @@
 
     // ── transitions ──
     function applyLayout(instant, keepCam) {
-      if (!n) { dirty = true; return; }
+      if (!n) {
+        // nothing to show: the last set's labels (day names, group names) go too
+        if (decor) { oldDecor.push(decor); decor = null; }
+        layout = null; dirty = true;
+        return;
+      }
       if (reduced) instant = true;
       layout = computeLayout(view);
       tP.set(layout.P); tQ.set(layout.Q); tS.set(layout.S); tBP.set(layout.BP); tBS.set(layout.BS);
@@ -1113,12 +1222,12 @@
       const trail = dz > 0 && !reduced && (flight.frame = (flight.frame || 0) + 1) % 2 === 0;
       const tstep = Math.max(1, Math.ceil(n / (dz >= 1 ? 220 : 90)));
       for (let i = 0; i < n; i++) {
-        let t = (now - flight.t0 - delay[i] * 1000) / flight.dur;
+        let t = (now - flight.t0 - (flight.delays ? flight.delays[i] : delay[i]) * 1000) / flight.dur;
         if (t < 1) done = false;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
         const e = ease(t), i3 = i * 3;
         const dx = tP[i3] - fP[i3], dy = tP[i3 + 1] - fP[i3 + 1], dz = tP[i3 + 2] - fP[i3 + 2];
-        const lift = Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.16 * Math.sin(Math.PI * e);
+        const lift = flight.flat ? 0 : Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.16 * Math.sin(Math.PI * e);
         P[i3] = fP[i3] + dx * e; P[i3 + 1] = fP[i3 + 1] + dy * e + lift; P[i3 + 2] = fP[i3 + 2] + dz * e;
         THREE.Quaternion.slerpFlat(Q, i * 4, fQ, i * 4, tQ, i * 4, e);
         S[i * 2] = fS[i * 2] + (tS[i * 2] - fS[i * 2]) * e; S[i * 2 + 1] = fS[i * 2 + 1] + (tS[i * 2 + 1] - fS[i * 2 + 1]) * e;
@@ -1192,26 +1301,50 @@
       const sp = Math.sin(cam.phi);
       camera.position.set(cam.t.x + cam.r * sp * Math.sin(cam.theta), cam.t.y + cam.r * Math.cos(cam.phi), cam.t.z + cam.r * sp * Math.cos(cam.theta));
       camera.lookAt(cam.t);
-      // Head-coupled perspective: when Friday is tracking the owner's head,
-      // the view shifts with it like a window. Reads FridayTracking when that
-      // is loaded, else the face-tracking globals index.html already keeps.
+      // Head-coupled perspective: a window, not an orbit. When Friday is
+      // tracking the owner's head the EYE moves with it (sideways, up and
+      // down, and in and out as they lean) while the aim stays put, and the
+      // projection shears so the plane through the focus stays nailed to the
+      // screen. Near cards then swing against far ones the way things behind
+      // real glass do. Re-aiming with lookAt instead (the old way) cancels
+      // most of the parallax. Same off-axis frustum as the backdrop scene,
+      // so the two move as one.
       const hp = headPose();
-      if (hp) {
-        tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.x * cam.r * 0.07);
-        camera.position.add(tmpV);
-        tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.y * cam.r * 0.05);
-        camera.position.add(tmpV);
-        camera.lookAt(cam.t);
+      if (hp && hp.frustum) {
+        const ex = hp.x * cam.r * 0.20, ey = hp.y * cam.r * 0.14, ez = hp.z * cam.r * 0.22;
+        tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion); camera.position.addScaledVector(tmpV, ex);
+        tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion); camera.position.addScaledVector(tmpV, ey);
+        tmpV.set(0, 0, -1).applyQuaternion(camera.quaternion); camera.position.addScaledVector(tmpV, ez);
+        camera.updateMatrixWorld();
+        hp.frustum(camera, ex, ey, ez, cam.r);
+        sheared = true;
+      } else {
+        if (sheared) { camera.updateProjectionMatrix(); sheared = false; }
+        if (hp) {
+          // older page without the frustum helper: the gentle orbit nudge
+          tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.x * cam.r * 0.07);
+          camera.position.add(tmpV);
+          tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.y * cam.r * 0.05);
+          camera.position.add(tmpV);
+          camera.lookAt(cam.t);
+        }
       }
       camera.updateMatrixWorld();
       camQ.copy(camera.quaternion);
       sky.position.copy(camera.position);
     }
+    var sheared = false;   // var: placeCamera may run before this line does
+    function clampH(v, m) { v = +v; return isFinite(v) ? Math.max(-m, Math.min(m, v)) : 0; }
     function headPose() {
       if (reduced) return null;
       try {
         const T = window.FridayTracking;
-        if (T && T.head && T.head.seen) return { x: +T.head.x || 0, y: -(+T.head.y || 0) };
+        if (T && T.head && T.head.seen) {
+          // the owner's own Parallax / Depth dials from Settings apply here too
+          const c = T.cfg || {}, ps = clampH(c.parallax_strength == null ? 1 : c.parallax_strength, 4), ds = clampH(c.depth_strength == null ? 1 : c.depth_strength, 4);
+          return { x: clampH(T.head.x, 1.6) * ps, y: -clampH(T.head.y, 1.6) * ps, z: clampH(T.head.z, 1.5) * ds,
+            frustum: typeof T.applyFrustum === 'function' ? T.applyFrustum : null };
+        }
         /* global isHologramMode, isFaceVisible, currFaceX, currFaceY */
         if (typeof isHologramMode !== 'undefined' && isHologramMode && typeof isFaceVisible !== 'undefined' && isFaceVisible
           && typeof currFaceX === 'number') return { x: currFaceX, y: -currFaceY };
@@ -1240,7 +1373,7 @@
     function setStates() {
       for (let i = 0; i < n; i++) {
         const fx = fxOf.size ? fxOf.get(i) : null;
-        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, 0, heldArr[i], diss[i]);
+        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, markArr[i], heldArr[i], diss[i]);
       }
       aState.needsUpdate = true;
       dirty = true;
@@ -1378,7 +1511,10 @@
     el.addEventListener('pointerdown', e => {
       el.setPointerCapture(e.pointerId);
       lastPointerDown = performance.now();
-      drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.button === 1 || e.shiftKey };
+      drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.button === 1 || e.shiftKey, item: -1, itemOn: false };
+      // a panel that can act on cards lets them be picked up: a left drag
+      // that starts on a card carries the card instead of orbiting
+      if (cb.onItemDrag && e.button === 0 && !e.shiftKey && !(e.ctrlKey || e.metaKey)) drag.item = pickAt(e.clientX, e.clientY);
       el.style.cursor = 'grabbing';
       cb.onInteract && cb.onInteract();
     });
@@ -1389,6 +1525,11 @@
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
       drag.moved = true; drag.x = e.clientX; drag.y = e.clientY;
+      if (drag.item >= 0) {
+        cb.onItemDrag(drag.itemOn ? 'move' : 'start', drag.item, e.clientX, e.clientY);
+        drag.itemOn = true; el.style.cursor = 'grabbing';
+        return;
+      }
       if (drag.pan) {
         const s = cam.r * 0.0016;
         tmpV.set(-dx * s, dy * s, 0).applyQuaternion(camera.quaternion);
@@ -1401,11 +1542,17 @@
     });
     el.addEventListener('pointerup', e => {
       el.style.cursor = 'grab';
-      const wasDrag = drag && drag.moved;
+      const wasDrag = drag && drag.moved, carried = drag && drag.itemOn ? drag.item : -1;
       drag = null;
+      if (carried >= 0) { cb.onItemDrag('end', carried, e.clientX, e.clientY); return; }
       if (wasDrag) return;
       const i = pickAt(e.clientX, e.clientY);
-      cb.onPick && cb.onPick(i >= 0 ? i : -1, false);
+      cb.onPick && cb.onPick(i >= 0 ? i : -1, false, { add: e.ctrlKey || e.metaKey, range: e.shiftKey });
+    });
+    el.addEventListener('pointercancel', () => {
+      const carried = drag && drag.itemOn ? drag.item : -1;
+      drag = null; el.style.cursor = 'grab';
+      if (carried >= 0) cb.onItemDrag('cancel', carried, 0, 0);
     });
     el.addEventListener('pointerleave', () => { pointer = null; if (!handPos()) setHover(-1); });
     el.addEventListener('dblclick', e => {
@@ -1785,7 +1932,7 @@
 
     // ── public ──
     let currentRoot = '', currentPath = '', currentBase = '';
-    return {
+    const self = {
       setData(list, root, path) {
         const again = root === currentRoot && (path || '') === currentPath;
         currentRoot = root; currentPath = path || ''; currentBase = (path || '').split('/').pop() || root;
@@ -1793,7 +1940,9 @@
       },
       setView(v) { if (v === view) return; view = v; skipFx(); applyLayout(false); },
       setDazzle(level) { dz = DAZZLE[level] != null ? DAZZLE[level] : DAZZLE.full; applyDazzle(); },
-      setHeld(i, on) { if (i >= 0 && i < n) { heldArr[i] = on ? 1 : 0; setStates(); } },
+      setHeld(i, on) { if (aState && i >= 0 && i < n) { heldArr[i] = on ? 1 : 0; setStates(); } },
+      // several cards selected at once (ctrl/shift click); indices into the data
+      setMarked(list) { if (!aState) return; markArr.fill(0); (list || []).forEach(i => { if (i >= 0 && i < n) markArr[i] = 1; }); setStates(); },
       fx: playFx,
       skipFx,
       isAnimating: () => fxOf.size > 0,
@@ -1847,6 +1996,7 @@
         return best >= 0 ? best : i;
       },
       resetCamera() { if (layout) setCamGoal(layout.cam); },
+      pickAt: (x, y) => pickAt(x, y),   // client coordinates -> card index or -1 (tests)
       screenPos(i) {
         if (i < 0) return null;
         tmpV.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]).project(camera);
@@ -1855,7 +2005,48 @@
       stats: summary,
       camInfo: () => ({ pos: camera.position.toArray().map(v => +v.toFixed(2)), target: cam.t.toArray().map(v => +v.toFixed(2)), goal: goal.t.toArray().map(v => +v.toFixed(2)), theta: +cam.theta.toFixed(3), phi: +cam.phi.toFixed(3), r: +cam.r.toFixed(2), goalR: +goal.r.toFixed(2) }),
       bench(ms) { return new Promise(resolve => { bench = { t0: performance.now(), ms: ms || 4000, resolve }; }); },
+      setIntro(k) { intro = k || 'center'; },
+      // Compile every shader this engine can use, now, so the first real
+      // frame does not stall on it (prewarm).
+      _compileAll() {
+        setData([{ i: 0, rel: 'warm', name: 'warm', dir: false, size: 0, mtime: 0, ext: '', cat: 'other', parent: -1, depth: 1, kids: [], card: { title: '', sub: '', badge: '' } }], true);
+        const vis = [refl, boxes, lines, selGlow].filter(Boolean).map(o => [o, o.visible]);
+        vis.forEach(([o]) => { o.visible = true; });
+        renderer.compile(scene, camera);
+        renderer.render(scene, camera);
+        vis.forEach(([o, v]) => { o.visible = v; });
+      },
+      _revive(m, c) {
+        mount = m; cb = c || {};
+        mount.appendChild(renderer.domElement);
+        renderer.domElement.style.cursor = 'grab';
+        disposed = false; dirty = true; camMoving = true; visible = true;
+        ro.observe(mount); io.observe(mount); resize();
+        last = performance.now();
+        raf = requestAnimationFrame(frame);
+      },
       dispose() {
+        if (this !== warming && !disposed) live = Math.max(0, live - 1);
+        if (!parked && !disposed) {
+          // park instead of destroying: free the cards, keep the GPU set-up
+          disposed = true;
+          hold(false);
+          cancelAnimationFrame(raf);
+          ro.disconnect(); io.disconnect();
+          freeMeshes();
+          if (decor) { disposeDecor(decor); decor = null; }
+          oldDecor.forEach(disposeDecor); oldDecor = [];
+          fxSprites.slice().forEach(dropSprite);
+          for (let a = 1; a < real.length; a++) if (real[a]) { real[a].dispose(); real[a] = null; }
+          for (let a = 0; a < atlases.length; a++) atlases[a] = real[0];
+          items = []; n = 0; layout = null; flight = null; materialize = null; pool = null;
+          currentRoot = ''; currentPath = ''; intro = 'center';
+          cb = {};
+          if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+          parked = self;
+          return;
+        }
+        if (parked === self) parked = null;
         disposed = true;
         hold(false);
         cancelAnimationFrame(raf);
@@ -1874,6 +2065,7 @@
         if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
     };
+    return self;
   }
 
   // ── React panel ─────────────────────────────────────────────────────────
@@ -2276,5 +2468,5 @@
     window.addEventListener('friday-dazzle', e => markDazzle(e && e.detail));
   }
   window.__files3dInternals = { buildItems, catOf, createSlotPool, stackSlots };
-  window.Friday3D = { createEngine, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
+  window.Friday3D = { createEngine, prewarm, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
 })();

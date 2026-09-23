@@ -157,8 +157,12 @@ const samples = {
 };
 for (const k of Object.keys(samples)) {
   const s = S[k], it = s.toItem(samples[k]);
+  const other = Object.assign({}, samples[k], { id: 'z', title: 'Zed', name: 'Zed Other', label: 'Zed' });
   out[k] = { title: it.title, time: it.time > 0 || k === 'models', groups: Object.keys(s.groupings).map(g => s.groupings[g].key(samples[k])),
-             views: s.views, detail: s.detail(samples[k]).length > 0 };
+             views: s.views, detail: s.detail(samples[k]).length > 0, intro: s.intro,
+             sorts: Object.keys(s.sorts || {}).map(q => typeof s.sorts[q].cmp(samples[k], other)),
+             filters: (s.filters || []).map(f => typeof f.test(samples[k])),
+             zones: (s.zones || []).length, undoable: !s.zones || (typeof s.act === 'function' && typeof s.undo === 'function') };
 }
 console.log(JSON.stringify(out));
 """
@@ -173,6 +177,15 @@ console.log(JSON.stringify(out));
     assert out["people"]["groups"][0] == "Inner circle"
     assert out["tasks"]["groups"][0] == "High priority"
     assert out["calendar"]["views"][0] == "week" and out["messages"]["views"][0] == "stack"
+    # each workspace arrives its own way and brings its own sorts and filters
+    intros = {k: v["intro"] for k, v in out.items()}
+    assert intros == {"models": "center", "news": "rain", "people": "spiral", "tasks": "rise", "calendar": "sweep", "messages": "deal"}
+    for k, v in out.items():
+        assert v["sorts"] and all(t == "number" for t in v["sorts"]), k
+        assert all(t == "boolean" for t in v["filters"]), k
+        assert v["undoable"], k          # anything that can act on a card can undo it
+    assert out["messages"]["zones"] >= 5 and out["tasks"]["zones"] == 1 and out["news"]["zones"] == 1
+    assert out["people"]["zones"] == 0 and out["calendar"]["zones"] == 0 and out["models"]["zones"] == 0
 
 
 @pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
