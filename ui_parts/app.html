@@ -9243,6 +9243,9 @@ function SettingsTabGeneral({s,save}){
       </StRow>
       <StToggle label="Auto-open Chat on Launch" value={!!s.auto_open_chat} onChange={()=>save({auto_open_chat:!s.auto_open_chat})}/>
     </StSection>
+    <StSection title="TRACKING">
+      <TrackingPanel s={s} save={save}/>
+    </StSection>
   </div>;
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
@@ -9892,6 +9895,87 @@ function ApprovalScannerPanel({s,save}){
       </span>
       {st&&st.explain&&<div style={{color:'rgba(255,255,255,0.42)',marginTop:4}}>{st.explain}</div>}
       {laya.error&&!laya.ready&&<div style={{color:'rgba(255,255,255,0.3)',marginTop:4}}>{String(laya.error).slice(0,160)}</div>}
+    </div>
+  </div>;
+}
+// ── TRACKING SETTINGS ───────────────────────────────────────────────────
+// Live controls for the head-coupled perspective and the hand pointer.
+// Every control applies IMMEDIATELY via window.FridayTracking.apply() and is
+// persisted on release: tracking is the one settings group you cannot judge
+// by reading it, so a value that only took effect after a save would be
+// untunable.
+function TrackingSlider({label,desc,value,min,max,step,fmt,onLive,onCommit}){
+  return <div style={{marginBottom:10}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+      <span style={{fontSize:12,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono'}}>{label}</span>
+      <span style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{(fmt||(v=>v.toFixed(2)))(value)}</span>
+    </div>
+    <input type="range" min={min} max={max} step={step} value={value} style={{width:'100%',marginTop:4}}
+      onChange={e=>onLive(parseFloat(e.target.value))}
+      onMouseUp={e=>onCommit(parseFloat(e.target.value))}
+      onTouchEnd={e=>onCommit(parseFloat(e.target.value))}/>
+    {desc && <div style={{fontSize:10.5,color:'rgba(255,255,255,0.36)',marginTop:2,lineHeight:1.5}}>{desc}</div>}
+  </div>;
+}
+function TrackingPanel({s,save}){
+  const TK = typeof window!=='undefined' ? window.FridayTracking : null;
+  const defaults = TK ? TK.DEFAULTS : {};
+  const [cfg,setCfg] = useState(()=>Object.assign({},defaults,(s&&s.tracking)||{}));
+  const [calib,setCalib] = useState(null);
+  useEffect(()=>{ if(TK) TK.apply(cfg); },[]);
+  const live = patch => { const n=Object.assign({},cfg,patch); setCfg(n); if(TK) TK.apply(n); };
+  const commit = patch => { const n=Object.assign({},cfg,patch); setCfg(n); if(TK) TK.apply(n); save({tracking:n}); };
+  const sl = (key,label,desc,min,max,step,fmt)=>
+    <TrackingSlider label={label} desc={desc} value={cfg[key]} min={min} max={max} step={step} fmt={fmt}
+      onLive={v=>live({[key]:v})} onCommit={v=>commit({[key]:v})}/>;
+  return <div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:12,lineHeight:1.6}}>
+      Head tracking moves the view like a window onto the scene — lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag.
+    </div>
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'4px 0 10px'}}>HEAD / PARALLAX</div>
+    {sl('parallax_strength','Parallax strength','How far the scene swings as you move your head. 0 turns the window effect off.',0,2.5,0.05)}
+    {sl('depth_strength','Depth effect','How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.',0,2.5,0.05)}
+    {sl('head_smoothing','Head smoothing','Steadier to the right, quicker to the left. A One Euro filter, so low values are still calm when you hold still.',0,1,0.01)}
+    {sl('holo_cues','Holographic cues','Sheen and rim light that answer your head angle. Subtle on purpose.',0,1,0.01)}
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>DOCK</div>
+    {sl('dock_depth','Dock depth','How far the dock stands out of the screen — the floor it stands on, how far the icons rise off it, and how much a button swells as the pointer nears. 0 gives back the flat dock.',0,2,0.05)}
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>HAND CURSOR</div>
+    {sl('hand_gain','Sensitivity','Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.',0.5,6,0.1)}
+    {sl('hand_accel','Acceleration','Extra speed when you move fast, while slow movement stays precise.',0,2,0.05)}
+    {sl('hand_region','Active region','How much of the camera view maps to the whole screen. SMALLER means less hand movement covers more screen.',0.15,1,0.01,v=>Math.round(v*100)+'%')}
+    {sl('hand_deadzone','Dead zone','Movement below this is treated as shake, not intent.',0,0.03,0.001,v=>v.toFixed(3))}
+    {sl('hand_smoothing','Hand smoothing','Jitter filtering for the cursor. Same filter as the head.',0,1,0.01)}
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>CLICKING</div>
+    <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+      {[{k:'pinch',l:'Pinch'},{k:'dwell',l:'Dwell (hover to click)'}].map(o=>
+        <button key={o.k} className={`settings-btn ${cfg.click_method===o.k?'active':''}`} style={{fontSize:11}}
+          onClick={()=>commit({click_method:o.k})}>{o.l}</button>)}
+    </div>
+    {cfg.click_method==='pinch'
+      ? <div>
+          {sl('pinch_enter','Pinch closes at','Fingers must come closer than this to start a click.',0.02,0.12,0.005,v=>v.toFixed(3))}
+          {sl('pinch_exit','Pinch opens at','And wider than this to end it. The gap between the two is what stops a resting hand clicking over and over.',0.03,0.18,0.005,v=>v.toFixed(3))}
+        </div>
+      : sl('dwell_ms','Dwell time','Hold the cursor still this long to click.',250,2000,50,v=>Math.round(v)+' ms')}
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>TUNING</div>
+    <StToggle label="Debug overlay" value={!!cfg.debug_overlay}
+      onChange={()=>commit({debug_overlay:!cfg.debug_overlay})}
+      desc="Draws the tracked head position, the filter lag, the active region and the cursor path on screen."/>
+    <div style={{display:'flex',gap:8,marginTop:10}}>
+      <button className="settings-btn" style={{flex:1,fontSize:12}} onClick={()=>{
+        const TKx=window.FridayTracking;
+        const w=(typeof lastFaceBoxW!=='undefined')?lastFaceBoxW:0;
+        const got=TKx?TKx.calibrate(w):null;
+        setCalib(got?'Set from your current distance.':'No face seen — turn the hologram on and look at the camera.');
+        setTimeout(()=>setCalib(null),4000);
+      }}>◎ Calibrate distance</button>
+      <button className="settings-btn" style={{flex:1,fontSize:12}} onClick={()=>{
+        const n=Object.assign({},defaults); setCfg(n); if(TK) TK.apply(n); save({tracking:n});
+      }}>↺ Reset to defaults</button>
+    </div>
+    {calib && <div style={{fontSize:10.5,color:'#00d4ff',marginTop:6,fontFamily:'JetBrains Mono'}}>{calib}</div>}
+    <div style={{fontSize:10.5,color:'rgba(255,255,255,0.34)',marginTop:8,lineHeight:1.6}}>
+      Calibrate tells the depth effect what “normal distance” looks like for you and your camera. Sit where you usually sit, then press it.
     </div>
   </div>;
 }
