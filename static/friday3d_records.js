@@ -319,7 +319,7 @@
         recs && !recs.length && !err && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7f93ad', fontSize: 13 } }, src.empty),
         hover && hover.it && hover.it !== sel && h('div', { style: { position: 'fixed', left: hover.x + 14, top: hover.y + 12, pointerEvents: 'none', padding: '5px 8px', borderRadius: 6, background: PANEL, border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 11, zIndex: 50, maxWidth: 300 } },
           h('div', { style: { fontWeight: 600 } }, clip(hover.it.card.title, 90)), hover.it.card.sub && h('div', { style: { color: '#8fa6c4' } }, clip(hover.it.card.sub, 120))),
-        h('div', { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 10, color: '#6f86a6', pointerEvents: 'none' } },
+        h('div', { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 10, color: '#8fa3bf', pointerEvents: 'none', background: 'rgba(3,6,13,0.72)', padding: '3px 7px', borderRadius: 5 } },
           (recs ? shown + ' of ' + recs.length + ' shown' : '') + (stats ? ' · ' + stats.fps + ' fps' : '') + ' · drag orbit · scroll zoom · 1–' + src.views.length + ' views · Enter opens · Esc closes'),
         sel && h('div', { style: { position: 'absolute', top: 10, right: 10, bottom: 10, width: 'min(360px, 44%)', display: 'flex', flexDirection: 'column', gap: 8, padding: 12, borderRadius: 10, background: PANEL, border: '1px solid rgba(0,212,255,0.35)', color: '#e6f0ff', fontSize: 12, overflow: 'auto' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8 } },

@@ -198,3 +198,29 @@ def test_window_animation_css_respects_reduced_motion_and_dazzle_off(path):
     assert "@keyframes fwinMaterialize" in text and "@keyframes fwinFold" in text
     assert ':root[data-dazzle="off"] .fwin' in text
     assert "prefers-reduced-motion: reduce" in text and "fwinFade" in text
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+def test_stacks_never_leave_a_pile_alone_on_a_row():
+    src = HARNESS.split("const { createSlotPool")[0].replace("SCRIPT", SCRIPT.read_text(encoding="utf-8")) + r"""
+const { stackSlots } = window.__files3dInternals;
+const out = {};
+for (let n = 1; n <= 24; n++) {
+  const s = stackSlots(n), rows = {};
+  s.forEach(p => { (rows[p.row] = rows[p.row] || []).push(p); });
+  const sizes = Object.values(rows).map(r => r.length);
+  out[n] = { rows: sizes, centred: Object.values(rows).every(r => Math.abs(r.reduce((a, p) => a + p.x, 0) / r.length) < 1e-9),
+             span: Math.max(...s.map(p => Math.abs(p.yaw))) * 2 * 180 / Math.PI };
+}
+console.log(JSON.stringify(out));
+"""
+    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    for n in range(1, 8):                       # 1-7 piles: one arc, no wrap
+        assert out[str(n)]["rows"] == [n], n
+        assert out[str(n)]["span"] <= 101, n
+    for n in range(8, 25):                      # more: balanced, centred rows
+        rows = out[str(n)]["rows"]
+        assert sum(rows) == n and max(rows) - min(rows) <= 1 and max(rows) <= 7, (n, rows)
+    assert all(v["centred"] for v in out.values())
