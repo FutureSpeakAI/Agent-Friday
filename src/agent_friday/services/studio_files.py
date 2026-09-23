@@ -330,7 +330,24 @@ def scan(root_id: str, rel: str = '', *, limit: int = DEFAULT_LIMIT,
                 pi = index_of.get(pr) if pr else None
     return {'root': root_id, 'label': ROOT_LABELS.get(root_id, root_id),
             'path': base_rel, 'entries': entries, 'truncated': truncated,
+            'creations_prefix': _creations_prefix(root_real),
             'skipped': skipped, 'elapsed_ms': int((time.monotonic() - t0) * 1000)}
+
+
+def _creations_prefix(root_real: Path):
+    """Where Friday's creations folder sits inside this root ('' when the
+    root is that folder, None when it is not inside), so the UI can offer
+    Share, which posts creations only."""
+    try:
+        from agent_friday.core import CREATIONS_DIR
+        rel = os.path.relpath(Path(CREATIONS_DIR).resolve(), root_real)
+    except (ValueError, OSError):
+        return None
+    if rel == '.':
+        return ''
+    if rel.startswith('..') or os.path.isabs(rel):
+        return None
+    return rel.replace(os.sep, '/')
 
 
 # ── thumbnails ─────────────────────────────────────────────────────────────
@@ -552,7 +569,20 @@ def reveal(root_id: str, rel: str) -> dict:
 
 # ── approval-gated changes ─────────────────────────────────────────────────
 
-_VERBS = {'delete': 'Move to Recycle Bin', 'rename': 'Rename', 'move': 'Move'}
+_VERBS = {'delete': 'Move to Recycle Bin', 'rename': 'Rename', 'move': 'Move',
+          'copy': 'Copy'}
+
+
+def _copy_target(src: Path, dest: Path) -> Path:
+    """Where a copy of src lands in dest: its own name, or "name (copy).ext",
+    "name (copy 2).ext" ... when that is taken. Never an existing file."""
+    target = dest / src.name
+    n = 1
+    while target.exists():
+        tag = ' (copy)' if n == 1 else f' (copy {n})'
+        target = dest / f'{src.stem}{tag}{src.suffix}'
+        n += 1
+    return target
 
 
 def _valid_new_name(name: str) -> str:
@@ -566,7 +596,7 @@ def _valid_new_name(name: str) -> str:
 
 def request_change(op: str, root_id: str, rel: str, *, new_name: str = '',
                    dest_root: str = '', dest_rel: str = '') -> dict:
-    """File an approval card for a delete / rename / move. Nothing is touched
+    """File an approval card for a delete / rename / move / copy. Nothing is touched
     until the owner approves it in the Approvals queue."""
     if op not in _VERBS:
         raise Denied('unknown operation')
@@ -581,14 +611,16 @@ def request_change(op: str, root_id: str, rel: str, *, new_name: str = '',
         if (src.parent / payload['new_name']).exists():
             raise Denied('a file with that name already exists')
         what = f'Rename "{src.name}" to "{payload["new_name"]}" in {label}'
-    elif op == 'move':
+    elif op in ('move', 'copy'):
         dest = resolve(dest_root, dest_rel)
         if not dest.is_dir():
             raise Denied('destination is not a folder')
-        if (dest / src.name).exists():
+        if op == 'move' and (dest / src.name).exists():
             raise Denied('the destination already has a file with that name')
+        if op == 'copy' and not src.is_file():
+            raise Denied('only files can be copied from here')
         payload.update(dest_root=dest_root, dest_path=(dest_rel or '').strip('/'))
-        what = (f'Move "{src.name}" from {label} to '
+        what = (f'{_VERBS[op]} "{src.name}" from {label} to '
                 f'{ROOT_LABELS.get(dest_root, dest_root)}/{payload["dest_path"]}')
     else:
         what = f'Delete "{src.name}" from {label} (it goes to the Recycle Bin)'
@@ -649,6 +681,13 @@ def apply_change(payload: dict) -> dict:
             raise OSError('the destination already has a file with that name')
         shutil.move(str(src), str(target))
         return {'op': op, 'moved_to': payload.get('dest_path', '')}
+    if op == 'copy':
+        dest = resolve(payload.get('dest_root', ''), payload.get('dest_path', ''))
+        if not src.is_file():
+            raise OSError('only files can be copied')
+        target = _copy_target(src, dest)
+        shutil.copy2(str(src), str(target))
+        return {'op': op, 'copied_to': payload.get('dest_path', ''), 'name': target.name}
     raise Denied('unknown operation')
 
 

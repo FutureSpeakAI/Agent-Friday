@@ -1922,6 +1922,7 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    "studio_dazzle": "full",              # Studio › Files 3D visual intensity: off | subtle | full
     # Which scorer answers Friday's typed judgments (services/decisions.py).
     # "keyword" is today's substring scan and stays the default until another
     # backend is MEASURED to beat it on the log that module now keeps. An

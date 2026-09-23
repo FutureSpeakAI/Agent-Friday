@@ -85,6 +85,14 @@ def test_paths_outside_or_private_are_refused(client, docs, path):
     assert client.get(f"/api/studio-files/raw?root=documents&path={path}").status_code == 403
 
 
+def test_scan_reports_where_creations_live(client, docs, monkeypatch):
+    from agent_friday import core
+    monkeypatch.setattr(core, "CREATIONS_DIR", docs / "Album")
+    assert client.get("/api/studio-files/scan?root=documents").get_json()["creations_prefix"] == "Album"
+    monkeypatch.setattr(core, "CREATIONS_DIR", docs.parent / "elsewhere")
+    assert client.get("/api/studio-files/scan?root=documents").get_json()["creations_prefix"] is None
+
+
 def test_unknown_root_is_refused(client, docs):
     assert client.get("/api/studio-files/scan?root=windows").status_code == 403
 
@@ -224,6 +232,19 @@ def test_rename_and_move_run_only_after_approval(client, docs):
                    dest_root="documents", dest_path="")
     client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
     assert (docs / "deux.txt").exists()
+
+
+def test_copy_runs_only_after_approval_and_never_overwrites(client, docs):
+    aid = _request(client, op="copy", root="documents", path="notes.md", dest_root="documents", dest_path="")
+    assert not (docs / "notes (copy).md").exists()
+    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    assert (docs / "notes (copy).md").read_text(encoding="utf-8") == (docs / "notes.md").read_text(encoding="utf-8")
+    aid = _request(client, op="copy", root="documents", path="notes.md", dest_root="documents", dest_path="Album")
+    client.post(f"/api/approvals/{aid}/decide", json={"decision": "approve"})
+    assert (docs / "Album" / "notes.md").exists()
+    r = client.post("/api/studio-files/request-change",
+                    json={"op": "copy", "root": "documents", "path": "Album", "dest_root": "documents", "dest_path": ""})
+    assert r.status_code == 403
 
 
 @pytest.mark.parametrize("name", ["../x.txt", ".hidden", "a/b", "evil.pem", ""])
