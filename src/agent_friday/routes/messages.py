@@ -277,6 +277,7 @@ def api_messages_classify():
             _cache_messages(cached)
         # Also record in state for messages not in cache (live-only).
         state = _load_message_state()
+        before = dict(state.get(mid, {}))
         st = state.get(mid, {})
         st["lane_override"] = lane
         # Remember the sender so a live-only message can still teach; without
@@ -294,44 +295,88 @@ def api_messages_classify():
         except Exception as e:
             # A correction that fails to teach must still move the message.
             learned = {"ok": False, "error": str(e)}
+    message_triage._collect_cache.clear()
+    # `before` lets the UI undo the move with /api/messages/restore. The
+    # sender lesson is not unlearned by an undo; it is one weak vote.
     return jsonify({"status": "ok", "id": mid, "lane": lane,
-                    "learned": learned})
+                    "learned": learned, "before": {mid: before}})
+
+
+_LOCAL_ACTIONS = ("archive", "unarchive", "snooze", "unsnooze", "flag", "unflag", "read", "unread")
+
+
+def _apply_local(st, action, data):
+    if action == "archive":
+        st["archived"] = True
+    elif action == "unarchive":
+        st["archived"] = False
+    elif action == "snooze":
+        st["snoozed_until"] = data.get("until") or (
+            datetime.now() + timedelta(hours=4)).isoformat(timespec="seconds")
+    elif action == "unsnooze":
+        st["snoozed_until"] = ""
+    elif action == "flag":
+        st["flagged"] = True
+    elif action == "unflag":
+        st["flagged"] = False
+    elif action == "read":
+        st["read"] = True
+        st.pop("unread", None)
+    elif action == "unread":
+        st["read"] = False
+        st["unread"] = True
+    return st
 
 
 @messages_bp.route('/api/messages/action', methods=['POST'])
 def api_messages_action():
-    """Archive / snooze / flag / mark-read a message. Body: {id, action,
-    until?(iso)}. action in archive|unarchive|snooze|unsnooze|flag|unflag|read|unread."""
+    """Archive / snooze / flag / mark read or unread, for one message
+    ({id}) or many ({ids}). These are Friday-local: Gmail itself is not
+    changed. Every call returns `before` (each message's previous local
+    state) so the UI can undo it exactly with /api/messages/restore."""
     data = request.get_json(silent=True) or {}
-    mid = str(data.get("id") or "").strip()
+    ids = [str(i).strip() for i in (data.get("ids") or []) if str(i).strip()]
+    if not ids and str(data.get("id") or "").strip():
+        ids = [str(data.get("id")).strip()]
     action = str(data.get("action") or "").strip().lower()
-    if not mid or not action:
-        return jsonify({"status": "error", "message": "id and action required"}), 400
+    if not ids or not action:
+        return jsonify({"status": "error", "message": "id(s) and action required"}), 400
+    if action not in _LOCAL_ACTIONS:
+        return jsonify({"status": "error", "message": f"unknown action {action}"}), 400
+    before = {}
     with _MESSAGE_LOCK:
         state = _load_message_state()
-        st = state.get(mid, {})
-        if action == "archive":
-            st["archived"] = True
-        elif action == "unarchive":
-            st["archived"] = False
-        elif action == "snooze":
-            st["snoozed_until"] = data.get("until") or (
-                datetime.now() + timedelta(hours=4)).isoformat(timespec="seconds")
-        elif action == "unsnooze":
-            st["snoozed_until"] = ""
-        elif action == "flag":
-            st["flagged"] = True
-        elif action == "unflag":
-            st["flagged"] = False
-        elif action == "read":
-            st["read"] = True
-        elif action == "unread":
-            st["read"] = False
-        else:
-            return jsonify({"status": "error", "message": f"unknown action {action}"}), 400
-        state[mid] = st
+        for mid in ids[:500]:
+            before[mid] = dict(state.get(mid, {}))
+            state[mid] = _apply_local(dict(state.get(mid, {})), action, data)
         _save_message_state(state)
-    return jsonify({"status": "ok", "id": mid, "action": action, "state": st})
+    message_triage._collect_cache.clear()
+    out = {"status": "ok", "ids": list(before), "action": action, "before": before}
+    if len(before) == 1:
+        mid = next(iter(before))
+        out.update(id=mid, state=state[mid])
+    return jsonify(out)
+
+
+@messages_bp.route('/api/messages/restore', methods=['POST'])
+def api_messages_restore():
+    """Undo: put each message's local state back to exactly what an action
+    reported as `before`. Body: {states: {id: {...}}}."""
+    states = (request.get_json(silent=True) or {}).get("states") or {}
+    if not isinstance(states, dict) or not states:
+        return jsonify({"status": "error", "message": "states required"}), 400
+    allowed = {"archived", "snoozed_until", "flagged", "read", "unread", "lane_override", "sender"}
+    with _MESSAGE_LOCK:
+        state = _load_message_state()
+        for mid, st in list(states.items())[:500]:
+            clean = {k: v for k, v in (st or {}).items() if k in allowed}
+            if clean:
+                state[str(mid)] = clean
+            else:
+                state.pop(str(mid), None)
+        _save_message_state(state)
+    message_triage._collect_cache.clear()
+    return jsonify({"status": "ok", "restored": len(states)})
 
 
 @messages_bp.route('/api/messages/draft', methods=['POST'])
