@@ -14,6 +14,34 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ### Models
 
+- **Kimi K3 listed as an experimental CPU engine — not installed, never
+  selectable.** The `kimi-k3-in-c` project runs a 2.78-trillion-parameter
+  Kimi K3 CPU-only, streaming a 1.56 TB checkpoint from disk so peak RSS
+  stays near 8 GB. It now appears in the Model Browser with its real
+  requirements (~1.7 TB free disk, 8.2 GB RAM at the `laptop` preset,
+  **26.5 seconds per token** at 8 GB and 5.6 at 128 GB+, AVX2 + FMA), and
+  cannot be chosen anywhere: its row carries `roles: []` and
+  `curated: False`, it is in no provider's model list, and it is absent
+  from the router fallback chain. An engine with no tool calling that
+  answers in seconds per token must never be something Friday falls back
+  TO. See [docs/reference/kimi-k3.md](docs/reference/kimi-k3.md).
+- Two things about it are easy to get wrong, so they are recorded rather
+  than left to inference. It **is** chat-capable — `--chat` uses the
+  official Kimi K3 XTML control tokens; raw continuation is what you get
+  *without* it. And `--preset server` is a **memory budget** (~128 GB peak
+  RSS), not a serving mode: the README states "there are no tools, images,
+  server, or context compaction".
+- **The engine is Apache-2.0; the weights are not.** "Kimi K3 is created and
+  released by Moonshot AI under its own license... grants no rights to
+  them." Recorded on the catalog row itself, because the weights question
+  has to be answered before 1.7 TB is fetched, not after.
+- `services/kimi_k3.py` shells out to `bin/k3` for one-shot completions and
+  refuses until `kimi_k3.binary` and `kimi_k3.model_dir` are set AND present
+  on disk, reporting why in a sentence meant to be passed through. The
+  prompt goes via `--prompt-file` rather than `argv` and output is decoded
+  UTF-8 from bytes — both because the shell re-encodes `argv` and
+  `text=True` decodes with the Windows locale code page.
+
 - **Claude Opus 5.5 added, and it takes the Opus tier.** Verified against the
   published model and pricing pages on 2026-09-22: API id `claude-opus-5-5`,
   1M context, 128K max output, adaptive thinking, vision and tools,
