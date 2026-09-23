@@ -2126,6 +2126,9 @@ DEFAULT_SETTINGS = {
         "depth_strength": 1.0,
         "head_smoothing": 0.35,
         "holo_cues": 0.6,
+        # Dock depth: shelf tilt, how far icons stand off the shelf, and how
+        # much a button swells as the pointer nears it. 0 is the flat dock.
+        "dock_depth": 1.0,
         "hand_gain": 2.2,
         "hand_accel": 0.6,
         "hand_region": 0.45,

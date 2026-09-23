@@ -9201,6 +9201,8 @@ function TrackingPanel({s,save}){
     {sl('depth_strength','Depth effect','How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.',0,2.5,0.05)}
     {sl('head_smoothing','Head smoothing','Steadier to the right, quicker to the left. A One Euro filter, so low values are still calm when you hold still.',0,1,0.01)}
     {sl('holo_cues','Holographic cues','Sheen and rim light that answer your head angle. Subtle on purpose.',0,1,0.01)}
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>DOCK</div>
+    {sl('dock_depth','Dock depth','How far the dock stands out of the screen — shelf tilt, how far icons rise off it, and how much buttons swell as the pointer nears. 0 gives back the flat dock.',0,2,0.05)}
     <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>HAND CURSOR</div>
     {sl('hand_gain','Sensitivity','Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.',0.5,6,0.1)}
     {sl('hand_accel','Acceleration','Extra speed when you move fast, while slow movement stays precise.',0,2,0.05)}
