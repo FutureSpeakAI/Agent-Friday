@@ -104,6 +104,27 @@ def complete_todo(todo_id):
     return jsonify({"status": "error", "message": "Todo not found"}), 404
 
 
+# Statuses a to-do can be put back to. "completed" is not one: finishing
+# goes through /complete, and this route only exists to undo it.
+_RESTORABLE = ('proposed', 'approved', 'pending', 'open', 'in_progress', 'rejected')
+
+
+@todos_bp.route('/api/todos/<todo_id>/restore', methods=['POST'])
+def restore_todo(todo_id):
+    """Put a to-do back to the status it had before (the undo of Done)."""
+    status = str((request.get_json(silent=True) or {}).get('status') or '').strip()
+    if status not in _RESTORABLE:
+        return jsonify({"status": "error", "message": "cannot restore to that status"}), 400
+    todos = _load_todos()
+    for t in todos:
+        if t['id'] == todo_id:
+            t['status'] = status
+            t['updated'] = datetime.now().isoformat()
+            _save_todos(todos)
+            return jsonify({"status": "ok", "todo": t})
+    return jsonify({"status": "error", "message": "Todo not found"}), 404
+
+
 @todos_bp.route('/api/todos/<todo_id>', methods=['DELETE'])
 def delete_todo(todo_id):
     todos = _load_todos()
