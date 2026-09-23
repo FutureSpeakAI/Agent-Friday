@@ -174,7 +174,35 @@
   }
 
   // ── engine ──────────────────────────────────────────────────────────────
+  // Building an engine is mostly GPU work: compiling its shaders (~200 ms)
+  // and allocating its texture atlas (~100 ms), all on the main thread, all
+  // before the first card can show. So one engine is kept parked when a view
+  // closes and revived by the next one that opens, and prewarm() builds it
+  // ahead of time (when the pointer reaches a "View in 3D" button, or at idle
+  // for someone who uses 3D). A parked engine draws nothing and holds only
+  // its first atlas; its cards and labels are freed.
+  let parked = null, warming = null, live = 0;
   function createEngine(mount, cb) {
+    live++;
+    if (parked) { const e = parked; parked = null; e._revive(mount, cb); return e; }
+    return buildEngine(mount, cb);
+  }
+  // Never while a view is open or opening: a second build then would only
+  // compete with the one being looked at.
+  function prewarm() {
+    if (parked || warming || live > 0 || typeof THREE === 'undefined') return;
+    try {
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:-4000px;top:0;width:96px;height:64px;pointer-events:none;visibility:hidden';
+      document.body.appendChild(box);
+      warming = buildEngine(box, {});
+      warming._compileAll();
+      const e = warming; warming = null;
+      e.dispose();                       // parks it
+      box.remove();
+    } catch (_) { warming = null; }
+  }
+  function buildEngine(mount, cb) {
     const THREE = window.THREE;
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -463,7 +491,7 @@
     let BP, BS, fBP, fBS, tBP, tBS;                        // boxes (city): position / size
     let visMask = null, hoverIdx = -1, selIdx = -1;
     let pool = null, wanted, failed;
-    let view = 'wall', groupBy = 'type', layout = null;
+    let view = 'wall', groupBy = 'type', layout = null, hasOrd = false, intro = 'center';
     let flight = null, bbCur = 0, bbFrom = 0, bbTo = 0;
     let decor = null, oldDecor = [];
     let gen = 0;
@@ -522,6 +550,8 @@
         else c.multiplyScalar(0.55);
         boxes.setColorAt(i, c);
       }
+      // an empty set still needs the colour buffer its shader reads
+      if (!boxes.instanceColor) boxes.setColorAt(0, c.setHex(0));
       scene.add(boxes);
       // tree edges: one segment per item with a parent (root-level items join the root at the origin)
       edges = new Int32Array(n);
@@ -536,6 +566,7 @@
       BP = f(3); BS = f(3); fBP = f(3); fBS = f(3); tBP = f(3); tBS = f(3);
       for (let i = 0; i < n; i++) { Q[i * 4 + 3] = 1; delay[i] = ((i * 2654435761) % 1000) / 1000 * 0.35; }
       visMask = null; hoverIdx = -1; selIdx = -1;
+      hasOrd = n > 0 && typeof items[0].ord === 'number';
       pool = createSlotPool(SLOTS, cap);
       wanted = new Uint8Array(cap); failed = new Uint8Array(cap);
       loadQueue.length = 0; uploads.length = 0;
@@ -570,17 +601,48 @@
 
     // Opening a folder: the cards assemble from light, nearest the centre
     // first, while sparks converge on them.
+    // Entrances. 'center' assembles from light, nearest the middle first.
+    // The others also move the cards in, in a way that says what the
+    // workspace is: 'rain' (a feed arriving from above), 'sweep' (time,
+    // left to right), 'deal' (piles dealt from one deck), 'spiral' (rings
+    // opening out from the centre), 'rise' (standing up off the floor).
     function startMaterialize() {
       materialize = null;
       if (!n || dz <= 0 || reduced || !layout) { diss.fill(0); return; }
       const o = layout.order, c = layout.cam.t;
       let far = 1;
       const dist = new Float32Array(n);
-      for (const i of o) { dist[i] = Math.hypot(P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]); if (dist[i] > far) far = dist[i]; }
-      const spread = 380 + 320 * dz;
+      const key = i => {
+        if (intro === 'rain') return -P[i * 3 + 1];
+        if (intro === 'sweep') return P[i * 3];
+        if (intro === 'spiral') return Math.hypot(P[i * 3], P[i * 3 + 2]);
+        if (intro === 'deal') return o.indexOf(i);
+        return Math.hypot(P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]);
+      };
+      let lo = Infinity;
+      for (const i of o) { dist[i] = key(i); if (dist[i] < lo) lo = dist[i]; }
+      for (const i of o) { dist[i] -= lo; if (dist[i] > far) far = dist[i]; }
+      const spread = intro === 'center' ? 380 + 320 * dz : 260 + 200 * dz;   // motion entrances stay under ~1 s
       const delayMs = new Float32Array(n);
       for (let i = 0; i < n; i++) { delayMs[i] = dist[i] / far * spread; diss[i] = 1; }
       materialize = { t0: performance.now(), delayMs, dur: 420 };
+      if (intro !== 'center') {
+        // the cards travel in as they light up
+        const up = layout.cam.r * 0.45, deck = [c[0], c[1] - layout.cam.r * 0.35, c[2] + layout.cam.r * 0.5];
+        const delays = new Float32Array(n);
+        fP.set(tP); fQ.set(tQ); fS.set(tS); fBP.set(tBP); fBS.set(tBS);
+        for (const i of o) {
+          const i3 = i * 3;
+          delays[i] = delayMs[i] / 1000;
+          if (intro === 'rain') fP[i3 + 1] += up;
+          else if (intro === 'rise') fP[i3 + 1] -= up * 0.6;
+          else if (intro === 'sweep') fP[i3] -= up * 0.8;
+          else if (intro === 'deal') { fP[i3] = deck[0]; fP[i3 + 1] = deck[1]; fP[i3 + 2] = deck[2]; }
+          else if (intro === 'spiral') { fP[i3] *= 0.05; fP[i3 + 2] *= 0.05; fS[i * 2] *= 0.45; fS[i * 2 + 1] *= 0.45; }
+        }
+        P.set(fP); S.set(fS);
+        flight = { t0: performance.now(), dur: intro === 'deal' ? 460 : 560, delays };
+      }
       const step = Math.max(1, Math.ceil(o.length / (dz >= 1 ? 420 : 200)));
       for (let k = 0; k < o.length; k += step) {
         const i = o[k], s0 = Math.max(0.6, S[i * 2]), life = 0.45 + delayMs[i] / 1000;
@@ -616,6 +678,9 @@
       return a;
     };
     const byPath = (a, b) => items[a].rel.localeCompare(items[b].rel, undefined, { numeric: true, sensitivity: 'base' });
+    // A workspace that sorts its records hands the order over as item.ord;
+    // files keep their path order.
+    const byOrd = (a, b) => hasOrd ? items[a].ord - items[b].ord : byPath(a, b);
 
     function computeLayout(v) {
       const act = active();
@@ -634,19 +699,45 @@
       const m = act.length;
       const fovT = Math.tan(camera.fov * Math.PI / 360);
       if (v === 'wall') {
-        const ord = act.slice().sort(byPath);
+        const ord = act.slice().sort(byOrd);
         const R = Math.max(1, Math.min(60, Math.round(Math.sqrt(m / 2.2))));
-        const cols = Math.max(1, Math.ceil(m / R)), s = 1.18;
+        // Records arrive group by group: each group starts a new column with
+        // a gap before it and its name over it, so the wall reads as sections.
+        const cats = new Set(ord.map(i => items[i].cat));
+        const sections = hasOrd && cats.size > 1 && cats.size <= 24;
+        const cell = [], starts = [];
+        let cx = 0, r = 0, prev = null, count = 0;
+        ord.forEach(i => {
+          const cat = items[i].cat;
+          if (sections && prev !== null && cat !== prev) { starts[starts.length - 1].n = count; cx += (r > 0 ? 1 : 0) + 0.7; r = 0; count = 0; }
+          if (sections && cat !== prev) starts.push({ cx, cat });
+          cell.push([cx, r]); count++;
+          if (++r >= R) { r = 0; cx++; }
+          prev = cat;
+        });
+        if (starts.length) starts[starts.length - 1].n = count;
+        const cols = Math.max(1, (r > 0 ? cx + 1 : cx)), s = 1.18;
         const rad = Math.max(24, cols * s / (Math.PI * 0.85));
+        const ang = c => (c - (cols - 1) / 2) * s / rad;
         ord.forEach((i, k) => {
-          const c = Math.floor(k / R), r = k % R;
-          const a = (c - (cols - 1) / 2) * s / rad;
-          put(i, rad * Math.sin(a), ((R - 1) / 2 - r) * s, rad * (1 - Math.cos(a)), yawQ(-a), 1);
+          const a = ang(cell[k][0]);
+          put(i, rad * Math.sin(a), ((R - 1) / 2 - cell[k][1]) * s, rad * (1 - Math.cos(a)), yawQ(-a), 1);
+        });
+        starts.forEach(st => {
+          const a = ang(st.cx), c = catInfo(st.cat);
+          let text = (c.label || st.cat) + ' · ' + st.n;
+          if (text.length > 24) text = text.slice(0, 23) + '…';
+          L.labels.push({ text, pos: [rad * Math.sin(a) + 0.4, (R - 1) / 2 * s + 1.15, rad * (1 - Math.cos(a))], color: c.color || 0x9fd0ff, size: 0.62, maxW: 5.5 });
         });
         L.order = ord;
-        L.cam = { t: [0, 0, 0], theta: 0, phi: Math.PI / 2, r: Math.max(8, (R * s / 2 + 1) / fovT * 1.05) };
+        // frame the height, and the width too when that is not much further
+        // back: a wall of sections reads as a whole; a huge one stays legible
+        const rH = Math.max(8, (R * s / 2 + 1) / fovT * 1.05);
+        const halfW = rad * Math.sin(Math.min(Math.PI / 2, ang(cols - 1))) + 1;
+        const rW = halfW / (fovT * Math.max(0.5, camera.aspect)) * 1.05 + rad * (1 - Math.cos(Math.min(Math.PI / 2, ang(cols - 1))));
+        L.cam = { t: [0, 0, 0], theta: 0, phi: Math.PI / 2, r: Math.max(rH, Math.min(rW, rH * 1.9)) };
       } else if (v === 'ring') {
-        const ord = act.slice().sort(byPath);
+        const ord = act.slice().sort(byOrd);
         const per = Math.max(8, Math.min(48, m)), rr = Math.max(6, per * 2.3 / (2 * Math.PI)), pitch = 2.9;
         ord.forEach((i, k) => {
           const a = k * 2 * Math.PI / per;
@@ -925,7 +1016,7 @@
       let r = 5;
       const order = [];
       keys.forEach((k, gi) => {
-        const mem = groups.get(k).sort((a, b) => items[b].size - items[a].size || items[a].mtime - items[b].mtime);
+        const mem = groups.get(k).sort(hasOrd ? byOrd : (a, b) => items[b].size - items[a].size || items[a].mtime - items[b].mtime);
         const S0 = 2.1;
         r = Math.max(r, mem.length * S0 * 1.12 / (2 * Math.PI));
         mem.forEach((i, j) => {
@@ -949,11 +1040,12 @@
     function stackLayout(L, act, put) {
       const groups = new Map();
       act.forEach(i => { const k = items[i].cat; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
-      const keys = Array.from(groups.keys()).sort((a, b) => groups.get(b).length - groups.get(a).length);
+      const rank = k => (catInfo(k).rank != null ? catInfo(k).rank : 50);
+      const keys = Array.from(groups.keys()).sort((a, b) => rank(a) - rank(b) || groups.get(b).length - groups.get(a).length);
       const slots = stackSlots(keys.length);
       const order = [];
       keys.forEach((k, gi) => {
-        const mem = groups.get(k).sort((a, b) => items[b].mtime - items[a].mtime);
+        const mem = groups.get(k).sort(hasOrd ? byOrd : (a, b) => items[b].mtime - items[a].mtime);
         const sl = slots[gi], cy = Math.cos(sl.yaw), sy = Math.sin(sl.yaw);
         mem.forEach((i, j) => {
           const d = Math.min(j, 24);                         // the pile is shallow after 24
@@ -1007,7 +1099,7 @@
       const order = [];
       keys.forEach((k, gi) => {
         const cx = centres[gi][0], cy = centres[gi][1], cz = 0;
-        const mem = groups.get(k).slice().sort((a, b) => items[b].size - items[a].size);
+        const mem = groups.get(k).slice().sort(hasOrd ? byOrd : (a, b) => items[b].size - items[a].size);
         mem.forEach((i, j) => {
           const rr = rads[gi] * Math.cbrt((j + 0.5) / mem.length);
           const yy = 1 - 2 * (j + 0.5) / mem.length, th = j * GOLD, sr = Math.sqrt(1 - yy * yy);
@@ -1082,7 +1174,12 @@
 
     // ── transitions ──
     function applyLayout(instant, keepCam) {
-      if (!n) { dirty = true; return; }
+      if (!n) {
+        // nothing to show: the last set's labels (day names, group names) go too
+        if (decor) { oldDecor.push(decor); decor = null; }
+        layout = null; dirty = true;
+        return;
+      }
       if (reduced) instant = true;
       layout = computeLayout(view);
       tP.set(layout.P); tQ.set(layout.Q); tS.set(layout.S); tBP.set(layout.BP); tBS.set(layout.BS);
@@ -1115,7 +1212,7 @@
       const trail = dz > 0 && !reduced && (flight.frame = (flight.frame || 0) + 1) % 2 === 0;
       const tstep = Math.max(1, Math.ceil(n / (dz >= 1 ? 220 : 90)));
       for (let i = 0; i < n; i++) {
-        let t = (now - flight.t0 - delay[i] * 1000) / flight.dur;
+        let t = (now - flight.t0 - (flight.delays ? flight.delays[i] : delay[i]) * 1000) / flight.dur;
         if (t < 1) done = false;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
         const e = ease(t), i3 = i * 3;
@@ -1825,7 +1922,7 @@
 
     // ── public ──
     let currentRoot = '', currentPath = '', currentBase = '';
-    return {
+    const self = {
       setData(list, root, path) {
         const again = root === currentRoot && (path || '') === currentPath;
         currentRoot = root; currentPath = path || ''; currentBase = (path || '').split('/').pop() || root;
@@ -1898,7 +1995,48 @@
       stats: summary,
       camInfo: () => ({ pos: camera.position.toArray().map(v => +v.toFixed(2)), target: cam.t.toArray().map(v => +v.toFixed(2)), goal: goal.t.toArray().map(v => +v.toFixed(2)), theta: +cam.theta.toFixed(3), phi: +cam.phi.toFixed(3), r: +cam.r.toFixed(2), goalR: +goal.r.toFixed(2) }),
       bench(ms) { return new Promise(resolve => { bench = { t0: performance.now(), ms: ms || 4000, resolve }; }); },
+      setIntro(k) { intro = k || 'center'; },
+      // Compile every shader this engine can use, now, so the first real
+      // frame does not stall on it (prewarm).
+      _compileAll() {
+        setData([{ i: 0, rel: 'warm', name: 'warm', dir: false, size: 0, mtime: 0, ext: '', cat: 'other', parent: -1, depth: 1, kids: [], card: { title: '', sub: '', badge: '' } }], true);
+        const vis = [refl, boxes, lines, selGlow].filter(Boolean).map(o => [o, o.visible]);
+        vis.forEach(([o]) => { o.visible = true; });
+        renderer.compile(scene, camera);
+        renderer.render(scene, camera);
+        vis.forEach(([o, v]) => { o.visible = v; });
+      },
+      _revive(m, c) {
+        mount = m; cb = c || {};
+        mount.appendChild(renderer.domElement);
+        renderer.domElement.style.cursor = 'grab';
+        disposed = false; dirty = true; camMoving = true; visible = true;
+        ro.observe(mount); io.observe(mount); resize();
+        last = performance.now();
+        raf = requestAnimationFrame(frame);
+      },
       dispose() {
+        if (this !== warming && !disposed) live = Math.max(0, live - 1);
+        if (!parked && !disposed) {
+          // park instead of destroying: free the cards, keep the GPU set-up
+          disposed = true;
+          hold(false);
+          cancelAnimationFrame(raf);
+          ro.disconnect(); io.disconnect();
+          freeMeshes();
+          if (decor) { disposeDecor(decor); decor = null; }
+          oldDecor.forEach(disposeDecor); oldDecor = [];
+          fxSprites.slice().forEach(dropSprite);
+          for (let a = 1; a < real.length; a++) if (real[a]) { real[a].dispose(); real[a] = null; }
+          for (let a = 0; a < atlases.length; a++) atlases[a] = real[0];
+          items = []; n = 0; layout = null; flight = null; materialize = null; pool = null;
+          currentRoot = ''; currentPath = ''; intro = 'center';
+          cb = {};
+          if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+          parked = self;
+          return;
+        }
+        if (parked === self) parked = null;
         disposed = true;
         hold(false);
         cancelAnimationFrame(raf);
@@ -1917,6 +2055,7 @@
         if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
       }
     };
+    return self;
   }
 
   // ── React panel ─────────────────────────────────────────────────────────
@@ -2319,5 +2458,5 @@
     window.addEventListener('friday-dazzle', e => markDazzle(e && e.detail));
   }
   window.__files3dInternals = { buildItems, catOf, createSlotPool, stackSlots };
-  window.Friday3D = { createEngine, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
+  window.Friday3D = { createEngine, prewarm, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
 })();
