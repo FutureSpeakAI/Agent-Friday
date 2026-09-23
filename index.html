@@ -131,6 +131,16 @@ window.addEventListener('DOMContentLoaded',function(){
             --holo-tilt-x: 0deg; --holo-tilt-y: 0deg;
             --holo-depth: 1; --holo-sheen: 0deg;
             --holo-sheen-a: 0; --holo-rim: 0;
+
+            /* Dock depth. --dock-k is the setting; the rest is written by the
+               render loop. Unset, every dock rule below evaluates to the flat
+               geometry the dock had before, so a browser that never runs the
+               loop sees no change. */
+            --dock-k: 1;
+            --dock-ppx: 0px; --dock-ppy: -130px;
+            --dock-tilt: 0deg; --dock-yaw: 0deg;
+            --dock-spec: 50%; --dock-spec-a: 0;
+            --dock-persp: 620px;
         }
         #hud-overlay {
             transform: translate3d(var(--holo-par-x), var(--holo-par-y), 0)
@@ -1063,10 +1073,9 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Enhanced transitions (Part 2) */
         .btn { transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease; }
-        .dock-btn { will-change: transform; }
-        .dock-btn:hover { transform: translateY(-2px); }
-        .dock-btn:active { animation: dockBounce 0.18s ease-out; }
-        .dock-btn.active { transform: translateY(-1px); }
+        /* Dock transforms live in the DOCK IN THREE DIMENSIONS block below,
+           which needs to win on source order; the flat translateY hover and
+           the dockBounce press moved there. */
         .fwin { animation: fwinOpen 0.18s ease-out; }
         .fwin.closing { animation: fwinOpen 0.18s ease-in reverse; }
         .card { transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
@@ -1218,6 +1227,187 @@ window.addEventListener('DOMContentLoaded',function(){
           width: 1px; margin: 8px 4px;
           background: linear-gradient(180deg, transparent, rgba(0,212,255,0.15) 30%,
             rgba(123,97,255,0.2) 50%, rgba(255,0,255,0.15) 70%, transparent);
+        }
+
+
+        /* ══ DOCK IN THREE DIMENSIONS ═════════════════════════════════════
+           The dock is a set of objects standing on a glass floor that recedes
+           into the same window the scene sits in. Four things carry that, and
+           each one is doing work the others cannot:
+
+             - THE FLOOR RECEDES. It is a tall plane laid down almost flat, so
+               its grid lines converge toward a vanishing point. Convergence is
+               the cue a gradient cannot fake, and it is what tells you the
+               surface has a far edge.
+             - THE PERSPECTIVE ORIGIN FOLLOWS THE HEAD. Moving your head does
+               not move the dock; it moves the vanishing point, so the floor
+               shears the way a real surface does and the dock stays locked to
+               the scene instead of sliding across it. This is the flat-layer
+               equivalent of the off-axis frustum the 3D scene uses.
+             - Z SEPARATION INSIDE A BUTTON, at a short perspective distance.
+               620px is close enough that ninety pixels of separation is a
+               visible change in size, not a rounding error.
+             - CONTACT SHADOW. A magnified button throws a shadow down onto the
+               floor. Nothing else makes an object look like it is standing on
+               a surface rather than painted over it.
+
+           Readability comes first. The buttons and their labels never rotate;
+           only the floor does. Everything keys off --dock-k, the dock_depth
+           setting, and at 0 every rule here evaluates to the flat geometry the
+           dock had before, so the control is an off switch rather than a
+           smaller version of the effect. */
+        .dock {
+            /* Leaning in shortens the perspective distance, which is what
+               moving your head closer to a window actually does: the same
+               scene, seen through a wider cone. The dock therefore sits at its
+               own depth in the window rather than being pasted onto it. */
+            perspective: var(--dock-persp);
+            /* The origin offsets are PIXELS, not percentages. A percentage here
+               is a fraction of the dock's own width, and the dock is as wide as
+               the screen, so a modest-looking 16% threw an icon forty pixels
+               out of its own button. Pixels keep the shear proportional to how
+               far a layer actually stands off the surface. */
+            perspective-origin: calc(50% + var(--dock-ppx)) calc(50% + var(--dock-ppy));
+        }
+        .dock > * { transform-style: preserve-3d; }
+        .dock-group, .dock-group-btns { transform-style: preserve-3d; }
+
+        /* THE FLOOR. Tall and laid down flat, so it is only as high on screen
+           as the dock but has real depth to give away. The near edge sits at
+           z=0, which is where the buttons stand. */
+        .dock::before {
+            content: ''; position: absolute; z-index: 0; pointer-events: none;
+            left: -4%; right: -4%; bottom: 0;
+            height: calc(162px * var(--dock-k));
+            transform-origin: 50% 100%;
+            transform: rotateX(var(--dock-tilt)) rotateY(var(--dock-yaw));
+            background:
+                /* the specular band, following pointer and head */
+                linear-gradient(100deg,
+                    rgba(255,255,255,0) calc(var(--dock-spec) - 24%),
+                    rgba(200,240,255,var(--dock-spec-a)) var(--dock-spec),
+                    rgba(255,255,255,0) calc(var(--dock-spec) + 24%)),
+                /* lines running away from the viewer: these converge */
+                repeating-linear-gradient(90deg,
+                    rgba(120,215,255,0.16) 0 1px, transparent 1px 64px),
+                /* lines running across: these bunch up toward the far edge */
+                repeating-linear-gradient(0deg,
+                    rgba(120,215,255,0.10) 0 1px, transparent 1px 52px),
+                /* the glass, brightest at the near edge */
+                linear-gradient(to top,
+                    rgba(0,150,210,0.20) 0%,
+                    rgba(10,40,80,0.16) 38%,
+                    rgba(0,0,0,0.04) 100%);
+            /* The far edge has to dissolve, or the floor ends in a hard line
+               that reads as a rectangle lying on the screen. */
+            -webkit-mask-image: linear-gradient(to top,
+                #000 0%, rgba(0,0,0,0.75) 30%, rgba(0,0,0,0.12) 66%, transparent 92%);
+            mask-image: linear-gradient(to top,
+                #000 0%, rgba(0,0,0,0.75) 30%, rgba(0,0,0,0.12) 66%, transparent 92%);
+            opacity: var(--dock-k);
+        }
+
+        /* THE FRONT LIP. The thickness of the floor's near edge, catching the
+           same light. An edge you can see the thickness of is the cheapest
+           honest depth cue there is. */
+        .dock::after {
+            content: ''; position: absolute; z-index: 1; pointer-events: none;
+            left: 0; right: 0; bottom: 0; height: 3px;
+            transform: translate3d(0, 0, calc(6px * var(--dock-k)));
+            background: linear-gradient(90deg,
+                rgba(0,212,255,0.06) 0%,
+                rgba(210,245,255,calc(0.12 + 0.62 * var(--dock-spec-a))) var(--dock-spec),
+                rgba(123,97,255,0.06) 100%);
+            box-shadow: 0 -6px 16px -6px rgba(0,190,255,calc(0.35 * var(--dock-k)));
+            opacity: var(--dock-k);
+        }
+
+        /* Buttons stand on the floor. --mag, --mag-y and --mag-z are written
+           per button by the render loop from the pointer's distance to it,
+           which is what makes approaching the dock feel like reaching for
+           something rather than hovering over a list. */
+        .dock-btn {
+            transform-style: preserve-3d;
+            transform: translate3d(0, var(--mag-y, 0px), var(--mag-z, 0px))
+                       scale(var(--mag, 1));
+            transition: color 0.25s ease, background 0.25s ease,
+                        border-color 0.25s ease, box-shadow 0.25s ease;
+            will-change: transform;
+        }
+        /* Hover pulls the button toward you rather than nudging it upward, so
+           the mouse and the hand cursor produce the same gesture. */
+        .dock-btn:hover {
+            transform: translate3d(0, var(--mag-y, 0px),
+                                   calc(var(--mag-z, 0px) + 26px * var(--dock-k)))
+                       scale(var(--mag, 1));
+        }
+        .dock-btn.active {
+            transform: translate3d(0, var(--mag-y, 0px),
+                                   calc(var(--mag-z, 0px) + 14px * var(--dock-k)))
+                       scale(var(--mag, 1));
+        }
+
+        /* CONTACT SHADOW, on the floor under the button. It grows with the
+           magnification because a thing lifted off a surface casts wider. */
+        .dock-btn::before {
+            content: ''; position: absolute; z-index: -1; pointer-events: none;
+            left: 14%; right: 14%; bottom: -6px;
+            height: calc(10px + 9px * var(--mag-lift, 0));
+            border-radius: 50%;
+            background: radial-gradient(ellipse at center,
+                rgba(0,0,0,calc(0.42 * var(--mag-lift, 0))) 0%, transparent 72%);
+            transform: translate3d(0, calc(4px + 9px * var(--mag-lift, 0)),
+                                   calc(-2px - var(--mag-z, 0px)))
+                       rotateX(var(--dock-tilt));
+            transform-origin: 50% 100%;
+            opacity: var(--dock-k);
+        }
+
+        /* Layers inside a button, nearest the viewer first. Ninety pixels of
+           spread at a 620px perspective is about a sixth of a size change
+           between the icon and the floor it stands on. */
+        .dock-btn .ico {
+            transform: translateZ(calc(30px * var(--dock-k)));
+        }
+        .dock-btn > span:not(.ico):not(.dot) {
+            transform: translateZ(calc(12px * var(--dock-k)));
+        }
+        .dock-btn .dot {
+            transform: translateZ(calc(4px * var(--dock-k)));
+        }
+
+        /* Press: the button goes INTO the floor and comes back. A press that
+           only scales reads as a picture changing size; a press that loses
+           depth reads as something being pushed. */
+        @keyframes dockPress3d {
+            0%   { transform: translate3d(0,var(--mag-y,0px),var(--mag-z,0px))
+                              scale(var(--mag,1)); }
+            42%  { transform: translate3d(0,calc(var(--mag-y,0px) + 3px),
+                                          calc(var(--mag-z,0px) - 34px * var(--dock-k)))
+                              scale(calc(var(--mag,1) * 0.92)); }
+            100% { transform: translate3d(0,var(--mag-y,0px),
+                                          calc(var(--mag-z,0px) + 26px * var(--dock-k)))
+                              scale(var(--mag,1)); }
+        }
+        .dock-btn:active { animation: dockPress3d 0.22s cubic-bezier(0.2,0.8,0.3,1); }
+
+        /* The group label is printed ON the floor rather than standing on it,
+           so it lies down with the surface. The angle is a fraction of the
+           floor's, because text laid fully flat cannot be read. */
+        .dock-group-label {
+            /* No translateZ: the vanishing point is ABOVE the dock, so moving
+               the label back would walk it up into the buttons. It lies down
+               on the floor in place. A fraction of the floor's angle, because
+               text laid fully flat cannot be read. */
+            transform: rotateX(calc(var(--dock-tilt) * 0.30));
+            transform-origin: 50% 0%;
+        }
+        .dock-sep { transform: translateZ(calc(-14px * var(--dock-k))); }
+
+        /* Motion sensitivity and low-power paths get the flat dock back. */
+        @media (prefers-reduced-motion: reduce) {
+            :root { --dock-k: 0; }
+            .dock-btn:active { animation: none; }
         }
 
         /* ═══ MOBILE RESPONSIVE — Android Chrome via Cloudflare tunnel ═══ */
@@ -2567,6 +2757,8 @@ window.addEventListener('DOMContentLoaded',function(){
             // normalized range here halves the scene's reaction to mouse movement.
             mouseX = (e.clientX / window.innerWidth - 0.5) * 1.0;
             mouseY = (e.clientY / window.innerHeight - 0.5) * 1.0;
+            // The dock needs real pixels, not the normalized parallax value.
+            mousePxX = e.clientX; mousePxY = e.clientY;
         });
 
         // ════════════════════════════════════════════════════════════════
@@ -2602,7 +2794,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 holo_cues: 0.6, hand_gain: 2.2, hand_accel: 0.6, hand_region: 0.45,
                 hand_deadzone: 0.006, hand_smoothing: 0.30, click_method: 'pinch',
                 pinch_enter: 0.050, pinch_exit: 0.075, dwell_ms: 700,
-                debug_overlay: false
+                dock_depth: 1.0, debug_overlay: false
             };
             const cfg = Object.assign({}, DEFAULTS);
 
@@ -2805,6 +2997,12 @@ window.addEventListener('DOMContentLoaded',function(){
                 Object.assign(cfg, next || {});
                 retune();
                 document.body.classList.toggle('tracking-debug', !!cfg.debug_overlay);
+                // Written here rather than in the render loop so the dock's
+                // depth is correct before the first frame, and stays correct
+                // if the scene never starts.
+                const k = dockDepthK();
+                document.documentElement.style.setProperty('--dock-k', k.toFixed(3));
+                if (!k) resetDockVars();
             }
             function reset() {
                 apply(Object.assign({}, DEFAULTS));
@@ -2820,6 +3018,169 @@ window.addEventListener('DOMContentLoaded',function(){
                 applyFrustum: applyFrustum, calibrate: calibrate, OneEuro: OneEuro
             };
         })();
+
+
+        // ════════════════════════════════════════════════════════════════
+        //  DOCK DEPTH — head-coupled perspective and pointer-led magnification
+        // ════════════════════════════════════════════════════════════════
+        //  Two things the CSS cannot do for itself:
+        //
+        //    - The VANISHING POINT has to follow the head. Moving the shelf
+        //      would slide it across the scene; moving the perspective origin
+        //      shears it in place, which is what a real shelf does.
+        //    - MAGNIFICATION needs each button's distance to the pointer, and
+        //      CSS has no way to ask. Rects are measured once and reused until
+        //      the layout actually changes, so the per-frame cost is a handful
+        //      of custom-property writes on ~a dozen elements.
+        //
+        //  The pointer is the hand cursor when the camera is driving it and
+        //  the mouse otherwise, so both inputs light the dock the same way.
+        let mousePxX = -1, mousePxY = -1;
+        const dockRects = { w: 0, h: 0, n: 0, btns: [], top: 1e9, left: 0, width: 1 };
+        const dockLast = new WeakMap();
+
+        // One place decides the dock's depth, so the setting and the OS
+        // reduced-motion preference cannot disagree. The preference wins:
+        // an inline custom property would otherwise beat the media query.
+        function dockDepthK() {
+            const raw = Number(window.FridayTracking.cfg.dock_depth);
+            const k = isFinite(raw) ? Math.max(0, Math.min(2, raw)) : 1;
+            try {
+                if (window.matchMedia
+                    && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 0;
+            } catch (e) { /* matchMedia missing: keep the setting */ }
+            return k;
+        }
+
+        // Math.min/max propagate NaN, so clamping is not guarding. A single
+        // NaN reaching `perspective` does not soften the effect, it deletes it.
+        function dnum(v, lo, hi, fallback) {
+            const n = Number(v);
+            if (!isFinite(n)) return fallback;
+            return n < lo ? lo : (n > hi ? hi : n);
+        }
+
+        function resetDockVars() {
+            const st = document.documentElement.style;
+            st.setProperty('--dock-ppx', '0px');
+            st.setProperty('--dock-ppy', '-130px');
+            st.setProperty('--dock-tilt', '0deg');
+            st.setProperty('--dock-yaw', '0deg');
+            st.setProperty('--dock-spec-a', '0');
+            st.setProperty('--dock-persp', '620px');
+            dockRects.btns.forEach(function (b) {
+                b.el.style.removeProperty('--mag');
+                b.el.style.removeProperty('--mag-y');
+                b.el.style.removeProperty('--mag-z');
+                b.el.style.removeProperty('--mag-lift');
+            });
+        }
+
+        function measureDock() {
+            const els = document.querySelectorAll('.dock-btn');
+            const dock = document.querySelector('.dock');
+            if (!dock) { dockRects.btns = []; return; }
+            const dr = dock.getBoundingClientRect();
+            dockRects.left = dr.left; dockRects.width = Math.max(1, dr.width);
+            dockRects.top = dr.top;
+            dockRects.btns = Array.prototype.map.call(els, function (el) {
+                const r = el.getBoundingClientRect();
+                return { el: el, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+            });
+            dockRects.w = window.innerWidth; dockRects.h = window.innerHeight;
+            dockRects.n = els.length;
+        }
+
+        function updateDock3D(faceX, faceY, faceZ) {
+            const TK = window.FridayTracking;
+            const k = dockDepthK();
+            if (!(k > 0)) return;                       // the off switch
+
+            // Re-measure only when the layout can have moved. A dock button
+            // count change is the one thing that reflows it during a session.
+            if (dockRects.w !== window.innerWidth || dockRects.h !== window.innerHeight
+                || dockRects.n !== document.querySelectorAll('.dock-btn').length) {
+                measureDock();
+            }
+            if (!dockRects.btns.length) return;
+
+            // Pointer: hand cursor when the camera drives it, else the mouse.
+            const handOn = TK.hand.seen && typeof isHandTrackingMode !== 'undefined'
+                && isHandTrackingMode;
+            const px = handOn ? TK.hand.x : mousePxX;
+            const py = handOn ? TK.hand.y : mousePxY;
+
+            const st = document.documentElement.style;
+
+            // HEAD -> vanishing point. Looking left slides the vanishing point
+            // right, so the shelf turns to face you.
+            const pStr = dnum(TK.cfg.parallax_strength, 0, 4, 1);
+            faceX = dnum(faceX, -2, 2, 0);
+            faceY = dnum(faceY, -2, 2, 0);
+            faceZ = dnum(faceZ, -2, 2, 0);
+            // Pixels, deliberately. See the perspective-origin rule: a
+            // percentage of a full-width dock shears the near layers far more
+            // than it shears the floor they stand on.
+            st.setProperty('--dock-ppx', (-faceX * 95 * pStr * k).toFixed(1) + 'px');
+            st.setProperty('--dock-ppy', (-130 + faceY * 60 * pStr * k).toFixed(1) + 'px');
+
+            // The floor lies almost flat. Looking DOWN at it (head low in
+            // frame) flattens it further; looking along it stands it up. The
+            // range is clamped because past about eighty degrees the floor
+            // collapses to a line and past fifty it stops reading as a floor.
+            const tilt = dnum(66 + faceY * 10 * pStr, 50, 80, 66) * Math.min(1, k);
+
+            // LEAN IN / OUT. Closer to the glass is a shorter perspective
+            // distance: depth separations grow and the floor opens up. This is
+            // the dock's share of the same head signal the scene's frustum
+            // uses, so the two cannot drift apart.
+            const dStr = dnum(TK.cfg.depth_strength, 0, 4, 1);
+            const persp = dnum(620 - faceZ * 170 * dStr * k, 400, 1000, 620);
+            st.setProperty('--dock-persp', persp.toFixed(0) + 'px');
+            st.setProperty('--dock-tilt', tilt.toFixed(2) + 'deg');
+            st.setProperty('--dock-yaw', (faceX * 1.6 * pStr * k).toFixed(2) + 'deg');
+
+            // LIGHT. The highlight sits where the pointer is, and drifts with
+            // head angle when there is no pointer over the dock, so the shelf
+            // is lit by something in the room rather than by a static gradient.
+            const havePtr = px >= 0;
+            const ptrPct = havePtr
+                ? ((px - dockRects.left) / dockRects.width) * 100
+                : 50 - faceX * 40;
+            st.setProperty('--dock-spec', Math.max(-10, Math.min(110, ptrPct)).toFixed(1) + '%');
+
+            // MAGNIFICATION. Engages as the pointer nears the dock vertically,
+            // so crossing the screen does not set the whole dock rippling.
+            const near = havePtr
+                ? Math.max(0, Math.min(1, 1 - (dockRects.top - py) / 180))
+                : 0;
+            const cue = Math.max(0, Math.min(1, TK.cfg.holo_cues));
+            st.setProperty('--dock-spec-a',
+                (cue * k * (0.06 + 0.26 * near)).toFixed(3));
+
+            const SPREAD = 105;   // px; roughly two buttons either side
+            for (let i = 0; i < dockRects.btns.length; i++) {
+                const b = dockRects.btns[i];
+                let prox = 0;
+                if (near > 0) {
+                    const d = Math.abs(px - b.cx) / SPREAD;
+                    prox = d < 1 ? (1 - d * d) * near : 0;
+                }
+                const mag = 1 + 0.30 * prox * k;
+                const magz = 46 * prox * k;
+                const magy = -18 * prox * k;    // lifts off the floor
+                // Writing an unchanged value still dirties style on some
+                // engines, so only write when it would actually differ.
+                const prev = dockLast.get(b.el);
+                if (!prev || Math.abs(prev.m - mag) > 0.002 || Math.abs(prev.z - magz) > 0.2) {
+                    b.el.style.setProperty('--mag', mag.toFixed(3));
+                    b.el.style.setProperty('--mag-z', magz.toFixed(1) + 'px');
+                    b.el.style.setProperty('--mag-y', magy.toFixed(1) + 'px');
+                    b.el.style.setProperty('--mag-lift', prox.toFixed(3));
+                    dockLast.set(b.el, { m: mag, z: magz });
+                }
+            }
+        }
 
         // Persisted tracking settings on boot; the Settings panel pushes live
         // updates through window.FridayTracking.apply().
@@ -4098,6 +4459,11 @@ window.addEventListener('DOMContentLoaded',function(){
             currFaceX = window.FridayTracking.head.x;
             currFaceY = window.FridayTracking.head.y;
             currFaceZ = window.FridayTracking.head.z;
+
+            // Outside the camera block on purpose: the dock is DOM, and it
+            // should keep its depth even on a frame where the scene does not
+            // render.
+            updateDock3D(currFaceX, currFaceY, currFaceZ);
 
             // --- TIME LAPSE LOGIC ---
             if (timeLapseActive) {
@@ -38181,6 +38547,14 @@ function TrackingPanel({
       margin: '4px 0 10px'
     }
   }, "HEAD / PARALLAX"), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. This is a One Euro filter, so low values are still calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: '#00d4ff',
+      letterSpacing: '.12em',
+      margin: '18px 0 10px'
+    }
+  }, "DOCK"), sl('dock_depth', 'Dock depth', 'How far the dock stands out of the screen \u2014 shelf tilt, how far icons rise off it, and how much buttons swell as the pointer nears. 0 gives back the flat dock.', 0, 2, 0.05), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: 'Orbitron',
       fontSize: 9,
