@@ -2360,22 +2360,6 @@ DEFAULT_SETTINGS = {
         "embedding":      {"provider": "local",         "model": "all-MiniLM-L6-v2"},
         "local":          {"provider": "ollama-local",  "model": _FLOOR_MODEL},
     },
-    # ── Kimi K3 CLI engine (experimental; services/kimi_k3.py) ──────────────
-    # Off, and unconfigured, on purpose. The engine has no server and no tool
-    # calling, and its checkpoint is 1.56 TB plus a 109 GB trunk -- so nothing
-    # may select it until someone deliberately points these paths at a built
-    # binary and a downloaded checkpoint. Declared here because
-    # `_load_settings_raw` whitelists top-level keys against DEFAULT_SETTINGS
-    # and silently drops anything absent on every read, so an undeclared block
-    # would vanish the moment it was written.
-    "kimi_k3": {
-        "enabled": False,
-        "binary": "",          # path to bin/k3 (MSYS2 MinGW-w64 build on Windows)
-        "model_dir": "",       # the 1.56 TB checkpoint
-        "trunk_dir": "",       # the 109 GB packed trunk
-        "tokenizer_dir": "",   # --tok; defaults to model_dir when empty
-        "preset": "laptop",    # laptop|desktop|workstation|server|max
-    },
     # ── Content pipeline (docs/design/implemented/content-pipeline-spec.md) ──
     "content": {
         "enabled": True,                 # master switch for the publish pipeline
