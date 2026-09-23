@@ -61,6 +61,33 @@ def mail_outbox():
     return jsonify({"status": "ok", "sent": _gs.outbox(limit=limit)})
 
 
+def _attachments_for(body):
+    """Uploaded files (by the refs /api/mail/attachment returned) plus, for a
+    forward, the original message's attachments, fetched read-only now so
+    the card and the fingerprint cover the exact bytes."""
+    out = [a for a in (body.get("attachments") or []) if isinstance(a, dict)]
+    for f in body.get("forward_attachments") or []:
+        from agent_friday.services import gmail_read
+        data = gmail_read.get_attachment(f.get("account_id") or "", f.get("message_id") or "",
+                                         f.get("attachment_id") or "")
+        out.append(_gs.store_attachment(data, f.get("filename") or "attachment", f.get("mime") or ""))
+    return out or None
+
+
+@gmail_send_bp.route("/api/mail/attachment", methods=["POST"])
+def mail_attachment_upload():
+    """Store a file to attach to a message that is about to be requested.
+    Sends nothing and asks nothing; the approval card comes later."""
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"status": "error", "message": "no file"}), 400
+    try:
+        meta = _gs.store_attachment(f.read(), f.filename or "attachment", f.mimetype or "")
+    except _gs.SendRefused as e:
+        return jsonify({"status": "refused", "message": str(e)}), 400
+    return jsonify({"status": "ok", **meta})
+
+
 @gmail_send_bp.route("/api/mail/request", methods=["POST"])
 def mail_request():
     """Queue a message for approval. NEVER sends, whatever the body says."""
@@ -73,6 +100,11 @@ def mail_request():
             cc=body.get("cc"), bcc=body.get("bcc"),
             account_id=(body.get("account_id") or "").strip() or None,
             requested_by=(body.get("requested_by") or "ui"),
+            html=body.get("html") or None,
+            thread_id=body.get("thread_id") or None,
+            in_reply_to=body.get("in_reply_to") or None,
+            references=body.get("references") or None,
+            attachments=_attachments_for(body),
         )
     except _gs.SendRefused as e:
         return jsonify({"status": "refused", "message": str(e)}), 400
