@@ -149,6 +149,30 @@
     };
   }
 
+  // Where each pile of the Stacks view stands. Up to STACK_ARC piles share
+  // one shallow arc that curves toward the viewer, so no pile sits alone on
+  // a second row; beyond that, a balanced grid: rows differ by at most one
+  // pile and every row is centred.
+  const STACK_ARC = 7, STACK_GAP = 5.4, STACK_ROW = 12;
+  function stackSlots(n) {
+    const out = [];
+    if (n <= STACK_ARC) {
+      const R = Math.max(24, (n - 1) * STACK_GAP / (Math.PI * 0.55));   // span <= ~100 degrees
+      for (let k = 0; k < n; k++) {
+        const a = (k - (n - 1) / 2) * STACK_GAP / R;
+        out.push({ x: R * Math.sin(a), y: 0, z: R * (1 - Math.cos(a)), yaw: -a, row: 0 });
+      }
+      return out;
+    }
+    const rows = Math.ceil(n / STACK_ARC), base = Math.floor(n / rows), extra = n % rows;
+    let k = 0;
+    for (let r = 0; r < rows; r++) {
+      const inRow = base + (r < extra ? 1 : 0);
+      for (let c = 0; c < inRow; c++, k++) out.push({ x: (c - (inRow - 1) / 2) * STACK_GAP, y: -r * STACK_ROW, z: 0, yaw: 0, row: r });
+    }
+    return out;
+  }
+
   // ── engine ──────────────────────────────────────────────────────────────
   function createEngine(mount, cb) {
     const THREE = window.THREE;
@@ -924,22 +948,23 @@
       const groups = new Map();
       act.forEach(i => { const k = items[i].cat; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
       const keys = Array.from(groups.keys()).sort((a, b) => groups.get(b).length - groups.get(a).length);
-      const perRow = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(keys.length * 1.6))));
+      const slots = stackSlots(keys.length);
       const order = [];
       keys.forEach((k, gi) => {
         const mem = groups.get(k).sort((a, b) => items[b].mtime - items[a].mtime);
-        const cx = (gi % perRow - (perRow - 1) / 2) * 5.2, top = -Math.floor(gi / perRow) * 12;
+        const sl = slots[gi], cy = Math.cos(sl.yaw), sy = Math.sin(sl.yaw);
         mem.forEach((i, j) => {
           const d = Math.min(j, 24);                         // the pile is shallow after 24
           const jit = (((items[i].mtime * 2654435761) >>> 0) % 1000) / 1000 - 0.5;
-          tmpQ.setFromEuler(tmpE.set(-0.18, 0, jit * 0.07));
-          put(i, cx + jit * 0.2, top - d * 0.34, -j * 0.06, tmpQ, 3.8, 2.4);
+          const ox = jit * 0.2, oz = -j * 0.06;              // offsets in the pile's own frame
+          tmpQ.setFromEuler(tmpE.set(-0.18, sl.yaw, jit * 0.07, 'YXZ'));
+          put(i, sl.x + ox * cy + oz * sy, sl.y - d * 0.34, sl.z - ox * sy + oz * cy, tmpQ, 3.8, 2.4);
           order.push(i);
         });
         const c = catInfo(k);
         let label = c.label || k;
         if (label.length > 26) label = label.slice(0, 25) + '…';
-        L.labels.push({ text: label + ' · ' + mem.length, pos: [cx, top + 1.9, 0], color: c.color || 0x9fd0ff, size: 0.62, maxW: 4.8 });
+        L.labels.push({ text: label + ' · ' + mem.length, pos: [sl.x, sl.y + 1.9, sl.z], color: c.color || 0x9fd0ff, size: 0.62, maxW: 4.8 });
       });
       L.order = order;
       L.cam = fitCam(L, act, 0, Math.PI / 2 - 0.15);
@@ -2205,7 +2230,7 @@
           h('div', { style: { fontWeight: 600, wordBreak: 'break-all' } }, hover.it.name),
           h('div', { style: { color: '#8fa6c4' } }, (hover.it.dir ? hover.it.kids.length + ' items · ' : '') + fmtSize(hover.it.size) + ' · ' + fmtDate(hover.it.mtime))),
         // status / help
-        h('div', { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 10, color: '#6f86a6', pointerEvents: 'none', lineHeight: 1.5 } },
+        h('div', { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 10, color: '#8fa3bf', pointerEvents: 'none', lineHeight: 1.5, background: 'rgba(3,6,13,0.72)', padding: '3px 7px', borderRadius: 5 } },
           items.length ? (stats ? stats.visible : items.length) + ' of ' + items.length + ' shown' + (scanInfo && scanInfo.truncated ? ' · large folder: first ' + items.length + ' loaded' : '') + (stats ? ' · ' + stats.tiles + ' thumbnails live · ' + stats.fps + ' fps' : '') : '',
           h('br'), 'drag orbit · right-drag pan · scroll zoom · 1–6 views · arrows move · Enter open · / search'),
         // preview panel
@@ -2250,6 +2275,6 @@
     api('/api/settings').then(r => r.json()).then(d => markDazzle(((d && (d.settings || d)) || {}).studio_dazzle)).catch(() => {});
     window.addEventListener('friday-dazzle', e => markDazzle(e && e.detail));
   }
-  window.__files3dInternals = { buildItems, catOf, createSlotPool };
+  window.__files3dInternals = { buildItems, catOf, createSlotPool, stackSlots };
   window.Friday3D = { createEngine, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
 })();
