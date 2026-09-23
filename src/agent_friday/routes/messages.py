@@ -331,9 +331,18 @@ def _apply_local(st, action, data):
 @messages_bp.route('/api/messages/action', methods=['POST'])
 def api_messages_action():
     """Archive / snooze / flag / mark read or unread, for one message
-    ({id}) or many ({ids}). These are Friday-local: Gmail itself is not
-    changed. Every call returns `before` (each message's previous local
-    state) so the UI can undo it exactly with /api/messages/restore."""
+    ({id}) or many ({ids}). Every call returns `before` (each message's
+    previous local state) so the UI can undo it exactly with
+    /api/messages/restore.
+
+    With `gmail: [{id, account_id, thread_id}]`, archive, read/unread and
+    flag (star) also change Gmail itself for accounts that granted
+    gmail.modify. Gmail goes first: a conversation Gmail refused is not
+    changed in Friday either, so the two never disagree. `gmail_changes`
+    (exactly what was added and removed per conversation) goes back to
+    /api/messages/restore to undo it in Gmail too. Snooze stays Friday's own:
+    Gmail's API has none. Accounts without the permission change in Friday
+    only, and `gmail_status` says so."""
     data = request.get_json(silent=True) or {}
     ids = [str(i).strip() for i in (data.get("ids") or []) if str(i).strip()]
     if not ids and str(data.get("id") or "").strip():
@@ -343,6 +352,8 @@ def api_messages_action():
         return jsonify({"status": "error", "message": "id(s) and action required"}), 400
     if action not in _LOCAL_ACTIONS:
         return jsonify({"status": "error", "message": f"unknown action {action}"}), 400
+    gmail_changes, gmail_status, not_changed = _sync_gmail(action, ids, data.get("gmail"))
+    ids = [i for i in ids if i not in not_changed]
     before = {}
     with _MESSAGE_LOCK:
         state = _load_message_state()
@@ -351,19 +362,72 @@ def api_messages_action():
             state[mid] = _apply_local(dict(state.get(mid, {})), action, data)
         _save_message_state(state)
     message_triage._collect_cache.clear()
-    out = {"status": "ok", "ids": list(before), "action": action, "before": before}
+    out = {"status": "ok", "ids": list(before), "action": action, "before": before,
+           "gmail_changes": gmail_changes, "gmail_status": gmail_status,
+           "not_changed": not_changed}
+    if not before and not_changed:
+        out["status"] = "error"
+        out["message"] = "Gmail did not make the change: " + next(iter(not_changed.values()))
     if len(before) == 1:
         mid = next(iter(before))
         out.update(id=mid, state=state[mid])
     return jsonify(out)
 
 
+def _sync_gmail(action, ids, items):
+    """Apply a Friday action to Gmail for the accounts that allow it.
+    -> (gmail_changes {account_id: {thread_id: {added, removed}}},
+        gmail_status {account_id: "synced" | "not_permitted" | "failed"},
+        not_changed {card_id: why})"""
+    from agent_friday.services import gmail_mailbox as gm
+    changes, status, not_changed = {}, {}, {}
+    if action not in gm.ACTIONS or not isinstance(items, list):
+        return changes, status, not_changed
+    wanted = set(ids)
+    by_acct = {}
+    for it in items:
+        if not isinstance(it, dict) or str(it.get("id")) not in wanted:
+            continue
+        aid, tid = str(it.get("account_id") or ""), str(it.get("thread_id") or "")
+        if aid and tid:
+            by_acct.setdefault(aid, []).append((str(it["id"]), tid))
+    for aid, pairs in by_acct.items():
+        if not gm.can_modify(aid):
+            status[aid] = "not_permitted"
+            continue
+        try:
+            res = gm.apply_action(aid, [t for _, t in pairs], action)
+        except Exception as e:
+            status[aid] = "failed"
+            for cid, _ in pairs:
+                not_changed[cid] = str(e)
+            continue
+        changes[aid] = res["changed"]
+        status[aid] = "failed" if res["failed"] and not res["changed"] else "synced"
+        for cid, tid in pairs:
+            if tid in res["failed"]:
+                not_changed[cid] = res["failed"][tid]
+    return changes, status, not_changed
+
+
 @messages_bp.route('/api/messages/restore', methods=['POST'])
 def api_messages_restore():
     """Undo: put each message's local state back to exactly what an action
-    reported as `before`. Body: {states: {id: {...}}}."""
-    states = (request.get_json(silent=True) or {}).get("states") or {}
+    reported as `before`, and in Gmail reverse exactly the `gmail_changes` it
+    reported. Body: {states: {id: {...}}, gmail_changes?: {...}}."""
+    body = request.get_json(silent=True) or {}
+    states = body.get("states") or {}
+    gfailed = {}
+    for aid, changed in (body.get("gmail_changes") or {}).items():
+        try:
+            from agent_friday.services import gmail_mailbox as gm
+            gfailed.update(gm.undo(aid, changed)["failed"])
+        except Exception as e:
+            gfailed[aid] = str(e)
     if not isinstance(states, dict) or not states:
+        if body.get("gmail_changes"):
+            message_triage._collect_cache.clear()
+            return jsonify({"status": "ok" if not gfailed else "partial", "restored": 0, "gmail_failed": gfailed})
         return jsonify({"status": "error", "message": "states required"}), 400
     allowed = {"archived", "snoozed_until", "flagged", "read", "unread", "lane_override", "sender"}
     with _MESSAGE_LOCK:
@@ -376,7 +440,8 @@ def api_messages_restore():
                 state.pop(str(mid), None)
         _save_message_state(state)
     message_triage._collect_cache.clear()
-    return jsonify({"status": "ok", "restored": len(states)})
+    return jsonify({"status": "ok" if not gfailed else "partial", "restored": len(states),
+                    "gmail_failed": gfailed})
 
 
 @messages_bp.route('/api/messages/draft', methods=['POST'])
