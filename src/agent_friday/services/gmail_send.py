@@ -115,7 +115,7 @@ def _addresses(raw) -> list:
 
 
 def message_fingerprint(to, subject: str, body: str,
-                        cc=None, bcc=None) -> str:
+                        cc=None, bcc=None, extras: dict | None = None) -> str:
     """What the owner approved, exactly.
 
     The approval card is a promise about a specific message. Hashing the
@@ -123,12 +123,76 @@ def message_fingerprint(to, subject: str, body: str,
     decision is refused instead of delivered — approving a draft is not
     approving whatever the drafter later felt like sending.
     """
-    payload = json.dumps({
+    doc = {
         "to": _addresses(to), "cc": _addresses(cc or []),
         "bcc": _addresses(bcc or []),
         "subject": str(subject or ""), "body": str(body or ""),
-    }, sort_keys=True, ensure_ascii=False)
+    }
+    # Formatting, threading and attachments are part of the message too.
+    # A plain message hashes exactly as it always has, so cards already in
+    # the queue stay valid.
+    if extras:
+        doc["x"] = extras
+    payload = json.dumps(doc, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ── Attachments ───────────────────────────────────────────────────────────
+# Files to send are stored once, by content hash, under Friday's home. The
+# approval card names them and the fingerprint covers their hashes, so the
+# bytes that go out are the bytes that were approved.
+
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024        # Gmail's limit is 25 MB per message
+
+
+def _att_dir():
+    from agent_friday.core import FRIDAY_DIR
+    d = FRIDAY_DIR / "mail_outbox" / "attachments"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def store_attachment(data: bytes, filename: str, mime: str) -> dict:
+    if not data:
+        raise SendRefused("that attachment is empty")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise SendRefused("that attachment is larger than %d MB" % (MAX_ATTACHMENT_BYTES // 1048576))
+    sha = hashlib.sha256(data).hexdigest()
+    safe = re.sub(r'[\\/:*?"<>|\r\n]', '_', filename or 'attachment')[:180] or 'attachment'
+    (_att_dir() / sha).write_bytes(data)
+    return {"sha256": sha, "filename": safe, "mime": mime or "application/octet-stream", "size": len(data)}
+
+
+def _load_attachment(meta: dict) -> bytes:
+    sha = str(meta.get("sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
+        raise SendRefused("an attachment reference is malformed. Nothing was sent.")
+    path = _att_dir() / sha
+    if not path.exists():
+        raise SendRefused("the attachment %s is no longer on this machine. Nothing was sent."
+                          % meta.get("filename"))
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != sha:
+        raise SendRefused("the attachment %s changed after you approved it. Nothing was sent."
+                          % meta.get("filename"))
+    return data
+
+
+def _extras(html=None, thread_id=None, in_reply_to=None, references=None, attachments=None) -> dict:
+    x = {}
+    if html:
+        x["html"] = str(html)
+    if thread_id:
+        x["thread_id"] = str(thread_id)
+    if in_reply_to:
+        x["in_reply_to"] = str(in_reply_to)
+    if references:
+        x["references"] = str(references)
+    if attachments:
+        x["attachments"] = [{"sha256": a["sha256"], "filename": a["filename"],
+                             "mime": a.get("mime") or "application/octet-stream",
+                             "size": int(a.get("size") or 0)} for a in attachments]
+    return x
 
 
 def _live_card(fingerprint: str) -> dict | None:
@@ -158,7 +222,9 @@ def _live_card(fingerprint: str) -> dict | None:
 
 def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  account_id: str | None = None,
-                 requested_by: str = "friday") -> dict:
+                 requested_by: str = "friday", html: str | None = None,
+                 thread_id: str | None = None, in_reply_to: str | None = None,
+                 references: str | None = None, attachments=None) -> dict:
     """Ask to send. Returns the approval card; sends nothing.
 
     This is the only way to start a send, and it never delivers.
@@ -206,13 +272,24 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                                       for a in sendable))
     account_id = account["id"]
 
-    fp = message_fingerprint(tos, subject, body, cc, bcc)
+    for a in attachments or []:
+        _load_attachment(a)                      # present and intact before anyone is asked
+    extras = _extras(html, thread_id, in_reply_to, references, attachments)
+    fp = message_fingerprint(tos, subject, body, cc, bcc, extras or None)
     live = _live_card(fp)
     if live is not None:
         return {"status": live.get("status"), "approval": live,
                 "approval_id": live.get("approval_id")}
 
     ccs = _addresses(cc or [])
+    notes = []
+    if extras.get("thread_id"):
+        notes.append("This is a reply in an existing conversation.")
+    if extras.get("html"):
+        notes.append("Formatted text (the plain version is shown below).")
+    for a in extras.get("attachments") or []:
+        notes.append("Attachment: %s (%s, %d KB)" % (a["filename"], a["mime"], max(1, a["size"] // 1024)))
+    note_text = ("\n" + "\n".join(notes)) if notes else ""
     appr = _ap.create_approval(
         kind=APPROVAL_KIND,
         subject_type=SUBJECT_TYPE,
@@ -220,10 +297,10 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         title="Send email to %s" % ", ".join(
             tos[:3] + (["…"] if len(tos) > 3 else [])),
         action_description=(
-            "Send mail as you.\n\nFrom: %s\nTo: %s\nCc: %s\nSubject: %s\n\n%s"
+            "Send mail as you.\n\nFrom: %s\nTo: %s\nCc: %s\nSubject: %s%s\n\n%s"
             % (account.get("email") or account_id, ", ".join(tos),
                ", ".join(ccs) or "—",
-               subject or "(no subject)", str(body or ""))),
+               subject or "(no subject)", note_text, str(body or ""))),
         description="This leaves your machine and arrives as a message from "
                     "you. It cannot be unsent.",
         # ALWAYS gate, whatever the policy table has been set to. The default
@@ -239,7 +316,8 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  "cc": ccs, "bcc": _addresses(bcc or []),
                  "subject": str(subject or ""), "body": str(body or ""),
                  "account_id": account_id,
-                 "from_email": account.get("email")},
+                 "from_email": account.get("email"),
+                 **({"extras": extras} if extras else {})},
         requested_by=requested_by,
     )
     _log.info("send requested to %d recipient(s); approval %s (%s)",
@@ -276,9 +354,10 @@ def send(approval_id: str) -> dict:
 
     payload = appr.get("payload") or {}
     expected = payload.get("fingerprint")
+    extras = payload.get("extras") or {}
     actual = message_fingerprint(payload.get("to"), payload.get("subject"),
                                  payload.get("body"), payload.get("cc"),
-                                 payload.get("bcc"))
+                                 payload.get("bcc"), extras or None)
     if not expected or expected != actual:
         raise SendRefused(
             "the message changed after you approved it. Nothing was sent — "
@@ -336,9 +415,22 @@ def send(approval_id: str) -> dict:
     if payload.get("bcc"):
         msg["Bcc"] = ", ".join(payload["bcc"])
     msg["Subject"] = payload.get("subject") or ""
+    if extras.get("in_reply_to"):
+        msg["In-Reply-To"] = extras["in_reply_to"]
+        msg["References"] = (extras.get("references") or "") + (" " if extras.get("references") else "") + extras["in_reply_to"]
     msg.set_content(payload.get("body") or "")
+    if extras.get("html"):
+        msg.add_alternative(extras["html"], subtype="html")
+    for a in extras.get("attachments") or []:
+        data = _load_attachment(a)
+        maintype, _, subtype = (a.get("mime") or "application/octet-stream").partition("/")
+        msg.add_attachment(data, maintype=maintype or "application",
+                           subtype=subtype or "octet-stream", filename=a.get("filename"))
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    send_body = {"raw": raw}
+    if extras.get("thread_id"):
+        send_body["threadId"] = extras["thread_id"]
 
     # BURN THE APPROVAL BEFORE THE NETWORK CALL, not after.
     #
@@ -361,7 +453,7 @@ def send(approval_id: str) -> dict:
     try:
         from googleapiclient.discovery import build
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
-        sent = svc.users().messages().send(userId="me", body={"raw": raw}).execute()
+        sent = svc.users().messages().send(userId="me", body=send_body).execute()
     except Exception as e:
         _log.warning("send failed: %s", e)
         _outbox_record(appr, ok=False, error=str(e)[:500])
