@@ -140,7 +140,7 @@ window.addEventListener('DOMContentLoaded',function(){
             --dock-ppx: 0px; --dock-ppy: -130px;
             --dock-tilt: 0deg; --dock-yaw: 0deg;
             --dock-spec: 50%; --dock-spec-a: 0;
-            --dock-persp: 620px;
+            --dock-persp: 480px;
         }
         #hud-overlay {
             transform: translate3d(var(--holo-par-x), var(--holo-par-y), 0)
@@ -1306,7 +1306,14 @@ window.addEventListener('DOMContentLoaded',function(){
             perspective-origin: calc(50% + var(--dock-ppx)) calc(50% + var(--dock-ppy));
         }
         .dock > * { transform-style: preserve-3d; }
-        .dock-group, .dock-group-btns { transform-style: preserve-3d; }
+        /* Each button carries its OWN perspective (the perspective() at the
+           head of its transform), so whatever rises off it grows around its
+           own centre. Sharing the dock's single vanishing point instead drags
+           every raised layer sideways in proportion to how far the button is
+           from the middle of a screen-wide dock: at real depth the icons at
+           the ends walked off their labels. The floor keeps the dock-wide
+           perspective; it is the one thing that should converge. */
+        .dock-group, .dock-group-btns { transform-style: flat; }
 
         /* THE FLOOR. Tall and laid down flat, so it is only as high on screen
            as the dock but has real depth to give away. The near edge sits at
@@ -1314,7 +1321,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .dock::before {
             content: ''; position: absolute; z-index: 0; pointer-events: none;
             left: -4%; right: -4%; bottom: 0;
-            height: calc(162px * var(--dock-k));
+            height: calc(250px * var(--dock-k));
             transform-origin: 50% 100%;
             transform: rotateX(var(--dock-tilt)) rotateY(var(--dock-yaw));
             background:
@@ -1325,10 +1332,10 @@ window.addEventListener('DOMContentLoaded',function(){
                     rgba(255,255,255,0) calc(var(--dock-spec) + 24%)),
                 /* lines running away from the viewer: these converge */
                 repeating-linear-gradient(90deg,
-                    rgba(120,215,255,0.16) 0 1px, transparent 1px 64px),
+                    rgba(120,215,255,0.22) 0 1px, transparent 1px 64px),
                 /* lines running across: these bunch up toward the far edge */
                 repeating-linear-gradient(0deg,
-                    rgba(120,215,255,0.10) 0 1px, transparent 1px 52px),
+                    rgba(120,215,255,0.14) 0 1px, transparent 1px 44px),
                 /* the glass, brightest at the near edge */
                 linear-gradient(to top,
                     rgba(0,150,210,0.20) 0%,
@@ -1348,13 +1355,18 @@ window.addEventListener('DOMContentLoaded',function(){
            honest depth cue there is. */
         .dock::after {
             content: ''; position: absolute; z-index: 1; pointer-events: none;
-            left: 0; right: 0; bottom: 0; height: 3px;
-            transform: translate3d(0, 0, calc(6px * var(--dock-k)));
-            background: linear-gradient(90deg,
-                rgba(0,212,255,0.06) 0%,
-                rgba(210,245,255,calc(0.12 + 0.62 * var(--dock-spec-a))) var(--dock-spec),
-                rgba(123,97,255,0.06) 100%);
-            box-shadow: 0 -6px 16px -6px rgba(0,190,255,calc(0.35 * var(--dock-k)));
+            left: 0; right: 0; bottom: 0; height: calc(3px + 5px * var(--dock-k));
+            transform: translate3d(0, 0, calc(16px * var(--dock-k)));
+            background:
+                /* the lit top edge of the slab */
+                linear-gradient(90deg,
+                    rgba(0,212,255,0.10) 0%,
+                    rgba(210,245,255,calc(0.20 + 0.66 * var(--dock-spec-a))) var(--dock-spec),
+                    rgba(123,97,255,0.10) 100%) top / 100% 2px no-repeat,
+                /* its face, darker as it turns under */
+                linear-gradient(to bottom, rgba(40,120,170,0.55), rgba(2,8,18,0.95));
+            box-shadow: 0 -8px 22px -6px rgba(0,190,255,calc(0.45 * var(--dock-k))),
+                        0 6px 14px rgba(0,0,0,calc(0.55 * var(--dock-k)));
             opacity: var(--dock-k);
         }
 
@@ -1364,7 +1376,10 @@ window.addEventListener('DOMContentLoaded',function(){
            something rather than hovering over a list. */
         .dock-btn {
             transform-style: preserve-3d;
-            transform: translate3d(0, var(--mag-y, 0px), var(--mag-z, 0px))
+            /* The head moves each button's own eye point a little, all the
+               same way, so the dock sways as one piece of glass. */
+            transform-origin: calc(50% + var(--dock-bpx, 0px)) calc(50% + var(--dock-bpy, 0px));
+            transform: perspective(var(--dock-persp)) translate3d(0, var(--mag-y, 0px), var(--mag-z, 0px))
                        scale(var(--mag, 1));
             transition: color 0.25s ease, background 0.25s ease,
                         border-color 0.25s ease, box-shadow 0.25s ease;
@@ -1373,14 +1388,25 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Hover pulls the button toward you rather than nudging it upward, so
            the mouse and the hand cursor produce the same gesture. */
         .dock-btn:hover {
-            transform: translate3d(0, var(--mag-y, 0px),
-                                   calc(var(--mag-z, 0px) + 26px * var(--dock-k)))
+            z-index: 6;
+            transform: perspective(var(--dock-persp)) translate3d(0, var(--mag-y, 0px),
+                                   calc(var(--mag-z, 0px) + 36px * var(--dock-k)))
                        scale(var(--mag, 1));
         }
         .dock-btn.active {
-            transform: translate3d(0, var(--mag-y, 0px),
-                                   calc(var(--mag-z, 0px) + 14px * var(--dock-k)))
+            transform: perspective(var(--dock-persp)) translate3d(0, var(--mag-y, 0px),
+                                   calc(var(--mag-z, 0px) + 20px * var(--dock-k)))
                        scale(var(--mag, 1));
+        }
+        /* The open workspace's button spills its light onto the floor, a
+           pool the button stands in rather than a glow painted around it. */
+        .dock-btn.active::after {
+            content: ''; position: absolute; z-index: -2; pointer-events: none;
+            left: -10%; right: -10%; bottom: -14px; height: 26px; border-radius: 50%;
+            background: radial-gradient(ellipse at center,
+                rgba(0,212,255,calc(0.30 * var(--dock-k))) 0%, rgba(123,97,255,calc(0.12 * var(--dock-k))) 45%, transparent 72%);
+            transform: translate3d(0, 8px, calc(-4px - var(--mag-z, 0px))) rotateX(var(--dock-tilt));
+            transform-origin: 50% 100%;
         }
 
         /* CONTACT SHADOW, on the floor under the button. It grows with the
@@ -1388,11 +1414,11 @@ window.addEventListener('DOMContentLoaded',function(){
         .dock-btn::before {
             content: ''; position: absolute; z-index: -1; pointer-events: none;
             left: 14%; right: 14%; bottom: -6px;
-            height: calc(10px + 9px * var(--mag-lift, 0));
+            height: calc(12px + 14px * var(--mag-lift, 0));
             border-radius: 50%;
             background: radial-gradient(ellipse at center,
-                rgba(0,0,0,calc(0.42 * var(--mag-lift, 0))) 0%, transparent 72%);
-            transform: translate3d(0, calc(4px + 9px * var(--mag-lift, 0)),
+                rgba(0,0,0,calc((0.22 + 0.40 * var(--mag-lift, 0)) * var(--dock-k))) 0%, transparent 72%);
+            transform: translate3d(0, calc(5px + 13px * var(--mag-lift, 0)),
                                    calc(-2px - var(--mag-z, 0px)))
                        rotateX(var(--dock-tilt));
             transform-origin: 50% 100%;
@@ -1403,26 +1429,28 @@ window.addEventListener('DOMContentLoaded',function(){
            spread at a 620px perspective is about a sixth of a size change
            between the icon and the floor it stands on. */
         .dock-btn .ico {
-            transform: translateZ(calc(30px * var(--dock-k)));
+            transform: translateZ(calc(58px * var(--dock-k)));
+            /* a lifted icon throws its own soft shadow onto the button face */
+            filter: drop-shadow(0 calc(6px * var(--dock-k)) calc(5px * var(--dock-k)) rgba(0,0,0,0.55));
         }
         .dock-btn > span:not(.ico):not(.dot) {
-            transform: translateZ(calc(12px * var(--dock-k)));
+            transform: translateZ(calc(24px * var(--dock-k)));
         }
         .dock-btn .dot {
-            transform: translateZ(calc(4px * var(--dock-k)));
+            transform: translateZ(calc(8px * var(--dock-k)));
         }
 
         /* Press: the button goes INTO the floor and comes back. A press that
            only scales reads as a picture changing size; a press that loses
            depth reads as something being pushed. */
         @keyframes dockPress3d {
-            0%   { transform: translate3d(0,var(--mag-y,0px),var(--mag-z,0px))
+            0%   { transform: perspective(var(--dock-persp)) translate3d(0,var(--mag-y,0px),var(--mag-z,0px))
                               scale(var(--mag,1)); }
-            42%  { transform: translate3d(0,calc(var(--mag-y,0px) + 3px),
-                                          calc(var(--mag-z,0px) - 34px * var(--dock-k)))
+            42%  { transform: perspective(var(--dock-persp)) translate3d(0,calc(var(--mag-y,0px) + 3px),
+                                          calc(var(--mag-z,0px) - 52px * var(--dock-k)))
                               scale(calc(var(--mag,1) * 0.92)); }
-            100% { transform: translate3d(0,var(--mag-y,0px),
-                                          calc(var(--mag-z,0px) + 26px * var(--dock-k)))
+            100% { transform: perspective(var(--dock-persp)) translate3d(0,var(--mag-y,0px),
+                                          calc(var(--mag-z,0px) + 36px * var(--dock-k)))
                               scale(var(--mag,1)); }
         }
         .dock-btn:active { animation: dockPress3d 0.22s cubic-bezier(0.2,0.8,0.3,1); }
@@ -1438,7 +1466,7 @@ window.addEventListener('DOMContentLoaded',function(){
             transform: rotateX(calc(var(--dock-tilt) * 0.30));
             transform-origin: 50% 0%;
         }
-        .dock-sep { transform: translateZ(calc(-14px * var(--dock-k))); }
+        .dock-sep { transform: translateZ(calc(-26px * var(--dock-k))); }
 
         /* Motion sensitivity and low-power paths get the flat dock back. */
         @media (prefers-reduced-motion: reduce) {
@@ -3109,7 +3137,9 @@ window.addEventListener('DOMContentLoaded',function(){
             st.setProperty('--dock-tilt', '0deg');
             st.setProperty('--dock-yaw', '0deg');
             st.setProperty('--dock-spec-a', '0');
-            st.setProperty('--dock-persp', '620px');
+            st.setProperty('--dock-persp', '480px');
+            st.setProperty('--dock-bpx', '0px');
+            st.setProperty('--dock-bpy', '0px');
             dockRects.btns.forEach(function (b) {
                 b.el.style.removeProperty('--mag');
                 b.el.style.removeProperty('--mag-y');
@@ -3163,24 +3193,26 @@ window.addEventListener('DOMContentLoaded',function(){
             // Pixels, deliberately. See the perspective-origin rule: a
             // percentage of a full-width dock shears the near layers far more
             // than it shears the floor they stand on.
-            st.setProperty('--dock-ppx', (-faceX * 95 * pStr * k).toFixed(1) + 'px');
-            st.setProperty('--dock-ppy', (-130 + faceY * 60 * pStr * k).toFixed(1) + 'px');
+            st.setProperty('--dock-ppx', (-faceX * 160 * pStr * k).toFixed(1) + 'px');
+            st.setProperty('--dock-ppy', (-130 + faceY * 95 * pStr * k).toFixed(1) + 'px');
+            st.setProperty('--dock-bpx', (-faceX * 60 * pStr * k).toFixed(1) + 'px');
+            st.setProperty('--dock-bpy', (faceY * 36 * pStr * k).toFixed(1) + 'px');
 
             // The floor lies almost flat. Looking DOWN at it (head low in
             // frame) flattens it further; looking along it stands it up. The
             // range is clamped because past about eighty degrees the floor
             // collapses to a line and past fifty it stops reading as a floor.
-            const tilt = dnum(66 + faceY * 10 * pStr, 50, 80, 66) * Math.min(1, k);
+            const tilt = dnum(68 + faceY * 12 * pStr, 50, 80, 68) * Math.min(1, k);
 
             // LEAN IN / OUT. Closer to the glass is a shorter perspective
             // distance: depth separations grow and the floor opens up. This is
             // the dock's share of the same head signal the scene's frustum
             // uses, so the two cannot drift apart.
             const dStr = dnum(TK.cfg.depth_strength, 0, 4, 1);
-            const persp = dnum(620 - faceZ * 170 * dStr * k, 400, 1000, 620);
+            const persp = dnum(480 - faceZ * 150 * dStr * k, 340, 900, 480);
             st.setProperty('--dock-persp', persp.toFixed(0) + 'px');
             st.setProperty('--dock-tilt', tilt.toFixed(2) + 'deg');
-            st.setProperty('--dock-yaw', (faceX * 1.6 * pStr * k).toFixed(2) + 'deg');
+            st.setProperty('--dock-yaw', (faceX * 3.2 * pStr * k).toFixed(2) + 'deg');
 
             // LIGHT. The highlight sits where the pointer is, and drifts with
             // head angle when there is no pointer over the dock, so the shelf
@@ -3200,7 +3232,7 @@ window.addEventListener('DOMContentLoaded',function(){
             st.setProperty('--dock-spec-a',
                 (cue * k * (0.06 + 0.26 * near)).toFixed(3));
 
-            const SPREAD = 105;   // px; roughly two buttons either side
+            const SPREAD = 125;   // px; roughly two buttons either side
             for (let i = 0; i < dockRects.btns.length; i++) {
                 const b = dockRects.btns[i];
                 let prox = 0;
@@ -3208,9 +3240,9 @@ window.addEventListener('DOMContentLoaded',function(){
                     const d = Math.abs(px - b.cx) / SPREAD;
                     prox = d < 1 ? (1 - d * d) * near : 0;
                 }
-                const mag = 1 + 0.30 * prox * k;
-                const magz = 46 * prox * k;
-                const magy = -18 * prox * k;    // lifts off the floor
+                const mag = 1 + 0.20 * prox * k;     // the z lift does the rest of the growing
+                const magz = 72 * prox * k;
+                const magy = -24 * prox * k;    // lifts off the floor
                 // Writing an unchanged value still dirties style on some
                 // engines, so only write when it would actually differ.
                 const prev = dockLast.get(b.el);
