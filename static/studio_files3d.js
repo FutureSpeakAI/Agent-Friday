@@ -724,19 +724,28 @@
           const a = ang(cell[k][0]);
           put(i, rad * Math.sin(a), ((R - 1) / 2 - cell[k][1]) * s, rad * (1 - Math.cos(a)), yawQ(-a), 1);
         });
+        // A narrow section's name can be wider than the section; when it would
+        // run into the previous name it steps up a line instead.
+        let prevEnd = -Infinity, lift = 0;
         starts.forEach(st => {
           const a = ang(st.cx), c = catInfo(st.cat);
           let text = (c.label || st.cat) + ' · ' + st.n;
           if (text.length > 24) text = text.slice(0, 23) + '…';
-          L.labels.push({ text, pos: [rad * Math.sin(a) + 0.4, (R - 1) / 2 * s + 1.15, rad * (1 - Math.cos(a))], color: c.color || 0x9fd0ff, size: 0.62, maxW: 5.5 });
+          const wCols = Math.min(5.5, text.length * 0.36) / s;          // label width, in columns
+          lift = st.cx < prevEnd ? (lift ? 0 : 0.85) : 0;
+          prevEnd = lift ? Math.max(prevEnd, st.cx + wCols) : st.cx + wCols;
+          L.labels.push({ text, pos: [rad * Math.sin(a) + 0.4, (R - 1) / 2 * s + 1.15 + lift, rad * (1 - Math.cos(a))], color: c.color || 0x9fd0ff, size: 0.62, maxW: 5.5 });
         });
         L.order = ord;
         // frame the height, and the width too when that is not much further
         // back: a wall of sections reads as a whole; a huge one stays legible
-        const rH = Math.max(8, (R * s / 2 + 1) / fovT * 1.05);
+        // headroom for the section names over the top row, which the curve
+        // brings nearer (and so higher on screen) at the ends
+        const head = starts.length ? 2.6 : 0;
+        const rH = Math.max(8, (R * s / 2 + 1 + head) / fovT * 1.05);
         const halfW = rad * Math.sin(Math.min(Math.PI / 2, ang(cols - 1))) + 1;
         const rW = halfW / (fovT * Math.max(0.5, camera.aspect)) * 1.05 + rad * (1 - Math.cos(Math.min(Math.PI / 2, ang(cols - 1))));
-        L.cam = { t: [0, 0, 0], theta: 0, phi: Math.PI / 2, r: Math.max(rH, Math.min(rW, rH * 1.9)) };
+        L.cam = { t: [0, head * 0.45, 0], theta: 0, phi: Math.PI / 2, r: Math.max(rH, Math.min(rW, rH * 1.9)) };
       } else if (v === 'ring') {
         const ord = act.slice().sort(byOrd);
         const per = Math.max(8, Math.min(48, m)), rr = Math.max(6, per * 2.3 / (2 * Math.PI)), pitch = 2.9;
