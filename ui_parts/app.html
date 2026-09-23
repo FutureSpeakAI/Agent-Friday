@@ -1018,6 +1018,7 @@ function OutreachPanel(){
 const KG_PALETTE=['#00d4ff','#ff00aa','#00ff80','#8a2be2','#ff6600','#5fa8ff','#ff8bcb','#4ecdc4','#feca57','#ff6b6b','#7de1ff','#b0ffc8'];
 const KG_LOD_THRESHOLD=2500; // above this, render community super-nodes first
 const KG_EDGE_OPACITY = 0.32; // additive: dense clusters wash out above this
+const KG_ASSET_DIR = '/static/galaxy/'; // generated art, see CREDITS.md
 const KG_ARRANGE_SECS = 1.7; // one node's flight between arrangements
 const KG_ARRANGE_STAGGER = 0.55; // launch spread across nodes, seconds
 const KG_ARRANGEMENTS = [{
@@ -1040,6 +1041,22 @@ const KG_ARRANGEMENTS = [{
   id: 'timeline',
   label: 'Timeline',
   tip: 'Oldest edit on the left, newest on the right'
+}, {
+  id: 'rings',
+  label: 'Rings',
+  tip: "Saturn: Friday's identity is the planet, each wiki section a ring, orbiting at Kepler speeds"
+}, {
+  id: 'sphere',
+  label: 'Sphere',
+  tip: 'Nested shells by importance; each cluster a coloured band'
+}, {
+  id: 'spiral',
+  label: 'Spiral',
+  tip: 'A spiral galaxy: one arm per cluster, most-connected pages at the core'
+}, {
+  id: 'star',
+  label: 'Star map',
+  tip: 'Planetarium: clusters become constellations and their links draw in'
 }];
 
 // Node shading. A flat full-brightness sphere has no edge: two same-colour
@@ -1101,6 +1118,7 @@ function KnowledgeGraphWS(){
   const [lodMode,setLodMode]=useState(false);
   const [arrangement,setArrangement]=useState('galaxy');
   const [hasDates,setHasDates]=useState(false);
+  const [touring,setTouring]=useState(false);
 
   useNavTarget('knowledge',(t)=>{
     if(t.query){setSearchQ(t.query);runSearch(t.query)}
@@ -1186,7 +1204,9 @@ function KnowledgeGraphWS(){
     let idleSpin=true,userTouched=false;
     let pulses=[];                     // [{idx,t0}]
     const raycaster=new THREE.Raycaster();
-    const pointer=new THREE.Vector2();
+    // Off-canvas until the pointer first moves: the hover test runs every
+    // frame while nodes orbit, and must not "hover" whatever sits at centre.
+    const pointer=new THREE.Vector2(9,9);
 
     const hexToColor=(h)=>new THREE.Color(h);
     const commColor=(ci)=>hexToColor(KG_PALETTE[ci%KG_PALETTE.length]);
@@ -1213,6 +1233,150 @@ function KnowledgeGraphWS(){
       const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;return t;
     })();
 
+    // ── generated art (static/galaxy; provenance in CREDITS.md) ──
+    // Every piece is optional: a texture that fails to load leaves its
+    // decoration hidden and the graph exactly as it was. None of these
+    // objects live in `content`, so a graph rebuild never disposes them.
+    const deco = S.deco = {};
+    const texLoader = new THREE.TextureLoader();
+    const loadTex = (file, onLoad) => texLoader.load(KG_ASSET_DIR + file, tex => {
+      if (disposed) {
+        tex.dispose();
+        return;
+      }
+      onLoad(tex);
+    }, undefined, () => {});
+    const additive = map => ({
+      map,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    // Big Bang flash (a star burst once its texture loads) and shockwave.
+    deco.flash = new THREE.Sprite(new THREE.SpriteMaterial(Object.assign(additive(softDisc), {
+      color: 0xdff6ff
+    })));
+    deco.flash.visible = false;
+    grp.add(deco.flash);
+    loadTex('star_glow.png', tex => {
+      deco.starTex = tex;
+      deco.flash.material.map = tex;
+      deco.flash.material.needsUpdate = true;
+    });
+    loadTex('shockwave.png', tex => {
+      deco.shock = new THREE.Sprite(new THREE.SpriteMaterial(Object.assign(additive(tex), {
+        color: 0xbfe8ff
+      })));
+      deco.shock.visible = false;
+      grp.add(deco.shock);
+    });
+    // Nebula backdrop on an inside-out sphere, far behind the starfield.
+    loadTex('nebula_backdrop.jpg', tex => {
+      const m = new THREE.MeshBasicMaterial({
+        map: tex,
+        side: THREE.BackSide,
+        fog: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0,
+        color: 0x9aa0b8
+      });
+      deco.backdrop = new THREE.Mesh(new THREE.SphereGeometry(2400, 48, 24), m);
+      deco.backdrop.renderOrder = -2;
+      scene.add(deco.backdrop);
+    });
+    // Rings: a gas giant (shaded toward its limb; the texture alone is very
+    // bright) and a dust plane textured with a radial ring profile.
+    loadTex('gas_giant.jpg', tex => {
+      const m = new THREE.ShaderMaterial({
+        uniforms: {
+          map: {
+            value: tex
+          },
+          uOpacity: {
+            value: 0
+          }
+        },
+        transparent: true,
+        vertexShader: `
+          varying vec2 vUv; varying float vNdv;
+          void main(){
+            vUv = uv;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vNdv = clamp(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)), 0.0, 1.0);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          uniform sampler2D map; uniform float uOpacity;
+          varying vec2 vUv; varying float vNdv;
+          void main(){
+            vec3 c = texture2D(map, vUv).rgb * (0.08 + 0.4 * pow(vNdv, 0.7));
+            gl_FragColor = vec4(c, uOpacity);
+          }`
+      });
+      deco.planet = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), m);
+      deco.planet.visible = false;
+      grp.add(deco.planet);
+    });
+    loadTex('ring_profile.png', tex => {
+      deco.ringTex = tex;
+    });
+    // Spiral: a soft face-on galaxy glow under the disc.
+    loadTex('spiral_haze.png', tex => {
+      deco.haze = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial(Object.assign(additive(tex), {
+        side: THREE.DoubleSide,
+        fog: false
+      })));
+      deco.haze.visible = false;
+      grp.add(deco.haze);
+    });
+    // The ring plane is rebuilt to each Rings layout's radii, with UVs that
+    // run radially so the profile's bands become concentric rings.
+    const setRingPlane = (inner, outer, tilt) => {
+      if (!deco.ringTex) return;
+      if (!deco.ring) {
+        deco.ring = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial(Object.assign(additive(deco.ringTex), {
+          side: THREE.DoubleSide,
+          fog: false
+        })));
+        deco.ring.visible = false;
+        grp.add(deco.ring);
+      }
+      const g = new THREE.RingGeometry(inner, outer, 160, 1),
+        P = g.attributes.position,
+        U = g.attributes.uv;
+      for (let i = 0; i < P.count; i++) U.setXY(i, (Math.hypot(P.getX(i), P.getY(i)) - inner) / (outer - inner), 0.5);
+      deco.ring.geometry.dispose();
+      deco.ring.geometry = g;
+      deco.ring.rotation.set(-Math.PI / 2 + tilt, 0, 0);
+    };
+    // Star map: a glow on every star, coloured by its community.
+    const ensureHalo = () => {
+      const n = S.entities.length;
+      if (!deco.starTex) return;
+      if (deco.halo && deco.halo.userData.n === n && deco.halo.userData.for === S.entities) return;
+      if (!deco.halo) {
+        deco.halo = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial(Object.assign(additive(deco.starTex), {
+          size: 30,
+          sizeAttenuation: true,
+          vertexColors: true,
+          fog: false
+        })));
+        deco.halo.visible = false;
+        deco.halo.frustumCulled = false;
+        grp.add(deco.halo);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(Float32Array.from(S.baseColor), 3));
+      deco.halo.geometry.dispose();
+      deco.halo.geometry = g;
+      deco.halo.userData = {
+        n,
+        for: S.entities
+      };
+    };
     const makeLabel=(text,color,scale)=>{
       const c=document.createElement('canvas');const px=64;
       const ctx=c.getContext('2d');ctx.font='700 '+px+'px Orbitron, sans-serif';
@@ -1295,7 +1459,8 @@ function KnowledgeGraphWS(){
       if(rels.length){
         const pos=new Float32Array(rels.length*6),col=new Float32Array(rels.length*6);
         let k=0;const pairs=[];
-        rels.forEach(r=>{
+        // strongest first: the star map draws links in in this order
+        rels.slice().sort((p,q)=>(q.weight||0.5)-(p.weight||0.5)).forEach(r=>{
           const a=S.entById[r.source],b=S.entById[r.target];
           if(!a||!b)return;
           pairs.push(a.__idx,b.__idx);
@@ -1313,7 +1478,8 @@ function KnowledgeGraphWS(){
         const lines=new THREE.LineSegments(eg,em);
         lines.frustumCulled=false;  // endpoints move during arrangements
         content.add(lines);S.edgeMat=em;S.edgePos=eg.attributes.position;S.edgePairs=pairs;
-      } else {S.edgeMat=null;S.edgePos=null;S.edgePairs=null}
+        S.edgeGeo=eg;S.edgeCol=eg.attributes.color;S.edgeColBase=col.slice();
+      } else {S.edgeMat=null;S.edgePos=null;S.edgePairs=null;S.edgeGeo=null;S.edgeCol=null}
 
       // — community nebulae + labels —
       S.nebulae=[];S.labels=[];
@@ -1360,7 +1526,8 @@ function KnowledgeGraphWS(){
         idleSpin=true;userTouched=false;
       }
       S.highlight=null;S.applyColors=applyColors;
-      flight=null;S.decor=null;S.layout='galaxy';setArrangement('galaxy');
+      flight=null;S.motion=null;S.drawIn=null;S.curScale=null;S.depth=null;stopTour();
+      S.decor=null;S.layout='galaxy';setArrangement('galaxy');
       setHasDates(entities.some(e=>e.updated));
       applyCam();
     };
@@ -1456,7 +1623,7 @@ function KnowledgeGraphWS(){
 
     // ── interaction ──────────────────────────────────────────
     let dragging=false,moved=0,px=0,py=0;
-    const onDown=(e)=>{dragging=true;moved=0;px=e.clientX;py=e.clientY;renderer.domElement.style.cursor='grabbing'};
+    const onDown=(e)=>{stopTour();dragging=true;moved=0;px=e.clientX;py=e.clientY;renderer.domElement.style.cursor='grabbing'};
     const onMove=(e)=>{
       const rect=renderer.domElement.getBoundingClientRect();
       pointer.x=((e.clientX-rect.left)/rect.width)*2-1;
@@ -1480,11 +1647,13 @@ function KnowledgeGraphWS(){
       }
       if(!S.mesh)return;
       const hits=raycaster.intersectObject(S.mesh);
+      // A selected node stops the orbits so the camera stays on it.
       if(hits.length){
         const ent=S.entities[hits[0].instanceId];
+        S.spinHold=true;
         setSelected(ent);
         flyTo(ent);
-      } else setSelected(null);
+      } else {S.spinHold=false;setSelected(null)}
     };
     const onDbl=()=>{
       raycaster.setFromCamera(pointer,camera);
@@ -1492,7 +1661,7 @@ function KnowledgeGraphWS(){
       const ent=hits.length?S.entities[hits[0].instanceId]:S.lastHoverEnt;
       if(ent)openWikiPage(ent);
     };
-    const onWheel=(e)=>{e.preventDefault();camGoal.r=Math.max(40,Math.min(1200,camGoal.r*(1+e.deltaY*0.0011)));idleSpin=false;userTouched=true};
+    const onWheel=(e)=>{e.preventDefault();stopTour();camGoal.r=Math.max(40,Math.min(1200,camGoal.r*(1+e.deltaY*0.0011)));idleSpin=false;userTouched=true};
     const flyTo=(ent)=>{
       camGoal.target.set(ent.x,ent.y,ent.z);
       camGoal.r=Math.max(60,cam.r*0.45);
@@ -1511,7 +1680,20 @@ function KnowledgeGraphWS(){
       const E = S.entities,
         n = E.length,
         to = new Float32Array(n * 3),
-        labels = [];
+        labels = [],
+        scale = new Float32Array(n).fill(1);
+      // Optional outputs: per-node orbit rates (spin) about the Y axis of an
+      // untilted frame (base), a camera override, a depth-fade override, the
+      // link opacity, and the star-map flag.
+      let spin = null,
+        base = null,
+        tilt = 0,
+        star = false,
+        cam = null,
+        depth = null,
+        edge = null,
+        frame = 1.9,
+        art = null;
       const put = (e, x, y, z) => {
         to[e.__idx * 3] = x;
         to[e.__idx * 3 + 1] = y;
@@ -1634,12 +1816,240 @@ function KnowledgeGraphWS(){
             pos: [-L + 2 * L * (m > 1 ? r / (m - 1) : 0.5), 46, 0]
           });
         }
+      } else if (mode === 'rings') {
+        // Saturn: Friday's identity (SOUL.md) is the planet and every wiki
+        // section is a ring around it, smallest innermost. Pages in a ring run
+        // most-connected first; big sections wrap into several lanes. Rings
+        // orbit at Kepler speeds (angular speed falls as r^-1.5, so inner
+        // rings overtake outer ones), in a plane tilted like Saturn's.
+        spin = new Float32Array(n);
+        base = new Float32Array(n * 3);
+        tilt = 0.4;
+        const ct = Math.cos(tilt),
+          st = Math.sin(tilt);
+        const place = (e, x, y, z) => {
+          const i3 = e.__idx * 3;
+          base[i3] = x;
+          base[i3 + 1] = y;
+          base[i3 + 2] = z;
+          put(e, x, y * ct - z * st, y * st + z * ct);
+        };
+        const groups = {};
+        let soul = null;
+        E.forEach(e => {
+          if (e.type === 'soul') {
+            soul = e;
+            return;
+          }
+          const k = e.section || 'core';
+          (groups[k] = groups[k] || []).push(e);
+        });
+        if (soul) {
+          place(soul, 0, 0, 0);
+          scale[soul.__idx] = 5;
+        }
+        const keys = Object.keys(groups).sort((a, b) => groups[a].length - groups[b].length || (a < b ? -1 : 1));
+        let r = 30;
+        keys.forEach((k, gi) => {
+          const mem = groups[k].slice().sort(byDegree),
+            m = mem.length;
+          const perLane = Math.max(6, Math.floor(2 * Math.PI * r / 6.5)),
+            lanes = Math.ceil(m / perLane),
+            perRow = Math.ceil(m / lanes);
+          mem.forEach((e, j) => {
+            const rr = r + j % lanes * 5.5,
+              th = Math.floor(j / lanes) / perRow * 2 * Math.PI + gi * 0.9;
+            place(e, rr * Math.cos(th), 0, rr * Math.sin(th));
+            spin[e.__idx] = 40 / Math.pow(rr, 1.5);
+          });
+          if (m >= 4) {
+            const a = gi * 0.9 + 0.35,
+              lr = r + (lanes - 1) * 2.75,
+              x = lr * Math.cos(a),
+              y = 6,
+              z = lr * Math.sin(a);
+            labels.push({
+              text: k.toUpperCase() + ' \xB7 ' + m,
+              color: KG_PALETTE[gi % KG_PALETTE.length],
+              pos: [x, y * ct - z * st, y * st + z * ct],
+              size: 0.07
+            });
+          }
+          r += lanes * 5.5 + 6;
+        });
+        edge = 0.07;
+        art = {
+          ring: [22, r + 4],
+          tilt
+        };
+      } else if (mode === 'sphere') {
+        // Nested shells by importance: the most-connected tenth of the pages
+        // is the core, the next 30% the inner shell, the rest the outer
+        // shell. On each shell a community owns a latitude band, so clusters
+        // read as coloured stripes. The shells counter-rotate.
+        spin = new Float32Array(n);
+        const order = E.slice().sort(byDegree);
+        // The shell labels stack above the whole sphere, clear of every node,
+        // outermost shell nearest to it.
+        [[0, 0.1, 38, 0.16, 1.5, 'CORE \xB7 MOST CONNECTED', 156], [0.1, 0.4, 82, -0.11, 1, 'INNER SHELL', 146.5], [0.4, 1, 128, 0.07, 0.6, 'OUTER SHELL', 137]].forEach(([a, b, R, w, sz, name, ly]) => {
+          const mem = order.slice(Math.floor(a * n), Math.floor(b * n)).sort((p, q) => p.__ci - q.__ci || byDegree(p, q));
+          const m = mem.length;
+          mem.forEach((e, j) => {
+            // y stops short of the pole: each shell keeps an empty cap under
+            // its label.
+            const y = 0.86 - 1.86 * (j + 0.5) / m,
+              sr = Math.sqrt(Math.max(0, 1 - y * y)),
+              th = j * GOLDEN;
+            put(e, R * sr * Math.cos(th), R * y, R * sr * Math.sin(th));
+            spin[e.__idx] = w;
+            scale[e.__idx] = sz;
+          });
+          if (m) labels.push({
+            text: name + ' \xB7 ' + m + ' pages',
+            color: '#dff6ff',
+            pos: [0, ly, 0],
+            size: 0.07,
+            onTop: true
+          });
+        });
+        frame = 2.6;
+      } else if (mode === 'spiral') {
+        // Spiral galaxy: every community of three or more pages is an arm,
+        // and along an arm pages run from most-connected (at the nucleus)
+        // outward. Friday's identity is the nucleus; one- and two-page
+        // communities form the halo. The disc turns slowly as one body, so
+        // the arms keep their shape.
+        spin = new Float32Array(n).fill(0.07);
+        const groups = {};
+        let soul = null;
+        E.forEach(e => {
+          if (e.type === 'soul') {
+            soul = e;
+            return;
+          }
+          (groups[e.__ci] = groups[e.__ci] || []).push(e);
+        });
+        if (soul) {
+          put(soul, 0, 0, 0);
+          scale[soul.__idx] = 2.4;
+        }
+        const keys = Object.keys(groups);
+        const arms = keys.filter(k => groups[k].length >= 3).sort((a, b) => groups[b].length - groups[a].length);
+        const halo = [].concat(...keys.filter(k => groups[k].length < 3).map(k => groups[k]));
+        const maxM = arms.length ? groups[arms[0]].length : 1;
+        let sd = 777;
+        const rnd = () => {
+          sd = sd * 1103515245 + 12345 & 0x7fffffff;
+          return sd / 0x7fffffff;
+        };
+        arms.forEach((k, ai) => {
+          const mem = groups[k].slice().sort(byDegree),
+            m = mem.length;
+          const th0 = ai / arms.length * 2 * Math.PI,
+            Rmax = 70 + 170 * Math.sqrt(m / maxM);
+          mem.forEach((e, j) => {
+            const r = 16 + Math.pow((j + 1) / m, 0.85) * Rmax;
+            const th = th0 + 1.9 * Math.log(r / 16) + (rnd() - 0.5) * 0.18;
+            const w = (rnd() - 0.5) * (2 + r * 0.05);
+            put(e, r * Math.cos(th) - w * Math.sin(th), (rnd() - 0.5) * Math.max(1.5, 9 - r * 0.03), r * Math.sin(th) + w * Math.cos(th));
+          });
+          if (ai < 8) labels.push({
+            text: (S.communities[k] && S.communities[k].title || 'cluster ' + k).toUpperCase(),
+            color: KG_PALETTE[k % KG_PALETTE.length],
+            pos: [0, 0, 0],
+            anchor: mem[m - 1].__idx,
+            off: [0, 9, 0],
+            size: 0.08
+          });
+        });
+        halo.forEach((e, j) => {
+          const y = 1 - 2 * (j + 0.5) / Math.max(1, halo.length),
+            sr = Math.sqrt(Math.max(0, 1 - y * y)),
+            th = j * GOLDEN,
+            r = 24 + rnd() * 10;
+          put(e, r * sr * Math.cos(th), r * y * 0.8, r * sr * Math.sin(th));
+        });
+        edge = 0.08;
+        frame = 1.45;
+        let ext = 0;
+        for (let i = 0; i < n; i++) ext = Math.max(ext, Math.hypot(to[i * 3], to[i * 3 + 2]));
+        art = {
+          haze: ext * 2.4
+        };
+      } else if (mode === 'star') {
+        // Planetarium: the camera sits inside a dome and each page is placed
+        // in the direction it lies from the centre of the linked galaxy, so
+        // every community becomes a constellation. Its links draw in,
+        // strongest first, but only between near neighbours on the sky (a
+        // chord across the dome would cut through the view).
+        star = true;
+        const R = 260;
+        let cx = 0,
+          cy = 0,
+          cz = 0;
+        E.forEach(e => {
+          cx += e.__gx;
+          cy += e.__gy;
+          cz += e.__gz;
+        });
+        cx /= n;
+        cy /= n;
+        cz /= n;
+        E.forEach(e => {
+          const x = e.__gx - cx,
+            y = e.__gy - cy,
+            z = e.__gz - cz,
+            h = Math.hypot(x, y, z) || 1;
+          put(e, R * x / h, R * y / h, R * z / h);
+        });
+        scale.fill(1.15);
+        const groups = {};
+        E.forEach(e => {
+          (groups[e.__ci] = groups[e.__ci] || []).push(e);
+        });
+        Object.keys(groups).filter(k => groups[k].length >= 3).forEach(k => {
+          let x = 0,
+            y = 0,
+            z = 0;
+          groups[k].forEach(e => {
+            x += to[e.__idx * 3];
+            y += to[e.__idx * 3 + 1];
+            z += to[e.__idx * 3 + 2];
+          });
+          const h = Math.hypot(x, y, z) || 1;
+          labels.push({
+            text: (S.communities[k] && S.communities[k].title || 'cluster ' + k).toUpperCase(),
+            color: KG_PALETTE[k % KG_PALETTE.length],
+            pos: [0.86 * R * x / h, 0.86 * R * y / h, 0.86 * R * z / h],
+            size: 0.13
+          });
+        });
+        // Settle outside the dome with every constellation in view; the tour
+        // then flies inside for the planetarium. The inside depth fade
+        // applies only while the camera is within 200 of the centre.
+        cam = {
+          r: R * 2.3,
+          phi: 1.2,
+          target: [0, 0, 0]
+        };
+        depth = [150, 520, 200];
+        edge = 0.6;
       } else {
         E.forEach(e => put(e, e.__gx, e.__gy, e.__gz));
       }
       return {
         to,
-        labels
+        labels,
+        scale,
+        spin,
+        base,
+        tilt,
+        star,
+        cam,
+        depth,
+        edge,
+        frame,
+        art
       };
     };
     const clearLayoutLabels = () => {
@@ -1650,58 +2060,261 @@ function KnowledgeGraphWS(){
       });
       S.layoutLabels = [];
     };
-    const arrange = mode => {
+    // Per-node drawing shared by flights and continuous motion.
+    const nodeDummy = new THREE.Object3D();
+    const writeNode = (i, e, mult) => {
+      nodeDummy.position.set(e.x, e.y, e.z);
+      nodeDummy.scale.setScalar(S.baseScale[i] * mult);
+      nodeDummy.updateMatrix();
+      S.mesh.setMatrixAt(i, nodeDummy.matrix);
+      if (S.outline) {
+        nodeDummy.scale.setScalar(S.baseScale[i] * mult * (S.emphIdx === i ? 1.42 : 1.12));
+        nodeDummy.updateMatrix();
+        S.outline.setMatrixAt(i, nodeDummy.matrix);
+      }
+    };
+    // Edges and anchored labels follow the nodes wherever they are.
+    const syncEdgesAndLabels = () => {
+      const E = S.entities;
+      if (S.edgePos && S.edgePairs) {
+        const P = S.edgePos.array,
+          pr = S.edgePairs;
+        for (let k = 0; k < pr.length; k += 2) {
+          const a = E[pr[k]],
+            b = E[pr[k + 1]],
+            o = k * 3;
+          P[o] = a.x;
+          P[o + 1] = a.y;
+          P[o + 2] = a.z;
+          P[o + 3] = b.x;
+          P[o + 4] = b.y;
+          P[o + 5] = b.z;
+        }
+        S.edgePos.needsUpdate = true;
+      }
+      (S.layoutLabels || []).forEach(spr => {
+        const a = spr.userData.anchor;
+        if (a === undefined) return;
+        const e = E[a],
+          o = spr.userData.off;
+        spr.position.set(e.x + o[0], e.y + o[1], e.z + o[2]);
+      });
+    };
+    // Star map shows only links between near neighbours on the sky, brighter
+    // than elsewhere; every other arrangement restores the base colours.
+    const setStarEdges = (on, to) => {
+      if (!S.edgeCol || !S.edgePairs) return;
+      const C = S.edgeCol.array,
+        B = S.edgeColBase,
+        pr = S.edgePairs,
+        near = Math.cos(0.8);
+      for (let k = 0; k < pr.length; k += 2) {
+        let f = 1;
+        if (on) {
+          const a = pr[k] * 3,
+            b = pr[k + 1] * 3;
+          const dot = (to[a] * to[b] + to[a + 1] * to[b + 1] + to[a + 2] * to[b + 2]) / (Math.hypot(to[a], to[a + 1], to[a + 2]) * Math.hypot(to[b], to[b + 1], to[b + 2]) || 1);
+          f = dot > near ? 2.2 : 0;
+        }
+        for (let j = 0; j < 6; j++) C[k * 3 + j] = B[k * 3 + j] * f;
+      }
+      S.edgeCol.needsUpdate = true;
+    };
+    // Presentation tour: each step arranges, holds while the camera sweeps,
+    // then moves on. Any click, drag or scroll in the graph stops it.
+    const KG_TOUR = [['galaxy', 10, true], ['spiral', 9], ['rings', 10], ['sphere', 9], ['star', 14, false, 40], ['cluster', 8], ['importance', 8], ['galaxy', 7]];
+    const stopTour = () => {
+      if (!S.tour) return;
+      clearTimeout(S.tour.timer);
+      clearTimeout(S.tour.zoom);
+      S.tour = null;
+      setTouring(false);
+    };
+    const startTour = () => {
+      stopTour();
+      S.tour = {
+        i: 0,
+        timer: null
+      };
+      setTouring(true);
+      const step = () => {
+        if (!S.tour) return;
+        const [mode, secs, bang, zoomR] = KG_TOUR[S.tour.i];
+        arrange(mode, {
+          bang: !!bang,
+          keepTour: true
+        });
+        if (zoomR) S.tour.zoom = setTimeout(() => {
+          if (S.tour && S.layout === mode) camGoal.r = zoomR;
+        }, 5000);
+        S.tour.i++;
+        S.tour.timer = setTimeout(S.tour.i < KG_TOUR.length ? step : stopTour, secs * 1000);
+      };
+      step();
+    };
+    S.startTour = startTour;
+    S.stopTour = stopTour;
+    const arrange = (mode, opts) => {
       if (!S.mesh || !S.entities || !S.entities.length) return;
+      opts = opts || {};
+      if (!opts.keepTour) stopTour();
       const E = S.entities,
         n = E.length;
       if (entranceT0 >= 0) {
         entranceT0 = -2;
         if (S.outline) S.outline.visible = true;
       }
-      const {
-        to,
-        labels
-      } = layoutTargets(mode);
-      const from = new Float32Array(n * 3),
-        lift = new Float32Array(n * 3),
-        delay = new Float32Array(n);
+      const L = layoutTargets(mode),
+        to = L.to;
+      if (!S.curScale || S.curScale.length !== n) S.curScale = new Float32Array(n).fill(1);
       let sd = 4242;
       const rnd = () => {
         sd = sd * 1103515245 + 12345 & 0x7fffffff;
         return sd / 0x7fffffff;
       };
-      for (let i = 0; i < n; i++) {
-        const e = E[i];
-        from[i * 3] = e.x;
-        from[i * 3 + 1] = e.y;
-        from[i * 3 + 2] = e.z;
-        // Arc control point: bulge outward from the axis and up/down, so
-        // nodes swoop past each other instead of sliding through the crowd.
-        const mx = (e.x + to[i * 3]) / 2,
-          mz = (e.z + to[i * 3 + 2]) / 2;
-        const d = Math.hypot(to[i * 3] - e.x, to[i * 3 + 1] - e.y, to[i * 3 + 2] - e.z);
-        const h = Math.hypot(mx, mz) || 1;
-        lift[i * 3] = mx / h * d * 0.35;
-        lift[i * 3 + 1] = (rnd() - 0.5) * d * 0.6;
-        lift[i * 3 + 2] = mz / h * d * 0.35;
-        delay[i] = rnd() * KG_ARRANGE_STAGGER;
-      }
-      flight = {
-        t0: clock.getElapsedTime(),
-        from,
-        to,
-        lift,
-        delay
+      const here = () => {
+        const f = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          f[i * 3] = E[i].x;
+          f[i * 3 + 1] = E[i].y;
+          f[i * 3 + 2] = E[i].z;
+        }
+        return f;
       };
+      // Arc control points. A move bulges outward from the axis and up or
+      // down, so nodes swoop past each other instead of sliding through the
+      // crowd; an explosion overshoots outward along each node's direction.
+      const arcLift = (from, dest, explode) => {
+        const lift = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          const i3 = i * 3;
+          const d = Math.hypot(dest[i3] - from[i3], dest[i3 + 1] - from[i3 + 1], dest[i3 + 2] - from[i3 + 2]);
+          if (explode) {
+            for (let a = 0; a < 3; a++) lift[i3 + a] = (dest[i3 + a] - from[i3 + a]) * 0.45 + (rnd() - 0.5) * d * 0.5;
+          } else {
+            const mx = (from[i3] + dest[i3]) / 2,
+              mz = (from[i3 + 2] + dest[i3 + 2]) / 2,
+              h = Math.hypot(mx, mz) || 1;
+            lift[i3] = mx / h * d * 0.35;
+            lift[i3 + 1] = (rnd() - 0.5) * d * 0.6;
+            lift[i3 + 2] = mz / h * d * 0.35;
+          }
+        }
+        return lift;
+      };
+      const settle = () => {
+        S.bangHold = false;
+        S.curScale = L.scale;
+        S.motion = L.spin ? {
+          rates: L.spin,
+          base: L.base || to,
+          tilt: L.tilt,
+          T: 0
+        } : null;
+        if (L.star && S.edgePairs) S.drawIn = {
+          t0: clock.getElapsedTime(),
+          total: S.edgePairs.length
+        };
+        applyColors();
+      };
+      S.motion = null;
+      S.drawIn = null;
+      S.bangHold = false;
+      if (opts.bang) {
+        // Big Bang: everything falls to the centre, flashes, and explodes into
+        // the arrangement. Pages arrive in the order they were last written,
+        // oldest first (by link count when the graph carries no dates).
+        const order = E.map((e, i) => i).sort((a, b) => (E[a].updated || 0) - (E[b].updated || 0) || byDegree(E[a], E[b]));
+        const rank = new Float32Array(n);
+        order.forEach((i, r) => {
+          rank[i] = r / Math.max(1, n - 1);
+        });
+        let bx = 0,
+          by = 0,
+          bz = 0;
+        for (let i = 0; i < n; i++) {
+          bx += to[i * 3] / n;
+          by += to[i * 3 + 1] / n;
+          bz += to[i * 3 + 2] / n;
+        }
+        const zero = new Float32Array(n * 3),
+          from = here(),
+          pre = new Float32Array(n),
+          shrink = new Float32Array(n).fill(0.35);
+        for (let i = 0; i < n; i++) {
+          pre[i] = rnd() * 0.25;
+          zero[i * 3] = bx;
+          zero[i * 3 + 1] = by;
+          zero[i * 3 + 2] = bz;
+        }
+        S.bangHold = true;
+        flight = {
+          t0: clock.getElapsedTime(),
+          from,
+          to: zero,
+          lift: arcLift(from, zero, false),
+          delay: pre,
+          dur: 0.9,
+          s0: S.curScale.slice(),
+          s1: shrink,
+          glow: 0.4,
+          onDone: () => {
+            S.flashT = clock.getElapsedTime();
+            S.flashAt = [bx, by, bz];
+            const del = new Float32Array(n);
+            for (let i = 0; i < n; i++) del[i] = rank[i] * 2.2;
+            flight = {
+              t0: clock.getElapsedTime(),
+              from: zero,
+              to,
+              lift: arcLift(zero, to, true),
+              delay: del,
+              dur: 1.5,
+              s0: shrink,
+              s1: L.scale,
+              glow: 1.2,
+              onDone: settle
+            };
+          }
+        };
+      } else {
+        const from = here(),
+          delay = new Float32Array(n);
+        for (let i = 0; i < n; i++) delay[i] = rnd() * KG_ARRANGE_STAGGER;
+        flight = {
+          t0: clock.getElapsedTime(),
+          from,
+          to,
+          lift: arcLift(from, to, false),
+          delay,
+          dur: KG_ARRANGE_SECS,
+          s0: S.curScale.slice(),
+          s1: L.scale,
+          glow: 0.9,
+          onDone: settle
+        };
+      }
+      if (S.edgeGeo) S.edgeGeo.setDrawRange(0, L.star ? 0 : Infinity);
+      setStarEdges(!!L.star, to);
       clearLayoutLabels();
-      labels.forEach(l => {
-        const spr = makeLabel(l.text, l.color, 0.1);
+      L.labels.forEach(l => {
+        const spr = makeLabel(l.text, l.color, l.size || 0.1);
         spr.position.set(l.pos[0], l.pos[1], l.pos[2]);
+        if (l.onTop) {
+          // drawn over the nodes, so nothing in front can hide it
+          spr.material.depthTest = false;
+          spr.renderOrder = 10;
+        }
+        if (l.anchor !== undefined) {
+          spr.userData.anchor = l.anchor;
+          spr.userData.off = l.off || [0, 8, 0];
+        }
         content.add(spr);
         S.layoutLabels.push(spr);
       });
       // Outside the galaxy, links are context rather than structure: thin
-      // them so hub edges do not pile into a haze.
+      // them so hub edges do not pile into a haze (the star map is the
+      // exception, since its links are the constellations).
       S.decor = mode === 'galaxy' ? {
         neb: 0.1,
         lbl: 0.8,
@@ -1711,10 +2324,21 @@ function KnowledgeGraphWS(){
         neb: 0,
         lbl: 0,
         lay: 0.85,
-        edge: 0.12
+        edge: L.edge != null ? L.edge : 0.12
       };
+      S.depth = L.depth;
+      S.decoTilt = L.art && L.art.ring ? L.art.tilt : 0;
+      if (L.art && L.art.ring) setRingPlane(L.art.ring[0], L.art.ring[1], L.art.tilt);
+      if (L.art && L.art.haze && S.deco.haze) S.deco.haze.scale.set(L.art.haze, L.art.haze, 1);
+      if (L.star) ensureHalo();
       S.layout = mode;
       setArrangement(mode);
+      if (L.cam) {
+        camGoal.target.set(L.cam.target[0], L.cam.target[1], L.cam.target[2]);
+        camGoal.r = L.cam.r;
+        camGoal.phi = L.cam.phi;
+        return;
+      }
       // Frame the arrangement: orbit its centre at a distance that fits its
       // bounding sphere in the 58-degree view.
       const lo = [1e9, 1e9, 1e9],
@@ -1729,18 +2353,32 @@ function KnowledgeGraphWS(){
       let R = 0;
       for (let i = 0; i < n; i++) R = Math.max(R, Math.hypot(to[i * 3] - cx, to[i * 3 + 1] - cy, to[i * 3 + 2] - cz));
       camGoal.target.set(cx, cy, cz);
-      camGoal.r = Math.max(120, Math.min(1100, R * 1.9));
+      camGoal.r = Math.max(120, Math.min(1100, R * L.frame));
       camGoal.theta += 0.6;
-      // Towers, spire and tunnel read side-on; the cluster ring from above.
+      // Towers, spire and tunnel read side-on; the cluster ring and the
+      // spiral's disc from above; Saturn from just above its ring plane.
       camGoal.phi = {
         cluster: 0.95,
         importance: 1.45,
         section: 1.32,
-        timeline: 1.4
+        timeline: 1.4,
+        rings: 1.2,
+        sphere: 1.2,
+        spiral: 0.75
       }[mode] || 1.05;
+      // Sphere: lift the view a little so the label stack above it fits.
+      if (mode === 'sphere') camGoal.target.y += 16;
+      if (mode === 'rings') {
+        // Face the ring plane (it tilts toward +z about the X axis) instead of
+        // catching it edge-on; take the nearest such angle so the camera does
+        // not spin all the way round.
+        const want = Math.PI / 2 - 0.3;
+        camGoal.theta = want + 2 * Math.PI * Math.round((camGoal.theta - want) / (2 * Math.PI));
+      }
     };
     S.arrange = arrange;
-    window.__kgArrange = mode => arrange(mode);
+    window.__kgArrange = (mode, opts) => arrange(mode, opts);
+    window.__kgTour = () => startTour();
     // Debug/test hook: project entity i to screen coords (used by smoke tests).
     window.__kgPick=(i)=>{
       const e=S.entities&&S.entities[i];if(!e)return null;
@@ -1843,79 +2481,165 @@ function KnowledgeGraphWS(){
       }
 
       // arrangement flight: quadratic arc from→(mid+lift)→to per node, each
-      // node launching after its own small delay; nodes brighten mid-flight.
+      // node launching after its own delay; nodes brighten mid-flight and ease
+      // between their old and new size. A flight's onDone may start another.
       if (flight && S.mesh) {
-        const ft = t - flight.t0,
+        const F = flight,
+          ft = t - F.t0,
           E = S.entities,
-          n = E.length;
-        const od = new THREE.Object3D(),
+          n = E.length,
           col = new THREE.Color();
         let done = true;
         for (let i = 0; i < n; i++) {
-          const p = Math.min(1, Math.max(0, (ft - flight.delay[i]) / KG_ARRANGE_SECS));
+          const p = Math.min(1, Math.max(0, (ft - F.delay[i]) / F.dur));
           if (p < 1) done = false;
           const q = easeIO(p),
             u = 1 - q,
             i3 = i * 3,
             e = E[i];
           const arc = a => {
-            const A = flight.from[i3 + a],
-              B = flight.to[i3 + a];
-            return u * u * A + 2 * u * q * ((A + B) / 2 + flight.lift[i3 + a]) + q * q * B;
+            const A = F.from[i3 + a],
+              B = F.to[i3 + a];
+            return u * u * A + 2 * u * q * ((A + B) / 2 + F.lift[i3 + a]) + q * q * B;
           };
           e.x = arc(0);
           e.y = arc(1);
           e.z = arc(2);
-          od.position.set(e.x, e.y, e.z);
-          od.scale.setScalar(S.baseScale[i]);
-          od.updateMatrix();
-          S.mesh.setMatrixAt(i, od.matrix);
-          if (S.outline) {
-            od.scale.setScalar(S.baseScale[i] * (S.emphIdx === i ? 1.42 : 1.12));
-            od.updateMatrix();
-            S.outline.setMatrixAt(i, od.matrix);
-          }
-          const glow = 1 + 0.9 * Math.sin(Math.PI * p);
+          writeNode(i, e, F.s0[i] + (F.s1[i] - F.s0[i]) * q);
+          const glow = 1 + F.glow * Math.sin(Math.PI * p);
           col.setRGB(S.baseColor[i3] * glow, S.baseColor[i3 + 1] * glow, S.baseColor[i3 + 2] * glow);
           S.mesh.setColorAt(i, col);
         }
         S.mesh.instanceMatrix.needsUpdate = true;
         if (S.mesh.instanceColor) S.mesh.instanceColor.needsUpdate = true;
         if (S.outline) S.outline.instanceMatrix.needsUpdate = true;
-        if (S.edgePos && S.edgePairs) {
-          const P = S.edgePos.array,
-            pr = S.edgePairs;
-          for (let k = 0; k < pr.length; k += 2) {
-            const a = E[pr[k]],
-              b = E[pr[k + 1]],
-              o = k * 3;
-            P[o] = a.x;
-            P[o + 1] = a.y;
-            P[o + 2] = a.z;
-            P[o + 3] = b.x;
-            P[o + 4] = b.y;
-            P[o + 5] = b.z;
-          }
-          S.edgePos.needsUpdate = true;
-        }
-        if (done) {
+        syncEdgesAndLabels();
+        if (done && flight === F) {
           flight = null;
-          applyColors();
+          if (F.onDone) F.onDone();
+        }
+      } else if (S.motion && S.mesh) {
+        // Continuous motion: each node turns about the arrangement's axis at
+        // its own rate (rings: Kepler; sphere: counter-rotating shells;
+        // spiral: one rigid disc), then the plane's tilt is applied. Held
+        // while a node is selected or under the pointer, so it can be read
+        // and clicked.
+        const M = S.motion,
+          E = S.entities,
+          n = E.length;
+        if (!S.spinHold && S.lastHoverIdx === undefined) M.T += dt;
+        // Re-test hover ~10 times a second, not every frame: a raycast over
+        // every instance each frame costs more than the orbit itself.
+        S.hoverTick = (S.hoverTick || 0) + 1;
+        if (S.hoverTick % 6 === 0 && Math.abs(pointer.x) <= 1 && Math.abs(pointer.y) <= 1) S.pointerDirty = true;
+        const ct = Math.cos(M.tilt),
+          st = Math.sin(M.tilt);
+        for (let i = 0; i < n; i++) {
+          const a = M.rates[i] * M.T,
+            c = Math.cos(a),
+            s = Math.sin(a),
+            i3 = i * 3,
+            e = E[i];
+          const x = M.base[i3] * c - M.base[i3 + 2] * s,
+            z = M.base[i3] * s + M.base[i3 + 2] * c,
+            y = M.base[i3 + 1];
+          e.x = x;
+          e.y = y * ct - z * st;
+          e.z = y * st + z * ct;
+          writeNode(i, e, S.curScale[i]);
+        }
+        S.mesh.instanceMatrix.needsUpdate = true;
+        if (S.outline) S.outline.instanceMatrix.needsUpdate = true;
+        syncEdgesAndLabels();
+      }
+      // Star map: the constellations' links draw in, strongest first.
+      if (S.drawIn && S.edgeGeo) {
+        const k = Math.min(1, (t - S.drawIn.t0) / 6);
+        S.edgeGeo.setDrawRange(0, Math.floor(S.drawIn.total * k / 2) * 2);
+        if (k >= 1) S.drawIn = null;
+      }
+      // Big Bang flash: a bloom spike, a star burst and a shockwave ring.
+      if (S.flashT != null) {
+        const age = t - S.flashT,
+          at = S.flashAt || [0, 0, 0],
+          F = S.deco.flash,
+          W = S.deco.shock;
+        if (bloomPass) bloomPass.strength = 0.55 + 2.6 * Math.exp(-age * 2.5);
+        F.position.set(at[0], at[1], at[2]);
+        F.visible = age < 1.4;
+        F.scale.setScalar(20 + age * 320);
+        F.material.opacity = Math.max(0, 1 - age / 1.4);
+        if (W && !(window.__kgDecoOff || {}).shock) {
+          W.position.set(at[0], at[1], at[2]);
+          W.visible = age < 1.8;
+          W.scale.setScalar(10 + age * 480);
+          W.material.opacity = 0.9 * Math.max(0, 1 - age / 1.8);
+        }
+        if (age > 2.5) {
+          if (bloomPass) bloomPass.strength = 0.55;
+          S.flashT = null;
         }
       }
+      // Generated art: fade each decoration toward its target for the current
+      // arrangement and keep the moving ones on their nodes.
+      // window.__kgDecoOff = {backdrop: true, ...} switches pieces off (for
+      // measuring what each one costs).
+      if (S.deco && S.entities) {
+        const D = S.deco,
+          off = window.__kgDecoOff || {},
+          kd = 1 - Math.pow(0.05, dt),
+          mode = S.bangHold ? '' : S.layout;
+        const fade = (obj, target, setOp) => {
+          if (!obj) return 0;
+          const m = obj.material,
+            cur = m.uniforms ? m.uniforms.uOpacity.value : m.opacity,
+            next = cur + (target - cur) * kd;
+          if (m.uniforms) m.uniforms.uOpacity.value = next;else m.opacity = next;
+          obj.visible = next > 0.01;
+          return next;
+        };
+        fade(D.backdrop, off.backdrop ? 0 : 1);
+        if (S.soulFor !== S.entities) {
+          S.soulFor = S.entities;
+          S.soulIdx = S.entities.findIndex(e => e.type === 'soul');
+        }
+        const soul = S.entities[S.soulIdx];
+        if (fade(D.planet, mode === 'rings' && soul && !off.planet ? 1 : 0) > 0.01 && soul) {
+          D.planet.position.set(soul.x, soul.y, soul.z);
+          D.planet.scale.setScalar(S.baseScale[S.soulIdx] * (S.curScale ? S.curScale[S.soulIdx] : 1) * 1.16);
+          D.planet.rotation.set(S.decoTilt || 0, D.planet.rotation.y + dt * 0.05, 0);
+        }
+        fade(D.ring, mode === 'rings' && !off.ring ? 0.13 : 0);
+        if (fade(D.haze, mode === 'spiral' && !off.haze ? 0.2 : 0) > 0.01) {
+          D.haze.rotation.set(-Math.PI / 2, 0, S.motion ? S.motion.rates[0] * S.motion.T : 0);
+        }
+        if (D.halo && fade(D.halo, mode === 'star' && !off.halo ? 0.9 : 0) > 0.01) {
+          const P = D.halo.geometry.attributes.position,
+            E = S.entities;
+          for (let i = 0; i < E.length; i++) P.setXYZ(i, E[i].x, E[i].y, E[i].z);
+          P.needsUpdate = true;
+        }
+      }
+      if (S.tour) camGoal.theta += dt * 0.09;
       // cross-fade the galaxy's nebulae/labels against the arrangement labels
       if (S.decor && entranceT0 < -1) {
-        const kd = 1 - Math.pow(0.03, dt);
+        const kd = 1 - Math.pow(0.03, dt),
+          D = S.bangHold ? {
+            neb: 0,
+            lbl: 0,
+            lay: 0,
+            edge: 0
+          } : S.decor;
         S.nebulae.forEach(m => {
-          if (m) m.opacity += (S.decor.neb - m.opacity) * kd;
+          if (m) m.opacity += (D.neb - m.opacity) * kd;
         });
         S.labels.forEach(m => {
-          if (m) m.opacity += (S.decor.lbl - m.opacity) * kd;
+          if (m) m.opacity += (D.lbl - m.opacity) * kd;
         });
         (S.layoutLabels || []).forEach(spr => {
-          spr.material.opacity += (S.decor.lay - spr.material.opacity) * kd;
+          spr.material.opacity += (D.lay - spr.material.opacity) * kd;
         });
-        if (S.edgeMat) S.edgeMat.opacity += (S.decor.edge - S.edgeMat.opacity) * kd;
+        if (S.edgeMat) S.edgeMat.opacity += (D.edge - S.edgeMat.opacity) * kd;
       }
 
       // hover raycast (only when pointer moved)
@@ -1945,7 +2669,7 @@ function KnowledgeGraphWS(){
       applyCam();
       // Depth cue follows the zoom: full brightness in front of the orbit
       // target, fading behind it.
-      if(S.nodeMat){S.nodeMat.uniforms.uNear.value=cam.r*0.85;S.nodeMat.uniforms.uFar.value=cam.r*1.9}
+      if(S.nodeMat){const dOv=S.depth&&cam.r<S.depth[2]?S.depth:null;S.nodeMat.uniforms.uNear.value=dOv?dOv[0]:cam.r*0.85;S.nodeMat.uniforms.uFar.value=dOv?dOv[1]:cam.r*1.9}
       if(composer&&bloomOn)composer.render();else renderer.render(scene,camera);
 
       // fps meter + graceful degradation
@@ -1995,18 +2719,29 @@ function KnowledgeGraphWS(){
 
   return(<div style={{display:'flex',flexDirection:'column',height:'100%',gap:6}}>
     {/* HUD bar */}
-    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+    <div style={{display:'flex',gap:8,rowGap:6,flexWrap:'wrap',alignItems:'center'}}>
       <input value={searchQ} onChange={e=>{setSearchQ(e.target.value);runSearch(e.target.value)}}
         placeholder="🔭 Light up a constellation..."
-        style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(170,120,255,0.25)',borderRadius:6,padding:'6px 10px',color:'#ddd',fontSize:12,fontFamily:'Inter',outline:'none'}}/>
+        style={{flex:1,minWidth:200,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(170,120,255,0.25)',borderRadius:6,padding:'6px 10px',color:'#ddd',fontSize:12,fontFamily:'Inter',outline:'none'}}/>
       {focusComm!=null&&<button className="btn" style={{fontSize:11,padding:'4px 9px'}}
         onClick={()=>{setFocusComm(null);const S=kgRef.current;S.focus=null;S.loadGraph(null,{instant:true})}}>← all constellations</button>}
-      {!lodMode&&stats&&<div style={{display:'flex',gap:2,border:'1px solid rgba(170,120,255,0.25)',borderRadius:6,padding:2}}>
+      {!lodMode&&stats&&<div style={{display:'flex',flexWrap:'wrap',gap:2,border:'1px solid rgba(170,120,255,0.25)',borderRadius:6,padding:2}}>
         {KG_ARRANGEMENTS.map(a=>{const off=a.id==='timeline'&&!hasDates;return(
           <button key={a.id} disabled={off} title={off?'Needs page dates — rebuild the graph (↻) to add them':a.tip}
             onClick={()=>{const S=kgRef.current;if(S.arrange){S.arrange(a.id);setArrangement(a.id)}}}
             style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:off?'default':'pointer',opacity:off?0.35:1,
               background:arrangement===a.id?'rgba(0,212,255,0.18)':'transparent',color:arrangement===a.id?'#bff3ff':'#8fa8c8'}}>{a.label}</button>)})}
+        <span style={{width:1,alignSelf:'stretch',background:'rgba(170,120,255,0.25)',margin:'0 3px'}}/>
+        <button title="Collapse everything to a point and explode into this arrangement; pages arrive in the order they were written"
+          onClick={()=>{const S=kgRef.current;if(S.arrange)S.arrange(S.layout||'galaxy',{bang:true})}}
+          style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:'transparent',color:'#ffd28a'}}>✦ Big Bang</button>
+        <button title={touring?'Stop the tour':'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen'}
+          onClick={()=>{const S=kgRef.current;if(touring)S.stopTour&&S.stopTour();else{
+            // For an audience the graph fills the screen; Esc returns.
+            const el=mountRef.current;
+            if(el&&el.requestFullscreen&&!document.fullscreenElement)el.requestFullscreen().catch(()=>{});
+            S.startTour&&S.startTour()}}}
+          style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:touring?'rgba(255,80,120,0.15)':'transparent',color:touring?'#ff9db0':'#9dffc8'}}>{touring?'■ Stop tour':'▶ Tour'}</button>
       </div>}
       <button className="btn" title="Rebuild the graph from the wiki" style={{fontSize:11,padding:'4px 9px'}} onClick={reindex}>↻</button>
       {stats&&<span style={{fontSize:11,color:'#8fa8c8',fontFamily:'JetBrains Mono',whiteSpace:'nowrap'}}>
