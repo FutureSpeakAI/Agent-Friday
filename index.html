@@ -2785,6 +2785,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/studio_files3d.js"></script>
     <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
     <script src="/static/friday3d_records.js"></script>
+    <!-- Messages: the Gmail-grade inbox (defines window.FridayMailPanel). -->
+    <script src="/static/friday_mail.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -47280,7 +47282,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     health: /*#__PURE__*/React.createElement(HealthWS, null),
     contacts: with3D('contacts', 'people', /*#__PURE__*/React.createElement(ContactsWS, null)),
     content: /*#__PURE__*/React.createElement(ContentWS, null),
-    messages: with3D('messages', 'messages', /*#__PURE__*/React.createElement(MessagesWS, null)),
+    // The Gmail-grade inbox (static/friday_mail.js); the older view stays as the fallback.
+    messages: with3D('messages', 'messages', window.FridayMailPanel ? /*#__PURE__*/React.createElement(window.FridayMailPanel, null) : /*#__PURE__*/React.createElement(MessagesWS, null)),
     calendar: with3D('calendar', 'calendar', /*#__PURE__*/React.createElement(CalendarWS, null)),
     marketplace: /*#__PURE__*/React.createElement(MarketplaceWS, null),
     workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
