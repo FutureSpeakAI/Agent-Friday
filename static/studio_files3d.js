@@ -12,6 +12,22 @@
  * here changes a file: delete / move / rename file an approval card and the
  * change happens only after the owner approves it.
  *
+ * Look (the "Dazzle" levels Off / Subtle / Full, setting studio_dazzle)
+ * follows Friday's holographic theme:
+ *   - cyan #00d4ff is the light: rims, selection, grid, focus;
+ *   - the cyan -> violet -> magenta shimmer appears only on interaction
+ *     and on events, never as wallpaper;
+ *   - amber means "waiting for you" (a change held for approval), red
+ *     means failure;
+ *   - deep ink and navy under the knowledge galaxy's own nebula art
+ *     (static/galaxy/), tinted by Friday's live mood colours;
+ *   - glow is soft (10-20 % halos, additive light), grain and scanlines
+ *     stay at the backdrop's own tiny amounts, and never on a file name;
+ *   - motion is fast-out / soft-settle; file actions last <= 600 ms and a
+ *     click or key skips them; prefers-reduced-motion stills everything.
+ * Every file action animates only what actually happened: a delete
+ * dissolves after the approved change reports success, never before.
+ *
  * Loaded by index.html as a plain script; defines window.Files3DPanel.
  */
 (function () {
@@ -47,6 +63,12 @@
   const TEXT_PREVIEW = new Set('txt md markdown rst log csv tsv json jsonl xml yaml yml toml ini cfg html htm css scss js jsx ts tsx mjs py rs go java kt c h cpp hpp cs rb php sh ps1 bat sql lua swift vue svelte srt vtt'.split(' '));
   const catOf = (ext, dir) => dir ? 'folder' : (EXT_CAT[ext] || 'other');
   const hex = c => '#' + c.toString(16).padStart(6, '0');
+  const BRAND = {
+    cyan: 0x00d4ff, violet: 0x7b61ff, magenta: 0xff0080, amber: 0xf59e0b,
+    danger: 0xef4444, ink: 0x000103, fog: 0x03050d, nebula: 0x9aa0b8
+  };
+  const DAZZLE = { off: 0, subtle: 0.55, full: 1 };
+  const FX_MS = { delete: 600, fail: 520, copy: 600, move: 600, share: 560, rename: 520, open: 560 };
 
   const fmtSize = b => {
     if (!b) return '0 B';
@@ -116,6 +138,8 @@
         return { slot: best, evicted: old };
       },
       touch(i, now) { if (slotOf[i] >= 0) seen[slotOf[i]] = now; },
+      release(i) { const s = slotOf[i]; if (s >= 0) { itemIn[s] = -1; slotOf[i] = -1; } return s; },
+      adopt(i, s, now) { if (s >= 0 && s < slots && itemIn[s] < 0 && slotOf[i] < 0) { itemIn[s] = i; slotOf[i] = s; seen[s] = now || 0; return true; } return false; },
       used() { let u = 0; for (let s = 0; s < slots; s++) if (itemIn[s] >= 0) u++; return u; }
     };
   }
@@ -125,11 +149,11 @@
     const THREE = window.THREE;
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-    renderer.setClearColor(0x03060d, 1);
+    renderer.setClearColor(BRAND.ink, 1);
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;outline:none;cursor:grab;touch-action:none';
     const scene = new THREE.Scene();
-    const FOG = new THREE.Color(0x03060d);
+    const FOG = new THREE.Color(BRAND.fog);
     const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 4000);
     scene.add(new THREE.HemisphereLight(0xa9c8ff, 0x0b0f18, 0.95));
     const sun = new THREE.DirectionalLight(0xffffff, 0.75);
@@ -149,6 +173,141 @@
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0x6f8fbf, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0.55, fog: false })));
     })();
+
+    // ── atmosphere: nebula, drifting dust, particles, selection glow, floor ──
+    const clock0 = performance.now();
+    const clock = () => (performance.now() - clock0) / 1000;
+    let dz = DAZZLE.full, reduced = false;
+    try {
+      const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+      reduced = mq.matches;
+      if (mq.addEventListener) mq.addEventListener('change', e => { reduced = e.matches; applyDazzle(); });
+    } catch (_) { /* no media queries: motion stays on */ }
+    const loader = new THREE.TextureLoader();
+    const TX = {};
+    ['nebula_backdrop.jpg', 'star_glow.png', 'shockwave.png', 'spiral_haze.png'].forEach(f => {
+      TX[f.split('.')[0]] = loader.load('/static/galaxy/' + f, () => { dirty = true; }, undefined, () => {});
+    });
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(1400, 48, 24),
+      new THREE.MeshBasicMaterial({ map: TX.nebula_backdrop, color: BRAND.nebula, side: THREE.BackSide, fog: false, depthWrite: false, transparent: true, opacity: 0 }));
+    sky.renderOrder = -2;
+    scene.add(sky);
+
+    const DUST = 900;
+    const dustGeo = new THREE.BufferGeometry();
+    (() => {
+      const pos = new Float32Array(DUST * 3), seed = new Float32Array(DUST);
+      let sd = 97;
+      const rnd = () => (sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      for (let i = 0; i < DUST; i++) { pos[i * 3] = rnd() * 2 - 1; pos[i * 3 + 1] = rnd() * 2 - 1; pos[i * 3 + 2] = rnd() * 2 - 1; seed[i] = rnd(); }
+      dustGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      dustGeo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+    })();
+    const px = renderer.getPixelRatio();
+    const dustMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 }, uTex: { value: TX.star_glow }, uCenter: { value: new THREE.Vector3() }, uRegion: { value: 60 },
+        uOpacity: { value: 0 }, uColA: { value: new THREE.Color(BRAND.cyan) }, uColB: { value: new THREE.Color(BRAND.violet) }, uPx: { value: px }
+      },
+      vertexShader: [
+        'attribute float aSeed; uniform float uTime, uRegion, uPx; uniform vec3 uCenter; varying float vSeed; varying float vFade;',
+        'void main(){ vSeed = aSeed;',
+        '  vec3 drift = vec3(sin(uTime*0.07+aSeed*40.0), 0.6*sin(uTime*0.05+aSeed*23.0), cos(uTime*0.06+aSeed*31.0))*0.08;',
+        '  vec4 mv = modelViewMatrix*vec4(uCenter + (position + drift)*uRegion, 1.0);',
+        '  vFade = smoothstep(uRegion*0.05, uRegion*0.3, -mv.z) * (1.0 - smoothstep(uRegion*0.9, uRegion*1.6, -mv.z));',
+        '  gl_PointSize = uPx*(1.0 + aSeed*2.5)*clamp(60.0/max(1.0,-mv.z), 0.6, 6.0);',
+        '  gl_Position = projectionMatrix*mv; }'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform sampler2D uTex; uniform float uOpacity, uTime; uniform vec3 uColA, uColB; varying float vSeed; varying float vFade;',
+        'void main(){ float a = texture2D(uTex, gl_PointCoord).r; float tw = 0.55 + 0.45*sin(uTime*(0.7+vSeed)+vSeed*50.0);',
+        '  gl_FragColor = vec4(mix(uColA, uColB, vSeed), a*tw*vFade*uOpacity); }'
+      ].join('\n'),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const dust = new THREE.Points(dustGeo, dustMat);
+    dust.frustumCulled = false;
+    scene.add(dust);
+
+    // One ring buffer of short-lived light particles: flight trails,
+    // materialize sparks, the delete vortex, copy ghosts' wakes.
+    const PN = 6000;
+    const pGeo = new THREE.BufferGeometry();
+    const pPos = new Float32Array(PN * 3), pVel = new Float32Array(PN * 3), pBirth = new Float32Array(PN).fill(-99),
+      pLife = new Float32Array(PN).fill(1), pCol = new Float32Array(PN * 3), pSize = new Float32Array(PN);
+    [['position', pPos, 3], ['aVel', pVel, 3], ['aBirth', pBirth, 1], ['aLife', pLife, 1], ['aCol', pCol, 3], ['aSize', pSize, 1]]
+      .forEach(([k, a, w]) => pGeo.setAttribute(k, new THREE.BufferAttribute(a, w).setUsage(THREE.DynamicDrawUsage)));
+    const partMat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uTex: { value: TX.star_glow }, uPx: { value: px } },
+      vertexShader: [
+        'attribute vec3 aVel, aCol; attribute float aBirth, aLife, aSize; uniform float uTime, uPx; varying vec3 vCol; varying float vA;',
+        'void main(){ float age = uTime - aBirth; float k = age / aLife;',
+        '  if (k < 0.0 || k > 1.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vA = 0.0; vCol = aCol; return; }',
+        '  vec4 mv = modelViewMatrix*vec4(position + aVel*age, 1.0); vCol = aCol;',
+        '  vA = (1.0-k)*(1.0-k)*smoothstep(0.0, 0.15, k + 0.04);',
+        '  gl_PointSize = uPx*aSize*clamp(90.0/max(1.0,-mv.z), 1.0, 40.0); gl_Position = projectionMatrix*mv; }'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform sampler2D uTex; varying vec3 vCol; varying float vA;',
+        'void main(){ float a = texture2D(uTex, gl_PointCoord).r; gl_FragColor = vec4(vCol, a*vA); }'
+      ].join('\n'),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const parts = new THREE.Points(pGeo, partMat);
+    parts.frustumCulled = false;
+    scene.add(parts);
+    let pk = 0, pDirty = false;
+    const pc = new THREE.Color();
+    function spawn(x, y, z, vx, vy, vz, life, color, size) {
+      if (dz <= 0 || reduced) return;
+      const i = pk; pk = (pk + 1) % PN;
+      pPos[i * 3] = x; pPos[i * 3 + 1] = y; pPos[i * 3 + 2] = z;
+      pVel[i * 3] = vx; pVel[i * 3 + 1] = vy; pVel[i * 3 + 2] = vz;
+      pBirth[i] = clock(); pLife[i] = life; pSize[i] = size;
+      pc.set(color); pCol[i * 3] = pc.r; pCol[i * 3 + 1] = pc.g; pCol[i * 3 + 2] = pc.b;
+      pDirty = true;
+    }
+    function flushParticles() {
+      if (!pDirty) return;
+      pDirty = false;
+      for (const k of ['position', 'aVel', 'aBirth', 'aLife', 'aCol', 'aSize']) pGeo.attributes[k].needsUpdate = true;
+    }
+
+    const glowTex = (() => {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const x = c.getContext('2d'), g = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+      g.addColorStop(0, 'rgba(255,255,255,0.9)'); g.addColorStop(0.35, 'rgba(255,255,255,0.25)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+      return new THREE.CanvasTexture(c);
+    })();
+    const additive = (map, color) => new THREE.SpriteMaterial({ map, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    const selGlow = new THREE.Sprite(additive(glowTex, BRAND.cyan));
+    selGlow.visible = false;
+    scene.add(selGlow);
+
+    const floorMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 }, uOpacity: { value: 0 }, uCenter: { value: new THREE.Vector3() }, uSpan: { value: 50 }, uCell: { value: 2 },
+        uColA: { value: new THREE.Color(BRAND.cyan) }, uColB: { value: new THREE.Color(BRAND.violet) }
+      },
+      vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }',
+      fragmentShader: [
+        'uniform float uTime, uOpacity, uSpan, uCell; uniform vec3 uCenter, uColA, uColB; varying vec3 vW;',
+        'void main(){ vec2 q = (vW.xz - uCenter.xz)/uCell; vec2 g = abs(fract(q - 0.5) - 0.5)/fwidth(q);',
+        '  float line = 1.0 - min(min(g.x, g.y), 1.0);',
+        '  float d = length(vW.xz - uCenter.xz)/uSpan; float fade = 1.0 - smoothstep(0.2, 1.0, d);',
+        '  float pulse = 1.0 - smoothstep(0.0, 0.025, abs(d - fract(uTime*0.05)));',
+        '  vec3 col = mix(uColA, uColB, clamp(d*1.3, 0.0, 1.0));',
+        '  float a = (line*0.28 + 0.035 + pulse*0.1)*fade*uOpacity;',
+        '  gl_FragColor = vec4(col*(0.55 + line*0.7 + pulse*0.5), a); }'
+      ].join('\n'),
+      transparent: true, depthWrite: false, side: THREE.DoubleSide, extensions: { derivatives: true }
+    });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.visible = false;
+    scene.add(floor);
+    const fxSprites = [];   // ripples and vortices alive right now
 
     // ── thumbnail atlases ──
     const TILE = 128, ATLAS = 2048, PER = ATLAS / TILE, SLOTS_PER = PER * PER;
@@ -172,48 +331,92 @@
       return real[a];
     };
 
-    const cardMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uAtlas: { value: atlases }, uTileUV: { value: TILE / ATLAS }, uPad: { value: 1.5 / TILE },
-        uFog: { value: FOG }, uFogDensity: { value: 0.0055 }
-      },
-      vertexShader: [
-        'attribute vec3 aTile; attribute vec3 aColor; attribute vec2 aState;',
-        'varying vec2 vUv; varying vec3 vTile; varying vec3 vColor; varying vec2 vState; varying float vDepth;',
-        'void main(){ vUv=uv; vTile=aTile; vColor=aColor; vState=aState;',
-        '  vec4 mv = modelViewMatrix * instanceMatrix * vec4(position,1.0);',
-        '  vDepth = -mv.z; gl_Position = projectionMatrix * mv; }'
-      ].join('\n'),
-      fragmentShader: [
-        'uniform sampler2D uAtlas[8]; uniform float uTileUV; uniform float uPad; uniform vec3 uFog; uniform float uFogDensity;',
-        'varying vec2 vUv; varying vec3 vTile; varying vec3 vColor; varying vec2 vState; varying float vDepth;',
-        'vec4 atl(float i, vec2 uv){',
-        '  if(i<0.5) return texture2D(uAtlas[0],uv); if(i<1.5) return texture2D(uAtlas[1],uv);',
-        '  if(i<2.5) return texture2D(uAtlas[2],uv); if(i<3.5) return texture2D(uAtlas[3],uv);',
-        '  if(i<4.5) return texture2D(uAtlas[4],uv); if(i<5.5) return texture2D(uAtlas[5],uv);',
-        '  if(i<6.5) return texture2D(uAtlas[6],uv); return texture2D(uAtlas[7],uv); }',
-        'void main(){',
-        '  vec2 uv=vUv; float edge=min(min(uv.x,1.0-uv.x),min(uv.y,1.0-uv.y));',
-        '  vec3 col;',
-        '  if(vTile.x < -0.5){',
-        '    col = mix(vColor*0.16, vColor*0.42, uv.y);',
-        '    col = mix(col, vColor*0.75, (1.0-step(0.2,uv.y))*0.55);',
-        '  } else {',
-        '    vec2 t = vec2(uv.x, 1.0-uv.y)*(1.0-2.0*uPad)+uPad;',
-        '    col = atl(vTile.x, vTile.yz + t*uTileUV).rgb;',
-        '  }',
-        '  if(!gl_FrontFacing) col = vColor*0.14;',
-        '  float st = vState.x;',
-        '  float bw = st > 1.5 ? 0.06 : 0.035;',
-        '  float border = 1.0 - smoothstep(0.0, bw, edge);',
-        '  vec3 rim = st > 1.5 ? vec3(0.55,0.95,1.0) : vColor*(1.0+st*0.7);',
-        '  col = mix(col, rim, border*(0.5+0.5*min(st,1.0)));',
-        '  col *= mix(1.0, 0.22, vState.y);',
-        '  if(st > 0.5) col += vec3(0.05,0.07,0.1);',
-        '  float f = 1.0 - exp(-uFogDensity*uFogDensity*vDepth*vDepth);',
-        '  gl_FragColor = vec4(mix(col, uFog, f), 1.0); }'
-      ].join('\n'),
-      side: THREE.DoubleSide
+    const CARD_VS = [
+      'attribute vec3 aTile; attribute vec3 aColor; attribute vec4 aState;',
+      'uniform float uTime, uReduced;',
+      'varying vec2 vUv; varying vec3 vTile; varying vec3 vColor; varying vec4 vState; varying float vDepth; varying float vFacing; varying float vWorldY;',
+      'void main(){ vUv=uv; vTile=aTile; vColor=aColor; vState=aState;',
+      '  vec4 wp = modelMatrix * instanceMatrix * vec4(position,1.0); vWorldY = wp.y;',
+      '  vec4 mv = viewMatrix * wp;',
+      '#ifndef REFLECT',
+      '  mv.y += aState.z * (0.16 + (1.0 - uReduced)*0.06*sin(uTime*2.2));',   // held: hovering, waiting
+      '#endif',
+      '  vec3 nrm = normalize(mat3(viewMatrix) * mat3(modelMatrix) * mat3(instanceMatrix) * vec3(0.0, 0.0, 1.0));',
+      '  vFacing = abs(nrm.z);',
+      '  vDepth = -mv.z; gl_Position = projectionMatrix * mv; }'
+    ].join('\n');
+    const CARD_FS = [
+      'uniform sampler2D uAtlas[8]; uniform float uTileUV; uniform float uPad; uniform vec3 uFog; uniform float uFogDensity;',
+      'uniform float uTime, uDazzle, uReduced, uFloorY, uReflect;',
+      'uniform vec3 uCyan, uViolet, uMagenta, uAmber, uDanger;',
+      'varying vec2 vUv; varying vec3 vTile; varying vec3 vColor; varying vec4 vState; varying float vDepth; varying float vFacing; varying float vWorldY;',
+      'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7)))*43758.5453); }',
+      'float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);',
+      '  return mix(mix(hash(i), hash(i+vec2(1.0,0.0)), u.x), mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), u.x), u.y); }',
+      'vec4 atl(float i, vec2 uv){',
+      '  if(i<0.5) return texture2D(uAtlas[0],uv); if(i<1.5) return texture2D(uAtlas[1],uv);',
+      '  if(i<2.5) return texture2D(uAtlas[2],uv); if(i<3.5) return texture2D(uAtlas[3],uv);',
+      '  if(i<4.5) return texture2D(uAtlas[4],uv); if(i<5.5) return texture2D(uAtlas[5],uv);',
+      '  if(i<6.5) return texture2D(uAtlas[6],uv); return texture2D(uAtlas[7],uv); }',
+      'vec3 prism(float x){ float t = 0.5 + 0.5*sin(x); return t < 0.5 ? mix(uCyan, uViolet, t*2.0) : mix(uViolet, uMagenta, t*2.0 - 1.0); }',
+      'void main(){',
+      '  vec2 uv = vUv; float edge = min(min(uv.x, 1.0-uv.x), min(uv.y, 1.0-uv.y));',
+      '  float t = uTime*(1.0 - uReduced); float D = uDazzle;',
+      // dissolve (delete) and materialize (folder open) share one threshold
+      '  float diss = vState.w, burn = 0.0;',
+      '  if (diss > 0.001) { float nz = vnoise(uv*5.5 + vTile.yz*97.0 + vColor.rg*13.0)*0.96 + hash(uv*61.0)*0.04;',
+      '    if (nz < diss) discard; burn = 1.0 - smoothstep(0.0, 0.12, nz - diss); }',
+      '  vec3 col;',
+      '  if (vTile.x < -0.5) { col = mix(vColor*0.12, vColor*0.36, uv.y); col = mix(col, vColor*0.7, (1.0-step(0.2, uv.y))*0.5); }',
+      '  else { vec2 tt = vec2(uv.x, 1.0-uv.y)*(1.0-2.0*uPad)+uPad; col = atl(vTile.x, vTile.yz + tt*uTileUV).rgb; }',
+      // holographic texture on the picture only; the name strip (bottom 22 %) is left untouched
+      '  float img = step(0.22, uv.y);',
+      '  col *= 1.0 - D*0.045*(0.5 + 0.5*sin(uv.y*150.0 - t*3.0))*img;',
+      '  col += (hash(uv*vec2(413.0, 297.0) + fract(t*3.7)) - 0.5)*0.035*D*img;',
+      '  float sweep = fract(t*0.06 + vTile.y*7.0 + vColor.b*3.0)*2.6 - 0.8;',
+      '  col += smoothstep(0.1, 0.0, abs(uv.x*0.8 + uv.y*0.5 - sweep))*0.10*D*img;',
+      '  col = mix(col, col*vec3(0.93, 1.0, 1.07) + uCyan*0.025, 0.5*D);',
+      '  if (!gl_FrontFacing) col = mix(vColor*0.12, uViolet*0.18, 0.5);',
+      '  float st = vState.x;',
+      '  float bw = st > 1.5 ? 0.06 : 0.035;',
+      '  float border = 1.0 - smoothstep(0.0, bw, edge);',
+      '  float fres = pow(1.0 - clamp(vFacing, 0.0, 1.0), 2.0);',
+      '  vec3 shimmer = prism(t*1.6 + (uv.x - uv.y)*5.0);',
+      '  vec3 rim;',
+      '  if (st > 2.5) rim = uDanger;',
+      '  else if (st > 1.5) rim = mix(vec3(0.6, 0.97, 1.0), shimmer, 0.35*D);',
+      '  else if (st > 0.5) rim = mix(vColor*1.6, shimmer, D);',
+      '  else rim = mix(vColor, mix(vColor, uCyan, 0.35), D);',
+      '  col = mix(col, rim, border*(0.5 + 0.5*min(st, 1.0)));',
+      '  col += rim*fres*0.35*D;',
+      '  if (st > 0.5 && st < 2.5) col += vec3(0.04, 0.06, 0.09);',
+      '  float held = vState.z;',
+      '  if (held > 0.0) { float pulse = 0.7 + 0.3*sin(t*4.0); float hb = 1.0 - smoothstep(0.02, 0.1, edge);',
+      '    col = mix(col, uAmber*1.35, hb*held*pulse*0.95); col += uAmber*0.09*held*pulse; }',
+      '  col += mix(uCyan, uMagenta, burn)*burn*1.6;',
+      '  float f = 1.0 - exp(-uFogDensity*uFogDensity*vDepth*vDepth);',
+      '  col = mix(col, uFog, f);',
+      '#ifdef REFLECT',
+      '  if (vWorldY > uFloorY) discard;',
+      '  gl_FragColor = vec4(col*exp(-(uFloorY - vWorldY)*0.45)*0.32*uReflect, 1.0);',
+      '#else',
+      '  gl_FragColor = vec4(col, 1.0);',
+      '#endif',
+      '}'
+    ].join('\n');
+    const cardUniforms = {
+      uAtlas: { value: atlases }, uTileUV: { value: TILE / ATLAS }, uPad: { value: 1.5 / TILE },
+      uFog: { value: FOG }, uFogDensity: { value: 0.0055 },
+      uTime: { value: 0 }, uDazzle: { value: 1 }, uReduced: { value: 0 }, uFloorY: { value: -1e4 }, uReflect: { value: 0 },
+      uCyan: { value: new THREE.Color(BRAND.cyan) }, uViolet: { value: new THREE.Color(BRAND.violet) },
+      uMagenta: { value: new THREE.Color(BRAND.magenta) }, uAmber: { value: new THREE.Color(BRAND.amber) }, uDanger: { value: new THREE.Color(BRAND.danger) }
+    };
+    const cardMat = new THREE.ShaderMaterial({ uniforms: cardUniforms, vertexShader: CARD_VS, fragmentShader: CARD_FS, side: THREE.DoubleSide });
+    // The floor reflection is the same cards drawn once more through a
+    // mirror matrix, faded with depth below the floor and added as light.
+    const reflMat = new THREE.ShaderMaterial({
+      uniforms: cardUniforms, vertexShader: CARD_VS, fragmentShader: CARD_FS, defines: { REFLECT: '' },
+      side: THREE.DoubleSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
     });
     const boxMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
     const boxGeo = new THREE.BoxGeometry(1, 1, 1); boxGeo.translate(0, 0.5, 0);
@@ -222,7 +425,8 @@
 
     // ── per-item state ──
     let items = [], n = 0;
-    let cards = null, boxes = null, lines = null, lineGeo = null, edges = null;
+    let cards = null, boxes = null, lines = null, lineGeo = null, edges = null, refl = null;
+    let heldArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
     let aTile, aColor, aState;
     let P, Q, S, fP, fQ, fS, tP, tQ, tS, delay;           // cards: current / from / to
     let BP, BS, fBP, fBS, tBP, tBS;                        // boxes (city): position / size
@@ -240,19 +444,30 @@
     const camQ = new THREE.Quaternion();
 
     function freeMeshes() {
+      skipFx();
+      if (refl) scene.remove(refl);
       [cards, boxes, lines].forEach(m => { if (m) { scene.remove(m); if (m.geometry !== planeGeo && m.geometry !== boxGeo) m.geometry.dispose(); } });
-      cards = boxes = lines = null;
+      cards = boxes = lines = refl = null;
     }
 
-    function setData(list) {
+    function setData(list, fresh) {
       gen++;
+      // A refresh of the same folder keeps each surviving file's tile and
+      // place, so the rest glide together and only new files materialize.
+      const keep = !fresh && n && pool ? new Map() : null;
+      if (keep) for (let i = 0; i < n; i++) {
+        keep.set(items[i].rel + '|' + items[i].mtime, {
+          s: pool.slotOf[i], t: [aTile.getX(i), aTile.getY(i), aTile.getZ(i)],
+          p: [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], q: [Q[i * 4], Q[i * 4 + 1], Q[i * 4 + 2], Q[i * 4 + 3]], sc: [S[i * 2], S[i * 2 + 1]]
+        });
+      }
       freeMeshes();
       items = list; n = list.length;
       const cap = Math.max(1, n);
       const g = planeGeo.clone();
       aTile = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(-1), 3);
       aColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
-      aState = new THREE.InstancedBufferAttribute(new Float32Array(cap * 2), 2);
+      aState = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
       aTile.setUsage(THREE.DynamicDrawUsage); aState.setUsage(THREE.DynamicDrawUsage);
       g.setAttribute('aTile', aTile); g.setAttribute('aColor', aColor); g.setAttribute('aState', aState);
       cards = new THREE.InstancedMesh(g, cardMat, cap);
@@ -260,6 +475,11 @@
       cards.frustumCulled = false;
       cards.count = n;
       scene.add(cards);
+      refl = new THREE.InstancedMesh(g, reflMat, cap);
+      refl.instanceMatrix = cards.instanceMatrix;
+      refl.count = n; refl.frustumCulled = false; refl.matrixAutoUpdate = false; refl.visible = false;
+      scene.add(refl);
+      heldArr = new Uint8Array(cap); diss = new Float32Array(cap);
       boxes = new THREE.InstancedMesh(boxGeo, boxMat, cap);
       boxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       boxes.frustumCulled = false; boxes.count = n;
@@ -288,7 +508,72 @@
       pool = createSlotPool(SLOTS, cap);
       wanted = new Uint8Array(cap); failed = new Uint8Array(cap);
       loadQueue.length = 0; uploads.length = 0;
-      applyLayout(true);
+      if (!keep) {
+        applyLayout(true);
+        if (fresh) startMaterialize(); else { materialize = null; diss.fill(0); }
+        return;
+      }
+      const born = [];
+      for (let i = 0; i < n; i++) {
+        const k = keep.get(items[i].rel + '|' + items[i].mtime);
+        if (!k) { born.push(i); continue; }
+        if (k.s >= 0 && pool.adopt(i, k.s, performance.now())) aTile.setXYZ(i, k.t[0], k.t[1], k.t[2]);
+        P.set(k.p, i * 3); Q.set(k.q, i * 4); S.set(k.sc, i * 2);
+      }
+      diss.fill(0);
+      applyLayout(false, true);
+      for (const i of born) {   // new arrivals appear in place, from light
+        P.set(tP.subarray(i * 3, i * 3 + 3), i * 3); fP.set(tP.subarray(i * 3, i * 3 + 3), i * 3);
+        Q.set(tQ.subarray(i * 4, i * 4 + 4), i * 4); fQ.set(tQ.subarray(i * 4, i * 4 + 4), i * 4);
+        S.set(tS.subarray(i * 2, i * 2 + 2), i * 2); fS.set(tS.subarray(i * 2, i * 2 + 2), i * 2);
+      }
+      materialize = null;
+      if (born.length && dz > 0 && !reduced) {
+        const delayMs = new Float32Array(n);
+        for (let i = 0; i < n; i++) diss[i] = 0;
+        born.forEach(i => { diss[i] = 1; delayMs[i] = 250; });
+        materialize = { t0: performance.now(), delayMs, dur: 520, only: new Set(born) };
+      }
+      aTile.needsUpdate = true;
+    }
+
+    // Opening a folder: the cards assemble from light, nearest the centre
+    // first, while sparks converge on them.
+    function startMaterialize() {
+      materialize = null;
+      if (!n || dz <= 0 || reduced || !layout) { diss.fill(0); return; }
+      const o = layout.order, c = layout.cam.t;
+      let far = 1;
+      const dist = new Float32Array(n);
+      for (const i of o) { dist[i] = Math.hypot(P[i * 3] - c[0], P[i * 3 + 1] - c[1], P[i * 3 + 2] - c[2]); if (dist[i] > far) far = dist[i]; }
+      const spread = 380 + 320 * dz;
+      const delayMs = new Float32Array(n);
+      for (let i = 0; i < n; i++) { delayMs[i] = dist[i] / far * spread; diss[i] = 1; }
+      materialize = { t0: performance.now(), delayMs, dur: 420 };
+      const step = Math.max(1, Math.ceil(o.length / (dz >= 1 ? 420 : 200)));
+      for (let k = 0; k < o.length; k += step) {
+        const i = o[k], s0 = Math.max(0.6, S[i * 2]), life = 0.45 + delayMs[i] / 1000;
+        for (let j = 0; j < 2; j++) {
+          const ox = (Math.random() - 0.5) * s0 * 4, oy = (Math.random() - 0.5) * s0 * 4, oz = (Math.random() - 0.5) * s0 * 4;
+          spawn(P[i * 3] + ox, P[i * 3 + 1] + oy, P[i * 3 + 2] + oz, -ox / life, -oy / life, -oz / life, life, j ? BRAND.cyan : BRAND.violet, 0.9);
+        }
+      }
+    }
+    function stepMaterialize(now) {
+      if (!materialize) return false;
+      let done = true;
+      const m = materialize, arr = aState.array;
+      for (let i = 0; i < n; i++) {
+        let k = (now - m.t0 - m.delayMs[i]) / m.dur;
+        if (k < 1) done = false;
+        k = k < 0 ? 0 : k > 1 ? 1 : k;
+        if (m.only && !m.only.has(i)) { arr[i * 4 + 3] = diss[i]; continue; }
+        diss[i] = fxOf.has(i) ? diss[i] : 1 - k * k * (3 - 2 * k);
+        arr[i * 4 + 3] = diss[i];
+      }
+      aState.needsUpdate = true;
+      if (done) materialize = null;
+      return true;
     }
 
     // ── layouts ──
@@ -367,6 +652,17 @@
         clusterLayout(L, act, put);
       }
       if (!L.cam) L.cam = { t: [0, 0, 0], theta: 0, phi: 1.2, r: 60 };
+      // A floor under everything, for the views that stand on one.
+      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster')) {
+        let y0 = Infinity, x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        for (const i of act) {
+          const hs = (L.S[i * 2 + 1] || 0) / 2;
+          y0 = Math.min(y0, L.P[i * 3 + 1] - hs);
+          x0 = Math.min(x0, L.P[i * 3]); x1 = Math.max(x1, L.P[i * 3]); z0 = Math.min(z0, L.P[i * 3 + 2]); z1 = Math.max(z1, L.P[i * 3 + 2]);
+        }
+        const span = Math.max(x1 - x0, z1 - z0) * 0.75 + 14;
+        L.floor = { y: v === 'city' ? -0.03 : y0 - 1.4, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, span, cell: v === 'city' ? 1 : 2, mirror: v !== 'city' };
+      }
       return L;
     }
     // Frame every visible card (and city block) from the view's direction:
@@ -651,8 +947,9 @@
     }
 
     // ── transitions ──
-    function applyLayout(instant) {
+    function applyLayout(instant, keepCam) {
       if (!n) { dirty = true; return; }
+      if (reduced) instant = true;
       layout = computeLayout(view);
       tP.set(layout.P); tQ.set(layout.Q); tS.set(layout.S); tBP.set(layout.BP); tBS.set(layout.BS);
       bbTo = layout.bb;
@@ -663,9 +960,9 @@
         flight = null;
       } else {
         fP.set(P); fQ.set(Q); fS.set(S); fBP.set(BP); fBS.set(BS); bbFrom = bbCur;
-        flight = { t0: performance.now(), dur: 1300 };
+        flight = { t0: performance.now(), dur: keepCam ? 700 : 1300 };
       }
-      setCamGoal(layout.cam, instant);
+      if (!keepCam) setCamGoal(layout.cam, instant);
       dirty = true;
     }
     function setCamGoal(c, instant) {
@@ -681,6 +978,8 @@
     function stepFlight(now) {
       if (!flight) return false;
       let done = true;
+      const trail = dz > 0 && !reduced && (flight.frame = (flight.frame || 0) + 1) % 2 === 0;
+      const tstep = Math.max(1, Math.ceil(n / (dz >= 1 ? 220 : 90)));
       for (let i = 0; i < n; i++) {
         let t = (now - flight.t0 - delay[i] * 1000) / flight.dur;
         if (t < 1) done = false;
@@ -692,6 +991,8 @@
         THREE.Quaternion.slerpFlat(Q, i * 4, fQ, i * 4, tQ, i * 4, e);
         S[i * 2] = fS[i * 2] + (tS[i * 2] - fS[i * 2]) * e; S[i * 2 + 1] = fS[i * 2 + 1] + (tS[i * 2 + 1] - fS[i * 2 + 1]) * e;
         for (let k = 0; k < 3; k++) { BP[i3 + k] = fBP[i3 + k] + (tBP[i3 + k] - fBP[i3 + k]) * e; BS[i3 + k] = fBS[i3 + k] + (tBS[i3 + k] - fBS[i3 + k]) * e; }
+        if (trail && i % tstep === 0 && t > 0.05 && t < 0.95 && S[i * 2] > 0.01)
+          spawn(P[i3], P[i3 + 1], P[i3 + 2], 0, 0.3, 0, 0.7, i % 3 ? BRAND.cyan : items[i] ? CATS[items[i].cat].color : BRAND.violet, 0.9 + S[i * 2] * 0.6);
       }
       const gt = Math.min(1, (now - flight.t0) / (flight.dur + 350));
       bbCur = bbFrom + (bbTo - bbFrom) * ease(gt);
@@ -715,6 +1016,8 @@
         }
         tmpS.set(S[i * 2] * k, S[i * 2 + 1] * k, 1);
         tmpV.set(P[i3], P[i3 + 1], P[i3 + 2]);
+        const fx = fxOf.size ? fxOf.get(i) : null;
+        if (fx) fxTransform(fx, tmpV, tmpQ, tmpS);
         tmpM.compose(tmpV, tmpQ, tmpS);
         cards.setMatrixAt(i, tmpM);
         tmpS.set(BS[i3], BS[i3 + 1], BS[i3 + 2]);
@@ -757,8 +1060,31 @@
       const sp = Math.sin(cam.phi);
       camera.position.set(cam.t.x + cam.r * sp * Math.sin(cam.theta), cam.t.y + cam.r * Math.cos(cam.phi), cam.t.z + cam.r * sp * Math.cos(cam.theta));
       camera.lookAt(cam.t);
+      // Head-coupled perspective: when Friday is tracking the owner's head,
+      // the view shifts with it like a window. Reads FridayTracking when that
+      // is loaded, else the face-tracking globals index.html already keeps.
+      const hp = headPose();
+      if (hp) {
+        tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.x * cam.r * 0.07);
+        camera.position.add(tmpV);
+        tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.y * cam.r * 0.05);
+        camera.position.add(tmpV);
+        camera.lookAt(cam.t);
+      }
       camera.updateMatrixWorld();
       camQ.copy(camera.quaternion);
+      sky.position.copy(camera.position);
+    }
+    function headPose() {
+      if (reduced) return null;
+      try {
+        const T = window.FridayTracking;
+        if (T && T.head && T.head.seen) return { x: +T.head.x || 0, y: -(+T.head.y || 0) };
+        /* global isHologramMode, isFaceVisible, currFaceX, currFaceY */
+        if (typeof isHologramMode !== 'undefined' && isHologramMode && typeof isFaceVisible !== 'undefined' && isFaceVisible
+          && typeof currFaceX === 'number') return { x: currFaceX, y: -currFaceY };
+      } catch (_) { /* tracking not loaded */ }
+      return null;
     }
 
     // ── picking ──
@@ -780,7 +1106,10 @@
       return -1;
     }
     function setStates() {
-      for (let i = 0; i < n; i++) aState.setXY(i, i === selIdx ? 2 : i === hoverIdx ? 1 : 0, 0);
+      for (let i = 0; i < n; i++) {
+        const fx = fxOf.size ? fxOf.get(i) : null;
+        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, 0, heldArr[i], diss[i]);
+      }
       aState.needsUpdate = true;
       dirty = true;
     }
@@ -981,6 +1310,182 @@
       return isFinite(x) && isFinite(y) ? { x, y } : null;
     }
 
+    // ── file-action animations ──
+    // Each runs <= 600 ms, is finished at once by skipFx() (any click or key),
+    // and collapses to its end state under reduced motion. The panel calls
+    // them only after the server has reported what actually happened.
+    const fxOf = new Map();
+    const easeOut = t => 1 - Math.pow(1 - t, 3);
+    const fxSprite = (map, color, pos, scale) => {
+      const sp = new THREE.Sprite(additive(map, color));
+      sp.position.copy(pos); sp.scale.setScalar(scale);
+      scene.add(sp); fxSprites.push(sp);
+      return sp;
+    };
+    const dropSprite = sp => {
+      if (!sp) return;
+      scene.remove(sp); sp.material.dispose();
+      const k = fxSprites.indexOf(sp); if (k >= 0) fxSprites.splice(k, 1);
+    };
+    function destPoint(f) {
+      const d = f.opts.dest;
+      if (d >= 0 && d < n && S[d * 2] > 0.01) return new THREE.Vector3(P[d * 3], P[d * 3 + 1], P[d * 3 + 2]);
+      // destination not on screen: up and away, out of the scene
+      return new THREE.Vector3(P[f.i * 3], P[f.i * 3 + 1], P[f.i * 3 + 2])
+        .add(new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(cam.r * 0.6))
+        .add(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).multiplyScalar(cam.r * 0.4));
+    }
+    function playFx(kind, i, opts) {
+      return new Promise(resolve => {
+        if (!(i >= 0 && i < n)) { resolve(false); return; }
+        const prev = fxOf.get(i);
+        if (prev) finishFx(prev);
+        const slow = +window.__files3dFxScale || 1;   // tests slow animations down to photograph them
+        const f = { kind, i, t0: performance.now(), dur: reduced ? 0 : (FX_MS[kind] || 500) * slow, opts: opts || {}, resolve, k: 0 };
+        const s0 = Math.max(0.5, S[i * 2]);
+        f.base = new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+        f.size = s0;
+        if (!reduced && dz > 0) {
+          if (kind === 'delete') {
+            f.vortex = f.base.clone().add(new THREE.Vector3(0, -1, 0).applyQuaternion(camera.quaternion).multiplyScalar(s0 * 1.1));
+            f.spr = fxSprite(TX.spiral_haze, BRAND.magenta, f.vortex, s0 * 0.4);
+            f.spr2 = fxSprite(glowTex, BRAND.violet, f.vortex, s0 * 0.6);
+            // dust spirals inward to the vortex
+            for (let j = 0; j < 72; j++) {
+              const a = j / 72 * Math.PI * 4, r = s0 * (1.0 + (j / 72) * 1.4);
+              const off = new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0).applyQuaternion(camera.quaternion);
+              const life = (0.3 + (j / 72) * 0.3) * slow;
+              spawn(f.vortex.x + off.x, f.vortex.y + off.y, f.vortex.z + off.z, -off.x / life, -off.y / life, -off.z / life, life, j % 3 ? BRAND.magenta : BRAND.violet, 1.1);
+            }
+          } else if (kind === 'share') {
+            f.spr = fxSprite(TX.shockwave, BRAND.cyan, f.base, s0);
+            for (let j = 0; j < 40; j++) {
+              const a = j / 40 * Math.PI * 2, v = new THREE.Vector3(Math.cos(a), Math.sin(a), 0).applyQuaternion(camera.quaternion).multiplyScalar(s0 * 5 / slow);
+              spawn(f.base.x, f.base.y, f.base.z, v.x, v.y, v.z, 0.5 * slow, j % 2 ? BRAND.cyan : BRAND.violet, 0.8);
+            }
+          } else if (kind === 'copy') {
+            f.ghost = makeGhost(i);
+          }
+        } else if (kind === 'copy') {
+          f.ghost = null;
+        }
+        if (dz > 0 && !reduced && (kind === 'move' || kind === 'copy')) f.dest = destPoint(f);
+        fxOf.set(i, f);
+        setStates();
+        dirty = true;
+        if (!f.dur) finishFx(f);
+      });
+    }
+    function makeGhost(i) {
+      const g = planeGeo.clone();
+      const at = new THREE.InstancedBufferAttribute(new Float32Array([aTile.getX(i), aTile.getY(i), aTile.getZ(i)]), 3);
+      const ac = new THREE.InstancedBufferAttribute(new Float32Array([aColor.getX(i), aColor.getY(i), aColor.getZ(i)]), 3);
+      const as = new THREE.InstancedBufferAttribute(new Float32Array([1, 0, 0, 0.15]), 4);
+      g.setAttribute('aTile', at); g.setAttribute('aColor', ac); g.setAttribute('aState', as);
+      const m = new THREE.InstancedMesh(g, cardMat, 1);
+      m.frustumCulled = false;
+      scene.add(m);
+      return m;
+    }
+    function stepFx(now) {
+      if (!fxOf.size) return false;
+      for (const f of Array.from(fxOf.values())) {
+        f.k = f.dur ? Math.min(1, (now - f.t0) / f.dur) : 1;
+        const k = f.k, i = f.i;
+        if (f.kind === 'delete') {
+          diss[i] = Math.max(0, (k - 0.15) / 0.85);
+          aState.array[i * 4 + 3] = diss[i]; aState.needsUpdate = true;
+          if (f.spr) { f.spr.material.opacity = Math.min(1, Math.sin(Math.PI * k) * 1.6) * dz; f.spr.material.rotation = -k * 9; f.spr.scale.setScalar(f.size * (0.6 + 2.2 * easeOut(k))); }
+          if (f.spr2) { f.spr2.material.opacity = Math.sin(Math.PI * k) * 0.7 * dz; f.spr2.scale.setScalar(f.size * (1.2 + 1.6 * Math.sin(Math.PI * k))); }
+          // the burning edge throws sparks down into the vortex
+          if ((f.tick = (f.tick || 0) + 1) % 2 === 0 && k > 0.15 && k < 0.9) {
+            tmpV.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+            const life = 0.3 * (+window.__files3dFxScale || 1);
+            spawn(tmpV.x + (Math.random() - 0.5) * f.size, tmpV.y + (Math.random() - 0.5) * f.size, tmpV.z,
+              (f.vortex.x - tmpV.x) / life, (f.vortex.y - tmpV.y) / life, (f.vortex.z - tmpV.z) / life, life, Math.random() < 0.5 ? BRAND.cyan : BRAND.magenta, 0.9);
+          }
+        } else if (f.kind === 'share' && f.spr) {
+          f.spr.material.opacity = (1 - k) * 0.9 * dz; f.spr.scale.setScalar(f.size * (1 + 5 * easeOut(k)));
+        } else if (f.kind === 'rename' && !f.midDone && k >= 0.25) {
+          f.midDone = true;
+          if (f.opts.onMid) f.opts.onMid();
+        } else if (f.kind === 'copy' && f.ghost) {
+          const e = ease(k), from = f.base, to = f.dest || f.base;
+          const peel = Math.min(1, k / 0.25);
+          tmpV.copy(from).lerp(to, Math.max(0, (e - 0.1) / 0.9));
+          const lift = from.distanceTo(to) * 0.3 * Math.sin(Math.PI * e);
+          tmpV.y += lift;
+          tmpV.add(new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion).multiplyScalar(f.size * 0.4 * peel));
+          tmpS.set(f.size * (1.05 - 0.6 * e), f.size * (1.05 - 0.6 * e), 1);
+          tmpM.compose(tmpV, camQ, tmpS);
+          f.ghost.setMatrixAt(0, tmpM); f.ghost.instanceMatrix.needsUpdate = true;
+          const ga = f.ghost.geometry.attributes.aState; ga.array[3] = 0.15 + 0.75 * Math.max(0, (k - 0.7) / 0.3); ga.needsUpdate = true;
+          if ((f.tick = (f.tick || 0) + 1) % 2 === 0) spawn(tmpV.x, tmpV.y, tmpV.z, 0, 0, 0, 0.35, BRAND.cyan, 0.7);
+        } else if (f.kind === 'move' && f.dest && (f.tick = (f.tick || 0) + 1) % 2 === 0) {
+          spawn(P[i * 3], P[i * 3 + 1], P[i * 3 + 2], 0, 0, 0, 0.35, BRAND.cyan, 0.7);
+        }
+        if (k >= 1) finishFx(f);
+      }
+      return true;
+    }
+    // Where an animating card is drawn this frame (writeMatrices).
+    const fxAxis = new THREE.Vector3(), fxQ = new THREE.Quaternion();
+    function fxTransform(f, pos, quat, scl) {
+      const k = f.k, e = ease(k);
+      if (f.kind === 'delete') {
+        const lift = Math.min(1, k / 0.2), e2 = easeOut(Math.max(0, (k - 0.15) / 0.85));
+        pos.y += f.size * 0.12 * lift * (1 - e2);
+        if (f.vortex) pos.lerp(f.vortex, e2);
+        fxAxis.set(0, 0, 1); fxQ.setFromAxisAngle(fxAxis, e2 * Math.PI * 2.5); quat.multiply(fxQ);
+        scl.multiplyScalar(1 - 0.85 * e2);
+      } else if (f.kind === 'fail') {
+        tmpS2.set(1, 0, 0).applyQuaternion(camQ).multiplyScalar(Math.sin(k * Math.PI * 7) * (1 - k) * f.size * 0.18);
+        pos.add(tmpS2);
+      } else if (f.kind === 'move') {
+        const to = f.dest || pos;
+        const d = f.base.distanceTo(to);
+        pos.lerp(to, e); pos.y += d * 0.35 * Math.sin(Math.PI * e);
+        scl.multiplyScalar(1 - 0.75 * e);
+      } else if (f.kind === 'share') {
+        tmpS2.copy(camera.position).sub(pos).normalize().multiplyScalar(Math.sin(Math.PI * k) * f.size * 1.2);
+        pos.add(tmpS2); scl.multiplyScalar(1 + 0.22 * Math.sin(Math.PI * k));
+      } else if (f.kind === 'rename') {
+        fxAxis.set(0, 1, 0); fxQ.setFromAxisAngle(fxAxis, e * Math.PI * 2); quat.multiply(fxQ);
+      } else if (f.kind === 'open') {
+        const out = Math.sin(Math.PI * k);
+        tmpS2.copy(camera.position).sub(pos).multiplyScalar(0.55 * out);
+        pos.add(tmpS2); scl.multiplyScalar(1 + 0.6 * out);
+      }
+    }
+    const tmpS2 = new THREE.Vector3();
+    function finishFx(f) {
+      if (!fxOf.has(f.i) || fxOf.get(f.i) !== f) return;
+      fxOf.delete(f.i);
+      const i = f.i;
+      if (f.kind === 'rename' && !f.midDone && f.opts.onMid) { f.midDone = true; f.opts.onMid(); }
+      if (f.kind === 'delete' || f.kind === 'move') {
+        // gone from this folder: stays invisible until the folder is re-read
+        S[i * 2] = S[i * 2 + 1] = tS[i * 2] = tS[i * 2 + 1] = 0; diss[i] = 1;
+        BS[i * 3 + 1] = tBS[i * 3 + 1] = 0;
+      }
+      dropSprite(f.spr); dropSprite(f.spr2);
+      if (f.ghost) { scene.remove(f.ghost); f.ghost.geometry.dispose(); }
+      setStates();
+      dirty = true;
+      f.resolve(true);
+    }
+    function skipFx() { Array.from(fxOf.values()).forEach(finishFx); }
+
+    // Dazzle level and reduced motion -> every layer's strength.
+    function applyDazzle() {
+      const u = cardMat.uniforms;
+      u.uDazzle.value = dz;
+      u.uReduced.value = reduced ? 1 : 0;
+      dustGeo.setDrawRange(0, dz >= 1 ? DUST : dz > 0 ? 380 : 0);
+      if (dz <= 0 || reduced) { materialize = null; diss.fill(0); if (aState) { for (let i = 0; i < n; i++) aState.array[i * 4 + 3] = 0; aState.needsUpdate = true; } }
+      dirty = true;
+    }
+
     // ── resize / visibility ──
     let W = 1, H = 1;
     const resize = () => {
@@ -1022,6 +1527,8 @@
       }
     };
     let lastHandHover = 0, lastMoveHover = 0;
+    const flags = { tick: 0 };
+    const heldAny = () => { for (let i = 0; i < n; i++) if (heldArr[i]) return true; return false; };
     function frame(now) {
       raf = requestAnimationFrame(frame);
       hold(wantHold());
@@ -1034,6 +1541,56 @@
       }
       let moved = stepFlight(now);
       moved = stepCamera(dt) || moved;
+      moved = stepFx(now) || moved;
+      moved = stepMaterialize(now) || moved;
+      const tsec = clock();
+      cardMat.uniforms.uTime.value = tsec; dustMat.uniforms.uTime.value = tsec; partMat.uniforms.uTime.value = tsec; floorMat.uniforms.uTime.value = tsec;
+      flushParticles();
+      // atmosphere follows the dazzle level; the floor waits for flights to land
+      const ease1 = Math.min(1, dt * 4);
+      const skyTo = dz > 0 ? 0.55 + 0.45 * dz : 0;
+      if (Math.abs(sky.material.opacity - skyTo) > 1e-3) { sky.material.opacity += (skyTo - sky.material.opacity) * ease1; moved = true; }
+      sky.visible = sky.material.opacity > 0.01;
+      const fl = layout && layout.floor;
+      const floorTo = fl && dz > 0 && !flight ? 0.9 * Math.min(1, dz * 1.4) : 0;
+      if (fl) { floor.position.set(fl.cx, fl.y, fl.cz); floor.scale.set(fl.span * 2.2, fl.span * 2.2, 1); floorMat.uniforms.uCenter.value.set(fl.cx, fl.y, fl.cz); floorMat.uniforms.uSpan.value = fl.span * 1.1; floorMat.uniforms.uCell.value = fl.cell; }
+      if (Math.abs(floorMat.uniforms.uOpacity.value - floorTo) > 1e-3) { floorMat.uniforms.uOpacity.value += (floorTo - floorMat.uniforms.uOpacity.value) * ease1; moved = true; }
+      floor.visible = floorMat.uniforms.uOpacity.value > 0.01;
+      const reflTo = fl && fl.mirror && dz >= 1 && !flight ? 1 : 0;
+      const ur = cardMat.uniforms.uReflect;
+      if (Math.abs(ur.value - reflTo) > 1e-3) { ur.value += (reflTo - ur.value) * ease1; moved = true; }
+      if (refl) {
+        refl.visible = ur.value > 0.01 && !!fl;
+        if (refl.visible) {
+          cardMat.uniforms.uFloorY.value = fl.y;
+          refl.matrix.makeScale(1, -1, 1).premultiply(tmpM.makeTranslation(0, 2 * fl.y, 0));
+          refl.matrixWorld.copy(refl.matrix);
+        }
+      }
+      dustMat.uniforms.uOpacity.value = dz > 0 ? 0.5 * dz : 0;
+      dust.visible = dz > 0;
+      dustMat.uniforms.uCenter.value.copy(cam.t);
+      dustMat.uniforms.uRegion.value = Math.max(30, cam.r * 1.1);
+      // Friday's live mood colour tints the dust and the floor's far edge
+      /* global moodLerpValues */
+      if (typeof moodLerpValues !== 'undefined' && moodLerpValues && moodLerpValues.accentColor && moodLerpValues.accentColor.isColor) {
+        dustMat.uniforms.uColB.value.copy(moodLerpValues.accentColor).lerp(pc.set(BRAND.violet), 0.5);
+        floorMat.uniforms.uColB.value.copy(dustMat.uniforms.uColB.value);
+      }
+      // the selected file glows softly from behind
+      if (selIdx >= 0 && selIdx < n && dz > 0 && S[selIdx * 2] > 0.01 && !fxOf.has(selIdx)) {
+        selGlow.material.color.setHex(heldArr[selIdx] ? BRAND.amber : BRAND.cyan);
+        tmpV.set(P[selIdx * 3], P[selIdx * 3 + 1], P[selIdx * 3 + 2]);
+        tmpS2.copy(tmpV).sub(camera.position).normalize().multiplyScalar(0.06 * S[selIdx * 2]);
+        selGlow.position.copy(tmpV).add(tmpS2);
+        selGlow.scale.setScalar(S[selIdx * 2] * (3.8 + (reduced ? 0 : 0.2 * Math.sin(tsec * 2))));
+        selGlow.material.opacity = 0.65 * dz;
+        selGlow.visible = true;
+      } else selGlow.visible = false;
+      const hpNow = headPose();
+      // ambient life (dust, shimmer, held pulse) keeps a gentle 30 fps when nothing else moves
+      const ambient = !reduced && (dz > 0 || heldAny()) && (flags.tick = (flags.tick + 1) % 2) === 0;
+      if (hpNow) moved = true;
       // fade decor: current in (after the flight lands), old out
       const fadeIn = flight ? 0 : 1;
       if (decor) decor.userData.mats.forEach(m => { const o = m.opacity + (fadeIn - m.opacity) * Math.min(1, dt * 5); if (Math.abs(o - m.opacity) > 1e-3) { m.opacity = o; moved = true; } });
@@ -1063,7 +1620,7 @@
       wantTiles(now);
       const up = flushUploads();
       t1 = tick(); prof.tiles += t1 - t2;
-      if (moved || dirty || up || (view === 'ring' && camMoving)) {
+      if (moved || dirty || up || ambient || (view === 'ring' && camMoving)) {
         if (n) writeMatrices();
         t2 = tick(); prof.mat += t2 - t1;
         let q = null;
@@ -1097,10 +1654,22 @@
     let currentRoot = '', currentPath = '', currentBase = '';
     return {
       setData(list, root, path) {
+        const again = root === currentRoot && (path || '') === currentPath;
         currentRoot = root; currentPath = path || ''; currentBase = (path || '').split('/').pop() || root;
-        setData(list);
+        setData(list, !again);
       },
-      setView(v) { if (v === view) return; view = v; applyLayout(false); },
+      setView(v) { if (v === view) return; view = v; skipFx(); applyLayout(false); },
+      setDazzle(level) { dz = DAZZLE[level] != null ? DAZZLE[level] : DAZZLE.full; applyDazzle(); },
+      setHeld(i, on) { if (i >= 0 && i < n) { heldArr[i] = on ? 1 : 0; setStates(); } },
+      fx: playFx,
+      skipFx,
+      isAnimating: () => fxOf.size > 0,
+      retile(i, rel, name) {
+        if (!(i >= 0 && i < n)) return;
+        items[i].rel = rel; items[i].name = name;
+        if (pool && pool.release(i) >= 0) { aTile.setXYZ(i, -1, 0, 0); aTile.needsUpdate = true; }
+        failed[i] = 0; lastWant = 0; dirty = true;
+      },
       getView: () => view,
       setGroupBy(g) { groupBy = g; if (view === 'cluster') applyLayout(false); },
       setFilter(mask) { visMask = mask; applyLayout(false); },
@@ -1162,7 +1731,11 @@
         if (decor) disposeDecor(decor);
         oldDecor.forEach(disposeDecor);
         real.forEach(t => t && t.dispose());
-        cardMat.dispose(); boxMat.dispose(); lineMat.dispose(); boxGeo.dispose(); planeGeo.dispose();
+        cardMat.dispose(); reflMat.dispose(); boxMat.dispose(); lineMat.dispose(); boxGeo.dispose(); planeGeo.dispose();
+        [dustMat, partMat, floorMat, sky.material, selGlow.material].forEach(m => m.dispose());
+        [dustGeo, pGeo, sky.geometry, floor.geometry].forEach(g => g.dispose());
+        fxSprites.slice().forEach(dropSprite);
+        Object.values(TX).forEach(t => t.dispose()); glowTex.dispose();
         workers.forEach(w => w.terminate());
         renderer.dispose();
         if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
@@ -1206,6 +1779,7 @@
     const [noGL, setNoGL] = useState(false);
     const [stageH, setStageH] = useState(0);
     const [full, setFull] = useState(false);
+    const [dazzle, setDazzle] = useState('full');
     const stageRef = useRef(null);
     const itemsRef = useRef([]); itemsRef.current = items;
     const selRef = useRef(-1); selRef.current = sel;
@@ -1224,6 +1798,7 @@
       } catch (e) { setNoGL(true); return; }
       engRef.current = eng;
       window.__files3d = eng;
+      window.__files3dInternalsItems = () => itemsRef.current;   // read-only, for tests
       const iv = setInterval(() => setStats(eng.stats()), 1000);
       return () => { clearInterval(iv); eng.dispose(); engRef.current = null; if (window.__files3d === eng) window.__files3d = null; };
     }, []);
@@ -1287,9 +1862,10 @@
         if (!ok) { setErr(j.error || 'That folder is not available.'); return; }
         const list = buildItems(j);
         setItems(list);
-        setScanInfo({ truncated: j.truncated, skipped: j.skipped, ms: j.elapsed_ms, label: j.label });
+        setScanInfo({ truncated: j.truncated, skipped: j.skipped, ms: j.elapsed_ms, label: j.label, creations: j.creations_prefix });
+        itemsRef.current = list;
         const eng = engRef.current;
-        if (eng) { eng.setData(list, r, j.path); eng.select(-1); }
+        if (eng) { eng.setData(list, r, j.path); eng.select(-1); reapplyHeld(); }
       }).catch(() => { setLoading(false); setErr('Scan failed.'); });
     }, []);
     useEffect(() => { if (root) scan(root, path); }, [root, path, scan]);
@@ -1315,6 +1891,23 @@
     }, [query, cats, items]);
 
     useEffect(() => { engRef.current && engRef.current.setView(view); remember('view', view); }, [view]);
+    // Dazzle level: Settings › Appearance (studio_dazzle), mirrored here.
+    useEffect(() => {
+      const load = () => api('/api/settings').then(r => r.json()).then(d => {
+        const v = ((d && (d.settings || d)) || {}).studio_dazzle;
+        if (v === 'off' || v === 'subtle' || v === 'full') setDazzle(v);
+      }).catch(() => {});
+      load();
+      const onSet = e => { if (e && e.detail) setDazzle(e.detail); };
+      window.addEventListener('friday-dazzle', onSet);
+      window.addEventListener('focus', load);
+      return () => { window.removeEventListener('friday-dazzle', onSet); window.removeEventListener('focus', load); };
+    }, []);
+    useEffect(() => { engRef.current && engRef.current.setDazzle(dazzle); }, [dazzle]);
+    const saveDazzle = v => {
+      setDazzle(v);
+      postJSON('/api/settings', { settings: { studio_dazzle: v } }).catch(() => {});
+    };
     useEffect(() => { if (root) remember('root', root); }, [root]);
     useEffect(() => { engRef.current && engRef.current.setGroupBy(groupBy); }, [groupBy]);
 
@@ -1339,6 +1932,16 @@
     }
 
     const say = (text, extra) => { setToast(Object.assign({ text }, extra)); setTimeout(() => setToast(t => t && t.text === text ? null : t), extra && extra.sticky ? 20000 : 5000); };
+    const idxOf = rel => itemsRef.current.findIndex(x => x.rel === rel);
+    const fx = (kind, rel, opts) => { const e = engRef.current, i = idxOf(rel); return e && i >= 0 ? e.fx(kind, i, opts) : Promise.resolve(false); };
+    // Pending approvals by path: the card hovers in an amber "held" glow
+    // until the owner decides, and again after any re-scan.
+    const pendingRef = useRef(new Map());
+    const reapplyHeld = () => {
+      const e = engRef.current;
+      if (!e) return;
+      pendingRef.current.forEach((_, rel) => { const i = idxOf(rel); if (i >= 0) e.setHeld(i, true); });
+    };
     const act = (what, it) => {
       if (!it) return;
       if (what === 'copy') {
@@ -1346,8 +1949,27 @@
         try { navigator.clipboard.writeText(lbl + '/' + it.rel); say('Path copied'); } catch (_) { say('Copy failed'); }
         return;
       }
-      postJSON('/api/studio-files/' + what, { root, path: it.rel }).then(({ ok, j }) => say(ok ? (what === 'open' ? 'Opened ' + it.name : 'Showing ' + it.name + ' in Explorer') : (j.error || 'Refused')));
+      postJSON('/api/studio-files/' + what, { root, path: it.rel }).then(({ ok, j }) => {
+        if (!ok) { fx('fail', it.rel); say(j.error || 'Refused'); return; }
+        if (what === 'open') fx('open', it.rel);
+        say(what === 'open' ? 'Opened ' + it.name : 'Showing ' + it.name + ' in Explorer');
+      });
     };
+    // Share hands a creation to Friday's Share / Post dialog; the card
+    // launches with a ripple once the dialog is actually open.
+    const creationName = it => {
+      const pre = scanInfo && scanInfo.creations;
+      if (pre == null || !it || it.dir) return null;
+      const rest = pre ? (it.rel.startsWith(pre + '/') ? it.rel.slice(pre.length + 1) : null) : it.rel;
+      return rest && rest.indexOf('/') < 0 ? rest : null;
+    };
+    const share = it => {
+      const fname = creationName(it);
+      if (!fname || !window.fridayQuickPost) return;
+      const open = () => window.fridayQuickPost({ title: it.name.replace(/[-_]/g, ' ').replace(/\.[^.]+$/, ''), content: '', asset: { filename: fname }, source: { kind: 'creation', ref: fname } });
+      fx('share', it.rel).then(open, open);
+    };
+    const folderLabel = () => (roots.find(r => r.id === root) || {}).label || root;
     const change = (op, it) => {
       if (!it) return;
       const body = { op, root, path: it.rel };
@@ -1355,20 +1977,26 @@
         const nn = window.prompt('New name for ' + it.name, it.name);
         if (!nn || nn === it.name) return;
         body.new_name = nn;
-      } else if (op === 'move') {
-        const dest = window.prompt('Move "' + it.name + '" to which folder? (a path inside ' + ((roots.find(r => r.id === root) || {}).label || root) + ', blank = top level)', it.rel.includes('/') ? it.rel.slice(0, it.rel.lastIndexOf('/')) : '');
+      } else if (op === 'move' || op === 'copy') {
+        const here = it.rel.includes('/') ? it.rel.slice(0, it.rel.lastIndexOf('/')) : '';
+        const dest = window.prompt((op === 'move' ? 'Move' : 'Copy') + ' "' + it.name + '" to which folder? (a path inside ' + folderLabel() + ', blank = top level)', here);
         if (dest === null) return;
-        body.dest_root = root; body.dest_path = dest;
+        body.dest_root = root; body.dest_path = dest.replace(/^\/+|\/+$/g, '');
       }
       say('Asking for your approval…', { sticky: true });
       postJSON('/api/studio-files/request-change', body).then(({ ok, j }) => {
-        if (!ok || !j.approval_id) { say(j.error || 'Refused'); return; }
+        if (!ok || !j.approval_id) { fx('fail', it.rel); say(j.error || 'Refused'); return; }
+        pendingRef.current.set(it.rel, { op, id: j.approval_id, body });
+        reapplyHeld();
         say('Waiting for your approval — nothing changes until you approve it.', { sticky: true, approval: j.approval_id });
-        watchApproval(j.approval_id);
+        watchApproval(j.approval_id, it.rel, op, body);
       });
     };
-    const watchApproval = id => {
+    // The animation follows the server's account of what happened: the
+    // success animation plays only after the approved change reports ok.
+    const watchApproval = (id, rel, op, body) => {
       let tries = 0;
+      const release = () => { pendingRef.current.delete(rel); const e = engRef.current, i = idxOf(rel); if (e && i >= 0) e.setHeld(i, false); };
       const iv = setInterval(() => {
         if (++tries > 200) { clearInterval(iv); return; }
         api('/api/approvals/' + id).then(r => r.json()).then(d => {
@@ -1376,10 +2004,16 @@
           if (!a || a.status === 'pending') return;
           if (a.status === 'approved' && !a.consumed) return;
           clearInterval(iv);
+          release();
           const det = a.used_detail || {};
-          if (a.status === 'approved') say(det.ok === false ? 'Approved, but it failed: ' + det.error : 'Done — the change was applied.');
-          else say('Not approved — nothing was changed.');
-          if (a.status === 'approved' && det.ok !== false) scan(rootRef.current, pathRef.current);
+          if (a.status !== 'approved') { say('Not approved — nothing was changed.'); return; }
+          if (det.ok === false) { fx('fail', rel); say('Approved, but it failed: ' + det.error); return; }
+          const destIdx = (body.dest_root === root && body.dest_path != null) ? idxOf(body.dest_path) : -1;
+          const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+          const onMid = op === 'rename' ? () => { const e = engRef.current, i = idxOf(rel); if (e && i >= 0) e.retile(i, dir + det.renamed_to, det.renamed_to); } : null;
+          const msg = { delete: 'Moved to the Recycle Bin.', rename: 'Renamed to ' + det.renamed_to + '.', move: 'Moved.', copy: 'Copied' + (det.name ? ' as ' + det.name : '') + '.' }[op] || 'Done.';
+          say(msg);
+          fx(op, rel, { dest: destIdx, onMid }).then(() => scan(rootRef.current, pathRef.current));
         }).catch(() => {});
       }, 3000);
     };
@@ -1427,7 +2061,8 @@
 
     const chip = (on, onClick, label, color, title) => h('button', { key: label, className: 'btn' + (on ? '' : ' btn-magenta'), onClick, title, style: Object.assign({}, BTN, color && on ? { borderColor: color, color } : null) }, label);
 
-    return h('div', { ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: full ? { outline: 'none', display: 'flex', flexDirection: 'column', height: '100vh', padding: 10, boxSizing: 'border-box', background: '#02040a' } : { outline: 'none' } },
+    const skip = () => { const e = engRef.current; if (e && e.isAnimating()) e.skipFx(); };
+    return h('div', { ref: boxRef, tabIndex: 0, onKeyDown: e => { skip(); onKey(e); }, onPointerDownCapture: skip, style: full ? { outline: 'none', display: 'flex', flexDirection: 'column', height: '100vh', padding: 10, boxSizing: 'border-box', background: '#02040a' } : { outline: 'none' } },
       // toolbar
       h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 } },
         h('select', { value: root, onChange: e => { setPath(''); setRoot(e.target.value); }, 'aria-label': 'Folder', style: { background: '#0b1220', color: '#cfe3ff', border: '1px solid #24406a', borderRadius: 6, padding: '5px 6px', fontSize: 12, minHeight: 30 } },
@@ -1437,6 +2072,9 @@
           crumbs.map((c, i) => h(React.Fragment, { key: i }, h('span', null, '›'), h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => setPath(crumbs.slice(0, i + 1).join('/')) }, c))),
           path && h('button', { className: 'btn', style: BTN, onClick: goUp, title: 'Up one folder (Backspace)' }, '↑ Up')),
         h('button', { className: 'btn btn-magenta', style: BTN, onClick: toggleFull, title: full ? 'Leave full screen (Esc)' : 'Full screen' }, full ? '⤡ Exit full screen' : '⛶ Full screen'),
+        h('label', { title: 'Dazzle: how much holographic polish the 3D view uses (also in Settings › Appearance)', style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#8fb2dd', fontFamily: 'Orbitron, Inter, sans-serif', letterSpacing: '.08em' } }, '✨ DAZZLE',
+          h('select', { value: dazzle, onChange: e => saveDazzle(e.target.value), 'aria-label': 'Dazzle', style: { background: '#0b1220', color: '#cfe3ff', border: '1px solid #24406a', borderRadius: 6, padding: '4px 6px', fontSize: 11, minHeight: 30 } },
+            h('option', { value: 'off' }, 'Off'), h('option', { value: 'subtle' }, 'Subtle'), h('option', { value: 'full' }, 'Full'))),
         h('input', { ref: searchRef, value: query, onChange: e => setQuery(e.target.value), placeholder: 'Search names…  (.png for a type)', 'aria-label': 'Search files', style: { flex: '1 1 180px', minWidth: 140, background: '#0b1220', color: '#e6f0ff', border: '1px solid #24406a', borderRadius: 6, padding: '6px 8px', fontSize: 12, minHeight: 30 } })),
       h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6, alignItems: 'center' } },
         VIEWS.map((v, i) => h('button', { key: v.id, className: 'btn' + (view === v.id ? '' : ' btn-magenta'), style: Object.assign({}, BTN, { fontWeight: view === v.id ? 700 : 400 }), title: v.tip + ' (' + (i + 1) + ')', onClick: () => setView(v.id), 'aria-pressed': view === v.id }, v.ico + ' ' + v.label)),
@@ -1475,12 +2113,14 @@
             selIt.dir && h('button', { className: 'btn', style: BTN, onClick: () => setPath(selIt.rel) }, '⤵ Enter folder'),
             h('button', { className: 'btn', style: BTN, onClick: () => act('open', selIt), title: 'Open with its usual app (programs and scripts are never launched)' }, '↗ Open'),
             h('button', { className: 'btn', style: BTN, onClick: () => act('reveal', selIt) }, '📂 Show in Explorer'),
-            h('button', { className: 'btn', style: BTN, onClick: () => act('copy', selIt) }, '⧉ Copy path')),
+            h('button', { className: 'btn', style: BTN, onClick: () => act('copy', selIt) }, '⧉ Copy path'),
+            creationName(selIt) && window.fridayQuickPost && h('button', { className: 'btn', style: BTN, onClick: () => share(selIt), title: 'Share or post this creation to your platforms' }, '📤 Share…')),
           h('details', { style: { fontSize: 11, color: '#9fb0c8' } },
             h('summary', { style: { cursor: 'pointer', padding: '4px 0' } }, 'Change this file… (needs your approval)'),
             h('div', { style: { display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' } },
               h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => change('rename', selIt) }, 'Rename…'),
               h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => change('move', selIt) }, 'Move…'),
+              !selIt.dir && h('button', { className: 'btn btn-magenta', style: BTN, onClick: () => change('copy', selIt) }, 'Copy to…'),
               h('button', { className: 'btn btn-magenta', style: Object.assign({}, BTN, { color: '#ff9a9a' }), onClick: () => change('delete', selIt) }, 'Delete…')),
             h('div', { style: { marginTop: 6, color: '#6f86a6' } }, 'These file an approval card in System › Approvals. Nothing changes until you approve it there; delete goes to the Recycle Bin.'))),
         toast && h('div', { role: 'status', style: { position: 'absolute', left: '50%', bottom: 44, transform: 'translateX(-50%)', padding: '8px 12px', borderRadius: 8, background: PANEL_BG, border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', maxWidth: '80%' } },

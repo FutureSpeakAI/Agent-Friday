@@ -8502,6 +8502,12 @@ function SettingsTabGeneral({s,save}){
     <StSection title="APPEARANCE">
       <StToggle label="Show All Workspaces" value={s.show_all_workspaces!==false} onChange={()=>save({show_all_workspaces:!(s.show_all_workspaces!==false)})} desc="Show all workspace icons in the dock."/>
       <StToggle label="Compact Mode" value={!!s.compact_mode} onChange={()=>save({compact_mode:!s.compact_mode})} desc="Reduce padding and element sizes."/>
+      <StRow label="3D Dazzle (Studio › Files 3D)">
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <input type="range" min={0} max={2} step={1} aria-label="3D Dazzle" value={['off','subtle','full'].indexOf(s.studio_dazzle||'full')} onChange={e=>{const v=['off','subtle','full'][+e.target.value];save({studio_dazzle:v});window.dispatchEvent(new CustomEvent('friday-dazzle',{detail:v}));}} style={{flex:1,accentColor:'#00d4ff'}}/>
+          <span style={{fontFamily:'Orbitron',fontSize:10,letterSpacing:'.12em',color:'#00d4ff',minWidth:52}}>{(s.studio_dazzle||'full').toUpperCase()}</span>
+        </div>
+      </StRow>
     </StSection>
     <StSection title="STARTUP">
       <StRow label="Startup Workspace">

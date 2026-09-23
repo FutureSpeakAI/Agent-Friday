@@ -43,6 +43,15 @@ const out = {};
   out.claim_again = p.claim(5, wanted, 12);
   out.used = p.used();
 }
+// A refresh hands a surviving file its old slot; a taken slot is refused.
+{
+  const p = createSlotPool(4, 10), wanted = new Uint8Array(10).fill(1);
+  out.adopt_ok = p.adopt(3, 2, 1);
+  out.adopt_taken = p.adopt(4, 2, 1);
+  out.adopt_twice = p.adopt(3, 1, 1);
+  out.adopt_next_claim = p.claim(5, wanted, 2).slot;
+  out.adopt_owner = p.itemIn[2];
+}
 // The item table links folders to their files and skips the scanned folder itself.
 {
   const items = buildItems({ path: 'base', entries: [
@@ -80,6 +89,14 @@ def test_slot_pool_evicts_only_unwanted_least_recent():
 
 
 @pytest.mark.skipif(not node, reason="node is not installed")
+def test_slot_pool_adopts_a_kept_tile_only_into_a_free_slot():
+    out = _run()
+    assert out["adopt_ok"] is True and out["adopt_owner"] == 3
+    assert out["adopt_taken"] is False and out["adopt_twice"] is False
+    assert out["adopt_next_claim"] != 2
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
 def test_item_table_links_folders():
     items = _run()["items"]
     assert items == [
@@ -104,3 +121,15 @@ def test_page_loads_the_browser_and_honours_the_backdrop_hold(path):
     text = (ROOT / path).read_text(encoding="utf-8")
     assert '<script src="/static/studio_files3d.js"></script>' in text
     assert "if (composer && !(window.__fridayBackdropHold > 0)) composer.render();" in text
+
+
+@pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
+def test_settings_offers_the_dazzle_slider(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert "3D Dazzle (Studio › Files 3D)" in text
+    assert "studio_dazzle" in text and "friday-dazzle" in text
+
+
+def test_dazzle_defaults_to_full():
+    from agent_friday.core import DEFAULT_SETTINGS
+    assert DEFAULT_SETTINGS["studio_dazzle"] == "full"

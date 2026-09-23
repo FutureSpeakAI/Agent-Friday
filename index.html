@@ -33743,7 +33743,43 @@ function SettingsTabGeneral({
       compact_mode: !s.compact_mode
     }),
     desc: "Reduce padding and element sizes."
-  })), /*#__PURE__*/React.createElement(StSection, {
+  }), /*#__PURE__*/React.createElement(StRow, {
+    label: "3D Dazzle (Studio › Files 3D)"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "range",
+    min: 0,
+    max: 2,
+    step: 1,
+    "aria-label": "3D Dazzle",
+    value: ['off', 'subtle', 'full'].indexOf(s.studio_dazzle || 'full'),
+    onChange: e => {
+      const v = ['off', 'subtle', 'full'][+e.target.value];
+      save({
+        studio_dazzle: v
+      });
+      window.dispatchEvent(new CustomEvent('friday-dazzle', {
+        detail: v
+      }));
+    },
+    style: {
+      flex: 1,
+      accentColor: '#00d4ff'
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 10,
+      letterSpacing: '.12em',
+      color: '#00d4ff',
+      minWidth: 52
+    }
+  }, (s.studio_dazzle || 'full').toUpperCase())))), /*#__PURE__*/React.createElement(StSection, {
     title: "STARTUP"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Startup Workspace"
