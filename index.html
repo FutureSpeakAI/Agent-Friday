@@ -9221,6 +9221,13 @@ function KnowledgeGraphWS() {
         sphere: 1.2,
         spiral: 0.75
       }[mode] || 1.05;
+      if (mode === 'rings') {
+        // Face the ring plane (it tilts toward +z about the X axis) instead of
+        // catching it edge-on; take the nearest such angle so the camera does
+        // not spin all the way round.
+        const want = Math.PI / 2 - 0.3;
+        camGoal.theta = want + 2 * Math.PI * Math.round((camGoal.theta - want) / (2 * Math.PI));
+      }
     };
     S.arrange = arrange;
     window.__kgArrange = (mode, opts) => arrange(mode, opts);
