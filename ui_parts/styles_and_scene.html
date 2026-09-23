@@ -54,6 +54,10 @@
     <script src="/static/vendor/three-r128-CopyShader.js"></script>
     <script src="/static/vendor/three-r128-LuminosityHighPassShader.js"></script>
     <script src="/static/vendor/three-r128-UnrealBloomPass.js"></script>
+    <!-- Studio › Files: the 3D file browser (defines window.Files3DPanel). -->
+    <script src="/static/studio_files3d.js"></script>
+    <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
+    <script src="/static/friday3d_records.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -1502,7 +1506,10 @@
             }
             
             if (starField && starField.rotation) starField.rotation.y += 0.0001;
-            if (composer) composer.render();
+            // A large foreground 3D view (Studio › Files) holds the backdrop's
+            // drawing while it is on screen: both share one GPU. Everything
+            // above still runs, so the hand cursor keeps tracking.
+            if (composer && !(window.__fridayBackdropHold > 0)) composer.render();
         }
 
         window.onload = init;

@@ -852,8 +852,44 @@ window.addEventListener('DOMContentLoaded',function(){
         .dock-btn:hover { transform: translateY(-2px); }
         .dock-btn:active { animation: dockBounce 0.18s ease-out; }
         .dock-btn.active { transform: translateY(-1px); }
-        .fwin { animation: fwinOpen 0.18s ease-out; }
-        .fwin.closing { animation: fwinOpen 0.18s ease-in reverse; }
+        /* Workspace windows materialise out of their dock icon and fold back
+           into it on close (--fwin-ox/--fwin-oy: the icon's centre, in the
+           window's own coordinates, set by FWin). A cyan light band sweeps
+           the glass as it forms. Dazzle Off keeps the plain fade;
+           prefers-reduced-motion gets an opacity-only fade. */
+        .fwin { animation: fwinMaterialize 0.34s cubic-bezier(0.2,0.8,0.3,1) both; transform-origin: var(--fwin-ox, 50%) var(--fwin-oy, 110%); }
+        .fwin.closing { animation: fwinFold 0.26s cubic-bezier(0.55,0,0.85,0.35) both; pointer-events: none; }
+        .fwin::before {
+            content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 6; border-radius: inherit;
+            background: linear-gradient(180deg, transparent 38%, rgba(0,212,255,0.28) 46%, rgba(230,250,255,0.55) 50%, rgba(123,97,255,0.28) 54%, transparent 62%);
+            background-size: 100% 260%; mix-blend-mode: screen; opacity: 0;
+            animation: fwinSweep 0.5s ease-out 0.06s both;
+        }
+        .fwin.closing::before { animation: fwinSweep 0.26s ease-in reverse both; }
+        @keyframes fwinMaterialize {
+            0% { opacity: 0; transform: scale(0.05); filter: brightness(2.4) saturate(1.5); }
+            45% { opacity: 1; filter: brightness(1.5) saturate(1.2); }
+            100% { opacity: 1; transform: none; filter: none; }
+        }
+        @keyframes fwinFold {
+            0% { opacity: 1; transform: none; filter: none; }
+            60% { opacity: 0.9; filter: brightness(1.8) saturate(1.3); }
+            100% { opacity: 0; transform: scale(0.05); filter: brightness(2.6); }
+        }
+        @keyframes fwinSweep {
+            0% { background-position: 0 100%; opacity: 1; }
+            80% { opacity: 1; }
+            100% { background-position: 0 0; opacity: 0; }
+        }
+        :root[data-dazzle="off"] .fwin { animation: fwinOpen 0.18s ease-out; }
+        :root[data-dazzle="off"] .fwin.closing { animation: fwinOpen 0.18s ease-in reverse both; }
+        :root[data-dazzle="off"] .fwin::before { display: none; }
+        @keyframes fwinFade { from { opacity: 0; } to { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+            .fwin, :root[data-dazzle="off"] .fwin { animation: fwinFade 0.12s linear both; }
+            .fwin.closing, :root[data-dazzle="off"] .fwin.closing { animation: fwinFade 0.12s linear reverse both; }
+            .fwin::before { display: none; }
+        }
         .card { transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
         .card:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
 
