@@ -66,8 +66,23 @@ _EPHEMERAL = {"type": "ephemeral"}
 #: a breakpoint (there are only 4) on something that cannot hit.
 #: The minimum is NOT monotonic across generations — 512 on the newest models
 #: and 4096 on Haiku 4.5 — so it cannot be guessed from the model's age.
+#:
+#: Read off the prompt-caching page on 2026-09-23, which lists them by name:
+#: "512 tokens for Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude
+#: Opus 5, Claude Fable 5, and Claude Mythos 5"; "1,024 tokens for Claude Opus
+#: 4.8, Claude Sonnet 5, Claude Sonnet 4.6, Claude Sonnet 4.5"; "4,096 tokens
+#: for Claude Haiku 4.5". Every row below was confirmed against that list, not
+#: only the two that were added.
+#:
+#: Opus 5.5 and Fable 5.1 were both missing and are both 512, so each fell to
+#: the 1024 default and lost every cacheable prefix in the 512–1023 band. The
+#: default errs in the safe direction — too HIGH only forgoes a breakpoint that
+#: would have hit, where too low spends one of four on a prefix Anthropic
+#: ignores — which is why this was a missed saving and not a wrong bill.
 _MIN_CACHEABLE = {
+    "claude-fable-5-1": 512,
     "claude-fable-5": 512,
+    "claude-opus-5-5": 512,
     "claude-opus-5": 512,
     "claude-sonnet-5": 1024,
     "claude-sonnet-4-6": 1024,

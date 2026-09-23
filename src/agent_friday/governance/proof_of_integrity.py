@@ -49,6 +49,18 @@ CLAWS_TEXT = (
 AGENT_VERSION = "4.4.0"
 
 
+def _default_cloud_model() -> str:
+    """The shipped default orchestrator model, from the one place that declares
+    it. Imported lazily: this module otherwise pulls in nothing but stdlib and
+    `agent_friday.paths`, and importing core is a multi-second bootstrap."""
+    try:
+        from agent_friday.core import ANTHROPIC_MODEL_DEFAULT
+        return ANTHROPIC_MODEL_DEFAULT
+    except Exception:
+        # Never invent a different model than the declared default.
+        return "claude-sonnet-5"
+
+
 class AgentIntegrityManifest:
     """Structured manifest of the agent's integrity state.
 
@@ -321,19 +333,49 @@ class IntegrityEngine:
     # ── Helpers ────────────────────────────────────────────────────
 
     def _default_model_manifest(self) -> dict:
+        """What this install would actually use, for the attestation record.
+
+        This reads `settings.json` off disk rather than through
+        `core._load_settings()`, deliberately: the engine is constructed with a
+        `friday_dir` so tests and a rehearsal home stay isolated, and the point
+        of an attestation is the recorded state. But reading the file directly
+        means no DEFAULT_SETTINGS merge, so a key the model picker never wrote
+        IS absent here -- and the fallback then decides what gets attested.
+
+        Two faults, both of which made this assert a model nobody configured:
+
+        * The orchestrator fallback was `claude-opus-5`. The shipped default is
+          `claude-sonnet-5` (`DEFAULT_SETTINGS["orchestrator_model"]`, and
+          `capability_routing.reasoning`), so on any install where the flat key
+          was never written -- the normal state -- the manifest named a model no
+          turn would use. `ANTHROPIC_MODEL_DEFAULT` is the single constant and
+          honours the ANTHROPIC_MODEL env override that a literal defeats.
+        * `encoding="utf-8"` rather than `utf-8-sig`. A leading BOM is a
+          JSONDecodeError, the `except` swallows it, and every field collapses
+          to the last-resort return -- while every key on disk is intact and
+          correct. PowerShell 5.1's `>` and `Out-File` write UTF-8 WITH BOM by
+          default, so this is a routine way for the file to end up unreadable.
+          `core._load_settings` carries the same fix for the same reason.
+
+        An empty stored value is treated as absent, not as a model name.
+        """
+        default_model = _default_cloud_model()
         try:
             settings_file = self.friday_dir / "settings.json"
             if settings_file.exists():
-                s = json.loads(settings_file.read_text(encoding="utf-8"))
+                s = json.loads(settings_file.read_text(encoding="utf-8-sig"))
                 return {
-                    "orchestrator": s.get("orchestrator_model", "claude-opus-5"),
-                    "subagent": s.get("subagent_model", "claude-sonnet-5"),
-                    "creative": s.get("creative_model", "gemini-nano-banana-2"),
-                    "voice": s.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
+                    "orchestrator": s.get("orchestrator_model") or default_model,
+                    "subagent": s.get("subagent_model") or default_model,
+                    "creative": (s.get("creative_model")
+                                 or "gemini-nano-banana-2"),
+                    "voice": (s.get("voice_model")
+                              or "gemini-2.5-flash-native-audio-latest"),
                 }
-        except Exception:
-            pass
-        return {"orchestrator": "claude-opus-5"}
+        except Exception as e:
+            _log.warning("integrity manifest: settings unreadable (%s); "
+                         "attesting the shipped default instead", e)
+        return {"orchestrator": default_model}
 
     def _load_epistemic(self) -> dict:
         try:

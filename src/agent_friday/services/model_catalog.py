@@ -27,14 +27,10 @@ some grayed out"):
   * Unavailable entries carry `needs_key` + a human `hint` so the UI can dim
     them, block the click, and say exactly which key to add.
 """
-import logging
-
 from agent_friday.services.provider_registry import (
     get_provider_registry, ALL_ROLES,
     ROLE_ORCHESTRATOR, ROLE_SUBAGENT, ROLE_CREATIVE, ROLE_VOICE,
 )
-
-_log = logging.getLogger("friday.model_catalog")
 
 # Importing the router family helper is cheap and dependency-free.
 try:
@@ -741,31 +737,6 @@ def _friday_store_entries(exclude: set | None = None) -> list:
     return out
 
 
-def _experimental_engine_entries() -> list:
-    """Engines Friday knows about but does not run: listed, never selectable.
-
-    These are not providers. A provider descriptor has to earn
-    `classification: local` by naming a local-capable adapter AND a private
-    base_url, and an engine invoked as a SUBPROCESS has no URL at all -- so
-    registering one as a provider would fail that check and the row would be
-    badged `cloud`, which is precisely backwards for something that never
-    touches a network. `_arbiter_seat_entries` already builds local rows by
-    hand for the same reason, and this follows it.
-
-    Every row here carries `roles: []` and `curated: False`, which is what
-    makes it unselectable rather than merely discouraged: `build_catalog` files
-    an entry under a role only when the entry is curated AND names that role.
-    """
-    out = []
-    try:
-        from agent_friday.services import kimi_k3 as _k3
-        out.append(_k3.catalog_entry())
-    except Exception as e:
-        # A broken experimental row must not cost anyone their model picker.
-        _log.debug("experimental engine entry skipped: %s", e)
-    return out
-
-
 def build_catalog() -> dict:
     """Return the full model catalog grouped by UI role.
 
@@ -877,15 +848,6 @@ def build_catalog() -> dict:
             "source": "custom",
             "_ord": len(flat),
         })
-
-    # Experimental engines last: present in `models` so the Model Browser can
-    # show them with their requirements, absent from every role list.
-    for e in _experimental_engine_entries():
-        if (e["id"], e["provider"]) in seen:
-            continue
-        seen.add((e["id"], e["provider"]))
-        e["_ord"] = len(flat)
-        flat.append(e)
 
     # Stable, useful ordering: available first, then provider, then the order
     # the provider declared its models in (Sonnet 5 leads the Claude lineup —
