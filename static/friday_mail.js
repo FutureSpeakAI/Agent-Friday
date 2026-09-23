@@ -8,8 +8,12 @@
  * - Threads open from the account they belong to, as formatted mail in a
  *   sandboxed frame with no scripts and remote images off until asked for,
  *   with attachments to preview or download.
- * - Archive, snooze, flag, read/unread and lane moves are Friday-local (Gmail
- *   is not changed) and every one can be undone (toast, or Z).
+ * - Archive, flag (star) and read/unread also change Gmail itself for an
+ *   account reconnected with sending (gmail.modify); otherwise, and for snooze
+ *   and lane moves, they are Friday's own. Labels are Gmail's. Every change
+ *   can be undone (toast, or Z), in Gmail too.
+ * - Drafts can be saved into Gmail Drafts; a message can be scheduled, and
+ *   after approval it waits 10 seconds (or until its time) and can be taken back.
  * - Reply, reply all, forward and compose never send. They file an approval
  *   card; the message goes out only after it is approved, and only from an
  *   account that granted sending.
@@ -220,9 +224,18 @@
     const [atts, setAtts] = useState([]);
     const [fwd, setFwd] = useState((init.forward || []).map(a => Object.assign({ keep: true }, a)));
     const [busy, setBusy] = useState(false);
-    const [state, setState] = useState(null);     // {approval_id, status, message}
+    const [state, setState] = useState(null);     // {approval_id, status, message, seconds}
+    const [sendAt, setSendAt] = useState('');       // datetime-local, '' = as soon as approved
+    const [drafting, setDrafting] = useState(false);
     const ed = useRef(null), fileRef = useRef(null);
-    useEffect(() => { if (ed.current && init.html != null) ed.current.innerHTML = init.html; if (ed.current && !init.to) {} }, []);
+    useEffect(() => {
+      if (ed.current && init.html != null) ed.current.innerHTML = init.html;
+      // replies and forwards start typing above the quoted original
+      if (ed.current && init.to && init.mode !== 'new') {
+        ed.current.focus();
+        try { const r = document.createRange(); r.setStart(ed.current, 0); r.collapse(true); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); } catch (_) {}
+      }
+    }, []);
     const cmd = (c, v) => { document.execCommand(c, false, v); ed.current && ed.current.focus(); };
     const upload = files => {
       Array.from(files || []).forEach(f => {
@@ -233,19 +246,37 @@
       });
     };
     const sendable = canSend.find(a => a.id === from);
-    const request = () => {
+    const fromAcct = accounts.find(a => a.id === from);
+    const canDraft = !!(fromAcct && fromAcct.mail && fromAcct.mail.modify);
+    const fields = () => {
       const html = ed.current ? ed.current.innerHTML : '';
       const text = ed.current ? ed.current.innerText : '';
+      return { to: splitAddrs(to).map(addrOf), cc: splitAddrs(cc).map(addrOf), bcc: splitAddrs(bcc).map(addrOf), subject,
+        body: text, html, account_id: from, thread_id: init.thread_id || null, in_reply_to: init.in_reply_to || null,
+        references: init.references || null, attachments: atts, forward_attachments: fwd.filter(a => a.keep) };
+    };
+    // Into his own Gmail Drafts. Sends nothing; needs the mailbox permission.
+    const saveDraft = () => {
+      setDrafting(true);
+      post('/api/mail/draft', fields()).then(({ ok, j }) => {
+        setDrafting(false);
+        say(ok ? 'Saved to Gmail Drafts (' + (fromAcct.email || fromAcct.label || 'account') + '). Nothing was sent.' : (j.message || 'Gmail did not save the draft.'));
+      }).catch(() => { setDrafting(false); say('Could not reach Friday.'); });
+    };
+    // Undo send: take an approved message back while it waits.
+    const undoSend = () => {
+      if (!state || !state.approval_id) return;
+      post('/api/mail/held/' + encodeURIComponent(state.approval_id) + '/cancel', {}).then(({ ok, j }) => {
+        setState(s => Object.assign({}, s, ok ? { status: 'cancelled', message: 'Taken back. Nothing was sent.' } : { message: j.message || 'Too late to take it back.' }));
+      }).catch(() => say('Could not reach Friday.'));
+    };
+    const request = () => {
       const bad = splitAddrs(to).concat(splitAddrs(cc), splitAddrs(bcc)).filter(a => !/^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(addrOf(a)));
       if (!splitAddrs(to).length) { say('Add at least one recipient.'); return; }
       if (bad.length) { say('Not an email address: ' + bad.join(', ')); return; }
       setBusy(true);
-      post('/api/mail/request', {
-        to: splitAddrs(to).map(addrOf), cc: splitAddrs(cc).map(addrOf), bcc: splitAddrs(bcc).map(addrOf), subject,
-        body: text, html, account_id: from, requested_by: 'ui:messages',
-        thread_id: init.thread_id || null, in_reply_to: init.in_reply_to || null, references: init.references || null,
-        attachments: atts, forward_attachments: fwd.filter(a => a.keep)
-      }).then(({ ok, j }) => {
+      post('/api/mail/request', Object.assign(fields(), { requested_by: 'ui:messages',
+        send_at: sendAt ? new Date(sendAt).toISOString() : null })).then(({ ok, j }) => {
         setBusy(false);
         if (!ok || !j.approval_id) { setState({ status: 'refused', message: j.message || 'Friday could not queue this message.' }); return; }
         setState({ approval_id: j.approval_id, status: j.approval_status, message: 'Waiting for your approval. Nothing has been sent yet.' });
@@ -253,19 +284,27 @@
     };
     // follow the card: approved → sent (or refused), denied → not sent
     useEffect(() => {
-      if (!state || !state.approval_id || /sent|denied|failed/.test(state.status)) return;
+      if (!state || !state.approval_id || /sent|denied|failed|cancelled/.test(state.status)) return;
       const iv = setInterval(() => {
         api('/api/approvals/' + state.approval_id).then(r => r.json()).then(d => {
           const a = d.approval || d;
           if (!a) return;
           if (a.status === 'approved' && a.consumed) {
             const det = a.used_detail || {};
-            setState(s => Object.assign({}, s, { status: det.message_id ? 'sent' : 'failed', message: det.message_id ? 'Sent.' : 'Approved, but Gmail did not accept it. See Settings › Outbox.' }));
+            setState(s => Object.assign({}, s, { status: det.message_id ? 'sent' : 'failed', message: det.message_id ? 'Sent.' : 'Not sent. See Settings › Outbox.' }));
+          } else if (a.status === 'approved') {
+            // approved and waiting: the undo window, or its scheduled time
+            api('/api/mail/held').then(r => r.json()).then(hd => {
+              const row = (hd.held || []).find(x => x.approval_id === state.approval_id);
+              if (!row) return;
+              const when = row.scheduled ? 'Scheduled for ' + new Date(row.due * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Sending in ' + row.seconds_left + ' s';
+              setState(s => Object.assign({}, s, { status: 'held', message: when + ' — you can still take it back.' }));
+            }).catch(() => {});
           } else if (a.status === 'denied' || a.status === 'expired' || a.status === 'blocked') {
             setState(s => Object.assign({}, s, { status: 'denied', message: 'Not approved. Nothing was sent.' }));
           }
         }).catch(() => {});
-      }, 2500);
+      }, state.status === 'held' ? 1000 : 2500);
       return () => clearInterval(iv);
     }, [state && state.approval_id, state && state.status]);
     const title = { new: 'NEW MESSAGE', reply: 'REPLY', replyAll: 'REPLY ALL', forward: 'FORWARD' }[init.mode] || 'MESSAGE';
@@ -297,9 +336,14 @@
         h('input', { ref: fileRef, type: 'file', multiple: true, style: { display: 'none' }, onChange: e => { upload(e.target.files); e.target.value = ''; } }),
         h('span', { style: { flex: 1 } }),
         state && h('span', { style: { fontSize: 11, color: state.status === 'sent' ? '#7df0b0' : state.status === 'refused' || state.status === 'denied' || state.status === 'failed' ? '#ffb4b4' : '#ffd699', marginRight: 6 } }, state.message),
-        state && state.approval_id && !/sent|denied|failed/.test(state.status) && h('button', { className: 'btn fm-btn', onClick: () => window.fridayRunActions && window.fridayRunActions([{ type: 'navigate', workspace: 'system', tab: 'approvals' }]) }, 'Review in Approvals'),
+        state && state.status === 'held' && h('button', { className: 'btn fm-btn', onClick: undoSend, style: { borderColor: '#ffb86b', color: '#ffb86b' } }, 'Undo send'),
+        state && state.approval_id && !/sent|denied|failed|cancelled|held/.test(state.status) && h('button', { className: 'btn fm-btn', onClick: () => window.fridayRunActions && window.fridayRunActions([{ type: 'navigate', workspace: 'system', tab: 'approvals' }]) }, 'Review in Approvals'),
+        (!state || state.status === 'refused') && canDraft && h('button', { className: 'btn fm-btn', disabled: drafting, onClick: saveDraft, title: 'Save into your Gmail Drafts. Sends nothing.' }, drafting ? 'Saving…' : 'Save draft'),
+        (!state || state.status === 'refused') && h('span', { style: { fontSize: 11, color: '#7f93ad', marginLeft: 4 } }, '⏰ Later'),
+        (!state || state.status === 'refused') && h('input', { type: 'datetime-local', value: sendAt, onChange: e => setSendAt(e.target.value), title: 'Send later (optional). The time is part of what you approve.',
+          'aria-label': 'Send later', style: { background: '#0b1220', color: sendAt ? '#e6f0ff' : '#6f86a6', border: '1px solid #24406a', borderRadius: 6, fontSize: 11, padding: '4px 6px', minHeight: 28 } }),
         (!state || state.status === 'refused') && h('button', { className: 'btn fm-btn', disabled: busy, onClick: request, title: 'Files an approval card. Nothing is sent until you approve it.', style: { borderColor: '#00d4ff', color: '#00d4ff' } },
-          busy ? 'Asking…' : 'Send — asks for approval')));
+          busy ? 'Asking…' : sendAt ? 'Send later — asks for approval' : 'Send — asks for approval')));
   }
 
   // ── the panel ───────────────────────────────────────────────────────────
@@ -318,6 +362,7 @@
     const [showImages, setShowImages] = useState(false);
     const [compose, setCompose] = useState(null);
     const [toast, setToast] = useState(null);
+    const [labelsBy, setLabelsBy] = useState({});      // account id -> its own Gmail labels
     const [help, setHelp] = useState(false);
     const [preview, setPreview] = useState(null);
     const [accounts, setAccounts] = useState([]);
@@ -370,18 +415,52 @@
     const drop = ids => setData(d => d && Object.assign({}, d, { messages: (d.messages || []).filter(m => !ids.includes(m.id)) }));
 
     // Friday-local actions; each one can be undone exactly.
+    const canModify = aid => { const a = accounts.find(x => x.id === aid); return !!(a && a.mail && a.mail.modify); };
+    const loadLabels = aid => {
+      if (!aid || labelsBy[aid] || !canModify(aid)) return;
+      api('/api/mail/labels?account=' + encodeURIComponent(aid)).then(r => r.json()).then(d => {
+        if (d.status === 'ok') setLabelsBy(m => Object.assign({}, m, { [aid]: d.labels || [] }));
+      }).catch(() => {});
+    };
+    // A Gmail label on a whole conversation; undo takes off exactly what was put on.
+    const applyLabel = (card, labelId, name) => {
+      const aid = card.account_id, tid = card.thread_id || card.gmail_id;
+      post('/api/mail/modify', { account_id: aid, thread_ids: [tid], add: [labelId] }).then(({ ok, j }) => {
+        if (!ok || j.status !== 'ok' || (j.failed && j.failed[tid])) { say((j && j.message) || (j && j.failed && j.failed[tid]) || 'Gmail did not add the label.'); return; }
+        const u = { label: 'label', gmailOnly: { account_id: aid, changed: j.changed } };
+        undoStack.current.push(u);
+        say('Labelled “' + name + '” in Gmail', u);
+      }).catch(() => say('Could not reach Friday.'));
+    };
+    const newLabel = card => {
+      const name = (window.prompt('New Gmail label name') || '').trim();
+      if (!name) return;
+      post('/api/mail/labels', { account_id: card.account_id, name }).then(({ ok, j }) => {
+        if (!ok || j.status !== 'ok') { say(j.message || 'Gmail did not create the label.'); return; }
+        setLabelsBy(m => Object.assign({}, m, { [card.account_id]: (m[card.account_id] || []).concat([j.label]) }));
+        applyLabel(card, j.label.id, j.label.name);
+      }).catch(() => say('Could not reach Friday.'));
+    };
     const act = (cards, action, opts) => {
       cards = cards.filter(Boolean);
       if (!cards.length) return Promise.resolve();
-      const ids = cards.map(c => c.id);
+      const asked = cards.map(c => c.id);
       const prev = cards.map(c => Object.assign({}, c));
-      return post('/api/messages/action', { ids, action }).then(({ ok, j }) => {
-        if (!ok) { say(j.message || 'That did not work.'); return; }
+      // each card's account and conversation, so Gmail itself changes where allowed
+      const gmail = cards.map(c => ({ id: c.id, account_id: c.account_id, thread_id: c.thread_id || c.gmail_id }));
+      return post('/api/messages/action', { ids: asked, action, gmail }).then(({ ok, j }) => {
+        if (!ok || j.status === 'error') { say(j.message || 'That did not work.'); return; }
+        const ids = j.ids || asked;                    // conversations Gmail refused are left as they were
+        const st = Object.values(j.gmail_status || {});
+        const where = st.includes('synced') && !st.includes('not_permitted') ? ' (also in Gmail)'
+          : st.includes('synced') ? ' (in Gmail where allowed; the rest in Friday only)'
+            : ' (in Friday only' + (st.includes('not_permitted') ? ' — Reconnect with sending to change Gmail too' : '') + ')';
+        const refused = Object.keys(j.not_changed || {}).length;
         if (action === 'archive' || action === 'snooze') { drop(ids); if (open && ids.includes(open.card.id)) setOpen(null); }
         else patch(ids, m => Object.assign({}, m, action === 'flag' ? { flagged: true } : action === 'unflag' ? { flagged: false } : action === 'read' ? { unread: false } : action === 'unread' ? { unread: true } : {}));
-        const undo = { before: j.before, cards: prev, label: action };
+        const undo = { before: j.before, gmail: j.gmail_changes || {}, cards: prev.filter(c => ids.includes(c.id)), label: action };
         undoStack.current.push(undo);
-        if (!(opts && opts.silent)) say(({ archive: 'Archived', snooze: 'Snoozed for 4 hours', flag: 'Flagged', unflag: 'Unflagged', read: 'Marked read', unread: 'Marked unread' }[action] || action) + (ids.length > 1 ? ' · ' + ids.length + ' messages' : '') + ' (in Friday only)', undo);
+        if (!(opts && opts.silent)) say(({ archive: 'Archived', snooze: 'Snoozed for 4 hours', flag: 'Flagged', unflag: 'Unflagged', read: 'Marked read', unread: 'Marked unread' }[action] || action) + (ids.length > 1 ? ' · ' + ids.length + ' messages' : '') + (action === 'snooze' ? ' (in Friday only)' : where) + (refused ? ' · ' + refused + ' not changed (Gmail refused)' : ''), undo);
         setSel(new Set());
       });
     };
@@ -403,7 +482,11 @@
       u = u || undoStack.current.pop();
       if (!u) { say('Nothing to undo.'); return; }
       undoStack.current = undoStack.current.filter(x => x !== u);
-      post('/api/messages/restore', { states: u.before }).then(({ ok }) => {
+      if (u.gmailOnly) {
+        post('/api/mail/modify/undo', u.gmailOnly).then(({ ok, j }) => { setToast(null); say(ok && j.status === 'ok' ? 'Undone in Gmail.' : 'Undo failed in Gmail.'); });
+        return;
+      }
+      post('/api/messages/restore', { states: u.before, gmail_changes: u.gmail || {} }).then(({ ok }) => {
         if (!ok) { say('Undo failed.'); return; }
         setData(d => {
           if (!d) return d;
@@ -607,6 +690,12 @@
             h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'unread'), title: 'Shift+U' }, 'Mark unread'),
             h('select', { className: 'btn fm-btn', value: open.card.lane, onChange: e => moveLane([open.card], e.target.value), 'aria-label': 'Lane' },
               Object.keys(LANES).filter(k => k !== 'all').map(k => h('option', { key: k, value: k }, LANES[k][1] + ' ' + LANES[k][0]))),
+            canModify(open.card.account_id) && h('select', { className: 'btn fm-btn', value: '', 'aria-label': 'Gmail label', title: 'Add a Gmail label to this conversation (undoable)',
+              onFocus: () => loadLabels(open.card.account_id), onMouseDown: () => loadLabels(open.card.account_id),
+              onChange: e => { const v = e.target.value; if (v === '__new') newLabel(open.card); else if (v) { const l = (labelsBy[open.card.account_id] || []).find(x => x.id === v); applyLabel(open.card, v, l ? l.name : v); } } },
+              h('option', { value: '' }, '🏷 Label…'),
+              (labelsBy[open.card.account_id] || []).map(l => h('option', { key: l.id, value: l.id }, l.name)),
+              h('option', { value: '__new' }, '+ New label…')),
             h('label', { style: { fontSize: 11, color: '#8fa6c4', display: 'flex', gap: 4, alignItems: 'center' } }, h('input', { type: 'checkbox', checked: showImages, onChange: e => setShowImages(e.target.checked) }), 'Show remote images')),
           aiDraft && h('div', { className: 'fm-banner info', style: { flexDirection: 'column', alignItems: 'stretch' } },
             aiDraft.busy ? 'Friday is drafting a reply…' : aiDraft.error ? aiDraft.error : [h('div', { key: 't', style: { whiteSpace: 'pre-wrap' } }, aiDraft.text),
@@ -630,7 +719,7 @@
         [['j / k', 'next / previous'], ['o or Enter', 'open'], ['u', 'back to list'], ['x', 'select'], ['e', 'archive'], ['s', 'flag / unflag'], ['Shift+U', 'mark unread'], ['Shift+I', 'mark read'],
          ['b', 'snooze 4 hours'], ['z', 'undo'], ['r', 'reply'], ['a', 'reply all'], ['f', 'forward'], ['c', 'compose'], ['/', 'search'], ['g', 'refresh'], ['?', 'this help'], ['Esc', 'close / clear']]
           .map(([k, d]) => h('div', { key: k, style: { breakInside: 'avoid', margin: '3px 0' } }, h('kbd', null, k), d)),
-        h('div', { style: { marginTop: 10, color: '#7f93ad', columnSpan: 'all' } }, 'Archive, snooze, flag and read/unread change Friday’s view only; Gmail itself is not changed. Sending always waits for your approval.'))),
+        h('div', { style: { marginTop: 10, color: '#7f93ad', columnSpan: 'all' } }, 'Archive, flag (star) and read/unread also change Gmail for accounts reconnected with sending; otherwise Friday’s view only. Snooze is Friday’s own. Everything can be undone (Z). Sending always waits for your approval, then 10 seconds you can take it back in.'))),
       toast && h('div', { className: 'fm-toast', role: 'status' }, toast.text,
         toast.undo && h('button', { className: 'btn fm-btn', onClick: () => undo(toast.undo) }, 'Undo (z)')));
   }
