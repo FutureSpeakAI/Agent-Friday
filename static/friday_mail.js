@@ -283,10 +283,15 @@
     const say = (text, undo) => { setToast({ text, undo, t: Date.now() }); };
     useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(x => x === toast ? null : x), toast.undo ? 7000 : 3500); return () => clearTimeout(t); }, [toast]);
 
+    const seq = useRef(0);
     const load = useCallback((q) => {
+      const n = ++seq.current;
       setLoading(true);
+      // results of a different search are never shown under this one's name
+      setData(d => (d && (d.query || '') === (q || '')) ? d : null);
       const url = '/api/messages?limit=80' + (q ? '&q=' + encodeURIComponent(q) : '');
-      api(url).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(e => { setData({ status: 'error', search_failed: true, error: "Couldn't reach Friday: " + e }); setLoading(false); });
+      const done = d => { if (n !== seq.current) return; setData(d); setLoading(false); };
+      api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, query: q || null, error: "Couldn't reach Friday: " + e }));
       if (!q) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
     }, []);
     useEffect(() => { load(query); }, [query]);
@@ -373,7 +378,22 @@
         .catch(e => setOpen(o => o && o.card.id === m.id ? { card: m, loading: false, res: { status: 'error', error: "Couldn't reach Friday: " + e } } : o));
     };
 
-    const quoteOf = msg => '<br><br><div>On ' + esc(msg.date || '') + ', ' + esc(msg.sender) + ' wrote:</div><blockquote>' + (msg.html || esc(msg.body).replace(/\n/g, '<br>')) + '</blockquote>';
+    // The quoted original goes into an editor in Friday's own page, outside
+    // the sandboxed frame, so nothing in it may load: images (tracking
+    // pixels), frames, media and style urls are removed first. A DOMParser
+    // document is inert and fetches nothing while it is being cleaned.
+    const quotable = html => {
+      const d = new DOMParser().parseFromString(html, 'text/html');
+      d.querySelectorAll('script,style,link,meta,base,iframe,frame,object,embed,video,audio,source,picture,svg,form,input,button').forEach(n => n.remove());
+      d.querySelectorAll('img').forEach(n => n.replaceWith(d.createTextNode(n.getAttribute('alt') ? '[image: ' + n.getAttribute('alt') + ']' : '[image]')));
+      d.querySelectorAll('*').forEach(n => [...n.attributes].forEach(at => {
+        const k = at.name.toLowerCase();
+        if (k.startsWith('on') || k === 'background' || k === 'src' || k === 'srcset' || (k === 'style' && /url\s*\(/i.test(at.value))) n.removeAttribute(at.name);
+      }));
+      return d.body.innerHTML;
+    };
+    const bodyOf = msg => msg.html ? quotable(msg.html) : esc(msg.body).replace(/\n/g, '<br>');
+    const quoteOf = msg => '<br><br><div>On ' + esc(msg.date || '') + ', ' + esc(msg.sender) + ' wrote:</div><blockquote>' + bodyOf(msg) + '</blockquote>';
     const startReply = mode => {
       const msgs = open && open.res && open.res.messages;
       if (!msgs || !msgs.length) return;
@@ -382,7 +402,7 @@
       const subj = last.subject || '';
       if (mode === 'forward') {
         setCompose({ mode, account_id: open.res.account_id, to: '', subject: /^fwd?:/i.test(subj) ? subj : 'Fwd: ' + subj,
-          html: '<br><br><div>---------- Forwarded message ---------<br>From: ' + esc(last.sender) + '<br>Date: ' + esc(last.date) + '<br>Subject: ' + esc(subj) + '<br>To: ' + esc(last.to) + '</div><br>' + (last.html || esc(last.body).replace(/\n/g, '<br>')),
+          html: '<br><br><div>---------- Forwarded message ---------<br>From: ' + esc(last.sender) + '<br>Date: ' + esc(last.date) + '<br>Subject: ' + esc(subj) + '<br>To: ' + esc(last.to) + '</div><br>' + bodyOf(last),
           forward: (last.attachments || []).map(a => ({ account_id: open.res.account_id, message_id: last.id, attachment_id: a.attachment_id, filename: a.filename, mime: a.mime })) });
         return;
       }
@@ -452,13 +472,13 @@
     const Row = (m, i) => {
       const L = LANES[m.lane] || [m.lane, '•'];
       return h('div', {
-        key: m.id, className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : ''),
+        key: (m.account_id || '') + ':' + m.id, className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : ''),
         onClick: e => { setFocus(i); if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(m, e); else openThread(m); },
         role: 'row', 'aria-selected': sel.has(m.id)
       },
         h('input', { type: 'checkbox', checked: sel.has(m.id), onClick: e => toggleSel(m, e), onChange: () => {}, 'aria-label': 'Select message' }),
         h('span', { className: 'fm-dot', style: { background: m.account_color || '#7c8aa5' }, title: m.account_label }),
-        h('div', { className: 'fm-from' }, (m.flagged ? '🚩 ' : '') + (m.sender || m.sender_email)),
+        h('div', { className: 'fm-from' }, (m.flagged ? '🚩 ' : '') + (m.sender || m.sender_email), m.thread_count > 1 && h('span', { className: 'fm-count', style: { marginLeft: 6, opacity: 0.8 }, title: m.thread_count + ' messages in this conversation' }, m.thread_count)),
         h('div', { className: 'fm-line' },
           h('span', { className: 'fm-badge', style: { borderColor: 'rgba(0,212,255,0.35)', color: '#8fd3ff' } }, L[1] + ' ' + L[0]),
           h('span', { className: 'fm-subj' }, m.subject), h('span', { className: 'fm-snip' }, ' — ' + (m.snippet || ''))),
@@ -473,7 +493,7 @@
           data && !data.search_failed && h('span', { className: 'fm-count' }, all.filter(m => m.unread).length + ' unread')),
         accounts.map(a => h('span', { key: a.id, className: 'fm-chip' + (acct === a.id ? ' on' : ''), onClick: () => setAcct(a.id), title: a.email },
           h('span', { className: 'fm-dot', style: { background: a.color || '#7c8aa5' } }), a.label || a.email,
-          data && !data.search_failed && h('span', { className: 'fm-count' }, (unreadBy[a.id] || 0) + ' unread'),
+          data && !data.search_failed && !errs.some(x => x.account_id === a.id) && h('span', { className: 'fm-count' }, (unreadBy[a.id] || 0) + ' unread'),
           errs.some(x => x.account_id === a.id) && h('span', { title: 'This account could not be read', style: { color: '#ff8a8a' } }, '⚠'))),
         h('input', { ref: searchRef, className: 'fm-search', value: qInput, placeholder: 'Search mail — Gmail search: from:ada is:unread has:attachment newer_than:7d …  (press /)',
           'aria-label': 'Search mail', onChange: e => setQInput(e.target.value), onKeyDown: e => { if (e.key === 'Enter') setQuery(qInput.trim()); } }),
@@ -487,10 +507,11 @@
           LANES[id][1] + ' ' + LANES[id][0], id !== 'all' && counts[id] ? h('span', { className: 'fm-count' }, counts[id]) : null)),
         h('span', { className: 'fm-chip' + (unreadOnly ? ' on' : ''), onClick: () => setUnreadOnly(v => !v) }, '● Unread only')),
       // honest status
-      loading && !data && h('div', { className: 'fm-banner info' }, 'Reading your mail…'),
+      loading && !data && h('div', { className: 'fm-banner info' }, query ? 'Searching Gmail for “' + query + '”…' : 'Reading your mail…'),
       failed && h('div', { className: 'fm-banner err', role: 'alert' }, '⚠ ' + (data.error || "Couldn't read mail.") + ' This is not an empty inbox — the read did not happen.'),
       !failed && data && data.partial && h('div', { className: 'fm-banner warn' }, '⚠ Showing only part of your mail: ' + errs.map(e => (e.label || 'an account') + ' — ' + e.error).join('; ')),
-      !failed && data && data.source && /cache|legacy/.test(data.source) && h('div', { className: 'fm-banner warn' }, 'Showing Friday’s saved copy of your mail, not a live read (' + data.source + ').'),
+      !failed && data && /^cache/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing Friday’s saved copy of your mail, not a live read: Gmail could not be reached.'),
+      !failed && data && /^legacy/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing only your main account: the read across all accounts failed.'),
       query && !failed && data && h('div', { className: 'fm-banner info' }, 'Gmail search for “' + query + '”: ' + (data.total || 0) + ' result' + (data.total === 1 ? '' : 's') + ' across ' + (acct === 'all' ? 'all accounts' : 'this account') + (data.partial ? ' (partial)' : '')),
       // bulk bar
       sel.size > 0 && h('div', { className: 'fm-bulk' }, sel.size + ' selected',

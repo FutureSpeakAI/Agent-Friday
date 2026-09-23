@@ -192,3 +192,15 @@ def test_mark_unread_after_reading_makes_it_unread():
 
 def test_unknown_action_is_refused(client, _state):
     assert client.post("/api/messages/action", json={"ids": ["a"], "action": "delete"}).status_code == 400
+
+
+def test_a_conversation_is_one_row_not_one_per_message(client, monkeypatch):
+    older = dict(_raw(1), gmail_id="g0", timestamp="2026-09-22T09:00:00", has_attachment=True)
+    newer = dict(_raw(1), unread=False, labels=["INBOX"])
+    monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
+        "accounts": [{"id": "acct-p"}], "messages": [older, newer, _raw(2)], "errors": []})
+    r = client.get("/api/messages").get_json()
+    rows = [m for m in r["messages"] if m["thread_id"] == "t1"]
+    assert len(rows) == 1 and r["total"] == 2
+    assert rows[0]["gmail_id"] == "g1" and rows[0]["thread_count"] == 2
+    assert rows[0]["unread"] is True and rows[0]["has_attachment"] is True
