@@ -541,6 +541,7 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
             log.debug("message_triage: skipped a malformed message: %s", exc)
 
     cards.sort(key=lambda c: c.get("_sort_ts") or 0, reverse=True)
+    cards = _one_row_per_conversation(cards)
     for card in cards:
         card.pop("_sort_ts", None)
 
@@ -681,6 +682,29 @@ def _build_card(
     card["_sort_ts"] = dt.timestamp() if dt else 0
     card["age_hours"] = round((time.time() - dt.timestamp()) / 3600.0, 1) if dt else None
     return card
+
+
+def _one_row_per_conversation(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Gmail lists every message, so a conversation with three messages came
+    back as three cards sharing one id (the thread's). Keep the newest (cards
+    arrive newest first) as the conversation's row, the way Gmail's inbox
+    does, and carry what the others add: unread, attachment, message count."""
+    out: List[Dict[str, Any]] = []
+    seen: Dict[tuple, Dict[str, Any]] = {}
+    for card in cards:
+        key = (card.get("account_id"), card.get("id"))
+        head = seen.get(key)
+        if head is None:
+            card["thread_count"] = 1
+            seen[key] = card
+            out.append(card)
+            continue
+        head["thread_count"] += 1
+        if card.get("unread") and not head.get("unread"):
+            head["unread"] = True
+        if card.get("has_attachment"):
+            head["has_attachment"] = True
+    return out
 
 
 def _summarise_accounts(
