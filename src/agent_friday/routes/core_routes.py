@@ -397,7 +397,15 @@ def friday_health():
         "creations_today": creations_today,
         "models": models,
         "agent_name": settings.get("agent_name", "AGENT FRIDAY"),
-        "orchestrator_model": settings.get("orchestrator_model", "claude-opus-5"),
+        # The default here was `claude-opus-5`, which is not what an
+        # unconfigured install uses. It could not actually fire --
+        # `_load_settings` merges DEFAULT_SETTINGS, so the key is always
+        # present -- but an EMPTY stored value could still report it, and a
+        # wrong literal reads as documentation of a default that is not the
+        # default. `ANTHROPIC_MODEL_DEFAULT` is the one constant, and it
+        # honours the ANTHROPIC_MODEL env override that a literal defeats.
+        "orchestrator_model": (settings.get("orchestrator_model")
+                               or core.ANTHROPIC_MODEL_DEFAULT),
         "subagent_model": settings.get("subagent_model", "claude-sonnet-5"),
         "creative_model": settings.get("creative_model", "gemini-nano-banana-2"),
         "voice_model": settings.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
