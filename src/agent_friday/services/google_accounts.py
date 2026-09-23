@@ -86,6 +86,46 @@ GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, DOCS_READ, SHEETS_RE
 # the approval card, where the owner already is.
 GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 
+# Changing the owner's own mailbox: labels, archive (removing INBOX), star,
+# read/unread, and saving drafts. Like send, it is asked for only from an
+# explicit "Reconnect with sending" in Settings, never on an ordinary connect
+# or reconnect. It cannot delete mail permanently (that is mail.google.com,
+# which Friday never requests), and Friday uses it for nothing but the label
+# changes and drafts the owner makes, each of which can be undone.
+GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
+
+# What the Reconnect-with-sending consent asks for, in plain words, shown in
+# Settings before Google's own screen so the two can be compared line by line.
+_SCOPE_PLAIN = {
+    GMAIL_READ: "Read your email",
+    GMAIL_SEND: "Send email on your behalf. Each message still waits for your approval card.",
+    GMAIL_MODIFY: "Change your mailbox: labels, archive, star, read/unread, and saving drafts. Never permanent delete.",
+    CALENDAR_RW: "See and edit your calendar",
+    DRIVE_READ: "Read Drive files",
+    DOCS_READ: "Read Docs",
+    SHEETS_READ: "Read Sheets",
+    TASKS_RW: "Google Tasks",
+    CONTACTS_READ: "Read contacts",
+    USERINFO_EMAIL: "See your email address",
+}
+
+
+def mailbox_scopes(granted=None) -> list:
+    """Exactly the scopes a Reconnect-with-sending requests, with what each is
+    for. `new` is judged against what the account has actually granted, when
+    that is known; otherwise only send and modify are new."""
+    have = set(granted) if granted is not None else None
+    return [{"scope": sc, "what": _SCOPE_PLAIN.get(sc, sc),
+             "new": (sc not in have) if have is not None else sc in (GMAIL_SEND, GMAIL_MODIFY)}
+            for sc in list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]]
+
+
+def mail_permissions(rec: dict) -> dict:
+    """What an account's granted scopes allow for mail (granted, not requested)."""
+    sc = set((rec or {}).get("scopes") or [])
+    return {"read": GMAIL_READ in sc or GMAIL_MODIFY in sc,
+            "send": GMAIL_SEND in sc, "modify": GMAIL_MODIFY in sc}
+
 # Legacy single-account scopes (what google_token.json was consented for).
 _LEGACY_SCOPES = [GMAIL_READ, "https://www.googleapis.com/auth/calendar.readonly"]
 
@@ -265,6 +305,7 @@ def _public_record(rec: dict) -> dict:
     # Every consumer of a public record gets the derived verdict alongside the
     # raw status, so no surface has to (or gets to) invent its own answer.
     out["health"] = account_health(rec)
+    out["mail"] = mail_permissions(rec)
     return out
 
 
@@ -1465,7 +1506,8 @@ def active_client_kind() -> str:
         return "none"
 
 
-def build_auth_flow(state: str | None = None, include_send: bool = False):
+def build_auth_flow(state: str | None = None, include_send: bool = False,
+                    include_modify: bool = False):
     """Construct an OAuth Flow for a new account connection. Returns
     (flow, redirect_uri, client_type) or raises with a clear message.
 
@@ -1496,6 +1538,8 @@ def build_auth_flow(state: str | None = None, include_send: bool = False):
     scopes = list(GOOGLE_MULTI_SCOPES)
     if include_send:
         scopes.append(GMAIL_SEND)
+    if include_modify:
+        scopes.append(GMAIL_MODIFY)
     flow = Flow.from_client_config(
         cfg, scopes=scopes, redirect_uri=redirect_uri, state=state
     )

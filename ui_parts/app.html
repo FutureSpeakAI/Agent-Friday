@@ -10236,7 +10236,7 @@ function GoogleAccountsPanel(){
     const o=opts||{};
     setLoading(true);
     try{
-      const body=o.account?{account_id:o.account.id,email:o.account.email}:{label};
+      const body=o.account?{account_id:o.account.id,email:o.account.email,mailbox:!!o.mailbox}:{label};
       const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       if(d.status==='ok'&&d.auth_url){
@@ -10250,6 +10250,9 @@ function GoogleAccountsPanel(){
   };
   const addAccount=()=>startConnect({});
   const reconnectAccount=(acc)=>startConnect({account:acc});
+  // "Reconnect with sending": show the exact scopes first, then one Google screen.
+  const [mailboxAsk,setMailboxAsk]=useState(null);
+  const reconnectWithSending=(acc)=>apiFetch('/api/google/accounts/mailbox-scopes?account='+encodeURIComponent(acc.id)).then(r=>r.json()).then(d=>setMailboxAsk({account:acc,scopes:d.scopes||[]})).catch(()=>setMsg('Could not load the permission list.'));
   const removeAccount=async(id,email)=>{
     if(!window.confirm('Remove '+email+'? This revokes access.'))return;
     try{await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});setAccounts(a=>a.filter(x=>x.id!==id));setMsg('Removed.');}
@@ -10269,6 +10272,18 @@ function GoogleAccountsPanel(){
         <button className="settings-btn" style={{fontSize:11,padding:'4px 10px',whiteSpace:'nowrap'}} onClick={copyRedirectUri} title="Copy to clipboard">{copied?'✓ Copied':'📋 Copy'}</button>
       </div>
       {oauth.client_type==='web'&&<div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:6,lineHeight:1.4}}>This exact URI must be registered under "Authorized redirect URIs" for this OAuth client in the Google Cloud Console, or consent will fail with Error 400 (invalid_request).</div>}
+    </div>}
+    {mailboxAsk&&<div data-testid="ga-mailbox-scopes" style={{background:'rgba(0,212,255,0.05)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:8,padding:'10px 12px',marginBottom:12,fontSize:11.5,lineHeight:1.55}}>
+      <div style={{fontWeight:600,color:'#9fe6ff',marginBottom:6}}>Google will ask {mailboxAsk.account.email||'this account'} for exactly these permissions, on one screen:</div>
+      {mailboxAsk.scopes.map(x=><div key={x.scope} style={{display:'flex',gap:8,marginBottom:4,alignItems:'baseline'}}>
+        <span style={{color:x.new?'#ffb86b':'rgba(255,255,255,0.35)',fontWeight:700,width:34,flex:'none'}}>{x.new?'NEW':'has'}</span>
+        <span><span style={{color:x.new?'#fff':'rgba(255,255,255,0.6)'}}>{x.what}</span><code style={{display:'block',fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',overflowWrap:'anywhere'}}>{x.scope}</code></span>
+      </div>)}
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:6}}>Leave every box ticked on Google’s screen. If you untick one, Friday says so afterwards and that part stays off.</div>
+      <div style={{display:'flex',gap:8,marginTop:10}}>
+        <button className="settings-btn" style={{fontSize:12,color:'#00d4ff'}} onClick={()=>{const a=mailboxAsk.account;setMailboxAsk(null);startConnect({account:a,mailbox:true});}}>Continue to Google</button>
+        <button className="settings-btn" style={{fontSize:12}} onClick={()=>setMailboxAsk(null)}>Not now</button>
+      </div>
     </div>}
     {accounts.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:12}}>No Google accounts connected yet.</div>}
     {accounts.length>0&&accounts.some(a=>!gaHealth(a).healthy)&&<div style={{background:'rgba(255,140,66,0.08)',border:'1px solid rgba(255,140,66,0.3)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
@@ -10295,6 +10310,8 @@ function GoogleAccountsPanel(){
           </div>
           <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
             {!h.healthy&&<button className="settings-btn" style={{fontSize:11,padding:'4px 12px',color:'#ff8c42',borderColor:'#ff8c42',whiteSpace:'nowrap'}} onClick={()=>reconnectAccount(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect'}</button>}
+            {!(acc.mail&&acc.mail.send&&acc.mail.modify)&&<button className="settings-btn" data-testid="ga-reconnect-sending" title="Sign in again and allow Friday to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first." style={{fontSize:11,padding:'4px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.5)',whiteSpace:'nowrap'}} onClick={()=>reconnectWithSending(acc)} disabled={loading}>{reconnecting===acc.id?'Waiting…':'Reconnect with sending'}</button>}
+            {acc.mail&&acc.mail.send&&acc.mail.modify&&<span data-testid="ga-mail-full" style={{fontSize:10,color:'#22c55e',whiteSpace:'nowrap'}}>✓ can send + update mailbox</span>}
             <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
           </div>
         </div>

@@ -163,9 +163,10 @@ class TestRecoveryPathIsOffered:
         # function fails here loudly instead of vanishing into **kwargs.
         built = {}
 
-        def _fake_build_auth_flow(state=None, include_send=False):
+        def _fake_build_auth_flow(state=None, include_send=False, include_modify=False):
             built["state"] = state
             built["include_send"] = include_send
+            built["include_modify"] = include_modify
             return FakeFlow(), "http://127.0.0.1:3000/cb", "installed"
 
         monkeypatch.setattr(ga, "build_auth_flow", _fake_build_auth_flow)
@@ -181,6 +182,7 @@ class TestRecoveryPathIsOffered:
         # tick in Settings → Dock's sibling, the Google connector panel.
         assert built["include_send"] is False
         assert d["requesting_send"] is False
+        assert built["include_modify"] is False and d["requesting_modify"] is False
 
 
 # ── the other direction: recovery must not be masked by a cached verdict ────
