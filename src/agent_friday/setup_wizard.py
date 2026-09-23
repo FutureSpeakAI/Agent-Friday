@@ -21,6 +21,26 @@ from pathlib import Path
 from agent_friday.paths import friday_home
 from agent_friday.seed import ensure_seed_skills_installed
 
+
+def _default_cloud_model() -> str:
+    """The shipped default orchestrator model, from the one place that declares
+    it (`core.ANTHROPIC_MODEL_DEFAULT`, which also honours the ANTHROPIC_MODEL
+    env override). Imported lazily: the wizard is a CLI and otherwise imports
+    nothing heavier than stdlib, and importing core is a multi-second bootstrap.
+
+    This was the literal `claude-opus-5` in three places, and the quick path is
+    the one that mattered: `setdefault` WROTE it, so a quick setup persisted
+    Opus as the orchestrator instead of the intended Sonnet -- 2.5x the price
+    per token at the time. And because the flat `orchestrator_model` key
+    outranks `capability_routing` on every save, that value then stamped itself
+    over the canonical seat.
+    """
+    try:
+        from agent_friday.core import ANTHROPIC_MODEL_DEFAULT
+        return ANTHROPIC_MODEL_DEFAULT
+    except Exception:
+        return "claude-sonnet-5"
+
 try:
     from rich.console import Console
     from rich.panel import Panel
@@ -186,6 +206,32 @@ ASCII_BANNER = r"""
 
 
 # ── Config I/O ────────────────────────────────────────────────────
+
+def _apply_quick_defaults(config: dict) -> dict:
+    """Fill the model choices `--quick` skips asking about. Mutates and returns.
+
+    Extracted from `main()` so the one property that matters here is testable
+    without driving an interactive wizard: **an existing install's saved choice
+    is never rewritten.** `setdefault` is load-bearing, not stylistic — the
+    wizard round-trips the whole config (`_load_config` then `_save_config`,
+    which writes `json.dumps(config)` wholesale with no merge), so an
+    assignment here would overwrite a saved model on every re-run of setup.
+    Only a key that is absent, or present but empty, is filled.
+
+    The value used to be the literal `claude-opus-5`, which is not the shipped
+    default. That made `--quick` *persist* the wrong orchestrator rather than
+    merely report one, and because the flat `orchestrator_model` key outranks
+    `capability_routing` on every save, it then stamped itself over the
+    canonical seat.
+    """
+    config.setdefault("provider", "anthropic")
+    config.setdefault("creative_model", "gemini-nano-banana-2")
+    # `setdefault` alone would keep an empty string, which is not a model name
+    # and would leave the orchestrator unset while looking configured.
+    if not config.get("orchestrator_model"):
+        config["orchestrator_model"] = _default_cloud_model()
+    return config
+
 
 def _load_config() -> dict:
     if CONFIG_YAML.exists():
@@ -711,7 +757,7 @@ def step_model(total: int, provider_id: str, existing_model: str) -> str:
         models = models()
     if not models:
         console.print("  [yellow]No models available for this provider yet.[/yellow]")
-        return existing_model or "claude-opus-5"
+        return existing_model or _default_cloud_model()
 
     console.print(f"  [dim]Provider: {provider['name']}[/dim]\n")
     for i, (mid, mname, mdesc) in enumerate(models):
@@ -1621,7 +1667,7 @@ def main():
         # Step 7: Orchestrator model
         config["orchestrator_model"] = step_model(
             total_steps, config["provider"],
-            config.get("orchestrator_model", "claude-opus-5")
+            config.get("orchestrator_model") or _default_cloud_model()
         )
 
         # Step 8: Creative engine
@@ -1629,9 +1675,7 @@ def main():
             total_steps, config.get("creative_model", "gemini-nano-banana-2")
         )
     else:
-        config.setdefault("provider", "anthropic")
-        config.setdefault("orchestrator_model", "claude-opus-5")
-        config.setdefault("creative_model", "gemini-nano-banana-2")
+        _apply_quick_defaults(config)
 
     # Step 9 (always): API keys
     config["anthropic_api_key"], config["gemini_api_key"] = step_brain(

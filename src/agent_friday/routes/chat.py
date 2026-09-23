@@ -758,7 +758,7 @@ def chat():
             try:
                 compressor = _get_context_compressor(_compress_cfg)
                 if compressor.should_compress(messages):
-                    _selected_model = settings.get('orchestrator_model') or 'claude-opus-5'
+                    _selected_model = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
                     # Brief process orb so the user can see compression happen.
                     _comp_pid = f"compress-{uuid.uuid4().hex[:8]}"
                     try:
@@ -886,13 +886,13 @@ def chat():
                 "workspace": workspace,
                 "conversation_id": _conversation_id,
                 "conversation_seat": _conv_seat,
-                "cloud_model": settings.get('orchestrator_model') or 'claude-opus-5',
+                "cloud_model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
             })
         except Exception as _re:
             print(f"  [ROUTER] routing failed, defaulting to cloud: {_re}")
             _route_info = {
                 "provider": "cloud",
-                "model": settings.get('orchestrator_model') or 'claude-opus-5',
+                "model": settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
                 "is_local": False, "vault_allowed": False, "scrub_pii": True,
                 "vault_access": False, "refuse": False, "warning": None,
             }
@@ -914,7 +914,7 @@ def chat():
             _route_info = dict(
                 _route_info, provider='cloud', is_local=False,
                 vault_allowed=False, vault_access=False, scrub_pii=True,
-                model=settings.get('orchestrator_model') or 'claude-opus-5',
+                model=settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
                 route_override='user chose the cloud to avoid a local pause')
         elif _route_mode == 'cloud':
             print("  [ROUTER] refusing route_mode=cloud: this turn touches "
@@ -1426,7 +1426,7 @@ def chat():
                         _est_tokens = len(str(messages)) // 4 + len(reply) // 4
                         _router.cost_tracker.record(
                             "cloud",
-                            settings.get('orchestrator_model') or 'claude-opus-5',
+                            settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
                             prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
                         )
                     except Exception:
