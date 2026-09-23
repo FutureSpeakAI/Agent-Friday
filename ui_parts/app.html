@@ -2510,8 +2510,12 @@ function KnowledgeGraphWS(){
         <button title="Collapse everything to a point and explode into this arrangement; pages arrive in the order they were written"
           onClick={()=>{const S=kgRef.current;if(S.arrange)S.arrange(S.layout||'galaxy',{bang:true})}}
           style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:'transparent',color:'#ffd28a'}}>✦ Big Bang</button>
-        <button title={touring?'Stop the tour':'Presentation tour: cycles through the arrangements with camera moves; any click or scroll in the graph stops it'}
-          onClick={()=>{const S=kgRef.current;if(touring)S.stopTour&&S.stopTour();else S.startTour&&S.startTour()}}
+        <button title={touring?'Stop the tour':'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen'}
+          onClick={()=>{const S=kgRef.current;if(touring)S.stopTour&&S.stopTour();else{
+            // For an audience the graph fills the screen; Esc returns.
+            const el=mountRef.current;
+            if(el&&el.requestFullscreen&&!document.fullscreenElement)el.requestFullscreen().catch(()=>{});
+            S.startTour&&S.startTour()}}}
           style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:touring?'rgba(255,80,120,0.15)':'transparent',color:touring?'#ff9db0':'#9dffc8'}}>{touring?'■ Stop tour':'▶ Tour'}</button>
       </div>}
       <button className="btn" title="Rebuild the graph from the wiki" style={{fontSize:11,padding:'4px 9px'}} onClick={reindex}>↻</button>

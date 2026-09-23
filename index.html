@@ -9559,10 +9559,15 @@ function KnowledgeGraphWS() {
       color: '#ffd28a'
     }
   }, "\u2726 Big Bang"), /*#__PURE__*/React.createElement("button", {
-    title: touring ? 'Stop the tour' : 'Presentation tour: cycles through the arrangements with camera moves; any click or scroll in the graph stops it',
+    title: touring ? 'Stop the tour' : 'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen',
     onClick: () => {
       const S = kgRef.current;
-      if (touring) S.stopTour && S.stopTour();else S.startTour && S.startTour();
+      if (touring) S.stopTour && S.stopTour();else {
+        // For an audience the graph fills the screen; Esc returns.
+        const el = mountRef.current;
+        if (el && el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {});
+        S.startTour && S.startTour();
+      }
     },
     style: {
       fontSize: 11,
