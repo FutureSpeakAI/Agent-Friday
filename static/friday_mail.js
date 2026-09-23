@@ -341,13 +341,15 @@
     };
     const moveLane = (cards, newLane) => {
       cards = cards.filter(Boolean);
-      Promise.all(cards.map(c => post('/api/messages/classify', { id: c.id, lane: newLane }))).then(rs => {
+      Promise.all(cards.map(c => post('/api/messages/classify', { id: c.id, lane: newLane }).catch(() => ({ ok: false, j: {} })))).then(rs => {
         const before = {};
-        rs.forEach(r => Object.assign(before, (r.j && r.j.before) || {}));
-        patch(cards.map(c => c.id), m => Object.assign({}, m, { lane: newLane }));
-        const undo = { before, cards: cards.map(c => Object.assign({}, c)), label: 'move' };
+        const moved = cards.filter((c, k) => rs[k].ok);
+        rs.forEach(r => r.ok && Object.assign(before, (r.j && r.j.before) || {}));
+        if (!moved.length) { say('Nothing moved: ' + ((rs[0] && rs[0].j && rs[0].j.message) || 'Friday refused the change.')); return; }
+        patch(moved.map(c => c.id), m => Object.assign({}, m, { lane: newLane }));
+        const undo = { before, cards: moved.map(c => Object.assign({}, c)), label: 'move' };
         undoStack.current.push(undo);
-        say('Moved to ' + laneLabel(newLane) + (cards.length > 1 ? ' · ' + cards.length + ' messages' : ''), undo);
+        say('Moved to ' + laneLabel(newLane) + (moved.length > 1 ? ' · ' + moved.length + ' messages' : '') + (moved.length < cards.length ? ' · ' + (cards.length - moved.length) + ' could not be moved' : ''), undo);
         setSel(new Set());
       });
     };
@@ -362,7 +364,7 @@
           const map = new Map(u.cards.map(c => [c.id, c]));
           const kept = (d.messages || []).map(m => map.has(m.id) ? map.get(m.id) : m);
           const missing = u.cards.filter(c => !(d.messages || []).some(m => m.id === c.id));
-          return Object.assign({}, d, { messages: kept.concat(missing).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))) });
+          return Object.assign({}, d, { messages: kept.concat(missing).sort((a, b) => (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0)) });
         });
         setToast(null); say('Undone.');
       });
