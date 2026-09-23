@@ -399,14 +399,16 @@
       .f3-search { flex:1 1 150px; min-width:120px; background:#0b1220; color:#e6f0ff; border:1px solid #24406a; border-radius:7px; padding:6px 9px; font-size:12px; min-height:30px; }
       .f3-search:focus { outline:none; border-color:#00d4ff; }
       .f3-tool { font-size:11px; padding:5px 10px; min-height:30px; }
-      .f3-stage { position:relative; height:calc(100vh - 290px); min-height:380px; border-radius:12px; overflow:hidden; border:1px solid rgba(80,140,220,0.25); background:#000103; }
+      .f3-stage { position:relative; height:calc(100vh - 322px); min-height:380px; border-radius:12px; overflow:hidden; border:1px solid rgba(80,140,220,0.25); background:#000103; }
       .f3-glass { position:absolute; background:rgba(4,8,16,0.82); border:1px solid rgba(80,140,220,0.25); border-radius:9px; color:#dbe8fa; font-size:11px; }
-      .f3-legend { top:10px; left:10px; max-width:min(300px, 40%); max-height:calc(100% - 120px); overflow:auto; padding:6px; display:flex; flex-direction:column; gap:2px; }
-      .f3-legend button { display:flex; align-items:center; gap:7px; background:transparent; border:0; color:#c6d6ea; font-size:11px; padding:3px 6px; border-radius:6px; cursor:pointer; text-align:left; }
-      .f3-legend button:hover { background:rgba(255,255,255,0.05); }
+      /* The legend sits above the scene, never over it, so it cannot hide a
+         group's heading in any view. */
+      .f3-legend { display:flex; gap:4px; align-items:center; overflow-x:auto; margin:-2px 0 6px; padding:2px 0; scrollbar-width:thin; }
+      .f3-legend button { display:inline-flex; align-items:center; gap:6px; flex:none; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); color:#c6d6ea; font-size:11px; padding:3px 9px; border-radius:999px; cursor:pointer; white-space:nowrap; }
+      .f3-legend button:hover { background:rgba(255,255,255,0.07); }
       .f3-legend button.off { opacity:.35; }
       .f3-legend .sw { width:9px; height:9px; border-radius:3px; flex:none; }
-      .f3-legend .n { margin-left:auto; font-family:'JetBrains Mono',monospace; color:#7f93ad; font-size:10px; padding-left:8px; }
+      .f3-legend .n { font-family:'JetBrains Mono',monospace; color:#7f93ad; font-size:10px; }
       .f3-status { left:10px; bottom:8px; padding:3px 8px; font-size:10px; color:#8fa3bf; pointer-events:none; }
       .f3-status.warn { color:#ffd699; border-color:rgba(245,158,11,0.5); }
       .f3-help { right:10px; top:10px; padding:12px 14px; width:min(300px, 60%); z-index:4; line-height:1.7; }
@@ -719,14 +721,14 @@
         (src.tools || []).map(t => h('button', { key: t.id, className: 'btn btn-magenta f3-tool', onClick: () => t.run(ctx), title: t.tip || t.label, disabled: t.disabled ? t.disabled(ctx) : false }, t.label)),
         h('button', { className: 'btn btn-magenta f3-tool', onClick: () => load(true), title: 'Read again' }, '↻'),
         h('button', { className: 'btn btn-magenta f3-tool', onClick: () => setHelp(v => !v), title: 'Mouse and keys (?)', 'aria-pressed': help }, '?')),
+      legend.length > 1 && h('div', { className: 'f3-legend', role: 'group', 'aria-label': 'Groups' },
+        legend.map(g => h('button', { key: g.key, className: solo && solo !== g.key ? 'off' : '', 'aria-pressed': solo === g.key, onClick: () => setSolo(s => s === g.key ? null : g.key), title: solo === g.key ? 'Show every group' : 'Show only ' + g.label },
+          h('span', { className: 'sw', style: { background: hex(g.color) } }), clip(g.label, 28), h('span', { className: 'n' }, g.n)))),
       h('div', { className: 'f3-stage' },
         h('div', { ref: mountRef, style: { position: 'absolute', inset: 0 } }),
         (err && !(recs && recs.length)) && h('div', { className: 'f3-glass', role: 'alert', style: { top: 12, left: 12, padding: '7px 11px', color: '#ff9a9a', fontSize: 12, borderColor: 'rgba(239,68,68,0.5)' } }, '⚠ ' + err + ' This is not an empty ' + (src.label || '').toLowerCase() + ' view: the read failed.'),
         recs === null && !err && h('div', { className: 'f3-glass', style: { top: 12, left: 12, padding: '6px 10px', color: '#9fd0ff', fontSize: 12 } }, 'Reading ' + (src.label || '').toLowerCase() + '…'),
         recs && !recs.length && !err && !busy && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7f93ad', fontSize: 13 } }, src.empty),
-        legend.length > 1 && !sel && h('div', { className: 'f3-glass f3-legend', 'aria-label': 'Groups' },
-          legend.map(g => h('button', { key: g.key, className: solo && solo !== g.key ? 'off' : '', 'aria-pressed': solo === g.key, onClick: () => setSolo(s => s === g.key ? null : g.key), title: solo === g.key ? 'Show every group' : 'Show only ' + g.label },
-            h('span', { className: 'sw', style: { background: hex(g.color) } }), clip(g.label, 28), h('span', { className: 'n' }, g.n)))),
         carry && h('div', { style: { position: 'fixed', left: carry.x + 14, top: carry.y + 10, pointerEvents: 'none', zIndex: 60, padding: '6px 10px', borderRadius: 8, background: 'rgba(6,10,18,0.94)', border: '1px solid ' + (carry.hot ? '#00d4ff' : '#ff0080'), color: '#e6f0ff', fontSize: 12, boxShadow: '0 6px 24px rgba(0,0,0,0.5)', maxWidth: 280 } },
           (src.carryIco || '▣') + ' ' + (carry.group.length > 1 ? carry.group.length + ' ' + noun : clip(carry.group[0].card.title, 60)) + (carry.hot ? ' → ' + carry.hot.label : '')),
         !carry && hover && hover.it && hover.it !== sel && h('div', { style: { position: 'fixed', left: hover.x + 14, top: hover.y + 12, pointerEvents: 'none', padding: '5px 8px', borderRadius: 6, background: 'rgba(6,10,18,0.92)', border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 11, zIndex: 50, maxWidth: 300 } },
