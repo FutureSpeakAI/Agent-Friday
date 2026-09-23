@@ -1076,8 +1076,44 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Dock transforms live in the DOCK IN THREE DIMENSIONS block below,
            which needs to win on source order; the flat translateY hover and
            the dockBounce press moved there. */
-        .fwin { animation: fwinOpen 0.18s ease-out; }
-        .fwin.closing { animation: fwinOpen 0.18s ease-in reverse; }
+        /* Workspace windows materialise out of their dock icon and fold back
+           into it on close (--fwin-ox/--fwin-oy: the icon's centre, in the
+           window's own coordinates, set by FWin). A cyan light band sweeps
+           the glass as it forms. Dazzle Off keeps the plain fade;
+           prefers-reduced-motion gets an opacity-only fade. */
+        .fwin { animation: fwinMaterialize 0.34s cubic-bezier(0.2,0.8,0.3,1) both; transform-origin: var(--fwin-ox, 50%) var(--fwin-oy, 110%); }
+        .fwin.closing { animation: fwinFold 0.26s cubic-bezier(0.55,0,0.85,0.35) both; pointer-events: none; }
+        .fwin::before {
+            content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 6; border-radius: inherit;
+            background: linear-gradient(180deg, transparent 38%, rgba(0,212,255,0.28) 46%, rgba(230,250,255,0.55) 50%, rgba(123,97,255,0.28) 54%, transparent 62%);
+            background-size: 100% 260%; mix-blend-mode: screen; opacity: 0;
+            animation: fwinSweep 0.5s ease-out 0.06s both;
+        }
+        .fwin.closing::before { animation: fwinSweep 0.26s ease-in reverse both; }
+        @keyframes fwinMaterialize {
+            0% { opacity: 0; transform: scale(0.05); filter: brightness(2.4) saturate(1.5); }
+            45% { opacity: 1; filter: brightness(1.5) saturate(1.2); }
+            100% { opacity: 1; transform: none; filter: none; }
+        }
+        @keyframes fwinFold {
+            0% { opacity: 1; transform: none; filter: none; }
+            60% { opacity: 0.9; filter: brightness(1.8) saturate(1.3); }
+            100% { opacity: 0; transform: scale(0.05); filter: brightness(2.6); }
+        }
+        @keyframes fwinSweep {
+            0% { background-position: 0 100%; opacity: 1; }
+            80% { opacity: 1; }
+            100% { background-position: 0 0; opacity: 0; }
+        }
+        :root[data-dazzle="off"] .fwin { animation: fwinOpen 0.18s ease-out; }
+        :root[data-dazzle="off"] .fwin.closing { animation: fwinOpen 0.18s ease-in reverse both; }
+        :root[data-dazzle="off"] .fwin::before { display: none; }
+        @keyframes fwinFade { from { opacity: 0; } to { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+            .fwin, :root[data-dazzle="off"] .fwin { animation: fwinFade 0.12s linear both; }
+            .fwin.closing, :root[data-dazzle="off"] .fwin.closing { animation: fwinFade 0.12s linear reverse both; }
+            .fwin::before { display: none; }
+        }
         .card { transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
         .card:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
 
@@ -2745,6 +2781,10 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/vendor/three-r128-CopyShader.js"></script>
     <script src="/static/vendor/three-r128-LuminosityHighPassShader.js"></script>
     <script src="/static/vendor/three-r128-UnrealBloomPass.js"></script>
+    <!-- Studio › Files: the 3D file browser (defines window.Files3DPanel). -->
+    <script src="/static/studio_files3d.js"></script>
+    <!-- The same 3D engine for News, Contacts, Calendar, Messages, Home tasks, Code and the model library. -->
+    <script src="/static/friday3d_records.js"></script>
 
     <script>
         // --- UI INTERACTION LOGIC ---
@@ -4904,7 +4944,10 @@ window.addEventListener('DOMContentLoaded',function(){
             }
             
             if (starField && starField.rotation) starField.rotation.y += 0.0001;
-            if (composer) composer.render();
+            // A large foreground 3D view (Studio › Files) holds the backdrop's
+            // drawing while it is on screen: both share one GPU. Everything
+            // above still runs, so the hand cursor keeps tracking.
+            if (composer && !(window.__fridayBackdropHold > 0)) composer.render();
         }
 
         window.onload = init;
@@ -5799,11 +5842,30 @@ function FWin({
   children,
   onClose,
   zIndex,
-  onFocus
+  onFocus,
+  closing
 }) {
   // Size & position persist per workspace and are clamped to the viewport so a
   // window can never be dragged or resized off-screen.
   const LSK = 'friday_fwin_' + id;
+  // The window grows out of (and folds back into) its own dock icon.
+  const fwinRef = useRef(null);
+  const aimAtDock = () => {
+    const el = fwinRef.current;
+    if (!el) return;
+    const img = document.querySelector('.dock-btn img[src="assets/icons/' + id + '.svg"]');
+    // offsetLeft/Top: the window's own position, unaffected by the scale
+    // the opening animation is applying at this moment.
+    if (img && el.offsetWidth) {
+      const d = img.getBoundingClientRect();
+      el.style.setProperty('--fwin-ox', Math.round(d.left + d.width / 2 - el.offsetLeft) + 'px');
+      el.style.setProperty('--fwin-oy', Math.round(d.top + d.height / 2 - el.offsetTop) + 'px');
+    }
+  };
+  React.useLayoutEffect(aimAtDock, []);
+  React.useLayoutEffect(() => {
+    if (closing) aimAtDock();
+  }, [closing]);
   const vw = () => window.innerWidth || document.documentElement.clientWidth || 1280;
   const vh = () => window.innerHeight || document.documentElement.clientHeight || 800;
   const clampW = w => Math.max(400, Math.min(w, vw() - 20));
@@ -5921,7 +5983,8 @@ function FWin({
     return () => window.removeEventListener('friday:open-ws-history', onOpen);
   }, [id]);
   return /*#__PURE__*/React.createElement("div", {
-    className: "fwin",
+    className: 'fwin' + (closing ? ' closing' : ''),
+    ref: fwinRef,
     style: {
       left: pos.x,
       top: pos.y,
@@ -16061,6 +16124,16 @@ function StudioWS() {
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
   useNavTarget('studio', t => {
     if (!t) return;
+    if (t.view === 'files') {
+      // {view:'files', root, path} opens that folder in the 3D file browser.
+      if (t.root) window.__files3dOpen = {
+        root: t.root,
+        path: t.path || ''
+      };
+      setView('files');
+      window.dispatchEvent(new Event('friday-files3d-open'));
+      return;
+    }
     if (t.creation) {
       loadCreations();
       openCreation({
@@ -16279,7 +16352,20 @@ function StudioWS() {
       fontSize: 11
     },
     onClick: () => setView('projects')
-  }, "\uD83D\uDCC1 Projects")), view === 'projects' && /*#__PURE__*/React.createElement(ProjectsPanel, null), view === 'generate' && /*#__PURE__*/React.createElement(GeneratePanel, {
+  }, "\uD83D\uDCC1 Projects"), /*#__PURE__*/React.createElement("button", {
+    className: 'btn ' + (view === 'files' ? '' : 'btn-magenta'),
+    style: {
+      fontSize: 11
+    },
+    title: "Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters",
+    onClick: () => setView('files')
+  }, "\uD83E\uDDCA Files 3D")), view === 'projects' && /*#__PURE__*/React.createElement(ProjectsPanel, null), view === 'files' && (window.Files3DPanel ? /*#__PURE__*/React.createElement(window.Files3DPanel, null) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: '#888',
+      fontSize: 12,
+      padding: 20
+    }
+  }, "The 3D file browser did not load.")), view === 'generate' && /*#__PURE__*/React.createElement(GeneratePanel, {
     onCreated: loadCreations
   }), view === 'music' && /*#__PURE__*/React.createElement(MusicPanel, {
     onCreated: loadCreations
@@ -16287,7 +16373,7 @@ function StudioWS() {
     onCreated: loadCreations
   }), view === 'production' && /*#__PURE__*/React.createElement(ProductionPanel, {
     onCreated: loadCreations
-  }), view !== 'projects' && view !== 'music' && view !== 'timeline' && view !== 'production' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StudioPromptBar, {
+  }), view !== 'projects' && view !== 'files' && view !== 'music' && view !== 'timeline' && view !== 'production' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(StudioPromptBar, {
     onCreated: loadCreations
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -28671,6 +28757,12 @@ function ContactsWS() {
   useEffect(() => {
     loadList();
   }, []);
+  // Deep link: {workspace:'contacts', name} opens that person (the 3D view uses it).
+  useNavTarget('contacts', t => {
+    if (t && t.name) openContact({
+      name: t.name
+    });
+  });
   const openContact = async c => {
     setSelected(c);
     setDetail(null);
@@ -35349,7 +35441,43 @@ function SettingsTabGeneral({
       compact_mode: !s.compact_mode
     }),
     desc: "Reduce padding and element sizes."
-  })), /*#__PURE__*/React.createElement(StSection, {
+  }), /*#__PURE__*/React.createElement(StRow, {
+    label: "3D Dazzle (every 3D view)"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "range",
+    min: 0,
+    max: 2,
+    step: 1,
+    "aria-label": "3D Dazzle",
+    value: ['off', 'subtle', 'full'].indexOf(s.studio_dazzle || 'full'),
+    onChange: e => {
+      const v = ['off', 'subtle', 'full'][+e.target.value];
+      save({
+        studio_dazzle: v
+      });
+      window.dispatchEvent(new CustomEvent('friday-dazzle', {
+        detail: v
+      }));
+    },
+    style: {
+      flex: 1,
+      accentColor: '#00d4ff'
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 10,
+      letterSpacing: '.12em',
+      color: '#00d4ff',
+      minWidth: 52
+    }
+  }, (s.studio_dazzle || 'full').toUpperCase())))), /*#__PURE__*/React.createElement(StSection, {
     title: "STARTUP"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Startup Workspace"
@@ -40746,6 +40874,13 @@ function AddProviderForm({
     onClick: submit
   }, busy ? 'Saving…' : 'Save & Enable')));
 }
+// The model library in 3D sits on top of the Model Browser (friday3d_records.js).
+function with3DModels(el) {
+  return window.Friday3DToggle ? /*#__PURE__*/React.createElement(window.Friday3DToggle, {
+    ws: 'settings',
+    source: 'models'
+  }, el) : el;
+}
 function ModelBrowser({
   save
 }) {
@@ -41197,9 +41332,9 @@ function SettingsTabProviders({
       marginBottom: 10,
       lineHeight: 1.5
     }
-  }, "Search every connected provider's catalog \u2014 including OpenRouter's full list once its model list has been refreshed."), /*#__PURE__*/React.createElement(ModelBrowser, {
+  }, "Search every connected provider's catalog \u2014 including OpenRouter's full list once its model list has been refreshed."), /*#__PURE__*/with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
     save: save
-  })));
+  }))));
 }
 function SettingsTabConnectors({
   s,
@@ -46533,22 +46668,37 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       }).catch(() => {});
     } catch (_) {}
   };
-  const toggle = id => {
-    setOpenWins(p => {
+  // Closing is animated: a window stays mounted in closingWins while it
+  // folds into its dock icon, then leaves openWins. Reopening mid-fold
+  // cancels the fold.
+  const [closingWins, setClosingWins] = useState(new Set());
+  const closeTimers = useRef({});
+  const openWinsRef = useRef(openWins);
+  openWinsRef.current = openWins;
+  const closingRef = useRef(closingWins);
+  closingRef.current = closingWins;
+  const foldMs = () => {
+    try {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 130;
+    } catch (_) {}
+    return document.documentElement.dataset.dazzle === 'off' ? 190 : 270;
+  };
+  const cancelClose = id => {
+    clearTimeout(closeTimers.current[id]);
+    delete closeTimers.current[id];
+    setClosingWins(p => {
+      if (!p.has(id)) return p;
       const n = new Set(p);
-      if (n.has(id)) {
-        n.delete(id);
-      } else {
-        n.add(id);
-        recordWsVisit(id);
-      }
+      n.delete(id);
       return n;
     });
-    bringFront(id);
   };
-  // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
-  // so clicking a notification for an already-open workspace doesn't close it.
-  const openWs = id => {
+  const toggle = id => {
+    if (openWinsRef.current.has(id) && !closingRef.current.has(id)) {
+      close(id);
+      return;
+    }
+    cancelClose(id);
     setOpenWins(p => {
       if (p.has(id)) return p;
       const n = new Set(p);
@@ -46558,11 +46708,36 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     });
     bringFront(id);
   };
-  const close = id => setOpenWins(p => {
-    const n = new Set(p);
-    n.delete(id);
-    return n;
-  });
+  // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
+  // so clicking a notification for an already-open workspace doesn't close it.
+  const openWs = id => {
+    cancelClose(id);
+    setOpenWins(p => {
+      if (p.has(id)) return p;
+      const n = new Set(p);
+      n.add(id);
+      recordWsVisit(id);
+      return n;
+    });
+    bringFront(id);
+  };
+  const close = id => {
+    if (closeTimers.current[id]) return;
+    setClosingWins(p => new Set(p).add(id));
+    closeTimers.current[id] = setTimeout(() => {
+      delete closeTimers.current[id];
+      setOpenWins(p => {
+        const n = new Set(p);
+        n.delete(id);
+        return n;
+      });
+      setClosingWins(p => {
+        const n = new Set(p);
+        n.delete(id);
+        return n;
+      });
+    }, foldMs());
+  };
   /* WINDOWS LIVE IN A BAND, NOT ON A LADDER.
      Raising a window used to hand it an ever-increasing counter starting at
      42. The dock and the top bar are at 70, quick settings at 68, the chat
@@ -47082,26 +47257,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const dockShape = React.useMemo(
     () => dockArrangement(agentSettings.dock_custom, showAllWorkspaces),
     [agentSettings.dock_custom, showAllWorkspaces]);
+  // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
+  const with3D = (ws, source, el) => window.Friday3DToggle ? /*#__PURE__*/React.createElement(window.Friday3DToggle, {
+    ws,
+    source
+  }, el) : el;
   const wsMap = {
     edition: /*#__PURE__*/React.createElement(EditionWS, null),
-    home: /*#__PURE__*/React.createElement(HomeWS, null),
+    home: with3D('home', 'tasks', /*#__PURE__*/React.createElement(HomeWS, null)),
     career: /*#__PURE__*/React.createElement(CareerWS, null),
     wiki: /*#__PURE__*/React.createElement(WikiWS, null),
     knowledge: /*#__PURE__*/React.createElement(KnowledgeGraphWS, null),
     futurespeak: showAllWorkspaces ? /*#__PURE__*/React.createElement(FuturespeakWS, null) : /*#__PURE__*/React.createElement(SitesWS, null),
     family: /*#__PURE__*/React.createElement(FamilyWS, null),
     studio: /*#__PURE__*/React.createElement(StudioWS, null),
-    trust: /*#__PURE__*/React.createElement(TrustWS, null),
+    trust: with3D('trust', 'people', /*#__PURE__*/React.createElement(TrustWS, null)),
     system: /*#__PURE__*/React.createElement(SystemWS, null),
-    code: /*#__PURE__*/React.createElement(CodeWS, null),
-    news: /*#__PURE__*/React.createElement(NewsWS, null),
+    code: with3D('code', 'code', /*#__PURE__*/React.createElement(CodeWS, null)),
+    news: with3D('news', 'news', /*#__PURE__*/React.createElement(NewsWS, null)),
     draft: /*#__PURE__*/React.createElement(DraftWS, null),
     finance: /*#__PURE__*/React.createElement(FinanceWS, null),
     health: /*#__PURE__*/React.createElement(HealthWS, null),
-    contacts: /*#__PURE__*/React.createElement(ContactsWS, null),
+    contacts: with3D('contacts', 'people', /*#__PURE__*/React.createElement(ContactsWS, null)),
     content: /*#__PURE__*/React.createElement(ContentWS, null),
-    messages: /*#__PURE__*/React.createElement(MessagesWS, null),
-    calendar: /*#__PURE__*/React.createElement(CalendarWS, null),
+    messages: with3D('messages', 'messages', /*#__PURE__*/React.createElement(MessagesWS, null)),
+    calendar: with3D('calendar', 'calendar', /*#__PURE__*/React.createElement(CalendarWS, null)),
     marketplace: /*#__PURE__*/React.createElement(MarketplaceWS, null),
     workflows: /*#__PURE__*/React.createElement(WorkflowsWS, null),
     settings: /*#__PURE__*/React.createElement(SettingsWS, null)
@@ -47945,6 +48125,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       title: w.label,
       emoji: w.ico,
       zIndex: zMap[id] || 41,
+      closing: closingWins.has(id),
       onClose: () => close(id),
       onFocus: () => bringFront(id)
     }, /*#__PURE__*/React.createElement(Safe, {

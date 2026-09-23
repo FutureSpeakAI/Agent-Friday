@@ -501,10 +501,12 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True) -> Dic
     # Fallback 1: legacy single-account path.
     if not raw_messages:
         try:
-            legacy = ce._collect_messages(limit=limit_per_account * 2) or []
+            # _collect_messages returns (cards, source), source being
+            # 'gmail' | 'cache' | 'empty'; the cards are the messages.
+            legacy, legacy_source = ce._collect_messages(limit=limit_per_account * 2)
             if legacy:
                 raw_messages = list(legacy)
-                source = "legacy"
+                source = "cache" if legacy_source == "cache" else "legacy"
         except Exception as exc:
             log.warning("message_triage: legacy collect failed: %s", exc)
             errors.append({"account_id": None, "label": "legacy fetch", "error": str(exc)})

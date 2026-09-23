@@ -501,10 +501,15 @@ function ConnectorDot({wsId}){
   return <span title={tip} style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:col,boxShadow:`0 0 6px ${col}`,marginLeft:7,verticalAlign:'middle'}}/>;
 }
 
-function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
+function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // Size & position persist per workspace and are clamped to the viewport so a
   // window can never be dragged or resized off-screen.
   const LSK='friday_fwin_'+id;
+  // The window grows out of (and folds back into) its own dock icon.
+  const fwinRef=useRef(null);
+  const aimAtDock=()=>{const el=fwinRef.current;if(!el)return;const img=document.querySelector('.dock-btn img[src="assets/icons/'+id+'.svg"]');if(img&&el.offsetWidth){const d=img.getBoundingClientRect();el.style.setProperty('--fwin-ox',Math.round(d.left+d.width/2-el.offsetLeft)+'px');el.style.setProperty('--fwin-oy',Math.round(d.top+d.height/2-el.offsetTop)+'px');}};
+  React.useLayoutEffect(aimAtDock,[]);
+  React.useLayoutEffect(()=>{if(closing)aimAtDock();},[closing]);
   const vw=()=>window.innerWidth||document.documentElement.clientWidth||1280;
   const vh=()=>window.innerHeight||document.documentElement.clientHeight||800;
   const clampW=w=>Math.max(400,Math.min(w,vw()-20));
@@ -544,7 +549,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
     window.addEventListener('friday:open-ws-history',onOpen);
     return()=>window.removeEventListener('friday:open-ws-history',onOpen);
   },[id]);
-  return(<div className="fwin" style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
+  return(<div className={'fwin'+(closing?' closing':'')} ref={fwinRef} style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
       <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
@@ -3965,6 +3970,8 @@ function StudioWS(){
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
   useNavTarget('studio',t=>{
     if(!t)return;
+    // {view:'files', root, path} opens that folder in the 3D file browser.
+    if(t.view==='files'){if(t.root)window.__files3dOpen={root:t.root,path:t.path||''};setView('files');window.dispatchEvent(new Event('friday-files3d-open'));return;}
     if(t.creation){loadCreations();openCreation({name:t.creation});return;}
     // Older daily-creation notifications carry only a title/date — resolve that
     // to the materialized file in the gallery, then open it.
@@ -4024,13 +4031,15 @@ function StudioWS(){
       <button className={'btn '+(view==='production'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('production')}>🎬 Production</button>
       <button className={'btn '+(view==='gallery'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
       <button className={'btn '+(view==='projects'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
+      <button className={'btn '+(view==='files'?'':'btn-magenta')} style={{fontSize:11}} title="Browse your folders in 3D: wall, carousel, tree, city, timeline and clusters" onClick={()=>setView('files')}>🧊 Files 3D</button>
     </div>
     {view==='projects'&&<ProjectsPanel/>}
+    {view==='files'&&(window.Files3DPanel?<window.Files3DPanel/>:<div style={{color:'#888',fontSize:12,padding:20}}>The 3D file browser did not load.</div>)}
     {view==='generate'&&<GeneratePanel onCreated={loadCreations}/>}
     {view==='music'&&<MusicPanel onCreated={loadCreations}/>}
     {view==='timeline'&&<TimelinePanel onCreated={loadCreations}/>}
     {view==='production'&&<ProductionPanel onCreated={loadCreations}/>}
-    {view!=='projects'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
+    {view!=='projects'&&view!=='files'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
     <StudioPromptBar onCreated={loadCreations}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
       {creationLog&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
@@ -7545,6 +7554,8 @@ function ContactsWS(){
   const[researching,setResearching]=useState(false);const[toast,setToast]=useState('');
   const loadList=()=>{setLoading(true);fetch('/api/contacts').then(r=>r.json()).then(d=>{setContacts(d.contacts||[]);setLoading(false)}).catch(()=>{setLoading(false)})};
   useEffect(()=>{loadList()},[]);
+  // Deep link: {workspace:'contacts', name} opens that person (the 3D view uses it).
+  useNavTarget('contacts',t=>{if(t&&t.name)openContact({name:t.name});});
   const openContact=async(c)=>{setSelected(c);setDetail(null);setDetailLoad(true);try{const r=await fetch('/api/contacts/'+encodeURIComponent((c.name||'').toLowerCase()));const d=await r.json();setDetail(d.status==='ok'?{...d.contact,research:d.research}:null)}catch(e){setDetail(null)}setDetailLoad(false)};
   const doResearch=async()=>{if(!selected||researching)return;setResearching(true);try{const r=await fetch('/api/contacts/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected.name})});const d=await r.json();setToast(d.status==='ok'?('Research queued for '+selected.name):'Research failed')}catch(e){setToast('Research failed')}setResearching(false);setTimeout(()=>setToast(''),2500)};
   const doCopy=async()=>{if(!detail)return;try{await navigator.clipboard.writeText(JSON.stringify(detail,null,2));setToast('Copied contact JSON')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),2000)};
@@ -9233,6 +9244,12 @@ function SettingsTabGeneral({s,save}){
     <StSection title="APPEARANCE">
       <StToggle label="Show All Workspaces" value={s.show_all_workspaces!==false} onChange={()=>save({show_all_workspaces:!(s.show_all_workspaces!==false)})} desc="Show all workspace icons in the dock."/>
       <StToggle label="Compact Mode" value={!!s.compact_mode} onChange={()=>save({compact_mode:!s.compact_mode})} desc="Reduce padding and element sizes."/>
+      <StRow label="3D Dazzle (every 3D view)">
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <input type="range" min={0} max={2} step={1} aria-label="3D Dazzle" value={['off','subtle','full'].indexOf(s.studio_dazzle||'full')} onChange={e=>{const v=['off','subtle','full'][+e.target.value];save({studio_dazzle:v});window.dispatchEvent(new CustomEvent('friday-dazzle',{detail:v}));}} style={{flex:1,accentColor:'#00d4ff'}}/>
+          <span style={{fontFamily:'Orbitron',fontSize:10,letterSpacing:'.12em',color:'#00d4ff',minWidth:52}}>{(s.studio_dazzle||'full').toUpperCase()}</span>
+        </div>
+      </StRow>
     </StSection>
     <StSection title="STARTUP">
       <StRow label="Startup Workspace">
@@ -10480,6 +10497,8 @@ function AddProviderForm({templates,onDone,onCancel}){
     </div>
   </div>;
 }
+// The model library in 3D sits on top of the Model Browser (friday3d_records.js).
+function with3DModels(el){return window.Friday3DToggle?<window.Friday3DToggle ws="settings" source="models">{el}</window.Friday3DToggle>:el;}
 function ModelBrowser({save}){
   // The FULL catalog (statics ∪ discovery caches — OpenRouter's 300+): search,
   // provider + capability filters, price/context sort. Server-side filter+sort
@@ -10608,7 +10627,7 @@ function SettingsTabProviders({s,save}){
     </StSection>
     <StSection title="MODEL BROWSER">
       <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Search every connected provider's catalog — including OpenRouter's full list once its model list has been refreshed.</div>
-      <ModelBrowser save={save}/>
+      {with3DModels(<ModelBrowser save={save}/>)}
     </StSection>
   </div>;
 }
@@ -12771,11 +12790,17 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // Tell the backend a workspace was opened — feeds the usage model (predictions
   // + pre-warming) and the ambient switch-rate signal. Fire-and-forget.
   const recordWsVisit=id=>{try{fetch('/api/workspace/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspace:id})}).catch(()=>{})}catch(_){}};
-  const toggle=id=>{setOpenWins(p=>{const n=new Set(p);if(n.has(id)){n.delete(id)}else{n.add(id);recordWsVisit(id)}return n});bringFront(id)};
+  // Closing is animated: a window stays mounted in closingWins while it folds into
+  // its dock icon, then leaves openWins. Reopening mid-fold cancels the fold.
+  const [closingWins,setClosingWins]=useState(new Set());const closeTimers=useRef({});
+  const openWinsRef=useRef(openWins);openWinsRef.current=openWins;const closingRef=useRef(closingWins);closingRef.current=closingWins;
+  const foldMs=()=>{try{if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return 130}catch(_){}return document.documentElement.dataset.dazzle==='off'?190:270};
+  const cancelClose=id=>{clearTimeout(closeTimers.current[id]);delete closeTimers.current[id];setClosingWins(p=>{if(!p.has(id))return p;const n=new Set(p);n.delete(id);return n})};
+  const toggle=id=>{if(openWinsRef.current.has(id)&&!closingRef.current.has(id)){close(id);return}cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
   // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
   // so clicking a notification for an already-open workspace doesn't close it.
-  const openWs=id=>{setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
-  const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
+  const openWs=id=>{cancelClose(id);setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);recordWsVisit(id);return n});bringFront(id)};
+  const close=id=>{if(closeTimers.current[id])return;setClosingWins(p=>new Set(p).add(id));closeTimers.current[id]=setTimeout(()=>{delete closeTimers.current[id];setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});setClosingWins(p=>{const n=new Set(p);n.delete(id);return n})},foldMs())};
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
 
   // The Friday Edition is the front page: once setup is confirmed done, open
@@ -12925,7 +12950,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // One computation of what the dock is, shared by the dock itself and by
   // Settings → Dock. Memoised because App re-renders on every chat token.
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces]);
-  const wsMap={edition:<EditionWS/>,home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,knowledge:<KnowledgeGraphWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
+  // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
+  const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
+  const wsMap={edition:<EditionWS/>,home:with3D('home','tasks',<HomeWS/>),career:<CareerWS/>,wiki:<WikiWS/>,knowledge:<KnowledgeGraphWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:with3D('trust','people',<TrustWS/>),system:<SystemWS/>,code:with3D('code','code',<CodeWS/>),news:with3D('news','news',<NewsWS/>),draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:with3D('contacts','people',<ContactsWS/>),content:<ContentWS/>,messages:with3D('messages','messages',<MessagesWS/>),calendar:with3D('calendar','calendar',<CalendarWS/>),marketplace:<MarketplaceWS/>,workflows:<WorkflowsWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
@@ -13371,7 +13398,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     </div>}
 
     {/* Floating Windows */}
-    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
+    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} closing={closingWins.has(id)} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
 
     {/* Workspace Studio — contextual per-workspace chat (💬 button on each window) */}
     {wsChat&&<WorkspaceChat key={wsChat.wsId+':'+wsChat.key} wsId={wsChat.wsId} label={wsChat.label} emoji={wsChat.emoji} seedPrompt={wsChat.seed} onClose={()=>setWsChat(null)}/>}
