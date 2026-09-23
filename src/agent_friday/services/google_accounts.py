@@ -845,7 +845,8 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
         used.append(_public_record(rec))
         for m in _gmail_for_creds(creds, limit_per_account, days=days, query=query):
             if "error" in m:
-                errors.append({"account_id": aid, "label": rec.get("label"), "error": m["error"]})
+                errors.append({"account_id": aid, "label": rec.get("label"), "error": m["error"],
+                               "kind": m.get("error_kind", "other"), "partial": bool(m.get("partial"))})
                 continue
             m["account_id"] = aid
             m["account_label"] = rec.get("label")
@@ -861,58 +862,84 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
     """Fetch messages for one account's credentials.
 
     When `query` is given (a real Gmail search string), it is sent directly
-    as Gmail's own `q=` -- Gmail's server-side search already understands
-    from:/subject:/quotes/booleans/newer_than: etc., so there is no local
-    re-filtering to do here for the live-API path. With no query, falls back
-    to the previous unread/recent-window default so unrelated callers (the
-    daily briefing, notifications, etc.) keep their existing behavior."""
+    as Gmail's own `q=`. With no query, the unread/recent-window default.
+
+    Calls go through services/gmail_api: rate limits are retried with
+    backoff and message details come from one batch request per 50 ids.
+    Whatever was fetched before a failure is kept, and the failure is
+    appended as {"error", "error_kind"} -- callers must report it, never
+    read it as "no mail"."""
     try:
         from googleapiclient.discovery import build
     except Exception as e:
-        return [{"error": f"google-api-python-client not installed: {e}"}]
+        return [{"error": f"google-api-python-client not installed: {e}", "error_kind": "other"}]
+    from agent_friday.services import gmail_api
+    out, seen = [], set()
     try:
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
-        seen, out = set(), []
         q = (query or "").strip()
         if q:
             queries = (q,)
         else:
             window = "newer_than:%dd" % _gmail_window_days(days)
             queries = (f"is:unread {window}", window)
+        ids = []
         for qs in queries:
-            resp = svc.users().messages().list(userId="me", q=qs, maxResults=limit).execute()
+            resp = gmail_api.execute(svc.users().messages().list(userId="me", q=qs, maxResults=limit))
             for ref in resp.get("messages", []):
                 mid = ref.get("id")
-                if not mid or mid in seen:
-                    continue
-                seen.add(mid)
-                msg = svc.users().messages().get(
-                    userId="me", id=mid, format="metadata",
-                    metadataHeaders=["From", "Subject", "Date"],
-                ).execute()
-                headers = {h["name"].lower(): h["value"]
-                           for h in msg.get("payload", {}).get("headers", [])}
-                ts = msg.get("internalDate")
-                try:
-                    ts_iso = datetime.fromtimestamp(int(ts) / 1000).isoformat() if ts else (headers.get("date") or "")
-                except Exception:
-                    ts_iso = headers.get("date") or ""
-                out.append({
-                    "sender": headers.get("from", "unknown"),
-                    "subject": headers.get("subject", "(no subject)"),
-                    "snippet": (msg.get("snippet") or "").strip(),
-                    "timestamp": ts_iso,
-                    "thread_id": msg.get("threadId", ""),
-                    "labels": msg.get("labelIds", []),
-                    "unread": "UNREAD" in (msg.get("labelIds", []) or []),
-                })
-                if len(out) >= limit:
-                    break
-            if len(out) >= limit:
+                if mid and mid not in seen:
+                    seen.add(mid)
+                    ids.append(mid)
+            if len(ids) >= limit:
                 break
+        ids = ids[:limit]
+        got, failed = gmail_api.batch_get(
+            svc, ids, fmt="metadata",
+            headers=["From", "To", "Cc", "Subject", "Date", "Content-Type", "Message-ID"])
+        for mid in ids:
+            msg = got.get(mid)
+            if not msg:
+                continue
+            headers = {h["name"].lower(): h["value"]
+                       for h in msg.get("payload", {}).get("headers", [])}
+            ts = msg.get("internalDate")
+            try:
+                ts_iso = datetime.fromtimestamp(int(ts) / 1000).isoformat() if ts else (headers.get("date") or "")
+            except Exception:
+                ts_iso = headers.get("date") or ""
+            labels = msg.get("labelIds", []) or []
+            ctype = (headers.get("content-type") or msg.get("payload", {}).get("mimeType") or "").lower()
+            out.append({
+                # Gmail's id rides alongside, not as "id": Friday's local
+                # message state (archive, snooze, lane overrides) is keyed by
+                # the id _message_id() derives for mail without one.
+                "gmail_id": mid,
+                "sender": headers.get("from", "unknown"),
+                "to": headers.get("to", ""),
+                "cc": headers.get("cc", ""),
+                "subject": headers.get("subject", "(no subject)"),
+                "snippet": (msg.get("snippet") or "").strip(),
+                "timestamp": ts_iso,
+                "thread_id": msg.get("threadId", ""),
+                "labels": labels,
+                "unread": "UNREAD" in labels,
+                # multipart/mixed is how mail carries attachments; metadata
+                # format has no part list, so this is the cheap signal
+                "has_attachment": ctype.startswith("multipart/mixed"),
+            })
+        if failed:
+            kinds = {f.get("kind") for f in failed}
+            out.append({"error": "%d of %d messages could not be read: %s"
+                                 % (len(failed), len(ids), failed[0].get("message")),
+                        "error_kind": "rate_limited" if "rate_limited" in kinds else failed[0].get("kind", "other"),
+                        "partial": True})
         return out
+    except gmail_api.GmailError as e:
+        return out + [{"error": e.message, "error_kind": e.kind, "partial": bool(out)}]
     except Exception as e:
-        return [{"error": f"Gmail fetch failed: {e}"}]
+        d = gmail_api.describe(e)
+        return out + [{"error": d["message"], "error_kind": d["kind"], "partial": bool(out)}]
 
 
 def merged_calendar(days: int = 2) -> dict:
