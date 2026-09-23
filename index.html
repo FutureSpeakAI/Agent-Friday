@@ -138,7 +138,6 @@ window.addEventListener('DOMContentLoaded',function(){
             --dock-k: 1;
             --dock-ppx: 0px; --dock-ppy: -130px;
             --dock-tilt: 0deg; --dock-yaw: 0deg;
-            --dock-spec: 50%; --dock-spec-a: 0;
             --dock-persp: 620px;
         }
         #hud-overlay {
@@ -1305,12 +1304,12 @@ window.addEventListener('DOMContentLoaded',function(){
             height: calc(162px * var(--dock-k));
             transform-origin: 50% 100%;
             transform: rotateX(var(--dock-tilt)) rotateY(var(--dock-yaw));
+            /* No specular band. A highlight that sits wherever the pointer
+               is turns the floor into a torch beam following the mouse, and
+               that is the haze the owner asked to be rid of. The floor is lit
+               evenly; its depth comes from the converging lines and from the
+               near edge being brighter, neither of which answers the mouse. */
             background:
-                /* the specular band, following pointer and head */
-                linear-gradient(100deg,
-                    rgba(255,255,255,0) calc(var(--dock-spec) - 24%),
-                    rgba(200,240,255,var(--dock-spec-a)) var(--dock-spec),
-                    rgba(255,255,255,0) calc(var(--dock-spec) + 24%)),
                 /* lines running away from the viewer: these converge */
                 repeating-linear-gradient(90deg,
                     rgba(120,215,255,0.16) 0 1px, transparent 1px 64px),
@@ -1339,7 +1338,7 @@ window.addEventListener('DOMContentLoaded',function(){
             left: 0; right: 0; bottom: 0; height: 3px;
             background: linear-gradient(90deg,
                 rgba(0,212,255,0.06) 0%,
-                rgba(210,245,255,calc(0.12 + 0.62 * var(--dock-spec-a))) var(--dock-spec),
+                rgba(210,245,255,0.12) 50%,
                 rgba(123,97,255,0.06) 100%);
             box-shadow: 0 -6px 16px -6px rgba(0,190,255,calc(0.35 * var(--dock-k)));
             opacity: var(--dock-k);
@@ -1393,6 +1392,49 @@ window.addEventListener('DOMContentLoaded',function(){
            for why a translateZ here does not stay where it is put. Depth
            inside the dock comes from the floor and from the contact shadow,
            neither of which has anything nested in it to pull out of line. */
+
+        /* HIT TARGETS. A magnified tile overlaps its neighbours — that is what
+           magnification is — so the thing that has to be true is narrower and
+           checkable: at any point, the tile you can SEE is the tile that gets
+           the click. Stacking follows magnification, so the button nearest the
+           pointer is always the topmost one, and the hit areas partition the
+           dock along exactly the edges that are visible. Approaching a button
+           therefore always reaches it; it cannot be held under a neighbour
+           that got there first.
+
+           Before this, a hovered button was pulled 26px toward the viewer, and
+           under the dock's shared perspective that both widened it and slid it
+           away from the perspective origin — 73.6px of overrun at full depth,
+           enough to swallow the button beside it. Worse, once a neighbour
+           covered the target the hover had nothing to move onto, so it latched
+           and the button could never be reached. Studio, last on the row, was
+           where it showed.
+
+           Decorative layers take no clicks at all, and neither do a button's
+           own children, so the button itself is always the event target and
+           `e.target.closest('.dock-btn')` cannot miss. */
+        .dock-btn { z-index: calc(2 + 1000 * var(--mag, 1)); }
+        .dock-btn > * { pointer-events: none; }
+        .dock-group-label, .dock-sep, .dock-divider { pointer-events: none; }
+
+        /* A button also LIFTS as the pointer nears it, and at full depth that
+           is 36px on a 49px tile — enough that the tile rises out from under
+           the very point you aimed at, and the click lands on the floor. So
+           the hit area keeps the footprint the button just vacated: it reaches
+           from the button down through the gap it opened underneath itself.
+
+           The offset is divided by --mag because this is a child of a scaled
+           box, so a length here is multiplied by that scale on the way to the
+           screen; dividing first makes the extension exactly the lift. Nothing
+           lives below a button but the floor and the group label, both of
+           which take no clicks, so reaching down can never steal from another
+           tile. */
+        .dock-btn::after {
+            content: ''; position: absolute; z-index: -1;
+            left: 0; right: 0; top: 0;
+            bottom: calc(-18px * var(--dock-k, 0) / var(--mag, 1));
+            background: transparent;
+        }
 
         /* Press: the button settles DOWN onto the floor and springs back.
            Down-and-smaller reads as pressed for the same reason going back in
@@ -2888,10 +2930,20 @@ window.addEventListener('DOMContentLoaded',function(){
                 head.z = fz.filter(head.raw.z, tSec);
                 head.seen = true;
             }
-            function pushMouseFallback(mx, my, tSec) {
-                head.raw.x = mx; head.raw.y = my; head.raw.z = 0;
-                head.x = fx.filter(mx, tSec);
-                head.y = fy.filter(my, tSec);
+            // NO POINTER FALLBACK. The mouse used to stand in for the head
+            // whenever the camera was not tracking a face, which meant the
+            // whole scene sheared and slid as the pointer crossed the screen
+            // — a haze that follows the mouse, which is not what a window
+            // does. A window answers to where your HEAD is, and when nothing
+            // knows where your head is the honest answer is to sit still.
+            //
+            // Relaxing through the same filter rather than snapping to zero,
+            // so losing the face eases the scene back to centre instead of
+            // jolting it.
+            function relaxToNeutral(tSec) {
+                head.raw.x = 0; head.raw.y = 0; head.raw.z = 0;
+                head.x = fx.filter(0, tSec);
+                head.y = fy.filter(0, tSec);
                 head.z = fz.filter(0, tSec);
                 head.seen = false;
             }
@@ -3032,7 +3084,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 DEFAULTS: DEFAULTS, cfg: cfg, apply: apply, reset: reset,
                 get: function () { return Object.assign({}, cfg); },
                 head: head, hand: hand,
-                pushFace: pushFace, pushMouseFallback: pushMouseFallback,
+                pushFace: pushFace, relaxToNeutral: relaxToNeutral,
                 pushHand: pushHand, handLost: handLost,
                 applyFrustum: applyFrustum, calibrate: calibrate, OneEuro: OneEuro
             };
@@ -3085,7 +3137,6 @@ window.addEventListener('DOMContentLoaded',function(){
             st.setProperty('--dock-ppy', '-130px');
             st.setProperty('--dock-tilt', '0deg');
             st.setProperty('--dock-yaw', '0deg');
-            st.setProperty('--dock-spec-a', '0');
             st.setProperty('--dock-persp', '620px');
             dockRects.btns.forEach(function (b) {
                 b.el.style.removeProperty('--mag');
@@ -3103,7 +3154,11 @@ window.addEventListener('DOMContentLoaded',function(){
             dockRects.top = dr.top;
             dockRects.btns = Array.prototype.map.call(els, function (el) {
                 const r = el.getBoundingClientRect();
-                return { el: el, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+                // offsetWidth is the LAYOUT width: unlike the rect it is not
+                // scaled by --mag, so it stays the resting size even if the
+                // dock is measured while a button is magnified.
+                return { el: el, cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+                         w: el.offsetWidth };
             });
             dockRects.w = window.innerWidth; dockRects.h = window.innerHeight;
             dockRects.n = els.length;
@@ -3158,24 +3213,19 @@ window.addEventListener('DOMContentLoaded',function(){
             st.setProperty('--dock-tilt', tilt.toFixed(2) + 'deg');
             st.setProperty('--dock-yaw', (faceX * 1.6 * pStr * k).toFixed(2) + 'deg');
 
-            // LIGHT. The highlight sits where the pointer is, and drifts with
-            // head angle when there is no pointer over the dock, so the shelf
-            // is lit by something in the room rather than by a static gradient.
+            // NO POINTER-FOLLOWING LIGHT. The shelf used to carry a highlight
+            // that sat wherever the pointer was; moving the mouse dragged a
+            // bright smear along the dock and across the glass. The floor is
+            // lit evenly now. The pointer still decides which button is
+            // MAGNIFIED, because that is the dock answering a reach rather
+            // than a light sliding about.
             const havePtr = px >= 0;
-            const ptrPct = havePtr
-                ? ((px - dockRects.left) / dockRects.width) * 100
-                : 50 - faceX * 40;
-            st.setProperty('--dock-spec', Math.max(-10, Math.min(110, ptrPct)).toFixed(1) + '%');
 
             // MAGNIFICATION. Engages as the pointer nears the dock vertically,
             // so crossing the screen does not set the whole dock rippling.
             const near = havePtr
                 ? Math.max(0, Math.min(1, 1 - (dockRects.top - py) / 180))
                 : 0;
-            const cue = Math.max(0, Math.min(1, TK.cfg.holo_cues));
-            st.setProperty('--dock-spec-a',
-                (cue * k * (0.06 + 0.26 * near)).toFixed(3));
-
             const SPREAD = 105;   // px; roughly two buttons either side
             for (let i = 0; i < dockRects.btns.length; i++) {
                 const b = dockRects.btns[i];
@@ -3280,7 +3330,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
                 out.textContent =
                     'head  x ' + TK.head.x.toFixed(3) + '  y ' + TK.head.y.toFixed(3) +
-                    '  z ' + TK.head.z.toFixed(3) + (TK.head.seen ? '  [face]' : '  [mouse]') +
+                    '  z ' + TK.head.z.toFixed(3) + (TK.head.seen ? '  [face]' : '  [no face - at rest]') +
                     '\nlag   ' + Math.round(Math.hypot(hx - rx, hy - ry)) + ' px raw->filtered' +
                     '\nhand  ' + (TK.hand.seen
                         ? Math.round(TK.hand.x) + ',' + Math.round(TK.hand.y) +
@@ -4466,11 +4516,11 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             // --- STABILIZED TRUE 3D HOLOGRAPHIC PARALLAX OFFSET ---
-            // One Euro replaces the fixed per-frame lerps. The mouse fallback
-            // runs through the same filter so the two input paths cannot drift
-            // apart in feel.
+            // One Euro replaces the fixed per-frame lerps. With no face to
+            // follow the head eases back to centre, so the scene comes to rest
+            // rather than tracking the pointer around the screen.
             if (!(isHologramMode && isFaceVisible)) {
-                window.FridayTracking.pushMouseFallback(mouseX, mouseY, performance.now() / 1000);
+                window.FridayTracking.relaxToNeutral(performance.now() / 1000);
             }
             currFaceX = window.FridayTracking.head.x;
             currFaceY = window.FridayTracking.head.y;
