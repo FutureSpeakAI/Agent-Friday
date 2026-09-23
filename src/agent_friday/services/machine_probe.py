@@ -71,11 +71,22 @@ STATE_UNKNOWN = "unknown"
 
 def snapshot(key: str, compute: Callable[[], Any], *, fresh_for: float,
              budget: float = DEFAULT_BUDGET_S,
-             default: Any = None) -> tuple[Any, float, str]:
+             default: Any = None,
+             allow_blocking: bool | None = None) -> tuple[Any, float, str]:
     """``(value, computed_at, state)`` for ``key``, never blocking past ``budget``.
 
     ``computed_at`` is 0.0 exactly when ``state`` is ``"unknown"``, so a caller
     cannot accidentally render a placeholder with a plausible-looking age.
+
+    ``allow_blocking`` decides what a COLD read does once the budget is spent:
+
+      * ``None`` (default) — infer it: block outside an HTTP request, never
+        inside one. That is the actual rule, "a menu must not wait", rather than
+        "nobody may read the machine".
+      * ``False`` — never block. What a request path wants, and what a test of
+        the request path must pass explicitly so it does not accidentally
+        measure the blocking branch.
+      * ``True`` — always wait for the real answer.
     """
     hit = swr_cache.peek(key)
     if hit is not None:
@@ -97,7 +108,40 @@ def snapshot(key: str, compute: Callable[[], Any], *, fresh_for: float,
         got = swr_cache.peek(key)
         if got is not None:
             return got[0], got[1], STATE_FRESH
+
+    # OUTSIDE A REQUEST, WAIT FOR THE REAL ANSWER.
+    #
+    # The rule being enforced is "a MENU must not wait on the machine", not
+    # "nobody may ever read the machine". A CLI, a test, a boot warmer or a
+    # background job has no user watching a spinner, and for them an "unknown"
+    # is simply a wrong answer: five tests legitimately asserting real
+    # capability (a running local seat reaching the picker, NeMo availability
+    # gated on a real GPU) broke when this returned unknown unconditionally.
+    #
+    # Flask's request context is exactly the distinction, so use it rather than
+    # inventing a flag someone has to remember to set. In a request: never wait.
+    # Outside one: block for the truth.
+    may_block = (not _in_request()) if allow_blocking is None else allow_blocking
+    if may_block:
+        try:
+            value, ts = swr_cache.get(key, compute, fresh_for=fresh_for)
+            return value, ts, STATE_FRESH
+        except Exception as e:  # noqa: BLE001 - a probe failure is data
+            _log.debug("machine_probe: %s failed synchronously: %s", key, e)
     return default, 0.0, STATE_UNKNOWN
+
+
+def _in_request() -> bool:
+    """True when this call is serving an HTTP request.
+
+    False when Flask is absent or no request is active, which is the safe
+    direction for the CLI and the test suite: they get the real answer.
+    """
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
 
 
 _kicks: dict[str, threading.Event] = {}

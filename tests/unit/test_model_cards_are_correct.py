@@ -159,15 +159,89 @@ def test_the_kimi_k3_revert_left_nothing_behind(catalog):
 def test_an_unreadable_engine_row_says_so_rather_than_claiming_ready(monkeypatch):
     """The cold path for the two torch-backed voice probes. Unknown must render
     as unavailable WITH a reason -- calling an unimportable package ready is the
-    lie `kokoro_health` was written to prevent."""
+    lie `kokoro_health` was written to prevent.
+
+    Driven INSIDE a request context, because that is the only place the unread
+    row can appear: outside a request `machine_probe.snapshot` deliberately waits
+    for the real answer, since a CLI or a test has no spinner to protect.
+    """
+    import flask
+
     from agent_friday.services import swr_cache
     swr_cache.invalidate("voice:")
     monkeypatch.setattr(mc, "_kokoro_health_uncached",
                         lambda: (__import__("time").sleep(30), {})[1])
-    rows = mc._tts_engines()
+    with flask.Flask(__name__).test_request_context("/api/models"):
+        rows = mc._tts_engines()
     kok = next(r for r in rows if r["id"] == "kokoro")
     assert kok["available"] is False
     assert kok.get("reading") == "unknown"
     assert "couldn't read" in (kok.get("hint") or "").lower()
     # Piper is on-device and always offered, so the list is never empty.
     assert any(r["id"] == "piper" and r["available"] for r in rows)
+
+
+# ── the seats Friday actually uses must meter ───────────────────────────────
+#
+# Audited 2026-09-23 against the live settings: every cloud seat is bound
+# THROUGH OpenRouter, so the ids in use are gateway-prefixed and use a DOT where
+# Anthropic's canonical id has a dash:
+#
+#   reasoning / subagent / heavy_hitter -> anthropic/claude-opus-5.5
+#   orchestrator / sidekick_fast        -> anthropic/claude-sonnet-5
+#
+# None of those was in PRICING, openrouter declares no cost_per_1k, and
+# price_for's last resort returns 0/0 -- so the models Friday was actually
+# thinking with metered at exactly $0.00. `services/spend_guard` is denominated
+# in dollars, so a $0 rate silently disables the only stop that stops.
+
+@pytest.mark.parametrize("gateway_id,canonical", [
+    ("anthropic/claude-opus-5.5", "claude-opus-5-5"),
+    ("anthropic/claude-sonnet-5", "claude-sonnet-5"),
+    ("anthropic/claude-opus-5", "claude-opus-5"),
+    ("anthropic/claude-fable-5.1", "claude-fable-5-1"),
+])
+def test_a_gateway_prefixed_id_prices_like_the_model_it_is(gateway_id, canonical):
+    got = cm.price_for(gateway_id)
+    want = cm.price_for(canonical)
+    assert got == want, "%s priced %s, canonical is %s" % (gateway_id, got, want)
+    assert got["in"] > 0 and got["out"] > 0
+
+
+def test_the_live_seat_models_do_not_meter_free():
+    """The specific regression: these are the ids in settings right now."""
+    for mid in ("anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5"):
+        assert cm.cost_for(mid, 1_000_000, 0) > 0, "%s meters $0" % mid
+
+
+@pytest.mark.parametrize("variant", [
+    "anthropic/claude-opus-5.5:batch",   # 50% off -- a different price
+    "meta-llama/llama-4-maverick:free",  # free -- also a different price
+])
+def test_a_variant_suffix_is_never_normalised(variant):
+    """Better a visible zero than an invisible wrong number.
+
+    `:batch` is 50% off and `:free` is free, so neither may inherit the standard
+    row just because its stem matches. Asserted on the normaliser rather than by
+    comparing prices: the first version of this test compared the variant to its
+    stem, which is vacuous when the stem has no row either (llama-4-maverick has
+    none), so it passed for the wrong reason on one case and failed on it for the
+    other.
+    """
+    assert cm._canonical_gateway_id(variant) is None
+
+
+def test_a_priced_stem_does_not_leak_into_its_batch_variant():
+    """The case where a wrong answer would actually be reachable: the stem IS
+    priced, so a normaliser that ignored the suffix would bill batch at full
+    rate."""
+    std = cm.price_for("anthropic/claude-opus-5.5")
+    assert std["in"] > 0
+    batch = cm.price_for("anthropic/claude-opus-5.5:batch")
+    assert batch != std, "batch inherited the standard rate"
+
+
+def test_canonical_ids_are_untouched_by_the_normaliser():
+    assert cm.price_for("claude-opus-5-5")["in"] == pytest.approx(0.004)
+    assert cm._canonical_gateway_id("claude-opus-5-5") is None
+    assert cm._canonical_gateway_id("anthropic/claude-opus-5.5") == "claude-opus-5-5"

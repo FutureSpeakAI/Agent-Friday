@@ -1027,14 +1027,40 @@ def api_intelligence():
 
     # ── Residency: what is actually loaded, and what a change would cost ──
     seats, budgets, refusals, resident = {}, {}, [], set()
+    _res_state, _res_at = "unknown", 0.0
     pinned = {}
     _planned_at = None
     try:
         # Reuse the residency route's own view rather than re-deriving it, so
         # this surface and /api/residency/status can never disagree.
+        # THROUGH A SNAPSHOT, because it reads the machine. Profiled 2026-09-23:
+        # this route cost 32.7s cold and 12.6s warm -- and the cold figure is
+        # OVER the 30s AbortController the panel itself sets, so Settings >
+        # Intelligence aborted its own fetch and reported a timeout. The cost is
+        # here: socket.create_connection 5.3s over 7 calls,
+        # residency_arbiter.resident() 4.1s, _ours_resident_mib() 4.0s --
+        # loopback probes against seats that are not running.
+        #
+        # This also caused what looked like a separate bug: "nothing changed
+        # when I picked Opus 5.5". The save persisted correctly every time
+        # (verified end to end, POST 200 and settings.json updated), but the
+        # panel confirms by RE-FETCHING this route -- so the new seat never
+        # arrived on screen and the pick looked like it did nothing.
+        from agent_friday.services import machine_probe as _mp
         from agent_friday.routes.residency import status as _residency_status
-        resp = _residency_status()
-        st = resp.get_json() if hasattr(resp, "get_json") else (resp[0].get_json())
+
+        def _residency_payload():
+            resp = _residency_status()
+            return (resp.get_json() if hasattr(resp, "get_json")
+                    else resp[0].get_json())
+
+        st, _res_at, _res_state = _mp.snapshot(
+            "intelligence:residency", _residency_payload,
+            fresh_for=15.0, budget=1.0, default=None)
+        if st is None:
+            # Not read yet: omit the seats block rather than guess at it. Every
+            # other section still renders, and the payload says why below.
+            st = {}
         seats = st.get("seats") or {}
         budgets = st.get("budgets") or {}
         refusals = st.get("refusals") or []
@@ -1407,5 +1433,9 @@ def api_intelligence():
         "local_models": local_models,
         "providers": providers,
         "catalog_meta": cat.get("catalog_meta") or {},
+        # So the panel can say "as of 20s ago" or "couldn't read the seats yet"
+        # instead of presenting a stale or absent residency read as live.
+        "residency_reading": _res_state,
+        "residency_age": _mp.age_note(_res_at, _res_state),
         "now": time.time(),
     })

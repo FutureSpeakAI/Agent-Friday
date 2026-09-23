@@ -1028,7 +1028,35 @@ def _check_seat_installed(new_settings):
                 continue
             model = str(entry.get("model") or "").strip()
             prov = str(entry.get("provider") or "").strip().lower()
-            if model and prov in _LOCAL_SEAT_PROVIDERS:
+            if not model:
+                continue
+            # A WRITE THAT OMITS `provider` USED TO SKIP THIS CHECK ENTIRELY.
+            #
+            # The gate only fired when the caller DECLARED a local provider, so a
+            # seat write with no provider sailed straight through and a local
+            # model with no weights on this machine was accepted with 200 -- the
+            # exact "succeeds on paper, quietly rewritten at dispatch" failure
+            # this function exists to prevent, reachable by simply not saying who
+            # serves the model.
+            #
+            # And the UI does exactly that: model-catalog entries carry
+            # `provider` (singular) while index.html reads `m.providers`
+            # (plural), so `provider` arrives undefined and JSON.stringify drops
+            # the key. Found 2026-09-23 by a test that bound a seat to
+            # `gemma4:definitely-not-installed-9z` and got a cheerful 200.
+            #
+            # So infer locality when it was not declared. A gateway id always
+            # contains '/' (anthropic/claude-opus-5.5) and is never local;
+            # excluding those first stops a cloud model being asked to prove it
+            # is installed.
+            if not prov and "/" not in model:
+                try:
+                    from agent_friday.routing.model_router import provider_family
+                    if provider_family(model) == "local":
+                        prov = "local"
+                except Exception:
+                    pass
+            if prov in _LOCAL_SEAT_PROVIDERS:
                 wanted.append((f"capability_routing.{cap}", model, prov))
     mr = new_settings.get("model_routing")
     if isinstance(mr, dict) and str(mr.get("local_model") or "").strip():
