@@ -83,6 +83,18 @@ DEFAULT_PROVIDERS = [
             "claude-opus-5": 0.015,
             "claude-sonnet-5": 0.006,
             "claude-haiku-4-5": 0.003,
+            # The picker OFFERS these -- it discovers them from the live
+            # /v1/models list -- so it must be able to price them. Without
+            # a row the displayed rate is blank and `price_for` falls all
+            # the way through to $0. Blended midpoints, as everywhere here.
+            "claude-opus-4-8": 0.015,
+            "claude-opus-4-7": 0.015,
+            "claude-opus-4-6": 0.015,
+            "claude-opus-4-5": 0.015,
+            "claude-opus-4-5-20251101": 0.015,
+            "claude-sonnet-4-6": 0.009,
+            "claude-sonnet-4-5": 0.009,
+            "claude-sonnet-4-5-20250929": 0.009,
             "claude-haiku-4-5-20251001": 0.003,
         },
         "model_meta": {
@@ -132,7 +144,13 @@ DEFAULT_PROVIDERS = [
         "models": ["gpt-4o", "gpt-4o-mini", "o3"],
         "capabilities": ["tools", "vision"],
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
-        "cost_per_1k": {"gpt-4o": 0.0375, "gpt-4o-mini": 0.00225},
+        # Blended midpoints of cost_meter.PRICING, like every other
+        # provider here. These read 0.0375 and 0.00225 -- 6x the real
+        # rates -- so the picker displayed six times the true price for
+        # both. cost_meter has gpt-4o at $2.50/$10 (midpoint 0.00625) and
+        # gpt-4o-mini at $0.15/$0.60 (midpoint 0.000375).
+        "cost_per_1k": {"gpt-4o": 0.00625, "gpt-4o-mini": 0.000375,
+                        "o3": 0.025},
         "model_meta": {
             "gpt-4o": {"label": "GPT-4o", "short": "GPT-4o",
                        "modalities": ["text", "vision", "tools"]},
@@ -815,23 +833,31 @@ class ProviderRegistry:
         p = self._providers.get(name)
         if not p or not p.get("enabled", True):
             return False
-        # Local voice (Tier-1): "available" = the CPU deps are importable. Real
-        # model-download readiness is reported separately by provider_health.
-        if p.get("type") == "local-voice":
+        # THE DEPENDENCY PROBES BELOW IMPORT TORCH. They must not run on a
+        # request path. Measured 2026-09-23: `gpu_tier_ready()` for nemo-local
+        # cost 2.8s per call and was called twice during one cold
+        # `build_catalog`, and `deps_installed()` is the same shape. Together
+        # with the other probes that made the model picker take 18 seconds to
+        # open.
+        #
+        # So the two import-backed types answer from a snapshot: a cached
+        # verdict when there is one, otherwise False -- which is ALREADY what
+        # this method returns when a probe fails, so an unread capability is
+        # treated exactly like an unproven one and never claimed as ready. The
+        # real probe runs in the background and is warmed at boot.
+        _slow = {"local-voice": _probe_local_voice_deps,
+                 "nemo-local": _probe_nemo_gpu_tier}
+        _probe = _slow.get(p.get("type"))
+        if _probe is not None:
             try:
-                from agent_friday.services.local_voice import deps_installed
-                return deps_installed()
+                from agent_friday.services import machine_probe as _mp
+                got, _at, _st = _mp.snapshot(
+                    "provider_available:" + name, _probe,
+                    fresh_for=60.0, budget=0.0, default=None)
+                return bool(got) if got is not None else False
             except Exception:
                 return False
-        # Local voice (Tier-2, NeMo GPU): "available" only when the full GPU
-        # stack can actually run (torch + NeMo + CUDA GPU + enough VRAM). Without
-        # it the provider shows as an unavailable upgrade, never blocking Tier-1.
-        if p.get("type") == "nemo-local":
-            try:
-                from agent_friday.services.nemo_voice import gpu_tier_ready
-                return gpu_tier_ready()
-            except Exception:
-                return False
+
         # Higgsfield authenticates through the MCP connector's OAuth, not an
         # env var, so "available" means the connector is actually reachable
         # and authorized right now. Asserting availability from the descriptor
@@ -880,3 +906,24 @@ def get_provider_registry() -> ProviderRegistry:
     if _registry is None:
         _registry = ProviderRegistry()
     return _registry
+
+
+def _probe_local_voice_deps() -> bool:
+    """Tier-1 CPU voice deps importable? Background use only -- imports."""
+    try:
+        from agent_friday.services.local_voice import deps_installed
+        return bool(deps_installed())
+    except Exception:
+        return False
+
+
+def _probe_nemo_gpu_tier() -> bool:
+    """Tier-2 NeMo GPU stack actually runnable (torch + NeMo + CUDA + VRAM)?
+
+    Background use only: this imports torch, measured 2.8s per call.
+    """
+    try:
+        from agent_friday.services.nemo_voice import gpu_tier_ready
+        return bool(gpu_tier_ready())
+    except Exception:
+        return False

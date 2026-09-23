@@ -66,6 +66,22 @@ PRICING = {
     # keying ONLY on it meant a canonical-id call missed the table, fell through
     # the registry fallback (Haiku has no cost_per_1k there) and metered $0 --
     # which reads as "local, on-device, free" for a cloud call.
+    # Still SERVED by the API and therefore still offered by the picker,
+    # which discovers them from /v1/models. They had no rows, so every one
+    # fell through to the provider blended rate -- and the anthropic
+    # provider has no cost_per_1k for them either, so they metered at
+    # exactly $0. Same defect as the canonical-Haiku-id and Fable 5.1
+    # zeros; found by listing what the picker actually offers rather than
+    # what the shipped list names. Figures from the published price page,
+    # 2026-09-23.
+    "claude-opus-4-8":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-7":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-6":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-5":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-5-20251101":   {"in": 0.005, "out": 0.025},
+    "claude-sonnet-4-6":          {"in": 0.003, "out": 0.015},   # $3  / $15
+    "claude-sonnet-4-5":          {"in": 0.003, "out": 0.015},   # $3  / $15
+    "claude-sonnet-4-5-20250929": {"in": 0.003, "out": 0.015},
     "claude-haiku-4-5":           {"in": 0.001, "out": 0.005},   # $1  / $5
     "claude-haiku-4-5-20251001":  {"in": 0.001, "out": 0.005},
     "gpt-4o":                     {"in": 0.0025, "out": 0.010},
