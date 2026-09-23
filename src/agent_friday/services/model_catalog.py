@@ -105,6 +105,23 @@ def context_window_for(model_id: str):
     except Exception:
         win = None
 
+    # WHAT IS SERVED BEATS WHAT IS PLANNED OR DECLARED.
+    #
+    # Measured 2026-09-23 on bonsai2:27b — three different numbers for one model:
+    #   models.json declares  262,144   (the architecture's maximum)
+    #   the residency rung     65,536   (what this function used to return)
+    #   llama-server serves    49,152   (/props default_generation_settings.n_ctx)
+    #
+    # It returned the PLAN: 33% above what the running process will accept. That
+    # is the same shape as the e4b 400s (a planned 65,536 against a served
+    # 32,768) — a prompt budgeted to the planned window gets rejected. So when a
+    # seat is actually up, its own answer wins. It is the only one of the three
+    # that can be wrong in a way the user feels.
+    served = _served_context_window(mid)
+    if served:
+        _CTX_CACHE[mid] = (_t.time(), served)
+        return served
+
     # Local models are the one class with no other source: descriptors don't
     # declare windows and API discovery doesn't cover Ollama — and they are
     # exactly the class with SMALL windows, i.e. the case D3 exists for. The
@@ -123,6 +140,56 @@ def context_window_for(model_id: str):
 
     _CTX_CACHE[mid] = (_t.time(), win)
     return win
+
+
+def _served_context_window(model_id: str):
+    """The context window the live seat for `model_id` is actually serving.
+
+    Read from the owned llama-server's ``/props`` (its
+    ``default_generation_settings.n_ctx``), through a snapshot so this never
+    costs a request anything: a seat that is gone would otherwise pay a
+    connection timeout on the hot path that assembles every prompt.
+
+    None when no seat is up, when it has not been read yet, or when the endpoint
+    does not report one -- in which case the declared/planned value is used, as
+    before.
+    """
+    try:
+        from agent_friday.services import machine_probe as _mp
+        got, _at, _state = _mp.snapshot(
+            "models:served_ctx:" + model_id,
+            lambda: _served_context_window_uncached(model_id),
+            fresh_for=60.0, budget=0.0, default=None)
+        return got or None
+    except Exception:
+        return None
+
+
+def _served_context_window_uncached(model_id: str):
+    """Ask the owned endpoint for its n_ctx. Background use only."""
+    try:
+        import json as _json
+        import urllib.request as _ur
+
+        from agent_friday.services.residency_arbiter import owned_endpoint
+        ep = owned_endpoint(model_id)
+        if not ep:
+            return None
+        base = ep if isinstance(ep, str) else (ep.get("base_url") or "")
+        if not base:
+            return None
+        base = base.rstrip("/")
+        for suffix in ("/v1", ""):
+            if base.endswith(suffix) and suffix:
+                base = base[: -len(suffix)]
+                break
+        with _ur.urlopen(base + "/props", timeout=3.0) as r:
+            props = _json.load(r) or {}
+        dg = props.get("default_generation_settings") or {}
+        n = dg.get("n_ctx") or props.get("n_ctx")
+        return int(n) if n else None
+    except Exception:
+        return None
 
 
 def reset_context_window_cache():
@@ -158,11 +225,27 @@ def _humanize(model_id: str) -> dict:
 
 
 def _live_ollama_models(base_url: str):
-    """Installed Ollama models, in daemon order.
+    """Installed Ollama models, in daemon order, read through a snapshot.
 
-    Returns None when the daemon is unreachable (so callers can distinguish
-    "Ollama not running" from "running with nothing installed", which is []).
+    Returns None when the daemon is unreachable OR has not been read yet (so
+    callers can still distinguish it from "running with nothing installed",
+    which is []).
+
+    Measured 4.05s cold on 2026-09-23 with no daemon running: `is_available()`
+    waits out a connection timeout, and this sits inside `build_catalog`, so it
+    was 4 of the model picker's 18 seconds. A picker must not wait on a daemon
+    that is not there.
     """
+    from agent_friday.services import machine_probe as _mp
+    got, _at, _state = _mp.snapshot(
+        "models:ollama_installed:" + (base_url or "default"),
+        lambda: _live_ollama_models_uncached(base_url),
+        fresh_for=30.0, budget=0.0, default=None)
+    return got
+
+
+def _live_ollama_models_uncached(base_url: str):
+    """The real Ollama probe. Background use only -- see `_live_ollama_models`."""
     try:
         from agent_friday.routing.ollama_manager import get_manager
         mgr = get_manager(base_url or "http://localhost:11434")
@@ -253,7 +336,27 @@ def _model_entries_for(provider: dict, registry) -> list:
     prov_roles = provider.get("roles") or [ROLE_ORCHESTRATOR, ROLE_SUBAGENT]
     meta = provider.get("model_meta") or {}
     costs = provider.get("cost_per_1k") or {}
-    available = registry.is_provider_available(pname)
+    # Availability is a cheap env-key check for cloud providers and a MACHINE
+    # PROBE for the local engine ones. Measured cold on 2026-09-23:
+    # nvidia-nemo 2.69s (imports torch/NeMo), ollama-local 4.05s. Only those
+    # are snapshotted, so a cloud row still resolves synchronously and the
+    # picker opens with every shipped and discovered model present.
+    if ptype in ("ollama",) + VOICE_ENGINE_PROVIDER_TYPES:
+        from agent_friday.services import machine_probe as _mp
+        available, _av_at, _av_state = _mp.snapshot(
+            "models:provider_available:" + pname,
+            lambda: bool(registry.is_provider_available(pname)),
+            fresh_for=60.0, budget=0.0, default=None)
+        if available is None:
+            # Not read yet. Offered-but-dimmed with a reason that says so,
+            # rather than claimed ready or silently dropped.
+            available = False
+            _unread_provider = True
+        else:
+            _unread_provider = False
+    else:
+        available = registry.is_provider_available(pname)
+        _unread_provider = False
     needs_key = _needs_key(provider)
     # Ask the single authority rather than matching on type strings. A
     # hardcoded list is what made local openai-compatible providers render as
@@ -297,6 +400,9 @@ def _model_entries_for(provider: dict, registry) -> list:
     elif is_local:
         available = available and bool(ids)
 
+    if _unread_provider and hint is None:
+        hint = ("Still reading this engine from the machine — reopen in a "
+                "moment for a verdict.")
     if not available and hint is None:
         if needs_key:
             hint = f"Add {needs_key} in Settings → Providers"
@@ -463,9 +569,39 @@ def _voice_engines(registry) -> list:
     so a picker entry for it is a second name for the same thing. The value
     is still accepted on write (`_VOICE_ENUMS`) and read as local, so an
     existing settings.json keeps working."""
-    local_ok = bool(registry.is_provider_available("local-voice-lite"))
-    gpu_ok = bool(registry.is_provider_available("nvidia-nemo"))
-    gemini_ok = bool(registry.is_provider_available("google-gemini"))
+    # Measured 3.44s inside `build_catalog` on 2026-09-23 -- the availability
+    # checks for the local voice engines probe for torch/NeMo. Snapshotted for
+    # the same reason `_tts_engines` is: a picker must not wait on an import.
+    # Cold reads render every row unavailable WITH A REASON that says the check
+    # has not finished, rather than guessing either way.
+    from agent_friday.services import machine_probe as _mp
+
+    def _probe():
+        return {
+            "local": bool(registry.is_provider_available("local-voice-lite")),
+            "gpu": bool(registry.is_provider_available("nvidia-nemo")),
+            "gemini": bool(registry.is_provider_available("google-gemini")),
+        }
+
+    # budget=0 for the same reason as Kokoro: measured 3.4s, so no affordable
+    # wait reaches an answer.
+    _av, _at, _state = _mp.snapshot("voice:engine_availability", _probe,
+                                    fresh_for=300.0, budget=0.0, default=None)
+    if _av is None:
+        _unread = ("Couldn't read this engine's dependencies yet -- checking in "
+                   "the background. Reopen in a moment.")
+        return [
+            {"id": "local", "label": "Local CPU (Whisper + Piper)",
+             "short": "Local CPU", "available": False,
+             "reading": _mp.STATE_UNKNOWN, "hint": _unread},
+            {"id": "local-gpu", "label": "Local GPU (NeMo)",
+             "short": "Local GPU", "available": False,
+             "reading": _mp.STATE_UNKNOWN, "hint": _unread},
+            {"id": "gemini", "label": "Gemini Live (cloud)",
+             "short": "Gemini Live", "available": False,
+             "reading": _mp.STATE_UNKNOWN, "hint": _unread},
+        ]
+    local_ok, gpu_ok, gemini_ok = _av["local"], _av["gpu"], _av["gemini"]
     return [
         {"id": "local", "label": "Local CPU (Whisper + Piper)",
          "short": "Local CPU", "available": local_ok,
@@ -499,13 +635,40 @@ def _tts_engines() -> list:
     out = [{"id": "piper", "label": "Piper (CPU)", "short": "Piper",
             "available": True,
             "hint": "On-device, CPU-capable. GPL-3.0 since October 2025."}]
-    try:
-        from agent_friday.services.kokoro_voice import kokoro_health
-        h = kokoro_health() or {}
-    except Exception as e:  # noqa: BLE001
-        h = {"status": "error", "detail": str(e)[:160], "available": False}
+    # NEVER CALL kokoro_health() ON THE REQUEST PATH.
+    #
+    # It imports kokoro deliberately (see the docstring above), and that pulls
+    # in torch. Measured 2026-09-23: 28.9s on the first call, 0.00s after. This
+    # runs inside `build_catalog`, so that import WAS the model picker's first
+    # open after every restart -- 14.3s of its 18s.
+    #
+    # Read through a snapshot with a hard budget instead: the cached verdict if
+    # there is one, otherwise a row that says it has not been read yet while the
+    # import proceeds in the background. Unknown renders as
+    # unavailable-with-a-reason and never as ready, because calling an
+    # unimportable package ready is the exact lie this probe exists to prevent.
+    from agent_friday.services import machine_probe as _mp
+    # budget=0: this probe imports torch and takes ~29s, so waiting 1.5s for it
+    # can only ever cost 1.5s and still return "unknown". Boot warming is what
+    # makes this row populated in practice.
+    h, _at, _state = _mp.snapshot(
+        "voice:kokoro_health", _kokoro_health_uncached,
+        fresh_for=300.0, budget=0.0, default=None)
+    if h is None:
+        out.append({
+            "id": "kokoro", "label": "Kokoro-82M (GPU)", "short": "Kokoro",
+            "available": False, "status": "unknown", "default": False,
+            "reading": _mp.STATE_UNKNOWN,
+            "hint": ("Couldn't read the GPU voice engine yet -- it is being "
+                     "checked in the background (the check imports torch, which "
+                     "is slow on a cold start). Reopen in a moment."),
+        })
+        return out
     _ok = bool(h.get("available")) and h.get("status") == "ok"
     _hint = h.get("detail") or "Kokoro status unknown"
+    _age = _mp.age_note(_at, _state)
+    if _age:
+        _hint = "%s (%s)" % (_hint, _age)
     if _ok:
         # Selectable, deliberately not the default. Kokoro is fast on a GPU
         # (~12x realtime measured) but it is newer on this path than Piper and
@@ -520,12 +683,120 @@ def _tts_engines() -> list:
         "available": _ok,
         "status": h.get("status", "error"),
         "default": False,
+        "reading": _state,
         "hint": _hint,
     })
     return out
 
 
+def register_warmers() -> None:
+    """Tell `machine_probe` what to warm at boot.
+
+    Registered rather than called so `warm_all()` does not have to import the
+    heavy paths itself merely to know they exist -- importing them is the cost
+    being avoided.
+    """
+    from agent_friday.services import machine_probe as _mp
+    _mp.register_warmer("voice:kokoro_health",
+                        lambda: _mp.snapshot("voice:kokoro_health",
+                                             _kokoro_health_uncached,
+                                             fresh_for=300.0, budget=120.0))
+
+    def _voice_av():
+        reg = get_provider_registry()
+        return _mp.snapshot(
+            "voice:engine_availability",
+            lambda: {"local": bool(reg.is_provider_available("local-voice-lite")),
+                     "gpu": bool(reg.is_provider_available("nvidia-nemo")),
+                     "gemini": bool(reg.is_provider_available("google-gemini"))},
+            fresh_for=300.0, budget=120.0)
+
+    _mp.register_warmer("voice:engine_availability", _voice_av)
+    def _slow_provider_probes():
+        reg = get_provider_registry()
+        for prov in reg.get_enabled_providers():
+            nm, ty = prov.get("name"), prov.get("type")
+            if ty not in ("ollama",) + VOICE_ENGINE_PROVIDER_TYPES:
+                continue
+            _mp.snapshot("models:provider_available:" + nm,
+                         lambda nm=nm: bool(reg.is_provider_available(nm)),
+                         fresh_for=60.0, budget=30.0)
+            if ty == "ollama":
+                base = prov.get("base_url") or "default"
+                _mp.snapshot("models:ollama_installed:" + base,
+                             lambda b=prov.get("base_url"):
+                                 _live_ollama_models_uncached(b),
+                             fresh_for=30.0, budget=30.0)
+
+    _mp.register_warmer("models:slow_provider_probes", _slow_provider_probes)
+    def _overlays():
+        reg = get_provider_registry()
+        for prov in reg.get_enabled_providers():
+            _mp.snapshot("models:creative_overlay:" + str(prov.get("name")),
+                         lambda prov=prov: _overlay_uncached(prov),
+                         fresh_for=60.0, budget=20.0)
+
+    _mp.register_warmer("models:creative_overlays", _overlays)
+    _mp.register_warmer("models:friday_store",
+                        lambda: _mp.snapshot("models:friday_store",
+                                             _friday_store_entries_uncached,
+                                             fresh_for=30.0, budget=30.0))
+    _mp.register_warmer("models:arbiter_seats",
+                        lambda: _mp.snapshot("models:arbiter_seats",
+                                             _arbiter_seat_entries_uncached,
+                                             fresh_for=20.0, budget=60.0))
+
+
+def _overlay_uncached(provider: dict) -> dict:
+    """Apply the per-machine creative overlay. Background use only: it probes
+    ComfyUI over loopback and pays a connection timeout when it is not up."""
+    try:
+        from agent_friday.services.local_creative_overrides import (
+            merge_local_creative_overlay)
+        return merge_local_creative_overlay(provider)
+    except Exception:
+        return provider
+
+
+def _kokoro_health_uncached() -> dict:
+    """The real Kokoro probe, for the background snapshot only.
+
+    Never call this from a request: the import inside it took 28.9s on this
+    machine. A failure is returned as data rather than raised, so the snapshot
+    caches "it does not import" instead of retrying the 29-second import on
+    every menu open.
+    """
+    try:
+        from agent_friday.services.kokoro_voice import kokoro_health
+        return kokoro_health() or {}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "detail": str(e)[:160], "available": False}
+
+
 def _arbiter_seat_entries() -> list:
+    """Snapshotted view of the seats the Arbiter serves.
+
+    Measured 4.07s cold on 2026-09-23: the real builder health-checks each seat
+    over loopback, and a seat whose process is gone costs a connection timeout.
+    The picker must not wait on that, so it is read through `machine_probe`. A
+    cold read returns [] -- the ARBITER rows are simply absent for a moment
+    rather than invented or guessed -- and the shipped/discovered models still
+    render, so the picker opens complete enough to use.
+    """
+    from agent_friday.services import machine_probe as _mp
+    rows, _at, _state = _mp.snapshot("models:arbiter_seats",
+                                     _arbiter_seat_entries_uncached,
+                                     fresh_for=20.0, budget=0.0, default=None)
+    if rows is None:
+        return []
+    if _state != _mp.STATE_FRESH:
+        note = _mp.age_note(_at, _state)
+        rows = [dict(r, hint=("%s (%s)" % (r.get("hint") or "", note)).strip())
+                for r in rows]
+    return rows
+
+
+def _arbiter_seat_entries_uncached() -> list:
     """The local models the residency Arbiter actually serves, as catalog rows.
 
     These are real processes on real ports, health-checked before they are
@@ -633,6 +904,24 @@ def _arbiter_seat_entries() -> list:
 
 
 def _friday_store_entries(exclude: set | None = None) -> list:
+    """Snapshotted wrapper -- measured 4.09s cold on 2026-09-23.
+
+    The real builder asks a guarded presence probe about each model Friday
+    holds, and a model whose endpoint is gone costs a timeout. A cold read
+    returns [] rather than a guess: the store rows are briefly absent while the
+    shipped and discovered models still render, so the picker opens usable.
+    """
+    from agent_friday.services import machine_probe as _mp
+    rows, _at, _state = _mp.snapshot("models:friday_store",
+                                     _friday_store_entries_uncached,
+                                     fresh_for=30.0, budget=0.0, default=None)
+    if rows is None:
+        return []
+    ex = exclude or set()
+    return [r for r in rows if r.get("id") not in ex]
+
+
+def _friday_store_entries_uncached(exclude: set | None = None) -> list:
     """Every model Friday HOLDS, whether or not it is seated right now.
 
     `_arbiter_seat_entries` reports the residency PLAN, which is a statement
@@ -788,9 +1077,20 @@ def build_catalog() -> dict:
         # services/local_creative_overrides.py for why this can't live in
         # provider_registry.py itself.
         try:
-            from agent_friday.services.local_creative_overrides import (
-                merge_local_creative_overlay)
-            provider = merge_local_creative_overlay(provider)
+            # Measured 4.08s cold for local-comfyui on 2026-09-23: the
+            # overlay probes ComfyUI on :8188, which is usually not running, so
+            # it pays a connection timeout. Last of the five probes that made
+            # this function take 18 seconds. Snapshotted; a cold read leaves the
+            # descriptor un-overlaid, which is the same thing that happens when
+            # there is no overlay file -- the shipped creative models still
+            # render.
+            from agent_friday.services import machine_probe as _mp
+            _ov, _ov_at, _ov_state = _mp.snapshot(
+                "models:creative_overlay:" + str(provider.get("name")),
+                lambda provider=provider: _overlay_uncached(provider),
+                fresh_for=60.0, budget=0.0, default=None)
+            if _ov is not None:
+                provider = _ov
         except Exception:
             pass
         for e in _model_entries_for(provider, registry):
