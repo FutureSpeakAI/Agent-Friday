@@ -126,10 +126,75 @@ def test_page_loads_the_browser_and_honours_the_backdrop_hold(path):
 @pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
 def test_settings_offers_the_dazzle_slider(path):
     text = (ROOT / path).read_text(encoding="utf-8")
-    assert "3D Dazzle (Studio › Files 3D)" in text
+    assert "3D Dazzle (every 3D view)" in text
     assert "studio_dazzle" in text and "friday-dazzle" in text
 
 
 def test_dazzle_defaults_to_full():
     from agent_friday.core import DEFAULT_SETTINGS
     assert DEFAULT_SETTINGS["studio_dazzle"] == "full"
+
+
+RECORDS = ROOT / "static" / "friday3d_records.js"
+
+
+@pytest.mark.skipif(not node, reason="node is not installed")
+def test_every_workspace_source_maps_a_record_to_a_card():
+    src = r"""
+globalThis.window = {};
+globalThis.document = undefined;
+globalThis.React = { createElement() {}, useState() {}, useEffect() {}, useRef() {}, useCallback() {}, Fragment: 'f' };
+ENGINE
+RECORDS
+const S = window.__friday3dSources, out = {};
+const samples = {
+  models: { id: 'm', label: 'Model', provider: 'p', provider_label: 'P', local: true, available: true, context_window: 128000, modalities: ['text'] },
+  news: { id: 'n', title: 'Headline', snippet: 's', source: 'x.test', category: 'Science', published_at: '2026-09-20T10:00:00Z', relevance_score: 3 },
+  people: { name: 'Ada Example', overall: 0.8, evidence_count: 2, aliases: ['Ada'], domains: ['work'], last_interaction: '2026-09-01T10:00:00' },
+  tasks: { kind: 'todo', id: '1', title: 'Task', priority: 'high', status: 'approved', created: '2026-09-20T10:00:00' },
+  calendar: { id: 'e', title: 'Standup', start_time: '2026-09-22T09:00', end_time: '2026-09-22T09:30', day: '2026-09-22' },
+  messages: { id: 'm1', thread_id: 't1', subject: 'Hi', sender: 'Ada', unread: true, lane: 'career', timestamp: 'Wed, 16 Sep 2026 10:00:00 +0000' }
+};
+for (const k of Object.keys(samples)) {
+  const s = S[k], it = s.toItem(samples[k]);
+  out[k] = { title: it.title, time: it.time > 0 || k === 'models', groups: Object.keys(s.groupings).map(g => s.groupings[g].key(samples[k])),
+             views: s.views, detail: s.detail(samples[k]).length > 0 };
+}
+console.log(JSON.stringify(out));
+"""
+    src = src.replace("ENGINE", SCRIPT.read_text(encoding="utf-8")).replace("RECORDS", RECORDS.read_text(encoding="utf-8"))
+    r = subprocess.run([node, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert set(out) == {"models", "news", "people", "tasks", "calendar", "messages"}
+    for k, v in out.items():
+        assert v["title"] and v["time"] and v["detail"], k
+        assert all(isinstance(g, str) and g for g in v["groups"]), k
+    assert out["people"]["groups"][0] == "Inner circle"
+    assert out["tasks"]["groups"][0] == "High priority"
+    assert out["calendar"]["views"][0] == "week" and out["messages"]["views"][0] == "stack"
+
+
+@pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
+def test_workspaces_get_the_3d_bar(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    for ws, src in [("home", "tasks"), ("trust", "people"), ("code", "code"), ("news", "news"),
+                    ("contacts", "people"), ("messages", "messages"), ("calendar", "calendar")]:
+        assert f"with3D('{ws}', '{src}'" in text or f"with3D('{ws}','{src}'" in text, ws
+    assert "with3DModels(" in text
+    assert "useNavTarget('contacts'" in text
+
+
+@pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
+def test_windows_fold_away_instead_of_vanishing(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert "closingWins" in text and "cancelClose" in text
+    assert "'fwin' + (closing ? ' closing' : '')" in text or "'fwin'+(closing?' closing':'')" in text
+
+
+@pytest.mark.parametrize("path", ["index.html", "ui_parts/head.html"])
+def test_window_animation_css_respects_reduced_motion_and_dazzle_off(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert "@keyframes fwinMaterialize" in text and "@keyframes fwinFold" in text
+    assert ':root[data-dazzle="off"] .fwin' in text
+    assert "prefers-reduced-motion: reduce" in text and "fwinFade" in text

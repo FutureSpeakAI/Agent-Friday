@@ -1,6 +1,8 @@
 /* Studio › Files: builds thumbnail tiles off the main thread.
  *
- * In: {id, url|null, name, ext, dir, kids, size, color, token}
+ * In: {id, url|null, name, ext, dir, kids, size, color, token, card?, strip?}
+ *     card = {title, sub, badge} draws a record (headline, event, task ...)
+ *     instead of a file; url, when set, is its picture.
  * Out: {id, px} — a 128×128 RGBA tile (transferred ArrayBuffer), or
  *      {id, px: null} when it could not be built.
  * Fetching, decoding, drawing and the pixel read-back all happen here, so
@@ -29,10 +31,51 @@ async function bitmapFor(job) {
   }
 }
 
+function wrap(text, maxW, maxLines) {
+  const words = String(text || '').split(/\s+/), lines = [];
+  let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (x.measureText(t).width <= maxW) { cur = t; continue; }
+    if (cur) lines.push(cur);
+    cur = w;
+    if (lines.length === maxLines) break;
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
+    let last = lines[maxLines - 1];
+    while (last.length > 1 && x.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+    lines[maxLines - 1] = last + '…';
+  }
+  return lines;
+}
+
+function drawCard(job) {
+  const col = job.color, c = job.card;
+  const g = x.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, col + '40'); g.addColorStop(1, '#0b111c');
+  x.fillStyle = g; x.fillRect(0, 0, TILE, H);
+  x.textAlign = 'left'; x.textBaseline = 'top';
+  let y = 7;
+  if (c.badge) {
+    x.font = '700 9px sans-serif'; x.fillStyle = col;
+    x.fillText(String(c.badge).toUpperCase().slice(0, 22), 7, y); y += 13;
+  }
+  x.font = '700 12px sans-serif'; x.fillStyle = '#eef4ff';
+  const lines = wrap(c.title, TILE - 14, c.sub ? 4 : 5);
+  lines.forEach(l => { x.fillText(l, 7, y); y += 14; });
+  if (c.sub && y < H - 12) {
+    x.font = '500 10px sans-serif'; x.fillStyle = '#9fb0c8';
+    wrap(c.sub, TILE - 14, Math.max(1, Math.floor((H - 4 - y) / 12))).forEach(l => { x.fillText(l, 7, y + 2); y += 12; });
+  }
+}
+
 function draw(job, bmp) {
   const col = job.color;
   x.fillStyle = '#0b111c'; x.fillRect(0, 0, TILE, TILE);
-  if (bmp) {
+  if (job.card && !bmp) {
+    drawCard(job);
+  } else if (bmp) {
     const s = Math.max(TILE / bmp.width, H / bmp.height), dw = bmp.width * s, dh = bmp.height * s;
     x.save(); x.beginPath(); x.rect(0, 0, TILE, H); x.clip();
     x.drawImage(bmp, (TILE - dw) / 2, (H - dh) / 2, dw, dh);
@@ -59,7 +102,7 @@ function draw(job, bmp) {
   x.fillStyle = col; x.fillRect(0, H, TILE, 3);
   x.fillStyle = '#0d1420'; x.fillRect(0, H + 3, TILE, TILE - H - 3);
   x.fillStyle = '#e8eef8'; x.font = '600 12px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
-  let name = job.name;
+  let name = job.strip || job.name;
   if (x.measureText(name).width > TILE - 10) {
     while (name.length > 3 && x.measureText(name + '…').width > TILE - 10) name = name.slice(0, -1);
     name += '…';

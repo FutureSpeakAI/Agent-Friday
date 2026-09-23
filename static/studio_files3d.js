@@ -62,6 +62,11 @@
   const SERVER_THUMB = new Set('png jpg jpeg webp gif bmp tif tiff ico mp4 webm mov mkv avi m4v wmv txt md markdown rst log csv tsv json jsonl xml yaml yml toml ini cfg html htm css scss js jsx ts tsx mjs py rs go java kt c h cpp hpp cs rb php sh ps1 bat sql lua swift vue svelte srt vtt'.split(' '));
   const TEXT_PREVIEW = new Set('txt md markdown rst log csv tsv json jsonl xml yaml yml toml ini cfg html htm css scss js jsx ts tsx mjs py rs go java kt c h cpp hpp cs rb php sh ps1 bat sql lua swift vue svelte srt vtt'.split(' '));
   const catOf = (ext, dir) => dir ? 'folder' : (EXT_CAT[ext] || 'other');
+  // Record sources (News, Tasks, ...) add their own groups; unknown keys
+  // fall back to "other" so a card is never without a colour.
+  const EXTRA_CATS = {};
+  const catInfo = k => CATS[k] || EXTRA_CATS[k] || CATS.other;
+  const registerCats = obj => { Object.keys(obj || {}).forEach(k => { EXTRA_CATS[k] = obj[k]; }); };
   const hex = c => '#' + c.toString(16).padStart(6, '0');
   const BRAND = {
     cyan: 0x00d4ff, violet: 0x7b61ff, magenta: 0xff0080, amber: 0xf59e0b,
@@ -485,7 +490,7 @@
       boxes.frustumCulled = false; boxes.count = n;
       const c = new THREE.Color();
       for (let i = 0; i < n; i++) {
-        c.setHex(CATS[items[i].cat].color);
+        c.setHex(items[i].color != null ? items[i].color : catInfo(items[i].cat).color);
         aColor.setXYZ(i, c.r, c.g, c.b);
         if (items[i].dir) c.setHSL(0.6, 0.35, 0.12 + Math.min(0.2, items[i].depth * 0.035));
         else c.multiplyScalar(0.55);
@@ -648,12 +653,18 @@
         });
         L.order = ord; L.time = { ord, minZ: z };
         L.cam = timeCam(L, selIdx >= 0 ? L.P[selIdx * 3 + 2] : 0);
+      } else if (v === 'week') {
+        weekLayout(L, act, put);
+      } else if (v === 'orbit') {
+        orbitLayout(L, act, put);
+      } else if (v === 'stack') {
+        stackLayout(L, act, put);
       } else {
         clusterLayout(L, act, put);
       }
       if (!L.cam) L.cam = { t: [0, 0, 0], theta: 0, phi: 1.2, r: 60 };
       // A floor under everything, for the views that stand on one.
-      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster')) {
+      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster' || v === 'week' || v === 'stack')) {
         let y0 = Infinity, x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
         for (const i of act) {
           const hs = (L.S[i * 2 + 1] || 0) / 2;
@@ -844,6 +855,96 @@
     }
     const FLATQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 
+    // Week: one column per day, time of day running down, each event as
+    // tall as it is long; events that overlap step toward the viewer.
+    const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+    function weekLayout(L, act, put) {
+      const dayKey = t => { const d = new Date(t * 1000); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+      const days = Array.from(new Set(act.map(i => dayKey(items[i].mtime)))).sort((a, b) => a - b);
+      const col = new Map(days.map((d, k) => [d, k]));
+      const W = 4.4, HOUR = 1.05, TOP = 7;           // 07:00 sits at the top
+      const byDay = new Map();
+      act.forEach(i => { const k = dayKey(items[i].mtime); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(i); });
+      const order = [];
+      days.forEach((d, c) => {
+        const list = byDay.get(d).sort((a, b) => items[a].mtime - items[b].mtime);
+        const ends = [];                                 // lane -> end time
+        list.forEach(i => {
+          const it = items[i], dt = new Date(it.mtime * 1000);
+          const hr = dt.getHours() + dt.getMinutes() / 60, dur = Math.max(0.5, (it.dur || 3600) / 3600);
+          let lane = ends.findIndex(e => e <= it.mtime);
+          if (lane < 0) { lane = ends.length; ends.push(0); }
+          ends[lane] = it.mtime + (it.dur || 3600);
+          const hgt = Math.min(6, dur * HOUR);
+          const x = (c - (days.length - 1) / 2) * W + lane * 0.35, y = -(hr - TOP) * HOUR - hgt / 2, z = lane * 0.6;
+          put(i, x, y, z, IDQ, W * 0.84 - lane * 0.2, Math.max(1.0, hgt));
+          order.push(i);
+        });
+        const dd = new Date(d);
+        L.labels.push({ text: DAYS[dd.getDay()] + ' ' + dd.getDate() + ' ' + MONTHS[dd.getMonth()], pos: [(c - (days.length - 1) / 2) * W, 1.6, 0], color: 0x9fd0ff, size: 0.8, maxW: W * 0.95 });
+      });
+      for (let hr = TOP; hr <= 21; hr += 2)
+        L.labels.push({ text: String(hr).padStart(2, '0') + ':00', pos: [-(days.length / 2) * W - 1.6, -(hr - TOP) * HOUR, 0], color: 0x6f86a6, size: 0.5 });
+      L.order = order;
+      L.cam = fitCam(L, act, 0, Math.PI / 2 - 0.1);
+    }
+
+    // Orbit: rings around a still centre. Each group is one ring, the most
+    // pressing group innermost; heavier items sit nearer the front.
+    function orbitLayout(L, act, put) {
+      const groups = new Map();
+      act.forEach(i => { const k = items[i].cat; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+      const rank = k => (catInfo(k).rank != null ? catInfo(k).rank : 50);
+      const keys = Array.from(groups.keys()).sort((a, b) => rank(a) - rank(b) || groups.get(b).length - groups.get(a).length);
+      let r = 5;
+      const order = [];
+      keys.forEach((k, gi) => {
+        const mem = groups.get(k).sort((a, b) => items[b].size - items[a].size || items[a].mtime - items[b].mtime);
+        const S0 = 2.1;
+        r = Math.max(r, mem.length * S0 * 1.12 / (2 * Math.PI));
+        mem.forEach((i, j) => {
+          const a = Math.PI / 2 + (j + 0.5) / mem.length * Math.PI * 2;
+          put(i, r * Math.cos(a), 0, r * Math.sin(a), IDQ, S0);
+          order.push(i);
+        });
+        const c = catInfo(k);
+        // the ring's name sits on its near edge, under the cards
+        L.labels.push({ text: c.label + ' · ' + mem.length, pos: [0, -S0 * 0.9, r], color: c.color, size: 0.95 });
+        L.rings.push({ z: 0, r, flat: true, color: c.color, y: -S0 * 0.6 });
+        r += S0 * 2.4;
+      });
+      L.labels.push({ text: 'NOW', pos: [0, 0, 0], color: BRAND.cyan, size: 1.2 });
+      L.bb = 1; L.order = order;
+      L.cam = fitCam(L, act, 0, 1.12);
+    }
+
+    // Stack: one fanned pile per group, newest on top and nearest; the
+    // piles stand side by side, biggest first.
+    function stackLayout(L, act, put) {
+      const groups = new Map();
+      act.forEach(i => { const k = items[i].cat; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+      const keys = Array.from(groups.keys()).sort((a, b) => groups.get(b).length - groups.get(a).length);
+      const perRow = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(keys.length * 1.6))));
+      const order = [];
+      keys.forEach((k, gi) => {
+        const mem = groups.get(k).sort((a, b) => items[b].mtime - items[a].mtime);
+        const cx = (gi % perRow - (perRow - 1) / 2) * 5.2, top = -Math.floor(gi / perRow) * 12;
+        mem.forEach((i, j) => {
+          const d = Math.min(j, 24);                         // the pile is shallow after 24
+          const jit = (((items[i].mtime * 2654435761) >>> 0) % 1000) / 1000 - 0.5;
+          tmpQ.setFromEuler(tmpE.set(-0.18, 0, jit * 0.07));
+          put(i, cx + jit * 0.2, top - d * 0.34, -j * 0.06, tmpQ, 3.8, 2.4);
+          order.push(i);
+        });
+        const c = catInfo(k);
+        let label = c.label || k;
+        if (label.length > 26) label = label.slice(0, 25) + '…';
+        L.labels.push({ text: label + ' · ' + mem.length, pos: [cx, top + 1.9, 0], color: c.color || 0x9fd0ff, size: 0.62, maxW: 4.8 });
+      });
+      L.order = order;
+      L.cam = fitCam(L, act, 0, Math.PI / 2 - 0.15);
+    }
+
     function clusterLayout(L, act, put) {
       const key = i => {
         if (groupBy === 'type') return items[i].cat;
@@ -886,8 +987,9 @@
           put(i, cx + rr * sr * Math.cos(th), cy + rr * yy, cz + rr * sr * Math.sin(th), IDQ, 1);
           order.push(i);
         });
-        const color = groupBy === 'type' && CATS[k] ? CATS[k].color : 0x9fd0ff;
-        let label = groupBy === 'type' && CATS[k] ? CATS[k].label : k;
+        const known = groupBy === 'type' && (CATS[k] || EXTRA_CATS[k]);
+        const color = known ? catInfo(k).color : 0x9fd0ff;
+        let label = known ? catInfo(k).label : k;
         if (label.length > 22) label = label.slice(0, 21) + '…';
         L.labels.push({ text: label + ' · ' + mem.length, pos: [cx, cy + rads[gi] + 1.2 + rads[gi] * 0.12, cz], color, size: Math.max(1.1, rads[gi] * 0.28), maxW: 2 * rads[gi] + gap * 0.8 });
       });
@@ -927,8 +1029,13 @@
         for (let k = 0; k <= 64; k++) circle.push(new THREE.Vector3(Math.cos(k / 64 * Math.PI * 2) * 8.4, Math.sin(k / 64 * Math.PI * 2) * 8.4, 0));
         const cg = new THREE.BufferGeometry().setFromPoints(circle);
         L.rings.forEach(r => {
-          const m = new THREE.LineBasicMaterial({ color: 0x3fa9ff, transparent: true, opacity: 0 });
+          const m = new THREE.LineBasicMaterial({ color: r.color || 0x3fa9ff, transparent: true, opacity: 0 });
           const loop = new THREE.Line(cg, m);
+          if (r.flat) {                    // orbit path: a ring lying in the x-z plane
+            loop.rotation.x = Math.PI / 2; loop.scale.setScalar(r.r / 8.4); loop.position.y = r.y || 0;
+            g.add(loop); g.userData.mats.push(m);
+            return;
+          }
           loop.position.z = r.z;
           g.add(loop); g.userData.mats.push(m);
           const sp = textSprite(r.text, 0x8fd3ff, 1.0);
@@ -992,7 +1099,7 @@
         S[i * 2] = fS[i * 2] + (tS[i * 2] - fS[i * 2]) * e; S[i * 2 + 1] = fS[i * 2 + 1] + (tS[i * 2 + 1] - fS[i * 2 + 1]) * e;
         for (let k = 0; k < 3; k++) { BP[i3 + k] = fBP[i3 + k] + (tBP[i3 + k] - fBP[i3 + k]) * e; BS[i3 + k] = fBS[i3 + k] + (tBS[i3 + k] - fBS[i3 + k]) * e; }
         if (trail && i % tstep === 0 && t > 0.05 && t < 0.95 && S[i * 2] > 0.01)
-          spawn(P[i3], P[i3 + 1], P[i3 + 2], 0, 0.3, 0, 0.7, i % 3 ? BRAND.cyan : items[i] ? CATS[items[i].cat].color : BRAND.violet, 0.9 + S[i * 2] * 0.6);
+          spawn(P[i3], P[i3 + 1], P[i3 + 2], 0, 0.3, 0, 0.7, i % 3 ? BRAND.cyan : items[i] ? catInfo(items[i].cat).color : BRAND.violet, 0.9 + S[i * 2] * 0.6);
       }
       const gt = Math.min(1, (now - flight.t0) / (flight.dur + 350));
       bbCur = bbFrom + (bbTo - bbFrom) * ease(gt);
@@ -1226,8 +1333,9 @@
       if (!workers.length) return Promise.reject(new Error('no workers'));
       const job = {
         name: it.name, ext: it.ext, dir: it.dir, kids: it.kids.length, size: it.size,
-        color: hex(CATS[it.cat].color), token: window.__FRIDAY_API_TOKEN || '',
-        url: SERVER_THUMB.has(it.ext) ? '/api/studio-files/thumb?' + qs(currentRoot, it.rel) + '&s=128&m=' + it.mtime : null
+        color: hex(it.color != null ? it.color : catInfo(it.cat).color), token: window.__FRIDAY_API_TOKEN || '',
+        card: it.card || null, strip: it.strip || null,
+        url: it.img || (it.card ? null : SERVER_THUMB.has(it.ext) ? '/api/studio-files/thumb?' + qs(currentRoot, it.rel) + '&s=128&m=' + it.mtime : null)
       };
       const send = bmp => new Promise(res => {
         const id = ++jobSeq;
@@ -1758,7 +1866,10 @@
   const recall = k => { try { return localStorage.getItem('friday_files3d_' + k) || ''; } catch (_) { return ''; } };
   const PANEL_BG = 'rgba(6,10,18,0.9)';
 
-  function Files3DPanel() {
+  // props.root / props.path / props.view open a given folder and view
+  // (the Code workspace opens Projects as a City); otherwise the last used.
+  function Files3DPanel(props) {
+    props = props || {};
     const mountRef = useRef(null), engRef = useRef(null), boxRef = useRef(null), searchRef = useRef(null);
     const [roots, setRoots] = useState([]);
     const [root, setRoot] = useState('');
@@ -1767,7 +1878,7 @@
     const [scanInfo, setScanInfo] = useState(null);
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState('');
-    const [view, setView] = useState(() => VIEWS.some(v => v.id === recall('view')) ? recall('view') : 'wall');
+    const [view, setView] = useState(() => props.view || (VIEWS.some(v => v.id === recall('view')) ? recall('view') : 'wall'));
     const [query, setQuery] = useState('');
     const [cats, setCats] = useState({});
     const [groupBy, setGroupBy] = useState('type');
@@ -1837,6 +1948,7 @@
         setRoots(rs);
         const want = window.__files3dOpen && rs.find(r => r.id === window.__files3dOpen.root);
         if (want) { openPending(); return; }
+        if (props.root && rs.find(r => r.id === props.root)) { setRoot(props.root); setPath(props.path || ''); return; }
         const pref = rs.find(r => r.id === recall('root')) || rs.find(r => r.id === 'creations') || rs[0];
         if (pref) setRoot(pref.id);
       }).catch(() => setErr('Could not reach the file service.'));
@@ -1890,7 +2002,7 @@
       return () => clearTimeout(t);
     }, [query, cats, items]);
 
-    useEffect(() => { engRef.current && engRef.current.setView(view); remember('view', view); }, [view]);
+    useEffect(() => { engRef.current && engRef.current.setView(view); if (!props.root) remember('view', view); }, [view]);  // an embedded browser leaves Studio's memory alone
     // Dazzle level: Settings › Appearance (studio_dazzle), mirrored here.
     useEffect(() => {
       const load = () => api('/api/settings').then(r => r.json()).then(d => {
@@ -1906,9 +2018,10 @@
     useEffect(() => { engRef.current && engRef.current.setDazzle(dazzle); }, [dazzle]);
     const saveDazzle = v => {
       setDazzle(v);
+      try { window.dispatchEvent(new CustomEvent('friday-dazzle', { detail: v })); } catch (_) {}
       postJSON('/api/settings', { settings: { studio_dazzle: v } }).catch(() => {});
     };
-    useEffect(() => { if (root) remember('root', root); }, [root]);
+    useEffect(() => { if (root && !props.root) remember('root', root); }, [root]);
     useEffect(() => { engRef.current && engRef.current.setGroupBy(groupBy); }, [groupBy]);
 
     function choose(i, fly) {
@@ -2129,5 +2242,14 @@
   }
 
   window.Files3DPanel = Files3DPanel;
+
+  // The Dazzle level also shapes page-wide motion (window open/close in
+  // index.html reads :root[data-dazzle]).
+  if (typeof document !== 'undefined' && window.addEventListener) {
+    const markDazzle = v => { if (v === 'off' || v === 'subtle' || v === 'full') document.documentElement.dataset.dazzle = v; };
+    api('/api/settings').then(r => r.json()).then(d => markDazzle(((d && (d.settings || d)) || {}).studio_dazzle)).catch(() => {});
+    window.addEventListener('friday-dazzle', e => markDazzle(e && e.detail));
+  }
   window.__files3dInternals = { buildItems, catOf, createSlotPool };
+  window.Friday3D = { createEngine, registerCats, CATS, BRAND, api, postJSON, fmtSize, fmtDate, hex, recall, remember };
 })();
