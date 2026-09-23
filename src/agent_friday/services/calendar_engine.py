@@ -625,6 +625,8 @@ def _normalize_message(raw, rules, state):
     unread = ("UNREAD" in labels) if labels else (not st.get("read"))
     if st.get("read"):
         unread = False
+    if st.get("unread"):
+        unread = True          # marked unread in Friday after reading
     return {
         "id": mid,
         "thread_id": raw.get("thread_id") or mid,
