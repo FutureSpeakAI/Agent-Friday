@@ -129,8 +129,7 @@ window.addEventListener('DOMContentLoaded',function(){
         :root {
             --holo-par-x: 0px; --holo-par-y: 0px;
             --holo-tilt-x: 0deg; --holo-tilt-y: 0deg;
-            --holo-depth: 1; --holo-sheen: 0deg;
-            --holo-sheen-a: 0; --holo-rim: 0;
+            --holo-depth: 1; --holo-rim: 0;
 
             /* Dock depth. --dock-k is the setting; the rest is written by the
                render loop. Unset, every dock rule below evaluates to the flat
@@ -153,16 +152,12 @@ window.addEventListener('DOMContentLoaded',function(){
             transform: translate3d(calc(var(--holo-par-x) * 0.55),
                                    calc(var(--holo-par-y) * 0.55), 0);
         }
-        /* A sheen that sweeps with head angle — the giveaway that a surface
-           is being lit from somewhere rather than painted. */
-        #hud-overlay::after {
-            content: ''; position: absolute; inset: 0; pointer-events: none;
-            background: linear-gradient(var(--holo-sheen),
-                        rgba(0,212,255,0) 35%,
-                        rgba(0,212,255,calc(var(--holo-sheen-a) * 0.5)) 50%,
-                        rgba(0,212,255,0) 65%);
-            mix-blend-mode: screen; opacity: 1;
-        }
+        /* There is no sheen. A screen-blended band sweeping across the whole
+           desktop reads as the surface shimmering, not as the surface being
+           lit, and it sat over everything the desktop is actually for.
+           The rim light below stays: it is a fixed vignette whose brightness
+           answers the head, with no band, no sweep and no banding, so it
+           gives an edge to the glass without drawing attention to itself. */
         /* Rim light on the leading edge as the head turns. */
         #hud-overlay::before {
             content: ''; position: absolute; inset: 0; pointer-events: none;
@@ -1212,16 +1207,9 @@ window.addEventListener('DOMContentLoaded',function(){
               rgba(123,97,255,0.06) 50%, rgba(255,0,255,0.05) 75%,
               transparent 100%),
             linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.1) 100%);
-          background-size: 200% 100%, 100% 100%;
-          animation: holoShimmer 8s linear infinite;
+          background-size: 100% 100%, 100% 100%;
           border-top: 1px solid rgba(0,212,255,0.18);
           box-shadow: 0 -2px 16px rgba(0,0,0,0.5), 0 -1px 0 rgba(123,97,255,0.12), inset 0 1px 30px rgba(0,212,255,0.04);
-        }
-        .dock::after {
-          content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-          background: repeating-linear-gradient(0deg, transparent, transparent 2px,
-            rgba(0,212,255,0.008) 2px, rgba(0,212,255,0.008) 4px);
-          pointer-events: none; z-index: 1;
         }
 
         .dock-btn { position: relative; z-index: 2; animation: prismaticBorder 6s ease infinite; }
@@ -1305,8 +1293,8 @@ window.addEventListener('DOMContentLoaded',function(){
                far a layer actually stands off the surface. */
             perspective-origin: calc(50% + var(--dock-ppx)) calc(50% + var(--dock-ppy));
         }
-        .dock > * { transform-style: preserve-3d; }
-        .dock-group, .dock-group-btns { transform-style: preserve-3d; }
+        /* No preserve-3d anywhere in the button tree. The floor is the only
+           thing with depth now, and it has no children to displace. */
 
         /* THE FLOOR. Tall and laid down flat, so it is only as high on screen
            as the dock but has real depth to give away. The near edge sits at
@@ -1349,7 +1337,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .dock::after {
             content: ''; position: absolute; z-index: 1; pointer-events: none;
             left: 0; right: 0; bottom: 0; height: 3px;
-            transform: translate3d(0, 0, calc(6px * var(--dock-k)));
             background: linear-gradient(90deg,
                 rgba(0,212,255,0.06) 0%,
                 rgba(210,245,255,calc(0.12 + 0.62 * var(--dock-spec-a))) var(--dock-spec),
@@ -1358,29 +1345,33 @@ window.addEventListener('DOMContentLoaded',function(){
             opacity: var(--dock-k);
         }
 
-        /* Buttons stand on the floor. --mag, --mag-y and --mag-z are written
-           per button by the render loop from the pointer's distance to it,
-           which is what makes approaching the dock feel like reaching for
-           something rather than hovering over a list. */
+        /* Buttons stand on the floor. --mag and --mag-y are written per button
+           by the render loop from the pointer's distance to it, which is what
+           makes approaching the dock feel like reaching for something rather
+           than hovering over a list. */
+        /* A button SCALES AND LIFTS. It does not translate in Z.
+           Z on a button is what pulled its icon out of it: under a shared
+           perspective, a layer with its own Z is displaced from its parent by
+           (z / perspective) x (distance from the perspective origin), so an
+           icon at translateZ and a tile at zero cannot stay together, and the
+           further from the dock's centre a button sits the worse it gets.
+           Scale and lift are measured about the tile's own centre, so every
+           part of a button moves by exactly the same amount. */
         .dock-btn {
-            transform-style: preserve-3d;
-            transform: translate3d(0, var(--mag-y, 0px), var(--mag-z, 0px))
-                       scale(var(--mag, 1));
+            transform: translateY(var(--mag-y, 0px)) scale(var(--mag, 1));
             transition: color 0.25s ease, background 0.25s ease,
                         border-color 0.25s ease, box-shadow 0.25s ease;
             will-change: transform;
         }
-        /* Hover pulls the button toward you rather than nudging it upward, so
-           the mouse and the hand cursor produce the same gesture. */
+        /* Hover lifts and swells, the same gesture magnification makes, so the
+           mouse and the hand cursor agree about what approaching means. */
         .dock-btn:hover {
-            transform: translate3d(0, var(--mag-y, 0px),
-                                   calc(var(--mag-z, 0px) + 26px * var(--dock-k)))
-                       scale(var(--mag, 1));
+            transform: translateY(calc(var(--mag-y, 0px) - 4px * var(--dock-k)))
+                       scale(calc(var(--mag, 1) * (1 + 0.06 * var(--dock-k))));
         }
         .dock-btn.active {
-            transform: translate3d(0, var(--mag-y, 0px),
-                                   calc(var(--mag-z, 0px) + 14px * var(--dock-k)))
-                       scale(var(--mag, 1));
+            transform: translateY(calc(var(--mag-y, 0px) - 2px * var(--dock-k)))
+                       scale(calc(var(--mag, 1) * (1 + 0.03 * var(--dock-k))));
         }
 
         /* CONTACT SHADOW, on the floor under the button. It grows with the
@@ -1392,38 +1383,28 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 50%;
             background: radial-gradient(ellipse at center,
                 rgba(0,0,0,calc(0.42 * var(--mag-lift, 0))) 0%, transparent 72%);
-            transform: translate3d(0, calc(4px + 9px * var(--mag-lift, 0)),
-                                   calc(-2px - var(--mag-z, 0px)))
-                       rotateX(var(--dock-tilt));
+            transform: translateY(calc(4px + 9px * var(--mag-lift, 0)));
             transform-origin: 50% 100%;
             opacity: var(--dock-k);
         }
 
-        /* Layers inside a button, nearest the viewer first. Ninety pixels of
-           spread at a 620px perspective is about a sixth of a size change
-           between the icon and the floor it stands on. */
-        .dock-btn .ico {
-            transform: translateZ(calc(30px * var(--dock-k)));
-        }
-        .dock-btn > span:not(.ico):not(.dot) {
-            transform: translateZ(calc(12px * var(--dock-k)));
-        }
-        .dock-btn .dot {
-            transform: translateZ(calc(4px * var(--dock-k)));
-        }
+        /* NOTHING inside a button carries a transform. This is the rule that
+           keeps the icon dead centre in its tile; see the .dock-btn comment
+           for why a translateZ here does not stay where it is put. Depth
+           inside the dock comes from the floor and from the contact shadow,
+           neither of which has anything nested in it to pull out of line. */
 
-        /* Press: the button goes INTO the floor and comes back. A press that
-           only scales reads as a picture changing size; a press that loses
-           depth reads as something being pushed. */
+        /* Press: the button settles DOWN onto the floor and springs back.
+           Down-and-smaller reads as pressed for the same reason going back in
+           Z did, and it keeps the icon nailed to the centre of its tile,
+           because translateY and scale move every part of the button by the
+           same amount. */
         @keyframes dockPress3d {
-            0%   { transform: translate3d(0,var(--mag-y,0px),var(--mag-z,0px))
-                              scale(var(--mag,1)); }
-            42%  { transform: translate3d(0,calc(var(--mag-y,0px) + 3px),
-                                          calc(var(--mag-z,0px) - 34px * var(--dock-k)))
-                              scale(calc(var(--mag,1) * 0.92)); }
-            100% { transform: translate3d(0,var(--mag-y,0px),
-                                          calc(var(--mag-z,0px) + 26px * var(--dock-k)))
-                              scale(var(--mag,1)); }
+            0%   { transform: translateY(var(--mag-y,0px)) scale(var(--mag,1)); }
+            42%  { transform: translateY(calc(var(--mag-y,0px) + 3px * var(--dock-k)))
+                              scale(calc(var(--mag,1) * (1 - 0.07 * var(--dock-k)))); }
+            100% { transform: translateY(calc(var(--mag-y,0px) - 4px * var(--dock-k)))
+                              scale(calc(var(--mag,1) * (1 + 0.06 * var(--dock-k)))); }
         }
         .dock-btn:active { animation: dockPress3d 0.22s cubic-bezier(0.2,0.8,0.3,1); }
 
@@ -1431,14 +1412,12 @@ window.addEventListener('DOMContentLoaded',function(){
            so it lies down with the surface. The angle is a fraction of the
            floor's, because text laid fully flat cannot be read. */
         .dock-group-label {
-            /* No translateZ: the vanishing point is ABOVE the dock, so moving
-               the label back would walk it up into the buttons. It lies down
-               on the floor in place. A fraction of the floor's angle, because
-               text laid fully flat cannot be read. */
+            /* Lies down with the floor, in place. A fraction of the floor's
+               angle, because text laid fully flat cannot be read. No
+               translateZ, here or on the separator: see .dock-btn. */
             transform: rotateX(calc(var(--dock-tilt) * 0.30));
             transform-origin: 50% 0%;
         }
-        .dock-sep { transform: translateZ(calc(-14px * var(--dock-k))); }
 
         /* Motion sensitivity and low-power paths get the flat dock back. */
         @media (prefers-reduced-motion: reduce) {
@@ -3111,7 +3090,6 @@ window.addEventListener('DOMContentLoaded',function(){
             dockRects.btns.forEach(function (b) {
                 b.el.style.removeProperty('--mag');
                 b.el.style.removeProperty('--mag-y');
-                b.el.style.removeProperty('--mag-z');
                 b.el.style.removeProperty('--mag-lift');
             });
         }
@@ -3207,17 +3185,15 @@ window.addEventListener('DOMContentLoaded',function(){
                     prox = d < 1 ? (1 - d * d) * near : 0;
                 }
                 const mag = 1 + 0.30 * prox * k;
-                const magz = 46 * prox * k;
                 const magy = -18 * prox * k;    // lifts off the floor
                 // Writing an unchanged value still dirties style on some
                 // engines, so only write when it would actually differ.
                 const prev = dockLast.get(b.el);
-                if (!prev || Math.abs(prev.m - mag) > 0.002 || Math.abs(prev.z - magz) > 0.2) {
+                if (!prev || Math.abs(prev.m - mag) > 0.002 || Math.abs(prev.y - magy) > 0.2) {
                     b.el.style.setProperty('--mag', mag.toFixed(3));
-                    b.el.style.setProperty('--mag-z', magz.toFixed(1) + 'px');
                     b.el.style.setProperty('--mag-y', magy.toFixed(1) + 'px');
                     b.el.style.setProperty('--mag-lift', prox.toFixed(3));
-                    dockLast.set(b.el, { m: mag, z: magz });
+                    dockLast.set(b.el, { m: mag, y: magy });
                 }
             }
         }
@@ -4651,8 +4627,6 @@ window.addEventListener('DOMContentLoaded',function(){
                 rootStyle.setProperty('--holo-tilt-x', (-currFaceY * 5.0 * pStr).toFixed(2) + 'deg');
                 rootStyle.setProperty('--holo-tilt-y', (currFaceX * 7.0 * pStr).toFixed(2) + 'deg');
                 rootStyle.setProperty('--holo-depth', (1 + currFaceZ * 0.05 * dStr).toFixed(3));
-                rootStyle.setProperty('--holo-sheen', (Math.atan2(currFaceY, currFaceX) * 57.2958).toFixed(1) + 'deg');
-                rootStyle.setProperty('--holo-sheen-a', (cue * (0.10 + 0.38 * Math.min(1, Math.hypot(currFaceX, currFaceY)))).toFixed(3));
                 rootStyle.setProperty('--holo-rim', (cue * (0.18 + 0.5 * Math.min(1, Math.abs(currFaceX)))).toFixed(3));
             }
 
@@ -39463,7 +39437,7 @@ function TrackingPanel({
       letterSpacing: '.12em',
       margin: '4px 0 10px'
     }
-  }, "HEAD / PARALLAX"), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. This is a One Euro filter, so low values are still calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
+  }, "HEAD / PARALLAX"), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. This is a One Euro filter, so low values are still calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Rim light that answers your head angle. A vignette, not a shimmer.', 0, 1, 0.01), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: 'Orbitron',
       fontSize: 9,
