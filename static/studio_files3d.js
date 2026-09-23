@@ -1194,26 +1194,50 @@
       const sp = Math.sin(cam.phi);
       camera.position.set(cam.t.x + cam.r * sp * Math.sin(cam.theta), cam.t.y + cam.r * Math.cos(cam.phi), cam.t.z + cam.r * sp * Math.cos(cam.theta));
       camera.lookAt(cam.t);
-      // Head-coupled perspective: when Friday is tracking the owner's head,
-      // the view shifts with it like a window. Reads FridayTracking when that
-      // is loaded, else the face-tracking globals index.html already keeps.
+      // Head-coupled perspective: a window, not an orbit. When Friday is
+      // tracking the owner's head the EYE moves with it (sideways, up and
+      // down, and in and out as they lean) while the aim stays put, and the
+      // projection shears so the plane through the focus stays nailed to the
+      // screen. Near cards then swing against far ones the way things behind
+      // real glass do. Re-aiming with lookAt instead (the old way) cancels
+      // most of the parallax. Same off-axis frustum as the backdrop scene,
+      // so the two move as one.
       const hp = headPose();
-      if (hp) {
-        tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.x * cam.r * 0.07);
-        camera.position.add(tmpV);
-        tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.y * cam.r * 0.05);
-        camera.position.add(tmpV);
-        camera.lookAt(cam.t);
+      if (hp && hp.frustum) {
+        const ex = hp.x * cam.r * 0.20, ey = hp.y * cam.r * 0.14, ez = hp.z * cam.r * 0.22;
+        tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion); camera.position.addScaledVector(tmpV, ex);
+        tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion); camera.position.addScaledVector(tmpV, ey);
+        tmpV.set(0, 0, -1).applyQuaternion(camera.quaternion); camera.position.addScaledVector(tmpV, ez);
+        camera.updateMatrixWorld();
+        hp.frustum(camera, ex, ey, ez, cam.r);
+        sheared = true;
+      } else {
+        if (sheared) { camera.updateProjectionMatrix(); sheared = false; }
+        if (hp) {
+          // older page without the frustum helper: the gentle orbit nudge
+          tmpV.set(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.x * cam.r * 0.07);
+          camera.position.add(tmpV);
+          tmpV.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(hp.y * cam.r * 0.05);
+          camera.position.add(tmpV);
+          camera.lookAt(cam.t);
+        }
       }
       camera.updateMatrixWorld();
       camQ.copy(camera.quaternion);
       sky.position.copy(camera.position);
     }
+    var sheared = false;   // var: placeCamera may run before this line does
+    function clampH(v, m) { v = +v; return isFinite(v) ? Math.max(-m, Math.min(m, v)) : 0; }
     function headPose() {
       if (reduced) return null;
       try {
         const T = window.FridayTracking;
-        if (T && T.head && T.head.seen) return { x: +T.head.x || 0, y: -(+T.head.y || 0) };
+        if (T && T.head && T.head.seen) {
+          // the owner's own Parallax / Depth dials from Settings apply here too
+          const c = T.cfg || {}, ps = clampH(c.parallax_strength == null ? 1 : c.parallax_strength, 4), ds = clampH(c.depth_strength == null ? 1 : c.depth_strength, 4);
+          return { x: clampH(T.head.x, 1.6) * ps, y: -clampH(T.head.y, 1.6) * ps, z: clampH(T.head.z, 1.5) * ds,
+            frustum: typeof T.applyFrustum === 'function' ? T.applyFrustum : null };
+        }
         /* global isHologramMode, isFaceVisible, currFaceX, currFaceY */
         if (typeof isHologramMode !== 'undefined' && isHologramMode && typeof isFaceVisible !== 'undefined' && isFaceVisible
           && typeof currFaceX === 'number') return { x: currFaceX, y: -currFaceY };
