@@ -74,6 +74,47 @@ def _attachments_for(body):
     return out or None
 
 
+_CONTACTS = {"at": 0.0, "list": [], "errors": []}
+
+
+@gmail_send_bp.route("/api/mail/contacts")
+def mail_contacts():
+    """Address autocomplete for compose: Google contacts (read once and kept
+    for 10 minutes, so typing does not spend People API quota) plus the
+    people in recently loaded mail. Read-only."""
+    import time
+    q = (request.args.get("q") or "").strip().lower()
+    if time.time() - _CONTACTS["at"] > 600:
+        try:
+            from agent_friday.services import google_accounts as ga
+            res = ga.search_contacts("", max_results=1000)
+            _CONTACTS.update(at=time.time(), list=res.get("contacts") or [], errors=res.get("errors") or [])
+        except Exception as e:
+            _CONTACTS.update(at=time.time(), errors=[{"error": str(e)}])
+    seen, out = set(), []
+
+    def add(name, addr, source):
+        addr = (addr or "").strip().lower()
+        if not addr or addr in seen:
+            return
+        if q and q not in addr and q not in (name or "").lower():
+            return
+        seen.add(addr)
+        out.append({"name": name or "", "email": addr, "source": source})
+    for c in _CONTACTS["list"]:
+        for e in c.get("emails") or ([c.get("email")] if c.get("email") else []):
+            add(c.get("name"), e if isinstance(e, str) else (e or {}).get("value"), "contacts")
+    try:
+        from agent_friday.services import message_triage as mt
+        for slot in list(mt._collect_cache.values()):
+            for m in (slot.get("result") or {}).get("messages") or []:
+                add(m.get("sender"), m.get("sender_email"), "recent mail")
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "contacts": out[:20],
+                    "errors": _CONTACTS["errors"]})
+
+
 @gmail_send_bp.route("/api/mail/attachment", methods=["POST"])
 def mail_attachment_upload():
     """Store a file to attach to a message that is about to be requested.

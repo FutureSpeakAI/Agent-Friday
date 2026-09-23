@@ -164,3 +164,31 @@ def test_attachment_route_never_serves_active_content(client, monkeypatch):
     assert "sandbox" in r.headers["Content-Security-Policy"]
     r = client.get("/api/messages/attachment?account=a&message=m&id=i&name=p.png&mime=image/png")
     assert r.mimetype == "image/png" and r.headers["Content-Disposition"].startswith("inline")
+
+
+@pytest.fixture
+def _state(monkeypatch, tmp_path):
+    store = {"s": {"a": {"flagged": True}}}
+    from agent_friday.routes import messages as rm
+    monkeypatch.setattr(rm, "_load_message_state", lambda: {k: dict(v) for k, v in store["s"].items()})
+    monkeypatch.setattr(rm, "_save_message_state", lambda st: store.__setitem__("s", {k: dict(v) for k, v in st.items()}))
+    return store
+
+
+def test_bulk_archive_is_undone_exactly(client, _state):
+    r = client.post("/api/messages/action", json={"ids": ["a", "b"], "action": "archive"}).get_json()
+    assert r["status"] == "ok" and sorted(r["ids"]) == ["a", "b"]
+    assert _state["s"]["a"] == {"flagged": True, "archived": True} and _state["s"]["b"] == {"archived": True}
+    client.post("/api/messages/restore", json={"states": r["before"]})
+    assert _state["s"] == {"a": {"flagged": True}}
+
+
+def test_mark_unread_after_reading_makes_it_unread():
+    from agent_friday.services import calendar_engine as ce
+    raw = {"id": "x", "sender": "a@b.co", "subject": "s", "labels": ["INBOX"]}   # read in Gmail
+    assert ce._normalize_message(raw, {}, {"x": {"read": False, "unread": True}})["unread"] is True
+    assert ce._normalize_message(raw, {}, {"x": {"read": True}})["unread"] is False
+
+
+def test_unknown_action_is_refused(client, _state):
+    assert client.post("/api/messages/action", json={"ids": ["a"], "action": "delete"}).status_code == 400
