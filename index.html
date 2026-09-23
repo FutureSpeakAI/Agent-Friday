@@ -8761,11 +8761,15 @@ function KnowledgeGraphWS() {
         // read as coloured stripes. The shells counter-rotate.
         spin = new Float32Array(n);
         const order = E.slice().sort(byDegree);
-        [[0, 0.1, 38, 0.16, 1.5, 'CORE \xB7 MOST CONNECTED'], [0.1, 0.4, 82, -0.11, 1, 'INNER SHELL'], [0.4, 1, 128, 0.07, 0.6, 'OUTER SHELL']].forEach(([a, b, R, w, sz, name]) => {
+        // The shell labels stack above the whole sphere, clear of every node,
+        // outermost shell nearest to it.
+        [[0, 0.1, 38, 0.16, 1.5, 'CORE \xB7 MOST CONNECTED', 156], [0.1, 0.4, 82, -0.11, 1, 'INNER SHELL', 146.5], [0.4, 1, 128, 0.07, 0.6, 'OUTER SHELL', 137]].forEach(([a, b, R, w, sz, name, ly]) => {
           const mem = order.slice(Math.floor(a * n), Math.floor(b * n)).sort((p, q) => p.__ci - q.__ci || byDegree(p, q));
           const m = mem.length;
           mem.forEach((e, j) => {
-            const y = 1 - 2 * (j + 0.5) / m,
+            // y stops short of the pole: each shell keeps an empty cap under
+            // its label.
+            const y = 0.86 - 1.86 * (j + 0.5) / m,
               sr = Math.sqrt(Math.max(0, 1 - y * y)),
               th = j * GOLDEN;
             put(e, R * sr * Math.cos(th), R * y, R * sr * Math.sin(th));
@@ -8773,13 +8777,14 @@ function KnowledgeGraphWS() {
             scale[e.__idx] = sz;
           });
           if (m) labels.push({
-            text: name,
+            text: name + ' \xB7 ' + m + ' pages',
             color: '#dff6ff',
-            pos: [0, R + 9, 0],
-            size: 0.07
+            pos: [0, ly, 0],
+            size: 0.07,
+            onTop: true
           });
         });
-        frame = 2.4;
+        frame = 2.6;
       } else if (mode === 'spiral') {
         // Spiral galaxy: every community of three or more pages is an arm,
         // and along an arm pages run from most-connected (at the nucleus)
@@ -8891,12 +8896,15 @@ function KnowledgeGraphWS() {
             size: 0.13
           });
         });
+        // Settle outside the dome with every constellation in view; the tour
+        // then flies inside for the planetarium. The inside depth fade
+        // applies only while the camera is within 200 of the centre.
         cam = {
-          r: 40,
-          phi: 1.25,
+          r: R * 2.3,
+          phi: 1.2,
           target: [0, 0, 0]
         };
-        depth = [150, 520];
+        depth = [150, 520, 200];
         edge = 0.6;
       } else {
         E.forEach(e => put(e, e.__gx, e.__gy, e.__gz));
@@ -8986,10 +8994,11 @@ function KnowledgeGraphWS() {
     };
     // Presentation tour: each step arranges, holds while the camera sweeps,
     // then moves on. Any click, drag or scroll in the graph stops it.
-    const KG_TOUR = [['galaxy', 10, true], ['spiral', 9], ['rings', 10], ['sphere', 9], ['star', 12], ['cluster', 8], ['importance', 8], ['galaxy', 7]];
+    const KG_TOUR = [['galaxy', 10, true], ['spiral', 9], ['rings', 10], ['sphere', 9], ['star', 14, false, 40], ['cluster', 8], ['importance', 8], ['galaxy', 7]];
     const stopTour = () => {
       if (!S.tour) return;
       clearTimeout(S.tour.timer);
+      clearTimeout(S.tour.zoom);
       S.tour = null;
       setTouring(false);
     };
@@ -9002,11 +9011,14 @@ function KnowledgeGraphWS() {
       setTouring(true);
       const step = () => {
         if (!S.tour) return;
-        const [mode, secs, bang] = KG_TOUR[S.tour.i];
+        const [mode, secs, bang, zoomR] = KG_TOUR[S.tour.i];
         arrange(mode, {
           bang: !!bang,
           keepTour: true
         });
+        if (zoomR) S.tour.zoom = setTimeout(() => {
+          if (S.tour && S.layout === mode) camGoal.r = zoomR;
+        }, 5000);
         S.tour.i++;
         S.tour.timer = setTimeout(S.tour.i < KG_TOUR.length ? step : stopTour, secs * 1000);
       };
@@ -9160,6 +9172,11 @@ function KnowledgeGraphWS() {
       L.labels.forEach(l => {
         const spr = makeLabel(l.text, l.color, l.size || 0.1);
         spr.position.set(l.pos[0], l.pos[1], l.pos[2]);
+        if (l.onTop) {
+          // drawn over the nodes, so nothing in front can hide it
+          spr.material.depthTest = false;
+          spr.renderOrder = 10;
+        }
         if (l.anchor !== undefined) {
           spr.userData.anchor = l.anchor;
           spr.userData.off = l.off || [0, 8, 0];
@@ -9221,6 +9238,8 @@ function KnowledgeGraphWS() {
         sphere: 1.2,
         spiral: 0.75
       }[mode] || 1.05;
+      // Sphere: lift the view a little so the label stack above it fits.
+      if (mode === 'sphere') camGoal.target.y += 16;
       if (mode === 'rings') {
         // Face the ring plane (it tilts toward +z about the X axis) instead of
         // catching it edge-on; take the nearest such angle so the camera does
@@ -9579,8 +9598,9 @@ function KnowledgeGraphWS() {
       if (S.nodeMat) {
         // Depth cue follows the zoom: full brightness in front of the orbit
         // target, fading behind it.
-        S.nodeMat.uniforms.uNear.value = S.depth ? S.depth[0] : cam.r * 0.85;
-        S.nodeMat.uniforms.uFar.value = S.depth ? S.depth[1] : cam.r * 1.9;
+        const dOv = S.depth && cam.r < S.depth[2] ? S.depth : null;
+        S.nodeMat.uniforms.uNear.value = dOv ? dOv[0] : cam.r * 0.85;
+        S.nodeMat.uniforms.uFar.value = dOv ? dOv[1] : cam.r * 1.9;
       }
       if (composer && bloomOn) composer.render();else renderer.render(scene, camera);
 
