@@ -93,12 +93,48 @@ def test_dock_keyframes_do_not_reintroduce_z():
     )
 
 
-@pytest.mark.parametrize("var", ["--holo-sheen", "--holo-sheen-a"])
+@pytest.mark.parametrize("var", ["--holo-sheen", "--holo-sheen-a",
+                                 "--dock-spec", "--dock-spec-a"])
 def test_the_desktop_sheen_variables_have_no_readers(var):
     assert var not in INDEX.read_text(encoding="utf-8"), (
         "%s is back. It only ever fed the sweeping band over the desktop "
         "surface, which the owner asked to have removed." % var
     )
+
+
+def test_the_mouse_does_not_stand_in_for_the_head():
+    """Nothing on the desktop may follow the pointer.
+
+    The head-coupled scene shears and slides to answer where you are sitting.
+    While the camera was not tracking a face, the POINTER was fed in as a
+    stand-in head, so the whole scene — and the glass in front of it — swam
+    around after the mouse. Measured before the removal, moving the pointer
+    across the desktop accounted for 3.2 grey levels of change per pixel;
+    after, it accounts for none, within noise.
+
+    A window answers to a head. When nothing knows where the head is, it sits
+    still.
+    """
+    src = INDEX.read_text(encoding="utf-8")
+    assert "pushMouseFallback" not in src, (
+        "the mouse is being pushed in as a head position again, which makes "
+        "the whole scene follow the pointer"
+    )
+    assert "relaxToNeutral" in src, (
+        "the no-face path is gone; without it the head freezes at its last "
+        "value instead of easing back to centre"
+    )
+
+
+def test_the_dock_has_no_light_that_follows_the_pointer():
+    """The dock's floor and lip are lit evenly, not where the pointer is."""
+    css = stylesheet()
+    for sel, body in rules(css):
+        if sel.strip() in (".dock::before", ".dock::after"):
+            assert "--dock-spec" not in body, (
+                "%s puts a highlight where the pointer is again, which drags "
+                "a bright smear along the dock: %r" % (sel.strip(), body.strip())
+            )
 
 
 def test_the_hud_overlay_draws_no_sweeping_band():
