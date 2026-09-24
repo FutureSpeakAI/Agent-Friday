@@ -36,7 +36,7 @@ import os
 import re
 import shutil
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from agent_friday.core import runtime_dir
 from agent_friday.services import path_probe
@@ -288,7 +288,10 @@ def _candidates(rec: dict, key: str) -> list:
         out.append(str(local))
     if recorded:
         try:
-            out.append(str(store_dir() / Path(str(recorded)).name))
+            # The file NAME, split on either separator: the recorded path is
+            # often a Windows share, and POSIX pathlib would take the whole
+            # backslashed string as one name.
+            out.append(str(store_dir() / PureWindowsPath(str(recorded)).name))
         except Exception:
             pass
         out.append(str(recorded))
