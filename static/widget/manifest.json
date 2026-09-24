@@ -1,0 +1,17 @@
+{
+  "name": "FRIDAY Widget",
+  "short_name": "FRIDAY",
+  "description": "Friday in a small window that sits beside your work: the avatar, voice, what she is saying, and anything waiting on your decision.",
+  "start_url": "/widget",
+  "scope": "/widget",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#04070e",
+  "theme_color": "#04070e",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/static/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" }
+  ]
+}

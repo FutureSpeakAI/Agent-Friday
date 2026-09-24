@@ -627,6 +627,7 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
         </div>
         <div style={{display:'flex',gap:6,minWidth:0,alignItems:'flex-end'}}>
           <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
+            data-friday-voice-toggle="" data-voice-on={voiceOn?'1':'0'}
             style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>
             {voiceOn?'■':'🎤'}
           </button>
@@ -12196,6 +12197,10 @@ function App(){
         setVoiceStatus('you: '+(m.text||'').slice(-60));
       }else if(m.type==='text'){
         setVoiceStatus('Friday: '+(m.text||'').slice(-60));
+        // The condensed widget shows one line of this. An event rather than a
+        // shared state hook, because the widget also runs inside a
+        // Picture-in-Picture document that React does not render into.
+        try{window.dispatchEvent(new CustomEvent('friday-speech',{detail:{text:m.text||''}}))}catch(_){}
       }else if(m.type==='action'){
         // Voice is agentic too: the server detected an open/navigate intent in
         // the spoken turn and handed us actions. Run them through the same bus

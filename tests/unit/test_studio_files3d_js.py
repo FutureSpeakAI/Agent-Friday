@@ -120,7 +120,13 @@ def test_studio_offers_the_3d_browser(path):
 def test_page_loads_the_browser_and_honours_the_backdrop_hold(path):
     text = (ROOT / path).read_text(encoding="utf-8")
     assert '<script src="/static/studio_files3d.js"></script>' in text
-    assert "if (composer && !(window.__fridayBackdropHold > 0)) composer.render();" in text
+    # The GUARD is the invariant: a large foreground 3D view holds the
+    # backdrop's drawing because both share one GPU. What sits inside it is
+    # not — the condensed widget added a second, cheaper draw path in there,
+    # and pinning the whole line to one formatting made that read as a
+    # regression when the hold was never weakened.
+    assert "if (composer && !(window.__fridayBackdropHold > 0))" in text
+    assert "composer.render()" in text
 
 
 @pytest.mark.parametrize("path", ["index.html", "ui_parts/app.html"])
