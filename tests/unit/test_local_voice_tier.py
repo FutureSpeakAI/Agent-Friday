@@ -204,8 +204,17 @@ def test_nemo_provider_registered_and_enabled():
 def test_nemo_provider_availability_gated_on_gpu(monkeypatch):
     from agent_friday.services.provider_registry import get_provider_registry
     reg = get_provider_registry()
+    # Availability is now SNAPSHOT-CACHED for 60s: the real probe imports
+    # torch (2.8s measured) and used to run on the request path, which was
+    # part of why the model picker took 18s to open. The gate itself is
+    # unchanged -- but a flip of `gpu_tier_ready` is no longer observed
+    # until the cached verdict is dropped, so drop it between the two halves
+    # of this test rather than asserting through a cache.
+    from agent_friday.services import swr_cache
+    swr_cache.invalidate("provider_available:")
     monkeypatch.setattr(nv, "gpu_tier_ready", lambda: False)
     assert reg.is_provider_available("nvidia-nemo") is False
+    swr_cache.invalidate("provider_available:")
     monkeypatch.setattr(nv, "gpu_tier_ready", lambda: True)
     assert reg.is_provider_available("nvidia-nemo") is True
 

@@ -66,6 +66,22 @@ PRICING = {
     # keying ONLY on it meant a canonical-id call missed the table, fell through
     # the registry fallback (Haiku has no cost_per_1k there) and metered $0 --
     # which reads as "local, on-device, free" for a cloud call.
+    # Still SERVED by the API and therefore still offered by the picker,
+    # which discovers them from /v1/models. They had no rows, so every one
+    # fell through to the provider blended rate -- and the anthropic
+    # provider has no cost_per_1k for them either, so they metered at
+    # exactly $0. Same defect as the canonical-Haiku-id and Fable 5.1
+    # zeros; found by listing what the picker actually offers rather than
+    # what the shipped list names. Figures from the published price page,
+    # 2026-09-23.
+    "claude-opus-4-8":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-7":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-6":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-5":            {"in": 0.005, "out": 0.025},   # $5  / $25
+    "claude-opus-4-5-20251101":   {"in": 0.005, "out": 0.025},
+    "claude-sonnet-4-6":          {"in": 0.003, "out": 0.015},   # $3  / $15
+    "claude-sonnet-4-5":          {"in": 0.003, "out": 0.015},   # $3  / $15
+    "claude-sonnet-4-5-20250929": {"in": 0.003, "out": 0.015},
     "claude-haiku-4-5":           {"in": 0.001, "out": 0.005},   # $1  / $5
     "claude-haiku-4-5-20251001":  {"in": 0.001, "out": 0.005},
     "gpt-4o":                     {"in": 0.0025, "out": 0.010},
@@ -278,7 +294,43 @@ def price_for(model, speed=None):
                 return {"in": float(rate), "out": float(rate)}
     except Exception:
         pass
+    # A GATEWAY-PREFIXED ID IS THE SAME MODEL AT THE SAME PRICE.
+    #
+    # Friday's own seats are bound through OpenRouter, so the ids actually in
+    # use are `anthropic/claude-opus-5.5` and `anthropic/claude-sonnet-5` -- a
+    # vendor prefix, and a DOT where Anthropic's canonical id has a dash.
+    # Neither is in PRICING, openrouter declares no `cost_per_1k` at all, and so
+    # both fell through to the zero below. Audited 2026-09-23: the reasoning,
+    # subagent and heavy_hitter seats -- the models Friday was actually thinking
+    # with -- metered at exactly $0.00. Every cost figure downstream inherits
+    # that, and `services/spend_guard` is denominated in dollars, so a $0 rate
+    # quietly disables the one stop that stops.
+    #
+    # A `:` suffix is deliberately NOT normalised: `:batch` and `:free` are
+    # different prices, and mapping them onto the standard row would trade a
+    # visible zero for an invisible wrong number.
+    canon = _canonical_gateway_id(model)
+    if canon and canon in PRICING:
+        return PRICING[canon]
     return {"in": 0.0, "out": 0.0}
+
+
+def _canonical_gateway_id(model) -> str | None:
+    """`anthropic/claude-opus-5.5` -> `claude-opus-5-5`, else None.
+
+    Only for gateway ids shaped ``vendor/model`` with no ``:`` variant suffix.
+    The dot-to-dash rewrite targets a version number specifically, so an id that
+    merely contains a dot elsewhere is not mangled.
+    """
+    import re as _re
+
+    mid = str(model or "")
+    if "/" not in mid or ":" in mid:
+        return None
+    tail = mid.rsplit("/", 1)[-1].strip()
+    if not tail:
+        return None
+    return _re.sub(r"(\d)\.(\d)", r"\1-\2", tail)
 
 
 #: Anthropic prompt-cache multipliers on the INPUT rate. A cache read bills at

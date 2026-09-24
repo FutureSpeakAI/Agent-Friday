@@ -37928,6 +37928,10 @@ function SettingsTabIntelligence() {
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
   const [savingMode, setSavingMode] = useState(null);
+  /* The one-line answer to "did my pick take?" — set the moment the SERVER has
+     confirmed it, so it does not wait on the slow panel refresh. Carries `err`
+     when the pick could not be honoured, because silence was the original bug. */
+  const [seatNote, setSeatNote] = useState(null);
   // LOCAL MODELS ON THIS MACHINE (headroom.md §8.2) -- the pre-fetch card
   // and the one message line that reports what a fetch attempt did.
   const [fetchFor, setFetchFor] = useState(null);   // model_id or null
@@ -37935,23 +37939,51 @@ function SettingsTabIntelligence() {
   const [fetchMsg, setFetchMsg] = useState('');
   const [yielding, setYielding] = useState(false);
 
+  /* CONFIRM FROM THE FAST ROUTE, NOT THE SLOW ONE.
+     Reported as "nothing changed when I picked Opus 5.5 for either seat". The
+     save was never the problem: POST /api/settings returns 200 and settings.json
+     is updated, traced end to end. The CONFIRMATION was. This panel renders from
+     /api/intelligence, profiled at 32.7s cold and 12.6s warm against the 30s
+     AbortController in useIntelligence -- so the reload() below aborted, or had
+     simply not landed when the user looked, and the seat on screen never moved.
+     Confirm against /api/settings, which answers in milliseconds, say so at
+     once, and let the slow panel refresh catch up behind that. */
   const pick = (key, m) => {
     setSaving(key);
+    const label = m.label || m.id;
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       // MUST be wrapped in `settings` — the route reads data['settings'].
       body: JSON.stringify({ settings: { capability_routing: { [key]: { model: m.id, provider: (m.providers || [])[0] } } } }),
-    }).then(r => r.json()).then(() => apiFetch('/api/settings'))
-      .then(r => r.json()).then(d => {
+    }).then(r => r.json().catch(() => ({})).then(body => ({ ok: r.ok, body })))
+      .then(res => {
+        /* A pick that CANNOT be honoured now says why. The route refuses with
+           400 and a reason (no key, weights not on this machine, the seat gate),
+           and this used to read the body while ignoring the status -- so a real
+           refusal surfaced as the generic "did not stick" rather than its cause. */
+        if (!res.ok) {
+          throw new Error((res.body && (res.body.detail || res.body.error ||
+            res.body.message)) ||
+            'The server refused that model for this seat and gave no reason.');
+        }
+        return apiFetch('/api/settings').then(r2 => r2.json());
+      })
+      .then(d => {
         const seated = ((((d || {}).settings || {}).capability_routing || {})[key] || {}).model;
         if (seated !== m.id) {
           console.error('[seat] save did not take:', key, 'asked', m.id, 'server holds', seated);
-          alert('That model did not stick — the server still has ' + (seated || 'nothing') + '.');
-          return;
+          throw new Error('That model did not stick — the server still has ' +
+            (seated || 'nothing') + '.');
         }
+        setSeatNote({ key: key, label: label, err: null });
         window.dispatchEvent(new CustomEvent('friday:model-catalog-invalidated'));
-        reload();
-      }).catch(() => {}).finally(() => setSaving(null));
+        reload();          // the slow refresh, now behind the confirmation
+      })
+      .catch(e => {
+        setSeatNote({ key: key, label: label,
+                      err: (e && e.message) || String(e) });
+      })
+      .finally(() => setSaving(null));
   };
 
   const onOpen = (next, key, m) => {
@@ -38042,6 +38074,23 @@ function SettingsTabIntelligence() {
       soup: d.soup, d: d, mode: d.routing_mode || 'local_preferred',
       setMode: setMode, savingMode: savingMode, reload: reload,
     }),
+
+    /* Did my pick take? One line, set from the SERVER's confirmation rather
+       than from the 12-second panel refresh, because the refresh not landing is
+       what made a working save look like it did nothing. Layout deliberately
+       minimal — the Settings polish pass owns the styling of this panel. */
+    seatNote && E('div', {
+      style: {
+        margin: '6px 2px 2px', padding: '6px 9px', borderRadius: 6,
+        fontSize: 12, lineHeight: 1.45,
+        background: seatNote.err ? 'rgba(220,60,60,0.10)' : 'rgba(60,200,140,0.10)',
+        border: '1px solid ' + (seatNote.err ? 'rgba(220,60,60,0.35)'
+                                             : 'rgba(60,200,140,0.35)'),
+      },
+    }, seatNote.err
+        ? ('Could not seat ' + seatNote.label + ' for ' + seatNote.key + ': ' +
+           seatNote.err)
+        : ('Now using ' + seatNote.label + ' for ' + seatNote.key + '.')),
 
     // ── ROLES ────────────────────────────────────────────────────────────────
     E(StSection, { title: 'WHAT RUNS EACH JOB' },
