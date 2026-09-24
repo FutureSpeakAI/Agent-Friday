@@ -144,15 +144,15 @@ def test_the_knowledge_window_is_the_merged_workspace(ui):
 DOCK_CASES = [
     # (saved dock_custom, show_all, knowledge visible, why)
     ({}, True, True, "nothing saved"),
-    ({"order": ["wiki", "home", "knowledge"], "hidden": []}, True, True, "pre-merge, both shown"),
-    ({"order": ["home", "wiki", "knowledge"], "hidden": ["knowledge"]}, True, True,
+    ({"order": ["wiki", "news", "knowledge"], "hidden": []}, True, True, "pre-merge, both shown"),
+    ({"order": ["news", "wiki", "knowledge"], "hidden": ["knowledge"]}, True, True,
      "pre-merge: Knowledge hidden, Wiki kept; the merged icon holds the wiki"),
-    ({"order": ["home", "wiki", "knowledge"], "hidden": ["wiki"]}, True, True,
+    ({"order": ["news", "wiki", "knowledge"], "hidden": ["wiki"]}, True, True,
      "pre-merge: Wiki hidden, Knowledge kept"),
     ({"hidden": ["wiki"]}, False, True, "pre-merge, hidden list only"),
-    ({"order": ["home", "wiki", "knowledge"], "hidden": ["wiki", "knowledge"]}, True, False,
+    ({"order": ["news", "wiki", "knowledge"], "hidden": ["wiki", "knowledge"]}, True, False,
      "pre-merge: both hidden stays hidden"),
-    ({"order": ["home", "knowledge"], "hidden": ["knowledge"]}, True, False,
+    ({"order": ["news", "knowledge"], "hidden": ["knowledge"]}, True, False,
      "post-merge: hidden as saved"),
 ]
 
