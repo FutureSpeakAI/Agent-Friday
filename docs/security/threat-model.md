@@ -389,11 +389,13 @@ This guarantee holds as long as:
 | Configuration | What leaves your device |
 |--------------|------------------------|
 | A local model answers | Nothing — processing on-device |
-| A cloud model answers (cloud mode, or local mode when no local model is reachable) | Content the classifier places in TIER_1 (PUBLIC); private content becomes a placeholder, sensitive content is withheld |
+| A cloud model answers | Content the classifier places in TIER_1 (PUBLIC); private content becomes a placeholder, sensitive content is withheld |
 | Unrestricted cloud (an explicit, recorded consent) | Everything in the assembled payload |
 
-"On this computer only" (`local_only`) currently falls back to the cloud when no
-local model is reachable, rather than refusing; the first-run screen says so.
+In "On this computer only" (`local_only`) mode, a chat turn with no local seat
+serving is refused (`routing/model_router._route_basic`) with an offer to answer
+it in the cloud, which the owner must accept; voice has its own pipeline. The
+first-run screen's text still describes a fallback to cloud and is out of date.
 There is no switch that turns the egress gate off; unrestricted cloud is the
 only bypass, and it requires the recorded consent in `privacy/cloud_consent.py`.
 The privacy posture is visible in the setup wizard and in Settings → Privacy & Approvals.
