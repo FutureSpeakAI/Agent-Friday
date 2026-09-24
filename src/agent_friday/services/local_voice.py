@@ -388,12 +388,34 @@ class WhisperASR:
         for a comfortable margin and stand down rather than push the model
         that answers the question off the GPU.
         """
+        # The arbiter owns this card. If it is mid-transition, or holds a heavy
+        # lease (an image model, a displacing brain load), the ear is the one
+        # thing here that has a perfectly good CPU path — so it stands down
+        # rather than competing for memory the arbiter has already promised.
+        try:
+            from agent_friday.services import residency_arbiter as _ra
+            arb = getattr(_ra, "ARBITER", None)
+            if arb is not None:
+                st = arb.status()
+                if (st.get("state") or "") not in ("", "default", _ra.STATE_DEFAULT):
+                    return "cpu", "int8", (
+                        "the residency arbiter is %s" % st.get("state"))
+                lease = st.get("lease")
+                if lease:
+                    return "cpu", "int8", (
+                        "the arbiter holds a %s lease on the GPU"
+                        % lease.get("kind"))
+        except Exception:
+            pass                              # no arbiter here: fall through
         try:
             import torch
             if not torch.cuda.is_available():
                 return "cpu", "int8", "no CUDA device"
             free, _total = torch.cuda.mem_get_info()
-            need = 1.5 * (1024 ** 3)          # generous for base/small
+            # Bonsai2 is usually resident on this same card. whisper-base in
+            # float16 wants well under a gigabyte; ask for a comfortable margin
+            # so the ear never pushes the brain off the GPU to hear better.
+            need = 1.5 * (1024 ** 3)
             if free < need:
                 return "cpu", "int8", (
                     "only %.1f GiB free on the GPU; the brain has it"
