@@ -438,6 +438,20 @@ def _announce_seat_notice(conversation_id, text):
         pass
 
 
+#: How often a silent stream emits a keepalive comment.
+#:
+#: `q.get()` had no timeout, so a turn produced NO bytes between ": open" and the
+#: model's first token. On bonsai2 that gap covers a long reasoning phase plus a
+#: tool call, and on 2026-09-24 it covered both over a GPU the monitor was
+#: reporting as thrashing. Any proxy in between -- including the local Caddy that
+#: serves agent.friday -- may drop a connection that quiet, and the client then
+#: reported a connection error for a turn that was still running.
+#:
+#: Shorter than a typical proxy read timeout (Caddy/nginx default to 60s) with
+#: room to spare.
+_STREAM_KEEPALIVE_S = 10.0
+
+
 @chat_bp.route('/api/chat/stream', methods=['POST'])
 def chat_stream():
     """The same turn as /api/chat, delivered as it is written.
@@ -467,10 +481,21 @@ def chat_stream():
     SEP = chr(10) + chr(10)
     q = _queue.Queue()
     box = {}
+    # The SAME id `chat()` will register with core.turn_begin, which is the one
+    # /api/chat/turn/<id>/liveness knows about. A freshly minted id here would be
+    # unpollable -- the client would ask about a turn nothing had heard of, and
+    # recovery would look exactly like failure.
+    _turn_id = (str((request.get_json(silent=True) or {}).get('turn_id') or '')
+                .strip() or uuid.uuid4().hex[:12])
 
     @copy_current_request_context
     def _run_turn():
         token = _mr.DELTA_SINK.set(lambda piece: q.put(("delta", piece)))
+        tool_token = None
+        try:
+            tool_token = _mr.TOOL_SINK.set(lambda ev: q.put(("tool", ev)))
+        except Exception:
+            tool_token = None
         try:
             rv = chat()
             body = rv[0] if isinstance(rv, tuple) else rv
@@ -484,6 +509,11 @@ def chat_stream():
                 _mr.DELTA_SINK.reset(token)
             except Exception:
                 pass
+            if tool_token is not None:
+                try:
+                    _mr.TOOL_SINK.reset(tool_token)
+                except Exception:
+                    pass
             q.put(("done", None))
 
     threading.Thread(target=_run_turn, daemon=True).start()
@@ -492,10 +522,33 @@ def chat_stream():
         # Open the stream immediately so a proxy that buffers until the first
         # byte cannot hold the whole turn back.
         yield ": open" + SEP
+        # Say the turn is UNDERWAY before any token exists.
+        #
+        # The client used to treat "no delta yet" as "nothing happened" and, on a
+        # dropped connection, re-POST the whole turn to /api/chat -- running and
+        # billing it twice. A turn id it can poll instead is the difference
+        # between recovering and repeating.
+        yield "data: " + json.dumps({"started": True, "turn_id": _turn_id}) + SEP
         while True:
-            kind, val = q.get()
+            try:
+                kind, val = q.get(timeout=_STREAM_KEEPALIVE_S)
+            except _queue.Empty:
+                # THE BUG THIS FIXES. `q.get()` had no timeout, so between the
+                # ": open" byte and the model's first token the stream was
+                # completely silent -- through a long reasoning phase and a tool
+                # call on a thrashing GPU, that is minutes. A silent connection
+                # is one a proxy is entitled to drop, and the client then showed
+                # "connection error" for a turn that was still running.
+                #
+                # A comment frame, so no client parses it as an event.
+                yield ": ping" + SEP
+                continue
             if kind == "delta":
                 yield "data: " + json.dumps({"delta": val}) + SEP
+                continue
+            if kind == "tool":
+                # Live tool progress: what Friday is doing, while it does it.
+                yield "data: " + json.dumps({"tool": val}) + SEP
                 continue
             if "error" in box:
                 yield "data: " + json.dumps({"error": box["error"]}) + SEP

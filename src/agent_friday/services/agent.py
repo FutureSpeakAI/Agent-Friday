@@ -8122,6 +8122,14 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 # the resume path knows it is in that window instead of
                 # assuming it is not.
                 _resume_mark(session_ctx, tu.name, tu.id)
+                # Say what is about to happen BEFORE it happens. Derived from the
+                # tool actually being invoked, so it cannot describe work that is
+                # not occurring.
+                try:
+                    from agent_friday.services.model_router import announce_tool
+                    announce_tool(tu.name, tu.input)
+                except Exception:
+                    pass
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
                 # Cleared on the SUCCESS path only, deliberately not in a
                 # `finally`. If _execute_tool raised, the tool's side effect is
@@ -8614,6 +8622,14 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                             pass
 
             _task_log_tool(session_ctx, tname, targs)
+            # Say what is about to happen BEFORE it happens. Derived from the
+            # tool actually being invoked, so it cannot describe work that is
+            # not occurring.
+            try:
+                from agent_friday.services.model_router import announce_tool
+                announce_tool(tname, targs)
+            except Exception:
+                pass
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                    session_ctx=session_ctx)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
