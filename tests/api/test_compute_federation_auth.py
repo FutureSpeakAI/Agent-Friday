@@ -83,8 +83,21 @@ class TestArbitraryCodeExecutionIsReal:
     """The part of the claim that holds. No mocks: real HTTP route, real
     background thread, real subprocess, real file written to disk."""
 
-    def test_loopback_caller_gets_a_script_executed_with_full_env(self, client, tmp_path):
+    def test_loopback_caller_gets_a_script_executed_only_after_the_owner_approves(
+            self, client, tmp_path, monkeypatch):
+        """Gated since 2026-09-24: a peer's job passes the governance
+        checkpoint and waits on an approval card. Approved, it runs."""
+        from agent_friday.services import approvals
+        monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
+        monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
         marker = tmp_path / "rce_poc_marker.txt"
+        held = client.post("/api/federation/compute/request",
+                           data=json.dumps(_poc_payload(marker)),
+                           content_type="application/json")
+        assert held.status_code == 403 and held.get_json()["status"] == "HELD"
+        assert not _wait_for_marker(marker, timeout=2.0), "it ran before the owner decided"
+        (card,) = approvals.list_approvals(status="pending", kind="governed_action")
+        approvals.decide(card["approval_id"], "approve", decided_by="owner")
         resp = client.post(
             "/api/federation/compute/request",
             data=json.dumps(_poc_payload(marker)),
