@@ -203,8 +203,12 @@ def test_friday_asking_to_delete_files_an_approval_and_changes_nothing(client, s
         "gmail": _items(("c1", "acct_m", "t1"))})
     assert r.status_code == 202 and r.get_json()["status"] == "pending_approval"
     assert CALLS == [] and state["s"] == {}
+    # through the governance checkpoint, as its own kind of card
+    assert made["kind"] == "governed_action" and made["subject_type"] == "external_action"
     assert made["force_gate"] is True and made["payload"]["action"] == "trash"
     assert "old newsletters" in made["action_description"]
+    assert made["title"] == "Friday wants to move 1 conversation to Trash"
+    assert made["action_description"].startswith("Friday proposes to move these to Trash:")
 
 
 def test_a_request_that_does_not_say_who_made_it_waits_for_approval(client, state, monkeypatch):
@@ -214,12 +218,43 @@ def test_a_request_that_does_not_say_who_made_it_waits_for_approval(client, stat
     assert r.status_code == 202 and CALLS == [] and state["s"] == {}
 
 
-def test_an_approved_proposal_runs_the_same_change(state):
-    from agent_friday.services import mail_proposals as mp
-    mp._on_decision({"status": "approved", "approval_id": "ap1", "payload": {
-        "handler": "mail_proposal", "action": "trash", "ids": ["c1"],
-        "gmail": _items(("c1", "acct_m", "t1"))}})
+def test_an_approved_proposal_runs_the_same_change_once(client, state):
+    """A real card, approved the real way: the checkpoint runs the change once
+    and uses the card up, so the same approval can never make it twice."""
+    from agent_friday.services import approvals as ap
+    r = client.post("/api/messages/action", json={
+        "ids": ["c1"], "action": "trash", "requested_by": "agent:inbox-cleanup",
+        "gmail": _items(("c1", "acct_m", "t1"))})
+    card = r.get_json()
+    assert card["status"] == "pending_approval" and card["approval_id"]
+    assert CALLS == []
+    ap.decide(card["approval_id"], "approve")
     assert "TRASH" in THREADS["t1"] and state["s"]["c1"]["trashed"] is True
+    assert ap.get_approval(card["approval_id"])["consumed"] is True
+    made = len(CALLS)
+    from agent_friday.services import mail_proposals as mp
+    mp._on_decision(ap.get_approval(card["approval_id"]))       # a replayed hook
+    assert len(CALLS) == made
+
+
+def test_the_checkpoint_holds_friday_when_its_integrity_check_fails(client, state, monkeypatch):
+    from agent_friday.governance import action_gate
+    monkeypatch.setattr(action_gate, "verify_claws", lambda: (False, "the pinned cLaws do not match"))
+    r = client.post("/api/messages/action", json={
+        "ids": ["c1"], "action": "trash", "requested_by": "agent:x",
+        "gmail": _items(("c1", "acct_m", "t1"))}).get_json()
+    assert r["status"] == "refused" and "cLaws" in r["message"]
+    assert CALLS == [] and state["s"] == {}
+
+
+def test_the_owners_click_is_the_owner_acting_even_when_the_checkpoint_holds(client, state, monkeypatch):
+    """The owner's own REST actions are outside the checkpoint by design
+    (docs/decisions/2026-09-24-injection-provenance-gate.md)."""
+    from agent_friday.governance import action_gate
+    monkeypatch.setattr(action_gate, "verify_claws", lambda: (False, "held"))
+    r = client.post("/api/messages/action", json={"ids": ["c1"], "action": "trash", "requested_by": "ui:messages",
+                                                  "gmail": _items(("c1", "acct_m", "t1"))}).get_json()
+    assert r["status"] == "ok" and "TRASH" in THREADS["t1"]
 
 
 def test_a_denied_or_foreign_card_does_nothing(state):

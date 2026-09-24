@@ -1,22 +1,28 @@
 """Mailbox changes Friday proposes on its own initiative.
 
-The owner's own click in the Messages workspace acts at once, with undo.
+The owner's own click in the Messages workspace acts at once, with undo: it is
+the owner acting through Friday's page, which the governance checkpoint leaves
+alone on purpose (docs/decisions/2026-09-24-injection-provenance-gate.md, "the
+owner's own REST actions").
+
 When Friday itself decides to delete, archive, mute, report spam or
-unsubscribe, that is a different thing: it becomes an approval card, and the
-change happens only when the owner approves it. The approved change runs the
-same code the owner's click runs (routes.messages.run_action, or
+unsubscribe, that is a different thing, and it goes through the checkpoint
+like any other outward action (governance/action_gate.authorize_external): the
+cLaws are verified, an approval card says in words what will happen, and a
+signed receipt records the decision. The change runs only when the owner has
+approved that exact card, and running it passes the checkpoint again, which
+uses the card up, so one approval buys exactly one change. The approved change
+runs the same code the owner's click runs (routes.messages.run_action, or
 mail_unsubscribe.unsubscribe), so an approval can do nothing a click could not.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 
 _log = logging.getLogger("friday.mail_proposals")
 
-APPROVAL_KIND = "outward"
-SUBJECT_TYPE = "mail_action"
+#: The checkpoint's own card kind for actions that are not tool calls.
+APPROVAL_KIND = "governed_action"
 HANDLER = "mail_proposal"
 
 VERBS = {
@@ -25,6 +31,23 @@ VERBS = {
     "archive": "archive",
     "mute": "mute",
     "unsubscribe": "unsubscribe from",
+}
+
+#: The card's title, with {n} as "3 conversations".
+TITLES = {
+    "trash": "move {n} to Trash",
+    "spam": "report {n} as spam",
+    "archive": "archive {n}",
+    "mute": "mute {n}",
+}
+
+#: The card's first line, before the list of messages.
+BODIES = {
+    "trash": "move these to Trash",
+    "spam": "report these as spam",
+    "archive": "archive these",
+    "mute": "mute these",
+    "unsubscribe": "unsubscribe you from",
 }
 
 
@@ -37,41 +60,92 @@ def _clean_items(items):
     return out[:200]
 
 
-def propose(action: str, ids, gmail_items, *, requested_by: str, reason: str = "",
-            extra: dict | None = None) -> dict:
-    """File an approval card for a mailbox change Friday wants to make."""
-    from agent_friday.services import approvals as ap
-    if action not in VERBS:
-        raise ValueError("Friday cannot propose %r" % action)
-    ids = sorted({str(i) for i in ids or [] if str(i)})
-    items = _clean_items(gmail_items)
-    key = json.dumps([action, ids, extra or {}], sort_keys=True)
-    sid = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+def _action_name(action: str) -> str:
+    return "mail: " + action
+
+
+def _detail(action, ids, items, extra) -> dict:
+    return {"handler": HANDLER, "action": action,
+            "ids": sorted({str(i) for i in ids or [] if str(i)}),
+            "gmail": _clean_items(items), "extra": extra or {}}
+
+
+def _words(detail: dict, reason: str = "") -> tuple:
+    action, ids, items = detail["action"], detail["ids"], detail["gmail"]
     n = len(ids) or 1
+    if action == "unsubscribe":
+        title = "Friday wants to unsubscribe you from %s" % (detail["extra"].get("sender") or "a mailing list")
+    else:
+        title = "Friday wants to " + TITLES[action].format(
+            n="%d conversation%s" % (n, "" if n == 1 else "s"))
     listing = "\n".join("- %s%s" % (it.get("subject") or it.get("id") or "(message)",
                                      (" — " + it["sender"]) if it.get("sender") else "")
                         for it in items[:25])
-    what = VERBS[action]
+    body = "Friday proposes to %s:\n%s%s" % (
+        BODIES[action], listing or "(the messages it named)",
+        ("\n\nWhy: " + reason.strip()) if reason and reason.strip() else "")
+    return title, body
+
+
+def _run(detail: dict) -> dict:
+    """The change itself: the same code the owner's click runs."""
+    action = detail["action"]
     if action == "unsubscribe":
-        title = "Friday wants to unsubscribe you from %s" % ((extra or {}).get("sender") or "a mailing list")
-    else:
-        title = "Friday wants to %s %d conversation%s" % (what, n, "" if n == 1 else "s")
-    appr = ap.create_approval(
-        kind=APPROVAL_KIND,
-        subject_type=SUBJECT_TYPE,
-        subject_id=sid,
-        title=title,
-        action_description=("Friday proposes to %s:\n%s%s" % (
-            what, listing or "(the messages it named)",
-            ("\n\nWhy: " + reason.strip()) if reason and reason.strip() else "")),
-        description="Friday asked for this on its own. Nothing happens unless you approve it.",
-        force_gate=True,
-        payload={"handler": HANDLER, "action": action, "ids": ids, "gmail": items,
-                 "extra": extra or {}},
-        requested_by=requested_by or "friday",
-    )
-    return {"status": "pending_approval", "approval_id": appr.get("approval_id"),
-            "approval_status": appr.get("status"),
+        from agent_friday.services import mail_unsubscribe as mu
+        ex = detail.get("extra") or {}
+        return mu.unsubscribe(ex.get("account_id"), ex.get("message_id"))
+    from agent_friday.routes.messages import run_action
+    return run_action(action, detail.get("ids") or [], detail.get("gmail") or [], {})
+
+
+def _succeeded(detail: dict, res: dict) -> bool:
+    if detail["action"] == "unsubscribe":
+        return res.get("status") in ("done", "next")
+    return res.get("status") == "ok"
+
+
+def propose(action: str, ids, gmail_items, *, requested_by: str, reason: str = "",
+            extra: dict | None = None) -> dict:
+    """Put a mailbox change Friday wants to make to the governance checkpoint.
+
+    Normally that raises an approval card and nothing happens yet. If the
+    owner already approved this exact change and the card is unused, it runs
+    now (and uses the card); if the checkpoint holds it, it does not run.
+    """
+    from agent_friday.governance import action_gate
+    from agent_friday.services import approvals as ap
+    if action not in VERBS:
+        raise ValueError("Friday cannot propose %r" % action)
+    detail = _detail(action, ids, gmail_items, extra)
+    title, body = _words(detail, reason)
+    v = action_gate.authorize_external(
+        _action_name(action), detail, requested_by=requested_by or "friday",
+        title=title, action_description=body,
+        description="Friday asked for this on its own. Nothing happens unless you approve it.")
+    if v.action == "allow":
+        res = _run(detail)
+        return {"status": "done" if _succeeded(detail, res) else "error", "result": res,
+                "message": "You had already approved exactly this, so it was done."}
+    if v.action == "deny":
+        return {"status": "refused", "message": "Friday's governance check held this: %s" % v.reason}
+    card = None
+    try:
+        import hashlib
+        import json
+        fp = hashlib.sha256(json.dumps({"a": _action_name(action), "d": detail}, sort_keys=True,
+                                       default=str).encode()).hexdigest()[:16]
+        prefix = "%s:%s" % (_action_name(action), fp)
+        # the newest pending card for exactly this change (a card raised again
+        # after an earlier one was used carries a suffix on its subject)
+        mine = [r for r in ap.list_approvals(status="pending")
+                if r.get("kind") == APPROVAL_KIND and str(r.get("subject_id") or "").startswith(prefix)]
+        mine.sort(key=lambda r: r.get("created_at") or 0)
+        card = mine[-1] if mine else None
+    except Exception:
+        card = None
+    return {"status": "pending_approval",
+            "approval_id": (card or {}).get("approval_id"),
+            "approval_status": (card or {}).get("status"),
             "message": "Friday asked first: this is waiting for your approval."}
 
 
@@ -84,22 +158,23 @@ def _notify(title: str, body: str, kind: str = "info") -> None:
 
 
 def _on_decision(record: dict) -> None:
-    payload = record.get("payload") or {}
-    if payload.get("handler") != HANDLER:
-        return                      # some other outward card
+    detail = record.get("payload") or {}
+    if detail.get("handler") != HANDLER:
+        return                      # another governed action (e.g. a compute job)
     if (record.get("status") or "").lower() != "approved":
         return
-    action = payload.get("action")
+    action = detail.get("action")
     try:
-        if action == "unsubscribe":
-            from agent_friday.services import mail_unsubscribe as mu
-            ex = payload.get("extra") or {}
-            res = mu.unsubscribe(ex.get("account_id"), ex.get("message_id"))
-            ok = res.get("status") in ("done", "next")
-        else:
-            from agent_friday.routes.messages import run_action
-            res = run_action(action, payload.get("ids") or [], payload.get("gmail") or [], {})
-            ok = res.get("status") == "ok"
+        from agent_friday.governance import action_gate
+        v = action_gate.authorize_external(_action_name(action), detail,
+                                           requested_by="owner approval",
+                                           approval_id=record.get("approval_id"))
+        if v.action != "allow":
+            _notify("Mail: approved change NOT made",
+                    "Friday's governance check held it: %s" % v.reason, "warning")
+            return
+        res = _run(detail)
+        ok = _succeeded(detail, res)
         _notify("Mail: approved change %s" % ("made" if ok else "NOT made"),
                 res.get("message") or ("Done: %s." % VERBS.get(action, action)),
                 "info" if ok else "warning")

@@ -58,7 +58,7 @@ test('the desktop: windows, chat panel and chat window', async ({ page }) => {
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock', { timeout: 90000 });
   await page.waitForTimeout(1500);
-  for (const id of ['messages', 'news', 'home']) await page.locator(`.dock-btn[data-ws="${id}"]`).dispatchEvent('click', { bubbles: true });
+  for (const id of ['messages', 'news', 'calendar']) await page.locator(`.dock-btn[data-ws="${id}"]`).dispatchEvent('click', { bubbles: true });
   await page.evaluate(async () => { const r = await fetch('/api/conversations').then(x => x.json()); (window as any).fridayOpenChatWindow((r.conversations || [])[0].id, 'x'); });
   await page.waitForTimeout(2500);
   const bad = await unlabelled(page);
