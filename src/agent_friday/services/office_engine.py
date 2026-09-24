@@ -37,10 +37,20 @@ SOVEREIGNTY
 -----------
 The binary is pinned by version AND sha256 in
 `~/.friday/runtime/officecli/INSTALL.json` and re-verified before the first run
-of each process. Auto-update is off in its own config and `OFFICECLI_SKIP_UPDATE`
-/ `OFFICECLI_NO_AUTO_INSTALL` are set on every invocation. Upstream publishes no
-detached signature and the executable carries no Authenticode signature, so
-integrity rests on that checksum -- stated plainly rather than implied away.
+of each process. The pin sits next to the binary, so it detects corruption and
+an accidental swap, not a deliberate one by something that can write that
+folder. Upstream publishes no detached signature and the executable carries no
+Authenticode signature, so integrity rests on that checksum -- stated plainly
+rather than implied away.
+
+The pinned build (1.0.152) contains no self-update or telemetry endpoint. The
+`OFFICECLI_SKIP_UPDATE` / `OFFICECLI_NO_AUTO_INSTALL` switches are set on every
+invocation anyway, so a later build that adds an updater starts with it off.
+One path does reach the network: when no local Office is installed, the HTML
+preview renderer loads Mermaid, KaTeX, three.js and web fonts from public CDNs
+for documents that use diagrams, equations, 3D models or web fonts. That
+request is made by the renderer, outside Friday's egress gate. It carries no
+document text; a web-font request names the fonts the document uses.
 
 DOCUMENT TEXT IS DATA
 ---------------------
@@ -80,9 +90,9 @@ READ_VERBS = frozenset({
     "view", "get", "query", "validate", "help", "load_skill", "stats",
 })
 
-#: Verbs that change a document. Internal while they stay inside the documents
-#: folder -- a file Friday made, that she can make again -- and outward once
-#: they touch anything else.
+#: Verbs that change a document. Internal on a document Friday made in its
+#: documents folder -- one it can make again -- and outward on any document
+#: that was already there.
 WRITE_VERBS = frozenset({
     "create", "set", "add", "remove", "move", "swap", "batch", "save", "close",
 })
@@ -297,7 +307,46 @@ def classify(args: Optional[dict]) -> Tuple[str, str]:
     if verb == "create" and clobbered:
         return ("outward", "it would overwrite %s, which already exists"
                 % Path(clobbered[0]["path"]).name)
-    return ("internal", "it edits a document in Friday's own folder")
+    # Editing a document Friday made is reversible in the same sense as making
+    # it. A document that was already there -- one the owner put in the folder
+    # to be worked on -- has no copy to go back to, so changing it waits.
+    made = made_by_friday()
+    foreign = [d for d in clobbered if _key(d["path"]) not in made]
+    if foreign:
+        return ("outward", "it changes %s, which Friday did not make"
+                % Path(foreign[0]["path"]).name)
+    return ("internal", "it edits a document Friday made in its own folder")
+
+
+# ── Which documents Friday made ─────────────────────────────────────────────
+
+#: Resolved paths of documents a successful `create` produced. Kept next to the
+#: documents so it moves with them; a file missing from it is treated as the
+#: owner's.
+MADE_RECORD = ".made-by-friday.json"
+
+
+def _key(path) -> str:
+    try:
+        return os.path.normcase(str(Path(path).resolve()))
+    except Exception:
+        return os.path.normcase(str(path))
+
+
+def made_by_friday() -> set:
+    try:
+        return set(json.loads((DOCUMENTS_DIR / MADE_RECORD).read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def _record_made(paths) -> None:
+    if not paths:
+        return
+    made = made_by_friday() | {_key(p) for p in paths}
+    DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    (DOCUMENTS_DIR / MADE_RECORD).write_text(json.dumps(sorted(made), indent=1),
+                                             encoding="utf-8")
 
 
 # ── Running it ──────────────────────────────────────────────────────────────
@@ -351,6 +400,9 @@ def run_command(command, *, timeout: int = TIMEOUT_S) -> dict:
     for d in info["files"]:
         argv = [d["path"] if a == d["arg"] else a for a in argv]
     rc, out, err = run(argv, timeout=timeout)
+    if rc == 0 and info["verb"] == "create":
+        _record_made([d["path"] for d in info["files"]
+                      if not d["exists"] and Path(d["path"]).exists()])
     return {"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err,
             "verb": info["verb"], "files": info["files"],
             "argv": argv}
