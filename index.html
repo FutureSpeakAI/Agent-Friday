@@ -21660,6 +21660,232 @@ function SitesWS() {
   }), /*#__PURE__*/React.createElement(FSStudio, null));
 }
 // ═══ TASK RECORDS (retention is the user's setting; 0 keeps everything) ═══
+// ─── What Friday did: the morning receipt. Read-only; every row is a signed
+// checkpoint receipt from /api/governance/receipts, checked server-side. ───
+const RECEIPT_VISIT_KEY = 'friday.receipts.lastVisit';
+const RECEIPT_DECISION_COLOR = {
+  allow: '#00ff80',
+  confirm: '#00d4ff',
+  card: '#f59e0b',
+  deny: '#ff0080'
+};
+function WhatFridayDidCard() {
+  const [mode, setMode] = useState('visit');
+  const [day, setDay] = useState('');
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const lastVisit = useRef((() => {
+    try {
+      return parseFloat(localStorage.getItem(RECEIPT_VISIT_KEY) || '') || 0;
+    } catch (_) {
+      return 0;
+    }
+  })());
+  const load = () => {
+    let q;
+    if (mode === 'day' && day) q = 'date=' + encodeURIComponent(day) + '&tz_offset_min=' + new Date().getTimezoneOffset();else if (mode === 'visit' && lastVisit.current) q = 'since=' + lastVisit.current;else q = 'since=' + (Date.now() / 1000 - 86400);
+    setErr('');
+    fetch('/api/governance/receipts?' + q).then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(new Error(d.error || 'HTTP ' + r.status)))).then(d => {
+      setData(d);
+      try {
+        localStorage.setItem(RECEIPT_VISIT_KEY, String(Date.now() / 1000));
+      } catch (_) {}
+    }).catch(e => setErr(String(e.message || e)));
+  };
+  useEffect(() => {
+    load();
+  }, [mode, day]);
+  const acts = data ? data.actions || [] : [];
+  const shown = showAll ? acts : acts.slice(0, 40);
+  const when = t => new Date(t * 1000).toLocaleString();
+  const taskLink = (id, name) => id ? /*#__PURE__*/React.createElement("a", {
+    href: '/api/tasks/' + encodeURIComponent(id) + '/digest',
+    target: "_blank",
+    rel: "noopener",
+    title: "Open this task's record",
+    style: {
+      color: '#00d4ff'
+    }
+  }, name || id.slice(0, 8)) : null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 10,
+      padding: 10,
+      border: '1px solid rgba(0,255,128,0.18)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "\uD83E\uDDFE What Friday did"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Receipt window",
+    value: mode,
+    onChange: e => setMode(e.target.value),
+    style: {
+      fontSize: 11,
+      background: 'rgba(255,255,255,0.04)',
+      color: '#ccc',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 4
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "visit"
+  }, "Since last visit"), /*#__PURE__*/React.createElement("option", {
+    value: "24h"
+  }, "Last 24 hours"), /*#__PURE__*/React.createElement("option", {
+    value: "day"
+  }, "A day\u2026")), mode === 'day' && /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    "aria-label": "Receipt day",
+    value: day,
+    onChange: e => setDay(e.target.value),
+    style: {
+      fontSize: 11,
+      background: 'rgba(255,255,255,0.04)',
+      color: '#ccc',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 4
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    "aria-label": 'Refresh receipts',
+    title: 'Refresh receipts',
+    className: "btn",
+    style: {
+      fontSize: 11,
+      padding: '2px 8px'
+    },
+    onClick: load
+  }, "\u21BB"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      padding: '4px 2px'
+    }
+  }, "Every action Friday decided on, from the signed receipts the governance checkpoint writes. Each signature is checked; a receipt that does not verify says so."), err && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#ff0080'
+    }
+  }, "Could not load receipts: ", err), data && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#ccc',
+      margin: '4px 2px'
+    }
+  }, data.since ? 'From ' + when(data.since) + ' · ' : '', acts.length, " action", acts.length === 1 ? '' : 's', ['allow', 'confirm', 'card', 'deny'].map(k => /*#__PURE__*/React.createElement("span", {
+    key: k,
+    style: {
+      marginLeft: 8,
+      color: RECEIPT_DECISION_COLOR[k]
+    }
+  }, k, " ", data.counts[k] || 0)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      color: '#00ff80'
+    }
+  }, "\u2713 ", data.verified, " verified"), data.not_verified > 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      color: '#ff0080'
+    }
+  }, "\u2717 ", data.not_verified, " not verified"), !data.key_available && /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      color: '#f59e0b'
+    }
+  }, "signing key unavailable: nothing can be verified")), (data.tasks || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: '6px 2px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "stat-label",
+    style: {
+      fontSize: 10,
+      marginBottom: 2
+    }
+  }, "Tasks finished"), data.tasks.map(t => /*#__PURE__*/React.createElement("div", {
+    key: t.task_id,
+    style: {
+      fontSize: 11,
+      color: '#ccc',
+      padding: '2px 0'
+    }
+  }, taskLink(t.task_id, t.name), " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888'
+    }
+  }, "\xB7 ", t.status, " \xB7 ", when(t.ended))))), acts.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      padding: '6px 2px'
+    }
+  }, "No actions in this window.") : /*#__PURE__*/React.createElement("div", {
+    className: "receipt-list"
+  }, shown.map(a => /*#__PURE__*/React.createElement("div", {
+    key: a.line,
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'baseline',
+      fontSize: 11,
+      padding: '2px 0',
+      borderTop: '1px solid rgba(255,255,255,0.04)',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 10
+    }
+  }, when(a.at)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: RECEIPT_DECISION_COLOR[a.decision] || '#ccc',
+      minWidth: 48
+    }
+  }, a.decision), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#ddd',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, a.tool), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888'
+    }
+  }, a.surface), taskLink(a.task_id, a.task_name), /*#__PURE__*/React.createElement("span", {
+    title: a.reason || '',
+    style: {
+      marginLeft: 'auto',
+      color: a.verified ? '#00ff80' : '#ff0080'
+    }
+  }, a.verified ? '✓ signature verified' : '✗ not verified')))), acts.length > shown.length && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11,
+      padding: '2px 8px',
+      marginTop: 4
+    },
+    onClick: () => setShowAll(true)
+  }, "Show all ", acts.length), data.truncated && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#f59e0b',
+      marginTop: 4
+    }
+  }, "Only the newest ", acts.length, " are shown; narrow the window to see the rest.")));
+}
 function TaskRecordsCard() {
   const [ret, setRet] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -22281,7 +22507,7 @@ function SystemWS() {
     },
     disabled: !!apBusy,
     onClick: () => decideApproval(a.approval_id, 'deny')
-  }, "Deny"))))), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement("div", {
+  }, "Deny"))))), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Disk Space"), disks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "card",
