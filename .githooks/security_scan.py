@@ -112,7 +112,7 @@ def _looks_like_code_not_literal(value: str) -> bool:
         return True
     # Never exempt something that matches a known real key shape — the AQ. and
     # sk- formats contain dots and dashes and would otherwise read as identifiers.
-    for _cat, _rx, _val in RULES[:7]:
+    for _cat, _rx, _val in SHAPE_RULES:
         if _rx.search(value):
             return False
     if any(c in v for c in _CODE_PUNCT):
@@ -132,7 +132,7 @@ def _looks_like_code_not_literal(value: str) -> bool:
     # Crying wolf is not a harmless failure mode: it is how a scanner ends up
     # routinely bypassed and protecting nothing.
     #
-    # Safe because the RULES[:7] shape check above already ran -- anything
+    # Safe because the SHAPE_RULES check above already ran -- anything
     # matching a real key format (sk-, AQ., GOCSPX-, a JWT) has returned False
     # before reaching here. And a genuine secret is never an unquoted bare
     # word: `PASSWORD = hunter2` is a NameError, not a credential.
@@ -162,6 +162,8 @@ PLACEHOLDER_USERNAMES = {
     "user", "username", "user1", "name",
     "me", "someone", "example", "test", "demo", "placeholder",
     "public", "default", "all users", "administrator",
+    "runner", "runneradmin",          # GitHub-hosted CI runners
+    "x", "a", "u",
     "<user>", "<username>", "<you>", "<name>",
 }
 
@@ -183,14 +185,55 @@ def _is_personal_email(value: str) -> bool:
         return False
     return any(low.endswith("@" + d) or low.endswith(d) for d in PERSONAL_EMAIL_DOMAINS)
 
-RULES = [
+def _not_test_number(value: str) -> bool:
+    """555 numbers and Twilio's magic test numbers are fixtures, not people."""
+    digits = re.sub(r"\D", "", value)
+    return "555" not in digits[1:7]
+
+
+def _machine_identity() -> set:
+    """This machine's own account name and hostname, read at run time so the
+    scanner never has to write them down."""
+    import getpass
+    import os
+    import socket
+    names = set()
+    for v in (os.environ.get("USERNAME"), os.environ.get("USER"),
+              os.environ.get("COMPUTERNAME"), _safe(getpass.getuser),
+              _safe(socket.gethostname)):
+        v = (v or "").strip().lower()
+        if len(v) >= 4 and v not in PLACEHOLDER_USERNAMES:
+            names.add(v)
+    return names
+
+
+def _safe(fn):
+    try:
+        return fn()
+    except Exception:
+        return ""
+
+
+#: Rules that match a credential by its shape alone. `_looks_like_code_not_literal`
+#: never exempts a value these match.
+SHAPE_RULES = [
     ("Google/Gemini API key", re.compile(r"AIza[0-9A-Za-z_\-]{35}"), None),
-    ("OpenAI/Anthropic API key", re.compile(r"sk-(?:ant-)?[A-Za-z0-9_\-]{20,}"), None),
+    ("OpenAI/Anthropic/OpenRouter API key", re.compile(r"sk-(?:ant-|or-(?:v1-)?|proj-)?[A-Za-z0-9_\-]{20,}"), None),
     ("Google AI Studio (AQ.) key", re.compile(r"\bAQ\.[A-Za-z0-9_\-]{20,}"), None),
+    ("Google OAuth client secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_\-]{20,}"), None),
+    ("Google OAuth refresh token", re.compile(r"\b1//0[0-9A-Za-z_\-]{30,}"), None),
+    ("Google OAuth access token", re.compile(r"\bya29\.[0-9A-Za-z_\-]{20,}"), None),
     ("AWS access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), None),
     ("Slack token", re.compile(r"\bxox[baprs]-[0-9A-Za-z\-]{10,}"), None),
-    ("GitHub token", re.compile(r"\bgh[pousr]_[0-9A-Za-z]{30,}"), None),
-    ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"), None),
+    ("GitHub token", re.compile(r"\b(?:gh[pousr]_[0-9A-Za-z]{30,}|github_pat_[0-9A-Za-z_]{40,})"), None),
+    ("Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{30,}"), None),
+    ("Groq / xAI / Perplexity key", re.compile(r"\b(?:gsk_[A-Za-z0-9]{40,}|xai-[A-Za-z0-9]{40,}|pplx-[A-Za-z0-9]{40,})"), None),
+    ("Twilio API key or account SID", re.compile(r"\b(?:SK|AC)[0-9a-f]{32}\b"), None),
+    ("JSON Web Token", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"), None),
+    ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY-----"), None),
+]
+
+RULES = SHAPE_RULES + [
     ("Hardcoded secret assignment",
      re.compile(r"(?i)(?:api[_-]?key|secret|token|passwd|password|pwd|access[_-]?key)\s*[:=]\s*[\"']?([^\s\"';]{8,})"),
      _real_secret_assignment),
@@ -198,11 +241,20 @@ RULES = [
      re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
      _is_personal_email),
     ("Possible SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), None),
-    ("Possible phone number", re.compile(r"\b(?:\+?1[-.\s]?)?\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b|\b\d{3}[-.]\d{3}[-.]\d{4}\b"), None),
+    ("Possible phone number",
+     re.compile(r"\b(?:\+?1[-.\s]?)?\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b|\b\d{3}[-.]\d{3}[-.]\d{4}\b|\+1\d{10}\b"),
+     _not_test_number),
     ("Private Windows user path",
-     re.compile(r"[A-Za-z]:\\Users\\([A-Za-z0-9._\-]+)\\"),
+     re.compile(r"(?:[A-Za-z]:|/[a-z])[\\/]+Users[\\/]+([A-Za-z0-9._\-]+)[\\/]", re.I),
      lambda v: _is_real_username(v)),
 ]
+
+#: Files that should never be committed whatever they contain.
+SENSITIVE_FILE_RE = re.compile(
+    r"(?:^|/)(?:\.env(?:\..+)?|\.envrc|\.netrc|\.npmrc|\.pypirc|\.git-credentials|"
+    r"id_(?:rsa|dsa|ecdsa|ed25519)|credentials[^/]*\.json|client_secret[^/]*\.json|"
+    r"service-account[^/]*\.json|[^/]+\.(?:pem|key|p12|pfx|p8|kdbx|token|enc|har))$",
+    re.I)
 
 # Never scan these (binary / generated / vendored). Staged-but-gitignored files
 # normally won't appear, but guard anyway.
@@ -261,12 +313,29 @@ def file_lines(path: str):
         return
 
 
+def mask(value: str) -> str:
+    """Enough of a value to find it, never enough to use it."""
+    v = value or ""
+    if len(v) <= 8:
+        return "*" * len(v)
+    return f"{v[:4]}...{v[-2:]} ({len(v)} chars)"
+
+
 def detect(whole_tree: bool = False) -> list:
     """Scan staged additions (default) or every line of every tracked file
-    (whole_tree=True, used by CI to prove the public tree is clean)."""
+    (whole_tree=True, used by CI to prove the public tree is clean).
+
+    Returns (path, lineno, category, masked value). Values are masked so a
+    report printed to a CI log never republishes what it found."""
     findings = []
     files = tracked_files() if whole_tree else staged_files()
+    # The committer's own account name and hostname. Commit time only: on a CI
+    # runner these are the runner's, not a person's.
+    identity = set() if whole_tree else _machine_identity()
     for path in files:
+        if SENSITIVE_FILE_RE.search(path.replace("\\", "/")):
+            findings.append((path, 0, "Sensitive file type", path.rsplit("/", 1)[-1]))
+            continue
         if should_skip(path):
             continue
         for lineno, text in (file_lines(path) if whole_tree else added_lines(path)):
@@ -275,16 +344,16 @@ def detect(whole_tree: bool = False) -> list:
             if _is_deliberately_public(text):
                 continue
             for category, rx, validator in RULES:
-                m = rx.search(text)
-                if not m:
-                    continue
-                value = m.group(1) if m.groups() else m.group(0)
-                if validator and not validator(value):
-                    continue
-                snippet = text.strip()
-                if len(snippet) > 120:
-                    snippet = snippet[:117] + "..."
-                findings.append((path, lineno, category, snippet))
+                for m in rx.finditer(text):
+                    value = m.group(1) if m.groups() else m.group(0)
+                    if validator and not validator(value):
+                        continue
+                    findings.append((path, lineno, category, mask(value)))
+            low = text.lower()
+            for name in identity:
+                if re.search(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])", low):
+                    findings.append((path, lineno, "This machine's username or hostname",
+                                     mask(name)))
     return findings
 
 
@@ -303,9 +372,8 @@ def report(findings: list) -> None:
     _say("")
     _say("X BLOCKED -- potential secrets / PII found")
     _say("")
-    for path, lineno, category, snippet in findings:
-        _say(f"  {path}:{lineno}  [{category}]")
-        _say(f"      {snippet}")
+    for path, lineno, category, masked in findings:
+        _say(f"  {path}:{lineno}  [{category}]  {masked}")
     _say("")
     _say("What to do:")
     _say("  - Move secrets to environment variables or ~/.friday/ runtime config.")
@@ -320,10 +388,13 @@ if __name__ == "__main__":
     _whole_tree = "--tree" in sys.argv
     try:
         _findings = detect(whole_tree=_whole_tree)
-    except Exception as exc:  # never hard-fail a commit on a scanner/detection bug
-        print(f"[security_scan] warning: scanner error, not blocking commit: {exc}",
+    except Exception as exc:
+        # A scan that did not run has not shown the commit is clean. Hold it.
+        print(f"[security_scan] the scanner failed, so the commit is held: {exc}",
               file=sys.stderr)
-        sys.exit(0)
+        print("[security_scan] fix the scanner, or bypass knowingly with --no-verify",
+              file=sys.stderr)
+        sys.exit(2)
     # Detection succeeded: if anything was found, BLOCK — even if printing hiccups.
     if _findings:
         report(_findings)

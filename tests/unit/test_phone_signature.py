@@ -11,14 +11,14 @@ from agent_friday.phone import signature as S
 
 TOKEN = "12345"  # pragma: allowlist secret  (Twilio's documented example token)
 DOC_URL = "https://mycompany.com/myapp.php?foo=1&bar=2"
-DOC_PARAMS = {"CallSid": "CA1234567890ABCDE", "Caller": "+12349013030", "Digits": "1234",
-              "From": "+12349013030", "To": "+18005551212"}
+DOC_PARAMS = {"CallSid": "CA1234567890ABCDE", "Caller": "+12349013030", "Digits": "1234",  # pragma: allowlist secret
+              "From": "+12349013030", "To": "+18005551212"}  # pragma: allowlist secret  (Twilio's documented example numbers)
 SIG_A = "0/KCTR6DLpKmkAf8muzZqo1nDgQ="          # DOC_URL, DOC_PARAMS
 SIG_B = "EpDEmp1PyjDYp77YxYU3GILBWzE="          # same, URL written with :443
 SIG_C = "IvYavak98yoAoW95WqEhA1nZ6fM="          # repeated MediaUrl + Body
 SIG_D = "hPXmLwIy3Fgqv1i9KPmH/HhQ6zo="          # JSON body via bodySHA256
 SIG_E = "oVvxRrbyq0KAZw3Vv+ltlAwMInU="          # a Media Streams WebSocket URL
-JSON_BODY = b'{"CallSid":"CA1234567890ABCDE","Caller":"+12349013030"}'
+JSON_BODY = b'{"CallSid":"CA1234567890ABCDE","Caller":"+12349013030"}'  # pragma: allowlist secret
 JSON_URL = ("https://example.com/myapp?bodySHA256="
             "5ccde7145dfb8f56479710896586cb9d5911809d83afbe34627818790db0aec9")
 
