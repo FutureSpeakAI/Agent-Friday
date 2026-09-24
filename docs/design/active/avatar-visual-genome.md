@@ -275,7 +275,7 @@ The night already holds these jobs (default times, from `scheduler.py`):
 | 03:30 | knowledge-graph reindex |
 | 04:00 | context-log retention (daily); learning epoch (weekly) |
 | 06:00 | repo sync |
-| 06:30 | Edition |
+| 06:30 | *(free — The Friday Edition ran here until 2026-09-24)* |
 | 06:45 | brutalist.report scrape |
 | 07:00 | **Front Page morning slot** (uses the local seat) |
 

@@ -89,10 +89,19 @@ def serve_ui():
 _WS_ID = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
 
 
+#: Workspaces that used to exist. Their URLs may be bookmarked, linked from an
+#: old notification or sitting in someone's history, so they redirect rather than
+#: 404. `edition` (The Friday Edition, E0) was removed 2026-09-24 in favour of
+#: the briefings; its data is untouched at ~/.friday/edition.
+_RETIRED_WORKSPACES = {'edition': 'home'}
+
+
 @core_bp.route('/w/<ws_id>')
 def serve_workspace_tab(ws_id):
     if not _WS_ID.match(ws_id or ''):
         return "Not a workspace name.", 404
+    if ws_id in _RETIRED_WORKSPACES:
+        return redirect('/w/' + _RETIRED_WORKSPACES[ws_id])
     if ws_id == 'settings':
         return redirect('/?workspace=settings')
     return _serve_index(
