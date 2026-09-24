@@ -50662,7 +50662,9 @@ function App() {
          way — entering the mode is otherwise deliberate. */
       var autoEntered = false;
       function considerAuto() {
-        if (pipWindow) return;
+        // A workspace in its own tab (/w/<id>) is not the desktop and has no
+        // widget to become: shrinking it must leave the workspace on screen.
+        if (pipWindow || window.__FRIDAY_STANDALONE__) return;
         var tiny = window.innerWidth < 420 && window.innerHeight < 460;
         if (tiny && !body.classList.contains('condensed')) { setCondensed(true); autoEntered = true; }
         else if (!tiny && autoEntered && body.classList.contains('condensed')) { setCondensed(false); autoEntered = false; }
