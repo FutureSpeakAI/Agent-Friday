@@ -39217,6 +39217,24 @@ function SetupWizard({
       color: 'rgba(245,158,11,0.9)'
     }
   }, "Demo mode \u2014 connect a provider anytime in Settings")),
+  // Friday's own address, offered once at setup and always in Settings. The
+  // same card as Settings: each of its two system changes (the hosts entry and
+  // trusting Friday's certificate) starts only from its own button, and
+  // Windows asks the person again before making it.
+  /*#__PURE__*/React.createElement("div", {
+    'data-testid': 'wizard-local-address',
+    style: {
+      textAlign: 'left',
+      marginTop: 24
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.55)',
+      lineHeight: 1.6,
+      marginBottom: 8
+    }
+  }, "Optional: give Friday its own address on this PC. Each change asks Windows for your permission first, and you can do it later in Settings."), /*#__PURE__*/React.createElement(LocalAddressSettings, null)),
   // The vault passphrase used to be collected HERE: a purple box in the bottom
   // third of the final screen, below the configuration summary and immediately
   // above the button that dismisses the wizard forever, captioned "leave blank
