@@ -12363,11 +12363,13 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
                 ?<span style={{color:'rgba(52,211,153,0.9)'}}>✓ {enteredCount} provider{enteredCount>1?'s':''} connected</span>
                 :<span style={{color:'rgba(245,158,11,0.9)'}}>Demo mode — connect a provider anytime in Settings</span>}
             </div>
-            <div style={{marginTop:22,textAlign:'left',padding:'12px 14px',borderRadius:8,border:'1px solid rgba(124,58,237,0.25)',background:'rgba(124,58,237,0.05)'}}>
-              <div style={{fontSize:11,color:'rgba(200,180,255,0.9)',fontFamily:'JetBrains Mono',marginBottom:6,letterSpacing:'.04em'}}>🔐 ENCRYPT YOUR VAULT (RECOMMENDED)</div>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:8,lineHeight:1.6}}>A passphrase encrypts private data (finance, health, notes) at rest with AES-256-GCM. Stored in your OS keychain, with an encrypted on-disk backup only this account can read. Leave blank to set it later in Settings → Privacy.</div>
-              <input type="password" value={data.vault_passphrase||''} onChange={e=>onChange({vault_passphrase:e.target.value})} placeholder="Vault passphrase (optional)"
-                style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(124,58,237,0.3)',borderRadius:6,padding:'9px 12px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',boxSizing:'border-box'}}/>
+            {/* Friday's own address, offered once at setup and always in
+                Settings. Each system change starts only from its own button,
+                and Windows asks again before making it. The vault passphrase
+                is collected by ConsentFlow, before this wizard. */}
+            <div data-testid="wizard-local-address" style={{textAlign:'left',marginTop:24}}>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.55)',lineHeight:1.6,marginBottom:8}}>Optional: give Friday its own address on this PC. Each change asks Windows for your permission first, and you can do it later in Settings.</div>
+              <LocalAddressSettings/>
             </div>
             <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',marginTop:20,fontFamily:'JetBrains Mono',letterSpacing:'.05em'}}>
               BY FUTURESPEAK.AI · ASIMOV'S CLAWS CERTIFIED
