@@ -32,11 +32,16 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[2]
 INDEX = REPO / "index.html"
 LIVE = REPO / "static" / "live" / "friday_live.html"
+# index.html is the served UI; app.html is its hand-maintained mirror, and a
+# mirror that still schedules per chunk is a fix waiting to be undone by the
+# next person who regenerates from it. This test file originally checked only
+# the two served pages and let the mirror go stale for exactly that reason.
+APP = REPO / "ui_parts" / "app.html"
 WORKLET = REPO / "static" / "js" / "friday_pcm_player.worklet.js"
 WORKLET_URL = "/static/js/friday_pcm_player.worklet.js"
 PAGE_PATH = "/__voice_playback_fixture.html"
 
-STREAMING_PAGES = (INDEX, LIVE)
+STREAMING_PAGES = (INDEX, LIVE, APP)
 
 
 def test_the_shared_player_exists_and_registers_its_processor():
