@@ -486,6 +486,27 @@ def test_insert_refuses_rather_than_pasting_into_the_wrong_window():
     assert "clipboard" in note
 
 
+def test_an_administrator_window_is_named_as_the_reason():
+    """An elevated window refusing synthetic input is Windows working as
+    designed, and nothing the user can fix from Friday's side. Reporting it
+    as a generic paste failure leaves someone retrying a thing that can never
+    work."""
+    clip = FakeClip("old")
+    was_elevated, was_refocus = ptt.foreground_window_is_elevated, ptt.refocus
+    try:
+        ptt.foreground_window_is_elevated = lambda: True
+        ptt.refocus = lambda hwnd: False        # an elevated window refuses
+        ok, note = ptt.insert_text("a sentence", send_input=lambda: None,
+                                   clipboard=clip, target=1)
+    finally:
+        ptt.foreground_window_is_elevated = was_elevated
+        ptt.refocus = was_refocus
+    assert ok is False
+    assert "administrator" in note
+    assert "Ctrl+V" in note, "the words must still be reachable"
+    assert clip.value == "a sentence"
+
+
 def test_insert_with_no_target_still_works():
     """Called without a target — as the in-page path does — nothing changes."""
     clip = FakeClip("old")
