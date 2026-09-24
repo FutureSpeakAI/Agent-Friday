@@ -42,6 +42,7 @@ from agent_friday.services.wiki_engine import (
     _propose_wiki_update,
     _safe_wiki_path,
     _save_pending_wiki,
+    VAULT_LOCKED_PLACEHOLDER,
     wiki_read_text,
     wiki_write_text,
 )  # noqa: E501
@@ -50,12 +51,46 @@ wiki_bp = Blueprint('wiki', __name__)
 
 
 
+def _page_payload(rel, path):
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = None
+    rel = str(path.relative_to(WIKI_DIR.resolve())).replace('\\', '/')
+    section, _, filename = rel.rpartition('/')
+    content = wiki_read_text(path)
+    return {"status": "ok", "path": rel, "content": content,
+            "section": section, "filename": filename, "modified": mtime,
+            "locked": content.startswith(VAULT_LOCKED_PLACEHOLDER)}
+
+
+@wiki_bp.route('/api/wiki/page')
+def wiki_page_by_path():
+    """Read any wiki page by its path, nested or at the wiki root.
+
+    The Knowledge graph reaches every page (it walks the whole tree), so the
+    reader must too: `section/filename` alone cannot address a page at the
+    root or one folder deeper. The path is resolved inside WIKI_DIR or refused.
+    """
+    rel = (request.args.get('path') or '').strip()
+    path = _safe_wiki_path(rel)
+    if path is None:
+        return jsonify({"status": "error", "message": "invalid wiki path"}), 400
+    if not path.is_file():
+        return jsonify({"status": "not_found", "path": rel}), 404
+    return jsonify(_page_payload(rel, path))
+
+
 @wiki_bp.route('/api/wiki/<section>/<filename>')
 def wiki_page(section, filename):
-    """Read a wiki markdown file."""
+    """Read a wiki markdown file (two-level form, kept for older links).
+
+    Resolved through the same guard as every write: a `section` of `..` must
+    not read files that sit beside the wiki (SOUL.md, settings exports).
+    """
     if not filename.endswith('.md') and not filename.endswith('.txt'): filename += '.md'
-    safe_path = WIKI_DIR / section / filename
-    if safe_path.exists() and safe_path.suffix in ('.md', '.txt'):
+    safe_path = _safe_wiki_path(f"{section}/{filename}")
+    if safe_path is not None and safe_path.is_file() and safe_path.suffix in ('.md', '.txt'):
         return jsonify({"status": "ok", "content": wiki_read_text(safe_path),
                         "section": section, "filename": filename})
     return jsonify({"status": "not_found"}), 404
@@ -171,6 +206,18 @@ def wiki_edit():
     path = _safe_wiki_path(file)
     if path is None:
         return jsonify({"status": "error", "message": "invalid wiki path"}), 400
+    # Creating a page never replaces one: the form that asks checked a list
+    # that can be stale (another tab, Friday, the Drive mirror).
+    if data.get("create") and path.exists():
+        return jsonify({"status": "error", "exists": True,
+                        "message": "A page with that name already exists."}), 409
+    # A page that reads as the locked-vault placeholder is ciphertext this
+    # process cannot see. Whatever the editor sends was written against the
+    # placeholder, so saving it would replace the page; refuse until unlocked.
+    if path.is_file() and wiki_read_text(path).startswith(VAULT_LOCKED_PLACEHOLDER):
+        return jsonify({"status": "error", "locked": True,
+                        "message": "This page is encrypted and the vault is locked. "
+                                   "Unlock the vault before editing it."}), 409
     _mirror_wiki_file(file, content)
     return jsonify({"status": "ok", "saved": file, "bytes": len(content)})
 
