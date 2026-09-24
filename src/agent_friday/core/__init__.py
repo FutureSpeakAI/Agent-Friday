@@ -406,61 +406,170 @@ def _get_throttle_db():
 # remote connections (e.g. via Cloudflare Tunnel) ever see it.
 _LOOPBACK_ADDRS = {'127.0.0.1', '::1', 'localhost'}
 
-#: Headers that exist only because something FORWARDED the request. Any one of
-#: them means `remote_addr` is a proxy's address, not the client's, so it cannot
-#: be used to decide whether the client is this machine.
+#: Headers that exist only because something FORWARDED the request. Their
+#: presence means `remote_addr` is a PROXY's address rather than the client's, so
+#: the peer address alone cannot answer "is the client this machine".
 #:
-#: THIS IS A SECURITY BOUNDARY. `friday_startup.bat` runs
-#: `cloudflared tunnel --url http://localhost:3000`, publishing the entire API on
-#: a public trycloudflare URL, and cloudflared connects to Friday from LOOPBACK.
-#: So every tunnelled request arrived with remote_addr == '127.0.0.1', this
-#: function said "local", `_loopback_trusted()` auto-authenticated it, and
-#: anyone holding the URL was signed in as the machine's owner --
-#: `@login_required` routes and the approval endpoints included. A tunnel had
-#: been up for about two days when this was found (2026-09-24).
+#: THIS IS A SECURITY BOUNDARY, and it has been wrong in both directions.
 #:
-#: The comment above claimed the opposite ("only remote connections ... ever see
-#: it"). The intent was right; nothing implemented it.
+#: Too permissive (found 2026-09-24): `friday_startup.bat`/`.vbs` ran
+#: `cloudflared tunnel --url http://localhost:3000`, publishing the whole API on
+#: a public trycloudflare URL. cloudflared connects from LOOPBACK, so every
+#: tunnelled request arrived with remote_addr == '127.0.0.1', read as local, and
+#: was auto-authenticated as the machine's owner -- `@login_required` routes and
+#: the approval endpoints included. A tunnel had been up about two days.
 #:
-#: Matched by exact name and by the `cf-` PREFIX, because Cloudflare adds a
-#: family of these and can add more -- a fixed list would need maintaining, and
-#: the maintenance is what fails.
-_FORWARDED_HEADERS = (
-    'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
-    'x-forwarded-port', 'x-real-ip', 'forwarded', 'via',
-    'true-client-ip', 'x-cluster-client-ip',
+#: Too strict (found the same day, minutes after the first fix): treating the
+#: mere PRESENCE of a forwarding header as proof of remoteness locked Stephen out
+#: of his own machine. He browses `https://agent.friday`, which is Friday's OWN
+#: presentation proxy -- `ops/Caddyfile`, `bind 127.0.0.1 ::1`, `reverse_proxy
+#: 127.0.0.1:3000` -- and Caddy adds `X-Forwarded-For: 127.0.0.1`. He was asked
+#: for a password that exists only because a launcher sets `FRIDAY_PASSWORD`.
+#:
+#: So the question is not "was this forwarded" but "was it forwarded from
+#: somewhere on THIS MACHINE". A forwarded request is local only when all of:
+#:
+#:   * the immediate peer is loopback (the proxy runs here), AND
+#:   * no CDN/tunnel header is present -- any `CF-*` still means remote, AND
+#:   * every claimed client address in the chain is itself loopback, AND
+#:   * the forwarded host, if given, is a local alias, not a public name.
+#:
+#: cloudflared cannot satisfy that: Cloudflare's edge sets `CF-Connecting-IP`
+#: and appends the real client address to `X-Forwarded-For`, and a client cannot
+#: strip either. Two independent checks, so neither one carries the boundary
+#: alone. A tunnel that forwarded NO headers at all would still look like plain
+#: loopback -- that is what `FRIDAY_TRUST_LOOPBACK=0` is for, and it is why
+#: nothing here is a substitute for not running a public tunnel.
+
+#: Headers whose value is a claimed CLIENT address (or chain of them).
+_FORWARDED_CLIENT_HEADERS = (
+    'x-forwarded-for', 'x-real-ip', 'true-client-ip', 'x-cluster-client-ip',
 )
-_FORWARDED_PREFIXES = ('cf-',)
+
+#: Header name prefixes that mean a CDN or tunnel handled this. Matched by
+#: PREFIX because Cloudflare adds a family of these and can add more; a fixed
+#: list needs maintaining, and the maintenance is what fails.
+_CDN_HEADER_PREFIXES = ('cf-',)
+
+#: Hosts a local proxy may legitimately present. `agent.friday` is the hosts-file
+#: alias Caddy serves; anything else public (e.g. *.trycloudflare.com) is not us.
+_LOCAL_FORWARDED_HOSTS = {
+    'agent.friday', 'localhost', '127.0.0.1', '::1', '[::1]',
+}
 
 
-def _looks_proxied():
-    """True when the request carries evidence of having been forwarded.
+def _is_loopback_addr(addr) -> bool:
+    """True for 127.0.0.0/8, ::1, and IPv4-mapped forms of them."""
+    a = str(addr or '').strip().strip('"')
+    if not a:
+        return False
+    if a.startswith('['):                       # [::1]:1234
+        a = a[1:].split(']', 1)[0]
+    elif a.count(':') == 1 and '.' in a:        # 127.0.0.1:1234
+        a = a.split(':', 1)[0]
+    if a.startswith('::ffff:'):
+        a = a[7:]
+    a = a.lower()
+    if a in ('::1', 'localhost'):
+        return True
+    try:
+        import ipaddress
+        return ipaddress.ip_address(a).is_loopback
+    except Exception:
+        return a.startswith('127.')
 
-    A spoofed `X-Forwarded-For: 127.0.0.1` is treated exactly like any other:
-    the presence of the header is the disqualifier, not its contents. Trusting a
-    loopback-looking chain would hand the tunnel its bypass straight back, since
-    the chain is attacker-supplied.
+
+def _forwarded_client_addrs():
+    """Every client address this request CLAIMS, across all forwarding headers.
+
+    Returns None when no forwarding header is present at all (a direct request),
+    which is different from returning an empty list (headers present but
+    unparseable -- treated as untrustworthy by the caller).
     """
+    try:
+        h = request.headers
+    except Exception:
+        return []
+    found = False
+    addrs = []
+    for name in _FORWARDED_CLIENT_HEADERS:
+        raw = h.get(name)
+        if raw is None:
+            continue
+        found = True
+        addrs.extend(p.strip() for p in str(raw).split(',') if p.strip())
+    # RFC 7239: Forwarded: for=127.0.0.1;proto=https, for=...
+    raw = h.get('forwarded')
+    if raw is not None:
+        found = True
+        for element in str(raw).split(','):
+            for pair in element.split(';'):
+                k, _, v = pair.partition('=')
+                if k.strip().lower() == 'for' and v.strip():
+                    addrs.append(v.strip())
+    # `X-Forwarded-Host`/`-Proto`/`-Port` and `Via` carry no client address, but
+    # their presence still proves a hop happened.
+    if not found:
+        for name in ('x-forwarded-host', 'x-forwarded-proto',
+                     'x-forwarded-port', 'via'):
+            if h.get(name) is not None:
+                found = True
+                break
+    return addrs if found else None
+
+
+def _has_cdn_header() -> bool:
+    """True when a CDN or tunnel handled this request. Always disqualifying."""
     try:
         names = [k.lower() for k in request.headers.keys()]
     except Exception:
-        # No readable headers: cannot prove it was NOT proxied. Say it was.
+        return True                      # cannot prove it was not; assume it was
+    return any(n.startswith(p) for n in names for p in _CDN_HEADER_PREFIXES)
+
+
+def _forwarded_host_is_local() -> bool:
+    """True when `X-Forwarded-Host` is absent or names a local alias.
+
+    Defence in depth: cloudflared sets this to the public `*.trycloudflare.com`
+    hostname, so a request claiming a loopback chain while presenting a public
+    host is lying about one of the two.
+    """
+    try:
+        host = request.headers.get('x-forwarded-host')
+    except Exception:
+        return False
+    if not host:
         return True
-    for name in names:
-        if name in _FORWARDED_HEADERS:
-            return True
-        if any(name.startswith(p) for p in _FORWARDED_PREFIXES):
-            return True
-    return False
+    first = str(host).split(',')[0].strip().lower()
+    bare = first.rsplit(':', 1)[0] if first.count(':') == 1 else first
+    return first in _LOCAL_FORWARDED_HOSTS or bare in _LOCAL_FORWARDED_HOSTS
+
+
+def _looks_proxied():
+    """True when the request was forwarded from somewhere NOT on this machine.
+
+    Kept as the name the rest of the file and the tests use. It no longer means
+    "carries a forwarding header" -- Friday's own loopback proxy does that -- it
+    means "forwarded in a way this machine cannot vouch for".
+    """
+    if _has_cdn_header():
+        return True
+    claimed = _forwarded_client_addrs()
+    if claimed is None:
+        return False                     # no forwarding evidence at all
+    if not claimed:
+        return True                      # a hop happened, no address to check
+    if not _forwarded_host_is_local():
+        return True
+    return not all(_is_loopback_addr(a) for a in claimed)
 
 
 def _is_local_request():
-    """True if the current request originates from this machine (loopback).
+    """True if the current request originates from this machine.
 
-    A forwarded request is never local, however local the peer looks -- see
-    `_FORWARDED_HEADERS`. Every trust decision in the app routes through here
-    (the HTTP decorator, the settings gate, the voice WebSocket), so this is the
-    one place the distinction has to hold.
+    Every trust decision in the app routes through here -- the HTTP decorator,
+    the settings gate, the voice WebSocket -- so this is the one place the
+    distinction has to hold.
     """
     try:
         addr = (request.remote_addr or '').strip()
@@ -468,10 +577,10 @@ def _is_local_request():
         return False
     if not addr:
         return False
-    # Normalize IPv6-mapped IPv4 like ::ffff:127.0.0.1
-    if addr.startswith('::ffff:'):
-        addr = addr[7:]
-    if addr not in _LOOPBACK_ADDRS:
+    # The immediate peer must be on this machine, whether it is the browser or
+    # a proxy running here. Without this, a loopback-looking forwarded chain
+    # from a real remote peer would be believed.
+    if not _is_loopback_addr(addr):
         return False
     return not _looks_proxied()
 

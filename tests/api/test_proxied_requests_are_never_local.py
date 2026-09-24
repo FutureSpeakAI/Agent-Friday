@@ -23,6 +23,14 @@ to a `@login_required` route returned data whether sent plain, with
 `X-Forwarded-For`, or with `CF-Connecting-IP` + `Cf-Ray`. The headers changed
 nothing.
 
+AMENDED 2026-09-24, same day: the first fix disqualified a request for merely
+CARRYING a forwarding header, which made Friday's own loopback proxy
+(`https://agent.friday`, `ops/Caddyfile`) look remote and put a login screen in
+front of the local user. The rule is now "forwarded from somewhere this machine
+cannot vouch for": the peer must be loopback, no `CF-*` header may be present,
+every claimed address in the chain must be loopback, and a forwarded host must
+be a local alias. See test_a_loopback_proxy_is_still_the_local_user.py.
+
 Every trust decision in the app -- the HTTP decorator, the settings gate and the
 voice WebSocket -- funnels through `_is_local_request()`, so this is one place.
 """
@@ -35,7 +43,22 @@ import agent_friday.core as core
 #: them means the peer address belongs to a proxy, not to the client.
 PROXY_HEADERS = [
     {"X-Forwarded-For": "203.0.113.9"},
-    {"X-Forwarded-For": "127.0.0.1"},          # a spoofed loopback claim
+    # NOT here any more: {"X-Forwarded-For": "127.0.0.1"}.
+    #
+    # This file originally pinned a loopback-looking chain as remote, on the
+    # grounds that the chain is attacker-supplied. That was too strict and it
+    # locked Stephen out of his own machine within minutes: he browses
+    # `https://agent.friday`, Friday's OWN loopback proxy (`ops/Caddyfile`),
+    # and Caddy sends exactly that header.
+    #
+    # A spoof is now defeated by two other checks instead: any `CF-*` header
+    # is disqualifying on its own, and EVERY address in the chain must be
+    # loopback -- Cloudflare appends the real client address, which a client
+    # cannot strip. Both are exercised below and in
+    # test_a_loopback_proxy_is_still_the_local_user.py.
+    {"CF-Connecting-IP": "203.0.113.9",
+     "X-Forwarded-For": "127.0.0.1"},          # spoofed chain + a CF header
+    {"X-Forwarded-For": "127.0.0.1, 203.0.113.9"},  # a real hop in the chain
     {"X-Real-IP": "203.0.113.9"},
     {"Forwarded": "for=203.0.113.9;proto=https"},
     {"X-Forwarded-Host": "example.trycloudflare.com"},
