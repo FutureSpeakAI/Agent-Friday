@@ -406,8 +406,62 @@ def _get_throttle_db():
 # remote connections (e.g. via Cloudflare Tunnel) ever see it.
 _LOOPBACK_ADDRS = {'127.0.0.1', '::1', 'localhost'}
 
+#: Headers that exist only because something FORWARDED the request. Any one of
+#: them means `remote_addr` is a proxy's address, not the client's, so it cannot
+#: be used to decide whether the client is this machine.
+#:
+#: THIS IS A SECURITY BOUNDARY. `friday_startup.bat` runs
+#: `cloudflared tunnel --url http://localhost:3000`, publishing the entire API on
+#: a public trycloudflare URL, and cloudflared connects to Friday from LOOPBACK.
+#: So every tunnelled request arrived with remote_addr == '127.0.0.1', this
+#: function said "local", `_loopback_trusted()` auto-authenticated it, and
+#: anyone holding the URL was signed in as the machine's owner --
+#: `@login_required` routes and the approval endpoints included. A tunnel had
+#: been up for about two days when this was found (2026-09-24).
+#:
+#: The comment above claimed the opposite ("only remote connections ... ever see
+#: it"). The intent was right; nothing implemented it.
+#:
+#: Matched by exact name and by the `cf-` PREFIX, because Cloudflare adds a
+#: family of these and can add more -- a fixed list would need maintaining, and
+#: the maintenance is what fails.
+_FORWARDED_HEADERS = (
+    'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
+    'x-forwarded-port', 'x-real-ip', 'forwarded', 'via',
+    'true-client-ip', 'x-cluster-client-ip',
+)
+_FORWARDED_PREFIXES = ('cf-',)
+
+
+def _looks_proxied():
+    """True when the request carries evidence of having been forwarded.
+
+    A spoofed `X-Forwarded-For: 127.0.0.1` is treated exactly like any other:
+    the presence of the header is the disqualifier, not its contents. Trusting a
+    loopback-looking chain would hand the tunnel its bypass straight back, since
+    the chain is attacker-supplied.
+    """
+    try:
+        names = [k.lower() for k in request.headers.keys()]
+    except Exception:
+        # No readable headers: cannot prove it was NOT proxied. Say it was.
+        return True
+    for name in names:
+        if name in _FORWARDED_HEADERS:
+            return True
+        if any(name.startswith(p) for p in _FORWARDED_PREFIXES):
+            return True
+    return False
+
+
 def _is_local_request():
-    """True if the current request originates from this machine (loopback)."""
+    """True if the current request originates from this machine (loopback).
+
+    A forwarded request is never local, however local the peer looks -- see
+    `_FORWARDED_HEADERS`. Every trust decision in the app routes through here
+    (the HTTP decorator, the settings gate, the voice WebSocket), so this is the
+    one place the distinction has to hold.
+    """
     try:
         addr = (request.remote_addr or '').strip()
     except Exception:
@@ -417,7 +471,9 @@ def _is_local_request():
     # Normalize IPv6-mapped IPv4 like ::ffff:127.0.0.1
     if addr.startswith('::ffff:'):
         addr = addr[7:]
-    return addr in _LOOPBACK_ADDRS
+    if addr not in _LOOPBACK_ADDRS:
+        return False
+    return not _looks_proxied()
 
 def _loopback_trusted():
     """Loopback auto-auth, unless FRIDAY_TRUST_LOOPBACK=0 forces login locally too."""
