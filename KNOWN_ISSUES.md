@@ -48,11 +48,6 @@ you hit something that is not here, please open an issue.
   two receipt files: the privilege-ring check writes its own entries to
   `.friday\vault\decision-bom.jsonl`, and if signing fails there it writes the
   entry unsigned rather than holding the call.
-- **The wiki has a hard-coded Google Drive mirror.** `services/wiki_engine.py`
-  copies every wiki write to `G:\My Drive\Wiki` if that folder exists.
-  Encrypted sections arrive there as ciphertext, everything else as plain
-  text, and a Drive-synced folder uploads it. If you use Google Drive for
-  desktop on drive G:, check for that folder.
 - **The uninstaller does not undo the local address.** Remove the hosts-file
   entry and the trusted certificate from Settings → General before
   uninstalling.

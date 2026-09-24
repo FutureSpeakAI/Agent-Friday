@@ -2026,6 +2026,10 @@ DEFAULT_SETTINGS = {
     # on every load: the feature could not be switched on from settings.json
     # at all. The Privacy tab's checklist writes it (model-soup.md §11.4).
     "wiki_encrypted_sections": [],
+    # Absolute path of an owner-chosen folder that receives a copy of every
+    # wiki write and delete (services/wiki_engine._wiki_mirror_dir). Empty =
+    # off. A cloud-synced folder sends every mirrored page off the machine.
+    "wiki_mirror_dir": "",
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
