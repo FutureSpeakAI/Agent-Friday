@@ -18,6 +18,7 @@ document it is.
 | [Configuration](user-guide/configuration.md) | Every `settings.json` option, environment variable, and provider key. |
 | [File grants](user-guide/file-grants.md) | Letting Friday send a specific document to the cloud, deliberately and on the record. |
 | [Background network activity](user-guide/background-network.md) | Every outbound connection a default install makes, and how to disable each. |
+| [PDF documents](user-guide/pdf-documents.md) | Reading scans with local OCR, filling forms into a new file, and signing only on an approval card. |
 | [Skills](user-guide/skills.md) | The skill system, versioned optimisation, and the auto-research loop. |
 | [Local voice, GPU tier](user-guide/local-voice-gpu-tier.md) | The NVIDIA NeMo voice tier behind the same WebSocket contract as the CPU tier. |
 
