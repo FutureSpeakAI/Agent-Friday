@@ -309,7 +309,10 @@ def test_writing_fridays_own_state_is_outward(tmp_path, monkeypatch):
     (tmp_path / "home").mkdir()
     assert g.classify("write_file", {"path": str(tmp_path / "home" / "settings.json")})[0] == g.OUTWARD
     assert g.classify("write_file", {"path": str(tmp_path / "proj" / "SOUL.md")})[0] == g.OUTWARD
-    assert g.classify("write_file", {"path": str(tmp_path / "notes" / "todo.md")})[0] == g.INTERNAL
+    # Outside Friday's own output folders is the owner's disk: it waits too.
+    assert g.classify("write_file", {"path": str(tmp_path / "notes" / "todo.md")})[0] == g.OUTWARD
+    monkeypatch.setattr(g, "_output_dirs", lambda: [(tmp_path / "creations").resolve()])
+    assert g.classify("write_file", {"path": str(tmp_path / "creations" / "todo.md")})[0] == g.INTERNAL
 
 
 def test_run_command_refuses_the_local_api_even_if_reached():

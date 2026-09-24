@@ -132,17 +132,17 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone"})
 #: gate already judges, and delegation (a spawned task's own actions come
 #: back through this checkpoint one by one).
 INTERNAL_TOOLS = frozenset({
-    "search_web", "browse_web", "read_file", "search_files", "write_file",
+    "search_web", "browse_web", "read_file", "search_files",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
     "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",
     "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "open_path", "navigate", "switch_model", "list_sending_accounts",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
-    "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
+    "correct_wiki", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "generate_video",
     "generate_music", "compose_timeline", "create_presentation", "create_website",
-    "office_check",                 # validates and renders; writes nothing
+    "office_check",                 # validates; renders a preview PNG beside it
     "create_workflow", "run_workflow", "workflow_status", "creative_project",
     "start_creative_pipeline", "compare_image_takes", "content_post_status",
     "content_repurpose", "knowledge_query", "knowledge_related",
@@ -155,8 +155,10 @@ INTERNAL_TOOLS = frozenset({
 })
 
 #: Classified by argument: run_command by its command, content_create_post by
-#: whether it schedules.
-BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office"})
+#: whether it schedules, write_file by where it writes, learn_skill by whether
+#: it changes a skill.
+BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
+                         "write_file", "learn_skill"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -220,16 +222,54 @@ def classify_command(cmd: str) -> tuple:
     return INTERNAL, "read-only"
 
 
+def _resolve(path) -> Optional[Path]:
+    import os
+    try:
+        return Path(os.path.expanduser(str(path))).resolve()
+    except Exception:
+        return None
+
+
+def _output_dirs() -> list:
+    """Folders that hold Friday's own output: the creations folders and the
+    office documents folder. What lands here is Friday's work, not the
+    owner's files or Friday's configuration."""
+    dirs = []
+    try:
+        from agent_friday import core as _core
+        dirs += [getattr(_core, "CREATIONS_DIR", None), getattr(_core, "DAILY_CREATIONS_DIR", None)]
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import office_engine as _oe
+        dirs.append(_oe.DOCUMENTS_DIR)
+    except Exception:
+        pass
+    out = []
+    for d in dirs:
+        if d:
+            try:
+                out.append(Path(d).resolve())
+            except Exception:
+                pass
+    return out
+
+
+def _in_output_dir(p: Path) -> bool:
+    for d in _output_dirs():
+        if p == d or d in p.parents:
+            return True
+    return False
+
+
 def _writes_friday_state(path) -> bool:
     """A file write that lands in Friday's own state (settings, approvals,
     schedules, skills, wiki) or in a file it loads as instructions. The
-    creations folders are ordinary output and stay internal."""
+    output folders are ordinary output and are not state."""
     if not path:
         return False
-    import os
-    try:
-        p = Path(os.path.expanduser(str(path))).resolve()
-    except Exception:
+    p = _resolve(path)
+    if p is None:
         return True
     try:
         from agent_friday.services.taint import _RULE_FILES
@@ -237,22 +277,31 @@ def _writes_friday_state(path) -> bool:
             return True
     except Exception:
         return True
-    try:
-        from agent_friday import core as _core
-        for out in (getattr(_core, "CREATIONS_DIR", None), getattr(_core, "DAILY_CREATIONS_DIR", None)):
-            if out:
-                try:
-                    p.relative_to(Path(out).resolve())
-                    return False
-                except ValueError:
-                    pass
-    except Exception:
-        pass
+    if _in_output_dir(p):
+        return False
     try:
         p.relative_to(Path(friday_home()).resolve())
         return True
     except ValueError:
         return False
+
+
+def classify_write(path) -> tuple:
+    """(class, why) for a file write.
+
+    Only Friday's output folders are internal. Anywhere else is the owner's
+    disk: a write there can replace a document, drop a script into a folder
+    that runs at sign-in, or change what another program does. That waits for
+    a decision -- a yes in chat, or a card when nobody is in the chat.
+    """
+    if not path:
+        return OUTWARD, "a file write with no path"
+    if _writes_friday_state(path):
+        return OUTWARD, "it rewrites Friday's own settings, memory or rules"
+    p = _resolve(path)
+    if p is not None and _in_output_dir(p):
+        return INTERNAL, "it writes into Friday's own output folder"
+    return OUTWARD, "it writes a file outside Friday's output folders"
 
 
 def _laya_down() -> bool:
@@ -290,8 +339,14 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
             return _oe.classify(a)
         except Exception as e:
             return OUTWARD, f"the office command could not be classified ({e})"
-    if tool_name == "write_file" and _writes_friday_state(a.get("path")):
-        return OUTWARD, "it rewrites Friday's own settings, memory or rules"
+    if tool_name == "write_file":
+        return classify_write(a.get("path"))
+    if tool_name == "learn_skill":
+        # Skills are instructions Friday loads into later turns. Listing them
+        # reads; creating, changing or deleting one changes what Friday does.
+        if str(a.get("action") or "create").lower() == "list":
+            return INTERNAL, "it lists skills"
+        return OUTWARD, "it changes a skill Friday loads as instructions"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
@@ -482,6 +537,36 @@ def _decide(tool_name, klass, why, ctx, tainted) -> Verdict:
     if _interactive(ctx) and not tainted:
         return Verdict("confirm", klass, why)
     return Verdict("card", klass, why)
+
+
+class Held(RuntimeError):
+    """An outward action the checkpoint would not let through."""
+
+
+def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
+                    target: str = "") -> None:
+    """The checkpoint's integrity check and signed receipt, for an executor
+    that carries out an already-decided action outside a tool call (an
+    approved email, an approved text).
+
+    The decision itself (the card) is the caller's to verify. This adds the
+    two steps every tool call gets in `authorize`: the cLaws are intact, and
+    a signed receipt of the action is written. Raises `Held` if either fails,
+    so the caller stops before anything leaves the machine.
+    """
+    try:
+        ok, why = verify_claws()
+    except Exception as e:
+        raise Held(f"the cLaws integrity check could not run ({e})")
+    if not ok:
+        raise Held(f"the cLaws integrity check failed ({why})")
+    try:
+        _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
+                  "surface": surface,
+                  "reason": "approved card" if approval_id else surface,
+                  "approval": approval_id, "target": target})
+    except Exception as e:
+        raise Held(f"the signed receipt could not be written ({e})")
 
 
 def authorize_external(action: str, detail: dict, *, requested_by: str,
