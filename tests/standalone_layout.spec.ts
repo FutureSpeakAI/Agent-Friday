@@ -59,9 +59,13 @@ async function measure(page: Page) {
       if (/(hidden|clip)/.test(s.overflowY) && el.clientHeight > 150 && el.scrollHeight - el.clientHeight > 40 && !el.closest('canvas, svg, iframe'))
         clipped.push(tag(el) + ' (' + (el.scrollHeight - el.clientHeight) + 'px cut)');
     }
-    // dead space: a pane that scrolls on its own should reach the bottom
+    // dead space: a pane that scrolls on its own should reach the bottom, or
+    // the workspace's own footer when it keeps one in view under its panes
+    // (marked data-ws-footer, as Knowledge's bar is)
     const panes = all.filter(el => scrolls(el) && el.scrollHeight > el.clientHeight + 8 && el.clientHeight > 120 && cs(el).display !== 'none');
-    const gaps = panes.map(p => ({ pane: tag(p), gap: Math.round(vh - p.getBoundingClientRect().bottom) }));
+    const footer = body ? body.querySelector('[data-ws-footer]') : null;
+    const floor = footer ? footer.getBoundingClientRect().top : vh;
+    const gaps = panes.map(p => ({ pane: tag(p), gap: Math.round(floor - p.getBoundingClientRect().bottom) }));
     return {
       vh, bodyScrolls: body ? scrolls(body) : false,
       bodyOverflow: body ? body.scrollHeight - body.clientHeight : 0,
