@@ -1,19 +1,19 @@
-# Model Soup: how Friday chooses a model today, and the local lineup that gets Stephen mostly off the cloud
+# Model Soup: how Friday chooses a model today, and the local lineup that gets the owner mostly off the cloud
 
 > **Status:** active
 > **Written:** 2026-09-17
-> **Implementation:** 2026-09-17, first pass (uncommitted in the working tree). Landed: step 1 (UNC guard, `services/path_probe.py`, plus a fourth stall site the spec missed, `model_catalog._friday_store_entries`, which alone cost 25.4 s of a 27.2 s `/api/intelligence`; warm route now 0.14 s with the share wedged), the registry half of step 2 (`models.json` records the LoRA and local-disk preferences, `gemma4:e2b-friday-v1` retired, stale `residency/gguf_models.json` set aside with a timestamp; no weights copied), the code half of step 3 (`--lora`/`--mmproj` spawn, `/lora-adapters` check, honest absent seat instead of a daemon 404, `_ours_resident_mib`, `utf-8-sig`), `local_seats.serving()` from step 4 (the indexer, router candidates and manifest do not read it yet), step 6 (the card, three modes, seven dead pickers gone from the payload, two dead tabs deleted) and step 7 (Privacy and KG copy, `wiki_encrypted_sections` checklist with its missing `DEFAULT_SETTINGS` key). Not done: §7.1 yielding sidekick, §11.3 turn-level button, the `DEFAULT_SETTINGS`/`ASSIGNED_ROLES` removal of the seven seats, §8 speculation, steps 8 to 11 (Stephen's). §12 remains the build order for the rest.
+> **Implementation:** 2026-09-17, first pass (uncommitted in the working tree). Landed: step 1 (UNC guard, `services/path_probe.py`, plus a fourth stall site the spec missed, `model_catalog._friday_store_entries`, which alone cost 25.4 s of a 27.2 s `/api/intelligence`; warm route now 0.14 s with the share wedged), the registry half of step 2 (`models.json` records the LoRA and local-disk preferences, `gemma4:e2b-friday-v1` retired, stale `residency/gguf_models.json` set aside with a timestamp; no weights copied), the code half of step 3 (`--lora`/`--mmproj` spawn, `/lora-adapters` check, honest absent seat instead of a daemon 404, `_ours_resident_mib`, `utf-8-sig`), `local_seats.serving()` from step 4 (the indexer, router candidates and manifest do not read it yet), step 6 (the card, three modes, seven dead pickers gone from the payload, two dead tabs deleted) and step 7 (Privacy and KG copy, `wiki_encrypted_sections` checklist with its missing `DEFAULT_SETTINGS` key). Not done: §7.1 yielding sidekick, §11.3 turn-level button, the `DEFAULT_SETTINGS`/`ASSIGNED_ROLES` removal of the seven seats, §8 speculation, steps 8 to 11 (the owner's). §12 remains the build order for the rest.
 > **Authority:** this document has full authority over every settings surface in `index.html` that touches models, routing, residency, voice engines, image models, knowledge-graph indexing or egress (§11). `ui_parts/app.html` is a hand-maintained mirror nothing builds from; it is not edited.
 > **Method:** STORM. Four perspectives were argued against the tree and the live machine (a systems engineer counting MiB, a privacy engineer counting bytes that leave, a designer asking whether each control tells the truth, and a user who wants voice to answer). The synthesis below cites file paths and line numbers as they stand at `9eab2e2`.
-> **Provenance tags.** **MEASURED-2026-09-17** was measured by this session on Stephen's machine. **BRIEF** is a number handed in with the brief and not re-derived. **TREE** was read from the code. **RECORD** is from `Friday-Models/docs/DECISIONS.md`, `~/.friday/friday.log` or `~/.friday/runtime/*.json`. **LEDGER** is from `~/.friday/costs.db`. **ESTIMATE** is arithmetic on measured inputs and is labelled as such. **UNCHECKED** is a claim this session could not verify.
+> **Provenance tags.** **MEASURED-2026-09-17** was measured on the target machine (RTX 4070, 12 GB). **BRIEF** is a number handed in with the brief and not re-derived. **TREE** was read from the code. **RECORD** is from `Friday-Models/docs/DECISIONS.md`, `~/.friday/friday.log` or `~/.friday/runtime/*.json`. **LEDGER** is from `~/.friday/costs.db`. **ESTIMATE** is arithmetic on measured inputs and is labelled as such. **UNCHECKED** is a claim not verified when this was written.
 
 ---
 
 ## 0. What is true right now, in one page
 
-1. **Every turn Stephen has taken since 2026-09-06 has gone to the cloud, and nothing in the UI said so.** `model_routing.mode` is `cloud_only`, `cloud_consent.choice` is `cloud_unrestricted`, `vault_local_only` is `false`, and `knowledge_graph.indexing_mode` is `cloud` (**RECORD**, `~/.friday/settings.json`). Under that combination the egress gate returns every payload untouched (`services/egress_gate.py:1544-1554`), vault-tier prompt content is not stripped, and the knowledge graph's nightly pass sends wiki chunks to the cloud extractor. The consent that switched all of this off was recorded against a capability snapshot that said local was `capable: false` for one reason only, that nothing had been *measured* (`"why": "no RAM or throughput figure recorded for gemma4:e2b on this machine"`, **RECORD**). The consent answered a question the machine had asked wrongly.
+1. **Every turn the owner has taken since 2026-09-06 has gone to the cloud, and nothing in the UI said so.** `model_routing.mode` is `cloud_only`, `cloud_consent.choice` is `cloud_unrestricted`, `vault_local_only` is `false`, and `knowledge_graph.indexing_mode` is `cloud` (**RECORD**, `~/.friday/settings.json`). Under that combination the egress gate returns every payload untouched (`services/egress_gate.py:1544-1554`), vault-tier prompt content is not stripped, and the knowledge graph's nightly pass sends wiki chunks to the cloud extractor. The consent that switched all of this off was recorded against a capability snapshot that said local was `capable: false` for one reason only, that nothing had been *measured* (`"why": "no RAM or throughput figure recorded for gemma4:e2b on this machine"`, **RECORD**). The consent answered a question the machine had asked wrongly.
 
-2. **There is no local seat Friday can start.** The seat Stephen's settings name, `gemma4:e2b-fridayweaver-1.0`, is a Q8_0 base plus a LoRA plus an mmproj that must be passed to `llama-server` as `--lora` and `--mmproj`; `residency_arbiter.py` has no LoRA wiring anywhere (`grep -rn lora src/` returns only image-model comments, **TREE**), so the Arbiter can only ever spawn the base model under the FridayWeaver name, which is the silent-wrong-model failure `DECISIONS.md` refused on 2026-09-09. The seat has only ever run by hand. Its three files live on `\\wsl.localhost\Ubuntu-24.04\root\friday-models-storage\gguf-intermediate\`, and today that share does not answer (`wsl --list --verbose` itself hung past 25 s, **MEASURED-2026-09-17**). Ollama has zero models (**MEASURED-2026-09-17**, `ollama list`). `~/.friday/runtime/residency/gguf_models.json` names seven GGUFs under `runtime/models/gguf/`, a directory that no longer exists (**MEASURED-2026-09-17**), so the Arbiter's `gguf_paths` is empty and every pinned load would fall to the Ollama daemon and 404 (`residency_arbiter.py:1935-1964`).
+2. **There is no local seat Friday can start.** The seat the owner's settings name, `gemma4:e2b-fridayweaver-1.0`, is a Q8_0 base plus a LoRA plus an mmproj that must be passed to `llama-server` as `--lora` and `--mmproj`; `residency_arbiter.py` has no LoRA wiring anywhere (`grep -rn lora src/` returns only image-model comments, **TREE**), so the Arbiter can only ever spawn the base model under the FridayWeaver name, which is the silent-wrong-model failure `DECISIONS.md` refused on 2026-09-09. The seat has only ever run by hand. Its three files live on `\\wsl.localhost\Ubuntu-24.04\root\friday-models-storage\gguf-intermediate\`, and today that share does not answer (`wsl --list --verbose` itself hung past 25 s, **MEASURED-2026-09-17**). Ollama has zero models (**MEASURED-2026-09-17**, `ollama list`). `~/.friday/runtime/residency/gguf_models.json` names seven GGUFs under `runtime/models/gguf/`, a directory that no longer exists (**MEASURED-2026-09-17**), so the Arbiter's `gguf_paths` is empty and every pinned load would fall to the Ollama daemon and 404 (`residency_arbiter.py:1935-1964`).
 
 3. **The wedged WSL share is stalling Friday itself.** `model_store.available()` calls `Path(path).exists()` on every registered model (`services/model_store.py:203-204`), and one of those paths is the UNC share. That function sits under `residency_catalog.installed_entries()` (`:966`), which sits under `Arbiter.plan_fresh()` (`residency_arbiter.py:1221`), which `/api/residency/status` and `/api/intelligence` call. `GET /api/residency/status` on the live server timed out at 25 s and `/api/health` took 10.8 s (**MEASURED-2026-09-17**, server pid 25556 on `127.0.0.1:3000`). The same `exists()` is in `local_seats._friday_store()` (`services/local_seats.py:94`), which is on the chat path (`routes/chat.py:676`). A dead 9p share is a slow Friday, in every tab.
 
@@ -33,7 +33,7 @@ Stated early because a plan that hides this is worse than one that draws the lin
 
 | Capability | Verdict | Why (with numbers) |
 |---|---|---|
-| Image generation with the models Stephen has been using | **No, except SDXL, and only by evicting the language seat** | Ceiling after the 2,560 MiB display reserve is 9,722 MiB. Measured render peaks: `z-image-turbo-fp8` 10,453, `sd3.5-medium-fp8` 10,621, `flux1-dev-fp8` 11,878, `sdxl-base-1.0` 8,192 (`services/local_image.py:272-281`, **BRIEF**). SDXL fits only with the whole card. The retained E2B seat (4,291 at 131k, 3,607 at 32k) plus SDXL is 11,799 to 12,483 MiB, over the ceiling either way. So R10 ("the sidekick survives every lease", `residency_policy.py:364`) cannot hold for an SDXL lease on this card. The configured image seat, `z-image-turbo-fp8`, cannot render here at all; every request to it today ends in the structural refusal at `local_image.py:796-814`. |
+| Image generation with the models the owner has been using | **No, except SDXL, and only by evicting the language seat** | Ceiling after the 2,560 MiB display reserve is 9,722 MiB. Measured render peaks: `z-image-turbo-fp8` 10,453, `sd3.5-medium-fp8` 10,621, `flux1-dev-fp8` 11,878, `sdxl-base-1.0` 8,192 (`services/local_image.py:272-281`, **BRIEF**). SDXL fits only with the whole card. The retained E2B seat (4,291 at 131k, 3,607 at 32k) plus SDXL is 11,799 to 12,483 MiB, over the ceiling either way. So R10 ("the sidekick survives every lease", `residency_policy.py:364`) cannot hold for an SDXL lease on this card. The configured image seat, `z-image-turbo-fp8`, cannot render here at all; every request to it today ends in the structural refusal at `local_image.py:796-814`. |
 | Video generation | **No** | `services/local_video.py` exists and is wired to ComfyUI, and Wan 2.2 weights (5B Q8 5.03 GB, 14B two-expert Q3 13.4 GB) are on disk under `runtime/ComfyUI/models/diffusion_models` (**MEASURED-2026-09-17**). Nothing has ever been measured on this card, the 5B's VAE decode hangs (`local_video.py:44-48`), and `residency_policy.plan()` refuses the video seat unconditionally with a comment that says no backend exists (`:959-969`), which is stale. The setting already points at `gemini-omni-flash`. Leave it there. |
 | E2B and 12B resident at the same time | **No** | 12B Q4_K_M at 131,072 is 7,814 MiB under Ollama's `-b 512` (`measurements.json`, **RECORD**) and 7,813 under the Arbiter's caps (**BRIEF**). Add the E2B seat (4,291) and the total is 12,105 MiB against 9,722 usable. Even the smallest honest E2B (Q4, 32k, no mmproj, 1,811) beside the 12B at 32k (7,718) is 9,529, inside 9,722 by 193 MiB and outside the planner's 8,698 MiB budget (§3.2). The 12B is a lease that evicts E2B. |
 | Speculative decoding with a draft model on the 12B | **No** | 12B Q4 weights (6.6 to 6.9 GB) plus an E2B Q4 draft (about 1.5 GB) is 8.1 GB before either KV cache or compute buffer, leaving about 1.6 GB of 9.7 for both (**BRIEF** arithmetic). Ngram speculation costs no VRAM and is the only kind that fits (§8). |
@@ -120,7 +120,7 @@ The seat's window is 131,072 by measurement (`residency_arbiter.py:686-710`). At
 
 ## 4. The routing map
 
-Every path by which a turn reaches a model, with what decides local versus cloud, which setting governs it, whether sensitivity gating actually applies, and what happens when the local option is absent. **Today** means under Stephen's settings as of 2026-09-17 (`cloud_only`, `cloud_unrestricted`, `vault_local_only=false`, KG `cloud`, no local seat serving).
+Every path by which a turn reaches a model, with what decides local versus cloud, which setting governs it, whether sensitivity gating actually applies, and what happens when the local option is absent. **Today** means under the owner's settings as of 2026-09-17 (`cloud_only`, `cloud_unrestricted`, `vault_local_only=false`, KG `cloud`, no local seat serving).
 
 | # | Path | Entry point | What decides local vs cloud | Governing settings | Does sensitivity gating apply? | When the local option is absent | Today |
 |---|---|---|---|---|---|---|---|
@@ -128,7 +128,7 @@ Every path by which a turn reaches a model, with what decides local versus cloud
 | 2 | **Single-shot text** (briefings, digests, editorial, KG summaries, calendar/message drafting, wiki bootstrap) | `services/model_router._generate_text` (`:373`) with `has_tools: False` | Same router; SIMPLE/CODE/RESEARCH classes go to the bound seat; in `smart` with no binding they go to `_pick_local_model` if Ollama lists models (`:991-1037`, **Ollama-only**, so today always cloud) | as above | as above | The ladder `local → cloud → openai` (`:501-509`) unless `vault_access` | **cloud**; 3,354 calls / $85 in 30 days (**LEDGER**) |
 | 3 | **Scheduled and background agent turns** (heartbeat, routines, subagents via `spawn_task`) | `agent.py:2861-2874` uses `subagent_model` (settings flat key) → `_generate_agent` | `subagent_model` is `anthropic/claude-sonnet-5` on OpenRouter; the router's TOOL_USE branch would prefer local in `smart`/`local_preferred` | `subagent_model`, `capability_routing.subagent`, `mode` | as row 1 | as row 1 | **cloud**; 981 calls / $504 in 30 days |
 | 4 | **Local voice** (`/ws/voice`) | `routes/voice.py:1608` `ws_voice_local` → `VoiceSession` → `_generate_agent(..., is_voice=True)` (`:1791-1799`) | The Voice Manifest's mind proof: `local_seats.resolve("brain")` then `tool_budget._seat_base(seat)` must answer (`services/voice_manifest.py:163-211`). `TaskType.VOICE` in the router returns cloud (`routing/model_router.py:916-922`) but the local voice path never asks the router for the provider; it dispatches to the seat | `voice_engine` (`local` \| `gemini` \| provider name), `capability_routing.reasoning` (through `resolve("brain")`), `voice_ear_gpu`, `voice_mouth_gpu`, `voice_tools` | Local; no egress | Mind refused (`local_voice_brain_absent`); the session refuses rather than falls to cloud (settled 2026-09-09, clean-sheet §1.3) | **refused**: `resolve("brain")` returns `gemma4:e2b-friday-v1`, nothing serves it |
-| 5 | **Cloud voice** (Gemini Live, `/ws/live`) | `routes/voice.py` → `services/voice_engine.py` | `voice_engine=gemini`; mic audio goes to Google. `ask_friday` relays context questions to the local agent **only when** the manifest's mind is proven (`routes/voice.py:866-936`) | `voice_engine`, `voice_model` (`gemini-2.5-flash-native-audio-latest`), `voice_tools` | The `ask_friday` answer is sealed by `_gate_voice_tool_result` (`:584`); the seal is a no-op under `cloud_unrestricted` | Relay exists but has nothing to relay to; HUD says "your notes, memory and knowledge graph are out of reach" (`:928-936`) | **cloud, no reach into Stephen's context** |
+| 5 | **Cloud voice** (Gemini Live, `/ws/live`) | `routes/voice.py` → `services/voice_engine.py` | `voice_engine=gemini`; mic audio goes to Google. `ask_friday` relays context questions to the local agent **only when** the manifest's mind is proven (`routes/voice.py:866-936`) | `voice_engine`, `voice_model` (`gemini-2.5-flash-native-audio-latest`), `voice_tools` | The `ask_friday` answer is sealed by `_gate_voice_tool_result` (`:584`); the seal is a no-op under `cloud_unrestricted` | Relay exists but has nothing to relay to; HUD says "your notes, memory and knowledge graph are out of reach" (`:928-936`) | **cloud, no reach into the owner's context** |
 | 6 | **Knowledge graph Tier B** (entity extraction, community reports) | `knowledge_graph/indexer.py::_llm` (`:355-379`) via `run_nightly_reindex` (`integration.py:163`) or the panel | `knowledge_graph.indexing_mode`: `local` calls `_call_ollama` directly with `_available_local_model()`; `cloud` calls `_generate_text` with `model=None`. **`_resolve_model` never pins sensitive chunks local under `cloud`** (`:313-352`) | `knowledge_graph.indexing_mode`, `nightly_reindex` (default true), `index_sources` | Only the egress gate; bypassed today | `_available_local_model()` intersects **Ollama's** `list_models()` with `TOOL_CAPABLE_IDS` = {`gemma4:e2b`, `e4b`, `12b`, `26b`} (`indexer.py:275-310`, `model_plan.py:297`). It never looks at Friday's own store or a llama-server seat, and the FridayWeaver id is not in the set. **Local Tier B cannot run on this machine under any setting today** | **cloud**, nightly, 226 new wiki pages included |
 | 7 | **Knowledge graph ambient context** (every system prompt) | `integration.knowledge_context_block` (`:27-78`) | Structural, no LLM. Injects page excerpts into *every* provider's prompt with no per-provider tier gating (its own docstring, `:30-36`). The only filter is `wiki_encrypted_sections`, which is **absent** from settings | `wiki_encrypted_sections` | No | n/a | plaintext excerpts of any wiki page can ride any cloud prompt |
 | 8 | **Embeddings** (conversation memory, KG entity vectors) | `conversation_memory.EMBED_MODEL` = `all-MiniLM-L6-v2`, in-process CPU (`role_consumers.py:151-160`) | Constant. No setting reads | none (the `capability_routing.embedding` picker is inert) | Local always | n/a | **local** |
@@ -170,7 +170,7 @@ Each row is a control or a sentence on screen whose behaviour differs from the c
 
 **Systems engineer.** "Two seats cannot share this card. Pick one to be resident and make the other a lease that admits it will evict. Move the weights to a local NTFS path or every liveness check in the tree turns into a 25-second hang. And teach the Arbiter about `--lora`, because until then the seat you are planning around does not exist as far as the Arbiter is concerned."
 
-**Privacy engineer.** "The consent flag is doing all the work and it was answered on a false premise. Under `cloud_unrestricted` the gate is bypassed whole, not redacted, and the knowledge graph sends family, financial, legal and health pages to the cloud extractor nightly. The `embedding` seat pointing at OpenRouter is meaningless but the `indexing_mode: cloud` one is not. Fix the KG local path first, because it is the one that runs while he sleeps."
+**Privacy engineer.** "The consent flag is doing all the work and it was answered on a false premise. Under `cloud_unrestricted` the gate is bypassed whole, not redacted, and the knowledge graph sends family, financial, legal and health pages to the cloud extractor nightly. The `embedding` seat pointing at OpenRouter is meaningless but the `indexing_mode: cloud` one is not. Fix the KG local path first, because it is the one that runs overnight."
 
 **Designer.** "The Intelligence tab has sixteen rows and seven of them do nothing. The Privacy tab has a toggle that cannot change anything. Two different tabs each have a control called Local Only. A person cannot tell from any surface which model is about to answer or whether it is on this machine. One card at the top that answers that, and a ledger that shows what the last hour cost, does more than every picker combined."
 
@@ -195,7 +195,7 @@ The synthesis that follows is the plan all four could sign.
 
 Everything not in this table is cloud, by name, in the UI (§11).
 
-Which file for seat B: the recommended artifact is the stock Google QAT release quantized to Q4_K_M (`google/gemma-4-12b-it-qat-q4_0-gguf` or the unsloth `Q4_K_M` of the QAT checkpoint; the executor picks whichever carries the audio and vision towers in its mmproj and records the choice). The `HauhauCS ... Uncensored ... Balanced` file already on disk is a real QAT Q4_K_M with a mmproj and would serve immediately, but it is an abliterated community finetune with different refusal behaviour and no provenance chain to Google. **It is offered as the interim only if Stephen says so**; the spec does not choose it for him. Until either lands, seat B is absent and the UI says so.
+Which file for seat B: the recommended artifact is the stock Google QAT release quantized to Q4_K_M (`google/gemma-4-12b-it-qat-q4_0-gguf` or the unsloth `Q4_K_M` of the QAT checkpoint; the executor picks whichever carries the audio and vision towers in its mmproj and records the choice). The `HauhauCS ... Uncensored ... Balanced` file already on disk is a real QAT Q4_K_M with a mmproj and would serve immediately, but it is an abliterated community finetune with different refusal behaviour and no provenance chain to Google. **It is offered as the interim only if the owner says so**; the spec does not choose it for them. Until either lands, seat B is absent and the UI says so.
 
 ### 6.2 Why Q8_0 for the resident seat and not Q4
 
@@ -216,7 +216,7 @@ A Q4_K_M E2B would save about 1.7 GB of VRAM and 1.7 GB of disk. Nothing needs t
 
 | Setting | Value | Why |
 |---|---|---|
-| `model_routing.mode` | **`local_preferred`** | Local first, cloud when local fails or when Stephen picks cloud for a turn. `local_only` is available as a one-click posture in the card. `smart` is removed (§11.3) |
+| `model_routing.mode` | **`local_preferred`** | Local first, cloud when local fails or when the owner picks cloud for a turn. `local_only` is available as a one-click posture in the card. `smart` is removed (§11.3) |
 | `model_routing.local_model` | `gemma4:e2b-fridayweaver-1.0` | unchanged |
 | `capability_routing.reasoning` | `gemma4:e2b-fridayweaver-1.0`, provider `arbiter-local` | the explicit binding the router honours (`_route_chosen_seat`, `routing/model_router.py:378-384`) |
 | `capability_routing.heavy_hitter` | `gemma4:12b` (seat B), provider `arbiter-local` | the "Think harder" button (§11.2) routes a turn here |
@@ -228,9 +228,9 @@ A Q4_K_M E2B would save about 1.7 GB of VRAM and 1.7 GB of disk. Nothing needs t
 | `judgment_gate.enabled` / `.model` | `true` / `gemma4:e2b-fridayweaver-1.0` | the gate becomes useful once a local judge exists |
 | `model_routing.vault_local_only` | **`true`** | restores vault-tier stripping and force-local for vault turns, which is now satisfiable |
 | `model_routing.cloud_consent` | **re-asked** (§10.2) after seat A is proven | the current answer was given against a snapshot that said local was incapable because nothing was measured |
-| `voice_engine` | Stephen's pick; the local mind is proven either way | `ask_friday` gains reach the moment A is up |
+| `voice_engine` | The owner's pick; the local mind is proven either way | `ask_friday` gains reach the moment A is up |
 
-None of these are written by the executor. §12 stages them behind Stephen's confirmations where they change posture, and the UI (§11) is where he sets them.
+None of these are written by the executor. §12 stages them behind the owner's confirmations where they change posture, and the UI (§11) is where the owner sets them.
 
 ---
 
@@ -265,10 +265,10 @@ From the 30-day ledger (**LEDGER**, §0 item 6), by kind, with a judgement about
 
 | Kind | Cloud calls / $ | Movable to A or B | Basis for the share |
 |---|---|---|---|
-| `text` (single-shot: briefings, KG, summaries, drafts) | 3,354 / $85 | **≈90 %** | short prompts, no tool loop; E2B handles extraction and summaries, B handles editorial prose. The remaining 10 % is Stephen choosing cloud for a briefing he wants in frontier register |
+| `text` (single-shot: briefings, KG, summaries, drafts) | 3,354 / $85 | **≈90 %** | short prompts, no tool loop; E2B handles extraction and summaries, B handles editorial prose. The remaining 10 % is the owner choosing cloud for a briefing they want in frontier register |
 | `scheduled` (heartbeat, routines, subagents) | 981 / $504 | **≈80 %** | tool calling is the fine-tune's measured strength; judgement-heavy routines go to B; the rest stay cloud by `task_overrides` |
-| `chat` (interactive) | 1,846 / $659 | **≈50 to 70 %** | depends entirely on how often Stephen presses "Think in the cloud" (§11.2). E2B for reflex and lookups, B for depth |
-| `voice` | 119 / $2 | 100 % when `voice_engine=local`; 0 % when Gemini Live is chosen | his choice per session |
+| `chat` (interactive) | 1,846 / $659 | **≈50 to 70 %** | depends entirely on how often the owner presses "Think in the cloud" (§11.2). E2B for reflex and lookups, B for depth |
+| `voice` | 119 / $2 | 100 % when `voice_engine=local`; 0 % when Gemini Live is chosen | the owner's choice per session |
 | `creative` | 3 / $0.45 | image only via SDXL | |
 | **Total** | ≈6,300 / $1,250 | **≈70 to 80 % of calls, ≈55 to 70 % of spend** | **ESTIMATE**; measured after rollout by re-running the §0 ledger query, which the Model Soup card shows live (§11.2) |
 
@@ -309,15 +309,15 @@ Flag names to try in order if `ngram-cache` is rejected by the binary at spawn: 
 
 Total ≈12.3 GB. C: has 19.8 GB free with a 10 GiB floor, so **seat A fits today (5.5 GB, leaving 14.3 GB) and seat B does not** until about 7 GB is freed.
 
-### 9.3 Freeing the disk (Stephen's decision; irreversible)
+### 9.3 Freeing the disk (the owner's decision; irreversible)
 
-The image weights that can never render on this card (§1) are the obvious candidates: `flux_dev_fp8_scaled_diffusion_model.safetensors` (11.08 GB), `sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors` (10.84 GB), `z_image_turbo_fp8_e4m3fn.safetensors` (5.73 GB). Removing any one of the first two makes room for seat B. The executor does not delete them; it lists them in the card's disk row with their `fits_this_card` verdict and a "Move to…" action that copies to a path Stephen picks and then removes the original, with the size shown before the click.
+The image weights that can never render on this card (§1) are the obvious candidates: `flux_dev_fp8_scaled_diffusion_model.safetensors` (11.08 GB), `sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors` (10.84 GB), `z_image_turbo_fp8_e4m3fn.safetensors` (5.73 GB). Removing any one of the first two makes room for seat B. The executor does not delete them; it lists them in the card's disk row with their `fits_this_card` verdict and a "Move to…" action that copies to a path the owner picks and then removes the original, with the size shown before the click.
 
 The `.ollama/models/.studio_links` directory holds another ≈47 GB of GGUFs, most excluded from the ladder by product decision. Same treatment: listed, verdicted, never deleted silently.
 
 ### 9.4 The copy itself
 
-The WSL share is unresponsive as this is written and **must not be restarted while any seat is mmapped from it** (no seat is, today). The copy is done from *inside* WSL to `/mnt/c/Users/<you>/.friday/runtime/models/gguf/` once WSL answers again (`cp` with a checksum), or with `robocopy` from Windows if the 9p share comes back first. SHA-256 of each file is recorded in `models.json` (`model_store.register(..., sha256=)`). The WSL originals are left in place until the Arbiter has served the seat from C: for one full session; then they are Stephen's to delete.
+The WSL share is unresponsive as this is written and **must not be restarted while any seat is mmapped from it** (no seat is, today). The copy is done from *inside* WSL to `/mnt/c/Users/<you>/.friday/runtime/models/gguf/` once WSL answers again (`cp` with a checksum), or with `robocopy` from Windows if the 9p share comes back first. SHA-256 of each file is recorded in `models.json` (`model_store.register(..., sha256=)`). The WSL originals are left in place until the Arbiter has served the seat from C: for one full session; then they are the owner's to delete.
 
 ### 9.5 Code changes tied to storage
 
@@ -339,7 +339,7 @@ With `indexing_mode: cloud`, `nightly_reindex: true`, `cloud_unrestricted`, `vau
 2. `wiki_encrypted_sections` gets a UI (§11.4): a checklist of top-level wiki sections; checked sections never enter `knowledge_context_block` or the ambient prompt for a cloud provider. Default suggestion, shown and not pre-applied: the sections whose names match the sensitivity classifier's TIER_3 vocabulary.
 3. `indexing_mode` back to `local`, with the panel showing the seat it will run on and refusing to save `local` while `serving()` is empty.
 4. `vault_local_only: true`.
-5. **Re-ask the consent.** `cloud_consent.record_consent()` is the only writer (`core/__init__.py:1946-1958`). The card (§11.2) offers "Re-answer the cloud question" which runs `assess_local_capability()` against the now-measured seat and shows the two choices again with the new snapshot. Stephen may answer `cloud_unrestricted` again; the difference is that the answer will then be true to the machine.
+5. **Re-ask the consent.** `cloud_consent.record_consent()` is the only writer (`core/__init__.py:1946-1958`). The card (§11.2) offers "Re-answer the cloud question" which runs `assess_local_capability()` against the now-measured seat and shows the two choices again with the new snapshot. The owner may answer `cloud_unrestricted` again; the difference is that the answer will then be true to the machine.
 
 ### 10.3 Tier B on seat A
 
@@ -434,9 +434,9 @@ Keep the 2026-09-16 Mode picker and Voice Stack card as built. Three changes: th
 - The `local_only` refusal (`routing/model_router.py:887-890`): "Local-only mode is on, but no local model is serving right now. Load one on the Intelligence tab, or answer this turn in the cloud." (Ollama is not mentioned.)
 - `settings.setup.bundled_model` is migrated to `FLOOR_MODEL` on next save (U10).
 
-### 11.8 What Stephen can now tell at a glance
+### 11.8 What the owner can now tell at a glance
 
-Which model will answer the next turn, whether it is on this machine, whether it is proven up or merely configured, what the last turn cost and what the month cost, what his cloud consent says and when he said it, and one button to change the answer for this chat. Every control on the tab has a reader in the tree.
+Which model will answer the next turn, whether it is on this machine, whether it is proven up or merely configured, what the last turn cost and what the month cost, what the cloud consent says and when it was given, and one button to change the answer for this chat. Every control on the tab has a reader in the tree.
 
 ---
 
@@ -453,12 +453,12 @@ Each step is a commit that leaves the tree working, is independently revertible,
 | 5 | **Policy: yielding sidekick** (§7.1 items 1 to 3); Arbiter §7.2 items 6 and 7; golden fixture for this card. | git revert | `rp.plan()` on the profile places A pinned and B leased with `displaces: sidekick (…)` and the arithmetic in the string |
 | 6 | **Intelligence tab rebuild** (§11.2, §11.3), `/api/intelligence` `soup` object, deletion of the seven dead seats and the two dead tabs. Dead-settings tests for every surviving control. | git revert (one commit, UI only) | the card renders the seat from step 3 as proven; the removed keys no longer appear in `DEFAULT_SETTINGS`; `test_role_consumers` passes on the new set |
 | 7 | **Privacy and KG tabs** (§11.4, §11.5), `wiki_encrypted_sections` UI. | git revert | toggling "Keep vault content off the cloud" changes `vault_policy.status()`; the deleted Unrestricted toggle has no reader left |
-| 8 | **Posture flip, by Stephen, in the UI:** `local_preferred`, reasoning/subagent/local/memory_manager bound to A, KG `local`, `vault_local_only` true, judgment gate on. | each is one setting; the card's mode buttons revert in one click | the LAST 24 H row shows local turns climbing; the nightly KG pass logs the local seat |
-| 9 | **Seat B.** Disk freed per §9.3 (Stephen's yes), stock 12B QAT Q4_K_M downloaded through the allowlisted fetch with size shown, registered with mmproj, measured at 65,536 and 131,072 under the caps, bound to `heavy_hitter`. | remove the file and the binding | a "Think harder" turn grants `heavy_turn`, evicts A, answers, releases, and A is back within its measured cold load; the card shows all of it |
+| 8 | **Posture flip, by the owner, in the UI:** `local_preferred`, reasoning/subagent/local/memory_manager bound to A, KG `local`, `vault_local_only` true, judgment gate on. | each is one setting; the card's mode buttons revert in one click | the LAST 24 H row shows local turns climbing; the nightly KG pass logs the local seat |
+| 9 | **Seat B.** Disk freed per §9.3 (the owner's yes), stock 12B QAT Q4_K_M downloaded through the allowlisted fetch with size shown, registered with mmproj, measured at 65,536 and 131,072 under the caps, bound to `heavy_hitter`. | remove the file and the binding | a "Think harder" turn grants `heavy_turn`, evicts A, answers, releases, and A is back within its measured cold load; the card shows all of it |
 | 10 | **Speculation flags** (§8) on A, then B, each behind the measurement. | drop the flag; restart the seat | median decode ≥ 20 % better and no strict-accuracy loss, or the flag goes |
-| 11 | **Re-answer consent** (§10.2 step 5), offered by the card once A has been proven for a day. | the record is Stephen's | `cloud_consent.at` newer than 2026-09-06 with a snapshot that says `capable: true` |
+| 11 | **Re-answer consent** (§10.2 step 5), offered by the card once A has been proven for a day. | the record is the owner's | `cloud_consent.at` newer than 2026-09-06 with a snapshot that says `capable: true` |
 
-Steps 1 to 4 are the repair. Steps 5 to 7 are the shape. Steps 8 to 11 are Stephen's calls, made from a UI that tells the truth.
+Steps 1 to 4 are the repair. Steps 5 to 7 are the shape. Steps 8 to 11 are the owner's calls, made from a UI that tells the truth.
 
 ---
 
@@ -473,11 +473,11 @@ Steps 1 to 4 are the repair. Steps 5 to 7 are the shape. Steps 8 to 11 are Steph
 | A's restore time after a B or SDXL lease | transition audit | same row |
 | Ngram acceptance and decode rate, 50 turns each way | `timings` in responses | seat detail drawer |
 | Local share of calls and spend, 24 h and 30 d | the §0 ledger query | the card, live |
-| Tool-call strict/lenient on the served GGUF+LoRA | needs the endpoint scoring mode `frontier-on-12gb` §"The dependency" describes, inside `Friday-Models` (**Stephen's go required**) | `Friday-Models/docs/reports` |
+| Tool-call strict/lenient on the served GGUF+LoRA | needs the endpoint scoring mode `frontier-on-12gb` §"The dependency" describes, inside `Friday-Models` (**the owner's go required**) | `Friday-Models/docs/reports` |
 
 ---
 
-## 14. What this session verified, and what it could not
+## 14. What was verified, and what could not be
 
 ### 14.1 Verified: native audio input on this build
 
@@ -499,11 +499,11 @@ The log shows `init_audio: audio input is in experimental stage` and `loaded mul
 ### 14.3 Not verified (UNCHECKED)
 
 - **Seat A's actual VRAM and cold load from C:.** The 4,291 MiB figure is from 2026-09-12 with the files on the WSL share; mmap over 9p versus NTFS should not change VRAM but may change load time materially. Step 2 measures it.
-- **That the 2026-09-09 audio verification on the FridayWeaver seat used this same binary.** `DECISIONS.md` says it did ("Friday's real binary"); this session did not re-run it on that seat.
+- **That the 2026-09-09 audio verification on the FridayWeaver seat used this same binary.** `DECISIONS.md` says it did ("Friday's real binary"); it was not re-run on that seat.
 - **The stock 12B QAT Q4_K_M's exact size and whether its published mmproj carries the audio tower.** The 6.6 GB figure is from the brief; the on-disk HauhauCS mmproj is 160 MB, which is consistent with vision-only. The executor checks the mmproj's tensor names for an audio encoder before promising audio on seat B; if absent, seat B is text+vision and the card says so.
-- **Whether the E2B LoRA behaves identically when the base is served through `--lora` at Q8_0 versus the training checkpoint.** Nobody has scored the served artifact (`frontier-on-12gb` §"The dependency"). Step 13's last row is the measurement, and it needs Stephen's permission inside `Friday-Models`.
+- **Whether the E2B LoRA behaves identically when the base is served through `--lora` at Q8_0 versus the training checkpoint.** Nobody has scored the served artifact (`frontier-on-12gb` §"The dependency"). Step 13's last row is the measurement, and it needs the owner's permission inside `Friday-Models`.
 - **Ngram speculation's effect on this workload.** Unmeasured anywhere; §8 keeps it behind a measurement.
-- **What respawned the manual seat on 2026-09-10 with `--lora` intact.** `DECISIONS.md` records it and this session found no scheduled task or script that does it (`Get-ScheduledTask` lists only the forensics snapshot and the morning briefing; no `.ps1`/`.bat` under `~/.friday` mentions `lora`). Unknown. After step 3 it does not matter.
+- **What respawned the manual seat on 2026-09-10 with `--lora` intact.** `DECISIONS.md` records it and no scheduled task or script that does it was found (`Get-ScheduledTask` lists only the forensics snapshot and the morning briefing; no `.ps1`/`.bat` under `~/.friday` mentions `lora`). Unknown. After step 3 it does not matter.
 - **The wiki's 226 new pages' actual sensitivity distribution.** Not read. §10 treats the brief's description as the fact.
 
 ---

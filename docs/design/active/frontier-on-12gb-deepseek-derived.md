@@ -2,7 +2,7 @@
 
 Written 2026-09-12. Reference architecture: DeepSeek-V4.1-Flash (released 2026-09-10),
 552B backbone MoE, 8B active on prefill / 16B on decode, 1M context, 45T multimodal
-pretraining tokens. Sources at the end. Target hardware: Stephen's machine — RTX 4070,
+pretraining tokens. Sources at the end. Target hardware: the owner's machine — RTX 4070,
 12,282 MiB VRAM (9,722 usable after the 2,560 MiB display reserve), 32,620 MiB system
 RAM, ~30 GB free on C:.
 
@@ -157,11 +157,11 @@ weights), *then* run the f16-vs-q4_0 comparison.
 
 That is a small, well-defined change, and it closes a gap that predates this document:
 every score on record — including FridayWeaver-1.0's 0.9809 / 0.7033 — was measured on
-the **training checkpoint**, never on the **deployed GGUF + LoRA runtime** Stephen
+the **training checkpoint**, never on the **deployed GGUF + LoRA runtime** the owner
 actually talks to. Those are different artifacts through different code paths. Nobody
 has ever confirmed they score the same.
 
-`Friday-Models` is under a standing do-not-modify constraint, so this needs Stephen's
+`Friday-Models` is under a standing do-not-modify constraint, so this needs the owner's
 go before it happens.
 
 ## Sources

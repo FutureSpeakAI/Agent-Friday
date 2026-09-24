@@ -164,8 +164,7 @@ Three rules it is built around, all standing ones:
 
 **The budget informs this, and no longer kills anything.**
 `max_task_input_tokens` used to terminate a running task over a token count
-that was 96.4% cache reads and $3.14 of real spend
-(`docs/audits/2026-09-22-token-ceiling-forensics.md`). It is advisory now, and
+that was 96.4% cache reads and $3.14 of real spend. It is advisory now, and
 this card is the moment that advice was always for: today's measured spend
 from `costs.db` appears on the question, *before* the money is spent, instead
 of a guillotine after. The numbers inform the answer; they never decide it.

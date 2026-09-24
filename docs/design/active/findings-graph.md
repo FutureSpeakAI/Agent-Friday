@@ -88,15 +88,15 @@ That is the third class, and it is not hypothetical:
 > could not be, because prose has nowhere to put "this is one of a kind of
 > thing, here is the predicate, show me the others."
 
-Neither the human relay nor a checking session found `memory_manager`. I found
-it only because a separate question sent me looking. A record with a
+Neither the human relay nor a checking pass found `memory_manager`; it surfaced
+only because a separate question led there. A record with a
 `consumed_by` field turns "did anyone notice?" into `jq`.
 
 ### It has happened before, which makes it a pattern rather than an anecdote
 
-- **Stale inventory, twice.** `provisioning-report.md:79` documents an
+- **Stale inventory, twice.** The provisioning audit documented an
   orchestrator inventory that listed models as absent while they were installed:
-  *"was stale. Verified by fresh `ollama list`."* Today I found
+  *"was stale. Verified by fresh `ollama list`."* A later check found
   `llama-cpp-brain.provider.json` declaring one model nobody has
   (`qwen3.6-35b-a3b-iq4nl`) on port **8081**, which nothing is listening on,
   while the real seat serves `gemma4:12b` on **8090**. Same class, months apart,
@@ -144,7 +144,7 @@ anyone checked it, and how.* Everything below is sized to that and nothing more.
 | Artefact | What it is | What it cannot do |
 |---|---|---|
 | `KNOWN_ISSUES.md` | The ratchet. Curated, honest, genuinely load-bearing. | Prose. Cannot be queried by class. Records instances, not predicates. Has no field for "verified how". |
-| `docs/audits/*.md` | 18 files, ~450 KB, the real institutional memory. | Findings are buried in narrative. No two audits share a shape. Nothing links a claim to the command that proved it. |
+| Narrative audit reports | ~18 files, ~450 KB, the real institutional memory. | Findings are buried in narrative. No two audits share a shape. Nothing links a claim to the command that proved it. |
 | Git history | The commit DAG, free, already correct. | Says what changed, never why it was believed. |
 | `tests/golden/residency/` | Frozen expectations with a regeneration procedure. | Covers placement only. Nothing else in the repo has this shape. |
 | `evidence` in the audits | Ad-hoc: pasted `nvidia-smi` output, exit codes, line refs. | Sometimes present, sometimes not, never in a fixed place. |
@@ -178,7 +178,7 @@ it for free.
     "kind": "measurement",
     "command": "Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage'",
     "captured": "2026-08-23T15:37:09Z",
-    "ref": "docs/audits/intelligence-warnings-inventory.md#the-finding"
+    "ref": "KNOWN_ISSUES.md#gpu-memory"
   },
   "anchor": {
     "kind": "independent_instrument",
@@ -230,7 +230,7 @@ Permitted `anchor.kind`:
   mmproj"* is worth more than any amount of my reasoning about `--mmproj`.
 - `human_observation` — the maintainer saw it. Named as an anchor because it is one.
 
-Explicitly **not** anchors: another session's summary, a previous finding, an
+Explicitly **not** anchors: another agent's summary, a previous finding, an
 audit document, anything I wrote. A finding whose anchor cites another finding
 is the circular graph in JSON, and the audit for it is Concept 13's: follow ten
 findings to their leaves and count how many bottom out in something no model
@@ -299,9 +299,9 @@ nothing enters the 959 MB installer; no runtime code changes.
 would mean the file had become a place to record impressions with a schema
 around them, which is worse than the prose it replaced.
 
-**The strongest argument against remains unrebutted:** every error caught this
-week was caught by a session that read the source rather than trusting a
-summary. This file does not replace that. At best it tells the next session
+**The strongest argument against remains unrebutted:** every error caught so far
+was caught by a reader who read the source rather than trusting a
+summary. This file does not replace that. At best it tells the next reader
 which claims have already been through it.
 
 ---

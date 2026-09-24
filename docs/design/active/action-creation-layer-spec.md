@@ -69,7 +69,7 @@ Every new tool this spec adds — creative, Google, or Office — MUST route thr
 ```
 result = with_action_envelope(
     kind="creation" | "google" | "office",
-    intent=<one-line human string>,      # "Compose email to Libby about pickup"
+    intent=<one-line human string>,      # "Compose email to Sam about pickup"
     tier="observe" | "act",              # act = state-changing / outward
     provider=<provider or "local">,
     consent=<ConsentDecision or None>,   # required when tier=="act" and outward
@@ -274,7 +274,7 @@ Framework reuse: `pytest` (`tests/unit` no-Flask, `tests/api` Flask client, `tes
 
 ### Phase 4 — Google actions by voice (the outbound pillar)
 **Acceptance.**
-- Voice "email Libby that I'll be 10 minutes late" → Friday **reads back** recipient+subject+gist, **asks**, and only on "yes" calls `send_email(confirmed=true)`; a **consent receipt + work-log receipt** are written; without the yes, nothing is sent.
+- Voice "email Sam that I'll be 10 minutes late" → Friday **reads back** recipient+subject+gist, **asks**, and only on "yes" calls `send_email(confirmed=true)`; a **consent receipt + work-log receipt** are written; without the yes, nothing is sent.
 - `create_calendar_event` inserts a real event only after the same ask-first grant; `pull_contacts` (observe) returns People-API data.
 - SMS is **not** offered; asking for a text yields a clear "that's a separate integration I don't have."
 - **Adversarial egress test (required):** with the egress gate forced into a failed self-test state, every Google `act` tool is **blocked** (fail-closed) — no send, no insert; and a TIER_3 secret embedded in an email body is dropped/redacted by `gate_text` before any LLM assist, while the authorized send still requires the explicit grant.

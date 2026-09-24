@@ -10,7 +10,7 @@
 ## Implementation notes
 
 - **This is not a bug list.** It is what the voice subsystem looks like if it were designed today, knowing everything measured this month. Where the current tree already has the right piece, §11 says so and the builder keeps it. Where it has the wrong shape, §11 says what replaces it.
-- **Provenance tags.** **MEASURED-2026-09-16** — measured today on Stephen's machine while writing this. **RECEIPT-2026-09-10** — from `friday.log` turn receipts. **MEASURED-2026-09-12** — the seat VRAM ladder in `residency_arbiter.py`. **TREE** — read from the code today. **VENDOR** — a third party's claim, not reproduced here. A number with no tag is an engineering target, not a fact.
+- **Provenance tags.** **MEASURED-2026-09-16** — measured today on the owner's machine while writing this. **RECEIPT-2026-09-10** — from `friday.log` turn receipts. **MEASURED-2026-09-12** — the seat VRAM ladder in `residency_arbiter.py`. **TREE** — read from the code today. **VENDOR** — a third party's claim, not reproduced here. A number with no tag is an engineering target, not a fact.
 - **Nothing in this document is built.** No code changed, no dependency was installed, and no model was downloaded while writing it. The two timing probes in §2.4 ran read-only against packages and assets already on disk, on an idle GPU (the FridayWeaver seat was not running: no `llama-server.exe`, nothing listening on 8090–8130, 1,280 MiB in use — **MEASURED-2026-09-16**).
 
 ---
@@ -31,7 +31,7 @@ Ten decisions, so the rest of the document can be read as their consequences.
 | **D4** | **The brain is the FridayWeaver seat, unchanged.** No new local LLM is shipped (no Qwen3, no second GGUF). The local voice model is the same agentic pipeline text chat uses, on the seat already on port 8095 at 131,072 context. | §4.3, §4.6 |
 | **D5** | **Streaming end to end, with a prefix-stable prompt.** Tokens stream from the seat into a clause chunker into a streaming synthesizer; the static prompt prefix is byte-identical between turns so llama-server's prefix cache makes per-turn prefill small. This, not a faster model, is where the latency goes. | §4.2, §4.4 |
 | **D6** | **Ear and mouth default to what the seat leaves free.** ASR: faster-whisper on CUDA when a lease is granted (0.2 s per utterance, **MEASURED-2026-09-16**), CPU int8 at beam 1 otherwise (2.2 s). TTS: Kokoro-82M on CUDA when a lease is granted; on the CPU, Piper is the floor and Kokoro (torch or ONNX) is offered only where it measures fast enough. NeMo is demoted to experimental. | §2.4, §4.3 |
-| **D7** | **Cloud voice is realigned as *local brain, cloud mouth*.** Gemini Live stays, as the duplex option the user chooses. It gains one tool, `ask_friday`, that dispatches the question to the local agent pipeline with the full tool surface and the knowledge graph; the answer is egress-gated before it is relayed. Cloud voice can then reach Stephen's context honestly, through the local model. | §4.5 |
+| **D7** | **Cloud voice is realigned as *local brain, cloud mouth*.** Gemini Live stays, as the duplex option the user chooses. It gains one tool, `ask_friday`, that dispatches the question to the local agent pipeline with the full tool surface and the knowledge graph; the answer is egress-gated before it is relayed. Cloud voice can then reach the user's context honestly, through the local model. | §4.5 |
 | **D8** | **A custom tune is not required to ship this, and the trigger for one is written down.** If, after §12 Phase 3, the measured spoken-register metrics miss their bars, the next FridayWeaver training run gets a voice-register SFT pass — on the *same* line, not a new model. | §4.6 |
 | **D9** | **voicebox: borrow the patterns, do not adopt it, do not vendor it.** Per-model unload becomes D2's process-bound lease; the serial queue becomes the GPU job queue; LuxTTS is a *candidate* engine behind the engine interface, gated by measurement. | §10 |
 | **D10** | **One WebSocket contract, one settings surface, one indicator.** `/ws/voice` for local, `/ws/live` for cloud, identical frames; a Voice Stack card with three rows (Ear / Mind / Mouth) that shows selected → effective → proven; an in-session HUD with three lamps and the reach and egress lines. | §7, §8 |
@@ -40,10 +40,10 @@ Ten decisions, so the rest of the document can be read as their consequences.
 
 ## 1. Requirements
 
-### 1.1 Stephen's requirements, verbatim where they were given that way
+### 1.1 Stated requirements
 
 - **R1 — Fast local voice with a real model in the loop.** Not a bare STT→TTS pipe.
-- **R2 — Tool calling is non-negotiable.** "Local voice always needs to involve a model in the loop that can call tools and do research into the knowledge graph." (2026-09-10.) A speech-to-speech model with a reduced tool set does not satisfy this.
+- **R2 — Tool calling is non-negotiable.** Local voice always involves a model in the loop that can call tools and do research in the knowledge graph. A speech-to-speech model with a reduced tool set does not satisfy this.
 - **R3 — Gemini Flash Live stays supported.** Cloud voice is made honest, not removed.
 - **R4 — Do not bundle Qwen3.** Use the seat that exists (FridayWeaver, `:8095`).
 - **R5 — A custom tune or a local/cloud realignment is acceptable if justified.**
@@ -154,7 +154,7 @@ Each of this week's failures is a *shape*, and each shape gets a mechanism that 
 
 ### 3.1 "A component describing itself inaccurately" → the Voice Manifest (D1)
 
-**What happened.** Friday told Stephen it was running "faster-whisper and Kokoro on CPU" while `voice_engine` was `gemini` and Kokoro's CPU opt-in was off — a pipeline that cannot exist. Readiness said "ready" because a package imported. The three surfaces — settings panel, `/api/voice/session-info`, and the model's own words — each reconstructed the truth from different inputs, and they disagreed.
+**What happened.** Friday told the owner it was running "faster-whisper and Kokoro on CPU" while `voice_engine` was `gemini` and Kokoro's CPU opt-in was off — a pipeline that cannot exist. Readiness said "ready" because a package imported. The three surfaces — settings panel, `/api/voice/session-info`, and the model's own words — each reconstructed the truth from different inputs, and they disagreed.
 
 **The mechanism.** One object, `services/voice_manifest.py`, is the *only* source of facts about the voice stack. It has three stages — `ear`, `mind`, `mouth` — and for each:
 
@@ -173,7 +173,7 @@ Rules that make the lie inexpressible:
 
 1. **`proof.state` has three values — `unproven`, `proving`, `proven` — and `refused` with a code.** "Proven" is set only by `prove()` actually running the stage: the ear transcribes a bundled 2 s WAV and must return the expected words; the mind sends a one-line request to the seat with the *real* tool list and must receive a completion with `timings`; the mouth synthesizes a fixed 9-word line and must return non-empty PCM of plausible duration. Importability, file existence and `torch.cuda.is_available()` are inputs to `effective`, never to `proof`.
 2. **Proofs expire.** `ttl_s` defaults to 900 s idle and is re-run on `voice/arm` (mic click) if expired. A proof older than its TTL renders as `unproven (last proven 14 min ago)`, never as ready.
-3. **The model's self-description is generated from the manifest.** The voice system prompt's first paragraph — today a constant string claiming "ON-DEVICE speech-to-text and text-to-speech" — becomes `manifest.describe_for_model()`, e.g. *"Your ears are faster-whisper small on the GPU, your reasoning is FridayWeaver running locally, your voice is Kokoro on the CPU. All three run on this machine; nothing leaves it."* — or, on the cloud path, *"You are Gemini Live; the microphone audio is sent to Google. Questions about Stephen's own notes, memory or knowledge graph are answered by his local model through the `ask_friday` tool."* The model cannot claim a pipeline the manifest does not hold, because it has no other source.
+3. **The model's self-description is generated from the manifest.** The voice system prompt's first paragraph — today a constant string claiming "ON-DEVICE speech-to-text and text-to-speech" — becomes `manifest.describe_for_model()`, e.g. *"Your ears are faster-whisper small on the GPU, your reasoning is FridayWeaver running locally, your voice is Kokoro on the CPU. All three run on this machine; nothing leaves it."* — or, on the cloud path, *"You are Gemini Live; the microphone audio is sent to Google. Questions about the user's own notes, memory or knowledge graph are answered by their local model through the `ask_friday` tool."* The model cannot claim a pipeline the manifest does not hold, because it has no other source.
 4. **`/api/voice/session-info`, the Settings card, the HUD, and the session-start `manifest` frame are all `manifest.snapshot()`.** No surface computes its own version.
 5. **A test pins it:** `test_manifest_cannot_be_proven_without_running` — monkeypatch every engine's `run()` to raise; assert no stage reaches `proven`, and `describe_for_model()` says so in words.
 
@@ -287,7 +287,7 @@ The engine interface is one small ABC per stage (`ear.Engine.transcribe(pcm16_16
 
 | Engine | Device | Verdict | Why |
 |---|---|---|---|
-| **Kokoro-82M via `kokoro` (torch)** | **CUDA when leased (default policy: `if free`)** | **default voice** | The voice Stephen already uses (`af_heart`), 2.9–10.3× realtime on the card (**voice-mode-diagnosis-and-repair.md**); 39–56 s cold load on CUDA and a torch process resident on the card → lives in a worker under a lease (D2), loaded at arm time with a visible progress state, unloaded on idle. |
+| **Kokoro-82M via `kokoro` (torch)** | **CUDA when leased (default policy: `if free`)** | **default voice** | The voice the owner already uses (`af_heart`), 2.9–10.3× realtime on the card (**voice-mode-diagnosis-and-repair.md**); 39–56 s cold load on CUDA and a torch process resident on the card → lives in a worker under a lease (D2), loaded at arm time with a visible progress state, unloaded on idle. |
 | Kokoro-82M (torch) | CPU | **option, not default** | **1.6× realtime, 1.44 s to first chunk** (**MEASURED-2026-09-16**) — behind the clause pipeline that is ≈ 1 s to first audio, tolerable, not fast. Also threw a `TypeError` inside its g2p on the second probe sentence, so **every clause synthesis is wrapped and a failed clause is spoken by Piper** (the clause-fallback rule), announced once per session. |
 | Kokoro-82M via `kokoro-onnx` | CPU int8 | **candidate, measured in Phase 2** | Apache-2.0 model, MIT wrapper, ~80 MB int8, needs the ~27 MB voices file (§2.5). If it measures ≤ 500 ms first-chunk on this CPU it becomes the CPU default over Piper; if not, it is offered as an option with its measured number beside it. The `model_q8f16.onnx` already in `runtime/kokoro-onnx/` is an ONNX-community export whose loader differs; the builder uses the `kokoro-onnx` pair unless it proves the on-disk export loads. |
 | Piper `en_US-amy-medium` | CPU | **floor and CPU default** | Present, **4.7× realtime** on this CPU (**MEASURED-2026-09-16**), 22 kHz, robotic. Never removed; it is what speaks when everything else is refused, and what speaks a clause Kokoro failed on. |
@@ -317,9 +317,9 @@ The voice prompt is therefore assembled in this order, and the order is a test:
 
 Gemini Live is a duplex model: ears, mind and mouth in one hop, with barge-in and prosody nothing local matches. It also has 16 fixed tools and no path to the knowledge graph, memory, or the vault — which is exactly why it "utterly failed to reach my context". The two paths are not competitors for the same job; they are good at different halves of it.
 
-**The realignment:** cloud voice keeps its duplex ears and mouth, and *borrows the local mind for anything about Stephen*.
+**The realignment:** cloud voice keeps its duplex ears and mouth, and *borrows the local mind for anything about the user*.
 
-- One new Gemini Live tool, **`ask_friday(question: string)`** — "Ask Friday's local model, which has full access to Stephen's notes, memory, knowledge graph, files, calendar and email. Use it for any question about Stephen's own context, and for anything that needs a tool you do not have."
+- One new Gemini Live tool, **`ask_friday(question: string)`** — "Ask Friday's local model, which has full access to the user's notes, memory, knowledge graph, files, calendar and email. Use it for any question about the user's own context, and for anything that needs a tool you do not have."
 - Its handler runs `_generate_agent` on the FridayWeaver seat with the *full* contract (§3.3), `session_ctx={"authenticated": ..., "provider": "local", "is_voice": True}`, reply cap 300, and returns the text — **after `egress_gate` seals it for `google-gemini`** (`_gate_voice_tool_result` exists and already withholds rather than partially redacts). The vault's TIER_2/3 content therefore never crosses: the local model reads it, the sealed answer is what Google sees.
 - Choreography: Gemini announces ("Let me ask Friday."), calls the tool, and speaks the sealed answer. The local agent's 3–15 s (§2.3; faster after §4.4) sits inside a tool call that the duplex model narrates naturally.
 - Honesty: the `contract` frame for a cloud session reads *"16 native tools + ask_friday → your context is reached through Friday's local model"*, and the manifest's `describe_for_model()` says so to Gemini. The egress line (`egress_notice`, exists) stays on screen for the whole session.
@@ -342,7 +342,7 @@ The local mind's two jobs in voice are (1) call the right tool with the right ar
 | tool turns where the announcement sentence precedes the call | ≥ 95 % | tune |
 | strict tool-call accuracy on the t2-single harness | must not drop by > 1 point after tuning | reject the tune |
 
-The recipe if triggered: the *same* FridayWeaver line, an additional ~2k-example SFT set of spoken-register transcripts (announce → tool → confirm → one-to-three-sentence answer), trained under `Friday-Models` (do-not-modify constraint: needs Stephen's go), scored on the served GGUF+LoRA runtime — the endpoint scoring mode that document already says is missing. No new base model. No Qwen3 (R4).
+The recipe if triggered: the *same* FridayWeaver line, an additional ~2k-example SFT set of spoken-register transcripts (announce → tool → confirm → one-to-three-sentence answer), trained under `Friday-Models` (do-not-modify constraint: needs the owner's go), scored on the served GGUF+LoRA runtime — the endpoint scoring mode that document already says is missing. No new base model. No Qwen3 (R4).
 
 ### 4.7 Native audio-in
 
@@ -555,7 +555,7 @@ LuxTTS is the only engine on its roster that changes Friday's options: 48 kHz, <
 
 ### 10.3 The LuxTTS gate
 
-Install into a *separate* venv under `runtime/` (not Friday's), on a day with ≥ 12 GB free, then: (1) synthesize the manifest's proof line on CPU and on CUDA, record RTF, first-chunk latency, resident MiB; (2) A/B the 48 kHz output against Kokoro on three sentences with Stephen listening; (3) confirm the streaming shape (its README does not mention streaming). It ships as `mouth: luxtts` only if CPU first-chunk ≤ 500 ms or CUDA resident ≤ 1,000 MiB with first-chunk ≤ 250 ms, *and* Stephen prefers the sound. Otherwise the record of the measurement is the deliverable.
+Install into a *separate* venv under `runtime/` (not Friday's), on a day with ≥ 12 GB free, then: (1) synthesize the manifest's proof line on CPU and on CUDA, record RTF, first-chunk latency, resident MiB; (2) A/B the 48 kHz output against Kokoro on three sentences with the owner listening; (3) confirm the streaming shape (its README does not mention streaming). It ships as `mouth: luxtts` only if CPU first-chunk ≤ 500 ms or CUDA resident ≤ 1,000 MiB with first-chunk ≤ 250 ms, *and* the owner prefers the sound. Otherwise the record of the measurement is the deliverable.
 
 ### 10.4 Borrow — yes
 
@@ -590,11 +590,11 @@ Install into a *separate* venv under `runtime/` (not Friday's), on a day with �
 
 ## 12. Build order — for the implementing session
 
-The implementer is a **fresh Claude Code session on Fable 5.1 at low reasoning effort** (Stephen's instruction). Each phase is a commit that leaves the tree working; no phase lands half-wired. Run `venv/Scripts/python.exe -m pytest tests/unit tests/api tests/gauntlet -x -q` with `FRIDAY_TESTING=1` after each. Use the `friday-dev` launch config (port 3210) for browser checks, never the production port.
+The implementer is a **fresh Claude Code session on Fable 5.1 at low reasoning effort**. Each phase is a commit that leaves the tree working; no phase lands half-wired. Run `venv/Scripts/python.exe -m pytest tests/unit tests/api tests/gauntlet -x -q` with `FRIDAY_TESTING=1` after each. Use the `friday-dev` launch config (port 3210) for browser checks, never the production port.
 
 ### Hazards, first
 
-- **Do not disturb `llama-server.exe`** if it is running on 8095 (it was not on 2026-09-16 — see Implementation notes). Do not start it with ad-hoc commands; if a live check needs the seat, ask Stephen, or use the Arbiter's own spawn once it can pass `--lora`. Keep `MAX_SEAT_NUM_CTX = 131072`.
+- **Do not disturb `llama-server.exe`** if it is running on 8095 (it was not on 2026-09-16 — see Implementation notes). Do not start it with ad-hoc commands; if a live check needs the seat, ask the owner, or use the Arbiter's own spawn once it can pass `--lora`. Keep `MAX_SEAT_NUM_CTX = 131072`.
 - **Never broad-kill `python.exe`/`pythonw.exe`.** Friday's tray and server are Python. Voice workers are stopped by PID through their lease.
 - **Do not restart WSL.** The seat's GGUF is mmapped over `\\wsl.localhost`.
 - **Disk: 15.1 GB free, 10 GiB floor.** The only permitted downloads are §2.5's (≤ 40 MB). Do not install LuxTTS, NeMo checkpoints, or any torch wheel.
@@ -640,7 +640,7 @@ The implementer is a **fresh Claude Code session on Fable 5.1 at low reasoning e
 
 ---
 
-## 13. Open questions for Stephen
+## 13. Open questions for the owner
 
 Only three; everything else is decided above.
 

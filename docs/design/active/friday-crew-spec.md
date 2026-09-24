@@ -7,7 +7,7 @@
 >
 > Every citation of `services/edition_engine.py`
 > below is to a module that has since been **removed**. The Friday Edition
-> workspace was eliminated at Stephen's request in favour of the briefings; its
+> workspace was eliminated at the owner's request in favour of the briefings; its
 > data remains at `~/.friday/edition`. The patterns this spec borrows from it —
 > the receipt gate, the charter's taste/accuracy split, `_card_content_hash`,
 > `_build_rationale` — are unchanged as design ideas and can be read in git
@@ -29,7 +29,7 @@
 
 ---
 
-**Companions:** [`V6_WHOLENESS_SPEC.md`](v6-wholeness-spec.md), [`AUTONOMY_SPEC.md`](autonomy-execution-spec.md), [`SEATS_AND_TRANSPARENCY_SPEC.md`](../implemented/seats-and-transparency-spec.md), [`audits/decisions-2026-08.md`](../../decisions/2026-08-architecture-decisions.md), [`audits/phase-a-report.md`](../../history/audits/phase-a-report.md).
+**Companions:** [`V6_WHOLENESS_SPEC.md`](v6-wholeness-spec.md), [`AUTONOMY_SPEC.md`](autonomy-execution-spec.md), [`SEATS_AND_TRANSPARENCY_SPEC.md`](../implemented/seats-and-transparency-spec.md), [`2026-08-architecture-decisions.md`](../../decisions/2026-08-architecture-decisions.md).
 
 ---
 
@@ -127,7 +127,7 @@ Every Crew phase builds on verified in-tree code. *Harvest, don't rebuild* (V6 �
 | Seat-change visibility (diff → system line → notification) | `services/seat_transparency.py:97-153` | Extended to crew seats — no silent reseating, ever |
 | Trust graphs: people/source/**federation peers** (`reliability/honesty/claws_adherence/competence`) | `people_graph.py`, `source_trust_graph.py`, `services/federation.py:54-79, 403+` | Local inter-desk trust table (§6.5) |
 | Auth hardening: `login_required` fails closed for non-loopback without `FRIDAY_REMOTE_KEY` | `core/__init__.py:252-256, 350-370, 434-447` | Phone surface (§7.7); why the executor must NOT talk to the loopback web API (§7.3) |
-| Measured hardware constraint | `docs/audits/phase-a-report.md:267-269` | Brain at optimum holds ~11.6 GB of 12.28 GB VRAM — **370 MiB free**. Never-co-resident is measured, not conventional. Binds §7.6. |
+| Measured hardware constraint | Phase A residency measurement | Brain at optimum holds ~11.6 GB of 12.28 GB VRAM — **370 MiB free**. Never-co-resident is measured, not conventional. Binds §7.6. |
 
 ### 3.1 Defects that are Crew preconditions (fix in Crew-0)
 
@@ -167,7 +167,7 @@ Two adjacent facts, recorded but *not* Crew-0 scope: `learning_loop.promote()` i
 Two modes, sequenced honestly:
 
 - **Mode 1 (Crew-1): demonstrate *through* Friday.** The maintainer says "Friday, watch this" (chat or UI toggle), then performs the workflow using Friday herself — asks her to search, fetch, write, file — narrating intent as he goes. Everything already flows through the tool loop, so capture is a post-hook, not a recorder. He says "done — make that a routine"; the distiller produces a draft; the draft goes to the approval queue.
-- **Mode 2 (Crew-5): demonstrate on the screen.** The maintainer drives apps directly while narrating; Friday observes via per-app **observe-tier** grants (V6 P6 permission tiers) — periodic screenshots plus locally-transcribed narration (faster-whisper, measured RTF 0.869, comfortably realtime; `docs/audits/provisioning-report.md:304`). Honesty requirement carried from V6 Q12: screen *understanding* needs a capable VLM; the cloud path goes through the egress gate, the local path is labeled best-effort. Mode 2 depends on the actuation phase's permission tiers and is not the first deliverable — Mode 1 is where the weekend lives.
+- **Mode 2 (Crew-5): demonstrate on the screen.** The maintainer drives apps directly while narrating; Friday observes via per-app **observe-tier** grants (V6 P6 permission tiers) — periodic screenshots plus locally-transcribed narration (faster-whisper, measured RTF 0.869, comfortably realtime). Honesty requirement carried from V6 Q12: screen *understanding* needs a capable VLM; the cloud path goes through the egress gate, the local path is labeled best-effort. Mode 2 depends on the actuation phase's permission tiers and is not the first deliverable — Mode 1 is where the weekend lives.
 
 **The one law that binds both: a draft NEVER self-activates.** Not by the model, not by the distiller, not by a trigger, not by `learning_loop`. Activation is exactly one path: a human decision on an approval card.
 
@@ -401,11 +401,11 @@ The A3/D2 principle — *the gate decides from the destination; the call site ca
 - **Zero durable secrets in the guest.** No API keys, no `FRIDAY_PASSWORD`, no OAuth refresh tokens, no `FRIDAY_REMOTE_KEY`. The `extension_security.ENV_BLOCKLIST` pattern (`services/extension_security.py:21-43`) applies to the executor agent's environment by construction.
 - **Task-scoped injection:** short-lived session material (a session cookie, a one-time token) injected at job start over the encrypted transport, bound to the task's domain allowlist, revoked/expired at job end. The host's `credential_store` remains the only durable holder.
 - **Work identity (decided D5: both, user chooses):** each executor task class carries an identity mode set by the user in the UI — **dedicated work-identity accounts** (its own email, its own site logins) or **delegated session material** from the user's accounts (per-task, time-boxed, approval-gated). The mode is part of the task's scope and shows on its approval card. Either way the invariant holds: never a stored password in the guest, and the executor never types the user's passwords — that flow stays with the maintainer. Default for a new desk: dedicated identity, switchable per desk/task in settings.
-- **Guest OS: Windows 11 (decided D1).** Two verified reasons: `credential_store` falls to plaintext off-Windows (no Keychain/Secret Service — `decisions-2026-08.md:142`), and even ephemeral material deserves DPAPI; and tool parity with the host's actuation stack (pyautogui, window handles).
+- **Guest OS: Windows 11 (decided D1).** Two verified reasons: `credential_store` falls to plaintext off-Windows (no Keychain/Secret Service — [`2026-08-architecture-decisions.md`](../../decisions/2026-08-architecture-decisions.md)), and even ephemeral material deserves DPAPI; and tool parity with the host's actuation stack (pyautogui, window handles).
 
 ### 7.6 GPU arithmetic and residency
 
-Measured, not asserted (`phase-a-report.md:267-269`): the brain at optimum holds ~11.6 GB of the 12.28 GB card — **370 MiB free**; brain and sidekick cannot be co-resident; the never-co-resident rule is a hard constraint.
+Measured, not asserted: the brain at optimum holds ~11.6 GB of the 12.28 GB card — **370 MiB free**; brain and sidekick cannot be co-resident; the never-co-resident rule is a hard constraint.
 
 - **The executor is CPU-only and loads no models. Ever.** It is hands, not brain.
 - Its cognition — "what's on this page," "which button," "summarize this thread" — routes as requests to the **host** router: local models queue behind the host's residency reality (formal scheduler is Phase C per D8; until then the documented evict/reload discipline), or cloud via the host egress gate per Q12. GPU passthrough to the guest is a non-goal.
@@ -542,7 +542,7 @@ Persona-regression rule (V6 §5) binds every phase: A1 fixture eval green before
 
 ## 12. Decision record — accepted by the maintainer, 2026-08-14
 
-Originally posed as questions; answered same day. Downstream work inherits these from this file, not from chat history (the `decisions-2026-08.md` convention).
+Originally posed as questions; answered same day. Downstream work inherits these from this file, not from chat history (the [`2026-08-architecture-decisions.md`](../../decisions/2026-08-architecture-decisions.md) convention).
 
 | # | Question | Decision | Binds |
 |---|---|---|---|

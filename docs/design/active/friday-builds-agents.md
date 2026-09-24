@@ -239,8 +239,8 @@ Two lessons in that file are load-bearing for §3 and get cited again:
 
 - *"A chain can 'complete' with zero output if the model provider dies and the error becomes
   the result text. Files-on-disk is the only real completion signal."*
-- *"'his daughter' in the bible was redacted by the privacy gate when a cloud seat read the
-  file — the step went blind and reported honestly."*
+- *A family relationship named in the story bible was redacted by the privacy gate when a
+  cloud seat read the file — the step went blind and reported honestly.*
 
 The first is `KNOWN_ISSUES.md` §1's dominant failure mode, observed in production, four
 days ago. The second is the egress gate working — and is the reason §3.5 routes an agent's
@@ -249,8 +249,8 @@ privileged calls back through it rather than around it.
 ### 2.2 Chains are data; agents are code. An honest comparison.
 
 **VERIFIED** against `services/agent.py:2461-2846` and the live chains in
-`~/.friday/workflows/` (`engine-selftest.json`, `teen-storybook.json` 17 KB,
-`teen-storybook-tail.json`).
+`~/.friday/workflows/` (`engine-selftest.json`, a 17 KB storybook chain and its tail
+chain).
 
 A workflow chain is a JSON file: `{name, slug, description, seat, steps[], updated}` where
 a step is `{name, prompt, with_context, seat, retries}` (`agent.py:2486-2519`). There is no
@@ -279,7 +279,7 @@ the entire tool registry — the tool description says so (`agent.py:2674-2680`,
 **What chains are genuinely better at**, and this is not a consolation prize:
 
 - **Legibility to a non-programmer.** A chain is a list of English instructions. The maintainer can
-  read `teen-storybook.json` and know what it will attempt. He cannot read a 300-line
+  read the storybook chain and know what it will attempt. He cannot read a 300-line
   generated Python class as quickly, and neither can a non-technical second user.
 - **Failure containment by construction.** A step is bounded by the agent loop's own
   governance — every tool call funnels through `_execute_tool`, the ring check, the vault
@@ -354,7 +354,7 @@ delete the schema.**
    two capability-exposure mechanisms in a project that `KNOWN_ISSUES.md` says already
    loses track of which subsystems are alive.
 3. **The failure mode is worse at the same token count.** `tool-index.md` §8 cites
-   `services/tool_integrity.py:46` and `docs/audits/inference-discovery.md:113`:
+   `services/tool_integrity.py:46`:
    **prose-narrated fake tool calls** — local models emitting text that looks like a tool
    call without one occurring. A model that hallucinates a tool call fails visibly, because
    the tool did not run. A model that writes *plausible Python* against a live object can
@@ -690,8 +690,7 @@ component that cannot verify its own success must say so:
 ### 3.8 Does it run once with a human present before it runs unattended?
 
 **Yes. Not once — a bounded number of supervised runs with an explicit promotion, and the
-promotion is the maintainer's, not Friday's.** The reasoning, since the maintainer asked for it either
-way:
+promotion is the maintainer's, not Friday's.** The reasoning:
 
 **The case for going straight to unattended.** It is the honest counter-argument and it is
 not weak. (a) Friday's `sch_heartbeat` already runs hourly, unscoped and unconfirmed, so
@@ -799,9 +798,8 @@ readiness. Against which: Apache 2.0, so anything worth copying can be copied.
 
 **The figure 959 MB does not appear anywhere in this repository.** (**VERIFIED** by
 exhaustive search across `.md`, `.ps1`, `.txt`, `.toml`, `.json`, `.spec`, plus
-`git log -S"959 MB"` and `git log --grep 959`; the only hits are a PID in
-`docs/audits/server-death-forensics.md:140`, a line range in `docs/audits/voice-mode.md:101`,
-and a unix timestamp in a fixture.) Registered **REPORTED** and unsourced. The measured
+`git log -S"959 MB"` and `git log --grep 959`; the only hits are a PID and a line range
+in two audit write-ups, and a unix timestamp in a fixture.) Registered **REPORTED** and unsourced. The measured
 figures that *do* exist:
 
 | artefact | size | source |
@@ -817,7 +815,7 @@ core + recommended (~800 MB) plus the embedded CPython and payload lands near 90
 rather than a download size. Either way, the number the maintainer is defending is the **installed
 site-packages footprint**, and that is the number NOOA would attack.
 
-**What NOOA adds, specifically.** Commit `c82615d`, 2026-08-21 — two days ago — is titled
+**What NOOA adds, specifically.** Commit `c82615d` (2026-08-21) is titled
 *"fix(packaging/windows): headroom-ai[all] was smuggling 2.3GB into the recommended tier."*
 `packaging/windows/requirements/recommended.txt` names what `[all]` was dragging in
 (**VERIFIED**):
@@ -831,7 +829,7 @@ site-packages footprint**, and that is the number NOOA would attack.
 LiteLLM-supported models, **VERIFIED** from the README). Adding `nooa` to `core.txt` or
 `recommended.txt` would re-pull a chunk of what commit `c82615d` just removed, and would do
 it inside a tier a user consents to as "voice and PDF reading." That is not a size argument;
-it is the *same* argument the maintainer already made and won two days ago, and reversing it
+it is the *same* argument commit `c82615d` already made and won, and reversing it
 by accident would be a poor outcome.
 
 **Two hard constraints on any install path** (**VERIFIED**,
@@ -868,9 +866,8 @@ Two facts in tension, both verified:
   up to 50 iterations, under the same registry, vault gate and governance rings as cloud).
   Local Friday *acts*.
 - **Against:** the same file's §1 records prose-narrated fake tool calls
-  (`services/tool_integrity.py:46`), a 1-in-3 refusal rate on one measured suite
-  (`docs/audits/model-suite-determination.md:65-93`), and a non-reproducible gate scoring
-  10/10, 8/10, 8/10, 9/10 across runs (`docs/audits/residency-live-2026-08-15.md:64-77`).
+  (`services/tool_integrity.py:46`), a 1-in-3 refusal rate on one measured suite,
+  and a non-reproducible gate scoring 10/10, 8/10, 8/10, 9/10 across runs.
 
 **INFERRED:** a seat that narrates fake tool calls one turn in ten is a seat that will write
 Python that looks right and does nothing, and the code-as-action pattern converts that from
@@ -919,7 +916,7 @@ known-issues file is 32 KB and it is that long because this project is honest, w
 respect and which is also the point: you have a *long list of things that are broken now*
 and you are proposing a subsystem whose failure mode is a program you wrote, that you
 approved, running at 3am, doing something you did not intend, on a machine with your
-daughter's files on it.
+family's files on it.
 
 Look at the last fifteen commits. Every single one is packaging and install:
 *'run prewarm even when no models need downloading'*, *'the build was shipping an empty

@@ -35,7 +35,7 @@ Second correction: the brief refers to "a prior evaluation [that] found LocalAI 
 
 ## 0. The position, in one paragraph
 
-The coordination centre's first job is **arbitrating scarce resources, not routing messages.** Two days ago a CPU scoring job run alongside a training run cut that training to roughly a fifteenth of its speed, because nothing on this machine arbitrated between two processes that wanted the same silicon. No amount of agent-to-agent messaging would have prevented that; a lease would have. Everything else follows from taking that seriously. An agent is not a persona with a system prompt; an agent is **a scope, a budget, an irreversibility boundary, a termination condition and a score**, with a persona painted on the front so a human can talk to it. Orchestration is not a rank an agent holds; it is a **role a project assigns**, so the same agent leads one project and takes direction in another. The org chart is an excellent renderer and a poor schema: build typed contracts, budgets, permissions and evaluation as the substrate, then draw the org chart on top of it — but concede what the org-chart position gets right, which is that every unit of work needs a named **decomposer** and a named **escalation addressee**, because a purely contractual system with a gap in it deadlocks silently, and silence is the failure mode we already have.
+The coordination centre's first job is **arbitrating scarce resources, not routing messages.** A CPU scoring job run alongside a training run has cut that training to roughly a fifteenth of its speed, because nothing on this machine arbitrated between two processes that wanted the same silicon. No amount of agent-to-agent messaging would have prevented that; a lease would have. Everything else follows from taking that seriously. An agent is not a persona with a system prompt; an agent is **a scope, a budget, an irreversibility boundary, a termination condition and a score**, with a persona painted on the front so a human can talk to it. Orchestration is not a rank an agent holds; it is a **role a project assigns**, so the same agent leads one project and takes direction in another. The org chart is an excellent renderer and a poor schema: build typed contracts, budgets, permissions and evaluation as the substrate, then draw the org chart on top of it — but concede what the org-chart position gets right, which is that every unit of work needs a named **decomposer** and a named **escalation addressee**, because a purely contractual system with a gap in it deadlocks silently, and silence is the failure mode we already have.
 
 ---
 
@@ -199,7 +199,7 @@ The machine dimension is the new one and is the reason §5 exists.
 
 ### 4.2 The irreversibility boundary as configuration
 
-Today the rule *"reversible operations are the agent's to execute; irreversible ones need Stephen"* lives in a memory file and in one agent's head. Encoding it per-agent turns a convention into a field with three legal dispositions:
+Today the rule *"reversible operations are the agent's to execute; irreversible ones need the owner"* lives in a memory file and in one agent's head. Encoding it per-agent turns a convention into a field with three legal dispositions:
 
 - **`execute`** — do it, receipt it.
 - **`receipt`** — do it, receipt it, and surface it in the workspace as a notable action.
@@ -243,7 +243,7 @@ Every artifact an agent produces carries `{agent_id, charter_version, seat_model
 
 ## 5. The arbiter — scarcity is the coordination problem
 
-**MEASURED, inherited:** the brain at optimum holds ~11.6 GB of 12.28 GB VRAM — **370 MiB free** (`docs/history/audits/phase-a-report.md:267-269`). Never-co-resident is a hard constraint. The residency arbiter exists and returns `fits`, `overflow_mib`, `would_evict` — and is explicitly **advice, not a gate**: "a model the user selects wins."
+**MEASURED, inherited:** the brain at optimum holds ~11.6 GB of 12.28 GB VRAM — **370 MiB free**. Never-co-resident is a hard constraint. The residency arbiter exists and returns `fits`, `overflow_mib`, `would_evict` — and is explicitly **advice, not a gate**: "a model the user selects wins."
 
 That design is right for a human choosing a seat and wrong for two agents on two projects. So:
 
@@ -338,7 +338,7 @@ Mechanism is already there: `cognitive_memory` `source_id="agent:<slug>"` plus C
 
 > When P9 lands, `agent:<slug>` partitions nest inside `person:<id>` partitions, and `person_gate.py` adjudicates before the agent broker is consulted. Until then, no agent partition may carry person-identifying scope, and no feature in this spec may create an accidental second-user path.
 
-**INFERRED:** this is a cost. It means "Stephen's agents" and "a guest's agents" are indistinguishable today, and the multi-project workspace is single-principal. That is the right cost to pay, because the alternative is deciding Q1 and Q2 implicitly through an agent feature, which is exactly what the autonomy spec forbids.
+**INFERRED:** this is a cost. It means "the owner's agents" and "a guest's agents" are indistinguishable today, and the multi-project workspace is single-principal. That is the right cost to pay, because the alternative is deciding Q1 and Q2 implicitly through an agent feature, which is exactly what the autonomy spec forbids.
 
 ---
 
@@ -392,13 +392,13 @@ One thing you have got right that most teams don't: refusal as a first-class out
 
 **Fourth, a purely contractual system deadlocks on silence.** When a case falls outside every declared contract — and it will, on day one — a hierarchy has a default: it goes up. A flat contract mesh has no default; it has a gap, and gaps in this system present as the exact failure mode you already suffer, an agent quietly doing nothing. Hierarchy's much-mocked 'diffused responsibility' is the *pathology* of a mechanism whose *function* is having somewhere for the undefined case to go.
 
-**Fifth, humans need one throat to choke.** Not for blame — for questions. When Stephen asks 'what is happening with project X', the answer should come from one place with a coherent view, not from a query across seven receipt logs. That is a real requirement, and 'the UI aggregates it' is an answer that works until the aggregation is the thing that's wrong.
+**Fifth, humans need one throat to choke.** Not for blame — for questions. When the owner asks 'what is happening with project X', the answer should come from one place with a coherent view, not from a query across seven receipt logs. That is a real requirement, and 'the UI aggregates it' is an answer that works until the aggregation is the thing that's wrong.
 
 My concession: middle layers that only relay, and add latency without judgment, are pure loss, and agents make them cheap to create by accident. Cap depth. But do not mistake 'cap the depth' for 'there is no tree.'"
 
 ### P4 — The engineer who has to build the UI
 
-"Look at the object in §4. That is roughly forty configurable fields per agent. If I render that as a form, nobody — including Stephen — will ever create a second agent. Four things or this fails on contact.
+"Look at the object in §4. That is roughly forty configurable fields per agent. If I render that as a form, nobody — including the owner — will ever create a second agent. Four things or this fails on contact.
 
 **One: templates, not forms.** Creation starts from a role package (the crew spec already specifies `role-<name>/` with `ROLE.md`). The editor's default view shows about six fields — name, what it does, seat, what it may touch, what it may spend, who it escalates to. Everything else is behind 'advanced' with the inherited value shown, so the user sees *what it would be* without having to set it.
 
@@ -444,7 +444,7 @@ P4's "no dead fields" rule and P5's "no second daemon" rule together set the pha
 **What to steal, precisely.** The identity-plus-scope primitive is genuinely the right one, and it is close to what Friday already has: per-desk Ed25519 subkeys HKDF-derived from the install seed, with a revocation list. The three deltas worth adopting are:
 
 - **P-1 — Identity is a first-class object with a declared permission scope attached to the key, not to a role table.** Friday's scope currently rides the manifest; binding it to the subkey means the scope travels with any signed act and can be verified by a third party. Cheap, and it is what makes the rest possible.
-- **P-2 — Portability, gated.** The subkey should be *capable* of being exported so an agent could participate in a Nostr-compatible system with its identity, history and reputation intact. `identity.exportable` defaults false and requires a per-export approval card naming the destination (P2's amendment). Sovereignty means Stephen's agents are his, including his right to take them elsewhere — but exportable-by-default would mean an identity that can act outside Friday's egress gate, which is exactly the wrong default.
+- **P-2 — Portability, gated.** The subkey should be *capable* of being exported so an agent could participate in a Nostr-compatible system with its identity, history and reputation intact. `identity.exportable` defaults false and requires a per-export approval card naming the destination (P2's amendment). Sovereignty means the owner's agents are theirs, including the right to take them elsewhere — but exportable-by-default would mean an identity that can act outside Friday's egress gate, which is exactly the wrong default.
 - **P-3 — The receipt ledger becomes an append-only signed event log.** Friday has bylines and signed receipts already; making the ledger *structurally* an event log (one signed event per action, content-addressed, replayable) costs little now and turns a future Buzz integration into a transport change rather than a rewrite.
 
 **The integration, when it comes.** One seam, later: a desk holds a Nostr keypair and appears as a participant in a Buzz channel, over `services/federation_transport.py`, with every outbound event passing `egress_gate.seal_outbound` like any other egress. That makes Buzz a *channel* — the same category as the Telegram and Discord bridges already in `services/channels/` — and Invariant 12 governs it: reach never widens authority. It should not be attempted before V6 P9, because a shared workspace is a multi-principal surface and Friday has no principals yet.
@@ -562,14 +562,14 @@ Answers below bind downstream work; downstream inherits from this file, not from
 
 ## 15. Open questions — the maintainer's product calls, not engineering defaults
 
-- **Q1 — Who may create an agent?** Friday, acting on instruction, or the maintainer only? This is `friday-builds-agents.md`'s question in a new place, and the answer sets whether the editor is a tool Friday uses or a tool Stephen uses.
+- **Q1 — Who may create an agent?** Friday, acting on instruction, or the maintainer only? This is `friday-builds-agents.md`'s question in a new place, and the answer sets whether the editor is a tool Friday uses or a tool the owner uses.
 - **Q2 — What is the default irreversibility boundary for a newly created agent?** Deny-all (safe, high friction, guarantees the first hour of every new agent is approval cards), or inherit-from-creator (fast, and a quiet privilege-propagation path)? Engineering can implement either; which one is correct is a values call about how much friction is worth.
 - **Q3 — May agents read each other's histories by default, and may that cross project boundaries?** The spec defaults to brokered-and-receipted. A looser default would make crews smarter and make cross-contamination invisible.
 - **Q4 — May a higher-priority project preempt a lower one mid-work, and who sets priority?** Preemption is specified as opt-in per project. Whether it should ever be automatic — and whether Friday may set priority or only the maintainer — is a product call.
 - **Q5 — May a learning loop ever alter an agent's charter, or only its routines?** The spec defaults to routines only. Charter self-modification is the line between an agent that gets better at its job and an agent that changes what its job is.
-- **Q6 — Should Friday's agents be exportable off this machine at all?** Sovereignty cuts both ways: Stephen's agents are his, including the right to take them elsewhere; and an exportable identity can act outside the egress gate. D12 picks a cautious default; the principle is Stephen's to state.
+- **Q6 — Should Friday's agents be exportable off this machine at all?** Sovereignty cuts both ways: the owner's agents are theirs, including the right to take them elsewhere; and an exportable identity can act outside the egress gate. D12 picks a cautious default; the principle is the owner's to state.
 - **Q7 — When an agent needs an external account, is it a dedicated work identity or delegated session material?** The crew spec's D5 defaults to dedicated. Confirm, because it determines what an agent's compromise costs.
-- **Q8 — Does Stephen actually want the org metaphor in the interface?** The substrate argument holds either way. The chart is one rendering; a queue, a board, or a resource-first view are others. This is a taste call, and it should be made after AE-5 makes all three cheap to try.
+- **Q8 — Does the owner actually want the org metaphor in the interface?** The substrate argument holds either way. The chart is one rendering; a queue, a board, or a resource-first view are others. This is a taste call, and it should be made after AE-5 makes all three cheap to try.
 
 ---
 

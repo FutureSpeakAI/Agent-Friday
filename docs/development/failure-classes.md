@@ -228,7 +228,7 @@ call should happen at all.**
 > first is not gated, however careful the redaction is.
 
 The evaluator case is the sharpest because the protection was real and the leak
-was still there. On 2026-08-24 a vault-protected task refused the cloud, told
+was still there. A vault-protected task refused the cloud, told
 the user *"It was NOT sent to a cloud provider"*, and then `_evaluate_output`
 called Anthropic with that task's goal and up to 4,000 characters of its output.
 Nothing consulted `_vault_local_only()`. It surfaced only because the API key

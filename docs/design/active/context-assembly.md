@@ -96,7 +96,7 @@ same and stands: an assembler that never emits more than the seat holds.
 
 ### 1.4 What prompt caching actually offers — VERIFIED against both backends
 
-The maintainer asked whether prompt caching would help. Verified before designing, per the
+Whether prompt caching would help was verified before designing, per the
 commission's own rule: don't design against a capability that isn't there.
 
 **Both backends cache by byte-identical prefix.** The cache covers the prompt from its

@@ -4,7 +4,7 @@
 > **Written:** 2026-09-09
 > **Implementation:** `services/live_state.py` (the rule and the probe registry); `services/model_router.py` `_build_memory_context_block` (the hook); `conversation_memory.py` `supersede()` / `unsupersede()` / `find_ids()` (the remedy)
 > **Tests:** `tests/api/test_live_state_not_from_memory.py`, `tests/api/test_memory_supersede.py`
-> **Related:** `docs/decisions/2026-09-04-five-dead-settings.md`; `docs/history/2026-09-09-superseded-google-connectivity.json` (what was superseded, and how to reverse it)
+> **Related:** `docs/decisions/2026-09-04-five-dead-settings.md`
 
 ## The mechanism
 
@@ -22,7 +22,7 @@ It ran in five steps:
 2. **The user read the display and believed it.** Reasonably. It is the one
    place in the product whose entire job is to report whether accounts work.
 
-3. **The user told the assistant what he saw.** On 2026-09-09 Stephen said:
+3. **The user told the assistant what they saw.** On 2026-09-09 the owner said:
    *"I went to the settings workspace and I checked there and it says that my
    Google accounts are connected."* In good faith, reporting an observation.
 
@@ -37,7 +37,7 @@ It ran in five steps:
    `[conversation:2026-09-09]` citation. No tool was called.
 
 **The system laundered its own error through the person it was lying to, and
-returned it citing him as the authority.** The false claim entered as a display
+returned it citing them as the authority.** The false claim entered as a display
 bug and came back wearing user provenance, which is the strongest credential the
 architecture recognises.
 
@@ -101,7 +101,7 @@ its authority as evidence:
 - `unsupersede()` restores it. The operation is reversible.
 
 The true history here is worth preserving precisely because it is the evidence
-for this entry: a page told Stephen something false on 2026-09-09, and he
+for this entry: a page told the owner something false on 2026-09-09, and they
 repeated it in good faith. Deleting that sentence would erase the only trace of
 how the error travelled.
 

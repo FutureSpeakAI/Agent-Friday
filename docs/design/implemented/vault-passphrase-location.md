@@ -282,7 +282,7 @@ without it trades a visible fragile store for an invisible fragile store.
 
 ---
 
-## 7. Open questions for the next session
+## 7. Open questions
 
 - **Q1.** Is Option E offered as a choice, or is a passphrase mandatory? This is
   a threat-model question and it is the maintainer's. Everything else follows from it.
@@ -300,7 +300,7 @@ without it trades a visible fragile store for an invisible fragile store.
 
 ---
 
-## 8. Provisional shape, for the next session to argue with
+## 8. Provisional shape, to argue with
 
 Not a decision. Stated so there is something concrete to attack rather than a
 blank page:

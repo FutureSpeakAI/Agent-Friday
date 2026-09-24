@@ -21,7 +21,7 @@ interactive_brain  heavy_hitter  sidekick  sidekick_heavy  embedder  stt  tts  i
 orchestrator  sidekick_fast  function_manager  memory_manager  researcher
 ```
 
-The five new ones are the **working roles** the maintainer named on 2026-08-18. Do not assume a role is a
+The five new ones are the **working roles**. Do not assume a role is a
 model, and do not assume a role list is a count of resident processes. See §3.
 
 ---
@@ -135,8 +135,8 @@ Response is **always 200**, including when the selection does not fit. Notable f
 | `models[]` | per-model rows: `roles`, `residency`, `device`, `vram_mib`, `sized`, `num_ctx` |
 | `resident_vram_mib` / `peak_lease_vram_mib` / `peak_vram_mib` / `peak_state` | the three states the card passes through, and the worst |
 
-**This is advice, not a gate.** The maintainer's standing rule: a model the user selects wins. Show the
-consequence, let him choose. Do not refuse, and do not silently substitute.
+**This is advice, not a gate.** The standing rule: a model the user selects wins. Show the
+consequence, let the user choose. Do not refuse, and do not silently substitute.
 
 Two traps:
 
@@ -171,7 +171,7 @@ something could not be done; R11 means nothing has been asked for.
 
 ---
 
-## 6a. Context sizing changed on 2026-08-18 — read this before showing a seat size
+## 6a. Context sizing — read this before showing a seat size
 
 Two corrections landed together, and both move numbers a client may be caching.
 

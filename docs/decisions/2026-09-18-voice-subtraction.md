@@ -1,13 +1,13 @@
 # Voice subtraction — survey, measurements and the deletion proposal
 
-> **Status:** PROPOSED — awaiting Stephen's go on the deletion list
+> **Status:** PROPOSED — awaiting the owner's go on the deletion list
 > **Written:** 2026-09-18 (Fable 5.1, high effort)
 > **Supersedes when accepted:** `docs/design/active/voice-system-clean-sheet.md`,
 > `voice-system-spec.md`, `voice-mode-diagnosis-and-repair.md`,
 > `local-voice-repair-and-native-audio.md`, `cloud-voice-providers.md`,
 > `elevenlabs-voice.md` (all six move to `docs/design/historical/`)
 
-Stephen's requirement, verbatim: *"I hate how the UI gets in the way now and
+The owner's requirement, verbatim: *"I hate how the UI gets in the way now and
 it's super laggy. I want Gemini Live working fast, and I want the very latest
 version. I also want ONE on-device voice in/out option, and ONE
 hotkey-toggle-to-transcribe option that does not include voice out and works
@@ -92,7 +92,7 @@ the always-mounted `QuickSwitch` pill polls `GET /api/intelligence` every 20 s
 → `model_catalog.build_catalog()` (uncached) → `_tts_engines()` →
 `kokoro_health()` → `nemo_voice.gpu_status()` **and** `_voice_engines()` →
 `is_provider_available("nvidia-nemo")` → `gpu_tier_ready()` →
-`gpu_status()`. The cache TTL is 30 s (not 300 s) because Stephen's
+`gpu_status()`. The cache TTL is 30 s (not 300 s) because the owner's
 `local_voice_tts_engine` is `kokoro`, so a fresh torch CUDA query plus an
 `nvidia-smi` subprocess runs roughly every 40 s, all day, and logs the
 dispute each time. Deleting Kokoro and NeMo deletes the chain.
@@ -115,11 +115,11 @@ all request-driven through the catalog.
   released **2026-09-15** (three days ago), both stable. Google's models page
   now labels `gemini-3.1-flash-live-preview` "legacy" and recommends 3.8 Live.
   `gemini-2.0-flash-live-001` and `gemini-live-2.5-flash-preview` were shut
-  down 2025-12-09. Stephen's key sees all of: 3.8-live, 3.8-live-extended-
+  down 2025-12-09. The owner's key sees all of: 3.8-live, 3.8-live-extended-
   thinking, 3.1-flash-live-preview, 2.5-flash-native-audio-{latest,09-2025,
   12-2025}, 3.5-transcribe, 3.5-transcribe-live, three TTS previews.
-- Stephen is on `gemini-2.5-flash-native-audio-latest`.
-- **Real connects today, with his key, on the installed SDK (google-genai
+- The owner is on `gemini-2.5-flash-native-audio-latest`.
+- **Real connects today, with the owner's key, on the installed SDK (google-genai
   1.72.0), text prompt "Say hi in three words", time to first audio byte:**
 
 | Model | Endpoint | First audio | Notes |
@@ -153,7 +153,7 @@ dead weight on the new model.
 
 ## 4. Local voice — what the CPU can actually do (MEASURED)
 
-GPU: RTX 4070, 12,282 MiB. Under Stephen's testing the reasoning seat holds
+GPU: RTX 4070, 12,282 MiB. Under the owner's testing the reasoning seat holds
 ~11 GB, so GPU voice cannot be admitted anyway. Right now the seat is **not**
 running (1,660 MiB in use, no `llama-server.exe`, nothing on 8099); I did not
 touch it.
@@ -187,7 +187,7 @@ serialise on one CPU. With one pass at VAD close on `base.en` that is ~0.7 s.
 - Default `gemini-3.8-live`; fallback `gemini-3.1-flash-live-preview`; both
   verified by a real connect today. v1beta only. Context compression and
   session resumption on. Native barge-in (`START_OF_ACTIVITY_INTERRUPTS`).
-- Kept: tools + the `ask_friday` relay (how cloud voice reaches Stephen's
+- Kept: tools + the `ask_friday` relay (how cloud voice reaches the owner's
   context through the local model), egress gates, spend guard, cost metering,
   turn persistence, the PWA client.
 - Deleted: v1alpha attempt, affective dialog, proactive audio, voice
@@ -293,7 +293,7 @@ keys. Net ≈ −350 tests, +15.
 The six active voice specs move to `docs/design/historical/`; this file is the
 decision of record; `docs/DECISIONS.md` gets one line.
 
-### 6.6 Left on disk, NOT deleted by me (Stephen's data)
+### 6.6 Left on disk, NOT deleted by me (the owner's data)
 `~/.friday/models/nemo` (2.8 GB), `~/.friday/runtime/kokoro-onnx` (109 MB),
 `~/.friday/local_voice/whisper/models--Systran--faster-whisper-small`
 (464 MB, replaced by `base.en` 145 MB). Reclaimable after the change lands.
@@ -319,10 +319,10 @@ decision of record; `docs/DECISIONS.md` gets one line.
 
 ---
 
-## 8. Trade-offs Stephen should veto or accept
+## 8. Trade-offs the owner should veto or accept
 
 1. **The GPU ear goes.** When the card is free, whisper on CUDA measured
-   0.2 s vs 0.7 s for `base.en` on CPU. Under his actual testing the GPU
+   0.2 s vs 0.7 s for `base.en` on CPU. Under the owner's actual testing the GPU
    path is refused anyway, and the worker/lease machinery is ~2,000 lines.
 2. **`base.en` over `small`.** 3× faster; accuracy measured only on clean
    synthesized speech, not a real mic. One-constant swap if it disappoints.
@@ -330,7 +330,7 @@ decision of record; `docs/DECISIONS.md` gets one line.
    GPU policy. That is the ask; it is stated here so it is a decision.
 4. **Affective/proactive audio gone.** Not available on 3.8-live at all.
 5. **`voice_interruption_mode` survives** as the one hardware-dependent
-   toggle (speaker echo). Easy to delete too if he wants five controls.
+   toggle (speaker echo). Easy to delete too if the owner wants five controls.
 
 ---
 
@@ -370,7 +370,7 @@ decision of record; `docs/DECISIONS.md` gets one line.
 
 ## 11. Addendum (same day): "distill to wiki" runs once per voice session
 
-Stephen, verbatim: *"The distill to wiki task runs way too often. Maybe it
+The owner, verbatim: *"The distill to wiki task runs way too often. Maybe it
 should be part of the dreaming routine that runs when the computer is idle?"*
 
 ### 11.1 What happens today (TREE)
@@ -423,8 +423,8 @@ should be part of the dreaming routine that runs when the computer is idle?"*
      summary so `/api/memory/dream` history shows it.
 3. **"When the computer is idle."** The pass rides the existing 03:00 schedule
    (`notify: silent` already). Enabling it means flipping `enabled` on
-   `sch_memory_dreaming` in Stephen's `schedules.json` — his data, so it is
-   part of the go, or he flips it in the Schedules panel. An idle-triggered
+   `sch_memory_dreaming` in the owner's `schedules.json` — their data, so it is
+   part of the go, or they flip it in the Schedules panel. An idle-triggered
    variant (drain when `work_queue.is_away()` for 15 min, at most once a day)
    needs a trigger in `scheduler.py`, which the other session owns; I will
    write it as a follow-up note, not now.

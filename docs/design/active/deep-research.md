@@ -130,12 +130,11 @@ The numbers this design leans on, each **VERIFIED** at its source:
   check is the same probe pointed at the heavy seat.
 - **Fixed overhead of a full Friday turn is ~20,216 tokens** (~8,534 of tool schemas + ~11,681
   of system prompt; `services/context_budget.py:36-40`), measured live most recently at
-  **20,778** (`docs/audits/handoff-2026-08-16.md:22-23`). §3.3 is designed around *not paying
+  **20,778**. §3.3 is designed around *not paying
   this* on every grind step.
 - **The 26b's economics are batch economics**: 53.5 s to wake, then 22.4 tok/s
   (`services/pause_forecast.py:52-58`). The measured drain shows what amortization buys:
-  first item 8.66 s, second item **0.9 s** on the warm model
-  (`docs/audits/symphony-live-2026-08-15.md:349-361`).
+  first item 8.66 s, second item **0.9 s** on the warm model.
 - **The 12b at 131,072 has ~110k tokens of working room** — enough to hold every fetched page
   for a sub-question at once. That window cost 96 MiB (`residency_catalog.py:120-122`).
 
@@ -209,13 +208,13 @@ everything.
 
 **(b) Keywords cannot tell the maintainer's affairs from the world's.** The weak-keyword rule (§1.4)
 shreds payloads on exactly the topics a journalist researches, and the headline incident
-proved it on live data. The first draft of this document designed *around* that limitation;
-the maintainer rejected the limitation itself: *"keywording is insufficient; we need a judgement call
-and a classification system to protect sensitive materials, and it should work with the PII
-scrubber so we don't lock cloud models out completely."* §5 is the resulting component.
+proved it on live data. Designing *around* that limitation is rejected:
+keywording is insufficient. Protecting sensitive material needs a judgement call and a
+classification system that works with the PII scrubber, so cloud models are not locked out
+completely. §5 is that component.
 
-**(c) Protection, not location, is the constraint on framing.** The first draft forked
-vault-touching commissions to local-only scoping. Under the judgment gate the fork is
+**(c) Protection, not location, is the constraint on framing.** Vault-touching commissions
+are not forked to local-only scoping wholesale. Under the judgment gate the fork is
 narrower: Claude frames whenever a protected version of the question exists; local frames only
 when it does not (§3.2).
 
@@ -351,9 +350,8 @@ scoper would emit one sub-question, it was a lookup.
 
 ### 3.2 Stage B — scoping: scrub, then escalate
 
-> **Rewritten 2026-08-17.** The first draft forked vault-touching commissions to local-only
-> framing. The maintainer replaced that: *"Claude should see it if the PII scrubber can protect me
-> and if the local models may give an inferior answer."* Location is no longer the rule;
+> **The rule:** Claude sees a vault-touching commission when the PII scrubber can protect
+> it and the local models may give an inferior answer. Location is not the rule;
 > protection is.
 
 The scoper turns the question into a `ResearchPlan`. Who scopes is decided by the **judgment
@@ -510,7 +508,7 @@ commission, revisited when live runs produce evidence.
 | **E3** | A sub-question's `done_when` is unsatisfied after budget exhaustion | The `done_when`, findings so far | Narrowed done-criteria or acceptance of partial |
 | **E5** | The grind surfaces a sub-question the plan lacks | One sentence + the finding that surfaced it | Plan amendment yes/no |
 
-(The first draft's E4 — repeated verification failure — is now a synthesis-seat decision,
+(Repeated verification failure is a synthesis-seat decision,
 §3.4(b), rather than an escalation.)
 
 > **RS6 (rewritten).** Every escalation payload goes through the judgment gate before it is
@@ -547,9 +545,9 @@ report into the conversation. The chat message is the lede, not the report: what
 what was found (or not), how many claims were confirmed, how many struck, where the full
 report lives, and the colophon line. Example shape:
 
-> Research finished: *"What happened to the Austin housing-bond audit?"* — answered, 14
+> Research finished: *"What happened to the city housing-bond audit?"* — answered, 14
 > claims confirmed across 9 sources, 2 struck in verification, 1 thing I couldn't confirm
-> (flagged in the report). Full report: Research/austin-housing-bond-audit (opened in a new
+> (flagged in the report). Full report: Research/city-housing-bond-audit (opened in a new
 > tab). *Scoped by claude-sonnet-5 on a protected question (2 names scrubbed) · ground by
 > gemma4:12b + gemma4:e4b · synthesized by gemma4:26b · 74 fetches · 1 escalation · 38 min.*
 
