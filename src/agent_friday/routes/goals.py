@@ -222,3 +222,85 @@ def decide_approval_route(approval_id):
     if not rec:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "approval": rec})
+
+
+# ── Governance grants: outward powers for work nobody is watching ──────────
+# A scheduled or background job may take an outward action (send, post,
+# change a calendar, run a non-read command) only with a grant the owner made
+# here: named tools, one job's scope, an expiry and a use count. Everything
+# else it attempts waits on an approval card. See governance/action_gate.py.
+
+@goals_bp.route("/api/governance/grants", methods=["GET"])
+@login_required
+def list_governance_grants():
+    from agent_friday.governance import action_gate
+    return jsonify({"grants": action_gate.list_grants()})
+
+
+@goals_bp.route("/api/governance/grants", methods=["POST"])
+@login_required
+def create_governance_grant():
+    from agent_friday.governance import action_gate
+    body = request.get_json(silent=True) or {}
+    try:
+        g = action_gate.create_grant(
+            tools=list(body.get("tools") or []), scope=str(body.get("scope") or ""),
+            expires_in_seconds=float(body.get("expires_in_seconds") or 0),
+            max_uses=int(body.get("max_uses", 1)), created_by="owner",
+            note=str(body.get("note") or ""))
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"grant": g}), 201
+
+
+@goals_bp.route("/api/governance/grants/<grant_id>", methods=["DELETE"])
+@login_required
+def revoke_governance_grant(grant_id):
+    from agent_friday.governance import action_gate
+    return jsonify({"revoked": action_gate.revoke_grant(grant_id)})
+
+
+@goals_bp.route("/api/governance/outward-tools", methods=["GET"])
+@login_required
+def list_outward_tools():
+    """The actions a grant can cover: every registered tool the governance
+    checkpoint classifies as outward, in its own words. Read from the live
+    registry and the checkpoint's classifier, so the Grants screen offers
+    exactly what the gate would otherwise hold."""
+    from agent_friday.governance import action_gate
+    from agent_friday.services import agent as _agent
+    out = []
+    for name in sorted(_agent.CLAUDE_TOOL_HANDLERS):
+        probe = {"publish_at": "x"} if name == "content_create_post" else \
+                {"command": "Remove-Item x"} if name == "run_command" else {}
+        try:
+            klass, why = action_gate.classify(name, probe)
+        except Exception:
+            klass, why = action_gate.OUTWARD, "unclassified"
+        if klass == action_gate.OUTWARD and name not in action_gate.SELF_GATED:
+            out.append({"name": name, "why": why, "label": _GRANT_LABELS.get(name)
+                        or _connector_label(name)})
+    return jsonify({"tools": out})
+
+
+#: Plain words for the Grants screen. A tool missing here still appears, under
+#: a label built from its name, so a new outward tool is never hidden.
+_GRANT_LABELS = {
+    "create_calendar_event": "Create calendar events and send invites",
+    "update_calendar_event": "Change calendar events",
+    "annotate_calendar_events": "Add notes to calendar events",
+    "content_create_post": "Schedule a new social post",
+    "content_schedule_post": "Schedule an existing social post",
+    "delete_task": "Delete tasks",
+    "install_package": "Install software",
+    "run_command": "Run commands that change things",
+    "spawn_interactive_session": "Start a terminal session",
+    "send_to_session": "Type into an open terminal session",
+}
+
+
+def _connector_label(name):
+    words = name[4:].split("_") if name.startswith("mcp_") else name.split("_")
+    if name.startswith("mcp_") and len(words) > 1:
+        return "%s: %s" % (words[0].capitalize(), " ".join(words[1:]))
+    return " ".join(words).capitalize()
