@@ -61,7 +61,7 @@ regexes and two keyword lists. A full Windows installer run additionally gets
 Layer 3.
 
 **Presidio was evaluated and deliberately rejected.** It is not a missing
-feature or an unfinished one. Measured on 2026-08-24:
+feature or an unfinished one. In evaluation against the shipping classifier:
 
 - it returned **TIER_2 where the existing regex returns TIER_3** — weaker than
   what was already shipping, on real PII;
@@ -110,9 +110,19 @@ honest limits:
 
 1. **It is only as good as its classifier**, which on a frozen build is two
    layers of pattern matching. Novel PII shapes it has no rule for will pass.
-   Between 2026-08-24 and 2026-08-25 the classifier had **no phone, address, or
-   account-number regex at all**, and real contact details reached the cloud.
-   That is fixed; it is also the kind of thing that can recur.
+   The deterministic detectors cover *structured* shapes — phone numbers,
+   street addresses, masked account tails, issued identifiers — because there
+   the shape itself is the signal. There is **no named-entity recognition**, so
+   anything that depends on knowing a word is a name is classified by its
+   surrounding words alone and can pass as TIER_1: a bare drug name
+   (*"she started sertraline 50mg"*), *"Dr. Lastname"*, or a given-name
+   possessive (*"Emma's school pickup is at 3:15"*). Wiki and smart-context
+   sections default to TIER_2, so those sources are withheld regardless; the
+   residual exposure is content classified ad hoc, principally tool results
+   passing through the egress gate. The deliberate trade-offs: a dosage regex
+   fires on health journalism, and adding `dr.` to the weak words re-breaks
+   ordinary prompts such as "Dr. Seuss". The tractable fix is a local NER pass
+   at Layer 4, not Presidio.
 2. **A grant is a real hole, on purpose.** Granted file content is registered as
    sendable and crosses the wire. The design reasoning is in FILE_GRANTS.md.
 3. **Only the user can open it.** No model on any surface can create a grant —

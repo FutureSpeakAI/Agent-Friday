@@ -60,6 +60,7 @@ document it is.
 | [UI build](development/ui-build.md) | Which UI file is authoritative and how the build refuses to lose components. |
 | [Release process](development/release-process.md) | Versioning, tagging, building the Windows installer, what ships and what does not. |
 | [Failure classes](development/failure-classes.md) | The failure classes this codebase has produced, stated as rules a contributor can apply. |
+| [Which gate refused?](development/which-gate-refused.md) | The three gates that can refuse a tool call, how to tell them apart in the log, and what each one needs. |
 | [Windows installer](../packaging/windows/README.md) | The maintainer's guide to the installer's design rules and layout. |
 | [Local HTTPS proxy](../ops/README.md) | Optional: fronting the local server with `https://agent.friday` on one machine. |
 
@@ -82,10 +83,12 @@ decision requests, dated.
 
 ## Engineering history
 
-[`history/audits/`](history/audits/) holds dated investigations, forensics
-and audit reports. They describe the tree on the day they were written and are
-kept verbatim as records; the current state of any subsystem is in the
-documents above.
+[`history/audits/gauntlet-2026-09-03/`](history/audits/gauntlet-2026-09-03/)
+holds the finding register of a whole-repository audit (`findings.jsonl`,
+`claims.jsonl`). Tests under `tests/gauntlet/` cite its finding IDs. The
+register describes the tree on the day it was written; the current state of
+any subsystem is in the documents above, and the incident history of a change
+is in git.
 
 ## Release information
 

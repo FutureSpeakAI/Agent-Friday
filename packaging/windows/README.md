@@ -119,18 +119,17 @@ Installed layout on the user's machine, all under `%LOCALAPPDATA%\AgentFriday`:
 not mean the egress gate gains a layer.** Presidio runs **observe-only**: it
 logs what it *would* have flagged — entity type, offsets, score and a salted
 hash, never the matched text — and changes no tier decision. Enforcement
-requires `FRIDAY_PRESIDIO_ENFORCE=1`, and is not recommended: measured on
-2026-08-24 it scored TIER_2 where the existing regex returns TIER_3, and
-escalated 6 of 12 entirely benign prompts, including "what is the weather going
+requires `FRIDAY_PRESIDIO_ENFORCE=1`, and is not recommended: in evaluation it
+scored TIER_2 where the existing regex returns TIER_3, and escalated 6 of 12 entirely benign prompts, including "what is the weather going
 to be like tomorrow?".
 
 Two consequences for anyone working on this installer:
 
 - **`services/privacy_layers.py` deliberately reports Layer 2 as INACTIVE even
-  though the module imports.** That is not a bug to fix. Before 2026-08-25 it
-  reported on importability alone, so a fresh install printed "4/4 layers
-  active" while Presidio was inert — the exact class of overstatement the module
-  exists to prevent.
+  though the module imports.** That is not a bug to fix. Reporting on
+  importability alone makes a fresh install print "4/4 layers active" while
+  Presidio is inert — the exact class of overstatement the module exists to
+  prevent.
 - **Nothing here downloads a spaCy model.** Presidio's `AnalyzerEngine()` — the
   construction that would pull the ~590 MB `en_core_web_lg` — is only reached
   under `FRIDAY_PRESIDIO_ENFORCE=1` or `FRIDAY_PRESIDIO_SHADOW=1`, both off by
@@ -140,7 +139,7 @@ Two consequences for anyone working on this installer:
 
 ## What was verified on Windows 11, and what was not
 
-### Verified, on this machine, this session
+### Verified on a Windows 11 developer machine
 
 - **CPython 3.12.10 embeddable**, SHA-256 pinned and checked. 3.12 rather than
   3.13 because presidio pulls spacy, which pulls blis/thinc/murmurhash, and
@@ -183,7 +182,7 @@ Two consequences for anyone working on this installer:
   under the embedded interpreter — which is the whole `._pth` design validated
   end to end, without a line of `src/` being touched.
 - **A full uninstall**, isolated with `FRIDAY_HOME` so it could not touch the
-  73 GB of real `~/.friday` data on this machine. Every result checked
+  machine's existing, populated `~/.friday` (73 GB). Every result checked
   individually rather than trusting the summary line:
 
   | Checked | Result |
@@ -193,7 +192,7 @@ Two consequences for anyone working on this installer:
   | Her data directories (7) | 7/7 preserved, 7 of 7 files survived |
   | A data directory the deny-list has never heard of | preserved — the deny-list-not-allow-list choice does what it was meant to |
   | Windows Credential Manager | untouched, and the log records that it was deliberate |
-  | The real `~/.friday` on this machine | 73.73 GB before and after |
+  | The machine's existing `~/.friday` | 73.73 GB before and after |
 
 ### Sizes, measured rather than guessed
 
@@ -210,9 +209,9 @@ budget about 3 GB more for `gemma3:4b`.
 
 - **This has never run on a clean machine.** Everything above was tested on a
   developer box that already has Ollama, several Pythons, and Friday's own
-  `~/.friday` directory populated. The clean-machine test is the one that found
-  the most important defect of the previous day's work, and it has not been run
-  against this installer. **This is the single largest gap.**
+  `~/.friday` directory populated. A clean-machine run is the test most likely
+  to find a defect that a developer box hides, and it has not been run against
+  this installer. **This is the single largest gap.**
 - **The Ollama install path is untested end to end**, because Ollama was
   already present here and the code correctly declines to touch an existing
   install. Neither the winget path, nor the Inno switches, nor the NSIS
@@ -336,12 +335,12 @@ Kept here because every one of them looked like working code.
 
 ## Deliberately not done
 
-- **Nothing in `src/` was modified.** Not one file. The `._pth` approach exists
-  specifically so that `cli.py`'s inert `PYTHONPATH` hand-off did not have to
-  be touched while another session owned that tree.
+- **The installer needs no change in `src/`.** The `._pth` approach exists so
+  that `cli.py`'s inert `PYTHONPATH` hand-off works as it is; keeping the
+  installer independent of the application source keeps the two changeable
+  separately.
 - **No code signing.** The `.cmd` and `.ps1` files are unsigned, so
-  SmartScreen may warn on first run. Worth solving before this goes to anyone
-  who is not family.
+  SmartScreen may warn on first run. Worth solving before wide distribution.
 - **`get-pip.py` is not hash-pinned** — upstream regenerates it at a stable URL
   with no published hash. The installer records that it was *not* verified
   rather than implying it was. `sources.json` explains how to pin it properly
