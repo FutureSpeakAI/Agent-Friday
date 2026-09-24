@@ -95,6 +95,9 @@ DEFAULT_PIPER_VOICE = "en_US-amy-medium"
 _PIPER_HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 _PIPER_VOICE_PATHS = {
     "en_US-amy-medium": "en/en_US/amy/medium/en_US-amy-medium.onnx",
+    # Not offered in Settings: its training data (Lessac Blizzard 2013) is
+    # licensed for non-commercial research only. Kept so an install that
+    # already chose it keeps loading the voice its owner downloaded.
     "en_US-lessac-medium": "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
 }
 

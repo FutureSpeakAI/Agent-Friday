@@ -313,6 +313,14 @@ def file_lines(path: str):
         return
 
 
+#: Files that reproduce upstream copyright notices and license texts verbatim.
+#: Maintainers' published contact addresses and clause numbers in those texts
+#: are attribution, not personal data, and the texts cannot be edited. Only the
+#: email and phone rules are skipped here; credential shapes are still checked.
+ATTRIBUTION_FILES = {"THIRD_PARTY_LICENSES.md", "NOTICE", "LICENSE", "CREDITS.md"}
+_ATTRIBUTION_EXEMPT = {"Personal email (PII)", "Possible phone number"}
+
+
 def mask(value: str) -> str:
     """Enough of a value to find it, never enough to use it."""
     v = value or ""
@@ -343,7 +351,10 @@ def detect(whole_tree: bool = False) -> list:
                 continue
             if _is_deliberately_public(text):
                 continue
+            attribution = path.replace("\\", "/").rsplit("/", 1)[-1] in ATTRIBUTION_FILES
             for category, rx, validator in RULES:
+                if attribution and category in _ATTRIBUTION_EXEMPT:
+                    continue
                 for m in rx.finditer(text):
                     value = m.group(1) if m.groups() else m.group(0)
                     if validator and not validator(value):

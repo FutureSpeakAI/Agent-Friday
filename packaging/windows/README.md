@@ -151,8 +151,8 @@ Two consequences for anyone working on this installer:
   `torch 2.13.0+cpu` (the CPU wheel, not the multi-gigabyte CUDA one),
   chromadb, sentence-transformers, faster-whisper, piper, onnxruntime,
   presidio/spacy, pyttsx3 and headroom-ai.
-- **The one honest exception**: `pyautogui`, `pyscreeze`, `pygetwindow`,
-  `mouseinfo` and `pytweening` publish *no wheels at all*. Their sdists contain
+- **The one honest exception**: `pyautogui`, `pyscreeze`, `pygetwindow` and
+  `pytweening` publish *no wheels at all*. Their sdists contain
   no C sources and no `ext_modules`, so no compiler is needed — but the build
   now turns them into `py3-none-any` wheels on the build machine so the
   installer stays literally wheels-only on hers.
@@ -163,8 +163,9 @@ Two consequences for anyone working on this installer:
   instead, so no `src/` change is needed.
 - **Embeddable Python has no `tkinter`, `venv` or `ensurepip`.** `sqlite3`,
   `ssl`, `ctypes`, `lzma`, `bz2`, `decimal` and `multiprocessing` are all
-  present. Nothing in `agent_friday` imports tkinter; `mouseinfo` does, and
-  `pyautogui` tolerates its absence.
+  present. Nothing in `agent_friday` imports tkinter. `mouseinfo` (GPL-3.0),
+  which `pyautogui` lists as a dependency and imports only defensively, is not
+  shipped or installed.
 - **Argument quoting**: ten hostile argument vectors round-tripped through a
   real process and compared against the resulting argv.
 - **The build's credential scanner**, in both directions: it clears the four

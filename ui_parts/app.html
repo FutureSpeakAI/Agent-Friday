@@ -13284,7 +13284,7 @@ function SettingsTabVoice({s,save}){
       <PushToTranscribeRows s={s} save={save}/>
       {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Piper voice" desc="The on-device voice the local engines speak with.">
         <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
-          {[['en_US-amy-medium','Amy \u2014 US English (medium)'],['en_US-lessac-medium','Lessac \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+          {[['en_US-amy-medium','Amy \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
       </StRow>}
     </StSection>
