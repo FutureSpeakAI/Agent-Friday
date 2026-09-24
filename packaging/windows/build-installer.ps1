@@ -112,14 +112,13 @@ function Get-PayloadExcludePatterns {
     <#  SECURITY BOUNDARY, by SHAPE rather than by name.
 
         Get-PayloadExcludes above is an exact-name list, which means it only
-        ever catches the scratch files someone already thought of. On
-        2026-08-25 the repo root held _msgws_raw.txt, _msgws_full.txt,
-        _messages_ui_dump.txt, _triage_tail.txt, _triage_tail2.txt and
-        _orig_bytes.tmp -- ~90 KB of dumps from a live message-triage session,
-        none of them gitignored and none of them named in the list, so all six
-        would have been copied into the shipped payload. pyinstaller_build.log
-        was in the same position: gitignored, therefore absent from a clean
-        clone, but present in the working tree this script actually reads.
+        ever catches the scratch files someone already thought of. Debugging
+        dumps at the repo root (names like _msgws_raw.txt or _orig_bytes.tmp,
+        holding live message data) are neither gitignored nor named in that
+        list, so they would be copied into the shipped payload.
+        pyinstaller_build.log is in the same position: gitignored, therefore
+        absent from a clean clone, but present in the working tree this script
+        actually reads.
 
         These patterns are matched against ROOT-LEVEL entries only (the copy
         loop below enumerates $RepoRoot, not the tree), so '_*' cannot reach a
@@ -204,13 +203,13 @@ Get-ChildItem -LiteralPath $Payload -Recurse -Force -File -ErrorAction SilentlyC
 
 # -----------------------------------------------------------------------
 #  TRACKED-TREE GUARD. The copy loop above snapshots a WORKING TREE, and the
-#  exclusion lists only catch what someone already thought of. The published
-#  5.12.0 and 5.13.0 artifacts (audited 2026-09-06) each carried ~290 files
-#  that exist only on the developer's machine: a second git repository
+#  exclusion lists only catch what someone already thought of. A build made
+#  from a working tree has shipped ~290 files that exist only on the
+#  developer's machine: a second git repository
 #  checked out inside the repo root (with its own .git/), seven gitignored
 #  token files, a Claude memory file, PowerShell caches, and local-only
 #  handoff documents. Every one of them was gitignored or locally excluded,
-#  so a clean clone would never have had them -- but nothing enforced the
+#  so a clean clone would never have them -- but nothing enforced the
 #  "build from a clean worktree at the tag" sentence in the release docs.
 #
 #  This does. Every file in the payload must be tracked by git at the commit
@@ -313,8 +312,8 @@ Say-Ok "$($payloadFiles.Count) files, all required entry points present."
 # The naive version of this - "does the file contain /sk-ant-.{8,}/?" - fired
 # on four files, all of which turned out to be deliberate test fixtures and
 # documentation placeholders. One of them carries the repo's own
-# `# pragma: allowlist secret`; another is docs/audits/release-readiness.md,
-# which exists specifically to record that those strings are benign.
+# `# pragma: allowlist secret`; the others record that those strings are
+# benign.
 #
 # A scanner that cries wolf gets switched off, and a scanner that is switched
 # off is how a real key ships. So this one discriminates instead:

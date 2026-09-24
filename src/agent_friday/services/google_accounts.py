@@ -190,10 +190,10 @@ def _save_index(data: dict) -> None:
 # that renders account state must ask the second question, so the derivation
 # lives here once and is attached to every public record.
 #
-# 2026-09-09: both of Stephen's accounts sat at status="needs_reauth" with a
-# last_sync of 2026-09-01 while the connectors page said "connected", because
-# the page rendered the presence of the record. Nine days of confidently wrong
-# calendar answers, including a day with two job interviews reported as empty.
+# An account can sit at status="needs_reauth" with a days-old last_sync while
+# a page that renders the presence of the record says "connected". The result
+# is days of confidently wrong calendar answers, with busy days reported as
+# empty.
 
 STALE_AFTER_DAYS = 2
 
@@ -212,9 +212,9 @@ _STATUS_PRESENTATION = {
     # to fix it - it rewrites the token under whatever key the current process
     # has - which is the worst possible property for a wrong diagnosis to
     # have, because the remedy that hides the fault buys exactly one day.
-    # Measured 2026-09-19 in Stephen's audit log: 11,508 of these on Sept 4th,
-    # 9,517 on the 11th, 8,109 on the 17th, every one recorded as if Google
-    # had pulled the grant, and a reconnect every morning to clear it.
+    # Filed as needs_reauth, this produces thousands of audit entries a day
+    # (11,508 in one day), every one recorded as if Google had pulled the
+    # grant, and a reconnect every morning to clear it.
     "unreadable":   ("unreadable",   "Stored credential unreadable",
                      False, True),
 }
@@ -352,8 +352,8 @@ def has_accounts() -> bool:
 
     Callers that report a user-facing "connected" state must use
     has_working_accounts() instead -- this answers a storage question, and
-    answering a health question with it is what produced the 2026-09-09
-    incident (see account_health above). Kept because the legacy fallback
+    answering a health question with it reports a broken account as
+    connected (see account_health above). Kept because the legacy fallback
     paths genuinely want "was this install ever connected".
     """
     _migrate_legacy_if_needed()
@@ -621,9 +621,9 @@ def credentials_for(account_id: str):
     # SUCCESS CLEARS A STALE FAILURE. Only a successful *refresh* used to write
     # "connected" back, so an account marked bad by one transient failure stayed
     # bad for as long as its token remained valid - no refresh was due, so
-    # nothing ever said otherwise, and every fetch skipped it. Observed
-    # 2026-09-19: both accounts reading fine, audit full of success=true, and
-    # the connectors page insisting they needed reauthorising.
+    # nothing ever said otherwise, and every fetch skipped it: accounts
+    # reading fine, audit full of success=true, and the connectors page
+    # insisting they needed reauthorising.
     #
     # This is the other half of "the status is a live check, not a remembered
     # claim". A verdict that can only ever get worse is not a health check.
@@ -713,8 +713,7 @@ def _accounts_with(service: str) -> list:
     `status != "needs_reauth"`, which is a deny-list of exactly one value in
     a module whose header says health is never inferred from a record
     existing. Every other unhealthy state - "error", "disconnected",
-    "revoked", a missing status, and the "unreadable" state added on
-    2026-09-19 - passed straight through it as usable. `account_health` is
+    "revoked", a missing status, and the "unreadable" state - passed straight through it as usable. `account_health` is
     where usability is decided for every other surface; a fetch path that
     decides it a second way is how the connectors page and the data end up
     telling the user different stories.
@@ -745,20 +744,20 @@ _DEFAULT_GMAIL_WINDOW_DAYS = 7
 
 # ── per-service condition at the provider ───────────────────────────────────
 #
-# AN ACCOUNT BEING HEALTHY DOES NOT MEAN EVERY SERVICE ON IT WORKS. Measured
-# 2026-09-19: both of Stephen's accounts were connected, their tokens valid,
-# their `services` maps carrying `drive: true` - and every Drive call returned
-# `403 Google Drive API has not been used in project 449982820564 before or it
-# is disabled`. The Drive API had never been switched on for the Cloud project.
-# Nothing recorded that, so the connectors page reported Drive as on, the model
-# was told Drive was available, and the only evidence was a 403 thrown away
-# inside an errors list nobody surfaced.
+# AN ACCOUNT BEING HEALTHY DOES NOT MEAN EVERY SERVICE ON IT WORKS. Accounts
+# can be connected, their tokens valid, their `services` maps carrying
+# `drive: true` - and every Drive call return `403 Google Drive API has not
+# been used in project <id> before or it is disabled`, because the Drive API
+# was never switched on for the Cloud project. Unless that is recorded, the
+# connectors page reports Drive as on, the model is told Drive is available,
+# and the only evidence is a 403 thrown away inside an errors list nobody
+# surfaces.
 #
 # A CONDITION AT THE PROVIDER IS STICKY UNTIL IT ISN'T. It is not a transient:
 # enabling an API is a deliberate act in a console, so the condition persists
 # until someone performs it. It is therefore worth recording - but cleared the
 # instant a call succeeds, because a verdict that can only get worse is not a
-# health check (the lesson from `credentials_for` the same day).
+# health check (the same rule `credentials_for` follows).
 
 _SERVICE_STATE_FILE = ACCOUNTS_DIR / "service_state.json"
 
@@ -780,9 +779,9 @@ _PROVIDER_OFF_SIGNS = (
 #:
 #: The record itself is kept indefinitely -- enabling an API is a console act, so
 #: the condition is sticky -- but a reading has an age, and past this one it is
-#: history rather than a measurement. Observed 2026-09-24: Drive reported "not
-#: activated" long after Stephen had activated it, and only corrected itself when
-#: something happened to call Drive. A verdict that can be revised only by the
+#: history rather than a measurement. Without an expiry, Drive keeps reporting
+#: "not activated" long after the user has activated it, correcting itself only
+#: when something happens to call Drive. A verdict that can be revised only by the
 #: call it discourages cannot self-correct.
 #:
 #: The asymmetry decides the direction. If the service really is still off, the
@@ -1358,7 +1357,7 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
     """Classify the free-text fields of a Tasks write before they reach Google.
 
     title and notes are model-authored (tool args) and were the one Google
-    write path with no gate (2026-09-06 boundary audit; calendar writes have
+    write path with no gate (calendar writes have
     had one since security-boundary.md §19). Returns (gated_body, error);
     on error the caller refuses rather than sending unclassified text."""
     out = dict(body)

@@ -6,22 +6,19 @@ every existing surface keeps its current output, and the existing suite is the
 proof.
 
 WHY. "Is this connected?" is computed in twenty-six places across seven
-mechanisms, in six vocabularies that do not map onto each other (survey
-2026-09-19, §2.2 of the spec). The cost is not untidiness. It is that no caller
-can ask the question once and trust the answer, so every surface invents its
-own, and each new surface is a fresh opportunity to invent it wrong. The
-inventions so far:
+mechanisms, in six vocabularies that do not map onto each other (§2.2 of the
+spec). The cost is not untidiness. It is that no caller can ask the question
+once and trust the answer, so every surface invents its own, and each new
+surface is a fresh opportunity to invent it wrong. The failure modes:
 
-  * the connectors page rendered the PRESENCE of a Google record as health, and
-    reported both accounts fine while they sat at needs_reauth - nine days of
-    confidently wrong calendar answers, including a day with two job interviews
-    reported as empty (google_accounts.py:128-135)
-  * the provider surface reported a Firecrawl key as MISSING when the key was
-    present and merely undecryptable, so the user was told to supply something
-    he had already supplied (2026-09-19)
-  * both Google accounts carry `drive: true` while every Drive call returns 403
+  * rendering the PRESENCE of a Google record as health reports accounts fine
+    while they sit at needs_reauth - and every calendar answer confidently
+    wrong, busy days reported as empty (google_accounts.py:128-135)
+  * reporting a key that is present but undecryptable as MISSING tells the
+    user to supply something they have already supplied
+  * a Google account can carry `drive: true` while every Drive call returns 403
     because the API was never enabled on the Cloud project - a service reported
-    on that is off at the provider (2026-09-19)
+    on that is off at the provider
 
 FOUR RULES, each bought with one of those.
 
@@ -161,7 +158,7 @@ def _mapped(table: dict, value, source: str, detail: str = "",
     """Look `value` up in `table`, failing closed when it is not there.
 
     The fail-closed branch is the point of this helper. A vocabulary that grows
-    a new value - as google_accounts grew `unreadable` on 2026-09-19 - must
+    a new value - as google_accounts grew `unreadable` - must
     surface as UNKNOWN here, not as whatever the first branch of an if-chain
     happened to be.
     """
@@ -180,7 +177,7 @@ def _mapped(table: dict, value, source: str, detail: str = "",
 # ── the six vocabularies ────────────────────────────────────────────────────
 
 #: services/google_accounts.py. The only mechanism that already derives a
-#: verdict; `unreadable` was added on 2026-09-19 to separate a local key fault
+#: verdict; `unreadable` separates a local key fault
 #: from a revoked grant.
 _GOOGLE = {
     "connected": WORKING,
@@ -232,7 +229,7 @@ _UNVERIFIED_SOURCE_STATES = {"present_unverified"}
 
 #: services/credential_store.provider_key_status. The distinction this module
 #: exists to preserve: `present_but_unreadable` is NOT `missing`, and reporting
-#: it as missing told the user to supply a key he had already supplied.
+#: it as missing tells the user to supply a key they have already supplied.
 _KEY_STATUS = {
     "connected": WORKING,
     "present_but_unreadable": UNREADABLE,

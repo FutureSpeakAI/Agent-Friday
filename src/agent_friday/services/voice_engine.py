@@ -266,16 +266,16 @@ _VOICE_LIVE_TOOLS = [
       "on_complete_prompt": ("string", "Optional full instruction for that follow-up task.")},
      ["name", "prompt"]),
     # voice-system-clean-sheet.md §4.5 (D7): local brain, cloud mouth. The
-    # ONE tool that lets Gemini Live reach Stephen's context honestly -- by
-    # asking his local model, whose sealed answer is all Google ever sees.
+    # ONE tool that lets Gemini Live reach the user's context honestly -- by
+    # asking their local model, whose sealed answer is all Google ever sees.
     ("ask_friday",
-     "Ask Friday's local model, which has full access to Stephen's notes, "
+     "Ask Friday's local model, which has full access to the user's notes, "
      "memory, knowledge graph, files, calendar and email. Use it for ANY "
-     "question about Stephen's own context (his notes, his projects, what he "
-     "wrote, what he decided, his wiki, his memory), and for anything that "
-     "needs a tool you do not have. Announce it first ('Let me ask Friday.'), "
+     "question about the user's own context (their notes, their projects, what "
+     "they wrote, what they decided, their wiki, their memory), and for anything "
+     "that needs a tool you do not have. Announce it first ('Let me ask Friday.'), "
      "then call it, then speak the answer as given. The answer has already "
-     "passed Stephen's privacy gate; if it says something was withheld, say "
+     "passed the user's privacy gate; if it says something was withheld, say "
      "so plainly rather than guessing.",
      {"question": ("string", "The question, in full, as Friday's local model should hear it.")},
      ["question"]),
@@ -305,12 +305,12 @@ def _tool_ask_friday(inp):
     except Exception:
         seat = None
     if not seat:
-        return ("Friday's local model is not loaded right now, so Stephen's "
+        return ("Friday's local model is not loaded right now, so the user's "
                 "context cannot be reached from this session. Say so plainly.")
     system, _meta = _build_voice_system_prompt(settings)
     # The relay note and the volatile context ride in the USER turn: the
     # seat's template re-prefills the whole prompt on any system-message
-    # change (measured 2026-09-18), so the system text stays the one the
+    # change, so the system text stays the one the
     # local sessions and the proofs already have in cache.
     from agent_friday.routes.voice import _voice_user_message
     user = _voice_user_message(
@@ -977,7 +977,7 @@ LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-
 # connect, not just models.list.
 LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-preview-09-2025"
 LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
-# Added 2026-09-22 and verified the ONLY way this block accepts: a real
+# Verified the ONLY way this block accepts: a real
 # bidiGenerateContent connect (open, one server message, close) against
 # v1beta AND v1alpha, in the same run as a deliberately fake id
 # ("gemini-3.8-live-does-not-exist") that failed 1008 — so the OK is
@@ -1235,7 +1235,7 @@ def _model_supports_affective_dialog(model_name: str) -> bool:
     mn = (model_name or "").lower()
     if _is_gemini_38_live(mn):
         # 3.8 Live is not a 2.5 native-audio model and must not be treated as
-        # one. Probed 2026-09-22: the server ACCEPTS enable_affective_dialog on
+        # one. Probed: the server ACCEPTS enable_affective_dialog on
         # 3.8 (it does not 1011), so this is not a crash guard — it is a
         # correctness one. The field steers a 2.5-era emotion model that 3.8
         # does not have, and the general rule of this file is that a flag is
@@ -1249,8 +1249,8 @@ def _model_supports_affective_dialog(model_name: str) -> bool:
 
 
 # ── Gemini 3.8 Live family (released 2026-09-15) ────────────────────────────
-# Three config facts about this family, each established by a real connect on
-# 2026-09-22 rather than by reading the model card, and each one of which
+# Three config facts about this family, each established by a real connect
+# rather than by reading the model card, and each one of which
 # turns a working voice session into a 1007 if it is got wrong:
 #
 #   1. `proactivity` is GONE from the setup message. Not "defaults to true",
@@ -1594,8 +1594,8 @@ def _spawn_voice_distill(turn_log):
     prompt = (
         "Review the following voice conversation between the user and Friday. "
         "If the user mentioned anything new and durable about themselves, their work, "
-        "his family, his projects, or his preferences — something worth remembering "
-        "across sessions — call `propose_wiki_update` to queue it for his approval. "
+        "their family, their projects, or their preferences — something worth remembering "
+        "across sessions — call `propose_wiki_update` to queue it for their approval. "
         "Pick a sensible file under ~/wiki/ (e.g. identity/core-profile.md, "
         "professional/job-search.md, family/notes.md). If nothing new came up, "
         "reply with a one-line note and do nothing.\n\n"

@@ -156,10 +156,10 @@ def protect(data: bytes) -> tuple[bytes, str]:
     Returns (blob, method). `method` is recorded in metadata for auditing; the
     blob itself is also self-describing so unprotect() never needs it.
 
-    FRIDAY'S OWN STORE, FIRST AND NORMALLY ONLY. Everything written from
-    2026-09-19 goes through `keystore`, which keeps one random root key in one
+    FRIDAY'S OWN STORE, FIRST AND NORMALLY ONLY. Everything new is
+    written through `keystore`, which keeps one random root key in one
     file that every process finds the same way. The three mechanisms below it
-    survive only so that blobs written before that date can still be READ; see
+    survive only so that blobs written by earlier versions can still be READ; see
     `unprotect`. Nothing new is written with them, because the whole defect was
     a store that picked a different key depending on how the process started
     and then reported the result as the user's Google account being revoked.
@@ -366,11 +366,11 @@ def _legacy_keys() -> list[tuple[str, bytes]]:
     """Every key a credential on this machine could plausibly have been
     written with, newest-preference first.
 
-    NOT PARANOIA - MEASURED. On 2026-09-19 Stephen's machine held TWO different
-    passphrases: one in friday_startup.bat and a different one in the Windows
-    keychain. `vault_passphrase.resolve()` prefers the keychain, so every
-    credential written before that keychain entry appeared became unreadable
-    the moment it did - four provider API keys and an MCP OAuth token, silently,
+    NOT PARANOIA. A machine can hold TWO different passphrases: one in
+    friday_startup.bat and a different one in the Windows keychain.
+    `vault_passphrase.resolve()` prefers the keychain, so every credential
+    written before that keychain entry appeared becomes unreadable the moment
+    it does - provider API keys and MCP OAuth tokens alike, silently,
     with the health surface reporting them as "no API key set" rather than as
     "we have your key and cannot open it".
 
@@ -431,10 +431,9 @@ def decrypt_any(blob: bytes) -> tuple[bytes, str]:
 
     `mcp_servers.json` keeps its secrets as base64 inside JSON rather than as
     blobs on disk (services/connector_secrets.py), so it is invisible to
-    `_credential_files()` and was missed by the first keystore migration. The
-    cost of that miss was concrete: Stephen's GitHub MCP server failed every
-    spawn with "GCM auth tag mismatch" while the other five recovered
-    credentials came back, because its token was still sealed under the
+    `_credential_files()`. Missing it has a concrete cost: an MCP server whose
+    token is stored there fails every spawn with "GCM auth tag mismatch" while
+    file-based credentials recover, because its token is still sealed under the
     passphrase the resolver had stopped preferring.
     """
     return _decrypt_any(blob)

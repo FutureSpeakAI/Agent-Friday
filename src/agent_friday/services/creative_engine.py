@@ -71,11 +71,11 @@ _IMAGE_MODEL_MAP = {
     "gemini-nano-banana-2":   "gemini-3.1-flash-image",
     "nano-banana-2":          "gemini-3.1-flash-image",
     "nano_banana_2":          "gemini-3.1-flash-image",
-    # The bare "nano-banana" alias used to resolve to gemini-2.5-flash-image,
-    # the ORIGINAL Nano Banana. Google SHUTS THAT MODEL DOWN 2026-10-02.
-    # Repointed 2026-09-22, ten days ahead of the date, because the failure
-    # mode on the day is not a deprecation warning — it is every bare-alias
-    # image generation returning a 404 the user reads as "Friday is broken".
+    # The bare "nano-banana" alias does NOT resolve to gemini-2.5-flash-image,
+    # the ORIGINAL Nano Banana: Google SHUTS THAT MODEL DOWN 2026-10-02, and
+    # the failure mode on the day is not a deprecation warning — it is every
+    # bare-alias image generation returning a 404 the user reads as "Friday
+    # is broken".
     # "nano-banana" now means "the current Nano Banana", which is what a
     # caller typing the unversioned nickname was always asking for.
     "nano-banana":            "gemini-3.1-flash-image",
@@ -101,8 +101,8 @@ _VIDEO_MODEL_MAP = {
     # Gemini Omni Flash — conversational any-to-any video (I/O 2026).
     # Dispatched via the Interactions API, NOT Veo’s LRO path — see
     # _generate_video_omni().
-    # gemini-omni-flash-preview SHUTS DOWN 2026-09-30. Repointed 2026-09-22 —
-    # eight days of margin — to the GA replacement gemini-omni-1.1-flash,
+    # gemini-omni-flash-preview SHUTS DOWN 2026-09-30, so these resolve to
+    # the GA replacement gemini-omni-1.1-flash,
     # whose existence was confirmed by models.get against the live API
     # (131072 in / 65536 out, generateContent), not by reading a docs table.
     # The preview id is kept as its own key so a settings.json or a saved
@@ -1011,8 +1011,8 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
 
     # Cloud egress: from here the prompt (user text plus Series-Bible /
     # scene-DNA context) goes to Google, as a Veo long-running operation or an
-    # Omni interaction. generate_image gates its prompt at this same point;
-    # the video path did not (2026-09-06 boundary audit).
+    # Omni interaction. generate_image gates its prompt at this same point,
+    # and the video path must too.
     from agent_friday.services import egress_gate as _eg
     prompt = _eg.gate_text(prompt, "gemini", "video.prompt")
     if not prompt:

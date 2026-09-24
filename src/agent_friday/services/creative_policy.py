@@ -1,8 +1,7 @@
 """What Friday's creative policy actually is — legible, and the maintainer's to set.
 
 There is no content filter in the Z-Image weights, none in ComfyUI, and no
-filter node in the graph (`docs/history/audits/z-image-content-filtering-2026-08-16.md`
-records the audit). The only gate anywhere in that path is Friday's own
+filter node in the graph. The only gate anywhere in that path is Friday's own
 `creative_engine.check_content_safety`.
 
 A seat with nothing legible telling it what the policy IS will improvise one,

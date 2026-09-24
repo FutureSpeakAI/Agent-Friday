@@ -4,7 +4,7 @@
 # A failure here is a warning in the maintainer's report and a calm sentence for
 # her. It is never a stop.
 #
-# Verified 2026-08-21 on Windows 11 in embeddable CPython 3.12.10: resolves
+# Verified on Windows 11 in embeddable CPython 3.12.10: resolves
 # and installs with --only-binary=:all: and every module imports. Zero wheels
 # built from source. The heaviest thing in here is spacy's tree (blis, thinc,
 # numpy) pulled in by presidio, all of which ship cp312 win_amd64 wheels.
@@ -45,11 +45,11 @@ mutagen>=1.47
 # --- Context compression. Degrades to passthrough if absent. --------------
 #
 # NOTE 1: requirements.txt at the repo root says this "builds from sdist
-# (Rust + MSVC on Windows)". That is out of date - as of 2026-08-21 a cp312
-# win_amd64 wheel is published, verified by downloading it.
+# (Rust + MSVC on Windows)". That is out of date - a cp312 win_amd64 wheel
+# is published, verified by downloading it.
 #
 # NOTE 2, and this one matters: the repo pins `headroom-ai[all]`. On a real
-# install, measured on Windows 11 on 2026-08-21, that [all] extra pulls in
+# install, measured on Windows 11, that [all] extra pulls in
 #
 #   torch (490 MB on disk), transformers, sentence-transformers, datasets,
 #   scikit-learn, scipy, pandas, pyarrow, opencv-python, rapidocr-onnxruntime,

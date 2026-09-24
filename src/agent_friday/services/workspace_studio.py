@@ -251,7 +251,7 @@ def restore_as_of(ws_id, when):
     """Restore the state the workspace had AT a moment in time.
 
     "Put my workspace back to how it was this morning" is the request that
-    version ids cannot answer — he will not remember which of six changes broke
+    version ids cannot answer — the user will not remember which of six changes broke
     it. `when` is an ISO timestamp or a datetime; the newest snapshot taken at
     or before it wins, because that snapshot holds the state as it was BEFORE
     the change that followed.
@@ -301,7 +301,7 @@ def _changed_keys(before, after) -> list:
 
 
 def history(ws_id):
-    """The audit trail, in his language: what changed, when, how to undo it."""
+    """The audit trail, in the user's language: what changed, when, how to undo it."""
     doc = load_ws_doc(ws_id)
     vers = doc.get("versions") or []
     current = doc.get("customization") or {}

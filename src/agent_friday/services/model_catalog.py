@@ -107,12 +107,12 @@ def context_window_for(model_id: str):
 
     # WHAT IS SERVED BEATS WHAT IS PLANNED OR DECLARED.
     #
-    # Measured 2026-09-23 on bonsai2:27b — three different numbers for one model:
+    # Measured on bonsai2:27b — three different numbers for one model:
     #   models.json declares  262,144   (the architecture's maximum)
-    #   the residency rung     65,536   (what this function used to return)
+    #   the residency rung     65,536   (the PLAN)
     #   llama-server serves    49,152   (/props default_generation_settings.n_ctx)
     #
-    # It returned the PLAN: 33% above what the running process will accept. That
+    # The plan is 33% above what the running process will accept. That
     # is the same shape as the e4b 400s (a planned 65,536 against a served
     # 32,768) — a prompt budgeted to the planned window gets rejected. So when a
     # seat is actually up, its own answer wins. It is the only one of the three
@@ -231,9 +231,9 @@ def _live_ollama_models(base_url: str):
     callers can still distinguish it from "running with nothing installed",
     which is []).
 
-    Measured 4.05s cold on 2026-09-23 with no daemon running: `is_available()`
-    waits out a connection timeout, and this sits inside `build_catalog`, so it
-    was 4 of the model picker's 18 seconds. A picker must not wait on a daemon
+    Measured 4.05s cold with no daemon running: `is_available()` waits out a
+    connection timeout, and this sits inside `build_catalog`, so unsnapshotted
+    it is 4 of an 18-second model picker open. A picker must not wait on a daemon
     that is not there.
     """
     from agent_friday.services import machine_probe as _mp
@@ -337,7 +337,7 @@ def _model_entries_for(provider: dict, registry) -> list:
     meta = provider.get("model_meta") or {}
     costs = provider.get("cost_per_1k") or {}
     # Availability is a cheap env-key check for cloud providers and a MACHINE
-    # PROBE for the local engine ones. Measured cold on 2026-09-23:
+    # PROBE for the local engine ones. Measured cold:
     # nvidia-nemo 2.69s (imports torch/NeMo), ollama-local 4.05s. Only those
     # are snapshotted, so a cloud row still resolves synchronously and the
     # picker opens with every shipped and discovered model present.
@@ -565,11 +565,11 @@ def _voice_engines(registry) -> list:
     availability.
 
     `auto` is deliberately NOT offered (voice-system-clean-sheet.md §8.1 A):
-    since 2026-09-09 it is a synonym for `local` (it never reaches the cloud),
+    it is a synonym for `local` (it never reaches the cloud),
     so a picker entry for it is a second name for the same thing. The value
     is still accepted on write (`_VOICE_ENUMS`) and read as local, so an
     existing settings.json keeps working."""
-    # Measured 3.44s inside `build_catalog` on 2026-09-23 -- the availability
+    # Measured 3.44s inside `build_catalog` -- the availability
     # checks for the local voice engines probe for torch/NeMo. Snapshotted for
     # the same reason `_tts_engines` is: a picker must not wait on an import.
     # Cold reads render every row unavailable WITH A REASON that says the check
@@ -638,9 +638,9 @@ def _tts_engines() -> list:
     # NEVER CALL kokoro_health() ON THE REQUEST PATH.
     #
     # It imports kokoro deliberately (see the docstring above), and that pulls
-    # in torch. Measured 2026-09-23: 28.9s on the first call, 0.00s after. This
-    # runs inside `build_catalog`, so that import WAS the model picker's first
-    # open after every restart -- 14.3s of its 18s.
+    # in torch. Measured: 28.9s on the first call, 0.00s after. This runs
+    # inside `build_catalog`, so called inline that import would dominate the
+    # model picker's first open after every restart.
     #
     # Read through a snapshot with a hard budget instead: the cached verdict if
     # there is one, otherwise a row that says it has not been read yet while the
@@ -776,7 +776,7 @@ def _kokoro_health_uncached() -> dict:
 def _arbiter_seat_entries() -> list:
     """Snapshotted view of the seats the Arbiter serves.
 
-    Measured 4.07s cold on 2026-09-23: the real builder health-checks each seat
+    Measured 4.07s cold: the real builder health-checks each seat
     over loopback, and a seat whose process is gone costs a connection timeout.
     The picker must not wait on that, so it is read through `machine_probe`. A
     cold read returns [] -- the ARBITER rows are simply absent for a moment
@@ -904,7 +904,7 @@ def _arbiter_seat_entries_uncached() -> list:
 
 
 def _friday_store_entries(exclude: set | None = None) -> list:
-    """Snapshotted wrapper -- measured 4.09s cold on 2026-09-23.
+    """Snapshotted wrapper -- the real builder measures 4.09s cold.
 
     The real builder asks a guarded presence probe about each model Friday
     holds, and a model whose endpoint is gone costs a timeout. A cold read
@@ -957,8 +957,8 @@ def _friday_store_entries_uncached(exclude: set | None = None) -> list:
 
     # The same presence question local_seats._friday_store asks, answered
     # the same way: through the guarded probe, never `Path.exists()` inline.
-    # Profiled 2026-09-17 with the WSL share wedged: this loop's stat on the
-    # FridayWeaver record cost 25.4 s of a 27.2 s /api/intelligence request,
+    # Profiled with the WSL share wedged: an inline stat on the FridayWeaver
+    # record costs 25.4 s of a 27.2 s /api/intelligence request,
     # the endpoint the top-bar model pill reads. Retired records and
     # fine-tunes without their adapter are not pickable either.
     try:
@@ -1077,10 +1077,9 @@ def build_catalog() -> dict:
         # services/local_creative_overrides.py for why this can't live in
         # provider_registry.py itself.
         try:
-            # Measured 4.08s cold for local-comfyui on 2026-09-23: the
-            # overlay probes ComfyUI on :8188, which is usually not running, so
-            # it pays a connection timeout. Last of the five probes that made
-            # this function take 18 seconds. Snapshotted; a cold read leaves the
+            # Measured 4.08s cold for local-comfyui: the overlay probes
+            # ComfyUI on :8188, which is usually not running, so it pays a
+            # connection timeout. Snapshotted; a cold read leaves the
             # descriptor un-overlaid, which is the same thing that happens when
             # there is no overlay file -- the shipped creative models still
             # render.

@@ -1,10 +1,10 @@
 """Edit index.html without ever serving a half-finished page.
 
 The server reads index.html from disk on every request, so any partial edit
-reaches the running app the moment it touches the file. The app is in use
-as a daily driver while sessions rebuild it underneath him; on 2026-08-18 he
-opened Settings and got a spinner that never resolved, because a component was
-live in his browser before the work behind it was.
+reaches the running app the moment it touches the file. The app stays in use
+while it is being edited, so a half-written page shows up as, for example, a
+Settings spinner that never resolves because a component is live in the
+browser before the work behind it is.
 
 So edits go to a staging copy, the staged file is checked for syntax, and only
 then does it replace the served file in one atomic os.replace — which is

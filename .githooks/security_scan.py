@@ -100,7 +100,7 @@ def _not_placeholder(value: str) -> bool:
 # passed to a constructor — and flagging it teaches people that this scanner cries
 # wolf, which is how a scanner ends up bypassed and protecting nothing. Same for
 # prose: a comment reading "never drop the last token: `list_voices`" is not a
-# credential. (Both blocked a commit on 2026-08-21.)
+# credential. (Both have blocked commits.)
 _CODE_REF_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 _CODE_PUNCT = "`()[]{}"
 # A single unquoted word: a variable name being passed, not a value.
@@ -123,12 +123,13 @@ def _looks_like_code_not_literal(value: str) -> bool:
     #
     # _CODE_REF_RE requires a dot, so it exempts `core.GEMINI_API_KEY` and
     # misses `byoSecret` -- and `client_secret: byoSecret` in index.html
-    # blocked a commit on 2026-08-26. That is a reference being PASSED, which
+    # would block a commit. That is a reference being PASSED, which
     # is the correct pattern this scanner's own comment above defends; the
     # value it names is nowhere in the diff.
     #
-    # This is the fifth time a check here could not tell USING a thing from
-    # WRITING ABOUT one (see KNOWN_ISSUES.md and the comments either side).
+    # Telling USING a thing apart from WRITING ABOUT one is a recurring
+    # weakness of this scanner (see KNOWN_ISSUES.md and the comments either
+    # side).
     # Crying wolf is not a harmless failure mode: it is how a scanner ends up
     # routinely bypassed and protecting nothing.
     #

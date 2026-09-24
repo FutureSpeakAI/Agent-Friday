@@ -590,8 +590,8 @@ def evaluate_content(
         try:
             from agent_friday.services import moderation
             # apply_packs=False breaks the mutual recursion with moderation
-            # .scan (250 round-trips per approval card before 2026-09-22 —
-            # see that function's docstring). This call wants the H1-H4 floor;
+            # .scan (250 round-trips per approval card without it — see that
+            # function's docstring). This call wants the H1-H4 floor;
             # the pack rules are evaluated below, by this function.
             harm = moderation.scan(content_text=scan_text, apply_packs=False)
             if harm.get("blocked"):

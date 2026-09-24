@@ -3,15 +3,13 @@
 
 Why this exists
 ----------------
-The 2026-09-03 decision to remove Qwen from `model_plan.BRAIN_MODELS`
-entirely (Gemma 4 only, a placeholder until FutureSpeak's own model ships)
-was fixed in the ladder itself, then found AGAIN independently in three
-more places over the next three days: the setup wizard's hardcoded default,
-`install.ps1`'s own five-rung ladder (`scripts/gen_installer_ladder.py`
-exists because of that one), and finally the public README — found by
-The maintainer looking at the published repo, after a same-session documentation
-reconciliation pass had already run and missed it. Four fixes for one
-fact is the same disease `check_settings_readers.py` exists for on the
+Removing Qwen from `model_plan.BRAIN_MODELS` (Gemma 4 only, a placeholder
+until FutureSpeak's own model ships) was a change to the ladder itself, but
+the same fact was also asserted in three more places: the setup wizard's
+hardcoded default, `install.ps1`'s own five-rung ladder
+(`scripts/gen_installer_ladder.py` exists because of that one), and the
+public README, which a documentation reconciliation pass missed. Four fixes
+for one fact is the same disease `check_settings_readers.py` exists for on the
 settings side: a value asserted in more than one place drifts, and nothing
 short of a mechanical recheck notices when it does.
 
@@ -40,7 +38,7 @@ wrong.
 
 The curated file list (`CHECKED_FILES`) is deliberately short and is
 user-facing, living documentation — the things a stranger reads to learn
-what this product currently does. `docs/audits/*`, `CHANGELOG.md`'s older
+what this product currently does. Audit records, `CHANGELOG.md`'s older
 entries, and anywhere else Qwen's removal is itself the historical subject
 being documented are correctly excluded: this check would be actively
 wrong applied there, flagging the record of the fix as if it were the bug.
@@ -64,7 +62,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: Former `model_plan.BRAIN_MODELS` members, removed 2026-09-03. Extend this
+#: Former `model_plan.BRAIN_MODELS` members. Extend this
 #: the next time a family is retired from the reasoning ladder specifically
 #: — NOT for embedding, image, or video models, which are separate catalogs
 #: with their own independent lifecycles.
@@ -93,18 +91,15 @@ CHECKED_FILES = [
 # ---------------------------------------------------------
 # A retired brain-ladder model is a decision: it stopped being true the day
 # someone decided it, and a banned-token list captures that exactly. Google's
-# retirements are a CALENDAR. `gemini-omni-flash-preview` worked perfectly on
-# 2026-09-29 and returned 404 on 2026-09-30, and nothing in the repo changed
-# in between. A token blocklist cannot express that, because the same string
+# retirements are a CALENDAR. A model works perfectly the day before its
+# shutdown date and returns 404 the day after, and nothing in the repo
+# changes in between. A token blocklist cannot express that, because the same string
 # is correct before the date and broken after it.
 #
-# This section was added 2026-09-22 after `gemini-omni-flash-preview`
-# (shutdown 2026-09-30) and `gemini-2.5-flash-image` (shutdown 2026-10-02)
-# were BOTH found still wired into dispatch with eight and ten days left —
-# not caught by any test, any check, or any of the several passes that had
-# touched those same files in the weeks before. They were found by a human
-# reading Google's deprecations page. That is not a repeatable process, which
-# is the whole argument for this being code.
+# `gemini-omni-flash-preview` and `gemini-2.5-flash-image` were both still
+# wired into dispatch days before their shutdown dates, and no test or check
+# noticed; only reading Google's deprecations page did. That is not a
+# repeatable process, which is the whole argument for this being code.
 #
 # What it does: fails while there is still time to act, not after. An id in
 # GOOGLE_MODEL_SHUTDOWNS becomes an error once its shutdown date is within
@@ -113,7 +108,7 @@ CHECKED_FILES = [
 #
 # Honest limits, same as above: this table is hand-maintained and does not
 # fetch ai.google.dev. It cannot know about a retirement nobody has entered
-# here. What it CAN do — and what the omni/nano-banana incident needed — is
+# here. What it CAN do — and what the omni/nano-banana case needed — is
 # make sure a retirement someone already wrote down cannot sit in the repo
 # unnoticed until the date passes. Adding the next one is a one-line edit;
 # the check then does the remembering.
@@ -142,15 +137,12 @@ GOOGLE_MODEL_SHUTDOWNS = {
 #: The other half of the table, and the more surprising one: ids Google's
 #: deprecations page explicitly lists with NO shutdown date.
 #:
-#: This exists because a retirement can be UN-announced. On 2026-07-28
-#: Google's deprecations page gave gemini-2.5-pro, gemini-2.5-flash and
-#: gemini-2.5-flash-lite a shutdown date of 2026-10-16. By early August those
-#: dates were gone from the page, replaced by "No shutdown date announced"
-#: and a standing note that the 2.5 models "are not deprecated and will
-#: continue to be served until further notice" — with no changelog entry
-#: marking the reversal. The withdrawn date is what the provider_registry.py
-#: comment had captured and what the first pass at this section flagged as
-#: unverified.
+#: This exists because a retirement can be UN-announced. Google's
+#: deprecations page once gave gemini-2.5-pro, gemini-2.5-flash and
+#: gemini-2.5-flash-lite a shutdown date of 2026-10-16, then replaced those
+#: dates with "No shutdown date announced" and a standing note that the 2.5
+#: models "are not deprecated and will continue to be served until further
+#: notice" — with no changelog entry marking the reversal.
 #:
 #: Recording the negative result is the point. Without it the next person to
 #: read "2.5 Pro/Flash sunset 2026-10-16" anywhere — an old comment, a cached
@@ -176,8 +168,7 @@ GOOGLE_NO_SHUTDOWN_ANNOUNCED = {
     "lyria-3-pro-preview": (
         "2026-09-22",
         "page recommends lyria-3.5 as a replacement but announces no "
-        "shutdown date. A recommendation is not a deadline; this was "
-        "briefly carried here as 2027-05-07, which Google never said"),
+        "shutdown date. A recommendation is not a deadline"),
 }
 
 #: Source of truth for both tables above, re-read 2026-09-22.

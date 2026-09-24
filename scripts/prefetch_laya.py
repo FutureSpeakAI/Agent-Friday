@@ -2,7 +2,7 @@
 
 WHY THIS IS NOT LEFT LAZY, unlike all-MiniLM-L6-v2. That model backs
 conversation memory, and a first turn that is slightly less well recalled is a
-small thing. This one decides whether an action needs Stephen's sign-off, and
+small thing. This one decides whether an action needs the owner's sign-off, and
 it is ON by default - so a fresh machine that leaves it lazy spends its first
 minutes deciding with the keyword scan alone. That degradation is safe and it
 announces itself, but it is avoidable, and a 808 MB download is better spent

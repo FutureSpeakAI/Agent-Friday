@@ -1,17 +1,17 @@
 """What Friday does with the phone: every send, and every validated event.
 
-WHO FRIDAY MAY CONTACT. The owner's instruction was: start with his own cell,
-because he is the user, and nothing else "unless I tell Friday explicitly to
-call someone else". So there are two paths out, and they are different in kind:
+WHO FRIDAY MAY CONTACT. The owner's own cell, because the owner is the user,
+and nothing else unless the owner explicitly tells Friday to call someone
+else. So there are two paths out, and they are different in kind:
 
   * The VERIFIED OWNER CELL. Friday may text it on its own initiative: alerts,
-    approval codes, replies to his texts. Each send still passes the checkpoint
+    approval codes, replies to the owner's texts. Each send still passes the checkpoint
     below, which enforces the per-hour and per-day caps, the spend hard stop,
     and the egress gate on the text itself. Calls to it need an approval card
     like any call.
   * ANY OTHER NUMBER. Only when the owner's own message in that turn names the
     number, AND an approval card for that exact message or call is approved by
-    him. The card is fingerprinted: approving one text is not approving another,
+    the owner. The card is fingerprinted: approving one text is not approving another,
     and one approval buys one send.
 
 Nothing that arrives by phone can start either path. A text or call from the
@@ -174,7 +174,7 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
 
     if action in ("verify_sms", "verify_call"):
         # The owner started this from Settings on this machine, to the number
-        # he typed. It is the only send allowed before verification.
+        # they typed. It is the only send allowed before verification.
         if target != cfg.get("owner_cell"):
             refuse("a verification code goes only to the cell entered in Settings")
     elif approval is None:
@@ -693,7 +693,7 @@ def _handle_sms_in(ev: dict) -> str:
     _redact_later(sid)
     if not from_owner:
         # Not the owner: no agent, no reply (a reply costs money and confirms
-        # the number is live). He sees it, marked for what it is.
+        # the number is live). The owner sees it, marked for what it is.
         _notify("Text from %s (not you)" % mask(sender),
                 "Untrusted message, shown as received: %s" % body[:280],
                 priority="medium", dedupe_key="sms:%s" % sid)

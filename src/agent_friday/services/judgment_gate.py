@@ -56,7 +56,7 @@ _log = logging.getLogger("friday.judgment")
 
 # ── Verdicts (§5.2) ───────────────────────────────────────────────────────────
 ABOUT_THE_WORLD = "ABOUT_THE_WORLD"      # third-party published material
-STEPHEN_SUBSTANCE = "STEPHEN_SUBSTANCE"  # his, but identity is separable
+STEPHEN_SUBSTANCE = "STEPHEN_SUBSTANCE"  # the user's, but identity is separable
 NEVER_SEND = "NEVER_SEND"                # identity and substance inseparable
 _VALID_VERDICTS = {ABOUT_THE_WORLD, STEPHEN_SUBSTANCE, NEVER_SEND}
 

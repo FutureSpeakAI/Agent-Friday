@@ -37,7 +37,7 @@ def _report(conversation_id: str, text: str, meta: dict | None = None) -> None:
     Server-side is the point (§3.5): the old delivery path needed a live
     browser to witness a transition, so a task that completed while nothing was
     watching reported to nobody. Writing into the store means the message is
-    there whenever he next opens that conversation — including after a restart.
+    there whenever the user next opens that conversation — including after a restart.
     """
     try:
         from agent_friday.services import conversations as conv
@@ -357,10 +357,9 @@ def reconcile_tasks() -> dict:
             #
             # `chain_run_status` reports a step's STATUS and nothing else, so
             # "interrupted" reached the assistant as a bare word with no cause
-            # attached. On 2026-09-19 that cost an evening: a workflow step
-            # died twice, the reason was written down both times, and the
-            # assistant reading the status could only say it had no idea why -
-            # which was true, and was the bug.
+            # attached: a workflow step can die twice with the reason written
+            # down both times, and the assistant reading the status can only
+            # say it has no idea why - which is true, and is the bug.
             t["status_reason"] = _why
             touched.append(tid)
     resumable = []

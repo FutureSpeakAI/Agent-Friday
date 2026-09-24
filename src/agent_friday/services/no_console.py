@@ -5,16 +5,15 @@ WHY
 Friday is a desktop app. Every time it shells out — and it shells out a lot:
 git, powershell, ffmpeg, ollama, nvidia-smi, the credential helpers, the MCP
 clients — Windows opens a console window for the child unless it is told not
-to. The result, in Stephen's words on 2026-09-18: "There are a lot of terminal
-window popups happening on my machine when I run Friday, and when Friday is
-closed."
+to. The result is a stream of terminal window popups while Friday runs, and
+even after Friday is closed (the tray keeps running).
 
 The flag that prevents it already exists in this tree, four separate times,
 under three different names: `_POPEN_FLAGS` in `core/__init__.py` and
 `routing/ollama_manager.py`, `_CREATE_FLAGS` in `mcp_client.py`,
 `CREATE_NO_WINDOW` in `friday_tray.py`. It is applied at some call sites and
-not at others. An audit on 2026-09-18 found **46 subprocess calls with no
-`creationflags` at all**, spread across the CLI, the tray, the setup wizard,
+not at others. An audit found **46 subprocess calls with no `creationflags`
+at all**, spread across the CLI, the tray, the setup wizard,
 the agent, the connectors and the credential store.
 
 WHY THIS IS A PATCH AND NOT 46 EDITS

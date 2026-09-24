@@ -164,9 +164,8 @@ class IntegrityEngine:
                 # get_governance_key() below already does exactly this for
                 # its own file fallback; this write never did, leaving the
                 # private signing key world/group-readable at the process
-                # umask (commonly 644) on a from-source Linux/macOS install
-                # (see the 2026-09 gauntlet audit in docs/history/audits/). The
-                # public verify key is meant to be shared, so it alone is
+                # umask (commonly 644) on a from-source Linux/macOS install.
+                # The public verify key is meant to be shared, so it alone is
                 # left at the default mode.
                 try:
                     import stat

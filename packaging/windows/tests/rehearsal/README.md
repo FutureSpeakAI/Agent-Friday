@@ -48,7 +48,7 @@ with a second zip, then answers three questions:
 Get the zips with `gh release download v5.6.3 -p '*.zip' -D <dir>`. Results land
 in `<Root>\RESULT.json`; installer output in `<Root>\run-{base,upgrade}.log`.
 
-Measured 2026-08-29 on the published assets:
+Measured on the published release assets:
 
 | | → 5.6.5 | → 5.6.6 |
 |---|---|---|

@@ -267,7 +267,7 @@ def friday_capabilities():
 
 @core_bp.route('/api/decisions/gate_status')
 def decisions_gate_status():
-    """What is actually deciding which actions need Stephen's sign-off.
+    """What is actually deciding which actions need the owner's sign-off.
 
     The settings file says which scanner is SELECTED. This says whether it is
     running, which is a different question and the one that matters when the
@@ -301,8 +301,8 @@ def decisions_gate_status():
         from agent_friday.services import laya_backend as _laya
         # `?retry=1` forces a reload attempt, ignoring the backoff and the
         # attempt budget. For the case where the model failed at boot for a
-        # reason since fixed - a transformers import that lost a race on
-        # 2026-09-22, say - and the alternative is restarting the server to
+        # reason since fixed - a transformers import that lost a boot-time
+        # race, say - and the alternative is restarting the server to
         # clear one cached string.
         if str(request.args.get("retry", "")).lower() in ("1", "true", "yes"):
             _laya.start_warming(force=True)
@@ -554,9 +554,9 @@ def list_models():
     try:
         # SERVED FROM THE WARM CACHE, not rebuilt per request.
         #
-        # build_catalog() was measured at 18.9 s for 598 models on 2026-09-22,
-        # called synchronously here, which is why the model picker timed out
-        # and could not be used to switch seats at all. The value is now
+        # build_catalog() was measured at 18.9 s for 598 models; called
+        # synchronously here, it times out the model picker, which then cannot
+        # be used to switch seats at all. The value is now
         # warmed at boot, persisted across restarts, and refreshed behind the
         # request - `compute_if_cold` means the very first call on a machine
         # with no cache still gets a real answer rather than an empty picker.
@@ -1000,10 +1000,9 @@ def _check_local_only_seats(new_settings):
     exists specifically so a body of private text never leaves the machine cannot
     be aimed off the machine.
 
-    Observed 2026-09-24: the Memory keeper seat, whose description reads "Local
-    only", had been set to Claude Opus 5.5. Nothing leaked (the runtime refuses
-    before any call), but the feature was silently off and the UI had offered the
-    choice.
+    Example: the Memory keeper seat, whose description reads "Local only", set
+    to a cloud model. Nothing leaks (the runtime refuses before any call), but
+    the feature is silently off and the UI offered the choice.
     """
     try:
         from agent_friday.services.seat_policy import local_only_violations
@@ -1067,11 +1066,11 @@ def _check_seat_installed(new_settings):
     """Refuse to bind a LOCAL seat to a model that is not on this machine.
 
     This is not the removed conformance gate above: it asks nothing about
-    quality, only whether the weights exist. Observed 2026-09-18: the picker
-    wrote `capability_routing.reasoning = gemma4:12b` (Ollama held zero
-    models; the only local weights were the FridayWeaver e2b set), the save
-    returned 200, the UI announced success, and `local_seats.resolve()`
-    substituted e2b at INFO in a log nobody reads. A seat change that cannot
+    quality, only whether the weights exist. Without it, the picker can write
+    `capability_routing.reasoning = gemma4:12b` on a machine that does not
+    have it, the save returns 200, the UI announces success, and
+    `local_seats.resolve()` substitutes another model at INFO in a log nobody
+    reads. A seat change that cannot
     be served must fail here, out loud, naming what is missing and what is
     installed -- not succeed on paper and be quietly rewritten at dispatch.
 
@@ -1104,8 +1103,8 @@ def _check_seat_installed(new_settings):
             # And the UI does exactly that: model-catalog entries carry
             # `provider` (singular) while index.html reads `m.providers`
             # (plural), so `provider` arrives undefined and JSON.stringify drops
-            # the key. Found 2026-09-23 by a test that bound a seat to
-            # `gemma4:definitely-not-installed-9z` and got a cheerful 200.
+            # the key; a seat bound to `gemma4:definitely-not-installed-9z`
+            # would otherwise get a cheerful 200.
             #
             # So infer locality when it was not declared. A gateway id always
             # contains '/' (anthropic/claude-opus-5.5) and is never local;
@@ -1196,17 +1195,17 @@ def api_settings():
 
         # A seat change must reach the PLAN, not just dispatch.
         #
-        # Until now the plan was computed once at boot and never again, so
-        # choosing a model in the UI changed what answered him while the
-        # residency plan kept describing the old seat. Everything that reads
-        # the plan — the pause forecaster above all — then reasoned about a
-        # model that was not serving anyone, which is how a "cold model"
-        # warning appeared before every message for a model that was warm.
+        # A plan computed once at boot and never again means choosing a model
+        # in the UI changes what answers while the residency plan keeps
+        # describing the old seat. Everything that reads the plan — the pause
+        # forecaster above all — then reasons about a model that is not
+        # serving anyone, and a "cold model" warning appears before every
+        # message for a model that is warm.
         #
         # The plan is recomputed, but capability_routing is deliberately NOT
-        # rebound from it: his selection is the input here, and a save that
-        # quietly rewrote his choice back to whatever fits would be the same
-        # silent-override defect wearing different clothes. Where his choice
+        # rebound from it: the user's selection is the input here, and a save
+        # that quietly rewrote their choice back to whatever fits would be the
+        # same silent-override defect wearing different clothes. Where the choice
         # cannot be seated the plan records a refusal with its reason, which
         # /api/residency/status and Settings -> Models both surface.
         if any(k in (new_settings or {}) for k in

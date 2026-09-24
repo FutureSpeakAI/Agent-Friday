@@ -55,7 +55,7 @@ regex/bracket-matching extraction can miss a dynamically-constructed key
 proves consumption, not correct behaviour -- see check 3 above. This closes
 the *dead-key* class; it does not replace reading the diff.
 
-A concrete miss, so the limit is not abstract (2026-09-06): `content.enabled`
+A concrete miss, so the limit is not abstract: `content.enabled`
 was declared in DEFAULT_SETTINGS as "master switch for the publish
 pipeline", written by the UI, and READ by routes/content_pipeline.py into a
 dict that only ever used its sibling `conflict_window_hours`. The publisher
@@ -90,7 +90,7 @@ WRITE_CALL_RE = re.compile(r"\b(?:saveAgentSettings|save)\s*\(")
 #       positive (it cannot see the destructuring inside `save()` itself).
 #   (b) a real, confirmed instance of this exact defect class, found while
 #       calibrating this script, deliberately left for a product decision
-#       rather than guessed at here (2026-09-03 hunt; see KNOWN_ISSUES.md).
+#       rather than guessed at here (see KNOWN_ISSUES.md).
 #       Listed here, not silently fixed, so the guard's PRIMARY job --
 #       catching the next one -- stays green without pretending these are
 #       fine. Removing an entry without shipping the matching fix un-hides
@@ -130,14 +130,14 @@ ALLOWLIST: dict[str, str] = {
 # apply to them, which is the difference from ALLOWLIST.
 MIRROR_LAG: dict[str, str] = {
     "model_routing.unrestricted_cloud": "the Unrestricted Cloud toggle was "
-        "DELETED from index.html 2026-09-17 (model-soup.md §4.1 U2): the key "
+        "DELETED from index.html (model-soup.md §4.1 U2): the key "
         "is read by cloud_consent.resolve() only when no consent is recorded, "
         "so the toggle could not change the posture. app.html still has it.",
     "temperature": "written by SettingsTabModels, which SettingsWS never "
-        "rendered; that dead tab was deleted from index.html 2026-09-17 "
+        "rendered; that dead tab was deleted from index.html "
         "(model-soup.md §4.1 U8). app.html still carries the copy.",
-    "wiki_encrypted_sections": "NEW checklist on the index.html Privacy tab "
-        "2026-09-17 (model-soup.md §11.4), with its DEFAULT_SETTINGS key "
+    "wiki_encrypted_sections": "a checklist on the index.html Privacy tab "
+        "(model-soup.md §11.4), with its DEFAULT_SETTINGS key "
         "added in the same change; app.html has no counterpart.",
 }
 

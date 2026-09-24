@@ -172,11 +172,10 @@ def rewrap_config_onto_keystore(cfg: dict) -> tuple:
 
     WHY THIS IS SEPARATE FROM credential_store.migrate_to_keystore. That
     migration walks FILES, and these secrets are base64 inside a JSON document,
-    so `_credential_files()` cannot see them. The cost of the gap was exact:
-    five credentials were recovered on 2026-09-19 and the GitHub MCP server
-    kept failing every spawn with "GCM auth tag mismatch", because its token
-    was the one still sealed under the passphrase the resolver had stopped
-    preferring.
+    so `_credential_files()` cannot see them. The cost of the gap is exact:
+    file credentials recover while an MCP server keeps failing every spawn
+    with "GCM auth tag mismatch", because its token is the one still sealed
+    under the passphrase the resolver has stopped preferring.
 
     The rules are the ones that migration follows, for the same reason - this
     is somebody's only copy of a token:

@@ -40,8 +40,7 @@ if (-not (Test-Path $script)) { throw "missing: $script" }
 #
 # pythonw.exe, NOT python.exe. python.exe is a console-subsystem binary, so
 # Task Scheduler launching it every two minutes flashes a console window on the
-# desktop every two minutes, forever. That is what it has been doing since this
-# task was installed on 2026-08-24. pythonw.exe is the same interpreter built
+# desktop every two minutes, forever. pythonw.exe is the same interpreter built
 # against the GUI subsystem: it never allocates a console, so there is nothing
 # to show. Task Settings -> Hidden does NOT fix this; that checkbox only hides
 # the task from the scheduler's own list.

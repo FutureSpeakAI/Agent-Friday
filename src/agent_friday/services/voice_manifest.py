@@ -39,12 +39,12 @@ DEFAULT_TTL_S = 900
 
 #: The nine-word line every mouth proof speaks. Fixed so latency is comparable
 #: across engines and across days.
-PROOF_LINE = "Friday is ready to speak with you right now, Stephen."
+PROOF_LINE = "Friday is ready to speak with you right now."
 
 #: What the ear must hear in the bundled WAV (lower-case, punctuation-free
 #: word set; ALL must be present). The asset was synthesized with Piper Amy
 #: from "Friday, what time is it right now?" and transcribes exactly on
-#: faster-whisper small (CPU int8, beam 1) — verified 2026-09-16.
+#: faster-whisper small (CPU int8, beam 1).
 PROOF_WAV = Path(__file__).resolve().parent.parent / "resources" / "voice_proof.wav"
 PROOF_WORDS = ("friday", "time", "right", "now")
 
@@ -104,7 +104,7 @@ def read_selection(settings: dict | None = None) -> dict:
     """The three selections, from settings. Pure (no I/O beyond settings)."""
     s = settings if settings is not None else _settings()
     mode = str(s.get("voice_engine") or "local").strip().lower()
-    if mode == "auto":            # settled 2026-09-09: auto is a synonym for local
+    if mode == "auto":            # auto is a synonym for local
         mode = "local"
     return {
         "mode": mode,
@@ -254,10 +254,9 @@ def _run_mind(selection: dict, progress) -> dict:
         "max_tokens": 8, "temperature": 0,
     }
     # The gemma4 e-series thinks first, inside <|channel>thought, and eight
-    # tokens of thinking is an empty `content`. Observed live on
-    # 2026-09-18 against the FridayWeaver seat: content '' with
-    # reasoning 'Thinking Process:\n1', finish_reason 'length' -- and this
-    # proof called that "answered with no completion" on a seat that was
+    # tokens of thinking is an empty `content`: content '' with
+    # reasoning 'Thinking Process:\n1', finish_reason 'length' -- which a
+    # proof would call "answered with no completion" on a seat that is
     # fine. The router's real turns already disable thinking for these
     # models (model_router._call_openai, channel_toolcalls.
     # needs_thinking_disabled); the proof has to ask the same way, or it
@@ -587,8 +586,8 @@ class VoiceManifest:
                 self.prove(k)
             # F5 / §4.4: the proofs change the self-description, which is the
             # FIRST line of the session prompt, so the seat's prefix cache is
-            # cold on the first utterance even right after arming (measured
-            # 2026-09-18: 27,460 prefill tokens and ~8 s to first audio on
+            # cold on the first utterance even right after arming (measured:
+            # 27,460 prefill tokens and ~8 s to first audio on
             # turn 1, then 15 tokens and ~1.5 s from turn 2). The route
             # registers a warm hook that sends the session's exact prompt
             # once, through the same code path a turn uses.
@@ -743,12 +742,12 @@ class VoiceManifest:
         if self.mode == "gemini":
             mind = s["mind"]
             if mind["ready"]:
-                tail = ("Questions about Stephen's own notes, memory or knowledge "
-                        "graph are answered by his local model through the "
+                tail = ("Questions about the user's own notes, memory or knowledge "
+                        "graph are answered by their local model through the "
                         "`ask_friday` tool.")
             else:
                 tail = ("Friday's local model is NOT available right now, so you "
-                        "have no path to Stephen's notes, memory or knowledge "
+                        "have no path to the user's notes, memory or knowledge "
                         "graph; say so plainly if asked.")
             return ("You are Gemini Live; the microphone audio is sent to Google. "
                     + tail)
@@ -772,10 +771,9 @@ class VoiceManifest:
                      + "; ".join(unproven) + ". Do not describe it as running.")
         else:
             text += "All three run on this machine; nothing leaves it."
-        # Measured 2026-09-18 on the reference machine: given its engine ids
-        # in this line, the 4.6B seat parroted them into replies ("Gemma 4 is
-        # handling that for you", "I'm running on gemma4:e2b-fridayweaver-1.0
-        # for this one", and once a bare "Gemma 4"). The facts stay so the
+        # Given its engine ids in this line, a 4.6B seat parrots them into
+        # replies ("Gemma 4 is handling that for you", "I'm running on
+        # gemma4:e2b-fridayweaver-1.0 for this one"). The facts stay so the
         # model cannot claim a pipeline it does not have; the register is
         # set explicitly so they do not leak into every answer.
         text += (" You are Friday. These are facts for you to know, not to "

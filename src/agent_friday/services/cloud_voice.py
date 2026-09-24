@@ -51,7 +51,7 @@ MAX_CHARS = 5000
 
 # -- Model allowlists --------------------------------------------------------
 #
-# Q2 (settled 2026-09-09): ship only models documented as generally available.
+# Q2 (settled): ship only models documented as generally available.
 # ElevenLabs' Beta Services Addendum removes Beta Services from the definition
 # of "Services" and forbids commercial or production use of them, and NO
 # first-party ElevenLabs page labels which models are Beta. Verified directly
@@ -83,9 +83,8 @@ MAX_CHARS = 5000
 #       the decision's "exclude rather than risk it" applied to a model the
 #       spec wanted.
 #   eleven_turbo_v2_5, eleven_turbo_v2, scribe_v1 - formally deprecated.
-#   eleven_multilingual_v3 - NOT A REAL MODEL ID. It is priced in
-#       cost_meter.PRICING but does not appear in ElevenLabs' model table
-#       (verified 2026-09-09). Recorded as a finding; not shippable.
+#   eleven_multilingual_v3 - NOT A REAL MODEL ID. It does not appear in
+#       ElevenLabs' model table (verified 2026-09-09); not shippable.
 #   scribe_v2, scribe_v2_realtime - STT, refused by section 3.3, out of scope.
 #
 # Consequence, stated plainly: ElevenLabs ships with ONE quality tier, not two.
@@ -109,7 +108,7 @@ ELEVENLABS_GA_MODELS = {
     },
 }
 
-# Q8, settled 2026-09-09: APPLY THE SAME STANDARD, and accept the consequence.
+# Q8, settled: APPLY THE SAME STANDARD, and accept the consequence.
 #
 # The Q2 rule is "where GA cannot be determined, exclude." Applying it to
 # ElevenLabs and not to Inworld would mean the rule is a preference, not a
@@ -208,7 +207,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "retention": ("ElevenLabs may use your content to train its models by "
                       "default on consumer plans; an opt-out toggle exists in "
                       "your ElevenLabs account settings."),
-        # Q1 (settled 2026-09-09): NO cloned Friday voice. ElevenLabs clones
+        # Q1 (settled): NO cloned Friday voice. ElevenLabs clones
         # cannot be exported or downloaded and are reachable only through their
         # API with your key, which would make Friday's IDENTITY a permanent
         # vendor dependency - in direct conflict with the offline-voice
@@ -230,7 +229,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "retention": ("Inworld's retention and training posture for API audio "
                       "is not stated per-tier in its public terms."),
         "cloning": False,
-        # Q3 (settled 2026-09-09): Inworld's Terms section 4 assigns Outputs to
+        # Q3 (settled): Inworld's Terms section 4 assigns Outputs to
         # the user while section 13 requires deleting all Outputs on
         # termination. Those cannot both hold for a product that ships
         # generated audio. TREAT INWORLD AUDIO AS NON-DURABLE: fine for

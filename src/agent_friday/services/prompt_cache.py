@@ -21,10 +21,10 @@ the device — but they are NOT the same guarantee and must not be confused:
     it is billed costs nothing. That guard stays, and it still raises.
 
   * **The per-TASK cumulative budget is ADVISORY** and does not stop anything.
-    It used to raise, and on 2026-09-22 it killed two live chat turns at
-    ~4.09M and ~4.05M "input tokens". Checked against ``~/.friday/costs.db``,
-    96.4% of the first of those numbers was CACHE READS billed at 0.1x and the
-    whole turn cost $3.14. The count was accurate; the unit was wrong. A
+    As a hard stop it kills live chat turns at ~4M "input tokens" of which,
+    checked against ``~/.friday/costs.db``, over 96% are CACHE READS billed at
+    0.1x, for a turn costing about $3. The count is accurate; the unit is
+    wrong. A
     cumulative token tally across an agent loop measures how LONG a task is,
     not what it costs, and length is not a reason to destroy finished work.
     ``services/spend_guard`` is the stop that stops, it is denominated in
@@ -117,7 +117,7 @@ class CallTooLarge(RuntimeError):
 class TaskBudgetExceeded(RuntimeError):
     """Retained for import compatibility. NO LONGER RAISED.
 
-    ``max_task_input_tokens`` is advisory as of 2026-09-22 — see
+    ``max_task_input_tokens`` is advisory — see
     ``task_budget`` for the measurement that demoted it. Kept as a name so an
     old ``except`` clause somewhere does not become a NameError, and so this
     docstring is what a reader finds when they go looking for the guillotine.
@@ -188,21 +188,19 @@ _local = threading.local()
 class task_budget:
     """Context manager tracking one task's cumulative cloud input. ADVISORY.
 
-    It warns. It does not stop the task. That changed on 2026-09-22 and the
-    reason is measured, not argued:
+    It warns. It does not stop the task. The reason is measured, not argued:
 
-      Two live chat turns were killed mid-flight that morning
-      (friday.log:53032 at 06:29, friday.log:56076 at 08:33) at 4,050,351 and
-      4,090,829 "input tokens". Walking ``~/.friday/costs.db`` backwards from
-      the second kill: 25 calls in five minutes, 4,090,886 tokens presented to
-      Anthropic — matching the counter to 57 tokens — of which 50 were fresh
-      input, 145,643 cache WRITES and 3,945,193 cache READS. 96.4% of the
-      number in that error message was billed at 0.1x. The real cost of the
-      turn the ceiling refused to finish was $3.14.
+      A hard ceiling killed live chat turns mid-flight at ~4.05M and ~4.09M
+      "input tokens". Walking ``~/.friday/costs.db`` backwards from one kill:
+      25 calls in five minutes, 4,090,886 tokens presented to Anthropic —
+      matching the counter to 57 tokens — of which 50 were fresh input,
+      145,643 cache WRITES and 3,945,193 cache READS. 96.4% of the number in
+      that error message was billed at 0.1x. The real cost of the turn the
+      ceiling refused to finish was $3.14.
 
     So the tokens were real and the counter was accurate; the UNIT was wrong.
-    Prompt caching made a re-sent transcript an order of magnitude cheaper and
-    this ceiling kept pricing it at freight. A cumulative token count in an
+    Prompt caching makes a re-sent transcript an order of magnitude cheaper and
+    a token ceiling keeps pricing it at freight. A cumulative token count in an
     agent loop is a measure of how long the task is, not of what it costs, and
     length is not a reason to destroy finished work.
 

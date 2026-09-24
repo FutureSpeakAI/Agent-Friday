@@ -890,10 +890,9 @@ def _voice_context_reach(engine, tool_names=None, local_mind_ready=None):
 
     `local_mind_ready` lets a caller (or a test) state whether the local mind
     is proven; None asks the manifest. The relay through `ask_friday` is real
-    reach ONLY when that is true -- on 2026-09-16 this function said "full
-    context via the local model" in the same payload whose manifest said the
-    local model was not available, which is the self-description lie §3.1
-    exists to make impossible.
+    reach ONLY when that is true -- saying "full context via the local model"
+    in the same payload whose manifest says the local model is not available
+    is the self-description lie §3.1 exists to make impossible.
     """
     engine = str(engine or "local").strip().lower()
     if engine == "gemini":
@@ -1071,7 +1070,7 @@ def _resolve_voice_engine(settings=None):
             "local-only mode is on and no local voice engine is ready"
             if _local_only else "no voice engine available")}
 
-    # `auto` means LOCAL ONLY, and says so. Settled 2026-09-09 (R4.1 of
+    # `auto` means LOCAL ONLY, and says so. (R4.1 of
     # local-voice-repair-and-native-audio.md 4.5; voice-mode.md open item 1).
     #
     # voice-system-spec.md 7.2 used to permit `auto` to reach Tier 3 "(cloud
@@ -1093,8 +1092,8 @@ def _resolve_voice_engine(settings=None):
             "Friday will not send your voice to the cloud without you "
             "choosing it -- pick a cloud provider in Settings if you want one.")}
 
-    # `local` TERMINATES. It does not fall through to the cloud. Settled
-    # 2026-09-09, and this is the more important half of the `auto` fix above.
+    # `local` TERMINATES. It does not fall through to the cloud. This is the
+    # more important half of the `auto` rule above.
     #
     # What used to happen: a user who selected the mode named "local", with the
     # Tier-1 deps not installed (a separate opt-in step that is easy to skip)
@@ -1179,11 +1178,11 @@ def _build_voice_system_prompt(settings=None, description=None):
         "short sentences, under about 60 spoken words. That is the DEFAULT "
         "for every turn, including questions about yourself, your systems, "
         "the vault, or how you work. Give the single most useful answer, "
-        "then STOP and let him respond — a voice reply is a turn in a "
+        "then STOP and let them respond — a voice reply is a turn in a "
         "conversation, not a briefing. Never deliver a list, a walkthrough, "
-        "or a multi-paragraph explanation unless he explicitly asks you to "
+        "or a multi-paragraph explanation unless they explicitly ask you to "
         "go deep ('walk me through', 'give me the full version', 'go on'), "
-        "and even then deliver it in chunks and stop for his reply between "
+        "and even then deliver it in chunks and stop for their reply between "
         "them. If the honest answer is genuinely long, say the headline in "
         "one sentence and offer the detail: 'The short version is X — want "
         "the long one?'\n"
@@ -1206,7 +1205,7 @@ def _build_voice_system_prompt(settings=None, description=None):
         pass
     # THE VOLATILE TAIL LEAVES THE SYSTEM MESSAGE.
     #
-    # Measured against the FridayWeaver seat on 2026-09-18: with its chat
+    # Measured against the FridayWeaver seat: with its chat
     # template, ANY change to the system message -- 54 characters at the very
     # end -- re-prefills the whole prompt (17,203 of 17,203 tokens in the
     # probe; 27,480 on a real session), while a changed user message costs
@@ -1265,7 +1264,7 @@ def _warm_seat_prefix() -> dict:
     """F5 / clean-sheet §4.4: put the session's prompt prefix into the seat's
     KV cache right after the proofs, through the SAME call a turn makes.
 
-    Measured 2026-09-18: the first utterance after arming prefilled 27,460
+    Measured: the first utterance after arming prefilled 27,460
     tokens and took ~8 s to first audio; the second prefilled 15 and took
     ~1.5 s. The proofs themselves cannot warm it, because the manifest's
     self-description is the prompt's first line and it changes when the
@@ -1371,7 +1370,7 @@ def voice_prove():
 
 
 # ── F5: pre-warm the local voice engine ─────────────────────────────────────
-# Measured 2026-09-10: a cold KokoroTTS load is 39-56 s, and it was paid on
+# Measured: a cold KokoroTTS load is 39-56 s, and without this it is paid on
 # the first spoken turn. Warm it when the Voice panel opens or voice is armed;
 # the /ws/voice-local handler's ensure_ready() then returns immediately.
 _WARM_LOCK = threading.Lock()
@@ -1733,7 +1732,7 @@ def voice_setup_install_cancel():
 
 def _ws_auth_ok(ui_tok_ok: bool) -> bool:
     """Mirror core.login_required()'s fail-closed semantics for a WebSocket
-    handshake (see the 2026-09 gauntlet audit in docs/history/audits/).
+    handshake.
 
     Both `/ws/voice-local` and `/ws/live` used to gate on bare `FRIDAY_PASSWORD`
     directly: `if FRIDAY_PASSWORD and not authenticated and not loopback and
@@ -1853,8 +1852,8 @@ if sock is not None:
         done = threading.Event()
 
         # The thread the user has OPEN, carried by the client on the socket.
-        # A list, not a plain name, because the receive loop rebinds it when he
-        # switches conversations mid-call and _handle_turn must see the change.
+        # A list, not a plain name, because the receive loop rebinds it when the
+        # user switches conversations mid-call and _handle_turn must see the change.
         # None means "no open thread" -- _persist_voice_turn falls back to Main
         # explicitly for that case rather than sending everyone there.
         _open_cid = [(request.args.get('conversation_id') or '').strip() or None]
@@ -2056,7 +2055,7 @@ if sock is not None:
     # flask-sock's `route` decorator returns None, so a decorated
     # `ws_voice_local` was None by the time an alias function called it:
     # every /ws/voice connect answered HTTP 500 ("'NoneType' object is not
-    # callable", observed 2026-09-18) while /ws/voice-local -- the URL
+    # callable") while /ws/voice-local -- the URL
     # session-info hands the mic -- kept working. Register the undecorated
     # implementation under both paths, with distinct endpoint names so
     # Flask does not see one endpoint mapped to two view functions.
@@ -2227,8 +2226,8 @@ if sock is not None:
             _vlog('voice system prompt gated for cloud provider=gemini (vault local-only)')
         # Clean-sheet §3.1 rule 3 / §4.5: the first paragraph is the manifest's
         # self-description for the CLOUD path -- "You are Gemini Live; the
-        # microphone audio is sent to Google. Questions about Stephen's own
-        # context are answered by his local model through `ask_friday`" (or,
+        # microphone audio is sent to Google. Questions about the user's own
+        # context are answered by their local model through `ask_friday`" (or,
         # with no resident seat, that there is NO such path). Gemini has no
         # other source for what it is.
         try:
@@ -2545,7 +2544,7 @@ if sock is not None:
         done = threading.Event()
 
         # The thread the user has OPEN, carried by the client on the socket, and
-        # rebound below if he switches conversations mid-call. Same contract as
+        # rebound below if the user switches conversations mid-call. Same contract as
         # /ws/voice-local. None means "no open thread", which
         # _persist_voice_turn resolves to Main as an explicit fallback.
         _open_cid = [(request.args.get('conversation_id') or '').strip() or None]

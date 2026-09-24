@@ -2,8 +2,8 @@
 Agent Friday -- filesystem probes that cannot stall a request.
 
 `Path.exists()` on a UNC path (`\\\\wsl.localhost\\...`, `\\\\server\\share`)
-blocks for the SMB timeout when the share is wedged. Measured on
-2026-09-17 with the WSL share hung: `/api/residency/status` timed out at 25 s
+blocks for the SMB timeout when the share is wedged. Measured with the
+WSL share hung: `/api/residency/status` timed out at 25 s
 and `/api/health` took 10.8 s, because `model_store.available()` and
 `local_seats._friday_store()` both call `exists()` on every registered model
 path, one of which is that share. A dead share became a slow Friday in

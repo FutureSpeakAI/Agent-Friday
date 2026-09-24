@@ -5,8 +5,8 @@ Measured on the reference machine:
     request (46288 tokens) exceeds the available context size (32768 tokens)
 
 Every local turn returns HTTP 400 and the router falls back to the cloud, so
-the visible symptom is "it took forever to reply then kicked back to the cloud
-model, which I do not want". Nothing is wrong with the model, the seat, the
+the visible symptom is a long wait followed by a reply from a cloud model the
+user did not choose. Nothing is wrong with the model, the seat, the
 picker or the routing mode — the request simply cannot be built.
 
 The cause is arithmetic. Friday's own tools cost about 9.7k tokens. The
@@ -38,16 +38,15 @@ _CONNECTOR_PREFIX = "mcp_"
 # spends ~13k on tools and keeps ~19k for the conversation.
 _TOOL_SHARE = 0.4
 
-# MEASURED, 2026-09-09, against the live fridayweaver seat (llama-server,
-# gemma4:e2b, n_ctx 32,768) using /apply-template + /tokenize:
+# MEASURED against a live fridayweaver seat (llama-server, gemma4:e2b,
+# n_ctx 32,768) using /apply-template + /tokenize:
 #
 #   75 tool declarations   chars/4 estimate 12,740   TRUE 12,438   (0.98x)
 #   102-turn transcript    chars/4 estimate  5,253   TRUE  5,113   (0.97x)
 #
-# So the docstring above was WRONG about the direction of the error: this
-# template does not expand tool declarations beyond what chars/4 sees, and
-# chars/4 is very slightly CONSERVATIVE (it over-counts) on both tools and
-# prose. The under-count that actually killed turns is elsewhere -- see
+# So this template does not expand tool declarations beyond what chars/4
+# sees, and chars/4 is very slightly CONSERVATIVE (it over-counts) on both
+# tools and prose. The under-count that kills turns is elsewhere -- see
 # _GEN_HEADROOM.
 #
 # The estimate is still only an estimate, and a seat that can be asked exactly
@@ -58,17 +57,15 @@ _EST_TOKENS_PER_CHAR = 4
 # Reserved out of the window for everything that arrives AFTER the budget is
 # computed.
 #
-# THIS IS THE NUMBER THAT WAS WRONG, and not for the reason the docstring
-# above guessed. 4,608 is a sane reserve for ONE answer. The local path does
-# not send one answer: `_oai_agentic_loop` runs up to 50 rounds, and every
-# round appends the assistant's tool call AND the tool's result back into the
-# same conversation and re-sends it. The window has to hold the whole loop,
-# not the first reply.
+# 4,608 is a sane reserve for ONE answer, but the local path does not send
+# one answer: `_oai_agentic_loop` runs up to 50 rounds, and every round
+# appends the assistant's tool call AND the tool's result back into the same
+# conversation and re-sends it. The window has to hold the whole loop, not
+# the first reply.
 #
-# Observed on the reference machine (friday.log, 2026-09-09 20:55:58): a turn
-# budgeted at a ~27,000-token prompt passed llama.cpp's pre-flight check --
-# 27,000 + 4,096 max_tokens = 31,096, under 32,768 -- and then died mid-loop
-# with `500 Context size has been exceeded`, which is the RUNTIME overflow,
+# A turn budgeted at a ~27,000-token prompt can pass llama.cpp's pre-flight
+# check -- 27,000 + 4,096 max_tokens = 31,096, under 32,768 -- and then die
+# mid-loop with `500 Context size has been exceeded`, which is the RUNTIME overflow,
 # not the pre-flight `400 request (N tokens) exceeds the available context
 # size`. Two different errors; only the 400 is an arithmetic mistake about the
 # prompt. The 500 is a budget that never accounted for the loop's growth.
@@ -101,13 +98,12 @@ def _tokens(obj) -> int:
 class FittedTools(list):
     """A tool list that has ALREADY been budgeted. Do not budget it again.
 
-    ONE AUTHORITY. Three layers used to fit the same request independently:
-    `routes/chat.py` fitted the registry, then `_via_ollama` fitted it again,
-    then `model_router._call_openai` fitted THAT against a prompt which had
-    meanwhile grown by the `[SEAT]` note the first fit appended. Each layer was
-    individually defensible and together they compounded.
-
-    Observed in friday.log, 2026-09-09 20:26:04, one turn, two lines:
+    ONE AUTHORITY. Three layers can each fit the same request independently:
+    `routes/chat.py` fits the registry, then `_via_ollama` fits it again, then
+    `model_router._call_openai` fits THAT against a prompt which has meanwhile
+    grown by the `[SEAT]` note the first fit appended. Each layer is
+    individually defensible and together they compound. One turn, two log
+    lines:
 
         core tools trimmed 75 -> 10 ... with a ~27,039-token prompt
         core tools trimmed 10 -> 8  ... with a ~27,285-token prompt
@@ -324,7 +320,7 @@ def _window(model_id: str) -> int:
 #:   * spawn_task is how any job longer than ~10s gets done, and the prompt
 #:     tells the model to reach for it by name. Without it the model says
 #:     "Started — track it in the task tray" over a task that was never
-#:     started. That is the reported failure mode, verbatim.
+#:     started.
 #:
 #: `write_wiki` was listed here and HAS NEVER EXISTED in the registry — the
 #: wiki write path is propose_wiki_update / correct_wiki. The entry was inert
@@ -349,13 +345,12 @@ _ESSENTIAL_TOOLS = frozenset({
 #
 # Ranking is not protection. The loop below sorts well and then still skips
 # anything that does not fit the remaining budget, so on a long prompt the
-# tail of the ranking is dropped no matter how it was ranked. On 2026-09-10 a
-# 17,650-token prompt trimmed 75 tools to 40 and took `knowledge_query`,
-# `read_doc`, `search_drive`, `search_news` and `search_files` with it --
-# every of one Friday's ways of looking something up, gone in the same turn,
-# on the machine whose owner had just said local voice "always needs to
-# involve a model in the loop that can call tools and do research into the
-# knowledge graph."
+# tail of the ranking is dropped no matter how it was ranked. A 17,650-token
+# prompt can trim 75 tools to 40 and take `knowledge_query`, `read_doc`,
+# `search_drive`, `search_news` and `search_files` with it -- every one of
+# Friday's ways of looking something up, gone in the same turn. Local voice
+# must always involve a model that can call tools and research the knowledge
+# graph.
 #
 # These four are reserved BEFORE the budget is spent. If they cannot fit, the
 # seat is too small to be Friday at all and that is worth saying loudly rather
@@ -449,11 +444,10 @@ def _matches_intent(tool, terms: set) -> bool:
     """Does this tool plausibly serve the request in front of us?
 
     THE SPECIFIC FAILURE THIS EXISTS TO PREVENT: asked about the calendar on a
-    long conversation, the trimmer dropped `query_calendar` -- it is an
-    expensive schema and the sort's only real criterion was cheapness -- and
-    the model, still reading a system prompt that promised a calendar tool,
-    announced "I checked, boss. The calendar shows no events for tomorrow."
-    over a check that never happened. (conv-main, 2026-09-09 01:56.)
+    long conversation, a trimmer whose only real criterion is cheapness drops
+    `query_calendar` (an expensive schema), and the model, still reading a
+    system prompt that promises a calendar tool, announces "I checked. The
+    calendar shows no events for tomorrow." over a check that never happened.
 
     Matching on the tool's NAME and the first line of its description is
     deliberately crude. It does not need to rank tools well; it needs to stop
@@ -486,7 +480,7 @@ def _narrow_by_relevance(tools: list, intent, window: int, prompt_cost: int):
     because every wrong pick is a capability the model cannot see. Narrowing
     only replaces a cut that was going to happen regardless.
 
-    Measured 2026-09-18 against the live 75-tool catalogue: ~12,821 tokens of
+    Measured against the live 75-tool catalogue: ~12,821 tokens of
     schema down to ~2,600, in 160 ms, with the expected tool present in all
     six probe cases. Returns `tools` unchanged on any failure.
     """
@@ -518,12 +512,12 @@ def _narrow_by_relevance(tools: list, intent, window: int, prompt_cost: int):
 #: THE TOOL LIST IS PART OF THE CACHED PREFIX. A chat template renders tool
 #: declarations before anything else, so one tool appearing or disappearing
 #: moves every token after it and the seat's prefix cache matches nothing.
-#: Measured on 2026-09-18: consecutive turns sent 62 tools and then 63,
-#: because the budget subtracts the prompt from the window, the prompt
-#: breathes as the conversation moves, and the trim count breathes with it.
-#: The difference in capability between 62 tools and 63 is nil. The cost was
-#: the whole ~21,000-token prompt reprocessed at about 500 tokens a second —
-#: some forty-three seconds — on every single turn.
+#: Measured: consecutive turns sent 62 tools and then 63, because the budget
+#: subtracts the prompt from the window, the prompt breathes as the
+#: conversation moves, and the trim count breathes with it. The difference in
+#: capability between 62 tools and 63 is nil. The cost is the whole
+#: ~21,000-token prompt reprocessed at about 500 tokens a second — some
+#: forty-three seconds — on every single turn.
 #:
 #: Quantising rather than remembering the last decision, and that distinction
 #: was learned the hard way: a remembered decision has to be revised in SOME
@@ -653,13 +647,12 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     conn_cost = _tokens(connectors)
 
     # THE SEAT COUNTS THE TOOLS TOO. The prompt was measured exactly above;
-    # the tool declarations were still chars/4, which cannot see how a chat
-    # template renders them. Re-measured 2026-09-18 against the FridayWeaver
-    # seat: 75 declarations estimate 12,740 tokens, render to 12,433 (0.98x),
-    # and the prompt estimates 14,315 against 14,359 -- so on THIS seat the
-    # estimate is honest, and the "Context size has been exceeded" errors
-    # date from 2026-09-09 at a 32k window and did not recur at 65k. The
-    # exact count is used anyway: another template may expand tools
+    # chars/4 for the tool declarations cannot see how a chat template
+    # renders them. Measured against the FridayWeaver seat: 75 declarations
+    # estimate 12,740 tokens, render to 12,433 (0.98x), and the prompt
+    # estimates 14,315 against 14,359 -- so on THAT seat the estimate is
+    # honest, and "Context size has been exceeded" appears at a 32k window,
+    # not at 65k. The exact count is used anyway: another template may expand tools
     # differently, and a decision the seat can make for us should not rest
     # on an estimate in either direction.
     true_all = None
@@ -782,7 +775,7 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     # THE FLOOR GOES IN FIRST, before the budget can be spent on anything
     # else. See _FLOOR_TOOLS: without this, the research core is merely
     # ranked highly and then dropped anyway once a long prompt eats the
-    # budget, which is what happened on 2026-09-10.
+    # budget.
     _floor_set = set(_FLOOR_TOOLS)
     _by_name = {str(t.get("name")): t for t in core}
     for _fname in _FLOOR_TOOLS:
@@ -817,9 +810,9 @@ def fit_tools_to_seat(model_id: str, tools: list, *, share: float = _TOOL_SHARE,
     dropped = len(dropped_names)
     # A COUNT IS NOT A DISCLOSURE.
     #
-    # This note used to say "I am working with 53 of my 67 tools" and stop
-    # there. The model was told HOW MANY it had lost and never WHICH, under a
-    # prompt that still named them all and told it to use them proactively.
+    # "I am working with 53 of my 67 tools" alone tells the model HOW MANY it
+    # has lost and never WHICH, under a prompt that still names them all and
+    # tells it to use them proactively.
     # "53 of 67" is not something a model can act on; the names are.
     note = (f"This seat is small, so I am working with {len(kept)} of my "
             f"{len(core)} tools plus none of the {len(connectors)} connectors. "

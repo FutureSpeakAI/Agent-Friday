@@ -22,9 +22,9 @@ call sites.
 
 A TIER THAT CANNOT BE SERVED SAYS SO. `resolve()` returns a Resolution
 carrying either a model or a reason, and never substitutes silently. The
-failure this avoids is the one that cost a whole day on 2026-09-18: a seat
-that was absent, a router that quietly escalated, and a user who saw a local
-model stop being local with nothing on screen to explain it. If the 27B is not
+failure this avoids: a seat that is absent, a router that quietly escalates,
+and a user who sees a local model stop being local with nothing on screen to
+explain it. If the 27B is not
 loaded, a caller asking for `large_local` is told that - it does not get the
 cloud with a shrug, and it does not get a 4B pretending to be a 27B.
 """

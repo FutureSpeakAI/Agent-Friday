@@ -1,10 +1,9 @@
 """One policy text for real-world actions, and a guard that keeps it on top.
 
-Friday quoted two of its own directives back at Stephen on 2026-09-24 and they
-contradicted each other: a global "you have FULL authority to take multi-step
-actions without pausing for permission" in the base system prompt, against an
-"ask permission first and wait" policy that only two of thirty prompt call sites
-appended. Stephen's decision: **the policy wins. It must ask.**
+Two directives can contradict each other: a global "you have FULL authority to
+take multi-step actions without pausing for permission" in the base system
+prompt, against an "ask permission first and wait" policy that only two of
+thirty prompt call sites appended. The rule: **the policy wins. It must ask.**
 
 So the rule lives here, in one place, and:
 
@@ -34,7 +33,7 @@ _log = logging.getLogger("friday.action_policy")
 
 
 #: The rule. Extended beyond the original computer-only wording to name the
-#: outward actions Stephen listed -- sending, posting, buying, deleting, account
+#: outward actions that matter most -- sending, posting, buying, deleting, account
 #: changes -- because "real-world action" was being read as "clicks on this
 #: machine" while an email leaving the house is the one that cannot be undone.
 ACTION_PERMISSION_POLICY = (
@@ -77,10 +76,9 @@ OVERRIDE_PATTERNS = (
     r"full authority to take",
     r"without pausing for permission",
     # NOT listed: "never ask 'should I continue?'". That sentence is about
-    # not nagging between internal steps, which Stephen wants kept, and the
-    # rewritten AUTONOMOUS OPERATION block says it deliberately. Banning it
-    # would have made the guard fight the prompt it is guarding -- the first
-    # run of the guard test failed on exactly that. What matters is a claim of
+    # not nagging between internal steps, which is wanted, and the
+    # AUTONOMOUS OPERATION block says it deliberately. Banning it would make
+    # the guard fight the prompt it is guarding. What matters is a claim of
     # AUTHORITY over actions, which the patterns below catch.
     r"without asking for permission",
     r"no need to ask (?:for )?permission",

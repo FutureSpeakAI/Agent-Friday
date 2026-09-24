@@ -1,8 +1,8 @@
-"""The local seat is busy. Ask before spending money instead of deciding for him.
+"""The local seat is busy. Ask before spending money instead of deciding for the user.
 
-THE SITUATION. This machine has one local seat — a 12GB RTX 4070 with the
-bonsai2:27b brain pinned across essentially all of it (measured 2026-09-22:
-11,600 MiB of 12,282 used, 413 free). ``seat_queue``/``seat_supervisor``
+THE SITUATION. A typical machine has one local seat — on a 12GB card the
+bonsai2:27b brain is pinned across essentially all of it (11,600 MiB of 12,282
+used, 413 free). ``seat_queue``/``seat_supervisor``
 already do the right thing when a second task wants that seat: the task is
 admitted as ``queued-for-seat``, gets no worker, and waits its turn with an
 honest status. Local AI runs one job at a time and the queue says so.
@@ -16,7 +16,7 @@ THREE RULES IT IS BUILT AROUND, all of them the maintainer's standing ones:
 
   * **Never silently substitute one model for another.** The card names both
     seats — the one it is waiting for and the one it would move to — and the
-    answer is recorded. He always knows which model is serving him.
+    answer is recorded. The user always knows which model is serving them.
   * **Never nag and never block.** The task KEEPS WAITING while the card sits
     there. It is not parked pending an answer; if the seat frees first the
     task starts locally and the card is withdrawn. An unanswered question
@@ -27,11 +27,10 @@ THREE RULES IT IS BUILT AROUND, all of them the maintainer's standing ones:
     would not be asked about, because there is nothing to consent to. This
     fires only when the alternative is a paid provider.
 
-THE BUDGET BELONGS HERE, not in a kill switch. ``max_task_input_tokens`` used
-to terminate a running task for crossing a token count that turned out to be
-96% cache reads and $3.14 of real spend (docs/audits/
-2026-09-22-token-ceiling-forensics.md). It is advisory now, and THIS is the
-moment that advice was always for: a question asked before the money is spent,
+THE BUDGET BELONGS HERE, not in a kill switch. A hard ``max_task_input_tokens``
+ceiling terminates tasks for crossing a token count that can be 96% cache
+reads and a few dollars of real spend. It is advisory, and THIS is the moment
+that advice is for: a question asked before the money is spent,
 with today's actual spend on the card, rather than a guillotine after. The
 numbers are attached so the answer is informed — they never decide it.
 """
@@ -140,7 +139,7 @@ def cloud_alternative(record: Dict[str, Any]) -> Optional[str]:
 
 
 def should_offer(record: Dict[str, Any], *, wait_s: float = 0.0) -> bool:
-    """Is this a moment worth interrupting him for?"""
+    """Is this a moment worth interrupting the user for?"""
     if not enabled():
         return False
     if (record or {}).get("status") != "queued-for-seat":
@@ -234,7 +233,7 @@ def withdraw(task_id: str, reason: str = "the local seat freed first") -> bool:
 #  The answer
 # ─────────────────────────────────────────────────────────────────────────────
 def on_decision(card: Dict[str, Any]) -> None:
-    """What happens when he answers. Registered with the approvals queue.
+    """What happens when the user answers. Registered with the approvals queue.
 
     Approve -> the task is dispatched again, explicitly on the named cloud
     model, and the queued record is marked superseded so nothing runs twice.

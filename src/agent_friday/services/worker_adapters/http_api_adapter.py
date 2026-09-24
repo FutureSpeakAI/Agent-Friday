@@ -56,8 +56,8 @@ class HttpApiAdapter(BaseAdapter):
         # Egress gate. The endpoint is whatever the caller put in
         # task.context, reachable from POST /api/orchestrator/delegate and
         # /spawn, so this adapter can POST the delegate prompt to any host on
-        # the internet. It was the one worker path that skipped the gate the
-        # Ollama adapter enforces (2026-09-06 boundary audit). The gate decides
+        # the internet, so it enforces the same gate the Ollama adapter
+        # does. The gate decides
         # from the destination: an on-device endpoint passes unchanged, anything
         # else is sealed like a model call, and a gate failure stops the job.
         try:

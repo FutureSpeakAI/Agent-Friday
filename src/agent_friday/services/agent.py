@@ -149,8 +149,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     below can land the request on a DIFFERENT provider than predicted when the
     first leg fails operationally (seat down, timeout) — and a prompt gated
     for 'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
-    that content with no re-gating (see the 2026-09 gauntlet audit in
-    docs/history/audits/). When given, each leg calls `system_builder` with ITS
+    that content with no re-gating. When given, each leg calls `system_builder` with ITS
     OWN provider name and uses the result instead of the static `system`
     string, so the prompt is always gated for the provider actually about to
     see it. A builder that raises is treated as "no system prompt" for that
@@ -210,9 +209,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
             # `model` is a CLOUD-model hint here, not a binding, which is why
             # handing this a local id does not pin the turn to it: the router
             # reads it as "if you go to the cloud, go here". Passing
-            # bonsai2:27b through it got a conversation bound to the local 27B
-            # answered by Sonnet after a 74-second attempt (measured
-            # 2026-09-18) — the router never saw a binding at all.
+            # bonsai2:27b through it gets a conversation bound to the local 27B
+            # answered by a cloud model after a long failed attempt, because
+            # the router never sees a binding at all.
             "cloud_model": ((model if model and ':' not in str(model)
                              else None)
                             or settings.get('orchestrator_model')
@@ -594,7 +593,7 @@ CLAUDE_TOOLS = [
     {"name": "query_calendar", "description": "Check the user's Google Calendar (today's & tomorrow's events). Built-in Google integration. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to walk the user through it; do NOT say you lack calendar access.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "search_email", "description": "Search and read the user's recent Gmail across every connected account (built-in read-only Google integration). The query is sent to Gmail's own search, so its operators work: is:unread, in:inbox, from:, subject:, after:/before:, newer_than:7d, has:attachment, quotes and OR. An empty query returns recent unread. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail. If the result has search_failed or error, the search did NOT run — report that failure; never describe it as zero results.",
-     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:jere after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Gmail search syntax, e.g. 'is:unread', 'from:alex after:2026-09-01'. Empty means recent unread."}}, "required": ["query"]}},
     {"name": "search_drive", "description": "Search Google Drive file/folder names across every connected Google account (built-in read-only integration). Returns each hit's id, name, mime_type, and which account it's in — pass the id + mime_type to read_doc for Docs/Sheets content. If a hit's account never granted Drive access, its error is reported per-account, not as 'not connected'.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Name substring to search for; omit for the most recently modified files."}}}},
     {"name": "read_doc", "description": "Read a Google Doc's text or a Sheet's first-tab values, by file id (get the id from search_drive first). account_id is optional — omit it to try every connected account until one has access.",
@@ -680,7 +679,7 @@ CLAUDE_TOOLS = [
          "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
          "version_id": {"type": "string", "description": "For mode 'version'."}},
       "required": ["workspace"]}},
-    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means. Each entry names the keys that change touched (`changed_label`) and the keys restoring it would bring back (`keys`) — the customization itself is not returned, so read the entry and revert, don't ask for the contents.",
+    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when the user is not specific about which change they mean. Each entry names the keys that change touched (`changed_label`) and the keys restoring it would bring back (`keys`) — the customization itself is not returned, so read the entry and revert, don't ask for the contents.",
      "input_schema": {"type": "object", "properties": {
          "workspace": {"type": "string"},
          "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
@@ -774,10 +773,9 @@ def _tool_search_web(inp):
 
     results = out.get('results') or []
     if not results:
-        # The backend's own words reach the model. Observed 2026-09-18: the
-        # DuckDuckGo 202 and the "Firecrawl has no key" note were both in
-        # `detail`, and neither was in what the model was told -- so it told
-        # the user Firecrawl was not a tool it had.
+        # The backend's own words reach the model. Notes such as a DuckDuckGo
+        # 202 or "Firecrawl has no key" live in `detail`; without them the
+        # model tells the user Firecrawl is not a tool it has.
         detail = str(out.get('detail') or '').strip()
         return (f"Search for {q!r} returned no results "
                 f"(backend: {out.get('backend')}).\n"
@@ -1125,9 +1123,8 @@ def _summarize_multi_account_errors(result):
     # nor errored, so it appeared in neither list and vanished from this
     # summary entirely. The caller then reported `connected: true` (the index
     # is non-empty) alongside `accounts: []` and `count: 0`, which reads as
-    # "your calendar works and tomorrow is clear". Measured on this machine:
-    # both Google accounts have been needs_reauth since 2026-09-01, and a day
-    # with two interviews on it came back empty and confident.
+    # "your calendar works and tomorrow is clear": with every account in
+    # needs_reauth, a day full of events comes back empty and confident.
     #
     # An account Friday cannot read must be VISIBLE and must say why.
     try:
@@ -1348,18 +1345,16 @@ def _tool_list_workspace_history(inp):
 
 # -- Google connectivity, answered honestly ---------------------------------
 # These tools used to gate on ga.has_accounts() -- whether a RECORD EXISTS --
-# and then emit "connected": True. On 2026-09-09 both of Stephen's accounts had
-# been needs_reauth since 2026-09-01, so the calendar tool returned
-# connected:true with zero events, and a day holding two job interviews was
+# and then emit "connected": True. With every account in needs_reauth, the
+# calendar tool returned connected:true with zero events, and a busy day was
 # reported as an empty schedule.
 #
 # The worse half was the note. When a fetch failed it instructed the model:
 # "do not say Calendar 'needs connecting' (it's already connected)". That
-# instruction was FALSE, and the model repeated it faithfully -- Stephen asked
-# directly whether his Google accounts were connected and was told yes for
-# both. Nothing was fabricated, so no claim-verification layer could catch it:
-# the system told the model something untrue and the model reported it
-# accurately. A note that instructs the model what to assert must therefore be
+# instruction was FALSE, and the model repeated it faithfully: asked directly
+# whether the Google accounts were connected, it answered yes for all of them.
+# Nothing was fabricated, so no claim-verification layer could catch it: the
+# system told the model something untrue and the model relayed it accurately. A note that instructs the model what to assert must therefore be
 # emitted only in the state where that assertion is actually true.
 
 
@@ -1537,10 +1532,9 @@ def _tool_search_email(inp):
         # LITERAL TEXT: `is:unread` looked for the characters "is:unread" in
         # the subject line, found them nowhere, and returned count 0.
         #
-        # Measured 2026-09-22 against the real accounts: `is:unread` through
-        # this tool returned 0 while Gmail itself had 50 unread. `in:inbox`,
-        # `in:primary` and `after:2026-09-21` returned 0 for the same reason.
-        # That is what Stephen saw on "start my day".
+        # The effect: `is:unread` through this tool returned 0 while Gmail
+        # itself had 50 unread, and `in:inbox`, `in:primary` and `after:...`
+        # returned 0 for the same reason.
         #
         # merged_gmail already supported `query` and already documented that
         # it goes to Gmail's own q= ("Gmail does the matching, not a local
@@ -2555,15 +2549,12 @@ def _resolve_workspace(name):
     # _OPEN_VERB_RE eats a leading "please "; its target group is `(.+?)[\s?.!]*$`,
     # which does not, so "open workflows please" arrives here as
     # "workflows please" and resolves to nothing. The request then falls through
-    # to the model, which narrates a navigation it never performed — the exact
-    # failure logged on 2026-09-09 at 16:39:24, where "open workflows please"
-    # was answered with "Navigating you to the Code workspace" and no
-    # navigation occurred.
+    # to the model, which narrates a navigation it never performed ("Navigating
+    # you to the Code workspace") while no navigation occurs.
     #
-    # Every switch that worked that session had FRONT-loaded politeness
-    # ("Please open settings."); both that failed had it at the back. The
-    # asymmetry was the whole bug. Stripped repeatedly so "please now" and
-    # "for me thanks" both reduce.
+    # Front-loaded politeness ("Please open settings.") already works; trailing
+    # politeness is what needs stripping. Stripped repeatedly so "please now"
+    # and "for me thanks" both reduce.
     _tail = (r'\s+(please|now|thanks|thank you|for me|pls|plz|ok|okay|'
              r'right now|real quick|if you can|would you|will you)$')
     while True:
@@ -3845,13 +3836,11 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         - so a workflow step that dies explains itself in a conversation the
         user is not reading.
 
-        That is not hypothetical. On 2026-09-19 a workflow step came back
-        "interrupted" twice with no reason, and hours went into theorising
-        about model capability and spec quality. The reason existed the whole
-        time: `reconcile_tasks` writes "Interrupted by a restart - this was a
-        free-form run and its state lived in a process that no longer exists."
-        It went to Main. The person was in a different chat, and the assistant
-        in that chat correctly reported that it could not see why.
+        For example, `reconcile_tasks` writes "Interrupted by a restart - this
+        was a free-form run and its state lived in a process that no longer
+        exists." If that goes to Main while the person is in a different chat,
+        a step shows as "interrupted" with no reason, and the assistant in that
+        chat can only say it cannot see why.
 
     tools: optional list of CLAUDE_TOOLS names to narrow this task's registry
         to (see _task_worker). None keeps the default full registry.
@@ -4235,9 +4224,8 @@ def _tool_workflow_status(inp):
         lines.append("  %d. %s - %s" % (s['index'] + 1, s['name'], s['status']))
         # THE REASON, WHERE THE STATUS IS. This tool returned a bare status
         # word, so a step that died gave the model nothing to reason from and
-        # the only honest answer was "I cannot see why" - which is what
-        # happened twice on 2026-09-19, for a step that had been killed by a
-        # server restart with the cause written down each time.
+        # the only honest answer was "I cannot see why", even for a step
+        # killed by a server restart whose cause was written down.
         if s.get('reason'):
             lines.append("     reason: %s" % str(s['reason'])[:300])
         if s['status'] == 'failed' and s.get('result_tail'):
@@ -4355,8 +4343,8 @@ _CHAIN_FAILURE_SIGNATURES = (
     "no local seat available",
     # The harness's own empty-response apology: a seat that answered twice
     # with nothing produced no work product. Advancing it as a completed
-    # step feeds the apology to the next step as context (observed 2026-09-20,
-    # rsi-phase1-implement). Retry it like any other provider failure.
+    # step feeds the apology to the next step as context. Retry it like any
+    # other provider failure.
     "fault on this end, not an answer",
     "returned an empty response",
 )
@@ -4457,9 +4445,8 @@ def _tool_spawn_task(inp):
     # A TIER THAT CANNOT BE SERVED IS REPORTED, NOT SUBSTITUTED. Asking for
     # `large_local` when the 27B is not loaded gets a refusal naming what is
     # loaded, never the cloud with a shrug and never a 4B wearing the 27B's
-    # name. Silent substitution across the local/cloud line is the failure
-    # that cost a day on 2026-09-18: a local model quietly stopped being
-    # local and nothing on screen said so.
+    # name. Silent substitution across the local/cloud line means a local
+    # model quietly stops being local and nothing on screen says so.
     _tier = ((inp or {}).get('tier') or '').strip().lower()
     _model = None
     _tier_note = ''
@@ -5242,9 +5229,8 @@ def _creative_result_summary(res, kind):
         # Every branch below read `message`. Nothing ever read `reason`. So a
         # refusal fell through to the last line and the model was told exactly
         # four words: "image generation failed." Friday then had to explain a
-        # failure whose cause had been deleted one function earlier, and on
-        # 2026-09-10 she told Stephen she had no visibility into VRAM at all --
-        # which was true, because this line had thrown it away.
+        # failure whose cause had been deleted one function earlier, and she
+        # could honestly only say she had no visibility into VRAM at all.
         why = res.get("reason") or res.get("message") or "no reason given"
         rule = res.get("rule_id")
         opts = res.get("options") or []
@@ -7514,7 +7500,7 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
         reason = _scope_denial
         policy = "cLaw:SubagentScope"
     elif ctx.get("origin") == "phone" and ring > 0:
-        # A turn started by a text or call is not the owner at his machine:
+        # A turn started by a text or call is not the owner at the machine:
         # caller ID can be forged and the words are whatever the sender typed.
         # It may read and answer (ring 0) and nothing else, whatever other
         # keys the context carries.
@@ -7659,9 +7645,9 @@ _AFFIRM_WORDS = (
     r"i (?:said|already said) yes|you (?:already )?have my permission"
 )
 
-#: Conversational throat-clearing that precedes a real answer. Stephen's "um,
-#: sure" was a clear yes that the old start-anchored pattern could not see,
-#: because "um" was in front of it.
+#: Conversational throat-clearing that precedes a real answer. "um, sure" is a
+#: clear yes that a bare start-anchored pattern cannot see, because "um" is in
+#: front of it.
 _FILLER = r"(?:(?:um+|uh+|erm?|ah|well|so|look|dude|i mean|ok(?:ay)?|yeah)\b[\s,.!-]*)*"
 
 _AFFIRM_RE = re.compile(r"^\s*" + _FILLER + r"(?:" + _AFFIRM_WORDS + r")\b",
@@ -7684,8 +7670,8 @@ def _is_affirmative(message: str) -> bool:
     """True if `message` reads as the user approving a pending action.
 
     Matches an affirmative at the START (after filler) or at the END. The tail
-    case is not a nicety: on 2026-09-22 Stephen answered "I just authorized
-    that, so yes." and was asked the same question again, because nothing in a
+    case is not a nicety: a user who answers "I just authorized that, so yes."
+    would otherwise be asked the same question again, because nothing in a
     start-anchored pattern can see a yes in final position.
 
     An AMBIGUOUS message - one that reads as both yes and no - is neither, and
@@ -7735,18 +7721,17 @@ def _confirmation_bypassed(session_ctx: dict | None) -> bool:
 def _action_fingerprint(name, tool_input) -> str:
     """A stable id for "the exact thing the user is being asked about".
 
-    THIS IS THE FIX FOR THE 2026-09-22 LOOP. The grant used to be a single
-    session-wide boolean, so it answered no particular question: a yes meant
-    "run whatever gated tool comes next", and the pending record was a single
-    slot that each new gated call overwrote. Two consequences, both reproduced
-    before this change:
+    A grant must answer one particular question. A single session-wide
+    boolean would mean a yes is "run whatever gated tool comes next", with the
+    pending record a single slot that each new gated call overwrites. Two
+    consequences follow:
 
-      * a yes intended for one action authorised a DIFFERENT one - approving
-        "create bold-panel-prep.md" would have let a write to
+      * a yes intended for one action authorises a DIFFERENT one - approving
+        "create meeting-notes.md" would let a write to
         C:/Windows/System32/drivers/etc/hosts through;
       * `_current_session_id()` returns the calendar DATE, so every surface
-        open that day - chat tab, front page - shared that one slot and
-        clobbered each other's pending action.
+        open that day - chat tab, front page - would share that one slot and
+        clobber each other's pending action.
 
     Fingerprinting the (tool, arguments) pair makes a grant answer exactly the
     question it was given for, which is the invariant this flow was missing.
@@ -8163,8 +8148,8 @@ def _hook_confirmation_gate(ctx):
         # A GRANT SATISFIES THE REQUEST IT WAS GRANTED FOR, AND NO OTHER.
         # The fingerprint is re-derived here from the arguments the model is
         # actually about to run with, then matched against the one the user
-        # was shown. Before 2026-09-22 this was a bare session-wide boolean,
-        # so a yes for one file authorised a write to any other.
+        # was shown. A bare session-wide boolean would let a yes for one file
+        # authorise a write to any other.
         with _PENDING_LOCK:
             _entry = (_PENDING_CONFIRMATIONS.get(_sid) or {}).get(_fp)
         if _entry is not None and _entry.get("granted"):
@@ -8189,9 +8174,9 @@ def _hook_confirmation_gate(ctx):
             )
 
         # ASKED ONCE, ANSWERED, STILL NOT GRANTED. Repeating the identical
-        # question is the defect Stephen hit: he answered yes twice in his own
-        # words and was asked a fourth and fifth time. A user worn down by an
-        # unbreakable loop eventually approves something he has not read, so
+        # question traps a user who has answered yes in their own words into
+        # being asked again and again. A user worn down by an unbreakable
+        # loop eventually approves something they have not read, so
         # the loop is the safety problem, not just the annoyance.
         #
         # So the second ask changes mechanism instead of repeating itself: a
@@ -9958,12 +9943,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # "[Agent hit max tool iterations without completing.]" — on a call with
     # no iterations to exhaust.
     #
-    # Measured on the reference machine, 2026-09-22 09:55:45: the Front Page
-    # editorial (`_generate_text`, tools=None) ran 1,741s on bonsai2:27b,
-    # produced one empty completion, never retried, and handed the caller that
-    # string. `news_engine._extract_json_block` could not parse it, so the
-    # edition silently fell back to the un-curated deterministic pick, and the
-    # orb Stephen was looking at read "Max iters".
+    # For example, the Front Page editorial (`_generate_text`, tools=None) can
+    # run for half an hour on bonsai2:27b, produce one empty completion, never
+    # retry, and hand the caller that string. `news_engine._extract_json_block`
+    # cannot parse it, so the edition silently falls back to the un-curated
+    # deterministic pick, and its orb reads "Max iters".
     #
     # The repair round is not an iteration of the tool loop — it is the loop
     # asking again for the answer it was owed — so it is granted on top of
@@ -10158,10 +10142,10 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 # not a fault in the usual sense — the model worked for the
                 # whole budget and never reached the answer — and the remedy
                 # (more budget, or a seat that thinks less) is nothing like
-                # the remedy for a genuinely blank reply. Measured on the
-                # Front Page editorial, 2026-09-22: 1,800 tokens of
-                # reasoning_content, zero content, finish_reason=length,
-                # reported for days as "empty" and then as "Max iters".
+                # the remedy for a genuinely blank reply. A typical case:
+                # 1,800 tokens of reasoning_content, zero content,
+                # finish_reason=length, which without this branch reads as
+                # "empty" or "Max iters".
                 _think = (msg.get("reasoning_content")
                           or msg.get("reasoning") or "").strip()
                 if _last_finish == "length" and _think:

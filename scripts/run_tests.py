@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 """Run the test suite so that a failure is impossible to miss.
 
-Why this exists (2026-08-19): sessions verify their work with
+Why this exists: a common way to check work is
 
     pytest tests/ -q | tail -5
 
 A shell pipeline exits with the status of its LAST command, so `tail`'s 0
-replaces pytest's 1 and a suite with failures in it reports success. Several
-sessions leaned on "suite green" claims produced exactly that way. The output
-was right there; only the status lied.
+replaces pytest's 1 and a suite with failures in it reports success. A
+"suite green" claim produced that way is worthless: the output shows the
+failures, but the status says they are not there.
 
 Running through this script removes the trap three ways:
 

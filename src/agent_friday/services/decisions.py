@@ -2,13 +2,11 @@
 
 WHY THIS EXISTS, and it is not "to add a model".
 
-On 2026-09-22 we went looking for the training data behind Friday's most
-consequential classifier - the one that decides whether an action needs
-Stephen's sign-off, which since 2026-09-20 includes sending mail as him. The
-answer was `~/.friday/approvals.json`, and it holds ONE record. Friday has
-been making gate decisions by substring scan for months and keeping no record
-of them, so nobody - not him, not the loop, not a reviewer - can say how often
-it is right. That is the actual defect. A better classifier is a later
+Friday's most consequential classifier decides whether an action needs the
+owner's sign-off, which includes sending mail as them. Without this module
+its only training data is `~/.friday/approvals.json`, which holds almost
+nothing: gate decisions made by substring scan leave no record, so nobody -
+not the owner, not the loop, not a reviewer - can say how often it is right. That is the actual defect. A better classifier is a later
 question and cannot even be evaluated until this one is fixed.
 
 `dissent_gate.classify_severity` is a bare substring scan over a marker list.
@@ -186,16 +184,15 @@ def _clip(state: str) -> tuple:
 def _scrub(state: str) -> str:
     """Remove addresses and secrets from a state before it is written down.
 
-    ADDED 2026-09-22, and it is a fix to something this module shipped three
-    days earlier. `gmail_send.request_send` builds its action_description as
+    `gmail_send.request_send` builds its action_description as
     "Send mail as you.\\n\\nFrom: …\\nTo: …\\nCc: …\\nSubject: …\\n\\n<body>",
     that string is what `approvals.classify` hands to `decide`, and `_record`
-    wrote it verbatim. So the log that exists to make the gate auditable was
-    about to accumulate every recipient and the first ~1,900 characters of
-    every message Stephen sends - in a file whose whole purpose is to be read
-    back later, by a reviewer or by a calibration pass. The governance log
-    covering the SAME decision has scrubbed since it was written
-    (dissent_gate._scrub_and_truncate); this one had no such pass.
+    would write it verbatim. Unscrubbed, the log that exists to make the gate
+    auditable would accumulate every recipient and the first ~1,900
+    characters of every message the owner sends - in a file whose whole
+    purpose is to be read back later, by a reviewer or by a calibration pass.
+    The governance log covering the SAME decision is scrubbed too
+    (dissent_gate._scrub_and_truncate).
 
     It is unconditional and lives here rather than in the callers on purpose.
     A redaction rule that each new call site has to remember is not a rule.

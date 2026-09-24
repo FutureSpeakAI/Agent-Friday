@@ -25,8 +25,8 @@ else
 fi
 
 # ── Import smoke test ─────────────────────────────────────────────────────
-# A module-level use-before-definition in services/agent.py cost a silent
-# outage on 2026-08-19 (see docs/audits/server-death-forensics.md). Ruff
+# A module-level use-before-definition in services/agent.py once caused a
+# silent outage: the server died on import with no traceback anywhere. Ruff
 # cannot catch it - the names ARE defined, just too late - so only a real
 # import proves statement order is sound. ~4s.
 #
@@ -49,7 +49,7 @@ if [ -n "$IMPORTPY" ]; then
 fi
 
 # ── Gated-prompt caller check ─────────────────────────────────────────────
-# 2026-08-25: 22 call sites built Friday's system prompt with no provider/
+# 22 call sites once built Friday's system prompt with no provider/
 # vault_control decision, so TIER_2 vault content shipped to the cloud
 # whenever the call routed there. The function's required arguments now make
 # that a TypeError — but only a STATIC scan makes the failure loud at commit
@@ -74,10 +74,9 @@ if ! $PY "$HERE/../scripts/check_settings_readers.py"; then
 fi
 
 # ── Stale model-name check ────────────────────────────────────────────────
-# A model retired from model_plan.BRAIN_MODELS (Qwen, 2026-09-03) was found
-# independently in four separate places over the next three days, including
-# the public README after a same-session doc-reconciliation pass had already
-# run. Pure text scan, stdlib only, no app import.
+# A model retired from model_plan.BRAIN_MODELS (Qwen) was still named in four
+# separate places afterwards, including the public README, which a
+# doc-reconciliation pass missed. Pure text scan, stdlib only, no app import.
 if ! $PY "$HERE/../scripts/check_stale_model_names.py"; then
     echo "[pre-commit] stale-model-name check FAILED - commit blocked." >&2
     echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2

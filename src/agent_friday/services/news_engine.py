@@ -197,7 +197,7 @@ NEWS_CATEGORIES = {
     },
     "Local": {
         "color": "local",
-        # The Local beat is wired to Denver, TX: the maintainer's metro.
+        # The Local beat defaults to one metro's feeds (Denver, TX).
         # Every feed below is a live RSS/Atom source verified to return
         # same-day Denver stories:
         #   - KUT (Denver NPR, UT-Denver's Moody College) — index.rss
@@ -206,9 +206,8 @@ NEWS_CATEGORIES = {
         #   - The Texas Tribune (statewide, HQ'd in Denver) — main feed
         # Denver Monitor is deliberately absent: it stopped publishing in
         # 2025 and is not a live source.
-        # If this ever needs to move to a different city, replace the four
-        # feeds below and the query string; nothing else in the pipeline
-        # assumes Denver.
+        # To use a different city, replace the four feeds below and the
+        # query string; nothing else in the pipeline assumes Denver.
         "query": "Denver Texas local news today",
         "feeds": [
             "https://www.kut.org/index.rss",
@@ -1169,7 +1168,7 @@ def _gather_front_page_pool(per_cat=14):
 # ================================================================
 #  BRUTALIST REPORT SCRAPER
 #  brutalist.report aggregates ~80 tech/news sources with no public RSS/Atom
-#  feed (every feed route 404s, confirmed 2026-09-22) so this pulls the
+#  feed (every feed route 404s) so this pulls the
 #  rendered HTML directly. Structure (verified live): each source name is an
 #  <h3> header immediately followed by sibling <a href> headline links, one
 #  block per source repeated ~80 times down the page. Scraped twice daily
@@ -1598,13 +1597,12 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
     stamps it onto the edition and the notification says so, because a page
     that quietly loses its editor looks exactly like a page that has one.
 
-    THE SILENCE THIS REPLACES. Between 2026-09-19 and 2026-09-22 every single
-    edition on disk was this fallback — nine consecutive, the last curated one
-    being 2026-09-18 morning — and nothing said a word. The 09-22 morning run
-    spent 1,741s on bonsai2:27b, got back
-    "[Agent hit max tool iterations without completing.]" (see the loop fix in
-    services/agent.py), failed `_extract_json_block`, returned here, and the
-    user was then sent a "📰 Friday's Front Page — Morning edition" notice.
+    THE SILENCE THIS REPLACES. Without `degraded`, days of editions can all be
+    this fallback and nothing says a word: a run spends ~1,700s on a local
+    seat, gets back "[Agent hit max tool iterations without completing.]"
+    (see the loop fix in services/agent.py), fails `_extract_json_block`,
+    returns here, and the user is still sent a "📰 Friday's Front Page —
+    Morning edition" notice.
     """
     top = pool[:28]
     _t_started = _time.time()
@@ -1724,8 +1722,8 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
         #
         # The old 1800 was sized against the JSON alone. It is not the JSON's
         # budget: on an OpenAI-compatible endpoint `max_tokens` covers the
-        # model's reasoning channel too. Measured on the live bonsai2:27b seat
-        # on 2026-09-22 with this exact prompt (25,410 prompt tokens): 1,800
+        # model's reasoning channel too. Measured on a bonsai2:27b seat with
+        # this exact prompt (25,410 prompt tokens): 1,800
         # tokens spent entirely in `reasoning_content`, finish_reason="length",
         # zero characters of answer, 320s. A reasoning seat cannot reach the
         # reply through a ceiling that small.

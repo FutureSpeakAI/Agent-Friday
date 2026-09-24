@@ -41,9 +41,9 @@ _WATCHED = {
     "model_routing.mode": "routing mode",
     "model_routing.local_model": "local seat",
     # WHICH SCANNER GUARDS OUTWARD ACTIONS is a seat in every sense that
-    # matters here. It decides whether sending mail as him reaches him as an
-    # approval card first, and it is settable from the Settings panel, so the
-    # same rule applies: he always knows what is serving him, and a change
+    # matters here. It decides whether sending mail as the user reaches them as
+    # an approval card first, and it is settable from the Settings panel, so the
+    # same rule applies: the user always knows what is serving them, and a change
     # announces itself rather than being discoverable only by reading a file.
     "decision_backend": "approval scanner",
     "decision_shadow": "approval scanner (shadow)",
@@ -64,8 +64,8 @@ _MODE_MEANING = {
     "cloud_only": "all turns go to the cloud orchestrator",
     "local_only": "ALL turns go to the local seat — the cloud orchestrator "
                   "is not consulted",
-    # `smart` reads as local_preferred: it was removed from the picker on
-    # 2026-09-17 (model-soup.md §11.2 B) and the old sentence about
+    # `smart` reads as local_preferred: it is no longer offered in the picker
+    # (model-soup.md §11.2 B) and the old sentence about
     # vault-touching turns was only true with vault_local_only on.
     "smart": "local first; cloud when local fails, and the reply says so",
     "local_preferred": "local first; cloud when local fails, and the reply "
@@ -142,8 +142,8 @@ def _write_state(snap: dict):
 def _describe(key: str, old, new) -> str:
     label = _WATCHED.get(key, key)
     if key.startswith("decision_"):
-        # Not "Seat change" - he would read that as a model swap, and the
-        # thing that moved is what guards his outbound mail.
+        # Not "Seat change" - the user would read that as a model swap, and
+        # the thing that moved is what guards their outbound mail.
         line = (f"Approval gate change: {label} "
                 f"{old or '(none)'} → {new or '(none)'}.")
         meaning = _SCANNER_MEANING.get(str(new or ""))

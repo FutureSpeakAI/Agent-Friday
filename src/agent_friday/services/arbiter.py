@@ -432,7 +432,7 @@ def plan_eviction(resource: str, need: int,
     process it did not start.
 
     A lease that can only be refused is half a design. This is the other half:
-    when the language seat holds four gigabytes and Stephen asks for an image,
+    when the language seat holds four gigabytes and the user asks for an image,
     the honest answer is not "cannot do that", it is "unload the language model,
     run the image, reload - about fifty seconds each way".
     """

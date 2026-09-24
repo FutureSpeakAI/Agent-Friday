@@ -222,11 +222,11 @@ def available() -> dict:
 
     A record that carries a `lora` whose file cannot be found is also not
     available: serving the base under the fine-tune's name is the silent
-    wrong-model failure `Friday-Models/docs/DECISIONS.md` refused on
-    2026-09-09, and the planner must not be handed that seat.
+    wrong-model failure `Friday-Models/docs/DECISIONS.md` refuses, and the
+    planner must not be handed that seat.
 
     A `retired` record is never available, whatever is on disk. That is how
-    `gemma4:e2b-friday-v1` (the possibly no-op 2026-09-02 merge) is kept out
+    `gemma4:e2b-friday-v1` (a possibly no-op merge) is kept out
     of `local_seats.resolve()`'s smallest-candidate fallback while its file
     stays where it is.
     """

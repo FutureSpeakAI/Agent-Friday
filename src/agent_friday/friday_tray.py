@@ -27,7 +27,7 @@ from agent_friday.paths import clear_server_port, friday_home, server_port
 
 # No console windows from anything this process spawns. The tray outlives the
 # server — it is what starts Friday and what keeps running after Friday is
-# closed — so the popups Stephen reported "when Friday is closed" come from
+# closed — so console popups seen "when Friday is closed" come from
 # here. Installed before anything can shell out. See services/no_console.py.
 try:
     from agent_friday.services.no_console import install as _install_no_console
@@ -37,10 +37,10 @@ except Exception:
 
 # Same reasoning, one layer up. The tray is the ROOT of Friday's process tree,
 # so setting HF_HUB_DISABLE_XET here is inherited by the server and by every
-# child the server spawns - which matters because the two hf_xet aborts on
-# 2026-09-22 were in child processes, not in the server itself. Arming
-# faulthandler here additionally covers the tray, which outlives the server
-# and was previously the one process that could die with no record at all.
+# child the server spawns - which matters because hf_xet aborts happen in
+# child processes, not in the server itself. Arming faulthandler here
+# additionally covers the tray, which outlives the server and would otherwise
+# be the one process that could die with no record at all.
 try:
     from agent_friday.services import crash_forensics as _crash
     _crash.disable_hf_xet()
@@ -575,12 +575,11 @@ def _claim_windows_mutex() -> bool:
 def _acquire_single_instance() -> bool:
     """True when this process is the only tray. False when another holds it.
 
-    2026-09-18: the previous guard did not hold. Two trays were found running,
-    both created in the same second (7:56:24), each having started its own
-    server.py - so Friday was running twice, and both copies' schedulers and
-    health probes were hitting one single-slot llama-server. The seat log
-    showed four-token requests taking seven to twenty seconds, which is what
-    queueing behind another Friday looks like from the inside.
+    A socket-bind guard does not hold: two trays can start in the same second,
+    each starting its own server.py - so Friday runs twice, and both copies'
+    schedulers and health probes hit one single-slot llama-server. Four-token
+    requests taking seven to twenty seconds in the seat log is what queueing
+    behind another Friday looks like from the inside.
 
     A bare bind() is not a reliable mutex on Windows. Without
     SO_EXCLUSIVEADDRUSE the OS will let a second socket take the same loopback

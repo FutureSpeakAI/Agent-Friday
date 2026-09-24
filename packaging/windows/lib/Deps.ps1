@@ -21,7 +21,7 @@
     -----------------------------------------
     Everything is installed with --only-binary=:all:, so pip will refuse a
     source distribution rather than silently try to compile it. No compiler is
-    ever invoked on her machine. Verified on Windows 11 on 2026-08-21: the
+    ever invoked on her machine. Verified on Windows 11: the
     core and recommended tiers resolve and install with zero wheel builds.
 
     The exception is the PyAutoGUI family - pyautogui, pyscreeze, pygetwindow,

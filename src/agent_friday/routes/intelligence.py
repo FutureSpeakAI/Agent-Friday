@@ -70,7 +70,7 @@ ROLE_SPEC = [
      "Generates audio compositions."),
     ("voice",          "Live voice",            "voice",        "live",
      "Real-time spoken conversation. Chosen on the Voice tab."),
-    # REMOVED 2026-09-17 (docs/design/active/model-soup.md §11.2 C):
+    # REMOVED (docs/design/active/model-soup.md §11.2 C):
     # orchestrator, sidekick_fast, function_manager, researcher, asr, tts and
     # embedding. `services/role_consumers.py` finds no reader for the first
     # six, and `embedding` is read only for a badge: the embedder is the
@@ -201,8 +201,7 @@ def _humanise_refusal(r: dict, role_label) -> dict:
         # residency_policy emits unconditionally on every profile, because no
         # local video backend exists anywhere in the tree -- displayed as
         # "Image generation cannot run on this machine" on a machine with a
-        # perfectly good 12GB card. Stephen reported exactly that on
-        # 2026-09-10. Read the role before writing the sentence.
+        # perfectly good 12GB card. Read the role before writing the sentence.
         role = str(r.get("role") or "").lower()
         if role == "video":
             return {
@@ -1032,8 +1031,8 @@ def api_intelligence():
     try:
         # Reuse the residency route's own view rather than re-deriving it, so
         # this surface and /api/residency/status can never disagree.
-        # THROUGH A SNAPSHOT, because it reads the machine. Profiled 2026-09-23:
-        # this route cost 32.7s cold and 12.6s warm -- and the cold figure is
+        # THROUGH A SNAPSHOT, because it reads the machine. Profiled: without
+        # it this route cost 32.7s cold and 12.6s warm -- and the cold figure is
         # OVER the 30s AbortController the panel itself sets, so Settings >
         # Intelligence aborted its own fetch and reported a timeout. The cost is
         # here: socket.create_connection 5.3s over 7 calls,
@@ -1148,7 +1147,7 @@ def api_intelligence():
         })
     models.sort(key=lambda x: (not x["local"], x["label"].lower()))
 
-    # ── Roles, in his language, each with what it requires ───────────────────
+    # ── Roles, in the user's language, each with what it requires ────────────
     roles = []
     # Refusals, so an empty seat can say WHICH kind of empty it is. R11 means
     # nothing was asked for; R1-R10 mean something could not be done. Rendering
@@ -1297,7 +1296,7 @@ def api_intelligence():
         pass
 
     # ── Contract level (§8.3 item 4) ──────────────────────────────────────────
-    # D1 was ANSWERED 2026-09-24 (see docs/design/implemented/headroom.md §13):
+    # D1 is ANSWERED (see docs/design/implemented/headroom.md §13):
     # "I need my machine" releases the machine. `services/stand_down.py` unloads
     # the local models, pauses every scheduled job through the one gate in
     # `scheduler._run_task`, and persists across a restart. So `levels_enforced`
@@ -1389,7 +1388,7 @@ def api_intelligence():
     routing_mode = str(((settings.get("model_routing") or {}).get("mode")
                         or "local_preferred")).lower()
     if routing_mode == "smart":
-        # Removed from the picker 2026-09-17 (model-soup.md §11.2 B). The
+        # Removed from the picker (model-soup.md §11.2 B). The
         # router's `smart` branches stay for one release; the UI reads the
         # value as local_preferred, which is what it does for tool turns.
         routing_mode = "local_preferred"

@@ -78,9 +78,9 @@ def api_credentials_inventory():
     Never returns secret material - only whether a credential decrypts, when
     it expires, and what the user can do about it.
 
-    The enumeration that found seven stranded credentials on 2026-09-19 was a
-    one-off migration helper whose FIRST RUN found five dead. This is the
-    standing version, because a function that valuable should not run once.
+    Stranded credentials are found by enumerating a whole class at once, not
+    by anyone noticing a symptom. This is the standing version of that
+    enumeration, because a function that valuable should not run once.
     """
     try:
         from agent_friday.services import credential_sweep as _cs

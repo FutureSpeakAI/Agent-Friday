@@ -3,12 +3,11 @@
 
 Why this exists
 ---------------
-On 2026-08-19 a registration block in services/agent.py was moved ABOVE the dict
-it mutates, creating a module-level use-before-definition. The server could not
+A registration block in services/agent.py once moved ABOVE the dict it
+mutates, creating a module-level use-before-definition. The server could not
 import. It died ~2s into every start, before its own file logging existed, and
-the tray discarded the child's stderr - so seven consecutive failures produced
-no traceback anywhere and the cause took a full forensic pass to find.
-See docs/history/audits/server-death-forensics.md.
+the tray discarded the child's stderr - so repeated failures produced no
+traceback anywhere and the cause was hard to find.
 
 The same dict had been spliced apart once before (commit e8c6140, "rejoin the
 dict d207fec spliced apart in agent.py"). Twice is a pattern, not an accident.

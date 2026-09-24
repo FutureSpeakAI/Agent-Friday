@@ -847,7 +847,7 @@ def display_reserve_mib(displays: dict | None = None) -> int:
     """VRAM to hold back for the desktop, scaled to what is attached.
 
     This is the number the old code did not have. It replaces a single
-    boot-time snapshot with something that grows when he plugs a monitor in.
+    boot-time snapshot with something that grows when a monitor is plugged in.
     """
     d = displays if displays is not None else detect_displays()
     count = max(1, int(d.get("count") or 1))

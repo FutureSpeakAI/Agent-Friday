@@ -371,8 +371,8 @@ def insert_text(text, send_input=None, clipboard=None, target=None):
     the same as the window that has focus now: transcription takes a moment,
     and anything that steals focus in that moment — a notification, another
     application finishing its startup — would otherwise receive the sentence
-    instead. Observed live, where a dictated sentence went to a different
-    application entirely while its target sat in the background.
+    instead: a dictated sentence goes to a different application entirely
+    while its target sits in the background.
 
     Pasting private speech into whatever window happened to be in front is a
     disclosure, so when focus has moved and cannot be restored, this refuses

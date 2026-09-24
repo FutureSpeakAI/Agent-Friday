@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS
 ---------------
-Measured on the reference machine, 2026-09-18: the system prompt runs
+Measured on the reference machine: the system prompt runs
 ~104,700 characters (~26,000 tokens) and the 75 tool schemas add 51,284
 characters (~12,800 tokens, and `tool_budget` counts ~12,740). That is close
 to 39,000 tokens spent before the user has said anything. On a 64K seat it
@@ -37,7 +37,7 @@ wearing a reasoning problem's clothes.
 
 Pure embedding retrieval was tried next, and failed differently. MiniLM on
 terse tool descriptions ranked no email tool at all in the top 8 for "Email
-Mahesh to confirm the 3:30 interview" -- the exact capability loss this
+<a contact> to confirm the 3:30 interview" -- the exact capability loss this
 module exists to prevent.
 
 What works is the hybrid below: semantic similarity for recall, idf-weighted
@@ -157,7 +157,7 @@ def _lexical(query: str):
     """idf-weighted overlap. This is the half that catches literal words.
 
     Semantic similarity alone ranked no email tool in the top 8 for "Email
-    Mahesh to confirm the 3:30 interview", because "email" as a word carries
+    <a contact> to confirm the 3:30 interview", because "email" as a word carries
     more signal here than "email" as a direction in embedding space.
     """
     import numpy as np

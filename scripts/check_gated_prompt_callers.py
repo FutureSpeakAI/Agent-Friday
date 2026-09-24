@@ -5,7 +5,7 @@ code path that would have exercised it ever runs.
 
 Why this exists
 ----------------
-2026-08-25: 22 call sites across the codebase built Friday's system prompt
+22 call sites across the codebase built Friday's system prompt
 via _get_friday_system_prompt(keywords=..., workspace=...) with no `provider`
 or `vault_control` — the function's own former defaults ('cloud', None),
 which its docstring already called "legacy ungated". Two of the twenty-two

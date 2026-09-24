@@ -135,8 +135,8 @@ def endpoints_path() -> Path:
 def _read_published() -> dict:
     """`model_id -> base_url` as the file currently claims. Never raises."""
     try:
-        # utf-8-sig: a BOM on this file cost a seat its adoption on
-        # 2026-09-09 (Friday-Models/docs/DECISIONS.md).
+        # utf-8-sig: a BOM on this file must not cost a seat its adoption
+        # (Friday-Models/docs/DECISIONS.md).
         data = json.loads(endpoints_path().read_text(encoding="utf-8-sig"))
         return {str(m): str(b)
                 for m, b in (data.get("endpoints") or {}).items() if b}
@@ -249,13 +249,12 @@ def _published_endpoint(model_id: str) -> str | None:
 def owned_endpoint(model_id: str) -> str | None:
     """The OpenAI-compatible base URL of a seat WE are serving, or None.
 
-    This is the other half of owning the runtime, and forgetting it made things
-    briefly worse rather than better. Extracting the brain's GGUF moved it off
-    the Ollama daemon into a process the Arbiter runs on a loopback port — at
-    which point dispatch, which still asked the daemon on :11434, could not
-    find it. Measured on the reference machine: the brain sat resident and unreachable while
-    an ordinary "reply with one word" turn fell through to the cloud and took
-    2m05s, against 16s when the same model was served by the daemon.
+    This is the other half of owning the runtime. A brain GGUF served by a
+    process the Arbiter runs on a loopback port is invisible to dispatch that
+    asks only the daemon on :11434. Measured on the reference machine: the
+    brain sat resident and unreachable while an ordinary "reply with one word"
+    turn fell through to the cloud and took 2m05s, against 16s when the same
+    model was served by the daemon.
 
     A seat that is resident and unreachable is worse than one that is neither.
     """
@@ -389,15 +388,14 @@ def ollama_engine_path() -> Path:
     binary that shipped beside it, started and killed by the Arbiter like any
     other seat process. Nothing schedules it but us.
 
-    2026-09-18: Stephen asked for Ollama to stop being a dependency of Friday
-    at all, and by then the daemon already served nothing — `_DAEMON_MODELS`
-    has been empty since channel_toolcalls.py learned to parse the e-series
-    tool-call format directly. The only thing still wanted from that install
-    was this binary, because upstream llama.cpp refuses `gemma4:e2b` from a
+    Ollama is not a dependency of Friday. The daemon serves nothing —
+    `_DAEMON_MODELS` is empty because channel_toolcalls.py parses the e-series
+    tool-call format directly. The only thing wanted from an Ollama install is
+    this binary, because upstream llama.cpp refuses `gemma4:e2b` from a
     provably intact file ("wrong number of tensors; expected 2012, got 601")
     and FridayWeaver is built on it.
 
-    So the engine was copied into Friday's own runtime and Ollama removed.
+    So the engine lives in Friday's own runtime and Ollama is not required.
     Friday's copy comes first; the original path stays as a fallback for an
     install that still has Ollama, because a machine that has not run the
     migration should not lose the seat over it.
@@ -438,7 +436,7 @@ DAEMON_SERVED: dict = {}
 #
 # `procs` lives in memory, so a restart forgets every llama-server it started
 # while the processes themselves keep running and keep their VRAM. Measured
-# on the reference machine: EIGHT of them, one per restart that day, holding
+# on the reference machine: EIGHT of them after a day of restarts, holding
 # ~4.1 GB between them, none known to the Arbiter that had just booted. That
 # is the same defect as a daemon seating a model behind our back -- the rule
 # is that nothing occupies that GPU without the Arbiter knowing, and it does
@@ -698,11 +696,11 @@ def survey_live_seats(port_lo: int = PORT_BASE, port_hi: int = PORT_BASE + 40) -
     and invisible here means unadoptable, unpublished, and (before the guard
     in `adopt_or_reap`) killed as an orphan on the next boot.
 
-    Observed 2026-09-09: the FridayWeaver seat ran healthy on :8713 answering
-    as `gemma4:e2b-fridayweaver-1.0`, while this survey returned {} , the
-    published record was written empty, and every local turn fell through to
-    the Ollama daemon — which had zero models — and 404'd to the cloud. The
-    seat was fine. Nothing could see it.
+    For example, a FridayWeaver seat healthy on :8713 answering as
+    `gemma4:e2b-fridayweaver-1.0` would make a window-only survey return {},
+    the published record would be written empty, and every local turn would
+    fall through to the Ollama daemon — which has zero models — and 404 to the
+    cloud. The seat is fine; nothing can see it.
 
     So the window is a floor, not a fence: any port a llama-server we
     recognise is actually LISTENING on is probed too, wherever it sits.
@@ -770,15 +768,15 @@ class LlamaServerBackend:
         binary that is not among the candidates at all, and the failure mode
         is expensive rather than merely slow.
 
-        2026-09-18: Bonsai 2 27B was registered with its weights, projector and
-        chat template, and nothing recorded that it needs the PrismML fork of
-        llama.cpp — stock llama.cpp rejects its ternary tensor type outright
-        ("invalid ggml type 143"). So the Arbiter did exactly what it was
-        built to do: saw the seat down, killed the working process, respawned
-        with `runtime/llama.cpp/llama-server.exe`, got `exited 1`, marked the
-        seat NOT SERVING (R9), and every turn escalated to the cloud. From the
-        user's side a local model simply stopped answering and Sonnet replied
-        instead, repeatedly, for reasons nothing on screen explained.
+        Bonsai 2 27B, for example, needs the PrismML fork of llama.cpp — stock
+        llama.cpp rejects its ternary tensor type outright ("invalid ggml type
+        143"). If only its weights, projector and chat template are recorded,
+        the Arbiter does exactly what it was built to do: sees the seat down,
+        kills the working process, respawns with
+        `runtime/llama.cpp/llama-server.exe`, gets `exited 1`, marks the seat
+        NOT SERVING (R9), and every turn escalates to the cloud. From the
+        user's side a local model simply stops answering and a cloud model
+        replies instead, for reasons nothing on screen explains.
 
         A model that needs a particular runtime should be able to say so, in
         the same record that holds its weights. Declared beats learned, and
@@ -946,18 +944,17 @@ class LlamaServerBackend:
     #
     # The ceiling stays, because the thing it was built to stop is real: this
     # seat spawned at its architectural 262,144 left 448 MiB of 12,282 and
-    # took a monitor off the desktop. Measured on this card at 65,536 before
-    # committing to it -- see the report; a claim about a flat curve is not
-    # the same as this card.
+    # took a monitor off the desktop. A claim about a flat curve is not the
+    # same as a measurement on the card.
     #
-    # RAISED TO 131,072 ON 2026-09-12, AND THE OLD NUMBER WAS NOT WRONG --
-    # IT WAS MEASURED WITHOUT THE BATCH CAPS THIS CLASS NOW ALWAYS SPAWNS WITH.
+    # THE CEILING IS 131,072 BECAUSE IT IS MEASURED WITH THE BATCH CAPS THIS
+    # CLASS ALWAYS SPAWNS WITH.
     #
-    # The 1,385 MiB delta recorded above came from a run at the default batch,
-    # where the compute buffer scales with context and dwarfs the KV cache.
-    # `_spawn_once` has since pinned `-b 512 -ub 512` for exactly that reason.
-    # Re-measured end to end on this card (RTX 4070, 12,282 MiB) on 2026-09-12,
-    # each rung actually serving a completion before the card was read:
+    # At the default batch the compute buffer scales with context and dwarfs
+    # the KV cache (a 1,385 MiB delta per doubling), which is why
+    # `_spawn_once` pins `-b 512 -ub 512`. Measured end to end on a 12,282 MiB
+    # card (RTX 4070), each rung actually serving a completion before the card
+    # was read:
     #
     #     no seat at all          1,791 MiB
     #     -c 32768                5,398 MiB   (seat: 3,607)
@@ -965,13 +962,13 @@ class LlamaServerBackend:
     #     -c 131072               6,082 MiB   (seat: 4,291, +684 over 32k)
     #
     # Doubling twice costs 684 MiB, not 1,385 per doubling, and 131,072 leaves
-    # 6,200 MiB free against a 2,560 MiB display reserve. The old ceiling was
-    # measuring the compute buffer, not the context.
+    # 6,200 MiB free against a 2,560 MiB display reserve. A lower ceiling
+    # measures the compute buffer, not the context.
     #
-    # Why this is worth changing rather than leaving safe: at 32,768 the tool
-    # budget was trimming 75 core tools down to 40-49 on every turn to fit
-    # 16-18k-token prompts, and on 2026-09-10 that trimming dropped
-    # `knowledge_query` -- Friday's own route into its knowledge graph. A
+    # Why a smaller window is not "safe": at 32,768 the tool budget trims 75
+    # core tools down to 40-49 on every turn to fit 16-18k-token prompts, and
+    # that trimming can drop `knowledge_query` -- Friday's own route into its
+    # knowledge graph. A
     # window that forces the agent to discard its capabilities mid-turn is not
     # a safe default, it is a quiet one.
     # EVERY NUMBER ABOVE WAS MEASURED ON gemma4:12b, AND IT DOES NOT TRANSFER.
@@ -980,7 +977,7 @@ class LlamaServerBackend:
     # layer, eight times over — only the eight full layers scale with `-c`,
     # which is exactly why the curve looked flat enough to justify 131,072.
     # Bonsai 2 27B is a dense Qwen3.5: every layer's KV scales, and the model
-    # is more than twice the size. Measured on this card on 2026-09-18, the
+    # is more than twice the size. Measured on the same card, the
     # 27B at 65,536 held 11,518 MiB of 12,282 and left 495 MiB free, under
     # even the old 1,024 MiB display reserve, let alone the 2,560 in force.
     # At 131,072 — what this cap allows — the seat thrashes and a turn takes
@@ -1096,9 +1093,9 @@ class LlamaServerBackend:
             if not _reads_as_rejected_kv_flag(e):
                 # An unexplained failure is usually transient here: the seat
                 # being replaced is often still releasing its VRAM when the
-                # new one starts. Observed today — two spawns died silently
-                # during model load, a third with identical arguments came up
-                # fine nine seconds later. So retry once as-is, and keep the
+                # new one starts: a spawn can die silently during model load
+                # and the same arguments come up fine seconds later. So retry
+                # once as-is, and keep the
                 # quantized cache we came for.
                 if not getattr(self, "_kv_retry_in_flight", False):
                     self._kv_retry_in_flight = True
@@ -1112,16 +1109,15 @@ class LlamaServerBackend:
                             lora_path=lora_path, mmproj_path=mmproj_path)
                     finally:
                         self._kv_retry_in_flight = False
-                # 2026-09-18: this branch used to fire on ANY spawn failure,
-                # and the cost was the opposite of what it intended. A second
-                # Bonsai seat failed to load because the card was full; the
-                # Arbiter read that as "this build rejects --cache-type-k",
-                # latched f16 for the whole process, and every subsequent seat
-                # spawned with a KV cache twice the size — on the card that
-                # had just run out of room. A fallback that makes its own
-                # trigger more likely is not a fallback.
+                # The f16 fallback must NOT fire on any spawn failure. A seat
+                # that fails to load because the card is full would read as
+                # "this build rejects --cache-type-k", latch f16 for the whole
+                # process, and spawn every subsequent seat with a KV cache
+                # twice the size — on the card that just ran out of room. A
+                # fallback that makes its own trigger more likely is not a
+                # fallback.
                 #
-                # So the downgrade now needs the build to actually say so.
+                # So the downgrade needs the build to actually say so.
                 # Anything else is reported as what it is and re-raised: an
                 # out-of-memory spawn should look like an out-of-memory spawn,
                 # not like a capability this machine turns out not to have.
@@ -1230,7 +1226,7 @@ class LlamaServerBackend:
         # The adapter. FridayWeaver-1.0 is a Q8_0 base plus a LoRA applied at
         # serve time; without `--lora` the process that comes up under that
         # name is the stock base model, which is the silent wrong-model
-        # failure Friday-Models/docs/DECISIONS.md refused on 2026-09-09.
+        # failure Friday-Models/docs/DECISIONS.md refuses.
         # A record that names an adapter and a spawn that cannot pass it is a
         # TransitionError, never a base seat under the fine-tune's name.
         if lora_path:
@@ -1306,14 +1302,13 @@ class LlamaServerBackend:
             time.sleep(1.5)
         # TERMINATE IS A REQUEST; THE VRAM IS NOT FREE UNTIL THE PROCESS IS.
         #
-        # 2026-09-18: this was `proc.terminate()` followed straight by the
-        # raise, and `load()` moved on to the next engine on the next port
-        # immediately. A 27B seat takes seconds to die and release ten
-        # gigabytes, so the two overlapped: two bonsai2:27b servers were found
-        # alive on :8090 and :8091 at once, together holding 11,605 MiB of a
-        # 12,282 MiB card. The second spawn was then competing with the corpse
-        # of the first for the memory it needed, which is a good way to turn
-        # one slow boot into two failures.
+        # `proc.terminate()` followed straight by the raise would let `load()`
+        # move on to the next engine on the next port immediately. A 27B seat
+        # takes seconds to die and release ten gigabytes, so the two overlap:
+        # two bonsai2:27b servers alive on :8090 and :8091 at once can hold
+        # 11,605 MiB of a 12,282 MiB card. The second spawn then competes with
+        # the corpse of the first for the memory it needs, which is a good way
+        # to turn one slow boot into two failures.
         #
         # So wait for the exit, escalate to a kill if the request is ignored,
         # and only then report the failure. A caller that is about to try
@@ -1447,11 +1442,11 @@ class LlamaServerBackend:
         # same as a process nobody wants, and the difference is invisible
         # from here.
         #
-        # Observed 2026-09-09: a healthy FridayWeaver seat on :8713 sat
-        # outside the scanned window, so the survey returned {}, nothing was
-        # claimed, and this loop was one boot away from `taskkill /F`-ing the
-        # only working local model on the machine — while fixing nothing,
-        # because the routing failure was the invisibility, not the process.
+        # A healthy seat outside the scanned window (say FridayWeaver on
+        # :8713) makes the survey return {}, nothing is claimed, and this loop
+        # would `taskkill /F` the only working local model on the machine —
+        # while fixing nothing, because the routing failure is the
+        # invisibility, not the process.
         #
         # So: a pid is reaped only if the survey positively SAW it serving a
         # model and nothing claimed it. An unidentified llama-server is left
@@ -1461,15 +1456,13 @@ class LlamaServerBackend:
         # it can happen to.
         # A SEAT THE USER'S CONFIGURATION ROUTES TO IS NOT AN ORPHAN.
         #
-        # `wanted` comes from the residency plan alone. On 2026-09-09 that
-        # plan contained no pinned text seat at all — only stt/tts on-demand
-        # and a leased image seat — because the brain had never been measured
-        # on this hardware. So `wanted` was empty, and a healthy
-        # gemma4:e2b-fridayweaver-1.0 seat, surveyed and identified, was
-        # reaped as unwanted the moment it became visible. It had survived
-        # earlier restarts only by sitting outside the scanned port range.
-        # Making it visible without this check turns invisibility-as-luck
-        # into a reliable kill.
+        # `wanted` comes from the residency plan alone. A plan can contain no
+        # pinned text seat at all — only stt/tts on-demand and a leased image
+        # seat — when the brain has never been measured on the hardware. Then
+        # `wanted` is empty, and a healthy gemma4:e2b-fridayweaver-1.0 seat,
+        # surveyed and identified, would be reaped as unwanted the moment it
+        # became visible. Making it visible without this check turns
+        # invisibility-as-luck into a reliable kill.
         #
         # An enabled local openai-compatible descriptor naming that port is
         # an explicit statement that dispatch routes there. The plan not
@@ -1493,16 +1486,15 @@ class LlamaServerBackend:
         # AN EMPTY PLAN IS NOT AUTHORITY TO KILL.
         #
         # `wanted` is empty whenever the plan pins no llama.cpp seat — which
-        # on this machine is the NORMAL state, because the brain has never
-        # been measured on this hardware and the plan therefore lists only
-        # stt/tts on-demand and a leased image seat. Reaping on an empty
+        # is a NORMAL state wherever the brain has not been measured on the
+        # hardware and the plan therefore lists only stt/tts on-demand and a
+        # leased image seat. Reaping on an empty
         # `wanted` reads "the plan asked for nothing, so everything running
         # is garbage". The truthful reading is "the plan has no opinion",
         # and no opinion is not a mandate.
         #
-        # Measured the hard way on 2026-09-09: a healthy FridayWeaver seat
-        # was surveyed, found absent from an empty `wanted`, and killed —
-        # twice — on a restart whose only purpose was to make it reachable.
+        # Otherwise a healthy seat is surveyed, found absent from an empty
+        # `wanted`, and killed on the very restart meant to make it reachable.
         if not wanted:
             print("  [arbiter] plan pins no llama.cpp seat; not reaping "
                   f"{len(_llama_server_pids())} live llama-server process(es) "
@@ -1733,13 +1725,11 @@ class Arbiter:
         #
         # Every reader passes `seat_binding.overrides_from_settings(...)` --
         # `plan_fresh`, the status route, replan -- so the plan they render
-        # pins the seat the user chose. `boot()` did not: it called
-        # `compute_plan()` bare, twice, so the plan it LOADED FROM had no
-        # binding, printed "plan pins no llama.cpp seat", and skipped
-        # `_load_pinned` entirely. Observed on the reference machine at the
-        # 2026-09-17 17:02 and 2026-09-18 04:21 boots: the status page showed
-        # `gemma4:e2b-fridayweaver-1.0` pinned at 131,072 while no
-        # llama-server existed, because the only path that spawns one had
+        # pins the seat the user chose. `boot()` must too: a bare
+        # `compute_plan()` gives a plan with no binding, which prints "plan
+        # pins no llama.cpp seat" and skips `_load_pinned` entirely. The status
+        # page then shows `gemma4:e2b-fridayweaver-1.0` pinned at 131,072 while
+        # no llama-server exists, because the only path that spawns one has
         # planned without the settings that name it. `server.py` primes this
         # with the settings overrides immediately before `boot()`; a call
         # with `overrides=None` reuses them rather than planning blind.
@@ -1770,7 +1760,7 @@ class Arbiter:
         Goes through the Arbiter rather than beside it so the advice is
         computed against the SAME profile and catalog the plan uses -- including
         the live display reserve. An advisory built from a stale snapshot would
-        tell him a lineup fits on a card that no longer has the room.
+        tell the user a lineup fits on a card that no longer has the room.
 
         Never refuses. Returns `fits`, the overflow, and what would have to give.
         """
@@ -2490,10 +2480,10 @@ class Arbiter:
             why = "no GGUF mapped"
 
         # A MISSING MAPPING NEVER FALLS TO A DAEMON THAT DOES NOT HAVE THE
-        # MODEL. On 2026-09-17 the GGUF registry named seven files in a
-        # directory that no longer existed, Ollama held zero models, and every
-        # pinned load went to the daemon, 404ed, and left the boot DEGRADED
-        # with nothing in the log that said why. An honest empty seat, with
+        # MODEL. When the GGUF registry names files in a directory that no
+        # longer exists and Ollama holds zero models, every pinned load would
+        # go to the daemon, 404, and leave the boot DEGRADED with nothing in
+        # the log that said why. An honest empty seat, with
         # the reason on it, is the state the status endpoint should show.
         if not self._daemon_has(seat["model_id"]):
             reason = ("%s for %s, and the Ollama daemon does not have it "

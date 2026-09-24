@@ -140,9 +140,9 @@ def _gate_outbound_strings(obj, field: str):
     """Classify every string in a payload before it leaves for a peer.
 
     A peer is another machine, so this is cloud egress under the threat
-    model's guarantee (docs/security/threat-model.md:42). Both outbound
-    federation routes below sent caller/user text with no gate (2026-09-06
-    boundary audit). Refuse-on-change, never partial: returns
+    model's guarantee (docs/security/threat-model.md:42), so both outbound
+    federation routes below gate caller/user text. Refuse-on-change, never
+    partial: returns
     (True, None) when every string clears unchanged, else (False, path)
     naming the first field the gate would have altered or withheld."""
     from agent_friday.services import egress_gate as _eg

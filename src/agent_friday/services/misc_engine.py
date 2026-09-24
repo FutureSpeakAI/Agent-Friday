@@ -242,7 +242,8 @@ def _spawn_draft_task(mode, prompt_text, context=''):
         _task_log(task_id, f'Generating {_mode} draft…')
         try:
             # Load full vault/wiki context — Friday MUST know the user's contacts,
-            # his name, his boss, his family, etc. when writing on his behalf.
+            # their name, their boss, their family, etc. when writing on their
+            # behalf.
             _task_log(task_id, 'Loading vault context…')
             full_system = _get_friday_system_prompt(
                 prompt_text, workspace='draft',

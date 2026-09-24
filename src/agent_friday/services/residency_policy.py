@@ -117,7 +117,7 @@ _WARMTH = {RESIDENT: 2, LEASED: 1, ON_DEMAND: 0}
 
 # Roles that do useful work without a GPU at all. This is not a claim that CPU
 # is as good — it is that these jobs are either tiny (an embedder at 2048
-# tokens) or unhurried (a consolidation pass that runs while he sleeps), and
+# tokens) or unhurried (a consolidation pass that runs overnight), and
 # moving them off the card buys headroom the conversational seats need.
 CPU_CAPABLE_ROLES = frozenset({"embedder", "memory_manager", "stt", "tts"})
 
@@ -180,7 +180,7 @@ MOE_CPU_LAYERS_DEFAULT = 20
 # So the likeliest reading is that Ollama evicts the sidekick under memory
 # pressure and each probe pays a reload. R10 stops the ARBITER evicting it; it
 # cannot stop the daemon — the same degraded-pin problem that leaves the brain
-# unresident (docs/history/audits/symphony-live-2026-08-15.md §4). Consistent with two
+# unresident. Consistent with two
 # independent signals, still not directly confirmed.
 #
 # One run per candidate: a direction, not a settled number.
@@ -852,15 +852,15 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
             # machine. Interpolated straight into the sentence below that came
             # out as "needs None MiB, largest remaining budget is 6382 MiB" --
             # arithmetic against a missing value, presented as a capacity
-            # verdict. Observed 2026-09-10 on Stephen's machine for
-            # `gemma4:e2b-fridayweaver-1.0`, and it was the first link in a
+            # verdict. For an unsized model such as
+            # `gemma4:e2b-fridayweaver-1.0` that is the first link in a
             # six-step cascade: refused for "size", therefore not in the
             # plan's wanted set, therefore never adopted by `adopt_or_reap`,
             # therefore absent from the Arbiter's resident list, therefore
             # missing from endpoints.json, therefore invisible to the seat
-            # resolver, which fell back to size ordering and picked a retired
-            # alias that no longer exists. A seat that was up and answering
-            # the entire time.
+            # resolver, which falls back to size ordering and picks a retired
+            # alias that no longer exists -- for a seat that is up and
+            # answering the entire time.
             _need = _vram_for(sidekick, DEFAULT_NUM_CTX["sidekick"])
             _largest = max(free.values()) if free else 0
             if _need is None:
@@ -1088,8 +1088,8 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens,
     if not heavy.get("is_moe") and budgets:
         # Same distinction as the sidekick refusal above: `total or 0` turned
         # an unmeasured model into "dense model needs 0 MiB", which reads as a
-        # capacity finding and is really a missing measurement. Observed for
-        # `gemma4:e2b-friday-v1` on 2026-09-10.
+        # capacity finding and is really a missing measurement (as for an
+        # unsized `gemma4:e2b-friday-v1`).
         _largest = max(b["available_mib"] for b in budgets)
         if total is None:
             return None, _refusal(
@@ -1316,7 +1316,7 @@ def preview_assignment(assignments, entries, profile, *, overhead_tokens=None):
 
     It never refuses. A selection that does not fit comes back with
     `fits: False`, the overflow in MiB, and `would_evict` naming the seats that
-    would make room. The choice stays his -- that has been the standing rule.
+    would make room. The choice stays the user's -- that is the standing rule.
     """
     cost = assignment_cost(assignments, entries,
                            overhead_tokens=overhead_tokens)

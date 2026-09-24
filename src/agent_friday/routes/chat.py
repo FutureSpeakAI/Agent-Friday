@@ -170,7 +170,7 @@ def _fit_tools(model_id, tools, prompt_cost=0, intent=None,
 #: between 10,000 and 20,000 tokens depending on whether they are one-line
 #: questions or multi-paragraph answers, and an ordinary conversation moves
 #: through that whole range as short old messages age out and long new ones
-#: arrive. Measured on 2026-09-18: consecutive turns carrying prompts of
+#: arrive. Measured: consecutive turns carrying prompts of
 #: 10,209 and then 20,092 tokens. The larger one cost forty seconds of prompt
 #: evaluation on its own, and the swing between them crossed several tool
 #: budget steps, which changed the tool list, which broke the prefix cache as
@@ -344,11 +344,10 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
     Returns None when there is nothing to report: no pick, or the pick answered.
 
     One helper builds every seat notice, so every chat surface says the same
-    thing and there is a single place for the REASON to be right. The live
-    wording on 2026-09-24 was wrong in exactly that way: a cloud seat kept local
-    by the routing mode was reported as "not installed on this machine", which
-    told the user to install Opus 5.5 -- impossible -- and hid the setting that
-    actually caused it.
+    thing and there is a single place for the REASON to be right. A wrong
+    reason is its own defect: a cloud seat kept local by the routing mode,
+    reported as "not installed on this machine", tells the user to install a
+    cloud model -- impossible -- and hides the setting that actually caused it.
     """
     if cc_override:
         return (
@@ -448,11 +447,11 @@ def _announce_seat_notice(conversation_id, text):
 #: How often a silent stream emits a keepalive comment.
 #:
 #: `q.get()` had no timeout, so a turn produced NO bytes between ": open" and the
-#: model's first token. On bonsai2 that gap covers a long reasoning phase plus a
-#: tool call, and on 2026-09-24 it covered both over a GPU the monitor was
-#: reporting as thrashing. Any proxy in between -- including the local Caddy that
-#: serves agent.friday -- may drop a connection that quiet, and the client then
-#: reported a connection error for a turn that was still running.
+#: model's first token. On a reasoning seat that gap can cover a long reasoning
+#: phase plus a tool call, longer still on a thrashing GPU. Any proxy in between
+#: -- including the local Caddy that serves agent.friday -- may drop a
+#: connection that quiet, and the client then reports a connection error for a
+#: turn that is still running.
 #:
 #: Shorter than a typical proxy read timeout (Caddy/nginx default to 60s) with
 #: room to spare.
@@ -802,7 +801,7 @@ def chat():
         #      via record_binary_egress, so an image appears in the same file
         #      that already logs a four-word prompt to the same provider.
         #   3. A cloud send is disclosed IN THE TURN, not only in a document.
-        #      Same rule as the tool-disclosure line: rare, and where he is
+        #      Same rule as the tool-disclosure line: rare, and where the user is
         #      looking.
         screenshot_b64 = data.get('image') or data.get('screenshot') or None
         _vision_events = []
@@ -1031,11 +1030,11 @@ def chat():
             #
             # "Gone" is asked of every place Friday can serve from, not just
             # the catalogue. The catalogue omitted `gemma4:e2b` while that seat
-            # was live on 127.0.0.1:8092, so a chat bound to one of her OWN
+            # was live on 127.0.0.1:8092, so a chat bound to one of Friday's OWN
             # models was told it was no longer installed — refusing to answer
             # from a model that was running two ports away. A wrong "it's
-            # gone" is as damaging as a silent substitution: both end with him
-            # not getting the model he chose.
+            # gone" is as damaging as a silent substitution: both end with the
+            # user not getting the model they chose.
             if isinstance(_conv_seat, dict) and (_conv_seat.get('model') or ''):
                 _want = _conv_seat['model']
                 _known = False
@@ -1045,11 +1044,11 @@ def chat():
                     # Catalogue membership is not presence, for a LOCAL id.
                     #
                     # build_catalog() lists what Friday KNOWS OF, which includes
-                    # local models that were never pulled: on 2026-09-18 it
-                    # listed gemma4:12b, gemma4:26b and gemma4:e4b on a machine
-                    # whose Ollama store was empty. Asking it first set _known
-                    # True for an absent model, so this guard never fired and
-                    # the turn fell through to the cloud — the silent
+                    # local models that were never pulled, e.g. gemma4:12b on
+                    # a machine whose model store is empty. Asking it first
+                    # would set _known True for an absent model, so this guard
+                    # would never fire and the turn would fall through to the
+                    # cloud — the silent
                     # substitution §3.8 forbids, defeated by the one check
                     # written to prevent it.
                     #
@@ -1218,12 +1217,11 @@ def chat():
 
         # ── SAY WHEN THE SEAT THAT ANSWERS IS NOT THE SEAT THAT WAS CHOSEN ──
         #
-        # Observed 2026-09-18 (persisted chat records + friday.log): the picker
-        # held gemma4:12b, which is not installed; the router substituted the
-        # FridayWeaver seat at INFO; Computer Control was on, so the override
-        # above then sent every turn to claude-sonnet-5 with a print() to a
-        # stdout nobody reads. The user asked three times for the local model
-        # and was told "Done" each time. Both facts now reach the user in the
+        # Failure shape: the picker holds a model that is not installed; the
+        # router substitutes another local seat at INFO; an override (e.g.
+        # Computer Control) then sends every turn to a cloud model with a
+        # print() to a stdout nobody reads. The user asks for the local model
+        # and is told "Done" each time. Both facts reach the user in the
         # turn itself: a system line in the transcript, a notification, and
         # `seat_notice` on the response.
         _seat_notice = None
@@ -1454,10 +1452,10 @@ def chat():
         _tool_surface = None
         if _routed_local:
             # As much of the tool registry as this seat can physically hold.
-            # 112 tools cost ~46k tokens; his seat's window is 32,768, so
-            # every local turn 400'd with "exceeds the available context
-            # size" and the router fell back to Anthropic. The model, the
-            # seat, the picker and the mode were all fine — the request could
+            # 112 tools cost ~46k tokens; against a 32,768-token seat window
+            # every local turn 400s with "exceeds the available context
+            # size" and the router falls back to the cloud, while the model,
+            # the seat, the picker and the mode are all fine — the request could
             # not be built. See services/tool_budget.py.
             #
             # The budget covers the WHOLE request: a 400 here is tools
@@ -1465,9 +1463,9 @@ def chat():
             _prompt_cost = (len(system_prompt or '') + sum(
                 len(m.get('content')) for m in messages
                 if isinstance(m.get('content'), str))) // 4
-            # The user's own words decide which tools survive a trim. The
-            # reported failure was a calendar question that trimmed away
-            # query_calendar and then narrated the answer.
+            # The user's own words decide which tools survive a trim, so a
+            # calendar question cannot trim away query_calendar and then
+            # narrate the answer.
             _intent = ''
             for _m in reversed(messages or []):
                 if _m.get('role') == 'user' and isinstance(_m.get('content'), str):
@@ -1480,13 +1478,9 @@ def chat():
             # /api/chat/send uses. THIS is /api/chat, the streaming path the
             # UI actually talks to, and it assembles its own tool payload -
             # so the measured 15,930 -> 3,311 token cut never applied to the
-            # surface the person uses. That is the "one registry, one
-            # assembler" rule in docs/design/active/one-tool-registry.md
-            # breaking the day after it was written about: two builders, two
-            # answers.
-            #
-            # Caught 2026-09-19 by a survey of the spec backlog, not by
-            # anything failing - which is the whole argument for the survey.
+            # surface the person uses. That breaks the "one registry, one
+            # assembler" rule in docs/design/active/one-tool-registry.md:
+            # two builders, two answers.
             _catalogue_all = None
             try:
                 from agent_friday.services import tool_catalogue as _TCat
@@ -1588,11 +1582,11 @@ def chat():
                         "seat_events": _seat_events,
                     })
                 print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
-                # He chose a local seat. Answering from the cloud instead is a
-                # decision he did not make, about data he chose to keep on the
-                # machine, and it must not happen quietly — a silent fallback
-                # is indistinguishable from "changing the model does nothing",
-                # which is precisely how this was reported.
+                # The user chose a local seat. Answering from the cloud instead
+                # is a decision they did not make, about data they chose to keep
+                # on the machine, and it must not happen quietly — a silent
+                # fallback is indistinguishable from "changing the model does
+                # nothing".
                 #
                 # friday.log too, with the full error: the tray DEVNULLs
                 # stdout, so the print above vanishes — without this, a 400
@@ -2012,8 +2006,8 @@ def chat():
         except Exception:
             pass
 
-        # The same rule for claims that name no tool. Most of the fabrications
-        # in the 2026-09-09 session did not name one: an asserted workspace
+        # The same rule for claims that name no tool. Many fabrications do
+        # not name one: an asserted workspace
         # switch with no navigate call, "I'll remove it from your active task
         # list now" on a turn where nothing ran, a cited wiki path that does
         # not exist. Checked here, after `actions` is built, so the navigation
@@ -2034,12 +2028,11 @@ def chat():
             # the model (seat_missing, cloud_only_no_key, local_only_refused) —
             # the SUCCESS path did not, which left the only way to find out
             # being to ask the model, and a model answers that from its system
-            # prompt. On 2026-09-22 Stephen was told twice by Sonnet 5 that it
-            # was Bonsai2. Nothing had lied to him at the routing layer: the
-            # picker could not load (18.9 s catalogue) and bonsai2 was missing
-            # from the catalogue entirely, so the turn ran on the configured
-            # default exactly as asked — and then the prompt supplied an
-            # identity the transport never contradicted.
+            # prompt. A cloud model can then claim to be the local seat with
+            # nothing lying at the routing layer: if the picker cannot load and
+            # the local model is missing from the catalogue, the turn runs on
+            # the configured default exactly as asked — and the prompt
+            # supplies an identity the transport never contradicts.
             #
             # Routing already refuses rather than substitutes (§3.8). This is
             # the other half: say what served, every time, from the server's
@@ -2073,7 +2066,7 @@ def chat():
             # fires constantly is wallpaper (KNOWN_ISSUES.md §1).
             "vision_events": _vision_events,
             "fallback_chain": _fallback_chain,
-            # Present only when his chosen local seat could not answer and the
+            # Present only when the user's chosen local seat could not answer and the
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
             "local_fallback": _fell_back_from_local,
@@ -2244,7 +2237,7 @@ def chat_send():
         if screenshot_b64 and (include_vision or data.get('image') is not None):
             # Same contract as /api/chat (above): Local only means the image
             # does not leave, and every image that does leave is a ledger
-            # row. This route had neither (2026-09-06 boundary audit).
+            # row.
             _routing_mode = str(((_load_settings().get('model_routing') or {})
                                  .get('mode') or 'smart')).lower()
             try:
@@ -2342,17 +2335,16 @@ def chat_send():
         # nothing on the sending path ever looked at: choosing a model for one
         # chat appeared to work, persisted correctly, and changed nothing.
         #
-        # Caught 2026-09-18 by binding one conversation to bonsai2:27b and
-        # another to claude-sonnet-5 and watching both answer on Sonnet. It is
-        # the difference between multiple chat windows being a feature and
+        # Binding one conversation to a local model and another to a cloud
+        # model must produce two different answerers. It is the difference between multiple chat windows being a feature and
         # being decoration: two windows are only worth having if they can be
         # two models.
         #
         # Resolved through `effective_seat` so a project's default model
         # reaches the turn. A chat filed under a project and never bound
         # itself has an empty `.seat`, and reading the raw field here would
-        # have made project defaults decoration in exactly the way per-chat
-        # bindings were before 2026-09-18.
+        # make project defaults decoration in exactly the way unread per-chat
+        # bindings would be.
         _conv_seat_model = ''
         try:
             from agent_friday.services import conversations as _cv
@@ -2456,9 +2448,9 @@ def chat_send():
         #
         # This endpoint backs the "new window" surface (`ConversationWindow` in
         # index.html) and is a SECOND full dispatch path: it had the seat CHANGE
-        # feed above but no divergence check, so on 2026-09-24 it answered from
-        # bonsai2:27b while the reasoning seat held claude-opus-5-5 and said
-        # nothing at all. `_seat_model` is the model that actually generated the
+        # feed above but no divergence check, so it could answer from a local
+        # model while the reasoning seat held a cloud one and say nothing at
+        # all. `_seat_model` is the model that actually generated the
         # reply, so this compares fact against intent rather than two settings.
         _send_seat_notice = None
         try:

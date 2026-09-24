@@ -474,9 +474,9 @@ DEFAULT_PROVIDERS = [
         #   * CREATIVE  — image generation (Nano Banana Pro / Nano Banana 2) and
         #                 video generation (Google Veo + Gemini Omni Flash).
         #
-        # The TEXT line above used to end "(2.5 Pro/Flash sunset 2026-10-16)".
-        # That is WRONG and was corrected 2026-09-22. Google did announce that
-        # date around 2026-07-28 and then withdrew it without a changelog
+        # The TEXT line above carries NO "(2.5 Pro/Flash sunset 2026-10-16)".
+        # That date is WRONG. Google did announce it around 2026-07-28 and
+        # then withdrew it without a changelog
         # entry: ai.google.dev/gemini-api/docs/deprecations now lists both ids
         # as "No shutdown date announced" under a standing note that the 2.5
         # models "are not deprecated and will continue to be served until
@@ -568,11 +568,11 @@ DEFAULT_PROVIDERS = [
             # Gemini Omni Flash — any-to-any video generation/editing (I/O
             # 2026). Friendly id: creative_engine resolves it to
             # gemini-omni-1.1-flash and dispatches via the Interactions API
-            # (NOT Veo's long-running-operation path). It used to resolve to
-            # gemini-omni-flash-preview; that model shuts down 2026-09-30 and
-            # the alias was repointed 2026-09-22. The friendly id is the one
-            # stored in settings, which is exactly why it is a friendly id —
-            # this swap needed no migration of anybody's saved seat.
+            # (NOT Veo's long-running-operation path), not to
+            # gemini-omni-flash-preview, which shuts down 2026-09-30. The
+            # friendly id is the one stored in settings, which is exactly why
+            # it is a friendly id — repointing it needs no migration of
+            # anybody's saved seat.
             "gemini-omni-flash": {"label": "Gemini Omni Flash (video)",
                                    "short": "Omni", "roles": [ROLE_CREATIVE],
                                    "modalities": ["video"]},
@@ -834,11 +834,10 @@ class ProviderRegistry:
         if not p or not p.get("enabled", True):
             return False
         # THE DEPENDENCY PROBES BELOW IMPORT TORCH. They must not run on a
-        # request path. Measured 2026-09-23: `gpu_tier_ready()` for nemo-local
-        # cost 2.8s per call and was called twice during one cold
-        # `build_catalog`, and `deps_installed()` is the same shape. Together
-        # with the other probes that made the model picker take 18 seconds to
-        # open.
+        # request path. Measured: `gpu_tier_ready()` for nemo-local costs
+        # 2.8s per call and is called twice during one cold `build_catalog`,
+        # and `deps_installed()` is the same shape. Together with the other
+        # probes that makes the model picker take 18 seconds to open.
         #
         # So the two import-backed types answer from a snapshot: a cached
         # verdict when there is one, otherwise False -- which is ALREADY what

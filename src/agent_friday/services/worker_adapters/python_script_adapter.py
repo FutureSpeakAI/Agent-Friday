@@ -29,7 +29,7 @@ _JOBS_LOCK = threading.RLock()
 # nothing removes it -- on success, failure, timeout, or exception -- and
 # the count of leaked friday_*-prefixed directories in %TEMP% grows without
 # bound in code that also runs outside any test (small in bytes, unbounded
-# in count; see the 2026-09 gauntlet audit in docs/history/audits/).
+# in count).
 #
 # Not deleted immediately after each run: a completed job's `artifacts`
 # are file PATHS inside this directory, surfaced to callers (orchestrator.

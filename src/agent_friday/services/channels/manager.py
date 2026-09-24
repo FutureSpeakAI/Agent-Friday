@@ -258,8 +258,7 @@ def _run_agent(text: str) -> str:
     # baked prompt must not be handed to _generate_agent's fallback ladder on
     # its own — the ladder can land on a DIFFERENT provider than predicted
     # when the first leg fails operationally, which would reuse a prompt
-    # gated for the wrong destination (see the 2026-09 gauntlet audit in
-    # docs/history/audits/).
+    # gated for the wrong destination.
     # `_gated_system_prompt(provider, ...)` builds it for an EXPLICIT
     # provider (no internal prediction) and is passed as `system_builder`, so
     # _generate_agent re-gates the prompt for whichever provider each leg —

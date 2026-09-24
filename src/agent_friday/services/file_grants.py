@@ -77,13 +77,12 @@ def _ledger_path() -> Path:
 #: secret is allowed to rotate -- rotating it just logs everyone out. A LEDGER
 #: signing key must never change, or the ledger's own history stops verifying.
 #:
-#: On 2026-09-24 the hardcoded FRIDAY_SECRET_KEY was removed from the launchers
-#: during unrelated security work. `core._load_or_create_secret()` prefers the
-#: environment variable over the persisted `~/.friday/secret_key`, so that
-#: removal silently swapped this key, and the one line in Stephen's ledger --
-#: intact, correctly signed under the old key, untouched since Aug 25 -- stopped
-#: verifying. Friday correctly reported corruption and suspended every grant. It
-#: was right to shout; the key should never have been able to move.
+#: `core._load_or_create_secret()` prefers the FRIDAY_SECRET_KEY environment
+#: variable over the persisted `~/.friday/secret_key`, so removing that variable
+#: from a launcher silently swaps the session secret. A ledger signed with it
+#: then stops verifying even though every line is intact and correctly signed
+#: under the old key; Friday reports corruption and suspends every grant. That
+#: is the right reaction to a moved key, so the key must not be able to move.
 _SIGNING_KEY_CACHE: dict = {}
 
 

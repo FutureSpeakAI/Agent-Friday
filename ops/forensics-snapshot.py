@@ -7,11 +7,10 @@ Two of Friday's registries are plain in-memory dicts:
     PROCESSES  core/__init__.py:1209     the orbs, with their tool traces
     TASKS      services/agent.py:1995    background tasks
 
-A restart erases both. On 2026-08-24 three restarts inside twenty minutes
-destroyed the entire record of a six-task workflow run while it was being
-investigated (docs/history/audits/workflow-run-forensics-2026-08-24.md). The ledger
-survived because it is append-only on disk; everything about WHAT each agent
-actually did did not.
+A restart erases both. A few restarts in quick succession can destroy the
+entire record of a multi-task workflow run while it is being investigated.
+The ledger survives because it is append-only on disk; everything about WHAT
+each agent actually did does not.
 
 This captures the volatile registries, and copies the durable-but-rotatable
 files (friday.log rotates at 10 MB; settings.json has been factory-reset once

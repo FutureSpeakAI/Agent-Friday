@@ -110,9 +110,9 @@ ABSENT = "absent"
 PRESENT_FAILING = "present_but_failing"
 WORKING = "working"
 UNVERIFIED = "present_unverified"
-#: A missing key is NOT absence. This vocabulary used to return ABSENT for
-#: "no key configured", which is how a built, wired-in backend reached the
-#: model as "not a tool" (2026-09-18). See services/capability_state.py.
+#: A missing key is NOT absence. Reporting ABSENT for "no key configured"
+#: makes a built, wired-in backend reach the model as "not a tool". See
+#: services/capability_state.py.
 UNCONFIGURED = "unconfigured"
 
 _HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
@@ -307,10 +307,10 @@ def active_backend() -> str:
 #: configured, so nothing here is reachable from off the machine.
 #:
 #: WHY IT GOES FIRST. Every other backend in this chain can fail for a reason
-#: the user has to go and fix with a credit card. On 2026-09-18 neither
-#: Firecrawl nor Brave had a key on this machine, so every search fell to the
-#: DuckDuckGo scrape, which answered HTTP 202 anti-bot walls — a working
-#: internet and no way to read it. A keyless local backend removes that whole
+#: the user has to go and fix with a credit card. With neither a Firecrawl
+#: nor a Brave key, every search falls to the DuckDuckGo scrape, which can
+#: answer with HTTP 202 anti-bot walls — a working internet and no way to
+#: read it. A keyless local backend removes that whole
 #: class of failure rather than reporting it better.
 _WIGOLO_URL = "http://127.0.0.1:3333"
 _WIGOLO_PROBE_TTL_S = 30.0
@@ -538,16 +538,13 @@ def _normalise_rows(rows) -> list:
     THE WHOLE POINT IS THAT CALLERS STOP GUESSING. Four backends each invented
     their own field name for the same string - Brave and DuckDuckGo and
     Firecrawl say `snippet`, wigolo says `description` - and
-    `services/agent.py` renders results with a hard `r['snippet']`. So the
-    moment wigolo became the first runner on 2026-09-18, every single web
-    search raised `KeyError: 'snippet'` and the model was handed
-    "Tool error (search_web): 'snippet'". Search was 100% dead for a day, on
-    the one backend that always answers because it is local and keyless.
-
-    Reported 2026-09-19 as DuckDuckGo choking on an anti-bot wall, which was a
-    reasonable theory and the wrong one: DuckDuckGo returns `snippet` and
-    degrades cleanly. Measured before fixing - wigolo ready, wigolo answering,
-    three results, row keys ['description', 'title', 'url'].
+    `services/agent.py` renders results with a hard `r['snippet']`. Without
+    normalising, wigolo as the first runner makes every single web search
+    raise `KeyError: 'snippet'` and hands the model "Tool error (search_web):
+    'snippet'" - search 100% dead, on the one backend that always answers
+    because it is local and keyless. It looks like DuckDuckGo choking on an
+    anti-bot wall, but DuckDuckGo returns `snippet` and degrades cleanly;
+    wigolo's rows carry keys ['description', 'title', 'url'].
 
     Normalising HERE rather than teaching agent.py a second key name is the
     difference between fixing this bug and fixing this class of bug. A fifth
@@ -628,11 +625,10 @@ def search(query: str, count: int = 10) -> dict:
     last["query"] = q
     last["backend"] = runners[-1][0] if runners else "none"
     last["detail"] = "; ".join(tried)
-    # Observed 2026-09-18: with no Firecrawl key, every query fell to the
-    # DuckDuckGo scrape, which answered HTTP 202 anti-bot walls, and the
-    # model told the user "I don't have Firecrawl wired up as a tool right
-    # now, nothing in my toolkit is named that" -- false; it is the first
-    # backend in this chain. A failure that hides the fix is half a lie.
+    # With no Firecrawl key, every query can fall to the DuckDuckGo scrape
+    # and its HTTP 202 anti-bot walls, and without this note the model tells
+    # the user "I don't have Firecrawl wired up as a tool right now, nothing
+    # in my toolkit is named that" -- false; it is in this chain. A failure that hides the fix is half a lie.
     try:
         from agent_friday.services import capability_state as _cs
         note = _cs.unconfigured_backends_note()

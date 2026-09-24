@@ -505,8 +505,8 @@ def _final_texts(target: Dict[str, Any], post: Dict[str, Any]) -> List[str]:
     extras = [x for x in extras if x.strip()]
     if extras:
         texts.append(" ".join(extras))
-    # Side-channel strings the adapters also send as text and that no gate
-    # saw (2026-09-06 boundary audit): image alt text (bluesky, x, mastodon,
+    # Side-channel strings the adapters also send as text, which must pass
+    # the same gate: image alt text (bluesky, x, mastodon,
     # reddit, linkedin, instagram), Bluesky link-card title/description, and
     # LinkedIn's link description.
     for asset in (post.get("assets") or []):

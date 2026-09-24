@@ -23,18 +23,18 @@ machinery:
       that happens to be phrased as a fact, and it will be delivered with the
       full confidence of a real memory, complete with a citation.
 
-WHY THIS IS WRITTEN DOWN RATHER THAN JUST HANDLED (2026-09-09):
+WHY THIS IS WRITTEN DOWN RATHER THAN JUST HANDLED:
 
-Friday's settings page showed two expired Google accounts as "connected".
-Stephen read that page and told Friday what he saw. Friday stored his sentence
-as a user-authored fact -- the highest-trust source it has -- and from then on
-answered "are my Google accounts connected?" by retrieving his own sentence and
-citing him, never consulting anything live. Nine days of confidently wrong
-calendar answers, including a day holding two job interviews.
+A settings page that shows expired Google accounts as "connected" is read by
+the user, who tells Friday what they saw. Friday stores that sentence as a
+user-authored fact -- the highest-trust source it has -- and from then on
+answers "are my Google accounts connected?" by retrieving the user's own
+sentence and citing them, never consulting anything live. Every calendar
+answer after that is confidently wrong.
 
-Note what did NOT catch it. The claim-verifier could not: nothing was
-fabricated. The tool layer could not: no tool was called. Fixing the settings
-page could not: the memory was written nine days before the fix. The only
+Note what does NOT catch it. The claim-verifier cannot: nothing is
+fabricated. The tool layer cannot: no tool is called. Fixing the settings
+page cannot: the memory was written before the fix. The only
 defence is structural -- a question of this class must be routed to a live
 source before recall is ever consulted.
 
@@ -143,7 +143,7 @@ def annotate_user_turn(message: str) -> str:
 
     The system-prompt block (live_state_block) is necessary but not sufficient.
     The transcript replayed into `messages` is memory too, and it carries the
-    assistant's OWN earlier answers -- on 2026-09-09, several turns of "yep,
+    assistant's OWN earlier answers -- for example, several turns of "yep,
     they're connected" sitting closer to the question than any system text.
     A small local model continues its own recent voice.
 

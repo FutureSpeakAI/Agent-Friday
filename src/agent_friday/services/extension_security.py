@@ -25,9 +25,8 @@ AUDIT_FILE = AUDIT_DIR / "extension_audit.jsonl"
 # server. A denylist has to name every secret that will ever exist, and it
 # fails structurally: names drift from the real variables (e.g. listing
 # FRIDAY_VAULT_KEY while the real one is FRIDAY_VAULT_PASSPHRASE), and every
-# new provider key this codebase adds is a fresh chance to forget one (see
-# the 2026-09 gauntlet audit in docs/history/audits/). The maintainer's
-# ruling: invert it.
+# new provider key this codebase adds is a fresh chance to forget one. The
+# rule: invert it.
 #
 # SANDBOXED_ENV_ALLOWLIST names every environment variable a sandboxed
 # subprocess is given -- everything else in the parent process's

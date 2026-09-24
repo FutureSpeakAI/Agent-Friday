@@ -115,9 +115,8 @@ class PlatformConnector(Connector):
 class ChannelConnector(Connector):
     """One messaging bridge (`services/channels/`).
 
-    `/api/channels` has a complete HTTP surface and zero callers in index.html
-    (survey 2026-09-19), so Telegram and Discord have been reachable and
-    unseeable at the same time. Listing them here is the cheap half of the
+    `/api/channels` has a complete HTTP surface and zero callers in index.html,
+    so Telegram and Discord are reachable and unseeable at the same time. Listing them here is the cheap half of the
     answer to "wire them in or cut them" - you cannot decide about something
     you cannot see.
     """

@@ -17,10 +17,10 @@ import logging
 
 # No console windows from child processes. Friday shells out constantly — git,
 # powershell, ffmpeg, nvidia-smi, the credential helpers, the MCP clients — and
-# on Windows each one flashes a console unless told otherwise. An audit on
-# 2026-09-18 found 46 subprocess calls in this tree with no `creationflags` at
-# all. This sets the default once, before `core` imports anything that can
-# spawn, rather than editing 46 call sites and missing the 47th.
+# on Windows each one flashes a console unless told otherwise, and dozens of
+# subprocess calls in this tree pass no `creationflags` at all. This sets the
+# default once, before `core` imports anything that can spawn, rather than
+# editing every call site and missing the next one.
 try:
     from agent_friday.services.no_console import install as _install_no_console
     _install_no_console()
@@ -29,11 +29,11 @@ except Exception:
 
 # Crash forensics, armed before anything heavy is imported.
 #
-# 2026-09-22: seven Python crashes in 24 hours - five access violations in
-# python313.dll, two Rust aborts in hf_xet.pyd - each one surfacing as a
-# WerFault console window on the desktop, which is what the "popups" turned
-# out to be. WER could name a fault offset in a DLL and nothing about which
-# of Friday's several dozen Python processes it was, or what it was doing.
+# A native crash (an access violation in python313.dll, a Rust abort in
+# hf_xet.pyd) surfaces as a WerFault console window on the desktop, and WER
+# names a fault offset in a DLL and nothing about which of Friday's several
+# dozen Python processes it was, or what it was doing
+# (see services/crash_forensics.py).
 #
 # Both halves must run before `core` imports: faulthandler so a crash during
 # the heavy import chain is still caught, and HF_HUB_DISABLE_XET because
@@ -205,9 +205,8 @@ def _discover_and_register_blueprints(flask_app):
     if _failed:
         _log.warning("Blueprint auto-discovery: %d registered, %d skipped",
                      len(_registered), len(_failed))
-    # Record the outcome instead of only logging it. A WARNING alone hid a
-    # missing capability for seven weeks and ~70 restarts
-    # (docs/history/audits/server-death-forensics.md). Degradation must cost
+    # Record the outcome instead of only logging it. A WARNING alone can hide a
+    # missing capability for weeks of restarts. Degradation must cost
     # something visible, so the result becomes enforceable, servable and
     # testable rather than a line in a file nobody opens.
     global BLUEPRINT_REPORT
@@ -227,9 +226,9 @@ _discover_and_register_blueprints(app)
 def _register_warm_caches():
     """Declare the slow reads worth having ready before anyone asks.
 
-    Measured on 2026-09-22: build_catalog() is 18.9 s for 598 models, and
-    GET /api/models called it synchronously - the model picker timed out and
-    could not be used to change seats. Warmed here, persisted across restarts
+    Measured: build_catalog() is 18.9 s for 598 models, and a GET
+    /api/models that calls it synchronously times out the model picker, which
+    then cannot be used to change seats. Warmed here, persisted across restarts
     by services/warm_cache, refreshed behind the request.
 
     Registration is cheap and synchronous; WARMING is a background thread, so
@@ -358,11 +357,11 @@ def _residency_boot():
         entries = _rc.installed_entries(profile)
         arb = _ra.Arbiter(profile=profile, entries=entries)
         settings = _core._load_settings() or {}
-        # Plan AROUND what he chose, rather than planning without him and then
-        # overwriting his choice. Where a choice cannot be seated the plan
+        # Plan AROUND what the user chose, rather than planning without them
+        # and then overwriting their choice. Where a choice cannot be seated the plan
         # records a refusal with its reason (visible in /api/residency/status),
-        # which is the honest outcome; silently seating something else is what
-        # produced a plan and a dispatcher that disagreed all session.
+        # which is the honest outcome; silently seating something else leaves
+        # a plan and a dispatcher that disagree.
         plan = arb.compute_plan(_sb.overrides_from_settings(settings))
         print("  Residency: %s" % _hwp.summary(profile))
         prop = _sb.apply(plan, settings)
@@ -502,11 +501,10 @@ if not _TESTING:
     # builds the exemplar matrix the first time anything asks for an egress
     # classification. Every chat turn asks, through
     # `routing.model_router.needs_vault_access`, so the FIRST turn after a
-    # restart was paying for a torch import inline, on the request thread,
-    # while the user watched an empty chat box. Caught with py-spy on
-    # 2026-09-18: a turn sitting in `<frozen importlib._bootstrap>` under
-    # `sentence_transformers/__init__.py`, and cold turns measured at 104 to
-    # 166 seconds against 46 for a warm one.
+    # restart would pay for a torch import inline, on the request thread,
+    # while the user watches an empty chat box: a turn sitting in
+    # `<frozen importlib._bootstrap>` under `sentence_transformers/__init__.py`,
+    # with cold turns measured at 104 to 166 seconds against 46 for a warm one.
     #
     # Nothing about that work needs to happen then. It is the same import
     # either way; doing it here means it overlaps the rest of boot and is
@@ -557,13 +555,11 @@ if not _TESTING:
     # Credential sweep: read every credential Friday holds and say what is
     # wrong, hourly and locally.
     #
-    # On 2026-09-19 seven credentials were found stranded, and not one was
-    # found by anybody noticing a symptom - every one turned up because
-    # something finally enumerated a whole class at once. Firecrawl presented
-    # as "no API key set" while the key sat there undecryptable; GitHub
-    # presented as a broken MCP server; Drive presented as working. The
-    # enumeration that found them was a one-off migration helper. This is the
-    # standing version of it.
+    # Stranded credentials are not found by anybody noticing a symptom; they
+    # turn up when something enumerates a whole class at once. An
+    # undecryptable key presents as "no API key set", an MCP token as a broken
+    # MCP server, a disabled Google API as working. This is the standing
+    # version of that enumeration.
     from agent_friday.services.credential_sweep import sweep_loop
     threading.Thread(target=sweep_loop, daemon=True).start()
 
@@ -721,11 +717,10 @@ _enforce_blueprint_policy()
 def warm_voice_after_boot(base_url, delay_s=25.0, opener=None):
     """Pay the local voice model load at boot, not at the first sentence.
 
-    Measured on this machine: a cold Kokoro load is 91s and a warm one is
-    0.19s, and the cold one was paid on the first spoken turn. From the
+    Measured: a cold Kokoro load can take 91s and a warm one 0.19s, and
+    without this the cold one is paid on the first spoken turn. From the
     outside, a minute and a half of nothing after pressing the mic is
-    indistinguishable from voice being broken, which is what it was reported
-    as.
+    indistinguishable from voice being broken.
 
     It asks the server's own ``/api/voice/warm`` instead of reaching into the
     engine, so the decision about whether there is anything to warm — cloud
@@ -1068,7 +1063,7 @@ if __name__ == '__main__':
         pass
 
     # Warm the slow machine readings so the first menu open does not pay them.
-    # Measured 2026-09-23: the model picker's first open after a restart cost
+    # Measured: the model picker's first open after a restart can cost
     # 18s, 14.3s of which was `_tts_engines()` importing torch to learn whether
     # Kokoro loads. Warming runs on background threads and is never waited on --
     # boot must not get slower in order to make a menu fast, which would only

@@ -216,7 +216,7 @@ def propose(plan: dict, settings: dict) -> dict:
     cr = dict((settings or {}).get("capability_routing") or {})
     changes, refusals, skipped = {}, [], []
 
-    # A SEAT HE FILLED WITH A CLOUD MODEL IS NOT THIS PLANNER'S TO REASSIGN.
+    # A SEAT THE USER FILLED WITH A CLOUD MODEL IS NOT THIS PLANNER'S TO REASSIGN.
     #
     # `overrides_from_settings` drops cloud picks before planning, and it is
     # right to: a local VRAM planner cannot place claude-opus-5 and refusing
@@ -225,18 +225,16 @@ def propose(plan: dict, settings: dict) -> dict:
     # with its own candidate, and `apply()` writes that over the user's choice.
     # So the choice survives exactly until the next boot, every time.
     #
-    # Concretely (docs/history/audits/workflow-run-forensics-2026-08-24.md
-    # §2.2): with Opus 5 assigned in Settings -> Models, the plan's own
-    # `heavy = gen[0]` picked the largest GGUF on disk and the boot log
-    # recorded "seat binding applied: heavy_hitter->gemma4:26b" -- a model
-    # 16.95 GB on disk, on a 12 GB card, that no live endpoint was serving.
+    # Concretely: with Opus 5 assigned in Settings -> Models, the plan's own
+    # `heavy = gen[0]` picks the largest GGUF on disk and the boot log
+    # records "seat binding applied: heavy_hitter->gemma4:26b" -- a model
+    # 16.95 GB on disk, on a 12 GB card, that no live endpoint is serving.
     # From the user's side that is "I changed the setting and it did nothing"
     # — the same sentence this module's docstring was written to retire,
     # arriving through the one door left open.
     #
-    # `cloud_seats_from_settings` already exists for exactly this and was
-    # called by the Arbiter (residency_arbiter.py:951) and by nothing here.
-    # Read it in `propose` rather than adding a parameter, so every caller of
+    # `cloud_seats_from_settings` exists for exactly this and is also called
+    # by the Arbiter (residency_arbiter.py:951). Read it in `propose` rather than adding a parameter, so every caller of
     # propose/apply gets the fix without changing its call.
     #
     # THE FACTORY VALUE IS NOT A CHOICE. DEFAULT_SETTINGS ships `reasoning`

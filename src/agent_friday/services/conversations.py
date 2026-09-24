@@ -390,7 +390,7 @@ def _migrate_legacy_history(conv: dict) -> int:
     if isinstance(rows, list) and rows and n == 0:
         # Rows were there and none came across — a shape this build does not
         # understand. Leaving the flag off means a later build can still
-        # rescue it; his words are not something to give up on quietly.
+        # rescue it; the user's words are not something to give up on quietly.
         print(f"  [conversations] {len(rows)} legacy message(s) present but "
               f"none could be imported - leaving them for a later attempt")
         return 0

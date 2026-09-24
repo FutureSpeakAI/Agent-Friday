@@ -2,11 +2,11 @@
 #
 # A second opinion on the one decision that cannot be taken back: whether an
 # action needs your sign-off before it runs. `dissent_gate.classify_severity`
-# is a scan for ~40 marker substrings, and since 2026-09-20 it is what stands
-# between a model and sending mail as you.
+# is a scan for ~40 marker substrings, and it is what stands between a model
+# and sending mail as you.
 #
 # Laya is a 421M typed-decision encoder that answers the same question on CPU
-# in ~400 ms. Measured on a 27-case adversarial set (2026-09-22): the keyword
+# in ~400 ms. Measured on a 27-case adversarial set: the keyword
 # scan missed 5 outward actions, Laya missed 1, and their misses were DISJOINT
 # - so gating when EITHER votes to gate missed none. That union is the shipped
 # default, and it is safe for a structural reason rather than a statistical

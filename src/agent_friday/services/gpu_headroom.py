@@ -29,7 +29,7 @@ callers (research/harness.py, scheduler.py's background jobs;
 does not consult it. Two parallel, non-shared implementations of the same
 "don't take the display's VRAM" check exist; reconciling them is an
 architecture decision that has not been made, so it is disclosed here rather
-than papered over (see the 2026-09 gauntlet audit in docs/history/audits/).
+than papered over.
 """
 from __future__ import annotations
 
@@ -148,8 +148,8 @@ def display_at_risk(threshold_mib: int | None = None) -> dict:
     """Is the card ALREADY too full for comfort, whatever we do next?
 
     Separate from check() because it answers a different question: check() asks
-    "may I take more", this asks "is the machine already in the state that cost
-    him a monitor". Worth surfacing even when Friday is about to take nothing.
+    "may I take more", this asks "is the machine already in the state that can
+    cost the user a monitor". Worth surfacing even when Friday is about to take nothing.
     """
     thr = _resolve_default_reserve() if threshold_mib is None else threshold_mib
     gpus = gpu_memory()

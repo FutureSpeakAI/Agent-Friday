@@ -55,8 +55,8 @@ def friday_home() -> Path:
 
     This is the ONLY place in the codebase permitted to compute Friday's state
     root. Anything that recomputes it independently will drift out of the
-    override the moment someone sets FRIDAY_HOME — which is exactly how the gap
-    audited in docs/history/audits/friday-home-isolation-gap-2026-08-31.md arose.
+    override the moment someone sets FRIDAY_HOME, and state written there leaks
+    out of an isolated home (a test run's scratch home, for example).
     """
     env = os.environ.get("FRIDAY_HOME")
     if env:
