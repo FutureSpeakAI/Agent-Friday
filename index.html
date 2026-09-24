@@ -7385,6 +7385,7 @@ function ChatSurface(props) {
     toggleCiteSources,
     toggleVoice,
     turnStatus,
+    stopTurn,
     uploadFile,
     uploading,
     voiceContract,
@@ -7820,7 +7821,28 @@ function ChatSurface(props) {
     className: "dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "dot"
-  })), /*#__PURE__*/React.createElement("div", {
+  }),
+  /* Stop. The local seat now gets the same 999 rounds as the cloud seat, so a
+     long turn is legitimate and there has to be a way to end one by choice
+     rather than by cap. Cooperative: the loop checks between rounds. */
+  stopTurn && /*#__PURE__*/React.createElement("button", {
+    onClick: stopTurn,
+    disabled: !!(turnStatus && turnStatus.stopping),
+    title: "Stop this turn. It finishes the round it is on, keeps everything it has already done, and hands the thread back.",
+    style: {
+      marginLeft: 10,
+      fontFamily: 'JetBrains Mono',
+      fontSize: 10,
+      padding: '2px 8px',
+      borderRadius: 4,
+      cursor: (turnStatus && turnStatus.stopping) ? 'default' : 'pointer',
+      color: (turnStatus && turnStatus.stopping)
+        ? 'rgba(255,255,255,0.4)' : '#ff9a6b',
+      background: 'rgba(255,154,107,0.08)',
+      border: '1px solid rgba(255,154,107,0.3)'
+    }
+  }, (turnStatus && turnStatus.stopping) ? 'Stopping…' : '■ Stop')),
+  /*#__PURE__*/React.createElement("div", {
     ref: chatEnd
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -40965,6 +40987,150 @@ function WeightsRows({ rows }) {
     }));
 }
 
+// ── TURN LIMITS (advanced) ─────────────────────────────────────────
+// Stephen: "Why does the local model seat only get 50 rounds? Bonsai2 can reason
+// across hundreds." It now gets the same 999 the cloud seat always had, and the
+// limits that actually protect anything are loop detection, a wall clock and a
+// token ceiling -- see services/turn_budget.py.
+//
+// Collapsed by default because nobody needs these to use Friday. Loop detection
+// is deliberately NOT a knob: a number nobody can reason about is how the 50
+// got here.
+function TurnLimitsSection() {
+  const [tb, setTb] = useState(null);      // null while loading
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    apiFetch('/api/settings').then(r => r.json()).then(d => {
+      const blk = ((d || {}).settings || {}).turn_budget || {};
+      setTb({
+        rounds: blk.rounds || {},
+        wall_clock_s: blk.wall_clock_s || {},
+        tokens: blk.tokens || {},
+      });
+    }).catch(() => setTb({ rounds: {}, wall_clock_s: {}, tokens: {} }));
+  }, []);
+
+  /* SEND THE WHOLE GROUP, NEVER ONE KEY.
+     `_save_settings` deep-merges `turn_budget` one level, so a delta of
+     {rounds: {local: 120}} keeps `wall_clock_s` and `tokens` but replaces
+     `rounds` wholesale -- dropping a `default` or `scheduled` the user had
+     set. Posting the full block makes that impossible. */
+  const put = (group, key, value) => {
+    const next = Object.assign({}, tb,
+      { [group]: Object.assign({}, tb[group], { [key]: value }) });
+    setTb(next);
+    setNote('Saving\u2026');
+    apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { turn_budget: next } }),
+    }).then(r => r.json().catch(() => ({})).then(b => ({ ok: r.ok, b: b, st: r.status })))
+      .then(res => {
+        if (!res.ok) {
+          throw new Error((res.b && (res.b.detail || res.b.error ||
+            res.b.message)) || ('the server refused it (' + res.st + ')'));
+        }
+        setNote('Saved. It applies to the next turn \u2014 no restart needed.');
+      })
+      .catch(e => setNote('NOT saved: ' + (e.message || e)));
+  };
+
+  const ROWS = [
+    { group: 'rounds', key: 'default', fallback: 999, unit: 'rounds',
+      label: 'Rounds per turn',
+      hint: 'Tool calls Friday may make while working on one message. The same ' +
+            'budget the cloud seat has always had.' },
+    { group: 'rounds', key: 'local', fallback: null, unit: 'rounds',
+      label: 'Rounds \u2014 local seat only',
+      hint: '0 inherits the figure above. Worth setting only to give an ' +
+            'experimental local model a shorter leash than the seat that ' +
+            'answers your chat.' },
+    { group: 'rounds', key: 'scheduled', fallback: 300, unit: 'rounds',
+      label: 'Rounds \u2014 unattended work',
+      hint: 'Briefings, the news sweep, daily creation. Lower on purpose: ' +
+            'nobody is watching those, so there is no Stop button to press.' },
+    { group: 'wall_clock_s', key: 'default', fallback: 1800, unit: 'seconds',
+      label: 'Time limit per turn',
+      hint: 'A turn cannot run past this even while doing something new each ' +
+            'round. 1800 is 30 minutes.' },
+    { group: 'tokens', key: 'default', fallback: 1000000, unit: 'tokens',
+      label: 'Token ceiling per turn',
+      hint: 'Input and output together across every round. Each round resends ' +
+            'the whole conversation, so this climbs faster than it looks.' },
+  ];
+
+  const mono = 'JetBrains Mono';
+  return E(StSection, { title: 'TURN LIMITS' },
+    E('div', {
+      style: {
+        fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: mono,
+        lineHeight: 1.6, marginBottom: 8,
+      },
+    }, 'The local seat has the same round budget as the cloud seat. What stops ' +
+       'a runaway turn is loop detection \u2014 the same call with the same ' +
+       'arguments, three times \u2014 plus the clock and token ceiling below. ' +
+       'When one of those stops a turn, Friday says which one and offers to ' +
+       'continue. Your own Stop button, on a turn in flight, needs no such ' +
+       'offer.'),
+    E('button', {
+      className: 'btn',
+      onClick: () => setOpen(o => !o),
+      style: { fontSize: 11, fontFamily: mono, padding: '4px 10px' },
+    }, (open ? '\u25be' : '\u25b8') + ' Advanced'),
+    open && (tb === null
+      ? E('div', {
+          style: {
+            fontSize: 10.5, fontFamily: mono, color: 'rgba(255,255,255,0.4)',
+            marginTop: 10,
+          },
+        }, 'reading your settings\u2026')
+      : E('div', { style: { marginTop: 12 } },
+          ROWS.map(r => E('div', {
+            key: r.group + '.' + r.key,
+            style: {
+              display: 'flex', alignItems: 'flex-start', gap: 12,
+              padding: '9px 2px', borderTop: '1px solid rgba(255,255,255,0.05)',
+            },
+          },
+            E('div', { style: { flex: 1, minWidth: 0 } },
+              E('div', {
+                style: { fontFamily: mono, fontSize: 12, color: 'rgba(255,255,255,0.9)' },
+              }, r.label),
+              E('div', {
+                style: {
+                  fontSize: 10, fontFamily: mono, lineHeight: 1.5,
+                  color: 'rgba(255,255,255,0.4)', marginTop: 2,
+                },
+              }, r.hint)),
+            E('input', {
+              className: 'input', type: 'number', min: '0',
+              style: { width: 110, fontSize: 12, fontFamily: mono, flexShrink: 0 },
+              defaultValue: (tb[r.group] || {})[r.key] !== undefined
+                ? (tb[r.group] || {})[r.key]
+                : (r.fallback === null ? 0 : r.fallback),
+              // Save on blur, not on keystroke: one POST per edit, and a
+              // half-typed "1" never becomes a one-round budget.
+              onBlur: e => {
+                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                if (v !== (tb[r.group] || {})[r.key]) put(r.group, r.key, v);
+              },
+              onKeyDown: e => { if (e.key === 'Enter') e.target.blur(); },
+            }),
+            E('div', {
+              style: {
+                width: 58, fontSize: 10, fontFamily: mono, paddingTop: 4,
+                color: 'rgba(255,255,255,0.35)', flexShrink: 0,
+              },
+            }, r.unit))),
+          note && E('div', {
+            style: {
+              fontSize: 10.5, fontFamily: mono, marginTop: 10,
+              color: note.indexOf('NOT saved') === 0 ? '#ff9a6b' : '#00ff80',
+            },
+          }, note))));
+}
+
 function SettingsTabIntelligence() {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
@@ -41336,6 +41502,10 @@ function SettingsTabIntelligence() {
           ? [fmtAgo(p.last_used), p.calls + ' calls',
              p.cost_usd > 0 ? '$' + p.cost_usd.toFixed(2) : 'free'].join(' · ')
           : 'never served anything')))),
+
+    // ── TURN LIMITS (advanced) ───────────────────────────────────
+    // Last, and collapsed: a knob nobody needs does not belong above the seats.
+    E(TurnLimitsSection, null),
   );
 }
 
@@ -47520,6 +47690,35 @@ function App() {
                           served either, so sustained silence IS the hang
                           signature. Four consecutive misses, not one, so a
                           dropped packet never masquerades as a hang. */
+  /* THE STOP BUTTON, on the turn he is watching.
+     Raising the local round budget from 50 to parity removed the only thing
+     that had ever ended a long interactive turn early. Loop detection, the
+     clock and the token ceiling are all automatic; none of them is him
+     deciding he has seen enough. The server checks between rounds, so the turn
+     ends with its transcript intact rather than being killed mid-tool-call. */
+  const stopTurn = useCallback(async () => {
+    const turn = inFlightTurn.current;
+    if (!turn) return;
+    setTurnStatus(s => Object.assign({}, s || {}, { stopping: true }));
+    try {
+      const r = await apiFetch('/api/chat/turn/' + encodeURIComponent(turn)
+        + '/stop', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      // A button that silently does nothing is worse than no button. If the
+      // turn was already over, say so instead of leaving "Stopping…" up.
+      if (!d || d.stopping !== true) {
+        setTurnStatus(s => Object.assign({}, s || {}, {
+          stopping: false,
+          label: (d && d.detail) || 'that turn is no longer running here',
+        }));
+      }
+    } catch (e) {
+      setTurnStatus(s => Object.assign({}, s || {}, {
+        stopping: false, label: 'could not reach Friday to stop it',
+      }));
+    }
+  }, []);
+
   useEffect(() => {
     if (!chatLoad) { setTurnStatus(null); return; }
     let misses = 0, stop = false;
@@ -51552,6 +51751,7 @@ function App() {
     toggleCiteSources: toggleCiteSources,
     toggleVoice: toggleVoice,
     turnStatus: turnStatus,
+    stopTurn: stopTurn,
     uploadFile: uploadFile,
     uploading: uploading,
     voiceContract: voiceContract,

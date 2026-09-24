@@ -1742,6 +1742,49 @@ def turn_pet(label=None, step=None, model=None):
         pass
 
 
+def turn_request_stop(turn_id):
+    """Ask the turn running under `turn_id` to stop at its next round.
+
+    THE STOP THE LOCAL PATH NEVER HAD. The cloud loop honours a kill file
+    (``~/.friday/AGENT_STOP``) and a background task can be stopped from the
+    tasks tray, but an interactive chat turn had nothing: the only thing that
+    ever ended one early was the 50-round cap. Raising that cap to parity
+    without giving the user a way to say "enough" would have removed a brake
+    and replaced it with nothing.
+
+    Cooperative on purpose. The round loop checks between rounds, so the turn
+    ends with its transcript and receipts intact instead of being killed
+    mid-tool-call, which is what makes a stop recoverable rather than a second
+    kind of failure.
+
+    Returns True when the turn was registered and has been asked to stop, and
+    False when it is not running here (already finished, or never started) --
+    so the UI can say which, rather than showing a button that silently does
+    nothing.
+    """
+    if not turn_id:
+        return False
+    with _TURNS_LOCK:
+        rec = _TURNS.get(str(turn_id))
+        if rec is None:
+            return False
+        rec["stop"] = True
+    return True
+
+
+def turn_stop_requested(turn_id=None):
+    """Has a stop been asked for? Defaults to the turn on THIS thread."""
+    tid = turn_id or getattr(_TURN_LOCAL, "turn_id", None)
+    if not tid:
+        return False
+    try:
+        with _TURNS_LOCK:
+            rec = _TURNS.get(str(tid))
+            return bool(rec and rec.get("stop"))
+    except Exception:
+        return False
+
+
 def turn_liveness(turn_id, now=None):
     """What the chat UI asks instead of looking at a clock.
 
@@ -2268,6 +2311,20 @@ DEFAULT_SETTINGS = {
     # remaining daily creative budget is low.
     "daily_creation_free_choice": True,         # False reverts to the legacy text rotation
     "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
+    # ── Turn budget (advanced) ──
+    # Stephen, 2026-09-24: "Why does the local model seat only get 50 rounds?
+    # Bonsai2 can reason across hundreds." The local path defaulted to 50 while
+    # the cloud path got 999 -- a leftover from the gemma3:4b era. Parity here,
+    # with loop detection, a wall clock and a token ceiling doing the actual
+    # safety work. These repeat services/turn_budget.py's defaults so the
+    # figures are visible here; a missing or zero entry falls back to that
+    # module, and a per-seat key (e.g. {"local": 200}) overrides one seat only.
+    # `scheduled` is what unattended work gets, because nobody is watching it.
+    "turn_budget": {
+        "rounds": {"default": 999, "scheduled": 300},
+        "wall_clock_s": {"default": 1800},
+        "tokens": {"default": 1000000},
+    },
     # ── Idle-time work ──
     # Stephen: "Why doesn't the daily creation run by default during idle time?"
     # It was not running at all -- its schedule carried `enabled: false`. This is
@@ -2838,7 +2895,11 @@ def _load_settings():
 #: button only ever sends {staging_base_url, conflict_window_hours} (the two
 #: fields it edits) — without deep-merge that wholesale-replaces the block,
 #: silently resetting `enabled` and `psi_daily_cap` to nothing every time.
-_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content")
+#: `turn_budget` joins them for the same reason: Settings sends only the group
+#: it edited (rounds, or the clock, or tokens), and a wholesale replace would
+#: drop the other two back to the module defaults every time one is changed.
+_DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
+                       "turn_budget")
 
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False):

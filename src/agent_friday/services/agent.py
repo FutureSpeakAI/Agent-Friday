@@ -3233,19 +3233,23 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         if tools:
             _tools_override = [t for t in CLAUDE_TOOLS
                                if t.get('name') in tools] or None
-        reply, tool_trace = _generate_agent(
-            messages, system=system, system_builder=_sys_for,
-            max_tokens=16384, model=subagent_model,
-            session_ctx={"authenticated": True, "is_background_task": True,
-                         "task_id": task_id,
-                         # A scheduled job's outward actions need a grant
-                         # scoped to that schedule (governance/action_gate).
-                         "schedule_id": (description.split(":", 1)[1]
-                                         if str(description or "").startswith("scheduled:")
-                                         else None)},
-            orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
-            workspace='task', on_route=_log_route, tools=_tools_override,
-        )
+        # Unattended: a scheduled or background run keeps a tighter round cap
+        # than an interactive turn, because nobody is watching it.
+        from agent_friday.services import turn_budget as _tbud
+        with _tbud.unattended():
+            reply, tool_trace = _generate_agent(
+                messages, system=system, system_builder=_sys_for,
+                max_tokens=16384, model=subagent_model,
+                session_ctx={"authenticated": True, "is_background_task": True,
+                             "task_id": task_id,
+                             # A scheduled job's outward actions need a grant
+                             # scoped to that schedule (governance/action_gate).
+                             "schedule_id": (description.split(":", 1)[1]
+                                             if str(description or "").startswith("scheduled:")
+                                             else None)},
+                orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
+                workspace='task', on_route=_log_route, tools=_tools_override,
+            )
         # Stop-after-step (TV10): the loop returned at a checkpoint because the
         # user asked it to. That is a cancellation with a complete record, not
         # a result to grade or a chain link to advance.
@@ -8209,6 +8213,16 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _orb_safe(process_update, orb_id, status='error', label='Stopped', progress=1.0)
                 return ("[Agent stopped by operator control: AGENT_STOP file detected.]", tool_trace)
 
+            # The user's Stop, on the turn they are watching. A kill file is an
+            # operator control, not a button; this is the button.
+            if core.turn_stop_requested():
+                from agent_friday.services import turn_budget as _tbs
+                _orb_safe(process_update, orb_id, status='completed',
+                          label='Stopped', progress=1.0)
+                return (_tbs.stopped_message(used=iter_count,
+                                             model=str(model or "")),
+                        tool_trace)
+
             # Write instructions to ~/.friday/STEER.md to redirect mid-task.
             _steer_inject = None
             _steer_path = FRIDAY_DIR / "STEER.md"
@@ -8544,7 +8558,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 # ══════════════════════════════════════════════════════════════
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
-                      pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
+                      pii_lookup=None, session_ctx=None, max_iters=None, orb=None,
                       meter_provider=None, orb_id=None, seat=None,
                       catalogue_all=None, max_tokens=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
@@ -8604,7 +8618,16 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     from agent_friday.services import tool_catalogue as _TC
     _catalogue_all = catalogue_all
 
+    # Parity with the cloud path, resolved from settings rather than hardcoded.
+    # `max_iters=None` means "ask turn_budget"; an explicit value (a scheduled
+    # job, a caller that knows better) still wins.
+    from agent_friday.services import turn_budget as _tb
+    if max_iters is None:
+        max_iters = _tb.rounds_for("local")
     loops = max_iters if oai_tools else 1
+    _loop_guard = _tb.LoopGuard()
+    _wall = _tb.WallClock(_tb.wall_clock_for("local"))
+    _tokens = _tb.TokenBudget(_tb.token_budget_for("local"))
     _empty_retried = False
     # THE EMPTY-RETRY THAT NEVER RETRIED.
     #
@@ -8653,6 +8676,33 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         _orb(label="Reasoning…" if _round == 1 else f"Reasoning (step {_round})",
              step_n=_round)
         _t_round = _time.time()
+        # THE USER'S STOP, and the kill file, both of which the local loop went
+        # without while the cloud loop had them. Checked between rounds, so the
+        # turn ends with its transcript and receipts intact.
+        #
+        # Not wrapped in a try: a stop a swallowed exception can skip is not a
+        # stop. `core.turn_stop_requested()` already returns False rather than
+        # raising, and `Path.exists()` answers False for an unreadable path.
+        _stop_file = FRIDAY_DIR / "AGENT_STOP"
+        if core.turn_stop_requested() or _stop_file.exists():
+            if _stop_file.exists():
+                try:
+                    _stop_file.unlink()
+                except Exception:
+                    pass          # removing it is courtesy; stopping is not
+            _orb(status='completed', label='Stopped', progress=1.0)
+            _led_done()
+            return _tb.stopped_message(used=_round,
+                                       model=str(model or "")), tool_trace
+        # The wall clock. Raising the round cap to parity means a turn can now
+        # run long legitimately, so SOMETHING has to bound it in time -- a round
+        # count never did, since one round can take minutes on a busy card.
+        if _wall.expired():
+            _orb(status='error', label='Time limit', progress=1.0)
+            _led_done()
+            return _tb.limit_message("clock", detail=_wall.reason(),
+                                     used=int(_wall.elapsed()),
+                                     model=str(model or "")), tool_trace
         resp = send_fn(convo, oai_tools)
 
         usage = resp.get("usage", {}) or {}
@@ -8666,6 +8716,17 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _led_tok["out"] += int(usage.get("completion_tokens", 0) or 0)
         except Exception:
             pass
+        # The per-turn token ceiling, on the accounting that already runs.
+        # Outside the try above on purpose: a ceiling that a swallowed
+        # exception can silently skip is not a ceiling.
+        _tokens.add(usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0))
+        if _tokens.exceeded():
+            _orb(status='error', label='Token budget', progress=1.0)
+            _led_done()
+            return _tb.limit_message("tokens", detail=_tokens.reason(),
+                                     used=_round,
+                                     model=str(model or "")), tool_trace
         try:
             from agent_friday.routing.model_router import get_router
             get_router().cost_tracker.record(
@@ -8963,6 +9024,17 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _task_log_tool(session_ctx, tname, targs)
             # Narration is announced inside _execute_tool, after the governance
             # check allows the call (see _call_claude_agent).
+            # THE CHECK THE 50-ROUND CAP WAS STANDING IN FOR. The same tool with
+            # the same arguments, over and over, is a loop; a cap only noticed
+            # after 50 expensive rounds, and punished steady progress just as
+            # hard. This catches the real thing in three.
+            _loop_hit = _loop_guard.observe(tname, targs)
+            if _loop_hit:
+                _orb(status='error', label='Loop detected', progress=1.0)
+                _led_done()
+                return _tb.limit_message("loop", detail=_loop_hit,
+                                         used=_round,
+                                         model=str(model or "")), tool_trace
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                    session_ctx=session_ctx)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
@@ -8980,11 +9052,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     # since the repair round is granted rather than deducted it can no longer
     # fall through to here. Say which budget, and how much of it was used, so
     # "max iters" is a fact about this run rather than a label for any ending.
-    _orb(status='error', label=f'Max iters ({_round})', progress=1.0)
+    _orb(status='error', label=f'Round limit ({_round})', progress=1.0)
     _led_done()
-    return (f"[Agent hit its {loops}-step tool limit on {model} after "
-            f"{_round} steps without completing. Raise max_iters, or narrow "
-            f"the task.]"), tool_trace
+    # Name the real limit and offer to continue. The old text named `max_iters`,
+    # an internal knob the user cannot see, and read like their fault.
+    return _tb.limit_message("rounds", used=_round, model=str(model or "")), tool_trace
 
 
 # ══════════════════════════════════════════════════════════════

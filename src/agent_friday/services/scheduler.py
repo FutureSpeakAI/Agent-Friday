@@ -717,8 +717,16 @@ def _run_task(rec):
             raise RuntimeError(f"unknown builtin task ref {ref!r}")
         # One reasoning trace per run: every model call the job makes (the
         # Front Page editorial, the briefing, the daily creation) lands in it.
+        # Unattended, for the same reason the stand-down gate sits here rather
+        # than inside each job: it is a property of the RUN. A builtin schedule
+        # calls its function on this thread, so the mark reaches it; an
+        # agent_prompt spawns a thread and `_task_worker` marks itself there.
+        # Without this the briefings, the news sweep and daily creation would
+        # have inherited the interactive 999-round budget with nobody watching.
         from agent_friday.services import reasoning_trace as _rt
-        with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job", nested=True):
+        from agent_friday.services import turn_budget as _tbud
+        with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job", nested=True), \
+                _tbud.unattended():
             # `local_only` used to be read ONLY on the agent_prompt path below, so
             # every builtin schedule -- daily creation, the briefings, the news front
             # page -- ignored it completely and each job picked its own model. The
