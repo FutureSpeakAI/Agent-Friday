@@ -194,3 +194,33 @@ def test_machine_and_provider_diagnostics_live_in_advanced():
     for gone in ("E(Bar,", "E(WeightsRows", "I need my machine", "(d.providers || [])"):
         assert gone not in tab, "%s is still on the Models tab" % gone
     assert "IntelligenceDiagnostics" in _fn(src, "SettingsTabAdvanced")
+
+
+HEAD = ROOT / "ui_parts" / "head.html"
+
+
+@pytest.mark.parametrize("path", [INDEX, HEAD], ids=["index.html", "head.html"])
+def test_settings_speaks_one_typeface_at_a_readable_size(path):
+    """Panels written before the Settings tokens set JetBrains Mono, Orbitron,
+    forced capitals and 8-10px text inline. Inside .st-root those are overridden
+    in one place rather than edited panel by panel, so a new panel cannot
+    reintroduce them."""
+    css = path.read_text(encoding="utf-8")
+    assert re.search(r'\.st-root \[style\*="JetBrains Mono"\]:not\(\.st-mono\)', css)
+    assert re.search(r'\.st-root \[style\*="Orbitron"\]:not\(\.st-brand\)', css)
+    assert re.search(r'\.st-root \[style\*="text-transform: uppercase"\]', css)
+    assert re.search(r'\.st-root \[style\*="font-size: 9px"\]', css)
+
+
+def test_vault_warning_waits_for_the_vault_status():
+    """`armed` is false while the status is still loading, so an unguarded
+    warning told an encrypted vault's owner it was not encrypted."""
+    body = _fn(INDEX.read_text(encoding="utf-8"), "SettingsTabPrivacy")
+    assert "vaultStatus && !armed &&" in body
+    assert "}, x.v))))), !armed &&" not in body
+
+
+def test_voice_stages_are_named_in_plain_words():
+    src = INDEX.read_text(encoding="utf-8")
+    m = re.search(r"const VOICE_STAGE_LABEL = \{([^}]*)\}", src)
+    assert m and "'EAR'" not in m.group(1) and "Listening" in m.group(1)

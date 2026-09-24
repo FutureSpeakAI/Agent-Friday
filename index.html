@@ -766,7 +766,25 @@ window.addEventListener('DOMContentLoaded',function(){
         .st-rail-btn.on { color: var(--st-accent); background: rgba(0,212,255,0.07); border-left-color: var(--st-accent); }
         .st-rail-btn:focus-visible { outline: 1px solid var(--st-accent); outline-offset: -2px; }
         button.toggle-pill { font-family: inherit; }
-        .st-root .settings-btn { font-family: var(--st-font); letter-spacing: 0; }
+        .st-root .settings-btn, .st-root .btn { font-family: var(--st-font); letter-spacing: 0; }
+        /* Settings speaks one typeface. Panels written before these tokens set
+           JetBrains Mono or Orbitron inline; inside the Settings pane they take
+           the UI face, with tabular figures so numbers still line up. Text
+           that IS code (a path, a command) keeps the mono face via .st-mono,
+           and the product name keeps its display face via .st-brand. */
+        .st-root [style*="JetBrains Mono"]:not(.st-mono),
+        .st-root [style*="Orbitron"]:not(.st-brand) {
+            font-family: var(--st-font) !important;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: normal !important;
+        }
+        .st-root .st-mono { font-family: var(--st-mono) !important; }
+        /* Nothing in Settings is set in forced capitals or below 11px. */
+        .st-root [style*="text-transform: uppercase"]:not(.st-brand) { text-transform: none !important; }
+        .st-root [style*="font-size: 8px"], .st-root [style*="font-size: 8.5px"],
+        .st-root [style*="font-size: 9px"], .st-root [style*="font-size: 9.5px"],
+        .st-root [style*="font-size: 10px"] { font-size: 11px !important; }
+        .st-root [style*="font-size: 10.5px"] { font-size: 11.5px !important; }
         /* The Settings shell fills its window, so the section rail stays put
            and only the content pane scrolls. */
         .fwin-body:has(> .ws-custom-root > .st-root) { overflow: hidden; }
@@ -38856,12 +38874,12 @@ function FetchPreflightCard({ modelId, onClose, onConfirm, confirming }) {
 }
 
 const _MODALITY_HEADING = {
-  text: 'TEXT', image: 'IMAGE', video: 'VIDEO', voice: 'VOICE', embed: 'EMBEDDING',
+  text: 'Text', image: 'Images', video: 'Video', voice: 'Voice', embed: 'Embeddings',
 };
 
 function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching, fetchMsg }) {
   const sections = ['text', 'image', 'video', 'voice', 'embed'];
-  return E(StSection, { title: 'LOCAL MODELS ON THIS MACHINE' },
+  return E(StSection, { title: 'Local models' },
     E('div', {
       style: {
         fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
@@ -39068,7 +39086,7 @@ function CloudConsentRow({ consent, onChanged, compact }) {
         style: { fontSize: 10, padding: '3px 9px' },
       }, busy ? 'checking…' : 'Re-answer')),
     !compact && E('div', { style: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.5 } },
-      'Unrestricted means the egress gate sends every payload untouched. Re-answer runs the capability check again, against the local seat as it is now, and shows both choices with the fresh result.'),
+      'Unrestricted means the privacy gate sends everything to the cloud model untouched. Re-answer checks again what this machine can run locally today, and shows both choices with the fresh result.'),
     assess && E('div', {
       style: { marginTop: 8, padding: 10, border: '1px solid rgba(0,212,255,0.25)', borderRadius: 8, background: 'rgba(0,212,255,0.05)' },
     },
@@ -39123,10 +39141,10 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const whereTxt = (x) => x.where === 'local'
     ? 'this machine' + (x.port ? ' · :' + x.port : '') + (x.num_ctx ? ' · ' + Math.round(x.num_ctx / 1024) + 'k' : '')
     : (x.provider || 'cloud');
-  const stateDetail = (x) => x.state === 'proven' ? 'proven ' + (fmtAgo(x.proven_at) || 'now')
+  const stateDetail = (x) => x.state === 'proven' ? 'answered ' + (fmtAgo(x.proven_at) || 'just now')
     : x.state === 'ready' ? 'key present'
     : x.state === 'cloud' ? 'cloud'
-    : x.state === 'cold' ? 'cold' : x.state === 'refused' ? 'refused' : x.state || '';
+    : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
     mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
@@ -39189,14 +39207,14 @@ function WeightsRows({ rows }) {
       else if (!w.present) parts.push('not reachable' + (w.probe && w.probe.reason ? ' (' + w.probe.reason + ')' : ''));
       else if (w.remote) parts.push('served over a network share; move it to ' + w.local_dir);
       else parts.push('on local disk');
-      if (w.lora) parts.push('adapter ' + (w.lora_present ? 'present' : 'MISSING'));
+      if (w.lora) parts.push('adapter ' + (w.lora_present ? 'present' : 'missing'));
       if (w.mmproj) parts.push('projector ' + (w.mmproj_present ? 'present' : 'missing'));
       return E('div', {
         key: w.model_id,
         style: { fontFamily: 'JetBrains Mono', fontSize: 10.5, padding: '4px 0', borderTop: '1px solid rgba(255,255,255,0.05)', lineHeight: 1.5 },
       },
         E('div', { style: { color: tone } }, (w.label || w.model_id) + (w.size_bytes ? ' · ' + fmtBytes(w.size_bytes) : '') + (w.sha256_short ? ' · sha ' + w.sha256_short : '')),
-        E('div', { style: { color: bad && !w.retired ? '#ef9a9a' : 'rgba(255,255,255,0.45)', wordBreak: 'break-all' } }, (w.served_from || w.path) + ' — ' + parts.join(' · ')));
+        E('div', { className: 'st-mono', style: { color: bad && !w.retired ? '#ef9a9a' : 'rgba(255,255,255,0.45)', wordBreak: 'break-all', fontSize: 11 } }, (w.served_from || w.path) + ' — ' + parts.join(' · ')));
     }));
 }
 
@@ -39697,7 +39715,7 @@ function VoiceSetupWizard({
       color: '#00d4ff',
       letterSpacing: '0.05em'
     }
-  }, "VOICE SETUP WIZARD"), onClose && /*#__PURE__*/React.createElement("button", {
+  }, "Voice setup"), onClose && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11,
@@ -39848,7 +39866,7 @@ function VoiceSetupWizard({
 // its own about readiness. Opening the panel POSTs /api/voice/arm, which runs
 // the three proofs in the background; rows flip green one by one with their
 // measured latency. "Prove voice now" forces a re-proof.
-const VOICE_STAGE_LABEL = { ear: 'EAR', mind: 'MIND', mouth: 'MOUTH' };
+const VOICE_STAGE_LABEL = { ear: 'Listening', mind: 'Thinking', mouth: 'Speaking' };
 const VOICE_PROOF_GLYPH = {
   proven: ['●', '#22c55e'], proving: ['◐', '#38bdf8'],
   unproven: ['○', 'rgba(255,255,255,0.45)'], refused: ['✕', '#ef4444'],
@@ -39856,10 +39874,10 @@ const VOICE_PROOF_GLYPH = {
 };
 function voiceEffectiveText(st) {
   const e = st && st.effective || {};
-  if (!e.engine) return st && st.selected && st.selected.engine ? st.selected.engine + ' (selected)' : '—';
+  if (!e.engine) return st && st.selected && st.selected.engine ? (st.selected.engine === 'seat' ? 'local model' : st.selected.engine) + ' (selected)' : '—';
   let name = e.engine;
   if (e.engine === 'faster-whisper') name = 'faster-whisper ' + (e.model || '');
-  else if (e.engine === 'seat') name = (e.model || 'local seat');
+  else if (e.engine === 'seat') name = (e.model || 'local model');
   else if (e.engine === 'kokoro') name = 'Kokoro ' + (e.voice || '');
   else if (e.engine === 'piper') name = 'Piper ' + (e.voice || '');
   else if (e.engine === 'gemini-live') name = 'Gemini Live';
@@ -39871,21 +39889,21 @@ function VoiceStackRow({ stage, st, onProve, contract }) {
   const [glyph, color] = VOICE_PROOF_GLYPH[p.state] || VOICE_PROOF_GLYPH.unproven;
   const at = p.at ? new Date(p.at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   let proofText;
-  if (p.state === 'proven') proofText = 'proven ' + at + (p.latency_ms != null ? ' · ' + (p.latency_ms / 1000).toFixed(2) + ' s' : '');
-  else if (p.state === 'proving') proofText = 'proving… ' + (st.progress || '');
-  else if (p.state === 'refused') proofText = 'refused';
-  else if (p.state === 'cloud') proofText = 'cloud';
-  else proofText = 'unproven' + (st && st.reason ? ' — ' + st.reason : '');
-  const extra = stage === 'mind' && contract && contract.tools ? ' · ' + contract.tools.length + ' tools · KG ' + (contract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (contract.memory ? '✓' : '✗') : '';
-  return /*#__PURE__*/React.createElement("div", { style: { display: 'grid', gridTemplateColumns: '58px 1fr', gap: 8, alignItems: 'start', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' } },
-    /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'JetBrains Mono', fontSize: 11, letterSpacing: 1, opacity: 0.8, paddingTop: 2 } }, VOICE_STAGE_LABEL[stage]),
+  if (p.state === 'proven') proofText = 'working · checked ' + at + (p.latency_ms != null ? ' · ' + (p.latency_ms / 1000).toFixed(2) + ' s' : '');
+  else if (p.state === 'proving') proofText = 'checking… ' + (st.progress || '');
+  else if (p.state === 'refused') proofText = 'unavailable';
+  else if (p.state === 'cloud') proofText = '';  // the engine name already says cloud
+  else proofText = 'not checked yet' + (st && st.reason ? ' — ' + st.reason : '');
+  const extra = stage === 'mind' && contract && contract.tools ? ' · ' + contract.tools.length + ' tools · knowledge ' + (contract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (contract.memory ? '✓' : '✗') : '';
+  return /*#__PURE__*/React.createElement("div", { style: { display: 'grid', gridTemplateColumns: '84px 1fr', gap: 10, alignItems: 'start', padding: '7px 0', borderBottom: '1px solid var(--st-line)' } },
+    /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'var(--st-font)', fontSize: 12.5, fontWeight: 500, color: 'var(--st-label)', paddingTop: 1 } }, VOICE_STAGE_LABEL[stage]),
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, lineHeight: 1.5 } },
       /*#__PURE__*/React.createElement("div", null,
         /*#__PURE__*/React.createElement("span", { style: { color, marginRight: 6 } }, glyph),
-        /*#__PURE__*/React.createElement("b", null, voiceEffectiveText(st)),
+        voiceEffectiveText(st) !== '—' && /*#__PURE__*/React.createElement("b", null, voiceEffectiveText(st)),
         /*#__PURE__*/React.createElement("span", { style: { opacity: 0.75, marginLeft: 8 } }, proofText + extra)),
       p.state !== 'unproven' && st && st.reason && p.state !== 'cloud' && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: p.state === 'refused' ? '#ef4444' : 'var(--warn, #e0a030)' } }, st.reason),
-      p.state === 'refused' && st && st.action && /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '4px 10px', marginTop: 4 }, onClick: () => onProve(st.action) }, st.action.label || 'Retry')));
+      p.state === 'refused' && st && st.action && /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '4px 10px', marginTop: 4 }, onClick: () => onProve(st.action) }, String(st.action.label || 'Retry').replace(/^Prove\b/, 'Check'))));
 }
 function VoiceStackCard({ s, save, mc }) {
   const [manifest, setManifest] = useState(null);
@@ -39915,33 +39933,33 @@ function VoiceStackCard({ s, save, mc }) {
   const stages = manifest && manifest.stages || {};
   const policyRow = (key, label) => /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 } },
     /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.7, minWidth: 90 } }, label),
-    [['never', 'GPU: never'], ['if_free', 'GPU: if free'], ['required', 'GPU: required']].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
+    [['never', 'Never'], ['if_free', 'If free'], ['required', 'Required']].map(([v, l]) => /*#__PURE__*/React.createElement("button", {
       key: v, className: `settings-btn ${(s[key] || 'if_free') === v ? 'active' : ''}`, style: { fontSize: 11, padding: '4px 10px' },
       onClick: () => save({ [key]: v })
     }, l)));
   return /*#__PURE__*/React.createElement(React.Fragment, null,
-    /*#__PURE__*/React.createElement(StRow, { label: "Voice Stack", desc: "Selected → effective → proven. A row is green only after that stage has actually transcribed, thought or spoken within the last 15 minutes; nothing here reports ready because a package imports." },
+    /*#__PURE__*/React.createElement(StRow, { label: "Voice readiness", desc: "A stage turns green only after it has actually heard, thought or spoken in the last 15 minutes, so green means it works now, not merely that it is installed." },
       /*#__PURE__*/React.createElement("div", null,
         err && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.7 } }, err),
         ['ear', 'mind', 'mouth'].map(k => /*#__PURE__*/React.createElement(VoiceStackRow, { key: k, stage: k, st: stages[k], onProve: proveNow, contract: manifest && manifest.contract })),
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 } },
-          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Proving…' : 'Prove voice now'),
-          /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.6 } }, manifest ? (manifest.ready ? 'All stages proven.' : 'Not ready — see the rows above.') + ' Idle unload ' + Math.round((manifest.idle_unload_s || 600) / 60) + ' min.' : 'Reading manifest…')),
+          /*#__PURE__*/React.createElement("button", { className: "settings-btn", style: { fontSize: 11, padding: '5px 12px' }, onClick: () => proveNow(null) }, manifest && manifest.proving ? 'Checking…' : 'Check voice now'),
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, opacity: 0.6 } }, manifest ? (manifest.ready ? 'All three stages are working.' : 'Not ready yet; see the rows above.') + ' Voice models unload after ' + Math.round((manifest.idle_unload_s || 600) / 60) + ' minutes idle.' : 'Checking…')),
         manifest && manifest.description && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, opacity: 0.65, marginTop: 6, fontStyle: 'italic' } }, "What Friday is told about herself: “", manifest.description, "”"))),
-    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Ear", desc: "faster-whisper small. GPU policy: never keeps the card for the model; if free leases it when the display reserve allows; required refuses the session rather than falling to the CPU." },
-      policyRow('voice_ear_gpu', 'faster-whisper')),
-    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Mouth", desc: "Which synthesizer speaks. Piper is the CPU floor and always present; Kokoro needs a CUDA GPU (or the CPU opt-in below) and refuses rather than quietly running slowly." },
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Speech recognition", desc: "When listening may use the graphics card. Never: always the processor. If free: the graphics card when enough memory is spare after the display's share. Required: refuse a voice session rather than fall back to the processor." },
+      policyRow('voice_ear_gpu', 'Graphics card')),
+    (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, { label: "Speaking voice engine", desc: "Which synthesizer speaks. Piper runs on the processor and is always available. Kokoro sounds more natural but needs an NVIDIA graphics card (or the processor opt-in below), and refuses rather than quietly running slowly." },
       /*#__PURE__*/React.createElement("div", null,
         /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, engines.map(o => {
           const off = o.available === false;
           return /*#__PURE__*/React.createElement("button", { key: o.id, className: `settings-btn ${sel === o.id ? 'active' : ''}`, style: { fontSize: 12, padding: '7px 14px', opacity: off ? 0.4 : 1, cursor: off ? 'not-allowed' : 'pointer' }, "aria-disabled": off, title: o.hint || o.label, onClick: off ? undefined : () => save({ local_voice_tts_engine: o.id }) }, o.short || o.label);
         })),
         engines.filter(o => o.available === false).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.short || o.label, " unavailable:"), " ", o.hint || 'no reason given')),
-        policyRow('voice_mouth_gpu', sel === 'kokoro' ? 'Kokoro' : 'Piper (CPU)'),
+        policyRow('voice_mouth_gpu', 'Graphics card'),
         sel === 'kokoro' && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
           /*#__PURE__*/React.createElement("select", { className: "input", style: { width: '100%' }, value: s.local_voice_kokoro_voice || 'af_heart', onChange: e => save({ local_voice_kokoro_voice: e.target.value }) },
             [['af_heart', 'Heart — US English (female)'], ['af_bella', 'Bella — US English (female)'], ['af_nicole', 'Nicole — US English (female)'], ['am_michael', 'Michael — US English (male)'], ['am_puck', 'Puck — US English (male)'], ['bf_emma', 'Emma — UK English (female)'], ['bm_george', 'George — UK English (male)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", { key: v, value: v }, l))),
-          /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on CPU: allowed (slow)' : 'Kokoro on CPU: refused (default)')))));
+          /*#__PURE__*/React.createElement("button", { className: `settings-btn ${s.local_voice_kokoro_allow_cpu ? 'active' : ''}`, style: { fontSize: 11, padding: '5px 10px', marginTop: 6 }, onClick: () => save({ local_voice_kokoro_allow_cpu: !s.local_voice_kokoro_allow_cpu }) }, s.local_voice_kokoro_allow_cpu ? 'Kokoro on the processor: allowed (slow)' : 'Kokoro on the processor: off (default)')))));
 }
 // ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
 // One row of modes for the `voice_engine` setting. `auto` is gone from the
@@ -39963,7 +39981,7 @@ function VoiceModePicker({ s, save, mc }) {
     { id: 'local', label: 'Local', desc: 'Ears, reasoning and voice on this machine. Nothing leaves it.', off: false, reason: null },
     { id: 'gemini', label: 'Cloud (Gemini Live)', desc: "Google's speech-to-speech model. Your microphone audio goes to Google. Questions about your own context go through Friday's local model.", off: !!(gem && gem.available === false), reason: gem && gem.hint }
   ].concat(providers.map(pv => ({
-    id: pv.name, label: 'Local listening, cloud voice (' + pv.label + ')',
+    id: pv.name, label: 'Local listening, cloud voice (' + String(pv.label || pv.name).replace(/\s*\(cloud\)\s*$/i, '') + ')',
     desc: 'Friday hears and thinks here; ' + pv.label + ' speaks. Only the reply text leaves.',
     off: pv.selectable === false, reason: pv.reason, provider: pv.name
   }))).concat(gpu ? [{ id: 'local-gpu', label: 'Local GPU (NeMo, experimental)', desc: 'Nemotron ASR + FastPitch on CUDA. Off by default; kept behind the engine interface.', off: gpu.available === false, reason: gpu.hint }] : []);
@@ -40336,7 +40354,7 @@ function SettingsTabPrivacy({
     }
   }, [{
     l: 'Status',
-    v: vaultStatus.locked ? 'LOCKED' : 'UNLOCKED',
+    v: vaultStatus.locked ? 'Locked' : 'Unlocked',
     c: vaultStatus.locked ? '#f59e0b' : '#00ff80'
   }, {
     l: 'Encryption',
@@ -40361,7 +40379,13 @@ function SettingsTabPrivacy({
       fontSize: 12,
       color: x.c
     }
-  }, x.v))))), !armed && /*#__PURE__*/React.createElement("div", {
+  }, x.v))))), !vaultStatus && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-dim)',
+      marginBottom: 14
+    }
+  }, "Reading the vault’s status…"), vaultStatus && !armed && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '12px 14px',
       background: 'rgba(245,158,11,0.06)',
@@ -40629,7 +40653,7 @@ function ApprovalScannerPanel({
   }, {
     k: 'on',
     l: 'On',
-    d: 'Both scanners vote. An action waits for you when EITHER says it should — so this can add approval cards, never remove one.'
+    d: 'Both scanners vote. An action waits for you when either says it should — so this can add approval cards, never remove one.'
   }];
   const cur = opts.find(o => o.k === mode);
   const laya = st && st.laya || {};
@@ -40641,7 +40665,7 @@ function ApprovalScannerPanel({
       marginBottom: 10,
       lineHeight: 1.6
     }
-  }, "Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise MORE approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught."), /*#__PURE__*/React.createElement("div", {
+  }, "Before Friday sends mail as you, spends money, or does something it cannot undo, a scanner decides whether to stop and ask. Adding a second opinion can only ever raise more approval cards — the keyword scan is still one of the two votes, so turning this on cannot let something through that it would have caught."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
@@ -42086,7 +42110,7 @@ function AddProviderForm({
       letterSpacing: '.1em',
       marginBottom: 10
     }
-  }, "ADD PROVIDER"), /*#__PURE__*/React.createElement(StRow, {
+  }, "Add provider"), /*#__PURE__*/React.createElement(StRow, {
     label: "Template"
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
@@ -42514,7 +42538,7 @@ function AutoRouterControls({ s, save, orReady, compact }) {
   }, "Needs an OpenRouter key — add one in Settings → Accounts & Keys.");
 
   const tierRow = React.createElement(StRow, {
-    label: "COST PRIORITY",
+    label: "Cost priority",
     desc: "How much the router may spend on your behalf. OpenRouter's own default is Low; raising it buys stronger models at a higher rate."
   }, row(TIERS.map(([id, label]) => pill(tier === id, label, () => setKey('auto_router_cost_tier', id), 'cost_tier: ' + id))));
 
@@ -42810,6 +42834,7 @@ function SettingsTabAbout() {
       marginBottom: 24
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "st-brand",
     style: {
       fontFamily: 'Orbitron',
       fontSize: 22,
@@ -42826,10 +42851,11 @@ function SettingsTabAbout() {
       color: 'rgba(255,255,255,0.45)',
       marginBottom: 8
     }
-  }, 'v' + (upd?.current_version || h?.version || 'unknown'), " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
+  }, (upd?.current_version || h?.version) ? 'v' + (upd?.current_version || h?.version) : 'Version unknown', " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
+    className: "st-brand",
     style: {
       fontFamily: 'Orbitron',
-      fontSize: 10,
+      fontSize: 11,
       color: '#00d4ff',
       letterSpacing: '.2em'
     }
@@ -43446,7 +43472,7 @@ function SettingsTabCosts() {
       fontSize: 10,
       color: dim
     }, mono)
-  }, loaded ? 'No spend recorded yet.' : 'Loading...')), !!pts.length && /*#__PURE__*/React.createElement("div", {
+  }, loaded ? (costSummary && costSummary.total_usd > 0 ? 'No day-by-day figures for this period.' : 'No spend recorded yet.') : 'Loading…')), !!pts.length && /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       display: 'flex',
       justifyContent: 'space-between',
