@@ -6273,7 +6273,7 @@ function FWin({
     style: {
       fontSize: 12
     }
-  }, "\u2197"), /*#__PURE__*/React.createElement("button", {
+  }, "\u2197"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close ' + title, title: 'Close ' + title, 
     onClick: onClose
   }, "\xD7"))), /*#__PURE__*/React.createElement("div", {
     className: "fwin-body"
@@ -6325,7 +6325,7 @@ function FWin({
     style: {
       margin: 0
     }
-  })), /*#__PURE__*/React.createElement("button", {
+  })), /*#__PURE__*/React.createElement("button", { "aria-label": "Ask Friday to remove this note", 
     onClick: () => openWsChat('remove the pinned note'),
     title: "Ask Friday to remove this note",
     style: {
@@ -6595,7 +6595,7 @@ function WorkspaceChat({
       fontSize: 11,
       padding: '2px 7px'
     }
-  }, "\uD83D\uDD58 ", versions.length), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDD58 ", versions.length), /*#__PURE__*/React.createElement("button", { "aria-label": "Close", 
     onClick: onClose,
     title: "Close",
     style: {
@@ -7604,7 +7604,7 @@ function ChatSurface(props) {
       minWidth: 0,
       alignItems: 'flex-end'
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)', 
     className: "btn",
     onClick: toggleVoice,
     title: voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
@@ -7621,7 +7621,12 @@ function ChatSurface(props) {
       flexShrink: 0,
       zIndex: 1
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": (() => {
+      const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
+      const name = inp ? inp.label.split('(')[0].trim() : 'default device';
+      return 'Choose microphone and speaker — currently ' + name +
+             '. This does not start voice mode; the 🎤 button beside it does.';
+    })(), 
     "data-audio-device-toggle": "",
     className: "btn",
     onClick: () => setAudioDevicePopup(o => !o),
@@ -7833,7 +7838,7 @@ function ChatSurface(props) {
     accept: ".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.py,.js,.html,.css,.json,.ts,.tsx,.yaml,.yml,.toml",
     style: { display: 'none' },
     onChange: e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) uploadFile(f); }
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": uploading ? ('Analysing ' + uploading) : 'Attach a file — image, PDF or text', 
     className: "btn",
     disabled: !!uploading,
     title: uploading ? ('Analysing ' + uploading) : 'Attach a file — image, PDF or text',
@@ -8607,7 +8612,7 @@ function SendTo({
       position: 'relative',
       display: 'inline-block'
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": "Send to...", 
     onClick: e => {
       e.stopPropagation();
       setOpen(!open);
@@ -8901,7 +8906,7 @@ function HomeWS() {
       flex: 1,
       color: t.status === 'approved' ? '#00ff80' : '#ccc'
     }
-  }, t.title || t.task || 'Task'), t.status === 'proposed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+  }, t.title || t.task || 'Task'), t.status === 'proposed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", { "aria-label": 'Approve this task', title: 'Approve this task', 
     className: "btn",
     style: {
       padding: '2px 6px',
@@ -8909,7 +8914,7 @@ function HomeWS() {
       marginLeft: 4
     },
     onClick: () => approveTodo(t.id)
-  }, "\u2713"), /*#__PURE__*/React.createElement("button", {
+  }, "\u2713"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Reject this task', title: 'Reject this task', 
     className: "btn btn-magenta",
     style: {
       padding: '2px 6px',
@@ -12040,7 +12045,7 @@ function KnowledgeGraphWS() {
       background: touring ? 'rgba(255,80,120,0.15)' : 'transparent',
       color: touring ? '#ff9db0' : '#9dffc8'
     }
-  }, touring ? "\u25A0 Stop tour" : "\u25B6 Tour")), /*#__PURE__*/React.createElement("button", {
+  }, touring ? "\u25A0 Stop tour" : "\u25B6 Tour")), /*#__PURE__*/React.createElement("button", { "aria-label": "Rebuild the graph from the wiki", 
     className: "btn",
     title: "Rebuild the graph from the wiki",
     style: {
@@ -12048,7 +12053,7 @@ function KnowledgeGraphWS() {
       padding: '4px 9px'
     },
     onClick: reindex
-  }, "\u21BB"), stats && /*#__PURE__*/React.createElement("span", {
+  }, "↻ Rebuild"), stats && /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: '#8fa8c8',
@@ -12219,7 +12224,7 @@ function KnowledgeGraphWS() {
       whiteSpace: 'nowrap'
     },
     onClick: () => openWikiPage(selected)
-  }, "\uD83D\uDCD6 Open page"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCD6 Open page"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Clear the selection', title: 'Clear the selection', 
     className: "btn",
     style: {
       fontSize: 11,
@@ -13166,7 +13171,7 @@ function FSProjectCard({
       setEditing(!editing);
       setExpanded(true);
     }
-  }, "\u270F\uFE0F Quick Edit"), /*#__PURE__*/React.createElement("button", {
+  }, "\u270F\uFE0F Quick Edit"), /*#__PURE__*/React.createElement("button", { "aria-label": expanded ? 'Show less' : 'Show more', title: expanded ? 'Show less' : 'Show more', 
     className: "btn",
     style: {
       fontSize: 11,
@@ -16556,7 +16561,7 @@ function ProjectsPanel() {
     style: {
       color: '#888'
     }
-  }, " \xB7 \uD83C\uDF99 ", c.voice_profile) : ''), /*#__PURE__*/React.createElement("button", {
+  }, " \xB7 \uD83C\uDF99 ", c.voice_profile) : ''), /*#__PURE__*/React.createElement("button", { "aria-label": 'Remove ' + c.name, title: 'Remove ' + c.name, 
     className: "btn",
     style: {
       fontSize: 10,
@@ -16662,13 +16667,13 @@ function ProjectsPanel() {
     },
     disabled: busy,
     onClick: runPipeline
-  }, busy ? 'Starting…' : '▶ Run'), /*#__PURE__*/React.createElement("button", {
+  }, busy ? 'Starting…' : '▶ Run'), /*#__PURE__*/React.createElement("button", { "aria-label": 'Refresh the list of runs', title: 'Refresh the list of runs', 
     className: "btn",
     style: {
       fontSize: 11
     },
     onClick: loadRuns
-  }, "\u21BB"))), runs.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "↻ Refresh"))), runs.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "card"
   }, /*#__PURE__*/React.createElement("div", {
     className: "card-title"
@@ -16973,7 +16978,7 @@ function StudioPromptBar({
     style: {
       flex: 1
     }
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": "Generation settings \u2014 model, style, aspect ratio, duration", 
     className: "btn btn-magenta",
     style: {
       fontSize: 12,
@@ -19418,7 +19423,7 @@ function CapabilityCardPanel() {
       padding: '2px 6px'
     },
     onClick: () => savePrice(c.type)
-  }, "Save"), /*#__PURE__*/React.createElement("button", {
+  }, "Save"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Cancel editing', title: 'Cancel editing', 
     className: "settings-btn",
     style: {
       fontSize: 9,
@@ -21505,7 +21510,7 @@ function WorkflowsWS() {
   }, busy === c.slug ? 'Starting…' : '▶ Run'), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => setWatching(c.slug)
-  }, "Status"), /*#__PURE__*/React.createElement("button", {
+  }, "Status"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Delete this workflow', title: 'Delete this workflow', 
     className: "btn",
     style: {
       color: '#ff5f7a'
@@ -21727,7 +21732,7 @@ function WorkflowsWS() {
   }, s.enabled ? 'On' : 'Off'), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: () => runSched(s)
-  }, "\u25B6 Now"), s.source !== 'builtin' && /*#__PURE__*/React.createElement("button", {
+  }, "\u25B6 Now"), s.source !== 'builtin' && /*#__PURE__*/React.createElement("button", { "aria-label": 'Delete this schedule', title: 'Delete this schedule', 
     className: "btn",
     style: {
       color: '#ff5f7a'
@@ -22304,14 +22309,14 @@ function SystemWS() {
       fontSize: 11,
       marginLeft: 6
     }
-  }, "(", approvals.length, " pending)")), /*#__PURE__*/React.createElement("button", {
+  }, "(", approvals.length, " pending)")), /*#__PURE__*/React.createElement("button", { "aria-label": 'Refresh approvals', title: 'Refresh approvals', 
     className: "btn",
     style: {
       fontSize: 11,
       padding: '2px 8px'
     },
     onClick: refreshApprovals
-  }, "↻")), approvals.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "↻ Refresh")), approvals.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',
@@ -23652,7 +23657,7 @@ function DevFiles() {
       gridTemplateColumns: '1fr 1fr',
       gap: 4
     }
-  }, data && data.parent != null && /*#__PURE__*/React.createElement("button", {
+  }, data && data.parent != null && /*#__PURE__*/React.createElement("button", { "aria-label": 'Up to the parent folder', title: 'Up to the parent folder', 
     className: "btn",
     style: {
       fontSize: 11,
@@ -26013,42 +26018,42 @@ function NewsWS() {
   // Reusable card-corner actions: Read Later (toggle) + Open in Background.
   const cardActions = it => /*#__PURE__*/React.createElement("div", {
     className: "src-actions"
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": savedUrls[it.url] ? 'Saved to Read Later' : 'Save to Read Later', 
     className: 'src-btn save' + (savedUrls[it.url] ? ' on' : ''),
     title: savedUrls[it.url] ? 'Saved to Read Later' : 'Save to Read Later',
     onClick: e => {
       e.stopPropagation();
       savedUrls[it.url] ? removeLater(it.url) : saveLater(it);
     }
-  }, savedUrls[it.url] ? '🔖' : '🏷'), /*#__PURE__*/React.createElement("button", {
+  }, savedUrls[it.url] ? '🔖' : '🏷'), /*#__PURE__*/React.createElement("button", { "aria-label": "Open in background tab", 
     className: "src-btn bg",
     title: "Open in background tab",
     onClick: e => {
       e.stopPropagation();
       openBg(it.url);
     }
-  }, "\u29C9"), /*#__PURE__*/React.createElement("button", {
+  }, "\u29C9"), /*#__PURE__*/React.createElement("button", { "aria-label": "Draft a LinkedIn post / blog response about this", 
     className: "src-btn draft",
     title: "Draft a LinkedIn post / blog response about this",
     onClick: e => {
       e.stopPropagation();
       shareToDraft(it);
     }
-  }, shareBusy === it.url ? '…' : '✍️'), /*#__PURE__*/React.createElement("button", {
+  }, shareBusy === it.url ? '…' : '✍️'), /*#__PURE__*/React.createElement("button", { "aria-label": annById[it.url] ? 'Annotated — add another note' : 'Annotate', 
     className: 'src-btn note' + (annById[it.url] ? ' on' : '') + (annotateFor === it.url ? ' active' : ''),
     title: annById[it.url] ? 'Annotated — add another note' : 'Annotate',
     onClick: e => {
       e.stopPropagation();
       openAnnotate(it);
     }
-  }, "\uD83D\uDCDD"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCDD"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Boost ' + it.source, 
     className: "src-btn boost",
     title: 'Boost ' + it.source,
     onClick: e => {
       e.stopPropagation();
       boostSource(it.source);
     }
-  }, "\u2B50"), /*#__PURE__*/React.createElement("button", {
+  }, "\u2B50"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Ban ' + it.source, 
     className: "src-btn ban",
     title: 'Ban ' + it.source,
     onClick: e => {
@@ -26063,7 +26068,7 @@ function NewsWS() {
     }
   }, fpAudio && /*#__PURE__*/React.createElement("div", {
     className: "fp-audio-bar"
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": fpPlaying ? 'Pause' : 'Play', 
     className: "fp-audio-btn",
     title: fpPlaying ? 'Pause' : 'Play',
     onClick: toggleFpPlay,
@@ -26089,7 +26094,7 @@ function NewsWS() {
     key: s,
     className: 'fp-spd' + (fpSpeed === s ? ' on' : ''),
     onClick: () => setFpRate(s)
-  }, s, "x"))), /*#__PURE__*/React.createElement("button", {
+  }, s, "x"))), /*#__PURE__*/React.createElement("button", { "aria-label": "Close player", 
     className: "fp-audio-btn close",
     title: "Close player",
     onClick: closeFpAudio
@@ -26492,7 +26497,7 @@ function NewsWS() {
       fontSize: 11,
       padding: '16px 0'
     }
-  }, "\u2014 end of archive (", feed.length.toLocaleString(), " loaded) \u2014")), showTop && /*#__PURE__*/React.createElement("button", {
+  }, "\u2014 end of archive (", feed.length.toLocaleString(), " loaded) \u2014")), showTop && /*#__PURE__*/React.createElement("button", { "aria-label": "Back to top", 
     className: "btn",
     title: "Back to top",
     onClick: () => {
@@ -26580,7 +26585,7 @@ function NewsWS() {
     className: "fp-anchor-dot"
   }), /*#__PURE__*/React.createElement("span", {
     className: "fp-anchor-label"
-  }, "\uD83C\uDF99\uFE0F Now Reading: Front Page \u2014 speak any time to ask Friday about a story"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83C\uDF99\uFE0F Now Reading: Front Page \u2014 speak any time to ask Friday about a story"), /*#__PURE__*/React.createElement("button", { "aria-label": "End the live anchor briefing", 
     className: "fp-audio-btn close",
     title: "End the live anchor briefing",
     onClick: stopAnchorBriefing
@@ -27103,14 +27108,14 @@ function NewsWS() {
     className: "cat-chip"
   }, it.category || it.source), /*#__PURE__*/React.createElement("div", {
     className: "src-actions"
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": "Open in background tab", 
     className: "src-btn bg",
     title: "Open in background tab",
     onClick: e => {
       e.stopPropagation();
       openBg(it.url);
     }
-  }, "\u29C9"), /*#__PURE__*/React.createElement("button", {
+  }, "\u29C9"), /*#__PURE__*/React.createElement("button", { "aria-label": "Remove from Read Later", 
     className: "src-btn ban",
     title: "Remove from Read Later",
     onClick: e => {
@@ -27165,11 +27170,11 @@ function NewsWS() {
     className: "cat-chip"
   }, "\uD83D\uDCDD Note"), /*#__PURE__*/React.createElement("div", {
     className: "src-actions"
-  }, n.article_url && /*#__PURE__*/React.createElement("button", {
+  }, n.article_url && /*#__PURE__*/React.createElement("button", { "aria-label": "Open article", 
     className: "src-btn bg",
     title: "Open article",
     onClick: () => openBg(n.article_url)
-  }, "\u29C9"), /*#__PURE__*/React.createElement("button", {
+  }, "\u29C9"), /*#__PURE__*/React.createElement("button", { "aria-label": "Delete notes for this article", 
     className: "src-btn ban",
     title: "Delete notes for this article",
     onClick: () => removeAnnotations(n.article_id || n.article_url)
@@ -27278,7 +27283,7 @@ function NewsWS() {
         fontSize: 10,
         padding: '2px 9px'
       }
-    }), /*#__PURE__*/React.createElement("button", {
+    }), /*#__PURE__*/React.createElement("button", { "aria-label": isOpen ? 'Hide this briefing' : 'Show this briefing', title: isOpen ? 'Hide this briefing' : 'Show this briefing', 
       className: "icon-btn",
       onClick: e => {
         e.stopPropagation();
@@ -27304,7 +27309,7 @@ function NewsWS() {
       justifyContent: 'space-between',
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("h3", null, "\uD83D\uDEE1 MANAGE SOURCES"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\uD83D\uDEE1 MANAGE SOURCES"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this panel', title: 'Close this panel', 
     className: "icon-btn",
     onClick: () => setPanel(null)
   }, "\u2715")), /*#__PURE__*/React.createElement("div", {
@@ -27406,7 +27411,7 @@ function NewsWS() {
       justifyContent: 'space-between',
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("h3", null, "\u2699 CUSTOMIZE BRIEFING"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\u2699 CUSTOMIZE BRIEFING"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this panel', title: 'Close this panel', 
     className: "icon-btn",
     onClick: () => setPanel(null)
   }, "\u2715")), /*#__PURE__*/React.createElement("div", {
@@ -27423,7 +27428,7 @@ function NewsWS() {
       flexDirection: 'column',
       gap: 1
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": 'Move this section up', title: 'Move this section up', 
     className: "icon-btn",
     style: {
       lineHeight: 1,
@@ -27431,7 +27436,7 @@ function NewsWS() {
     },
     onClick: () => moveSection(i, -1),
     disabled: i === 0
-  }, "\u25B4"), /*#__PURE__*/React.createElement("button", {
+  }, "\u25B4"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Move this section down', title: 'Move this section down', 
     className: "icon-btn",
     style: {
       lineHeight: 1,
@@ -27477,7 +27482,7 @@ function NewsWS() {
       justifyContent: 'space-between',
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("h3", null, "\uD83D\uDCCA YOUR MEDIA DIET"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("h3", null, "\uD83D\uDCCA YOUR MEDIA DIET"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this panel', title: 'Close this panel', 
     className: "icon-btn",
     onClick: () => setPanel(null)
   }, "\u2715")), /*#__PURE__*/React.createElement("div", {
@@ -30446,13 +30451,13 @@ function ContactsWS() {
     value: q,
     onChange: e => setQ(e.target.value),
     placeholder: "Search contacts..."
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": 'Refresh contacts', title: 'Refresh contacts', 
     className: "btn",
     style: {
       fontSize: 11
     },
     onClick: loadList
-  }, "\u21BB")), toast && /*#__PURE__*/React.createElement("div", {
+  }, "↻ Refresh")), toast && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#00d4ff',
@@ -31098,13 +31103,13 @@ function ContentIdeasTab({
       display: 'flex',
       gap: 4
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": 'Refresh ideas', title: 'Refresh ideas', 
     className: "btn",
     style: {
       fontSize: 11
     },
     onClick: load
-  }, "\u21BB"), /*#__PURE__*/React.createElement("button", {
+  }, "↻ Refresh"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11,
@@ -32549,7 +32554,7 @@ function ContentCalendarTab({
       alignItems: 'center',
       marginBottom: 8
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", { "aria-label": view === 'month' ? 'Previous month' : 'Previous week', title: view === 'month' ? 'Previous month' : 'Previous week', 
     className: "btn",
     style: {
       fontSize: 11
@@ -32563,7 +32568,7 @@ function ContentCalendarTab({
       flex: 1,
       textAlign: 'center'
     }
-  }, hdr), /*#__PURE__*/React.createElement("button", {
+  }, hdr), /*#__PURE__*/React.createElement("button", { "aria-label": view === 'month' ? 'Next month' : 'Next week', title: view === 'month' ? 'Next month' : 'Next week', 
     className: "btn",
     style: {
       fontSize: 11
@@ -32838,7 +32843,7 @@ function ContentQueueTab({
       },
       title: "Publish this post immediately (still fully gated)",
       onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/publish-now', {}, '🚀 Dispatched')
-    }, "\u25B6 now"), /*#__PURE__*/React.createElement("button", {
+    }, "\u25B6 now"), /*#__PURE__*/React.createElement("button", { "aria-label": "Reschedule", 
       className: "btn btn-magenta",
       style: {
         fontSize: 10,
@@ -32857,7 +32862,7 @@ function ContentQueueTab({
           publish_at: d.toISOString()
         }, '📅 Rescheduled');
       }
-    }, "\u21BA"), /*#__PURE__*/React.createElement("button", {
+    }, "\u21BA"), /*#__PURE__*/React.createElement("button", { "aria-label": "Cancel this target", 
       className: "btn btn-magenta",
       style: {
         fontSize: 10,
@@ -32893,13 +32898,13 @@ function ContentQueueTab({
     style: {
       flex: 1
     }
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": 'Refresh the queue', title: 'Refresh the queue', 
     className: "btn",
     style: {
       fontSize: 10
     },
     onClick: load
-  }, "\u21BB"), /*#__PURE__*/React.createElement("button", {
+  }, "↻ Refresh"), /*#__PURE__*/React.createElement("button", {
     className: 'btn ' + (paused ? '' : 'btn-magenta'),
     style: {
       fontSize: 11,
@@ -33425,7 +33430,7 @@ function ContentAnalyticsTab() {
         style: {
           color: '#00d4ff'
         }
-      }, "\u2197"), t.id && /*#__PURE__*/React.createElement("button", {
+      }, "\u2197"), t.id && /*#__PURE__*/React.createElement("button", { "aria-label": "Manual metrics refresh (budget-aware)", 
         className: "btn",
         style: {
           fontSize: 9,
@@ -34530,7 +34535,7 @@ function CameraMode({
     playsInline: true
   }), /*#__PURE__*/React.createElement("span", {
     className: "cam-label"
-  }, label), refKey === 'webcam' && onChangeFacing && /*#__PURE__*/React.createElement("button", {
+  }, label), refKey === 'webcam' && onChangeFacing && /*#__PURE__*/React.createElement("button", { "aria-label": "Flip camera", 
     className: "cam-close",
     style: {
       right: 30,
@@ -34542,7 +34547,7 @@ function CameraMode({
       e.stopPropagation();
       onChangeFacing();
     }
-  }, "\u21C4"), /*#__PURE__*/React.createElement("button", {
+  }, "\u21C4"), /*#__PURE__*/React.createElement("button", { "aria-label": "Stop camera", 
     className: "cam-close",
     onMouseDown: e => e.stopPropagation(),
     onClick: e => {
@@ -35060,7 +35065,7 @@ function TaskTray({
     className: "task-tray"
   }, /*#__PURE__*/React.createElement("div", {
     className: "task-tray-header"
-  }, /*#__PURE__*/React.createElement("span", null, running > 0 ? `${running}/${total} TASKS · LIVE` : `${total} TASKS`, stalledN > 0 ? ` · ${stalledN} STALLED` : '', interruptedN > 0 ? ` · ${interruptedN} INTERRUPTED` : ''), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, running > 0 ? `${running}/${total} TASKS · LIVE` : `${total} TASKS`, stalledN > 0 ? ` · ${stalledN} STALLED` : '', interruptedN > 0 ? ` · ${interruptedN} INTERRUPTED` : ''), /*#__PURE__*/React.createElement("button", { "aria-label": "Collapse", 
     className: "task-card-btn",
     style: {
       padding: '1px 6px'
@@ -37406,7 +37411,7 @@ function SettingsTabWork() {
         fontFamily: 'JetBrains Mono',
         flexShrink: 0
       }
-    }, (EXEC_META[it.disposition] || {}).label), /*#__PURE__*/React.createElement("button", {
+    }, (EXEC_META[it.disposition] || {}).label), /*#__PURE__*/React.createElement("button", { "aria-label": 'Remove from the queue', title: 'Remove from the queue', 
       onClick: () => {
         apiFetch('/api/work/queue/' + it.id, {
           method: 'DELETE'
@@ -41183,7 +41188,7 @@ function DockSettingsPanel() {
       // workspace in question." This is the settings half: open the workspace
       // with its history already showing, rather than duplicating the panel
       // in a second place where the two copies could drift.
-      /*#__PURE__*/React.createElement("button", {
+      /*#__PURE__*/React.createElement("button", { "aria-label": "Earlier versions of " + w.label, 
         style: _mini, title: "Earlier versions of " + w.label,
         onClick: () => {
           try {
@@ -41193,8 +41198,8 @@ function DockSettingsPanel() {
           } catch (e) {}
         }
       }, "🕒"),
-      /*#__PURE__*/React.createElement("button", { style: _mini, disabled: idx === 0, onClick: () => move(id, -1), title: "Move up" }, "↑"),
-      /*#__PURE__*/React.createElement("button", { style: _mini, disabled: idx === shape.ids.length - 1, onClick: () => move(id, 1), title: "Move down" }, "↓"));
+      /*#__PURE__*/React.createElement("button", { "aria-label": "Move up",  style: _mini, disabled: idx === 0, onClick: () => move(id, -1), title: "Move up" }, "↑"),
+      /*#__PURE__*/React.createElement("button", { "aria-label": "Move down",  style: _mini, disabled: idx === shape.ids.length - 1, onClick: () => move(id, 1), title: "Move down" }, "↓"));
   });
 
   return /*#__PURE__*/React.createElement("div", null,
@@ -41633,14 +41638,14 @@ function GoogleAccountsPanel() {
     },
     onClick: addAccount,
     disabled: loading
-  }, loading ? '…' : '+ Add Account'), /*#__PURE__*/React.createElement("button", {
+  }, loading ? '…' : '+ Add Account'), /*#__PURE__*/React.createElement("button", { "aria-label": "Refresh", 
     className: "settings-btn",
     style: {
       padding: '6px 10px'
     },
     onClick: refresh,
     title: "Refresh"
-  }, "\u21BB")),
+  }, "↻ Refresh")),
   // Sending is opt-in, per connection. It sits next to Add Account rather
   // than in a settings list because the only moment it can be granted is the
   // moment consent is given \u2014 Google decides scopes at the consent screen,
@@ -44232,7 +44237,7 @@ function StandaloneApprovals() {
     open && /*#__PURE__*/React.createElement("div", { className: 'ws-tab-drawer', role: 'dialog', 'aria-label': 'Approvals' },
       /*#__PURE__*/React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 } },
         /*#__PURE__*/React.createElement("b", { style: { color: '#ffd699' } }, 'Waiting for your approval'),
-        /*#__PURE__*/React.createElement("button", { className: 'ws-tab-link', onClick: () => setOpen(false) }, '\u2715')),
+        /*#__PURE__*/React.createElement("button", { "aria-label": 'Close', title: 'Close',  className: 'ws-tab-link', onClick: () => setOpen(false) }, '\u2715')),
       !items.length && /*#__PURE__*/React.createElement("div", { style: { color: '#7f93ad', fontSize: 12 } }, 'Nothing is waiting.'),
       items.map(a => /*#__PURE__*/React.createElement("div", { key: a.approval_id, className: 'ws-tab-card' },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, color: '#fff', marginBottom: 4 } }, a.title),
@@ -49378,7 +49383,7 @@ function App() {
       transition: 'border-color .2s',
       boxShadow: '0 4px 30px rgba(0,0,0,0.3)'
     }
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": promptText.trim() ? 'Send message' : voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)', 
     onClick: () => {
       if (promptText.trim()) sendPrompt();else toggleVoice();
     },
@@ -49460,7 +49465,7 @@ function App() {
       fontSize: 11,
       color: '#00d4ff'
     }
-  }, "CAMERA MODE"), /*#__PURE__*/React.createElement("button", {
+  }, "CAMERA MODE"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close camera controls', title: 'Close camera controls', 
     onClick: () => setCameraControlsOpen(false),
     style: {
       background: 'none',
@@ -49705,7 +49710,7 @@ function App() {
     className: `thread-status-badge ${threadOrb.status || 'running'}`
   }, threadOrb.status || 'RUNNING'), /*#__PURE__*/React.createElement("span", {
     className: "thread-elapsed"
-  }, taskMeta && taskMeta.elapsed != null ? taskMeta.elapsed + 's' : ''), /*#__PURE__*/React.createElement("button", {
+  }, taskMeta && taskMeta.elapsed != null ? taskMeta.elapsed + 's' : ''), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close this process panel', title: 'Close this process panel', 
     className: "thread-close",
     onClick: () => setThreadOrb(null)
   }, "\u2715")), /*#__PURE__*/React.createElement("div", {
@@ -49820,7 +49825,7 @@ function App() {
       padding: '2px 6px',
       outline: 'none'
     }
-  }), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close activity', title: 'Close activity', 
     onClick: () => setActivityOpen(false),
     style: {
       background: 'none',
@@ -50047,7 +50052,7 @@ function App() {
       whiteSpace: 'nowrap'
     },
     title: p.label || p.name
-  }, p.label || p.name || 'Task'), /*#__PURE__*/React.createElement("button", {
+  }, p.label || p.name || 'Task'), /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss this failure", 
     onClick: () => dismissProc(p.id),
     title: "Dismiss this failure",
     style: {
@@ -50301,7 +50306,7 @@ function App() {
         color: '#00d4ff',
         marginTop: 1
       }
-    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && /*#__PURE__*/React.createElement("button", {
+    }, tgt.url && !tgt.workspace ? '↗' : '→'), n.id && /*#__PURE__*/React.createElement("button", { "aria-label": "Dismiss", 
       onClick: e => {
         e.stopPropagation();
         clearNotif(n.id);
@@ -50505,7 +50510,7 @@ function App() {
       fontSize: 11,
       color: '#00d4ff'
     }
-  }, "QUICK DRAFT"), /*#__PURE__*/React.createElement("button", {
+  }, "QUICK DRAFT"), /*#__PURE__*/React.createElement("button", { "aria-label": 'Close quick draft', title: 'Close quick draft', 
     onClick: () => setQuickDraft(false),
     style: {
       background: 'none',
