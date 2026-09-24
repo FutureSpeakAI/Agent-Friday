@@ -41,10 +41,33 @@ def _block():
     the script it meant to inspect, and silently stopped checking anything.
     """
     src = open(UI, encoding="utf-8").read()
-    marker = src.index("'/api/chat/turn/'")
+    # Anchor on the POLLER, not on the endpoint.
+    #
+    # `'/api/chat/turn/'` alone stopped identifying this effect the moment a
+    # second caller of the same endpoint appeared earlier in the file
+    # (`fridayResumeTurn`, which reads liveness before resuming a turn). The
+    # locator then spanned from a useEffect thousands of lines above to this
+    # effect's closing line, node refused to parse the result, and these four
+    # tests failed as a harness error rather than as a finding -- the drift this
+    # function's own comment warns about, in a new disguise.
+    #
+    # The poller is the only interval that awaits inside its own tick -- that
+    # overlap is the whole subject of this file -- so its own construction is
+    # the anchor, and the locator checks that it is unique rather than trusting
+    # that it still is.
+    NEEDLE = "const iv = setInterval(async () => {"
+    assert src.count(NEEDLE) == 1, (
+        "%d candidates for the liveness poller; the locator can no longer "
+        "identify it" % src.count(NEEDLE))
+    marker = src.index(NEEDLE)
     start = src.rindex("useEffect(() => {", 0, marker)
     end = src.index("}, [chatLoad]);", marker)
-    return src[start:end + len("}, [chatLoad]);")]
+    block = src[start:end + len("}, [chatLoad]);")]
+    assert "setInterval(async () =>" in block, "the poller was not located"
+    assert block.count("useEffect(() => {") == 1, (
+        "the located block spans more than one effect: %d found"
+        % block.count("useEffect(() => {"))
+    return block
 
 
 HARNESS = """

@@ -38,7 +38,11 @@ class SubagentScope:
         self.allowed_tools = data.get("allowed_tools")        # None = no allow-list
         self.denied_tools = list(data.get("denied_tools", []))
         self.max_ring = min(int(data.get("max_ring", 2)), _SUBAGENT_RING_CEILING)
-        self.max_steps = int(data.get("max_steps", 25))
+        # 25 came from the same era as the local path's 50-round cap. A subagent
+        # has a narrower remit than a chat turn so it keeps a bound, but not one a
+        # competent model trips over mid-task.
+        from agent_friday.services.turn_budget import SUBAGENT_STEP_DEFAULT
+        self.max_steps = int(data.get("max_steps", SUBAGENT_STEP_DEFAULT))
         self.time_budget_s = int(data.get("time_budget_s", 900))
 
     def allows(self, tool_name: str, ring: int) -> tuple:

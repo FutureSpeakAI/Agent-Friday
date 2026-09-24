@@ -720,14 +720,23 @@ def _run_task(rec):
         # page -- ignored it completely and each job picked its own model. The
         # flag is a property of the RUN, so it is applied here as a context that
         # the cloud transports refuse inside.
+        # Unattended, for the same reason the stand-down gate sits here rather
+        # than inside each job: it is a property of the RUN. A builtin schedule
+        # calls its function on this thread, so the mark reaches it; an
+        # agent_prompt spawns a thread and `_task_worker` marks itself there.
+        # Without this the briefings, the news sweep and daily creation would
+        # have inherited the interactive 999-round budget with nobody watching.
+        from agent_friday.services import turn_budget as _tbud
         if task.get("local_only"):
             from agent_friday.services import local_only_guard as _log_guard
-            with _log_guard.local_only(meta.get("label") or ref):
+            with (_log_guard.local_only(meta.get("label") or ref),
+                  _tbud.unattended()):
                 try:
                     return meta["fn"]()
                 except _log_guard.CloudRefused as exc:
                     raise SkippedRun(str(exc)) from exc
-        return meta["fn"]()
+        with _tbud.unattended():
+            return meta["fn"]()
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
     prompt = task.get("prompt") or ""
