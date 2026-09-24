@@ -139,6 +139,42 @@ def serve_favicon():
 
 
 _LIVE_DIR = os.path.join(os.path.abspath('static'), 'live')
+_WIDGET_DIR = os.path.join(os.path.abspath('static'), 'widget')
+
+
+@core_bp.route('/widget')
+@core_bp.route('/widget/')
+def serve_widget():
+    """The condensed widget as a window of its own.
+
+    The same index.html, the same scene and the same voice — started in
+    condensed mode and pointed at its own manifest, so Chrome can install it
+    and give it a standalone window sized like a widget.
+
+    This is the FALLBACK for "sits on top of other work". An installed PWA
+    window is an ordinary window: other windows cover it. The only web API that
+    genuinely floats above everything on Windows is Document
+    Picture-in-Picture, which the widget offers from its own toolbar.
+    """
+    try:
+        with open('index.html', encoding='utf-8') as _f:
+            _html = _f.read()
+    except FileNotFoundError:
+        return 'index.html not found', 404
+    _head = (
+        f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";'  # pragma: allowlist secret
+        'window.__FRIDAY_WIDGET=true;</script>'
+        '<link rel="manifest" href="/widget/manifest.json">'
+        '<meta name="theme-color" content="#04070e">'
+    )
+    _html = _html.replace('<head>', '<head>' + chr(10) + _head, 1)
+    return Response(_html, content_type='text/html')
+
+
+@core_bp.route('/widget/manifest.json')
+def serve_widget_manifest():
+    return send_from_directory(_WIDGET_DIR, 'manifest.json',
+                               mimetype='application/manifest+json')
 
 
 @core_bp.route('/friday-live')

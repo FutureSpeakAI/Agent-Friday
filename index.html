@@ -246,6 +246,13 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
+        /* A flex child will not shrink below its own content unless told it
+           may. Both halves of the bar therefore kept their full width and ran
+           off the edge: measured at 900px the right-hand group reached 908,
+           and at 420px the left-hand group reached 488. They may now shrink,
+           and whatever still does not fit is clipped rather than sticking out
+           over the scene. */
+        .top-bar > * { min-width: 0; overflow: hidden; }
         .top-edge-hover {
             position: fixed; top: 0; left: 0; right: 0; height: 18px; z-index: 69;
             pointer-events: auto; background: transparent;
@@ -1633,7 +1640,11 @@ window.addEventListener('DOMContentLoaded',function(){
                 row-gap: 2px;
                 padding-bottom: 6px;
             }
-            .dock-group { padding: 0 4px; }
+            .dock-group { padding: 0 4px; min-width: 0; }
+            /* The row of groups wraps, but a single group is itself a flex row
+               of up to eight buttons — wider than a phone. It has to wrap as
+               well, or the group hangs off the edge with the row intact. */
+            .dock-group-btns { flex-wrap: wrap; justify-content: center; }
             .dock-group-label { display: none; }
             .dock-btn { min-width: 52px; padding: 5px 8px 4px; font-size: 10px; }
             .dock-btn .ico img { width: 18px; height: 18px; }
@@ -1647,6 +1658,12 @@ window.addEventListener('DOMContentLoaded',function(){
                stops floating and becomes a sheet against the bottom of the
                screen, because a draggable 662px panel in a 700px window is not
                a window you can put anywhere. */
+            /* One even grid, not three groups each wrapping on their own. With
+               the captions already gone the groups carry no visible meaning
+               here, and letting each wrap independently left a single orphan
+               icon on a line of its own. display:contents dissolves the group
+               boxes so every button flows into the same wrap. */
+            .dock-group, .dock-group-btns { display: contents; }
             .dock-btn { min-width: 44px; font-size: 0; padding: 6px; gap: 0; }
             .dock-btn > span:not(.ico):not(.dot) { display: none; }
             .dock-btn .dot { width: 3px; height: 3px; }
@@ -1678,15 +1695,18 @@ window.addEventListener('DOMContentLoaded',function(){
            Driven by a class rather than a width, because this is a MODE: it is
            entered deliberately (or by the Picture-in-Picture window, which is
            small but is not a phone). */
-        body.condensed .dock,
-        body.condensed .top-bar,
-        body.condensed .hud-header,
-        body.condensed .hud-corner,
+        /* The whole application UI goes, not a list of its parts. Naming the
+           parts meant whatever was not on the list stayed: the chat panel is
+           parked off-screen rather than hidden, and its edge kept showing. The
+           widget needs the scene and its own controls, and nothing else.
+
+           #ui-root is display:none, not removed — the widget's mic button
+           still calls .click() on the real voice control inside it, which works
+           perfectly well on a hidden element, so there is still exactly one
+           voice implementation. */
+        body.condensed #ui-root,
         body.condensed #hud-overlay,
-        body.condensed .fwin,
-        body.condensed .orb-label,
-        body.condensed #state-pill,
-        body.condensed .cmd-palette { display: none !important; }
+        body.condensed .orb-label { display: none !important; }
 
         body.condensed { overflow: hidden; }
         body.condensed #friday-scene-canvas { z-index: 0; }
@@ -1788,14 +1808,17 @@ window.addEventListener('DOMContentLoaded',function(){
           .top-bar { padding: 0 8px; height: 40px; }
           .model-pill { font-size: 9px; padding: 1px 5px; }
 
-          /* Dock — horizontally scrollable strip */
+          /* Dock — wrapped, NOT a scrollable strip. The strip predates the
+             wrap and fought it: flex-start plus overflow-x kept laying the
+             buttons out in one line and letting it run off the edge, so at
+             420px the row still reached 442px and the last workspaces needed a
+             swipe nobody knew was there. Wrapping shows all of them. */
           .dock {
-            overflow-x: auto; overflow-y: hidden;
-            justify-content: flex-start;
+            overflow-x: visible; overflow-y: visible;
+            justify-content: center;
+            flex-wrap: wrap;
             padding: 4px 8px 6px;
             gap: 0;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: none;
           }
           .dock::-webkit-scrollbar { display: none; }
           .dock-group { flex-direction: row; align-items: center; gap: 0; padding: 0 4px; }
@@ -3044,6 +3067,25 @@ window.addEventListener('DOMContentLoaded',function(){
     <!-- Hand Cursor -->
     <canvas id="tracking-debug"></canvas>
     <div id="tracking-debug-readout"></div>
+    <!-- CONDENSED (WIDGET) MODE. Static shell markup, like the rest of the
+         holographic furniture, so it exists before React mounts and keeps
+         working inside a Picture-in-Picture window where React does not run. -->
+    <div id="condensed-ui" aria-live="polite">
+      <div id="condensed-spacer"></div>
+      <div id="condensed-approval" role="alertdialog" aria-label="Waiting for your decision">
+        <div class="ca-title"></div>
+        <div class="ca-actions">
+          <button type="button" data-ca="approve">APPROVE</button>
+          <button type="button" data-ca="deny">DENY</button>
+        </div>
+      </div>
+      <div id="condensed-caption"></div>
+      <div id="condensed-bar">
+        <button type="button" id="condensed-mic" title="Voice">🎤</button>
+        <button type="button" id="condensed-pip" title="Float on top of other windows">⧉</button>
+        <button type="button" id="condensed-expand" title="Back to the full desktop">⤢</button>
+      </div>
+    </div>
     <div id="hand-cursor" class="hidden">
         <svg id="pinch-progress">
             <circle class="pinch-circle" cx="17" cy="17" r="15" />
@@ -4381,6 +4423,10 @@ window.addEventListener('DOMContentLoaded',function(){
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            // The condensed widget needs to turn the cost of this scene down
+            // without freezing it — a still avatar in a voice window is worse
+            // than no avatar. See fridayCondensed below.
+            window.__fridayRenderer = renderer;
             renderer.setClearColor(0x000103, 1);
             renderer.domElement.id = 'friday-scene-canvas';
             document.body.appendChild(renderer.domElement);
@@ -5311,7 +5357,14 @@ window.addEventListener('DOMContentLoaded',function(){
             // A large foreground 3D view (Studio › Files) holds the backdrop's
             // drawing while it is on screen: both share one GPU. Everything
             // above still runs, so the hand cursor keeps tracking.
-            if (composer && !(window.__fridayBackdropHold > 0)) composer.render();
+            if (composer && !(window.__fridayBackdropHold > 0)) {
+                // In the widget, skip the post-processing chain and draw the
+                // scene straight. Bloom is the expensive pass and it is the one
+                // thing you do not miss in a 320px window; the avatar still
+                // animates at full frame rate.
+                if (window.__fridayLowCost) renderer.render(scene, camera);
+                else composer.render();
+            }
         }
 
         // A workspace in its own tab (/w/<id>), or an undocked chat
@@ -7885,6 +7938,10 @@ function ChatSurface(props) {
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn",
     onClick: toggleVoice,
+    // The condensed widget clicks THIS button rather than reimplementing voice,
+    // so there is one control and one source of truth for whether it is on.
+    'data-friday-voice-toggle': '',
+    'data-voice-on': voiceOn ? '1' : '0',
     title: voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
     style: {
       background: voiceOn ? 'rgba(255,0,128,0.18)' : 'rgba(0,212,255,0.08)',
@@ -46970,6 +47027,12 @@ function App() {
         setVoiceStatus('you: ' + (m.text || '').slice(-60));
       } else if (m.type === 'text') {
         setVoiceStatus('Friday: ' + (m.text || '').slice(-60));
+        // The condensed widget shows one line of this. An event rather than a
+        // shared state hook, because the widget also runs inside a
+        // Picture-in-Picture document that React does not render into.
+        try {
+          window.dispatchEvent(new CustomEvent('friday-speech', { detail: { text: m.text || '' } }));
+        } catch (_) {}
       } else if (m.type === 'action') {
         // Voice is agentic too: the server detected an open/navigate intent in
         // the spoken turn and handed us actions. Run them through the same bus
@@ -51126,6 +51189,234 @@ function App() {
   }
 })();
 </script>
+    <script>
+    /* ═══ CONDENSED (WIDGET) MODE ═══════════════════════════════════════════
+       A small window that is mostly Friday: the avatar, a voice control, one
+       line of what she is saying, and anything waiting on a decision. It is
+       what sits on top of other work while you are at your desk.
+
+       Deliberately NOT React. It has to keep working inside a Document
+       Picture-in-Picture window, which is a separate document that the React
+       tree does not render into, and it has to exist before the app mounts so
+       the widget can be the first thing drawn. It therefore talks to the rest
+       of the app the way anything else would: it clicks the voice button, it
+       polls the approvals endpoint, and it listens for one event.
+
+       Always-on-top is Document Picture-in-Picture. That is the only web API
+       that gives a genuinely floating window on Windows; a PWA in its own
+       window is a normal window that other windows cover, which is why it is
+       the fallback and not the plan. */
+    (function () {
+      var body = document.body;
+      var ui = document.getElementById('condensed-ui');
+      var capEl = document.getElementById('condensed-caption');
+      var apprEl = document.getElementById('condensed-approval');
+      var micBtn = document.getElementById('condensed-mic');
+      var pipBtn = document.getElementById('condensed-pip');
+      var expandBtn = document.getElementById('condensed-expand');
+      var pipWindow = null, approvalTimer = null, captionTimer = null;
+      var homeParent = ui ? ui.parentNode : null;
+
+      function renderCost(low) {
+        window.__fridayLowCost = !!low;
+        var r = window.__fridayRenderer;
+        if (!r) return;
+        try {
+          // 1x in the widget. A 320px window at devicePixelRatio 2 is four
+          // times the pixels for a picture the size of a postage stamp.
+          r.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio, 2));
+        } catch (_) {}
+      }
+
+      function setCondensed(on) {
+        body.classList.toggle('condensed', !!on);
+        renderCost(on);
+        // The scene sizes itself from the window; tell it the usable area changed.
+        try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+        if (on) { pollApprovals(); }
+        else if (approvalTimer) { clearInterval(approvalTimer); approvalTimer = null; }
+      }
+      window.fridayCondensed = {
+        enter: function () { setCondensed(true); },
+        exit: function () { setCondensed(false); },
+        toggle: function () { setCondensed(!body.classList.contains('condensed')); },
+        get isOn() { return body.classList.contains('condensed'); }
+      };
+
+      /* The caption. One line, and it clears itself: a caption that stays up
+         after she stops talking reads as her still talking. */
+      window.addEventListener('friday-speech', function (e) {
+        var t = (e && e.detail && e.detail.text || '').trim();
+        if (!capEl) return;
+        capEl.textContent = t;
+        if (captionTimer) clearTimeout(captionTimer);
+        captionTimer = setTimeout(function () { capEl.textContent = ''; }, 9000);
+        if (pipWindow) {
+          var p = pipWindow.document.getElementById('condensed-caption');
+          if (p) p.textContent = t;
+        }
+      });
+
+      /* Anything waiting on a decision takes the caption's place. Polled
+         rather than pushed, because the widget must not depend on the React
+         tree having mounted — in the PiP window it has not. */
+      function pollApprovals() {
+        if (approvalTimer) clearInterval(approvalTimer);
+        var tick = function () {
+          fetch('/api/approvals?status=pending')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              var list = (d && d.approvals) || [];
+              var a = list[0];
+              body.classList.toggle('has-approval', !!a);
+              if (a) {
+                var title = a.title || a.summary || a.action || 'Action waiting for approval';
+                var t = apprEl && apprEl.querySelector('.ca-title');
+                if (t) t.textContent = title;
+                apprEl && apprEl.setAttribute('data-id', a.id || '');
+              }
+            })
+            .catch(function () {});
+        };
+        tick();
+        approvalTimer = setInterval(tick, 5000);
+      }
+
+      function decide(ok) {
+        var id = apprEl && apprEl.getAttribute('data-id');
+        if (!id) return;
+        fetch('/api/approvals/' + encodeURIComponent(id) + '/decide', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: ok ? 'approve' : 'deny' })
+        }).catch(function () {}).then(function () {
+          body.classList.remove('has-approval');
+        });
+      }
+
+      /* The mic. The widget does not own voice — it presses the same button
+         the desktop has, so there is one implementation and one state. */
+      function voiceButton() {
+        return document.querySelector('[data-friday-voice-toggle]');
+      }
+      function syncMic() {
+        var b = voiceButton();
+        var on = !!(b && b.getAttribute('data-voice-on') === '1');
+        if (micBtn) {
+          micBtn.classList.toggle('on', on);
+          micBtn.textContent = on ? '■' : '🎤';
+          micBtn.title = on ? 'Stop voice' : 'Start voice';
+        }
+        if (pipWindow) {
+          var pm = pipWindow.document.getElementById('condensed-mic');
+          if (pm) { pm.classList.toggle('on', on); pm.textContent = micBtn ? micBtn.textContent : ''; }
+        }
+      }
+      setInterval(syncMic, 700);
+
+      function wire(doc) {
+        var mic = doc.getElementById('condensed-mic');
+        var exp = doc.getElementById('condensed-expand');
+        var pip = doc.getElementById('condensed-pip');
+        var appr = doc.getElementById('condensed-approval');
+        if (mic) mic.onclick = function () { var b = voiceButton(); if (b) b.click(); setTimeout(syncMic, 120); };
+        if (exp) exp.onclick = function () { setCondensed(false); };
+        if (pip) pip.onclick = openPip;
+        if (appr) appr.querySelectorAll('[data-ca]').forEach(function (b) {
+          b.onclick = function () { decide(b.getAttribute('data-ca') === 'approve'); };
+        });
+      }
+      wire(document);
+
+      /* ── Document Picture-in-Picture ──────────────────────────────────────
+         The avatar is a WebGL canvas in THIS document, and moving a live WebGL
+         canvas between documents is not something to rely on. So the canvas
+         stays where it is and the PiP window shows its captureStream in a
+         <video>: the scene keeps its context, and the floating window is cheap
+         to draw. */
+      function openPip() {
+        if (!('documentPictureInPicture' in window)) {
+          // No floating window available — fall back to the widget in place,
+          // and to the installable standalone window for a separate one.
+          setCondensed(true);
+          console.warn('[condensed] Document Picture-in-Picture unavailable; ' +
+                       'install FRIDAY Widget (/widget) for a standalone window instead.');
+          return;
+        }
+        setCondensed(true);
+        window.documentPictureInPicture.requestWindow({ width: 320, height: 380 })
+          .then(function (w) {
+            pipWindow = w;
+            var d = w.document;
+            // Copy the stylesheets so the widget looks the same in there.
+            Array.prototype.forEach.call(document.styleSheets, function (ss) {
+              try {
+                var rules = Array.prototype.map.call(ss.cssRules, function (r) { return r.cssText; }).join('');
+                var st = d.createElement('style'); st.textContent = rules; d.head.appendChild(st);
+              } catch (_) {
+                if (ss.href) {
+                  var l = d.createElement('link'); l.rel = 'stylesheet'; l.href = ss.href; d.head.appendChild(l);
+                }
+              }
+            });
+            d.body.classList.add('condensed', 'in-pip');
+            d.body.style.margin = '0';
+            d.body.style.background = '#04070e';
+            d.body.style.overflow = 'hidden';
+
+            var vid = d.createElement('video');
+            vid.autoplay = true; vid.muted = true; vid.playsInline = true;
+            vid.id = 'pip-avatar';
+            vid.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;object-fit:cover;';
+            d.body.appendChild(vid);
+            try {
+              var cv = document.getElementById('friday-scene-canvas');
+              // 24fps: the widget is small and this stream is pure overhead on
+              // top of the scene's own drawing.
+              if (cv && cv.captureStream) vid.srcObject = cv.captureStream(24);
+            } catch (e) { console.warn('[condensed] avatar capture failed:', e); }
+
+            d.body.appendChild(ui);            // move the controls in
+            wire(d);
+            syncMic();
+
+            w.addEventListener('pagehide', function () {
+              try { if (vid.srcObject) vid.srcObject.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+              if (homeParent) homeParent.appendChild(ui);
+              wire(document);
+              pipWindow = null;
+              setCondensed(false);
+            });
+          })
+          .catch(function (e) {
+            console.warn('[condensed] Picture-in-Picture refused:', e);
+          });
+      }
+      window.fridayCondensed.pip = openPip;
+
+      /* A window dragged down to widget proportions IS a widget. Above that,
+         the breakpoints in the stylesheet handle it and this stays out of the
+         way — entering the mode is otherwise deliberate. */
+      var autoEntered = false;
+      function considerAuto() {
+        if (pipWindow) return;
+        var tiny = window.innerWidth < 420 && window.innerHeight < 460;
+        if (tiny && !body.classList.contains('condensed')) { setCondensed(true); autoEntered = true; }
+        else if (!tiny && autoEntered && body.classList.contains('condensed')) { setCondensed(false); autoEntered = false; }
+      }
+      window.addEventListener('resize', considerAuto);
+      considerAuto();
+
+      /* Served at /widget as an installed standalone window: start condensed,
+         because that URL exists to BE the widget. */
+      if (window.__FRIDAY_WIDGET) setCondensed(true);
+
+      // Also reachable without the mouse.
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'F9') { e.preventDefault(); window.fridayCondensed.toggle(); }
+      });
+    })();
+    </script>
+
 </body>
 </html>
 
