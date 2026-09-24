@@ -646,9 +646,9 @@ download the GGUF, and re-pull only if llama-server loses; the cheap path is the
 UD-Q4_K_XL at 14.2 GB** (leaves 5.4 GB) at the cost of comparing different quantizations, which
 weakens a decision made "by number." Which?
 
-**Q4 — Should `local_inference_slots` be given meaning or deleted?** It sits in the settings
-defaults at `core/__init__.py:1484` with **zero readers** (**VERIFIED**), and leaving a phantom
-concurrency knob beside a real placement engine invites exactly the wrong mental model.
+**Q4 — Should `local_inference_slots` be given meaning or deleted?** Deleted. It had no reader,
+and a phantom concurrency knob beside a real placement engine invites exactly the wrong mental
+model.
 
 **Q5 — Is 10 GB the right floor for R8?** It is a judgement, not a measurement: large enough to
 absorb the pagefile growth §4.1 documents, small enough not to refuse routine loads on a machine

@@ -2294,19 +2294,11 @@ DEFAULT_SETTINGS = {
     # User modeling: tracks comm style, domain expertise, and workflow patterns;
     # injects a TIER_1 behavioral summary into the system prompt.
     "user_modeling": {"enabled": True, "inject_prompt": True},
-    # Bundled-model / no-key story. The default local brain is the floor of
-    # model_plan's ladder — the smallest model that can still CALL TOOLS. Chat
-    # works with zero cloud keys. Do not retype the name here: it was
-    # `gemma3:4b`, which cannot call tools, and Friday hands the tool registry
-    # to whatever is seated regardless (defect H3).
-    "setup": {"bundled_model": _FLOOR_MODEL, "no_key_mode": False},
     # Channel bridges (Discord / Telegram). Disabled + allowlist-gated by default;
     # every reply routes through the agent loop + egress gate.
     "channels": {"enabled": False,
                  "telegram": {"enabled": False, "allowlist": [], "poll_interval": 3.0},
                  "discord": {"enabled": False, "allowlist": [], "poll_interval": 3.0}},
-    # Voice-first onboarding on first run (no ~/.friday/.setup_complete).
-    "onboarding": {"voice_first": True},
     # ── Experimental ──
     "computer_control_enabled": False,     # opt-in gate for the pyautogui subsystem; OFF by
                                            # default. Even when True, each runtime grant is a
@@ -2541,7 +2533,6 @@ DEFAULT_SETTINGS = {
         # requires the shape this module writes, not merely a truthy value.
         "cloud_consent": {"answered": False, "choice": None, "at": None,
                           "capability_snapshot": None},
-        "local_inference_slots": 3,
         "fallback_to_cloud": True,
         "cost_tracking": True,
         # ── OpenAI-compatible cloud provider (opt-in) ──
@@ -3590,108 +3581,3 @@ def _is_existing_install() -> bool:
     if (FRIDAY_DIR / "personality.json").exists():
         return True
     return False
-
-
-# ══════════════════════════════════════════════════════════════
-#  FEATURE FLAGS  (replaces scattered try/except blocks)
-# ══════════════════════════════════════════════════════════════
-
-class FeatureFlags:
-    """Detect which optional subsystems are available at runtime.
-
-    Call FeatureFlags.detect() once at startup; the result is exposed via
-    GET /api/health so the UI can show which features are active without
-    each route independently probing for optional dependencies.
-    """
-    __slots__ = (
-        "vault_access", "cognitive_memory", "dynamic_rings", "proof_of_integrity",
-        "trust_graphs", "behavioral_monitor", "flask_sock", "chromadb",
-        "local_voice", "nemo_voice", "ollama", "anthropic_sdk", "google_genai",
-        "skill_hot_reload",
-    )
-
-    def __init__(self, **kwargs):
-        for slot in self.__slots__:
-            setattr(self, slot, kwargs.get(slot, False))
-
-    @classmethod
-    def detect(cls) -> "FeatureFlags":
-        """Probe each optional subsystem and return a populated FeatureFlags."""
-        flags: dict = {}
-
-        def _probe(key, mod, *attrs):
-            try:
-                import importlib
-                m = importlib.import_module(mod)
-                flags[key] = all(hasattr(m, a) for a in attrs) if attrs else True
-            except Exception:
-                flags[key] = False
-
-        _probe("vault_access",       "agent_friday.privacy.vault_access",       "Tier", "VaultAccessControl")
-        _probe("cognitive_memory",   "agent_friday.cognitive_memory",            "get_cognitive_memory")
-        _probe("dynamic_rings",      "agent_friday.dynamic_rings",               "get_privilege_manager")
-        _probe("proof_of_integrity", "agent_friday.governance.proof_of_integrity", "get_integrity_engine")
-        _probe("trust_graphs",       "agent_friday.people_graph",               "get_people_graph")
-        _probe("behavioral_monitor", "agent_friday.governance.behavioral_monitor", "get_behavioral_monitor")
-        _probe("flask_sock",         "flask_sock",                               "Sock")
-        _probe("local_voice",        "agent_friday.services.local_voice",        "LocalVoiceEngine")
-        _probe("nemo_voice",         "agent_friday.services.nemo_voice",         "NeMoVoiceEngine")
-        _probe("anthropic_sdk",      "anthropic",                                "Anthropic")
-        _probe("google_genai",       "google.genai",                             "Client")
-        _probe("skill_hot_reload",   "importlib",                                "reload")
-
-        try:
-            import chromadb  # noqa: F401
-            flags["chromadb"] = True
-        except Exception:
-            flags["chromadb"] = False
-
-        # NO NETWORK IN A FEATURE PROBE. This used to `requests.get` Ollama's
-        # /api/tags with a one-second timeout, so "which optional subsystems
-        # are available" included a blocking round trip — to a daemon that was
-        # removed from this project on 2026-09-18 (its llama.cpp engine was
-        # kept, the daemon was not). A probe that reaches the network is a
-        # probe that hangs when the network does.
-        flags["ollama"] = False
-
-        return cls(**flags)
-
-    def as_dict(self) -> dict:
-        return {slot: getattr(self, slot) for slot in self.__slots__}
-
-
-# Singleton — detected on FIRST USE, not at module load.
-#
-# SIX SECONDS, PER PROCESS, FOR A VALUE NOTHING READ. This used to be
-# `FEATURE_FLAGS = FeatureFlags.detect()` at module scope, so every single
-# import of `agent_friday.core` ran the whole probe: a dozen
-# `importlib.import_module` calls including chromadb, which drags in
-# OpenTelemetry and the OTLP gRPC exporters (~1s measured via -X importtime),
-# plus a network request to Ollama with a one-second timeout — to a service
-# that was deliberately removed from this project.
-#
-# Measured 2026-09-19: `import agent_friday.core` took 6.06s, of which ~2.0s
-# was this function's own body. Test collection alone took 38.5s and the full
-# suite over an hour, which is why several defects that week survived — the
-# gate nobody can afford to run is a gate that stops being run.
-#
-# And `FEATURE_FLAGS` had ZERO consumers. Grepped across src/ and tests/: no
-# route, no test, no caller. The docstring's claim that it is "exposed via
-# GET /api/health" is not true of this tree.
-#
-# Kept rather than deleted, lazily: the name stays importable and the probe
-# still works for anything that ever wants it, but nobody pays for it up
-# front. PEP 562 module-level __getattr__.
-_FEATURE_FLAGS_CACHE = None
-
-
-def __getattr__(name):
-    """Lazy module attributes. See FEATURE_FLAGS above."""
-    if name == "FEATURE_FLAGS":
-        global _FEATURE_FLAGS_CACHE
-        if _FEATURE_FLAGS_CACHE is None:
-            _FEATURE_FLAGS_CACHE = FeatureFlags.detect()
-        return _FEATURE_FLAGS_CACHE
-    raise AttributeError("module %r has no attribute %r" % (__name__, name))
-
-
