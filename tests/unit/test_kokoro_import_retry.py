@@ -47,7 +47,22 @@ def _clean_cache():
         kv._import_check_at = before_at
 
 
-def test_a_cached_failure_is_retried_once_the_cooldown_passes(monkeypatch):
+@pytest.fixture
+def importable_kokoro(monkeypatch):
+    """A kokoro whose import succeeds, on any host.
+
+    These tests are about WHEN the import is retried, not whether the real
+    package (torch and all) is installed; Kokoro is an optional voice
+    dependency and CI does not carry it.
+    """
+    import sys
+    import types
+    mod = types.ModuleType("kokoro")
+    mod.KPipeline = type("KPipeline", (), {})
+    monkeypatch.setitem(sys.modules, "kokoro", mod)
+
+
+def test_a_cached_failure_is_retried_once_the_cooldown_passes(monkeypatch, importable_kokoro):
     kv._import_check = dict(RACE)
     _set_attempt_at(0.0)                            # long past
     monkeypatch.setattr(kv, "kokoro_deps_installed", lambda: True)
@@ -88,7 +103,7 @@ def test_success_is_cached_and_never_re_imported(monkeypatch):
     assert kv.kokoro_import_status()["ok"] is True
 
 
-def test_refresh_forces_a_re_check(monkeypatch):
+def test_refresh_forces_a_re_check(monkeypatch, importable_kokoro):
     kv._import_check = dict(RACE)
     import time
     _set_attempt_at(time.monotonic())

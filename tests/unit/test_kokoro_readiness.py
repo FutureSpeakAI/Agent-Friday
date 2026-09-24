@@ -19,6 +19,38 @@ def _clear_import_cache():
     kv._import_check = None
 
 
+@pytest.fixture
+def numpy_or_stub(monkeypatch):
+    """numpy is an optional voice dependency. The synthesis-failure tests fail
+    inside the pipeline call, before numpy is used, so a bare stub is enough
+    where numpy is not installed; the real module is used where it is."""
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        import types
+        monkeypatch.setitem(sys.modules, "numpy", types.ModuleType("numpy"))
+
+
+@pytest.fixture
+def fake_misaki(monkeypatch):
+    """misaki is an optional voice dependency, and a real EspeakFallback needs
+    the espeak-ng library. attach_espeak_fallback only has to construct one
+    and attach it, so a stand-in module proves that on any host."""
+    import types
+
+    class EspeakFallback:
+        def __init__(self, british=False):
+            self.british = british
+
+    espeak = types.ModuleType("misaki.espeak")
+    espeak.EspeakFallback = EspeakFallback
+    misaki = types.ModuleType("misaki")
+    misaki.espeak = espeak
+    monkeypatch.setitem(sys.modules, "misaki", misaki)
+    monkeypatch.setitem(sys.modules, "misaki.espeak", espeak)
+    return EspeakFallback
+
+
 # ---------------------------------------------------------------- availability
 
 def test_available_is_false_when_package_resolves_but_import_fails(monkeypatch):
@@ -204,7 +236,7 @@ def test_load_accepts_a_pipeline_that_has_a_fallback(monkeypatch):
     assert tts._pipeline is not None
 
 
-def test_synthesis_failure_becomes_a_coded_refusal_with_an_offer():
+def test_synthesis_failure_becomes_a_coded_refusal_with_an_offer(numpy_or_stub):
     """The safety net. A raw TypeError from inside misaki reaches the voice
     session as an unhandled crash -- no code, no reason, no offer of Piper.
     Removing the wrapper puts that crash back."""
@@ -226,7 +258,7 @@ def test_synthesis_failure_becomes_a_coded_refusal_with_an_offer():
     assert "Piper" in ei.value.offer
 
 
-def test_engine_records_the_refusal_code_where_the_session_reads_it():
+def test_engine_records_the_refusal_code_where_the_session_reads_it(numpy_or_stub):
     """A code on an exception nobody inspects is a receipt written where nobody
     reads it. The session reads `last_error_code`, so synthesis refusals must
     land there -- while still propagating, never substituting another voice."""
@@ -306,7 +338,7 @@ def test_ensure_espeak_fallback_really_points_at_the_bundled_library():
 
 # ------------------------------------- out-of-dictionary proper nouns
 
-def test_attach_espeak_fallback_repairs_a_missing_fallback():
+def test_attach_espeak_fallback_repairs_a_missing_fallback(fake_misaki):
     """Do not depend on kokoro wiring its own fallback. If the g2p we are handed
     has none, build one and attach it to the object we hold -- that is immune to
     import ordering, which is what made this bug hide."""
@@ -320,7 +352,7 @@ def test_attach_espeak_fallback_repairs_a_missing_fallback():
     out = kv.attach_espeak_fallback(p)
     assert out["fallback"] is True, out.get("detail")
     assert out["repaired"] is True
-    assert p.g2p.fallback is not None
+    assert isinstance(p.g2p.fallback, fake_misaki)
 
 
 def test_attach_espeak_fallback_leaves_an_existing_fallback_alone():
