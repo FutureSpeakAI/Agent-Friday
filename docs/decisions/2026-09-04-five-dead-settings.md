@@ -2,7 +2,7 @@
 
 > **Status:** active
 > **Last verified:** 2026-09-09 (addendum: three more found, tally now 8)
-> **Implementation:** none yet — `scene_name` removed, with proof test `tests/gauntlet/test_dead_scene_name_setting_removed.py`; the other four are ruled but unbuilt
+> **Implementation:** none yet — `scene_name` removed, with proof test `tests/gauntlet/test_dead_scene_name_setting_removed.py`; the other four are ruled but unbuilt. Until each is built, the Settings pane does not show its control (`auto_open_chat`, `compact_mode`, `startup_workspace` removed from Settings; `tests/unit/test_settings_structure.py`), so no switch claims an effect it does not have. The ruling to build them stands.
 > **Supersedes / superseded by:** —
 > **Written:** 2026-09-04
 

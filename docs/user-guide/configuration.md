@@ -6,7 +6,7 @@ All configuration lives in `~/.friday/settings.json`. Settings can be updated vi
 
 ## API Keys
 
-Keys entered in **Settings → Providers** are stored encrypted in Friday's credential store (one file per provider under `~/.friday/providers/keys/`). Keys entered through the `friday setup` wizard are written in plaintext to `~/.friday/settings.json`, `~/.friday/config.yaml` and a `start.bat` launcher; prefer the Settings path for keys. Where each credential lives, and how it is protected, is stated in [SECURITY.md](../../SECURITY.md).
+Keys entered in **Settings → Accounts & Keys** are stored encrypted in Friday's credential store (one file per provider under `~/.friday/providers/keys/`). Keys entered through the `friday setup` wizard are written in plaintext to `~/.friday/settings.json`, `~/.friday/config.yaml` and a `start.bat` launcher; prefer the Settings path for keys. Where each credential lives, and how it is protected, is stated in [SECURITY.md](../../SECURITY.md).
 
 You can also supply keys as environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the stored credentials.
 
@@ -76,7 +76,7 @@ Settings under the `model_routing` key (top-level copies of these keys are ignor
 
 ## Providers
 
-Beyond the legacy single-slot `cloud_provider` path above, Friday ships a model-agnostic provider layer with 16 built-in providers, managed via the `/api/providers/*` routes and Settings → Providers.
+Beyond the legacy single-slot `cloud_provider` path above, Friday ships a model-agnostic provider layer with 16 built-in providers, managed via the `/api/providers/*` routes and Settings → Accounts & Keys.
 
 ### `providers` settings key
 

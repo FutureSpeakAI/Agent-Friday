@@ -160,7 +160,7 @@ def google_accounts_state() -> CapabilityState:
         return CapabilityState("google", label, ABSENT, (), "",
                                f"account store unreadable: {type(e).__name__}; "
                                "say you cannot tell")
-    fix = "Settings -> Connectors -> Google -> Connect / Reconnect"
+    fix = "Settings -> Accounts & Keys -> Google -> Connect / Reconnect"
     if s.get("total", 0) == 0:
         return CapabilityState("google", label, UNCONFIGURED, ("google account",),
                                f"To enable it, connect an account under {fix}",

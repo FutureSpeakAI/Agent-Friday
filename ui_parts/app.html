@@ -497,7 +497,7 @@ function ConnectorDot({wsId}){
   const s=map[wsId];
   if(!s||s==='off')return null;
   const col=s==='connected'?'#00ff80':s==='connecting'?'#f59e0b':'#ff5470';
-  const tip=s==='connected'?'Live data source connected':s==='connecting'?'Connecting data source…':'Data source error — check Settings → Connectors';
+  const tip=s==='connected'?'Live data source connected':s==='connecting'?'Connecting data source…':'Data source error — check Settings → Accounts & Keys';
   return <span title={tip} style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:col,boxShadow:`0 0 6px ${col}`,marginLeft:7,verticalAlign:'middle'}}/>;
 }
 
@@ -3907,7 +3907,7 @@ function StudioPromptBar({onCreated}){
     </div>}
     {!busy&&!err&&typeAvail&&typeAvail.available===false&&<div style={{marginTop:10,padding:'7px 10px',borderRadius:6,background:'rgba(255,190,0,0.08)',border:'1px solid rgba(255,190,0,0.25)',fontSize:10,color:'#ffd166',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
       <span style={{flex:1,minWidth:180}}>⚠ {typeAvail.reason||('Cloud '+T.label.toLowerCase()+' generation is unavailable.')}</span>
-      <button className="btn" style={{fontSize:10,padding:'2px 9px',whiteSpace:'nowrap'}} onClick={openProviders}>Open Settings → Providers</button>
+      <button className="btn" style={{fontSize:10,padding:'2px 9px',whiteSpace:'nowrap'}} onClick={openProviders}>Open Settings → Accounts & Keys</button>
     </div>}
     {busy&&<div style={{marginTop:10}}>
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
@@ -3922,7 +3922,7 @@ function StudioPromptBar({onCreated}){
     {err&&(err.needsKey
       ?<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,190,0,0.08)',border:'1px solid rgba(255,190,0,0.25)',fontSize:11,color:'#ffd166',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
         <span style={{flex:1,minWidth:180}}>🔑 {err.message}</span>
-        <button className="btn" style={{fontSize:10,padding:'3px 10px',whiteSpace:'nowrap'}} onClick={openProviders}>Open Settings → Providers</button>
+        <button className="btn" style={{fontSize:10,padding:'3px 10px',whiteSpace:'nowrap'}} onClick={openProviders}>Open Settings → Accounts & Keys</button>
       </div>
       :<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,0,128,0.08)',border:'1px solid rgba(255,0,128,0.25)',color:'#ff7ab8',fontSize:11}}>{err.message}</div>)}
     {result&&<div style={{marginTop:12}}>
@@ -9169,31 +9169,238 @@ function useSettings(){
   };
   return{s,save,msg,reload:load};
 }
-function StRow({label,children,desc}){
-  return <div style={{marginBottom:14}}>
-    <div style={{fontSize:12,color:'rgba(255,255,255,0.75)',marginBottom:desc?2:6,fontFamily:'JetBrains Mono'}}>{label}</div>
-    {desc&&<div style={{fontSize:11,color:'rgba(255,255,255,0.38)',marginBottom:6,lineHeight:1.5}}>{desc}</div>}
-    {children}
-  </div>;
+// ── Settings building blocks ────────────────────────────────────────────────
+// Every Settings tab is assembled from these, so a label, a helper line, a
+// switch and a section heading look the same wherever they appear. Colours
+// and fonts come from the .st-root tokens in the stylesheet.
+function StRow({
+  label,
+  children,
+  desc
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--st-label)',
+      marginBottom: desc ? 2 : 7,
+      fontFamily: 'var(--st-font)',
+      fontWeight: 500
+    }
+  }, label), desc && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 7,
+      lineHeight: 1.5,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc), children);
 }
-function StToggle({label,value,onChange,desc}){
-  return <div style={{marginBottom:8}}>
-    <div onClick={onChange} style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-      <div>
-        <div style={{fontSize:12,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono'}}>{label}</div>
-        {desc&&<div style={{fontSize:11,color:'rgba(255,255,255,0.38)',marginTop:2}}>{desc}</div>}
-      </div>
-      <div style={{width:34,height:18,borderRadius:9,background:value?'linear-gradient(90deg,#0097b2,#00d4ff)':'rgba(255,255,255,0.1)',position:'relative',transition:'background .2s',flexShrink:0,marginLeft:12}}>
-        <div style={{position:'absolute',top:2,left:value?16:2,width:14,height:14,borderRadius:7,background:'#fff',transition:'left .2s',boxShadow:'0 1px 4px rgba(0,0,0,0.4)'}}/>
-      </div>
-    </div>
-  </div>;
+// A real button with role="switch", so it is reachable and operable from the
+// keyboard and announced as on/off.
+function StToggle({
+  label,
+  value,
+  onChange,
+  desc,
+  disabled
+}) {
+  return /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": !!value,
+    disabled: !!disabled,
+    className: "st-switch",
+    onClick: onChange,
+    style: {
+      marginBottom: 4,
+      opacity: disabled ? 0.45 : 1,
+      cursor: disabled ? 'not-allowed' : 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      fontSize: 12.5,
+      color: 'var(--st-label)',
+      fontFamily: 'var(--st-font)',
+      fontWeight: 500
+    }
+  }, label), desc && /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginTop: 2,
+      lineHeight: 1.5,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc)), /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
+    style: {
+      width: 34,
+      height: 18,
+      borderRadius: 9,
+      background: value ? 'linear-gradient(90deg,#0097b2,#00d4ff)' : 'rgba(255,255,255,0.1)',
+      position: 'relative',
+      transition: 'background .2s',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'absolute',
+      top: 2,
+      left: value ? 16 : 2,
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      background: '#fff',
+      transition: 'left .2s',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.4)'
+    }
+  })));
 }
-function StSection({title,children}){
-  return <div style={{marginBottom:26}}>
-    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.15em',marginBottom:14,paddingBottom:6,borderBottom:'1px solid rgba(0,212,255,0.1)'}}>{title}</div>
-    {children}
-  </div>;
+function StSection({
+  title,
+  desc,
+  children
+}) {
+  return /*#__PURE__*/React.createElement("section", {
+    style: {
+      marginBottom: 30
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      margin: 0,
+      fontFamily: 'var(--st-font)',
+      fontSize: 13,
+      fontWeight: 600,
+      color: 'var(--st-accent)',
+      letterSpacing: '.01em',
+      paddingBottom: 7,
+      marginBottom: desc ? 6 : 14,
+      borderBottom: '1px solid rgba(0,212,255,0.12)'
+    }
+  }, title), desc && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      lineHeight: 1.55,
+      marginBottom: 14,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc), children);
+}
+// A labelled range. It applies live while it moves and saves when the change
+// is finished -- pointer up, a key released, or focus leaving -- so a change
+// made from the keyboard is saved as well as one made with the mouse.
+function StSlider({
+  label,
+  desc,
+  value,
+  min,
+  max,
+  step,
+  fmt,
+  onLive,
+  onCommit
+}) {
+  const v = typeof value === 'number' && !isNaN(value) ? value : min;
+  const done = e => onCommit && onCommit(parseFloat(e.target.value));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--st-label)',
+      fontFamily: 'var(--st-font)',
+      fontWeight: 500
+    }
+  }, label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-accent)',
+      fontFamily: 'var(--st-mono)'
+    }
+  }, (fmt || (x => x.toFixed(2)))(v))), /*#__PURE__*/React.createElement("input", {
+    type: "range",
+    "aria-label": typeof label === 'string' ? label : undefined,
+    min: min,
+    max: max,
+    step: step,
+    value: v,
+    style: {
+      width: '100%',
+      marginTop: 5,
+      accentColor: '#00d4ff'
+    },
+    onChange: e => onLive && onLive(parseFloat(e.target.value)),
+    onPointerUp: done,
+    onKeyUp: done,
+    onBlur: done,
+    onTouchEnd: done
+  }), desc && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginTop: 3,
+      lineHeight: 1.5,
+      fontFamily: 'var(--st-font)'
+    }
+  }, desc));
+}
+// StSlider bound to one saved value: moves locally, saves once when released.
+function StSavedSlider({
+  value,
+  onSave,
+  ...rest
+}) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return /*#__PURE__*/React.createElement(StSlider, Object.assign({}, rest, {
+    value: v,
+    onLive: setV,
+    onCommit: x => {
+      if (x !== value) onSave(x);
+    }
+  }));
+}
+// A native select dressed in the pane's tokens.
+function StSelect({
+  value,
+  onChange,
+  children,
+  ariaLabel,
+  style
+}) {
+  return /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    "aria-label": ariaLabel,
+    value: value,
+    onChange: onChange,
+    style: Object.assign({
+      width: '100%',
+      fontFamily: 'var(--st-font)',
+      fontSize: 12.5
+    }, style || {})
+  }, children);
 }
 function CcGrantPanel({enabled}){
   const [st,setSt]=useState({available:null,granted:false,killed:false});
@@ -9231,199 +9438,55 @@ function CcGrantPanel({enabled}){
     {err&&<div style={{fontSize:11,color:'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono',lineHeight:1.5}}>{err}</div>}
   </div>;
 }
-function SettingsTabGeneral({s,save}){
-  return <div>
-    <StSection title="IDENTITY">
-      <StRow label="Agent Name">
-        <input className="input" style={{width:'100%'}} defaultValue={s.agent_name||'Friday'} key={'an'+s.agent_name} onBlur={e=>save({agent_name:e.target.value})} placeholder="Agent Friday"/>
-      </StRow>
-      <StRow label="Personality" desc="How Friday presents herself.">
-        <textarea className="input" style={{width:'100%',height:80,resize:'vertical'}} defaultValue={s.personality||''} key={'pe'+s.personality} onBlur={e=>save({personality:e.target.value})} placeholder="Describe Friday's personality..."/>
-      </StRow>
-    </StSection>
-    <StSection title="APPEARANCE">
-      <StToggle label="Show All Workspaces" value={s.show_all_workspaces!==false} onChange={()=>save({show_all_workspaces:!(s.show_all_workspaces!==false)})} desc="Show all workspace icons in the dock."/>
-      <StToggle label="Compact Mode" value={!!s.compact_mode} onChange={()=>save({compact_mode:!s.compact_mode})} desc="Reduce padding and element sizes."/>
-      <StRow label="3D Dazzle (every 3D view)">
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <input type="range" min={0} max={2} step={1} aria-label="3D Dazzle" value={['off','subtle','full'].indexOf(s.studio_dazzle||'full')} onChange={e=>{const v=['off','subtle','full'][+e.target.value];save({studio_dazzle:v});window.dispatchEvent(new CustomEvent('friday-dazzle',{detail:v}));}} style={{flex:1,accentColor:'#00d4ff'}}/>
-          <span style={{fontFamily:'Orbitron',fontSize:10,letterSpacing:'.12em',color:'#00d4ff',minWidth:52}}>{(s.studio_dazzle||'full').toUpperCase()}</span>
-        </div>
-      </StRow>
-    </StSection>
-    <StSection title="STARTUP">
-      <StRow label="Startup Workspace">
-        <select className="input" style={{width:'100%'}} value={s.startup_workspace||''} onChange={e=>save({startup_workspace:e.target.value})}>
-          <option value="">None</option>
-          {WS.map(w=><option key={w.id} value={w.id}>{w.ico} {w.label}</option>)}
-        </select>
-      </StRow>
-      <StToggle label="Auto-open Chat on Launch" value={!!s.auto_open_chat} onChange={()=>save({auto_open_chat:!s.auto_open_chat})}/>
-    </StSection>
-    <StSection title="TRACKING">
-      <TrackingPanel s={s} save={save}/>
-    </StSection>
-  </div>;
+function SettingsTabGeneral({
+  s,
+  save
+}) {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Identity"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Name",
+    desc: "What Friday calls herself in chat and voice."
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    "aria-label": "Name",
+    style: {
+      width: '100%'
+    },
+    defaultValue: s.agent_name || 'Friday',
+    key: 'an' + s.agent_name,
+    onBlur: e => save({
+      agent_name: e.target.value
+    }),
+    placeholder: "Friday"
+  })), /*#__PURE__*/React.createElement(StRow, {
+    label: "Personality",
+    desc: "How Friday presents herself. Saved when you click away."
+  }, /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    "aria-label": "Personality",
+    style: {
+      width: '100%',
+      height: 96,
+      resize: 'vertical'
+    },
+    defaultValue: s.personality || '',
+    key: 'pe' + s.personality,
+    onBlur: e => save({
+      personality: e.target.value
+    }),
+    placeholder: "Describe Friday's personality..."
+  }))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Workspaces"
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Show all workspaces",
+    value: s.show_all_workspaces !== false,
+    onChange: () => save({
+      show_all_workspaces: !(s.show_all_workspaces !== false)
+    }),
+    desc: "Offer every workspace in the dock. Off shows the everyday set. Once you arrange the dock yourself in Appearance & 3D, your arrangement wins."
+  })));
 }
-// ── Work: what Friday intends to do, and the choice she is asking for ────────
-//
-// Maintainer ruling: "The user decides when a task is heavy; perhaps Friday
-// should present a custom workflow UI with a representation of the tasks it
-// will execute, and a series of config options for the workflow, so the user
-// can choose or select 'choose for me' as an option as well."
-//
-// So: Friday proposes, the user disposes. Three executions, and an option that
-// is unavailable is shown DISABLED WITH ITS REASON rather than hidden — a
-// missing button teaches nothing, and the reason here is always something the
-// user would want to know (this work reads your vault).
-const EXEC_META={
-  when_away:{label:'While I’m away',ico:'\u{1F319}',
-             hint:'Parked. Runs under one lease when the machine goes quiet — the model wakes once for the whole batch.'},
-  now_local:{label:'Now, locally',ico:'\u{1F3E0}',
-             hint:'Slower, private, no bill.'},
-  now_cloud:{label:'Now, in the cloud',ico:'☁️',
-             hint:'Faster, costs money.'},
-};
-const CLS_META={
-  reflex:{label:'reflex',c:'#8affc1'}, interactive:{label:'chat',c:'#00d4ff'},
-  heavy:{label:'heavy',c:'#ffb347'}, image:{label:'image',c:'#d78aff'},
-  background:{label:'background',c:'rgba(255,255,255,0.45)'},
-};
-function dur(s){s=Math.round(s||0);if(s<90)return s+'s';if(s<3600)return Math.round(s/60)+'m';return (s/3600).toFixed(1)+'h';}
-
-function WorkProposal({p,onDecided}){
-  const[per,setPer]=useState({});
-  const[busy,setBusy]=useState(null);
-  const[err,setErr]=useState('');
-  const blocked={};(p.blocked||[]).forEach(b=>{blocked[b.option]=b.reason});
-  const rec=p.recommendation||{};
-  const decide=(execution,chooseForMe)=>{
-    setBusy(chooseForMe?'auto':execution);setErr('');
-    apiFetch('/api/work/proposals/'+p.id+'/decide',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({execution,choose_for_me:!!chooseForMe,per_task:per})})
-      .then(r=>r.json().then(d=>({ok:r.ok,d})))
-      .then(({ok,d})=>{setBusy(null);if(!ok){setErr(d.error||'refused');return;}onDecided&&onDecided(d);})
-      .catch(e=>{setBusy(null);setErr(String(e))});
-  };
-  return <div style={{border:'1px solid rgba(0,212,255,0.22)',borderRadius:10,padding:16,marginBottom:14,background:'rgba(0,212,255,0.03)'}}>
-    <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:4}}>
-      <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.title}</div>
-      <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>
-        {p.totals.n_tasks} step{p.totals.n_tasks===1?'':'s'}
-        {p.totals.n_heavy>0&&<span> · {p.totals.n_heavy} heavy</span>}
-      </div>
-    </div>
-    {p.summary&&<div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:10}}>{p.summary}</div>}
-
-    {/* The tasks Friday intends to execute. */}
-    <div style={{marginBottom:12}}>
-      {(p.tasks||[]).map((t,i)=>{
-        const cm=CLS_META[t.cls]||CLS_META.background;
-        return <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:9,padding:'6px 0',borderTop:i?'1px solid rgba(255,255,255,0.05)':'none'}}>
-          <span style={{fontSize:10,color:'rgba(255,255,255,0.25)',fontFamily:'JetBrains Mono',width:16,flexShrink:0,paddingTop:2}}>{i+1}</span>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.85)'}}>
-              {t.title}
-              {t.touches_vault&&<span title="reads vault-tier material, which stays on this machine when Vault Local-Only is on" style={{marginLeft:6,fontSize:10,color:'#ffb347'}}>{'\u{1F512} vault'}</span>}
-            </div>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.38)',fontFamily:'JetBrains Mono',marginTop:2}}>
-              <span style={{color:cm.c}}>{cm.label}</span>
-              {t.seat_hint&&<span> · {t.seat_hint}</span>}
-              <span> · ~{dur(t.est_s_local)} local</span>
-              {t.est_s_cloud!=null&&<span> · ~{dur(t.est_s_cloud)} cloud</span>}
-            </div>
-          </div>
-          {/* Per-task override, for when one step wants different treatment. */}
-          <select value={per[t.id]||''} onChange={e=>setPer(Object.assign({},per,{[t.id]:e.target.value||undefined}))}
-            style={{background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,color:'rgba(255,255,255,0.6)',fontSize:10,padding:'2px 4px',flexShrink:0}}>
-            <option value="">same as workflow</option>
-            {Object.keys(EXEC_META).map(k=>
-              <option key={k} value={k} disabled={k==='now_cloud'&&t.touches_vault}>{EXEC_META[k].label}</option>)}
-          </select>
-        </div>;
-      })}
-    </div>
-
-    <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:8}}>
-      total ~{dur(p.totals.est_s_local)} locally · ~{dur(p.totals.est_s_cloud)} in the cloud
-    </div>
-
-    {/* The choice. A blocked option stays visible WITH its reason. */}
-    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
-      {Object.keys(EXEC_META).map(k=>{
-        const m=EXEC_META[k],why=blocked[k];
-        return <button key={k} disabled={!!why||!!busy} onClick={()=>decide(k,false)}
-          title={why||m.hint}
-          style={{flex:'1 1 150px',textAlign:'left',padding:'8px 10px',borderRadius:7,cursor:why?'not-allowed':'pointer',
-            background:why?'rgba(255,255,255,0.02)':'rgba(0,212,255,0.07)',
-            border:'1px solid '+(why?'rgba(255,255,255,0.06)':'rgba(0,212,255,0.25)'),
-            color:why?'rgba(255,255,255,0.28)':'#cfefff',opacity:busy&&busy!==k?0.5:1}}>
-          <div style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{m.ico} {m.label}</div>
-          <div style={{fontSize:9,opacity:0.65,marginTop:2,lineHeight:1.35}}>{why?('unavailable — '+why):m.hint}</div>
-        </button>;
-      })}
-    </div>
-
-    {/* "Choose for me" — and it says what it would pick, before he clicks. */}
-    <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-      <button disabled={!!busy} onClick={()=>decide(null,true)}
-        style={{padding:'7px 14px',borderRadius:7,border:'1px solid rgba(138,255,193,0.3)',background:'rgba(138,255,193,0.08)',color:'#8affc1',cursor:'pointer',fontSize:11,fontFamily:'JetBrains Mono'}}>
-        ✨ Choose for me
-      </button>
-      {rec.execution&&<div style={{fontSize:10,color:'rgba(255,255,255,0.42)',flex:1,minWidth:180}}>
-        would pick <b style={{color:'rgba(255,255,255,0.7)'}}>{(EXEC_META[rec.execution]||{}).label}</b> — {rec.why}
-      </div>}
-      <button disabled={!!busy} onClick={()=>{apiFetch('/api/work/proposals/'+p.id,{method:'DELETE'}).then(()=>onDecided&&onDecided({dismissed:true}))}}
-        style={{padding:'7px 10px',borderRadius:7,border:'1px solid rgba(255,255,255,0.1)',background:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:11}}>
-        Not now
-      </button>
-    </div>
-    {err&&<div style={{marginTop:8,fontSize:11,color:'#ff8080',lineHeight:1.4}}>{err}</div>}
-  </div>;
-}
-
-// The warning that has to arrive BEFORE the silence, not after it.
-//
-// Three things it must do, all of which were failures we actually saw:
-//   * say HOW LONG, so a wait is a wait and not a suspected crash;
-//   * say how sure — "might" is a real answer when Ollama can unload a model
-//     without telling us, and dressing that up as certainty teaches people to
-//     ignore the warning;
-//   * offer the way out, since a warning you cannot act on is a notification.
-const CONF_META={
-  certain:{c:'#ffb347',word:'This will pause'},
-  likely:{c:'#ffb347',word:'This will probably pause'},
-  possible:{c:'#8ab4ff',word:'This might pause'},
-};
-function PauseWarning({f,msg,onChoose,onCancel}){
-  const cm=CONF_META[f.confidence]||CONF_META.likely;
-  return <div style={{margin:'10px 0',border:'1px solid '+cm.c+'55',borderRadius:9,padding:12,background:cm.c+'0d'}}>
-    <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
-      <span style={{fontSize:13}}>⏳</span>
-      <span style={{fontFamily:'Orbitron',fontSize:12,color:cm.c}}>{cm.word} for {dur(f.seconds)}</span>
-      <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>{f.basis}</span>
-    </div>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',lineHeight:1.5,marginBottom:4}}>{f.why}</div>
-    {f.stays_awake&&f.stays_awake.length>0&&
-      <div style={{fontSize:10,color:'#8affc1',marginBottom:4}}>Friday stays reachable on the {f.stays_awake.join(', ')} throughout.</div>}
-    {msg&&<div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontStyle:'italic',margin:'6px 0'}}>Holding: “{msg.slice(0,90)}{msg.length>90?'…':''}”</div>}
-    <div style={{display:'flex',gap:7,flexWrap:'wrap',marginTop:8}}>
-      {(f.options||[]).map(o=>
-        <button key={o.id} disabled={!!o.unavailable} onClick={()=>onChoose(o.id)} title={o.detail}
-          style={{flex:'1 1 140px',textAlign:'left',padding:'7px 9px',borderRadius:6,
-            cursor:o.unavailable?'not-allowed':'pointer',
-            background:o.unavailable?'rgba(255,255,255,0.02)':'rgba(0,212,255,0.07)',
-            border:'1px solid '+(o.unavailable?'rgba(255,255,255,0.06)':'rgba(0,212,255,0.25)'),
-            color:o.unavailable?'rgba(255,255,255,0.28)':'#cfefff'}}>
-          <div style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{o.label}</div>
-          <div style={{fontSize:9,opacity:0.7,marginTop:2,lineHeight:1.35}}>{o.unavailable?'unavailable — '+o.detail:o.detail}</div>
-        </button>)}
-    </div>
-    <button onClick={onCancel} style={{marginTop:7,background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:10}}>put it back in the box</button>
-  </div>;
-}
-
 function SettingsTabWork(){
   const[props,setProps]=useState(null);
   const[q,setQ]=useState(null);
@@ -9704,13 +9767,16 @@ function TtsEngineRows({s,save,mc}){
 function SettingsTabVoice({s,save}){
   const[showWizard,setShowWizard]=useState(false);
   const mc=useModelCatalog();
-  const engineIcon={'local':'🔒 ','local-gpu':'⚡ ','gemini':'☁ ','auto':''};
+  const engineIcon={'local':'','local-gpu':'','gemini':'','auto':''};
+  // Several options only reach the Gemini Live session; showing them in a
+  // local mode would offer switches that change nothing.
+  const gem=(s.voice_engine||'local')==='gemini';
   return <div>
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
-      <button className="btn" style={{fontSize:11}} onClick={()=>setShowWizard(w=>!w)}>🎙 {showWizard?'Hide':'Voice Setup Wizard'}</button>
+      <button className="btn" style={{fontSize:11}} onClick={()=>setShowWizard(w=>!w)}>{showWizard?'Hide voice setup':'Voice setup'}</button>
     </div>
     {showWizard&&<VoiceSetupWizard onClose={()=>setShowWizard(false)}/>}
-    <StSection title="VOICE ENGINE">
+    <StSection title="Voice engine">
       <StRow label="Engine" desc="Local = on-device, private. Cloud = Gemini Live, most expressive.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {mc.voiceEngines.map(o=>{
@@ -9723,7 +9789,7 @@ function SettingsTabVoice({s,save}){
           )})}
         </div>
       </StRow>
-      {(s.voice_engine||'local')==='gemini'&&<StRow label="Gemini Live Model" desc="Real-time speech-to-speech model for the cloud engine.">
+      {(s.voice_engine||'local')==='gemini'&&<StRow label="Gemini Live model" desc="The speech-to-speech model the cloud engine uses.">
         <select className="input" style={{width:'100%'}} value={s.voice_model||''} onChange={e=>save({voice_model:e.target.value})}>
           <option value="">— default —</option>
           {s.voice_model&&!mc.voice.some(m=>m.id===s.voice_model)&&<option value={s.voice_model}>{s.voice_model+' (no longer offered)'}</option>}
@@ -9734,51 +9800,47 @@ function SettingsTabVoice({s,save}){
           to the cloud engine, and the local engines speak through Piper
           voices stored in local_voice_tts_voice. Showing the cloud list
           under Local CPU made the picker a silent no-op. */}
-      {((s.voice_engine||'local')==='gemini'||(s.voice_engine||'local')==='auto')&&<StRow label="TTS Voice (Gemini)">
+      {((s.voice_engine||'local')==='gemini'||(s.voice_engine||'local')==='auto')&&<StRow label="Gemini voice">
         <select className="input" style={{width:'100%'}} value={s.tts_voice||'Aoede'} onChange={e=>save({tts_voice:e.target.value})}>
           {['Aoede','Puck','Charon','Kore','Fenrir','Leda','Orus','Zephyr'].map(v=><option key={v}>{v}</option>)}
         </select>
       </StRow>}
       {((s.voice_engine||'local')!=='gemini')&&<TtsEngineRows s={s} save={save} mc={mc}/>}
-      {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Local TTS Voice (Piper)" desc="On-device voice used by the local engines.">
+      {((s.voice_engine||'local')!=='gemini')&&(s.local_voice_tts_engine||'piper')==='piper'&&<StRow label="Piper voice" desc="The on-device voice the local engines speak with.">
         <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
           {[['en_US-amy-medium','Amy \u2014 US English (medium)'],['en_US-lessac-medium','Lessac \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
         </select>
       </StRow>}
     </StSection>
-    <StSection title="AUDIO">
-      <StRow label="Interruption Mode" desc="Barge-in (default): talk over Friday and she stops instantly (native Gemini interruption; best with headphones/AirPods). No interruption: for open speakers where echo makes her cut herself off — use Esc or clear talk-over to interrupt instead.">
+    <StSection title="Listening">
+      {gem&&<StRow label="Interrupting Friday" desc="Talk over her and she stops, which works best with headphones. On open speakers her own voice can echo back and cut her off; choose no interruption there and press Esc to stop her instead.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          {[{k:'auto',l:'🎧 Barge-in (default)',match:['auto','speaker','headphones','headphone','barge','barge-in','bargein','']},{k:'no-barge',l:'🔊 No interruption (open speakers)',match:['no-barge','no_barge','nobarge','speaker-safe','speaker_safe','none','off']}].map(o=>(
+          {[{k:'auto',l:'Talk over her (default)',match:['auto','speaker','headphones','headphone','barge','barge-in','bargein','']},{k:'no-barge',l:'No interruption (open speakers)',match:['no-barge','no_barge','nobarge','speaker-safe','speaker_safe','none','off']}].map(o=>(
             <button key={o.k} className={`settings-btn ${o.match.includes((s.voice_interruption_mode||'auto').toLowerCase())?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
           ))}
         </div>
-      </StRow>
-      <StRow label="VAD Silence Threshold">
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <input type="range" min="300" max="2000" step="100" style={{flex:1}} value={s.voice_silence_ms??800} onChange={e=>save({voice_silence_ms:parseInt(e.target.value)})}/>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#00d4ff',minWidth:50}}>{s.voice_silence_ms??800}ms</span>
-        </div>
-      </StRow>
+      </StRow>}
+      {!gem&&<StSavedSlider label="Pause before Friday replies" desc="How long a silence counts as the end of what you said. Longer suits slow speech; shorter feels snappier."
+        value={s.voice_silence_ms??800} min={300} max={2000} step={100} fmt={v=>Math.round(v)+' ms'}
+        onSave={v=>save({voice_silence_ms:Math.round(v)})}/>}
     </StSection>
-    <StSection title="ADVANCED">
-      <StToggle label="Affective Dialog" value={!!s.voice_affective} onChange={()=>save({voice_affective:!s.voice_affective})} desc="Emotional expressiveness (2.5 native-audio models, v1alpha)."/>
-      <StToggle label="Proactive Audio" value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="Friday initiates follow-up questions."/>
-      <StToggle label="Context Compression" value={s.voice_context_compression!==false} onChange={()=>save({voice_context_compression:s.voice_context_compression===false})} desc="Keeps hours-long sessions alive by sliding the context window (prunes only the oldest turns). On by default — off removes the ~15-min session cap."/>
-      <StToggle label="Voice Tools" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc="Allow tool calls during voice sessions."/>
-      <StRow label="Voice Temperature">
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <input type="range" min="0" max="2" step="0.05" style={{flex:1}} value={s.voice_temperature??1.0} onChange={e=>save({voice_temperature:parseFloat(e.target.value)})}/>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#00d4ff',minWidth:32}}>{(s.voice_temperature??1.0).toFixed(2)}</span>
-        </div>
-      </StRow>
-      <StRow label="Custom Speaking Style" desc="Prepended as 'Speaking style: ...'">
+    {gem&&<StSection title="Gemini Live options" desc="These apply only to the Gemini Live session.">
+      <StToggle label="Expressive speech" value={!!s.voice_affective} onChange={()=>save({voice_affective:!s.voice_affective})} desc="Lets the voice carry emotion. Only some Gemini voice models support it."/>
+      <StToggle label="Friday may speak first" value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="She can ask a follow-up question without waiting to be spoken to."/>
+      <StToggle label="Keep long sessions going" value={s.voice_context_compression!==false} onChange={()=>save({voice_context_compression:s.voice_context_compression===false})} desc="Drops the oldest turns as a session grows so it can run for hours. Off, a session ends after about 15 minutes."/>
+      <StToggle label="Use tools while talking" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc="Lets Friday call her tools mid-conversation."/>
+      <StSavedSlider label={<span>Variety{s.voice_temperature!=null&&<button type="button" onClick={()=>save({voice_temperature:null})} style={{marginLeft:10,background:'none',border:'none',padding:0,color:'var(--st-accent)',cursor:'pointer',fontSize:11.5,textDecoration:'underline'}}>use the model default</button>}</span>}
+        desc="How much the wording varies from one reply to the next. Unset uses the model's own default."
+        value={s.voice_temperature??1.0} min={0} max={2} step={0.05}
+        fmt={v=>s.voice_temperature==null?'model default':v.toFixed(2)}
+        onSave={v=>save({voice_temperature:v})}/>
+      <StRow label="Speaking style" desc="A few words on how she should sound. Saved when you click away.">
         <input className="input" style={{width:'100%'}} defaultValue={s.voice_style_prompt||''} key={'vs'+s.voice_style_prompt} onBlur={e=>save({voice_style_prompt:e.target.value})} placeholder="e.g. warm, concise, news anchor"/>
       </StRow>
-      <StRow label="Language (BCP-47)">
+      <StRow label="Language" desc="A language code such as en-US or fr-FR. Leave blank for Gemini's default.">
         <input className="input" style={{width:'100%'}} defaultValue={s.voice_language||''} key={'vl'+s.voice_language} onBlur={e=>save({voice_language:e.target.value})} placeholder="e.g. en-US"/>
       </StRow>
-    </StSection>
+    </StSection>}
   </div>;
 }
 function SettingsTabPrivacy({s,save}){
@@ -9805,7 +9867,7 @@ function SettingsTabPrivacy({s,save}){
   };
   const armed=vaultStatus&&vaultStatus.encryption==='AES-256-GCM';
   return <div>
-    <StSection title="SOVEREIGN VAULT">
+    <StSection title="Vault">
       {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
           {[{l:'Status',v:vaultStatus.locked?'LOCKED':'UNLOCKED',c:vaultStatus.locked?'#f59e0b':'#00ff80'},{l:'Encryption',v:vaultStatus.encryption||'None',c:vaultStatus.encryption==='AES-256-GCM'?'#00ff80':'#f59e0b'},{l:'Entries',v:vaultStatus.entry_count??'—',c:'#00d4ff'}].map(x=><div key={x.l}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:3}}>{x.l}</div><div style={{fontFamily:'Orbitron',fontSize:12,color:x.c}}>{x.v}</div></div>)}
@@ -9815,41 +9877,44 @@ function SettingsTabPrivacy({s,save}){
         <div style={{fontSize:11,color:'rgba(255,210,140,0.9)',marginBottom:8,lineHeight:1.6}}>Your vault is <b>not encrypted at rest</b>. Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain, with an encrypted on-disk backup only this account can read — never sent anywhere).</div>
         <div style={{display:'flex',gap:6}}>
           <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Vault passphrase (min 6 chars)" className="input" style={{flex:1}}/>
-          <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap'}} disabled={armBusy} onClick={armPassphrase}>{armBusy?'Arming…':'Encrypt Vault'}</button>
+          <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap'}} disabled={armBusy} onClick={armPassphrase}>{armBusy?'Encrypting…':'Encrypt vault'}</button>
         </div>
         {armMsg&&<div style={{fontSize:10,color:armMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       </div>}
       {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       <StToggle label="Local-Only Mode" value={(s.model_routing||{}).vault_local_only!==false} onChange={()=>save({model_routing:{...(s.model_routing||{}),vault_local_only:(s.model_routing||{}).vault_local_only===false}})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
     </StSection>
-    <StSection title="CLOUD MODE">
+    <StSection title="Cloud mode">
       <StToggle label="Unrestricted Cloud" value={!!(s.model_routing||{}).unrestricted_cloud} onChange={()=>save({model_routing:{...(s.model_routing||{}),unrestricted_cloud:!(s.model_routing||{}).unrestricted_cloud}})} desc="Off (default): cloud sends are still tier-classified, redacted, and PII-scrubbed. On: no privacy safeguard holds anything back from the cloud — full tier content, no redaction, no PII scrub, the never-send list included. Every send is still logged to the egress ledger either way. This is a standing posture, not a one-time consent — leave it off unless you specifically want frontier cloud models to see everything, unfiltered, on every call."/>
     </StSection>
-    <StSection title="YOUR DATA">
+    <StSection title="What needs your sign-off">
+      <ApprovalScannerPanel s={s} save={save}/>
+    </StSection>
+    <StSection title="Computer control">
+      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High risk. Lets Friday move the mouse, click, type and take screenshots. It needs both this switch and a grant below; once granted, the grant lasts across restarts until you revoke it.</div>
+      <StToggle label="Allow computer control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
+      <CcGrantPanel enabled={!!s.computer_control_enabled}/>
+    </StSection>
+    <StSection title="Knowledge indexing">
+      <KnowledgeSettings s={s} save={save} part="privacy"/>
+    </StSection>
+    <StSection title="Conversation logging">
+      <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
+      <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Pause the log until you turn this back off."/>
+      <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
+      </StRow>
+      <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>Export conversation log (ZIP)</button>
+    </StSection>
+    <StSection title="Your data">
       <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists.</div>
-      <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:10}} onClick={()=>window.open('/api/data/export','_blank')}>⤓ Export all my data (ZIP)</button>
+      <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:10}} onClick={()=>window.open('/api/data/export','_blank')}>Export all my data (ZIP)</button>
       <div style={{fontSize:11,color:'rgba(255,180,180,0.75)',marginBottom:6,lineHeight:1.6}}>Permanently delete ALL local data — vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type <b>ERASE</b> to confirm.</div>
       <div style={{display:'flex',gap:6}}>
         <input value={eraseConfirm} onChange={e=>setEraseConfirm(e.target.value)} placeholder="Type ERASE" className="input" style={{flex:1}}/>
-        <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap',borderColor:eraseConfirm==='ERASE'?'rgba(255,0,80,0.5)':undefined,color:eraseConfirm==='ERASE'?'#ff6b8a':undefined}} disabled={eraseConfirm!=='ERASE'} onClick={eraseAll}>Erase Everything</button>
+        <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap',borderColor:eraseConfirm==='ERASE'?'rgba(255,0,80,0.5)':undefined,color:eraseConfirm==='ERASE'?'#ff6b8a':undefined}} disabled={eraseConfirm!=='ERASE'} onClick={eraseAll}>Erase everything</button>
       </div>
       {eraseMsg&&<div style={{fontSize:10,color:eraseMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{eraseMsg}</div>}
-    </StSection>
-    <StSection title="CONTEXT LOGGING">
-      <StToggle label="Full Context Logging" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="Append-only log of chats, tool calls, file reads. Stored locally."/>
-      <StToggle label="Go Off Record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Disable logging until you turn this back on."/>
-      <StRow label="Retention Period">
-        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
-      </StRow>
-      <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
-    </StSection>
-    <StSection title="WHAT NEEDS YOUR SIGN-OFF">
-      <ApprovalScannerPanel s={s} save={save}/>
-    </StSection>
-    <StSection title="COMPUTER CONTROL">
-      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Once granted, permission persists across restarts until you revoke it.</div>
-      <StToggle label="Enable Computer Control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
-      <CcGrantPanel enabled={!!s.computer_control_enabled}/>
     </StSection>
   </div>;
 }
@@ -9921,101 +9986,182 @@ function ApprovalScannerPanel({s,save}){
 // persisted on release: tracking is the one settings group you cannot judge
 // by reading it, so a value that only took effect after a save would be
 // untunable.
-function TrackingSlider({label,desc,value,min,max,step,fmt,onLive,onCommit}){
-  return <div style={{marginBottom:10}}>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
-      <span style={{fontSize:12,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono'}}>{label}</span>
-      <span style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{(fmt||(v=>v.toFixed(2)))(value)}</span>
-    </div>
-    <input type="range" min={min} max={max} step={step} value={value} style={{width:'100%',marginTop:4}}
-      onChange={e=>onLive(parseFloat(e.target.value))}
-      onMouseUp={e=>onCommit(parseFloat(e.target.value))}
-      onTouchEnd={e=>onCommit(parseFloat(e.target.value))}/>
-    {desc && <div style={{fontSize:10.5,color:'rgba(255,255,255,0.36)',marginTop:2,lineHeight:1.5}}>{desc}</div>}
-  </div>;
-}
-function TrackingPanel({s,save}){
-  const TK = typeof window!=='undefined' ? window.FridayTracking : null;
+const TrackingSlider = StSlider;
+// `part` picks which slice of the tracking settings to show: the camera
+// controls live in Voice & Tracking, the dock's depth in Appearance & 3D, and
+// the debug overlay in Advanced. All three edit the one `tracking` object.
+function TrackingPanel({
+  s,
+  save,
+  part
+}) {
+  const TK = typeof window !== 'undefined' ? window.FridayTracking : null;
   const defaults = TK ? TK.DEFAULTS : {};
-  const [cfg,setCfg] = useState(()=>Object.assign({},defaults,(s&&s.tracking)||{}));
-  const [calib,setCalib] = useState(null);
-  useEffect(()=>{ if(TK) TK.apply(cfg); },[]);
-  const live = patch => { const n=Object.assign({},cfg,patch); setCfg(n); if(TK) TK.apply(n); };
-  const commit = patch => { const n=Object.assign({},cfg,patch); setCfg(n); if(TK) TK.apply(n); save({tracking:n}); };
-  const sl = (key,label,desc,min,max,step,fmt)=>
-    <TrackingSlider label={label} desc={desc} value={cfg[key]} min={min} max={max} step={step} fmt={fmt}
-      onLive={v=>live({[key]:v})} onCommit={v=>commit({[key]:v})}/>;
-  return <div>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:12,lineHeight:1.6}}>
-      Head tracking moves the view like a window onto the scene — lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag.
-    </div>
-    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'4px 0 10px'}}>HEAD / PARALLAX</div>
-    {sl('parallax_strength','Parallax strength','How far the scene swings as you move your head. 0 turns the window effect off.',0,2.5,0.05)}
-    {sl('depth_strength','Depth effect','How much leaning in and out changes the perspective. Driven by how large your face reads to the camera.',0,2.5,0.05)}
-    {sl('head_smoothing','Head smoothing','Steadier to the right, quicker to the left. A One Euro filter, so low values are still calm when you hold still.',0,1,0.01)}
-    {sl('holo_cues','Holographic cues','Rim light that answers your head angle. A vignette, not a shimmer.',0,1,0.01)}
-    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>DOCK</div>
-    {sl('dock_depth','Dock depth','How far the dock stands out of the screen — the floor it stands on, how far the icons rise off it, and how much a button swells as the pointer nears. 0 gives back the flat dock.',0,2,0.05)}
-    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>HAND CURSOR</div>
-    {sl('hand_gain','Sensitivity','Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.',0.5,6,0.1)}
-    {sl('hand_accel','Acceleration','Extra speed when you move fast, while slow movement stays precise.',0,2,0.05)}
-    {sl('hand_region','Active region','How much of the camera view maps to the whole screen. SMALLER means less hand movement covers more screen.',0.15,1,0.01,v=>Math.round(v*100)+'%')}
-    {sl('hand_deadzone','Dead zone','Movement below this is treated as shake, not intent.',0,0.03,0.001,v=>v.toFixed(3))}
-    {sl('hand_smoothing','Hand smoothing','Jitter filtering for the cursor. Same filter as the head.',0,1,0.01)}
-    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>CLICKING</div>
-    <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
-      {[{k:'pinch',l:'Pinch'},{k:'dwell',l:'Dwell (hover to click)'}].map(o=>
-        <button key={o.k} className={`settings-btn ${cfg.click_method===o.k?'active':''}`} style={{fontSize:11}}
-          onClick={()=>commit({click_method:o.k})}>{o.l}</button>)}
-    </div>
-    {cfg.click_method==='pinch'
-      ? <div>
-          {sl('pinch_enter','Pinch closes at','Fingers must come closer than this to start a click.',0.02,0.12,0.005,v=>v.toFixed(3))}
-          {sl('pinch_exit','Pinch opens at','And wider than this to end it. The gap between the two is what stops a resting hand clicking over and over.',0.03,0.18,0.005,v=>v.toFixed(3))}
-        </div>
-      : sl('dwell_ms','Dwell time','Hold the cursor still this long to click.',250,2000,50,v=>Math.round(v)+' ms')}
-    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.12em',margin:'18px 0 10px'}}>TUNING</div>
-    <StToggle label="Debug overlay" value={!!cfg.debug_overlay}
-      onChange={()=>commit({debug_overlay:!cfg.debug_overlay})}
-      desc="Draws the tracked head position, the filter lag, the active region and the cursor path on screen."/>
-    <div style={{display:'flex',gap:8,marginTop:10}}>
-      <button className="settings-btn" style={{flex:1,fontSize:12}} onClick={()=>{
-        const TKx=window.FridayTracking;
-        const w=(typeof lastFaceBoxW!=='undefined')?lastFaceBoxW:0;
-        const got=TKx?TKx.calibrate(w):null;
-        setCalib(got?'Set from your current distance.':'No face seen — turn the hologram on and look at the camera.');
-        setTimeout(()=>setCalib(null),4000);
-      }}>◎ Calibrate distance</button>
-      <button className="settings-btn" style={{flex:1,fontSize:12}} onClick={()=>{
-        const n=Object.assign({},defaults); setCfg(n); if(TK) TK.apply(n); save({tracking:n});
-      }}>↺ Reset to defaults</button>
-    </div>
-    {calib && <div style={{fontSize:10.5,color:'#00d4ff',marginTop:6,fontFamily:'JetBrains Mono'}}>{calib}</div>}
-    <div style={{fontSize:10.5,color:'rgba(255,255,255,0.34)',marginTop:8,lineHeight:1.6}}>
-      Calibrate tells the depth effect what “normal distance” looks like for you and your camera. Sit where you usually sit, then press it.
-    </div>
-  </div>;
+  const [cfg, setCfg] = useState(() => Object.assign({}, defaults, s && s.tracking || {}));
+  const [calib, setCalib] = useState(null);
+
+  // Push to the engine on mount so a reload matches what is stored.
+  useEffect(() => {
+    if (TK) TK.apply(cfg);
+  }, []);
+  const live = patch => {
+    const next = Object.assign({}, cfg, patch);
+    setCfg(next);
+    if (TK) TK.apply(next); // immediate, before any save round-trip
+  };
+  const commit = patch => {
+    const next = Object.assign({}, cfg, patch);
+    setCfg(next);
+    if (TK) TK.apply(next);
+    save({
+      tracking: next
+    });
+  };
+  const sl = (key, label, desc, min, max, step, fmt) => /*#__PURE__*/React.createElement(TrackingSlider, {
+    label: label,
+    desc: desc,
+    value: cfg[key],
+    min: min,
+    max: max,
+    step: step,
+    fmt: fmt,
+    onLive: v => live({
+      [key]: v
+    }),
+    onCommit: v => commit({
+      [key]: v
+    })
+  });
+  const sub = t => /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: 'var(--st-text)',
+      margin: '18px 0 10px'
+    }
+  }, t);
+  if (part === 'dock') return sl('dock_depth', 'Dock depth', 'How far the dock stands out of the screen: the floor it stands on, how far the icons rise off it, and how much a button swells as the pointer nears. 0 gives the flat dock.', 0, 2, 0.05);
+  if (part === 'debug') return /*#__PURE__*/React.createElement(StToggle, {
+    label: "Tracking debug overlay",
+    value: !!cfg.debug_overlay,
+    onChange: () => commit({
+      debug_overlay: !cfg.debug_overlay
+    }),
+    desc: "Draws the tracked head position, the filter lag, the active region and the cursor path on screen."
+  });
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Head tracking moves the view like a window onto the scene: lean and the depth shifts. Hand tracking drives the on-screen cursor. Both need the camera on (the hologram and hand buttons on the orb). Changes apply as you drag."), sub('Head and parallax'), sl('parallax_strength', 'Parallax strength', 'How far the scene swings as you move your head. 0 turns the window effect off.', 0, 2.5, 0.05), sl('depth_strength', 'Depth effect', 'How much leaning in and out changes the perspective.', 0, 2.5, 0.05), sl('head_smoothing', 'Head smoothing', 'Steadier to the right, quicker to the left. Low values still stay calm when you hold still.', 0, 1, 0.01), sl('holo_cues', 'Holographic cues', 'Sheen and rim light that answer your head angle. Subtle on purpose.', 0, 1, 0.01), sub('Hand cursor'), sl('hand_gain', 'Sensitivity', 'Screen distance per unit of hand movement. Raise this first if the cursor feels sluggish.', 0.5, 6, 0.1), sl('hand_accel', 'Acceleration', 'Extra speed when you move fast, while slow movement stays precise.', 0, 2, 0.05), sl('hand_region', 'Active region', 'How much of the camera view maps to the whole screen. Smaller means less hand movement covers more screen.', 0.15, 1, 0.01, v => Math.round(v * 100) + '%'), sl('hand_deadzone', 'Dead zone', 'Movement below this is treated as shake, not intent.', 0, 0.03, 0.001, v => v.toFixed(3)), sl('hand_smoothing', 'Hand smoothing', 'Jitter filtering for the cursor. Same filter as the head.', 0, 1, 0.01), sub('Clicking'), /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Click method",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, [{
+    k: 'pinch',
+    l: 'Pinch'
+  }, {
+    k: 'dwell',
+    l: 'Dwell (hover to click)'
+  }].map(o => /*#__PURE__*/React.createElement("button", {
+    key: o.k,
+    type: "button",
+    role: "radio",
+    "aria-checked": cfg.click_method === o.k,
+    className: `settings-btn ${cfg.click_method === o.k ? 'active' : ''}`,
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => commit({
+      click_method: o.k
+    })
+  }, o.l))), cfg.click_method === 'pinch' ? /*#__PURE__*/React.createElement("div", null, sl('pinch_enter', 'Pinch closes at', 'Fingers must come closer than this to start a click.', 0.02, 0.12, 0.005, v => v.toFixed(3)), sl('pinch_exit', 'Pinch opens at', 'And wider than this to end it. The gap between the two stops a resting hand clicking over and over.', 0.03, 0.18, 0.005, v => v.toFixed(3))) : sl('dwell_ms', 'Dwell time', 'Hold the cursor still this long to click.', 250, 2000, 50, v => Math.round(v) + ' ms'), sub('Calibration'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 10,
+      lineHeight: 1.6
+    }
+  }, "Calibrate tells the depth effect what normal distance looks like for you and your camera. Sit where you usually sit, then press it."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
+    },
+    onClick: () => {
+      const TKx = window.FridayTracking;
+      const w = typeof lastFaceBoxW !== 'undefined' ? lastFaceBoxW : 0;
+      const got = TKx ? TKx.calibrate(w) : null;
+      setCalib(got ? 'Set from your current distance.' : 'No face seen. Turn the hologram on and look at the camera.');
+      setTimeout(() => setCalib(null), 4000);
+    }
+  }, "Calibrate distance"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
+    },
+    onClick: () => {
+      // Resets the camera dials only; the dock's depth and the debug overlay
+      // belong to other tabs and keep their values.
+      const next = Object.assign({}, defaults, {
+        dock_depth: cfg.dock_depth,
+        debug_overlay: cfg.debug_overlay
+      });
+      setCfg(next);
+      if (TK) TK.apply(next);
+      save({
+        tracking: next
+      });
+    }
+  }, "Reset tracking to defaults")), calib && /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-accent)',
+      marginTop: 8,
+      fontFamily: 'var(--st-mono)'
+    }
+  }, calib));
 }
 function SettingsTabFederation(){
   return <div>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Ed25519 identity + X25519/ChaCha20-Poly1305 transport. Connect with other Friday instances on the federation network.</div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Connect with other Friday instances. Each instance has its own signed identity, and messages between them are encrypted end to end.</div>
     <FederationPanel/>
-    <div style={{marginTop:24}}><StSection title="DEFEDERATION"><DefederationPanel/></StSection></div>
+    <div style={{marginTop:24}}><StSection title="Blocking instances"><DefederationPanel/></StSection></div>
   </div>;
 }
 function SettingsTabEconomy(){
   return <div>
-    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Positron (Ψ) economy: earn by contributing compute, spend on orchestrated tasks. Q-score = reputation charge.</div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Earn credits by contributing compute and spend them on orchestrated tasks. Your score reflects how the network rates your contributions.</div>
     <WalletPanel/>
-    <div style={{marginTop:24}}><StSection title="WORKSPACE BUDGETS"><OrchestratorBudgetPanel/></StSection></div>
+    <div style={{marginTop:24}}><StSection title="Workspace budgets"><OrchestratorBudgetPanel/></StSection></div>
   </div>;
 }
 function SettingsTabOrchestrator(){
   return <div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Manage local sub-agent workers. Spawn tasks to Ollama, Python scripts, or HTTP APIs within your budget envelope.</div>
     <OrchestratorPanel/>
-    <div style={{marginTop:24}}><StSection title="CAPABILITY CARD"><CapabilityCardPanel/></StSection></div>
-    <div style={{marginTop:24}}><StSection title="WORK LOG"><WorkLogPanel/></StSection></div>
+    <div style={{marginTop:24}}><StSection title="Capability card"><CapabilityCardPanel/></StSection></div>
+    <div style={{marginTop:24}}><StSection title="Work log"><WorkLogPanel/></StSection></div>
   </div>;
 }
 // Account state is read from the STORE's verdict (acc.health, derived server-side
@@ -10315,7 +10461,7 @@ function GoogleAccountsPanel(){
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:8}}>{msg}</div>}
   </div>;
 }
-// ─── Settings → Providers — the model-agnostic provider layer (P1/P2) ───
+// ─── Settings → Accounts & Keys — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
 // catalog size, spend today, encrypted key management, Test Connection, model
 // list refresh, enable/disable, and remove/revert. Add Provider works from the
@@ -10611,58 +10757,129 @@ function SettingsTabProviders({s,save}){
   const rows=provs.filter(p=>!['local-voice','nemo-local'].includes(p.type));
   const enabled=rows.filter(p=>p.enabled),disabled=rows.filter(p=>!p.enabled);
   return <div>
-    <StSection title="MODEL PROVIDERS">
+    <StSection title="Model providers">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',lineHeight:1.5,paddingRight:12}}>Friday is model-agnostic: OpenRouter, Hugging Face, Groq, DeepSeek, a LAN vLLM box — add a key and its models appear in every picker. Keys are encrypted on-device; every cloud provider passes the egress gate.</div>
-        <button className="settings-btn" style={{fontSize:12,color:'#00d4ff',whiteSpace:'nowrap'}} onClick={()=>setAdding(v=>!v)}>{adding?'✕ Close':'＋ Add Provider'}</button>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',lineHeight:1.5,paddingRight:12}}>Add a key and that provider's models appear in every model picker: OpenRouter, Hugging Face, Groq, DeepSeek or a model server on your own network. Keys are encrypted on this machine, and every cloud call passes the privacy gate.</div>
+        <button className="settings-btn" style={{fontSize:12,color:'#00d4ff',whiteSpace:'nowrap'}} onClick={()=>setAdding(v=>!v)}>{adding?'Close':'Add provider'}</button>
       </div>
       {adding&&<AddProviderForm templates={templates} onCancel={()=>setAdding(false)} onDone={()=>{setAdding(false);refresh();}}/>}
       {descErrors.length>0&&<div style={{padding:'8px 12px',background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:6,marginBottom:10}}>
         {descErrors.map((e,i)=><div key={i} style={{fontSize:11,color:'#ef4444',fontFamily:'JetBrains Mono'}}>⚠ {e.file}: {e.error}</div>)}
       </div>}
       {enabled.map(p=><ProviderRow key={p.name} prov={p} onChanged={refresh}/>)}
-      {disabled.length>0&&<div style={{fontSize:10,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono',margin:'14px 0 8px',letterSpacing:'.08em'}}>AVAILABLE — ONE CLICK TO ENABLE</div>}
+      {disabled.length>0&&<div style={{fontSize:10,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono',margin:'14px 0 8px',letterSpacing:'.08em'}}>Available to enable</div>}
       {disabled.map(p=><ProviderRow key={p.name} prov={p} onChanged={refresh}/>)}
-      <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',fontFamily:'JetBrains Mono',marginTop:10}}>● healthy · ◐ needs attention · ○ disabled — dot color is measured health (p50 latency / error rate / circuit breaker)</div>
+      <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',fontFamily:'JetBrains Mono',marginTop:10}}>● healthy · ◐ needs attention · ○ disabled. The dot reflects measured response time and error rate.</div>
     </StSection>
-    <StSection title="MODEL BROWSER">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Search every connected provider's catalog — including OpenRouter's full list once its model list has been refreshed.</div>
+    <StSection title="Model browser">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed.</div>
       {with3DModels(<ModelBrowser save={save}/>)}
     </StSection>
   </div>;
 }
-function SettingsTabConnectors({s,save}){
-  const[mcpServers,setMcpServers]=useState([]);
-  const[connectors,setConnectors]=useState([]);
-  useEffect(()=>{
-    apiFetch('/api/mcp/servers').then(r=>r.json()).then(d=>setMcpServers(d.servers||[])).catch(()=>{});
-    apiFetch('/api/connectors').then(r=>r.json()).then(d=>setConnectors(Array.isArray(d)?d:(d.connectors||[]))).catch(()=>{});
-  },[]);
-  return <div>
-    <StSection title="GOOGLE ACCOUNTS">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.5}}>Connect multiple Google accounts. Tokens are encrypted on-device with DPAPI — never sent to cloud.</div>
-      <GoogleAccountsPanel/>
-    </StSection>
-    <StSection title="MCP SERVERS">
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Model Context Protocol servers extend Friday's tool surface. Config: <code style={{color:'#00d4ff'}}>~/.friday/mcp_servers.json</code></div>
-      {mcpServers.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:8}}>No MCP servers configured.</div>}
-      {mcpServers.map((srv,i)=>(
-        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'rgba(255,255,255,0.03)',borderRadius:6,marginBottom:6}}>
-          <div><div style={{color:'rgba(255,255,255,0.85)',fontSize:12,fontFamily:'JetBrains Mono'}}>{srv.name||srv.id||'Unnamed'}</div>{srv.description&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:11}}>{srv.description}</div>}</div>
-          <span style={{fontSize:10,padding:'2px 8px',borderRadius:4,background:srv.enabled!==false?'rgba(0,255,128,0.1)':'rgba(255,255,255,0.04)',color:srv.enabled!==false?'#00ff80':'#555',fontFamily:'JetBrains Mono'}}>{srv.enabled!==false?'active':'off'}</span>
-        </div>
-      ))}
-    </StSection>
-    <StSection title="PLATFORM CONNECTORS">
-      {connectors.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12}}>No connectors available.</div>}
-      {connectors.slice(0,12).map((c,i)=>(
-        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'rgba(255,255,255,0.03)',borderRadius:6,marginBottom:6}}>
-          <div style={{color:'rgba(255,255,255,0.85)',fontSize:12,fontFamily:'JetBrains Mono'}}>{c.name||c.id}</div>
-          <span style={{fontSize:10,padding:'2px 8px',borderRadius:4,background:c.connected?'rgba(0,255,128,0.1)':'rgba(255,255,255,0.04)',color:c.connected?'#00ff80':'#555'}}>{c.connected?'on':'off'}</span>
-        </div>
-      ))}
-    </StSection>
-  </div>;
+// `part` splits the panel: Google accounts are something every user
+// connects (Accounts & Keys); the MCP server list and the platform connector
+// inventory are diagnostics (Advanced).
+function SettingsTabConnectors({
+  s,
+  save,
+  part
+}) {
+  const [mcpServers, setMcpServers] = useState([]);
+  const [connectors, setConnectors] = useState([]);
+  useEffect(() => {
+    if (part === 'accounts') return;
+    apiFetch('/api/mcp/servers').then(r => r.json()).then(d => setMcpServers(d.servers || [])).catch(() => {});
+    apiFetch('/api/connectors').then(r => r.json()).then(d => setConnectors(Array.isArray(d) ? d : d.connectors || [])).catch(() => {});
+  }, [part]);
+  if (part === 'accounts') return /*#__PURE__*/React.createElement(StSection, {
+    title: "Google accounts",
+    desc: "Connect one or more Google accounts for mail, calendar and files. Their tokens are encrypted on this machine and never sent to a cloud model."
+  }, /*#__PURE__*/React.createElement(GoogleAccountsPanel, null));
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "MCP servers"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      marginBottom: 10,
+      lineHeight: 1.5
+    }
+  }, "Model Context Protocol servers add tools Friday can call. Configured in ", /*#__PURE__*/React.createElement("code", {
+    style: {
+      color: '#00d4ff'
+    }
+  }, "~/.friday/mcp_servers.json")), mcpServers.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'rgba(255,255,255,0.38)',
+      fontSize: 12,
+      marginBottom: 8
+    }
+  }, "No MCP servers configured."), mcpServers.map((srv, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: '8px 12px',
+      background: 'rgba(255,255,255,0.03)',
+      borderRadius: 6,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'rgba(255,255,255,0.85)',
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, srv.name || srv.id || 'Unnamed'), srv.description && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'rgba(255,255,255,0.38)',
+      fontSize: 11
+    }
+  }, srv.description)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      padding: '2px 8px',
+      borderRadius: 4,
+      background: srv.enabled !== false ? 'rgba(0,255,128,0.1)' : 'rgba(255,255,255,0.04)',
+      color: srv.enabled !== false ? '#00ff80' : '#555',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, srv.enabled !== false ? 'active' : 'off')))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Platform connectors",
+    desc: "Every connector this build knows about and whether it is connected."
+  }, connectors.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'rgba(255,255,255,0.38)',
+      fontSize: 12
+    }
+  }, "No connectors available."), connectors.map((c, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: '8px 12px',
+      background: 'rgba(255,255,255,0.03)',
+      borderRadius: 6,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'rgba(255,255,255,0.85)',
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, c.name || c.id), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      padding: '2px 8px',
+      borderRadius: 4,
+      background: c.connected ? 'rgba(0,255,128,0.1)' : 'rgba(255,255,255,0.04)',
+      color: c.connected ? '#00ff80' : '#555'
+    }
+  }, c.connected ? 'on' : 'off')))));
 }
 function SettingsTabAbout(){
   const[h,setH]=useState(null);
@@ -10678,166 +10895,1068 @@ function SettingsTabAbout(){
       <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
       <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
     </div>
-    <StSection title="SYSTEM HEALTH">
+    <StSection title="System">
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-        {[{l:'Evolution Day',v:evo?.day??'—',c:'#00d4ff'},{l:'Uptime',v:fmtUp(h?.uptime_seconds),c:'#00ff80'},{l:'Mood',v:h?.mood||'—',c:'#a855f7'},{l:'Creations Today',v:h?.creations_today??'—',c:'#f59e0b'},{l:'Memory Entries',v:h?.memory_entries??'—',c:'#00d4ff'},{l:'Vault Entries',v:h?.vault_count??'—',c:'#22c55e'}].map(x=>(
+        {[{l:'Evolution day',v:evo?.day??'—',c:'#00d4ff'},{l:'Uptime',v:fmtUp(h?.uptime_seconds),c:'#00ff80'},{l:'Mood',v:h?.mood||'—',c:'#a855f7'},{l:'Creations today',v:h?.creations_today??'—',c:'#f59e0b'},{l:'Memory entries',v:h?.memory_entries??'—',c:'#00d4ff'},{l:'Vault entries',v:h?.vault_count??'—',c:'#22c55e'}].map(x=>(
           <div key={x.l} style={{padding:'10px 12px',background:'rgba(255,255,255,0.02)',borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:4}}>{x.l}</div>
             <div style={{fontFamily:'Orbitron',fontSize:14,color:x.c}}>{x.v}</div>
           </div>
         ))}
       </div>
-      {h?.models&&<div style={{marginTop:8}}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginBottom:6,fontFamily:'JetBrains Mono'}}>Active Models</div><div style={{display:'flex',flexWrap:'wrap',gap:6}}>{h.models.map((m,i)=><span key={i} className="model-pill" style={{fontSize:11}}><span className={`dot ${m.active?'active':'idle'}`}/>{m.name}</span>)}</div></div>}
     </StSection>
-    <StSection title="PERSONALITY MATURITY">
-      {evo&&<div style={{padding:'10px 14px',background:'rgba(255,255,255,0.02)',borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono',lineHeight:1.6}}>{evo.structure||'No evolution data yet.'}</div>
-        {evo.structure_index!==undefined&&<div style={{marginTop:8,fontFamily:'Orbitron',fontSize:12,color:'#a855f7'}}>Structure Index: {evo.structure_index}</div>}
-      </div>}
-    </StSection>
-    <StSection title="LINKS">
+    <StSection title="Links">
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-        <a href="https://github.com/FutureSpeak-AI/friday-desktop" target="_blank" rel="noopener noreferrer" className="settings-btn" style={{fontSize:12,textDecoration:'none'}}>GitHub</a>
-        <a href="https://github.com/FutureSpeakAI/Agent-Friday/blob/main/docs/security/threat-model.md" target="_blank" className="settings-btn" style={{fontSize:12,textDecoration:'none'}}>Threat Model</a>
-        <button className="settings-btn" style={{fontSize:12}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export Data</button>
+        <a href="https://github.com/FutureSpeakAI/Agent-Friday" target="_blank" rel="noopener noreferrer" className="settings-btn" style={{fontSize:12,textDecoration:'none'}}>GitHub</a>
+        <a href="https://github.com/FutureSpeakAI/Agent-Friday/blob/main/docs/security/threat-model.md" target="_blank" rel="noopener noreferrer" className="settings-btn" style={{fontSize:12,textDecoration:'none'}}>Threat model</a>
       </div>
     </StSection>
-    <StSection title="ACKNOWLEDGMENTS">
+    <StSection title="Acknowledgments">
       <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.7,fontFamily:'JetBrains Mono'}}>Context compression powered by <a href="https://github.com/chopratejas/headroom" target="_blank" rel="noopener noreferrer" style={{color:'#00d4ff',textDecoration:'none'}}>Headroom</a> by Tejas Chopra — Apache 2.0.</div>
     </StSection>
   </div>;
 }
-function SettingsTabKnowledge({s,save}){
-  const kg0=s.knowledge_graph||{};
-  // Defensive normalization: settings.json can still carry the legacy
-  // values ("local_only"/"gated_cloud") until this specific key is next saved
-  // — the backend migrates them on every read (kg_settings()), but this GET
-  // /api/settings response is the raw file, so the dropdown does the same
-  // translation rather than rendering blank against an <option> that no
-  // longer exists.
-  const _modeMap={local_only:'local',gated_cloud:'cloud'};
-  const kg={...kg0,indexing_mode:_modeMap[kg0.indexing_mode]||kg0.indexing_mode||'local'};
-  const src=kg.index_sources||{wiki:true,conversations:true,cognitive:true,soul:true};
-  const patch=(p)=>save({knowledge_graph:{...kg,index_sources:src,...p}});
-  const patchSrc=(k,v)=>save({knowledge_graph:{...kg,index_sources:{...src,[k]:v}}});
-  const[busy,setBusy]=useState(false);
-  const[note,setNote]=useState('');
-  const reindex=async(tier)=>{
-    setBusy(true);setNote('');
-    try{const r=await apiFetch('/api/knowledge-graph/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier})});
-      const d=await r.json();
-      setNote(tier==='A'?`Rebuilt: ${d.entities||0} nodes, ${d.relationships||0} links`:(d.status==='started'?'Semantic index running in the background — watch the Knowledge workspace.':d.message||d.status))}
-    catch(e){setNote('Reindex failed')}
+// Knowledge graph settings, shown where each belongs: where semantic
+// indexing runs is an egress decision (Privacy & Approvals), how the galaxy
+// groups pages is a look (Appearance & 3D), and what gets indexed and when is
+// housekeeping (Advanced).
+function KnowledgeSettings({
+  s,
+  save,
+  part
+}) {
+  const kg0 = s.knowledge_graph || {};
+  // settings.json can still carry the legacy values ("local_only" /
+  // "gated_cloud") until this key is next saved. The backend migrates them on
+  // every read (kg_settings()), but GET /api/settings returns the raw file, so
+  // the control does the same translation rather than rendering blank.
+  const _modeMap = {
+    local_only: 'local',
+    gated_cloud: 'cloud'
+  };
+  const kg = {
+    ...kg0,
+    indexing_mode: _modeMap[kg0.indexing_mode] || kg0.indexing_mode || 'local'
+  };
+  const src = kg.index_sources || {
+    wiki: true,
+    conversations: true,
+    cognitive: true,
+    soul: true
+  };
+  const patch = p => save({
+    knowledge_graph: {
+      ...kg,
+      index_sources: src,
+      ...p
+    }
+  });
+  const patchSrc = (k, v) => save({
+    knowledge_graph: {
+      ...kg,
+      index_sources: {
+        ...src,
+        [k]: v
+      }
+    }
+  });
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const reindex = async tier => {
+    setBusy(true);
+    setNote('');
+    try {
+      const r = await apiFetch('/api/knowledge-graph/reindex', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          tier
+        })
+      });
+      const d = await r.json();
+      setNote(tier === 'A' ? `Rebuilt: ${d.entities || 0} nodes, ${d.relationships || 0} links` : d.status === 'started' ? 'Semantic index running in the background. Progress shows in the Knowledge workspace.' : d.message || d.status);
+    } catch (e) {
+      setNote('Reindex failed');
+    }
     setBusy(false);
   };
-  const row={display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'};
-  const lbl={fontSize:12,color:'#ccc'};
-  const sub={fontSize:11,color:'#778',marginTop:2};
-  const sel={background:'rgba(0,0,0,0.4)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:5,color:'#ddd',fontSize:12,padding:'4px 8px'};
-  return(<div style={{maxWidth:620}}>
-    <div style={{fontFamily:'Orbitron',fontSize:14,color:'#c996ff',marginBottom:4}}>🌌 KNOWLEDGE GRAPH</div>
-    <div style={{fontSize:11,color:'#889',marginBottom:14}}>Friday's second brain: the wiki as a linked galaxy plus an LLM-extracted semantic layer. The wiki markdown is always the source of truth — the graph is derived and can be rebuilt at any time.</div>
+  if (part === 'privacy') return /*#__PURE__*/React.createElement(StRow, {
+    label: "Where knowledge indexing runs",
+    desc: "Friday reads your wiki, memories and conversations to link facts into the knowledge graph. Local keeps that text on this machine, and cannot run while no local model is serving. Cloud sends it to the cloud model under your cloud consent above."
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "Where knowledge indexing runs",
+    value: kg.indexing_mode || 'local',
+    onChange: e => patch({
+      indexing_mode: e.target.value
+    }),
+    style: {
+      maxWidth: 320
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "local"
+  }, "On this machine (private, default)"), /*#__PURE__*/React.createElement("option", {
+    value: "cloud"
+  }, "In the cloud (frontier models)")));
+  if (part === 'appearance') return /*#__PURE__*/React.createElement(StRow, {
+    label: "Constellation grouping",
+    desc: "How pages cluster in the knowledge galaxy: by wiki section, by how they link, or chosen automatically."
+  }, /*#__PURE__*/React.createElement(StSelect, {
+    ariaLabel: "Constellation grouping",
+    value: kg.community_mode || 'auto',
+    onChange: e => patch({
+      community_mode: e.target.value
+    }),
+    style: {
+      maxWidth: 320
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "auto"
+  }, "Automatic"), /*#__PURE__*/React.createElement("option", {
+    value: "section"
+  }, "Wiki sections"), /*#__PURE__*/React.createElement("option", {
+    value: "links"
+  }, "Link structure")));
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-dim)',
+      lineHeight: 1.55,
+      marginBottom: 10
+    }
+  }, "The wiki is always the source of truth; the graph is derived from it and can be rebuilt at any time. Where indexing runs is set in Privacy & Approvals."), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Reindex nightly",
+    value: kg.nightly_reindex !== false,
+    onChange: () => patch({
+      nightly_reindex: kg.nightly_reindex === false
+    }),
+    desc: "At 03:30, right after memory consolidation, so new facts join the graph."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      fontWeight: 500,
+      color: 'var(--st-label)',
+      margin: '14px 0 2px'
+    }
+  }, "Sources to index"), [['wiki', 'Wiki'], ['soul', 'SOUL.md'], ['conversations', 'Conversations'], ['cognitive', 'Memories']].map(([k, label]) => /*#__PURE__*/React.createElement(StToggle, {
+    key: k,
+    label: label,
+    value: src[k] !== false,
+    onChange: () => patchSrc(k, src[k] === false)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginTop: 14,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
+    },
+    disabled: busy,
+    onClick: () => reindex('A')
+  }, "Rebuild structure"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      fontFamily: 'var(--st-font)',
+      padding: '7px 14px'
+    },
+    disabled: busy,
+    onClick: () => reindex('B')
+  }, "Run semantic index"), note && /*#__PURE__*/React.createElement("span", {
+    role: "status",
+    style: {
+      fontSize: 11.5,
+      color: 'var(--st-accent)',
+      fontFamily: 'var(--st-mono)'
+    }
+  }, note)));
+}
+// ── Cost & Usage ─────────────────────────────────────────────────────────────
+// This panel is the entire reason cost_meter exists, and it must stay
+// reachable from the settings navigation. A UI rebuild that drops the
+// rendering JSX while leaving the fetches, the useState declarations and
+// saveBudget standing behind it leaves the meter recording every call
+// correctly and delivering it to nothing — /api/costs/summary keeps
+// returning 200, so no probe that watches the backend ever notices, while a
+// month's spend runs far past a budget whose alert cannot be armed because
+// the only control that could arm it is gone.
+//
+// Notes for whoever edits this next:
+//   * by_model is first, and sorted descending. "You spent $1,190" is a number
+//     a person can only wince at. "$679 of it is one model" is one they can act on.
+//   * Nothing here is rounded or abbreviated — 2-4 decimals, real thousands
+//     separators, never "$1.2k". A softened number argues with its reader.
+//   * The scope line under the total is load-bearing, not decoration. This
+//     table is Friday's own model calls. Claude Code bills its own account and
+//     none of it lands here. A total that looks complete and isn't is worse
+//     than no total at all.
+//   * The tab mounting IS the refresh gate. The deleted version gated its
+//     useEffect on openSections.costs, a key whose only toggle went with the
+//     JSX, so the effect could never fire even in principle.
+function SettingsTabCosts() {
+  const [costSummary, setCostSummary] = useState(null);
+  const [costSeries, setCostSeries] = useState([]);
+  const [costSched, setCostSched] = useState([]);
+  const [costBudget, setCostBudget] = useState({
+    daily: 0,
+    monthly: 0,
+    daily_enabled: false,
+    monthly_enabled: false,
+    hard_stop_daily: 0,
+    hard_stop_monthly: 0,
+    hard_stop_daily_enabled: false,
+    hard_stop_monthly_enabled: false
+  });
+  // The stopping cap's live state (services/spend_guard): tripped or not,
+  // and what it halted. Read, never written, from here.
+  const [hardStop, setHardStop] = useState(null);
+  const refreshHardStop = () => apiFetch('/api/costs/hard-stop').then(r => r.json()).then(d => {
+    if (d && d.status === 'ok') setHardStop(d);
+  }).catch(() => {});
+  const [costRange, setCostRange] = useState('month');
+  const [costErr, setCostErr] = useState('');
+  const [loaded, setLoaded] = useState(false);
 
-    <div style={row}>
-      <div><div style={lbl}>Semantic indexing</div><div style={sub}>Where Tier-B LLM extraction runs — your choice, not automatic. Local: nothing ever leaves this machine. Cloud: routes through Friday's normal cloud privacy rules{(s.model_routing||{}).unrestricted_cloud?' — currently UNRESTRICTED, see Privacy & Security':''}.</div></div>
-      <select style={sel} value={kg.indexing_mode||'local'} onChange={e=>patch({indexing_mode:e.target.value})}>
-        <option value="local">Local (private, default)</option>
-        <option value="cloud">Cloud (frontier models)</option>
-      </select>
-    </div>
-    <div style={{...sub,marginTop:-6,marginBottom:9}}>Active now: <b style={{color:kg.indexing_mode==='cloud'?'#ff9f43':'#4ade80'}}>{kg.indexing_mode==='cloud'?'CLOUD':'LOCAL'}</b></div>
+  const refreshCosts = () => {
+    refreshHardStop();
+    apiFetch('/api/costs/summary?range=' + costRange).then(r => r.json()).then(d => {
+      if (d && d.status === 'ok') {
+        setCostSummary(d.summary || null);
+        setCostErr('');
+      } else {
+        setCostErr((d && d.message) || 'the cost meter did not answer');
+      }
+      setLoaded(true);
+    }).catch(() => {
+      setCostErr('could not reach the cost meter');
+      setLoaded(true);
+    });
+    apiFetch('/api/costs/timeseries?range=month').then(r => r.json()).then(d => setCostSeries(d.series || [])).catch(() => {});
+    apiFetch('/api/costs/scheduled?range=month').then(r => r.json()).then(d => setCostSched(d.scheduled || [])).catch(() => {});
+    apiFetch('/api/costs/budget').then(r => r.json()).then(d => {
+      if (d && d.budget) setCostBudget(d.budget);
+    }).catch(() => {});
+  };
+  useEffect(() => {
+    refreshCosts();
+    const id = setInterval(refreshCosts, 8000);
+    return () => clearInterval(id);
+  }, [costRange]);
 
-    <div style={row}>
-      <div><div style={lbl}>Nightly reindex</div><div style={sub}>03:30, right after memory dreaming, so new facts join the galaxy.</div></div>
-      <input type="checkbox" checked={kg.nightly_reindex!==false} onChange={e=>patch({nightly_reindex:e.target.checked})}/>
-    </div>
+  // Optimistic locally, then reconciled against what the server actually
+  // stored — set_budget merges server-side, so the response is the truth.
+  const saveBudget = patch => {
+    setCostBudget(b => Object.assign({}, b, patch));
+    apiFetch('/api/costs/budget', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(patch)
+    }).then(r => r.json()).then(d => {
+      if (d && d.budget) setCostBudget(d.budget);
+      refreshHardStop();
+    }).catch(() => {});
+  };
 
-    <div style={row}>
-      <div><div style={lbl}>Constellation grouping</div><div style={sub}>How pages cluster: by wiki section, by link structure, or automatic.</div></div>
-      <select style={sel} value={kg.community_mode||'auto'} onChange={e=>patch({community_mode:e.target.value})}>
-        <option value="auto">Auto</option>
-        <option value="section">Wiki sections</option>
-        <option value="links">Link structure</option>
-      </select>
-    </div>
+  // Money keeps every digit the meter recorded. cost_meter rounds to 4dp on
+  // the way in; this rounds no further.
+  const usd = n => '$' + Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4
+  });
+  const num = n => Number(n || 0).toLocaleString();
+  const pct = n => (Number(n || 0) * 100).toFixed(1) + '%';
 
-    <div style={{...row,borderBottom:'none'}}>
-      <div style={lbl}>Index sources</div>
-      <div style={{display:'flex',gap:14}}>
-        {[['wiki','Wiki'],['soul','SOUL.md'],['conversations','Conversations'],['cognitive','Memories']].map(([k,label])=>(
-          <label key={k} style={{fontSize:11,color:'#aab',display:'flex',gap:5,alignItems:'center'}}>
-            <input type="checkbox" checked={src[k]!==false} onChange={e=>patchSrc(k,e.target.checked)}/>{label}
-          </label>
-        ))}
-      </div>
-    </div>
+  const mono = {
+    fontFamily: 'JetBrains Mono'
+  };
+  const dim = 'rgba(255,255,255,0.35)';
 
-    <div style={{display:'flex',gap:8,marginTop:16,alignItems:'center'}}>
-      <button className="btn" disabled={busy} onClick={()=>reindex('A')}>↻ Rebuild structure</button>
-      <button className="btn" disabled={busy} style={{color:'#c996ff',borderColor:'rgba(170,120,255,0.4)'}} onClick={()=>reindex('B')}>🧠 Run semantic index</button>
-      {note&&<span style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{note}</span>}
-    </div>
-  </div>);
+  // A breakdown reads as a ranked list with a proportion bar, because the
+  // question it answers is "what is the big one", not "what is the list".
+  const breakdown = obj => {
+    const rows = Object.entries(obj || {}).map(([k, v]) => ({
+      k: k,
+      usd: (v && v.usd) || 0,
+      calls: (v && v.calls) || 0
+    })).sort((a, b) => b.usd - a.usd);
+    if (!rows.length) return /*#__PURE__*/React.createElement("div", {
+      style: Object.assign({
+        fontSize: 11,
+        color: dim
+      }, mono)
+    }, "nothing recorded in this range");
+    const peak = Math.max.apply(null, rows.map(r => r.usd).concat([0])) || 1;
+    return rows.map(r => /*#__PURE__*/React.createElement("div", {
+      key: r.k,
+      style: {
+        marginBottom: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: Object.assign({
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        gap: 10,
+        fontSize: 11
+      }, mono)
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'rgba(255,255,255,0.75)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      },
+      title: r.k
+    }, r.k), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: r.usd > 0 ? '#fff' : dim
+      }
+    }, usd(r.usd)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: dim,
+        marginLeft: 10
+      }
+    }, num(r.calls), " calls"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 4,
+        background: 'rgba(255,255,255,0.06)',
+        borderRadius: 2,
+        marginTop: 4,
+        overflow: 'hidden'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        width: Math.max(0, r.usd / peak * 100) + '%',
+        background: '#00d4ff',
+        borderRadius: 2
+      }
+    }))));
+  };
+
+  const s = costSummary;
+  // Peak is taken over the bars actually drawn. Computing it over the whole
+  // series while rendering only the tail scales every bar against a spike
+  // that is off-screen, which makes a busy month look quiet — a chart that
+  // renders wrong is a chart that lies.
+  const pts = (costSeries || []).slice(-30);
+  const peak = Math.max.apply(null, [1].concat(pts.map(p => p.usd || 0)));
+
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Spend"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 12
+    }
+  }, [['today', 'Today'], ['7d', 'Last 7 days'], ['month', 'This month']].map(([r, label]) => /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    key: r,
+    "aria-pressed": costRange === r,
+    onClick: () => setCostRange(r),
+    style: Object.assign({
+      cursor: 'pointer',
+      background: 'none',
+      fontSize: 11,
+      padding: '4px 10px',
+      borderRadius: 5,
+      border: '1px solid ' + (costRange === r ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.1)'),
+      color: costRange === r ? '#00d4ff' : 'rgba(255,255,255,0.5)'
+    }, mono)
+  }, label))), costErr && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 11,
+      color: '#fbbf24',
+      marginBottom: 10
+    }, mono)
+  }, costErr), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 30,
+      color: '#fff',
+      fontFamily: 'Orbitron'
+    }
+  }, usd(s && s.total_usd)), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      textAlign: 'right'
+    }, mono)
+  }, num(s && s.total_calls), " calls", /*#__PURE__*/React.createElement("br", null), num(((s && s.input_tokens) || 0) + ((s && s.output_tokens) || 0)), " in + out tokens")), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      marginTop: 8,
+      lineHeight: 1.5
+    }, mono)
+  }, "Friday's own model calls only. Anything Claude Code or another tool spends on its own account is billed separately and is not counted here."), (s && s.unpriced_calls > 0) && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ffb347',
+      marginTop: 6,
+      lineHeight: 1.5
+    }, mono),
+    title: "These providers' rates could not be verified against their own pricing page, so no dollar figure is shown for them rather than guessing one -- see the model breakdown below."
+  }, num(s.unpriced_calls), " call", s.unpriced_calls === 1 ? '' : 's', " this period ", s.unpriced_calls === 1 ? 'is' : 'are', " not priced (real spend, unverified rate) — not included in the total above."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-end',
+      gap: 2,
+      height: 40,
+      marginTop: 16
+    }
+  }, pts.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    title: p.date + ': ' + usd(p.usd) + ' (' + num(p.calls) + ' calls)',
+    style: {
+      flex: 1,
+      minWidth: 2,
+      height: Math.max(2, (p.usd || 0) / peak * 40) + 'px',
+      background: 'rgba(0,212,255,0.55)',
+      borderRadius: '1px 1px 0 0'
+    }
+  })), !pts.length && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, loaded ? 'No spend recorded yet.' : 'Loading...')), !!pts.length && /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 9,
+      color: dim,
+      marginTop: 5
+    }, mono)
+  }, /*#__PURE__*/React.createElement("span", null, pts[0].date), /*#__PURE__*/React.createElement("span", null, "daily, peak ", usd(peak)), /*#__PURE__*/React.createElement("span", null, pts[pts.length - 1].date))), /*#__PURE__*/React.createElement(StSection, {
+    title: "By model"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Which model the money went to. Local models meter at $0."), breakdown(s && s.by_model)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Prompt cache"
+  }, s && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 22,
+      color: '#fff',
+      fontFamily: 'Orbitron'
+    }
+  }, pct(s.cache_hit_rate)), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim
+    }, mono)
+  }, "hit rate")), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.5)',
+      marginTop: 8,
+      lineHeight: 1.6
+    }, mono)
+  }, "read from cache  ", num(s.cache_read_tokens), " tok", /*#__PURE__*/React.createElement("br", null), "written to cache ", num(s.cache_write_tokens), " tok", /*#__PURE__*/React.createElement("br", null), "fresh input     ", num(s.input_tokens), " tok"), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 8,
+      lineHeight: 1.5
+    }, mono)
+  }, "The share of input tokens served from cache at 0.1x. A rate near zero over a busy range means the prefix is being broken upstream, not that caching is unavailable."))), /*#__PURE__*/React.createElement(StSection, {
+    title: "By provider"
+  }, breakdown(s && s.by_provider)), /*#__PURE__*/React.createElement(StSection, {
+    title: "By kind"
+  }, breakdown(s && s.by_kind)), /*#__PURE__*/React.createElement(StSection, {
+    title: "By workspace"
+  }, breakdown(s && s.by_workspace)), !!(costSched && costSched.length) && /*#__PURE__*/React.createElement(StSection, {
+    title: "Scheduled jobs this month"
+  }, (costSched || []).map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.schedule_id,
+    style: Object.assign({
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 11,
+      padding: '3px 0',
+      color: 'rgba(255,255,255,0.6)'
+    }, mono)
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, r.schedule_id), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#fff',
+      flexShrink: 0,
+      marginLeft: 10
+    }
+  }, usd(r.usd))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Budget alerts"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Off by default, and left off until you switch them on here."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.daily_enabled,
+    className: 'toggle-pill ' + (costBudget.daily_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      daily_enabled: !costBudget.daily_enabled
+    })
+  }, "Daily"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "0.5",
+    value: costBudget.daily,
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      daily: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
+      daily: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.monthly_enabled,
+    className: 'toggle-pill ' + (costBudget.monthly_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      monthly_enabled: !costBudget.monthly_enabled
+    })
+  }, "Monthly"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    value: costBudget.monthly,
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      monthly: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
+      monthly: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "Hard stop"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "The cap that actually stops. When an enabled period's spend reaches its limit, Friday refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: '1px solid #ff0080',
+      background: 'rgba(255,0,128,0.08)',
+      borderRadius: 6,
+      padding: '8px 10px',
+      marginBottom: 12,
+      fontSize: 11,
+      color: '#ffb3d9'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      color: '#ff0080',
+      marginBottom: 4
+    }
+  }, "🛑 Hard cap reached — cloud work is stopped"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.hard_stop_daily_enabled,
+    className: 'toggle-pill ' + (costBudget.hard_stop_daily_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      hard_stop_daily_enabled: !costBudget.hard_stop_daily_enabled
+    })
+  }, "Daily stop"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "0.5",
+    value: costBudget.hard_stop_daily,
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      hard_stop_daily: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
+      hard_stop_daily: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "aria-pressed": !!costBudget.hard_stop_monthly_enabled,
+    className: 'toggle-pill ' + (costBudget.hard_stop_monthly_enabled ? 'on' : ''),
+    onClick: () => saveBudget({
+      hard_stop_monthly_enabled: !costBudget.hard_stop_monthly_enabled
+    })
+  }, "Monthly stop"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: dim
+    }
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    value: costBudget.hard_stop_monthly,
+    onChange: e => setCostBudget(b => Object.assign({}, b, {
+      hard_stop_monthly: parseFloat(e.target.value) || 0
+    })),
+    onBlur: e => saveBudget({
+      hard_stop_monthly: parseFloat(e.target.value) || 0
+    }),
+    style: Object.assign({
+      width: 90,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.1)',
+      borderRadius: 5,
+      padding: '5px 8px',
+      color: '#fff',
+      fontSize: 11
+    }, mono)
+  })), hardStop && Array.isArray(hardStop.recent_halts) && hardStop.recent_halts.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginBottom: 4
+    }, mono)
+  }, "Stopped by the cap (most recent first)"), hardStop.recent_halts.slice(0, 8).map((h, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: Object.assign({
+      fontSize: 10,
+      color: '#ccc',
+      padding: '2px 0',
+      borderBottom: '1px solid rgba(255,255,255,0.04)'
+    }, mono)
+  }, new Date((h.ts || 0) * 1000).toLocaleString(), " \xB7 ", h.what, " \xB7 ", usd(h.spend), " of ", usd(h.limit), " ", h.period))), /*#__PURE__*/React.createElement("div", {
+    style: Object.assign({
+      fontSize: 10,
+      color: dim,
+      marginTop: 12,
+      lineHeight: 1.5
+    }, mono)
+  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")));
 }
 
-function SettingsWS(){
+// Federation and Economy are on hold: the V6 wholeness spec says they must
+// not surface. Their panels, routes and data are untouched; setting this to
+// true puts both back in the Settings rail.
+const SETTINGS_SHOW_HELD_FEATURES = false;
+// Tab ids that earlier layouts used, from buttons, events and
+// window.__fridaySettingsTab all over the app. Each lands on the tab that now
+// holds that content, never on a blank pane.
+const SETTINGS_TAB_ALIASES = {
+  providers: 'accounts',
+  connectors: 'accounts',
+  dock: 'appearance',
+  knowledge: 'advanced',
+  work: 'advanced',
+  models: 'intelligence',
+  federation: 'general',
+  economy: 'general'
+};
+const SETTINGS_HELD_TABS = [{
+  id: 'federation',
+  label: 'Federation',
+  sub: 'Other Friday instances this one can talk to.'
+}, {
+  id: 'economy',
+  label: 'Economy',
+  sub: 'The compute-credit wallet and workspace budgets.'
+}];
+function settingsTabId(t) {
+  if (!t) return 'general';
+  if (SETTINGS_SHOW_HELD_FEATURES && (t === 'federation' || t === 'economy')) return t;
+  return SETTINGS_TAB_ALIASES[t] || t;
+}
+function SettingsWS() {
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
-  // Settings straight onto Providers. The global covers a window that is
-  // about to MOUNT (set before open); the event covers one already mounted.
-  const[tab,setTab]=useState(()=>{const t=window.__fridaySettingsTab;window.__fridaySettingsTab=null;return t||'general'});
-  useEffect(()=>{
-    const h=e=>{const t=e&&e.detail&&e.detail.tab;if(t)setTab(t);window.__fridaySettingsTab=null;};
-    window.addEventListener('friday:settings-tab',h);
-    return()=>window.removeEventListener('friday:settings-tab',h);
-  },[]);
-  const{s,save,msg}=useSettings();
-  const TABS=[
-    {id:'general',label:'General',ico:'⚡️'},
-    // Two edits, always: an entry here with no branch below gives a rail item
-    // that selects a blank pane, and a branch with no entry gives a panel
-    // nothing can reach.
-    {id:'dock',label:'Dock',ico:'\u{1F39B}️'},
-    {id:'models',label:'Models',ico:'🧠'},
-    {id:'work',label:'Work',ico:'\u{1F4CB}'},
-    {id:'providers',label:'Providers',ico:'🧩'},
-    {id:'voice',label:'Voice',ico:'🎤'},
-    {id:'privacy',label:'Privacy & Security',ico:'🔒'},
-    {id:'knowledge',label:'Knowledge Graph',ico:'🌌'},
-    {id:'federation',label:'Federation',ico:'🌐'},
-    {id:'economy',label:'Economy',ico:'💎'},
-    {id:'orchestrator',label:'Orchestrator',ico:'⚙️'},
-    {id:'connectors',label:'Connectors',ico:'🔌'},
-    {id:'about',label:'About',ico:'ℹ️'},
-  ];
-  return (
-    <div style={{display:'flex',height:'100%',minHeight:0}}>
-      <div style={{width:168,borderRight:'1px solid rgba(255,255,255,0.05)',padding:'14px 0',flexShrink:0,overflowY:'auto',background:'rgba(0,0,0,0.15)'}}>
-        <div style={{fontFamily:'Orbitron',fontSize:9,color:'rgba(255,255,255,0.22)',padding:'0 14px',marginBottom:12,letterSpacing:'.15em'}}>SETTINGS</div>
-        {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'9px 14px',background:tab===t.id?'rgba(0,212,255,0.07)':'none',border:'none',borderLeft:`3px solid ${tab===t.id?'#00d4ff':'transparent'}`,color:tab===t.id?'#00d4ff':'rgba(255,255,255,0.52)',cursor:'pointer',textAlign:'left',fontSize:12,transition:'all .15s'}}>
-            <span style={{fontSize:13,width:18,textAlign:'center',flexShrink:0}}>{t.ico}</span>
-            <span style={{fontFamily:'JetBrains Mono'}}>{t.label}</span>
-          </button>
-        ))}
-        {msg&&<div style={{padding:'10px 14px',fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{msg}</div>}
-      </div>
-      <div style={{flex:1,overflowY:'auto',padding:'24px 26px',minWidth:0}}>
-        {tab==='general'&&<SettingsTabGeneral s={s} save={save}/>}
-        {tab==='dock'&&<StSection title="Dock"><DockSettingsPanel/></StSection>}
-        {tab==='models'&&<SettingsTabModels s={s} save={save}/>}
-        {tab==='work'&&<SettingsTabWork/>}
-        {tab==='providers'&&<SettingsTabProviders s={s} save={save}/>}
-        {tab==='voice'&&<SettingsTabVoice s={s} save={save}/>}
-        {tab==='privacy'&&<SettingsTabPrivacy s={s} save={save}/>}
-        {tab==='knowledge'&&<SettingsTabKnowledge s={s} save={save}/>}
-        {tab==='federation'&&<SettingsTabFederation/>}
-        {tab==='economy'&&<SettingsTabEconomy/>}
-        {tab==='orchestrator'&&<SettingsTabOrchestrator/>}
-        {tab==='connectors'&&<SettingsTabConnectors s={s} save={save}/>}
-        {tab==='about'&&<SettingsTabAbout/>}
-      </div>
-    </div>
-  );
+  // Settings straight onto Accounts & Keys. The global covers a window that
+  // is about to MOUNT (set before open); the event covers one already mounted.
+  const [tab, setTab] = useState(() => {
+    const t = window.__fridaySettingsTab;
+    window.__fridaySettingsTab = null;
+    return settingsTabId(t);
+  });
+  useEffect(() => {
+    const h = e => {
+      const t = e && e.detail && e.detail.tab;
+      if (t) setTab(settingsTabId(t));
+      window.__fridaySettingsTab = null;
+    };
+    window.addEventListener('friday:settings-tab', h);
+    return () => window.removeEventListener('friday:settings-tab', h);
+  }, []);
+  const {
+    s,
+    save,
+    msg
+  } = useSettings();
+  // Two edits, always. An entry here with no branch in the render chain below
+  // gives a rail item that selects a blank pane; a branch with no entry here
+  // gives a panel nothing can reach. `sub` is the one line under the heading.
+  const TABS = [{
+    id: 'general',
+    label: 'General',
+    sub: 'Her name, her personality, and which workspaces the dock offers.'
+  }, {
+    id: 'intelligence',
+    label: 'Intelligence',
+    sub: 'Which model does each job, and whether it runs here or in the cloud.'
+  }, {
+    // Spend keys and the accounts Friday may use sit together: both are
+    // things a person connects once and then forgets about.
+    id: 'accounts',
+    label: 'Accounts & Keys',
+    sub: 'Model provider keys, Google accounts and tool servers.'
+  }, {
+    id: 'privacy',
+    label: 'Privacy & Approvals',
+    sub: 'What may leave this machine, what needs your sign-off, and your data.'
+  }, {
+    id: 'appearance',
+    label: 'Appearance & 3D',
+    sub: 'The dock, its depth, and how much the 3D views move and glow.'
+  }, {
+    id: 'voice',
+    label: 'Voice & Tracking',
+    sub: 'How Friday listens and speaks, and how the camera follows your head and hand.'
+  }, {
+    // This entry must never be dropped: without it the Spending panel's
+    // fetches run into nothing and budget alerts cannot be armed.
+    id: 'costs',
+    label: 'Spending',
+    sub: 'What cloud models have cost, and the limits you set.'
+  }, {
+    id: 'advanced',
+    label: 'Advanced',
+    sub: 'Rarely needed controls and diagnostics. Nothing here is required for everyday use.'
+  }].concat(SETTINGS_SHOW_HELD_FEATURES ? SETTINGS_HELD_TABS : []).concat([{
+    id: 'about',
+    label: 'About',
+    sub: 'Version, updates and credits.'
+  }]);
+  const cur = TABS.filter(t => t.id === tab)[0] || TABS[0];
+  const ok = msg && msg.indexOf('Error') !== 0;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "st-root",
+    style: {
+      display: 'flex',
+      height: '100%',
+      minHeight: 0,
+      fontFamily: 'var(--st-font)'
+    }
+  }, /*#__PURE__*/React.createElement("nav", {
+    "aria-label": "Settings sections",
+    style: {
+      width: 184,
+      borderRight: '1px solid var(--st-line)',
+      padding: '16px 0',
+      flexShrink: 0,
+      overflowY: 'auto',
+      background: 'rgba(0,0,0,0.15)',
+      display: 'flex',
+      flexDirection: 'column'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontWeight: 600,
+      color: 'var(--st-faint)',
+      padding: '0 16px',
+      marginBottom: 10,
+      letterSpacing: '.06em'
+    }
+  }, "Settings"), TABS.map(t => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: t.id
+  }, t.id === 'about' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minHeight: 12,
+      borderBottom: '1px solid var(--st-line)',
+      margin: '0 16px 8px'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: 'st-rail-btn' + (tab === t.id ? ' on' : ''),
+    "aria-current": tab === t.id ? 'page' : undefined,
+    onClick: () => setTab(t.id)
+  }, t.label)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      overflowY: 'auto',
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("header", {
+    style: {
+      position: 'sticky',
+      top: 0,
+      zIndex: 2,
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 16,
+      padding: '20px 28px 14px',
+      background: 'rgb(9,13,24)',
+      borderBottom: '1px solid var(--st-line)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      margin: 0,
+      fontSize: 17,
+      fontWeight: 600,
+      color: 'var(--st-text)'
+    }
+  }, cur.label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--st-dim)',
+      marginTop: 3,
+      lineHeight: 1.5
+    }
+  }, cur.sub)), /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    style: {
+      minWidth: 70,
+      textAlign: 'right',
+      fontSize: 11.5,
+      fontFamily: 'var(--st-mono)',
+      color: ok ? 'var(--st-ok)' : 'var(--st-danger)',
+      paddingTop: 3
+    }
+  }, msg || '')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 28px 40px',
+      maxWidth: 860
+    }
+  }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
+    s: s,
+    save: save
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabModels, {
+    s: s,
+    save: save
+  }), tab === 'accounts' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabProviders, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
+    s: s,
+    save: save,
+    part: "accounts"
+  })), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+    s: s,
+    save: save
+  }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
+    s: s,
+    save: save
+  }), tab === 'voice' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabVoice, {
+    s: s,
+    save: save
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "Head and hand tracking"
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save,
+    part: "main"
+  }))), tab === 'costs' && /*#__PURE__*/React.createElement(SettingsTabCosts, null), tab === 'advanced' && /*#__PURE__*/React.createElement(SettingsTabAdvanced, {
+    s: s,
+    save: save
+  }), SETTINGS_SHOW_HELD_FEATURES && tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), SETTINGS_SHOW_HELD_FEATURES && tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null))));
+}
+// Appearance & 3D: the dock, how far it stands out, and the 3D effects.
+function SettingsTabAppearance({
+  s,
+  save
+}) {
+  const dz = ['off', 'subtle', 'full'];
+  const cur = s.studio_dazzle || 'full';
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Dock",
+    desc: "Which workspaces the dock shows, and in what order."
+  }, /*#__PURE__*/React.createElement(DockSettingsPanel, null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 18
+    }
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save,
+    part: "dock"
+  }))), /*#__PURE__*/React.createElement(StSection, {
+    title: "3D effects"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "3D dazzle",
+    desc: "Glow, particles and motion in every 3D view. Subtle keeps the depth and drops most of the sparkle; off is the calmest and lightest on the graphics card."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "3D dazzle",
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, dz.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "aria-checked": cur === v,
+    className: 'settings-btn' + (cur === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        studio_dazzle: v
+      });
+      window.dispatchEvent(new CustomEvent('friday-dazzle', {
+        detail: v
+      }));
+    }
+  }, v.charAt(0).toUpperCase() + v.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Knowledge graph"
+  }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
+    s: s,
+    save: save,
+    part: "appearance"
+  })));
+}
+// Advanced: controls a person rarely needs, and the diagnostics a developer
+// reaches for. Moved here rather than deleted, so nothing is lost.
+function SettingsTabAdvanced({
+  s,
+  save
+}) {
+  // SettingsTabWork brings its own "Proposed work" and "Queue" sections.
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsTabWork, null), /*#__PURE__*/React.createElement(StSection, {
+    title: "Knowledge graph indexing"
+  }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
+    s: s,
+    save: save,
+    part: "advanced"
+  })), /*#__PURE__*/React.createElement(SettingsTabConnectors, {
+    s: s,
+    save: save,
+    part: "advanced"
+  }), /*#__PURE__*/React.createElement(StSection, {
+    title: "Local workers"
+  }, /*#__PURE__*/React.createElement(SettingsTabOrchestrator, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Tracking diagnostics"
+  }, /*#__PURE__*/React.createElement(TrackingPanel, {
+    s: s,
+    save: save,
+    part: "debug"
+  })));
 }
 
 
@@ -11056,7 +12175,7 @@ function App(){
   // displays — and it had drifted to claude-opus-4-8 / claude-sonnet-4-6 /
   // gemini-3.1-flash-live-preview, three ids the backend had already moved off,
   // so a user opening Settings was shown a model that was not answering them.
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-sonnet-5',subagent_model:'claude-sonnet-5',creative_model:'gemini-nano-banana-2',voice_model:'gemini-2.5-flash-native-audio-latest',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true,
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:true,voice_proactive:true,voice_context_compression:true,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-sonnet-5',subagent_model:'claude-sonnet-5',creative_model:'gemini-nano-banana-2',voice_model:'gemini-2.5-flash-native-audio-latest',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true,
     // The owner's own dock arrangement. Empty = never shaped, and
     // show_all_workspaces governs. See dockArrangement() near DOCK_GROUPS.
     dock_custom:{order:[],hidden:[]}};
@@ -11315,8 +12434,7 @@ function App(){
     return true;
   };
   const savePersonality=()=>saveAgentSettings({},{personality:personalityDraft,msg:'Personality saved'});
-  const toggleNewsTopic=(t)=>{const cur=new Set(agentSettings.news_priorities||[]);cur.has(t)?cur.delete(t):cur.add(t);saveAgentSettings({news_priorities:[...cur]})};
-  // ── Onboarding parity (Settings → Providers / Services / Hardware / Distribution / Advanced) ──
+  // ── Onboarding parity (Settings → Accounts & Keys / Services / Hardware / Distribution / Advanced) ──
   // Same backend as the wizard, so the two surfaces stay congruent.
   const[provHealth,setProvHealth]=useState({});      // provider name -> {status,detail}
   const[capList,setCapList]=useState([]);            // capability_router.route_table()
@@ -11405,7 +12523,7 @@ function App(){
   // can route to right now (available !== false — the offline-fallback statics
   // carry no availability field and must not vanish), a handful per role, zero
   // greyed-out rows, zero duplicates. The FULL browsable catalog with all the
-  // per-model metadata lives in Settings → Providers.
+  // per-model metadata lives in Settings → Accounts & Keys.
   const _mmAvail=m=>!!m&&m.available!==false;
   const _mmRole=r=>(modelCatalog[r]||[]).filter(_mmAvail);
   const curOrchId=agentSettings.orchestrator_model||orchModel.id||'';
@@ -11475,10 +12593,6 @@ function App(){
   const setRoutingMode=(mode)=>{
     const cur=agentSettings.model_routing||{};
     saveAgentSettings({model_routing:{...cur,mode}});
-  };
-  const setLocalModel=(name)=>{
-    const cur=agentSettings.model_routing||{};
-    saveAgentSettings({model_routing:{...cur,local_model:name}});
   };
   // ── Seat-gate status: DIAGNOSTIC ONLY. Nothing here gates a binding.
   // The gate is removed. Any installed model can be assigned to
@@ -12820,7 +13934,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // Global workspace opener — lets any child component (e.g. NewsWS "Share to
   // Draft") open + deep-link a workspace without prop-drilling openWs.
   useEffect(()=>{window.fridayOpenWorkspace=(t)=>{if(!t||!t.workspace)return;openWs(t.workspace);fridayNavigate(t)};return()=>{if(window.fridayOpenWorkspace)delete window.fridayOpenWorkspace}},[]);
-  // The one writer for dock_custom. Settings → Dock lives inside SettingsWS,
+  // The one writer for dock_custom. Settings → Appearance & 3D lives inside SettingsWS,
   // which reads through useSettings() — a parallel store over the same POST
   // endpoint that does not feed agentSettings. Routing the write back here means
   // the dock reshapes as the panel is edited instead of on the next full settings
@@ -12948,7 +14062,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // SitesWS portfolio manager instead.
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
   // One computation of what the dock is, shared by the dock itself and by
-  // Settings → Dock. Memoised because App re-renders on every chat token.
+  // Settings → Appearance & 3D. Memoised because App re-renders on every chat token.
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
@@ -13249,7 +14363,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                 _sync_capability_routing mirrors to capability_routing.reasoning
                 — the key dispatch actually reads. One control, one key. */}
             {/* ── 4 · Footer — the FULL catalog (every provider, every model, all
-                 metadata, key management) lives in Settings → Providers. */}
+                 metadata, key management) lives in Settings → Accounts & Keys. */}
             <button onClick={()=>{setModelMenuOpen(false);setModelMenuRole(null);window.__fridaySettingsTab='providers';try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'providers'}}))}catch(_){}if(openWins.has('settings')){bringFront('settings')}else{toggle('settings')}}}
               style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,width:'100%',background:'rgba(0,212,255,0.04)',border:'none',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4,padding:'8px 12px',cursor:'pointer',color:'rgba(0,212,255,0.85)',fontFamily:'JetBrains Mono',fontSize:10,letterSpacing:'.05em',borderRadius:'0 0 9px 9px',transition:'background .15s'}}
               onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,212,255,0.10)'}}
@@ -13797,32 +14911,37 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       </div>
       <div style={{padding:'14px 16px'}}>
         <button className="btn" style={{width:'100%',marginBottom:14,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'9px'}} onClick={()=>{setSettingsOpen(false);toggle('settings');}}>
-          ⚙️️ Open Full Settings
+          Open full Settings
         </button>
-        <div className="settings-section-title" style={{marginBottom:8}}>Quick Toggles</div>
+        <div className="settings-section-title" style={{marginBottom:8}}>Quick toggles</div>
         {/* Once the dock has been shaped by hand this toggle no longer decides
             anything — dockArrangement() ignores show_all_workspaces the moment a
             custom arrangement exists. A switch that flips and changes nothing is
             worse than one that says why it is off, so it says why. */}
         {dockShape.configured
-          ? <div className="settings-toggle" style={{opacity:0.5,cursor:'default'}} title="Your own dock arrangement is in use, so this no longer applies." onClick={()=>{setSettingsOpen(false);toggle('settings');window.__fridaySettingsTab='dock';}}>
-              <span className="settings-toggle-label">Show all workspaces — set in Settings → Dock</span>
+          ? <div className="settings-toggle" style={{opacity:0.5,cursor:'default'}} title="Your own dock arrangement is in use, so this no longer applies." onClick={()=>{window.__fridaySettingsTab='appearance';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'appearance'}}))}catch(e){}}}>
+              <span className="settings-toggle-label">Show all workspaces — set in Settings → Appearance & 3D</span>
             </div>
           : <div className="settings-toggle" onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
               <span className="settings-toggle-label">Show all workspaces</span>
               <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
             </div>}
         <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
-          <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record</span>
+          <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go off the record</span>
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
         <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>
-          <span className="settings-toggle-label">Context Logging</span>
+          <span className="settings-toggle-label">Log conversations</span>
           <div className={`settings-toggle-switch ${agentSettings.context_logging_enabled?'on':''}`}/>
         </div>
-        <div className="settings-toggle" onClick={()=>saveAgentSettings({computer_control_enabled:!agentSettings.computer_control_enabled})}>
+        {/* Computer control is high risk and needs a separate grant, so it is
+            switched only in Privacy & Approvals, beside its warning and grant
+            status. This row reports the state and goes there. */}
+        <div className="settings-toggle" role="button" tabIndex={0} title="Computer control is changed in Settings, next to its warning and grant."
+          onClick={()=>{window.__fridaySettingsTab='privacy';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'privacy'}}))}catch(e){}}}
+          onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click();}}}>
           <span className="settings-toggle-label">Computer Control</span>
-          <div className={`settings-toggle-switch ${agentSettings.computer_control_enabled?'on':''}`}/>
+          <span style={{fontSize:11,color:agentSettings.computer_control_enabled?'#ffb347':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{(agentSettings.computer_control_enabled?'On':'Off')+' \u2192'}</span>
         </div>
       </div>
     </div>

@@ -62,14 +62,14 @@ def test_the_tab_parse_still_works():
     reachable = _reachable_tab_ids(_src())
     assert len(reachable) >= 8, "parsed only %d tabs: %s" % (
         len(reachable), sorted(reachable))
-    assert "providers" in reachable
+    assert "accounts" in reachable
 
 
 def test_cost_and_usage_is_a_reachable_tab():
     """The deletion regression, stated directly."""
     reachable = _reachable_tab_ids(_src())
     assert "costs" in reachable, (
-        "Cost & Usage is unreachable -- it has lost its TABS entry or its "
+        "Spending is unreachable -- it has lost its TABS entry or its "
         "render branch. A person cannot see what they are spending. "
         "reachable tabs: %s" % sorted(reachable)
     )
