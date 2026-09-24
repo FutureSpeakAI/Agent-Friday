@@ -17,6 +17,8 @@ import time as _time
 import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
+import contextvars as _contextvars
+from agent_friday.services.reasoning_trace import current as _rt_current
 import difflib as _difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
@@ -301,7 +303,11 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
                            "text": friday_msg.get('text') or '',
                            "pinned": bool(friday_msg.get('pinned')),
                            "meta": dict(meta or {}, kind="turn",
-                                        sources=friday_msg.get('sources') or [])})
+                                        sources=friday_msg.get('sources') or [],
+                                        # The reply's reasoning trace, so the
+                                        # bubble keeps its Reasoning section
+                                        # when the conversation is reopened.
+                                        trace_id=friday_msg.get('trace_id'))})
         _conv.prune(cid)
     except Exception as _e:
         print(f"  [conversations] could not persist turn to {cid}: {_e}")
@@ -438,6 +444,68 @@ def _announce_seat_notice(conversation_id, text):
         pass
 
 
+def _traced_turn(fn):
+    """Run a chat turn under its own reasoning trace.
+
+    The trace collects every model round, reasoning segment and tool call the
+    turn makes (and nests any subagent it spawns); it is archived when the
+    turn returns. The reply gains `trace_id` and `reasoning_sources` (the
+    honesty labels of what was captured) so the chat bubble can show a
+    Reasoning section.
+
+    `/api/chat/stream` pre-assigns the id through `_PRESET_TRACE_ID` so it can
+    tell the client before the first token.
+    """
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import reasoning_trace as _rt
+        data = request.get_json(silent=True) or {}
+        msg = str(data.get("message") or "").strip()
+        label = (msg.splitlines()[0][:120] if msg else "Chat turn")
+        tid = _rt.start("chat", label, parent_id=None,
+                        turn_id=(str(data.get("turn_id") or "").strip() or None),
+                        trace_id=_PRESET_TRACE_ID.get())
+        status = "failed"
+        reply_text = None
+        try:
+            with _rt.activate(tid):
+                rv = fn(*args, **kwargs)
+            status = "complete"
+            if tid:
+                rv, reply_text = _attach_trace(rv, tid)
+                # chat() reports a crashed turn as a reply rather than raising.
+                if str(reply_text or "").startswith("[Friday offline]"):
+                    status = "failed"
+            return rv
+        finally:
+            if tid:
+                _rt.finish(tid, status, reply=reply_text)
+    return _inner
+
+
+def _attach_trace(rv, tid):
+    """Add trace_id + reasoning_sources to a JSON turn response."""
+    from agent_friday.services import reasoning_trace as _rt
+    try:
+        body, code = (rv[0], rv[1]) if isinstance(rv, tuple) else (rv, None)
+        payload = body.get_json(silent=True) if hasattr(body, "get_json") else None
+        if not isinstance(payload, dict):
+            return rv, None
+        live = _rt.live_trace(tid) or {}
+        payload["trace_id"] = tid
+        payload["reasoning_sources"] = [_rt.LABELS.get(s, s) for s in live.get("sources") or []]
+        reply = payload.get("response")
+        if reply is None and isinstance(payload.get("friday_msg"), dict):
+            reply = payload["friday_msg"].get("text")
+        out = jsonify(payload)
+        return ((out, code) if code is not None else out), reply
+    except Exception:
+        return rv, None
+
+
+_PRESET_TRACE_ID = _contextvars.ContextVar("friday_preset_trace_id", default=None)
+
+
 @chat_bp.route('/api/chat/stream', methods=['POST'])
 def chat_stream():
     """The same turn as /api/chat, delivered as it is written.
@@ -468,8 +536,12 @@ def chat_stream():
     q = _queue.Queue()
     box = {}
 
+    _tid = "tr_" + uuid.uuid4().hex[:16]
+    q.put(("trace", _tid))
+
     @copy_current_request_context
     def _run_turn():
+        _PRESET_TRACE_ID.set(_tid)
         token = _mr.DELTA_SINK.set(lambda piece: q.put(("delta", piece)))
         try:
             rv = chat()
@@ -494,6 +566,11 @@ def chat_stream():
         yield ": open" + SEP
         while True:
             kind, val = q.get()
+            if kind == "trace":
+                # Before any token: the id the client subscribes to so the
+                # reasoning spools into the bubble while the turn runs.
+                yield "data: " + json.dumps({"trace_id": val}) + SEP
+                continue
             if kind == "delta":
                 yield "data: " + json.dumps({"delta": val}) + SEP
                 continue
@@ -511,6 +588,7 @@ def chat_stream():
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
+@_traced_turn
 def chat():
     """Text chat — powered by Anthropic Claude.
 
@@ -1765,6 +1843,7 @@ def chat():
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
             'role': 'friday',
+            'trace_id': _rt_current(),
             'text': reply,
             'pinned': False,
             'sources': sources,
@@ -2028,6 +2107,7 @@ def chat_history():
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
+@_traced_turn
 def chat_send():
     """Send a message, save to persistent history, return Friday's response.
     Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}.
@@ -2313,6 +2393,7 @@ def chat_send():
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
             'role': 'friday',
+            'trace_id': _rt_current(),
             'text': reply,
             'pinned': False,
             'sources': sources,
