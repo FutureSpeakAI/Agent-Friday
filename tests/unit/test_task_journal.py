@@ -313,3 +313,34 @@ def test_state_reaches_disk_before_the_api_can_show_it(monkeypatch):
             f"memory showed {mem!r} before state.json held it (disk write carried {disk!r})"
     # and the very first terminal write happened while memory still said running
     assert terminal_writes[0][1] == "running", terminal_writes
+
+
+def test_a_log_line_reaches_the_journal_before_the_api_can_show_it(monkeypatch):
+    """A log line visible in TASKS must already be a checkpoint on disk. The
+    killed-process test depends on it: its child waits until it sees a line
+    in memory and then dies, and that line must be in the record it leaves."""
+    leaks = []
+    real = tj.append
+
+    def spy(tid, kind, **fields):
+        if kind == "checkpoint":
+            with ag.TASKS_LOCK:
+                log = list((ag.TASKS.get(tid) or {}).get("log") or [])
+            if fields.get("summary") in log:
+                leaks.append(fields.get("summary"))
+        return real(tid, kind, **fields)
+    monkeypatch.setattr(tj, "append", spy)
+    tid, _ = _run_to_completion("Checkpoint first")
+    assert any(e["kind"] == "checkpoint" for e in tj.read(tid))
+    assert not leaks, f"memory showed these lines before the journal held them: {leaks}"
+
+
+def test_the_final_status_is_the_workers_not_the_supervisors_default():
+    """The seat supervisor's end-of-task hook must not relabel a worker's
+    terminal status. A task with no tool evidence ends 'completed_unverified';
+    the hook's default 'completed' used to overwrite that in memory, so the
+    API reported a verified completion the journal did not."""
+    tid, snap = _run_to_completion("Unverified stays unverified")
+    assert snap["status"] == "completed_unverified", snap["status"]
+    ended = [e for e in tj.read(tid) if e["kind"] == "ended"]
+    assert [e["status"] for e in ended] == ["completed_unverified"], ended
