@@ -312,7 +312,12 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Dock — solid-anchored gradient backdrop so labels read against bright scene */
         .dock {
             position: fixed; bottom: 0; left: 0; right: 0; z-index: 70;
-            display: flex; justify-content: center; gap: 2px;
+            /* WRAPS AT ANY WIDTH. The row is about 1450px of buttons, so a
+               1280px window clipped both ends of it — measured -125 to 1404,
+               with Settings among the workspaces left off the screen. Wrapping
+               is not a narrow-screen special case; it is what a row of fixed
+               items has to do whenever the window is narrower than the row. */
+            display: flex; flex-wrap: wrap; justify-content: center; gap: 2px;
             padding: 6px 12px 8px;
             background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
             backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.06);
@@ -478,6 +483,12 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+        /* A CLOSED panel must not paint outside itself. Parked off-screen its
+           box is out of view, but its header row is wider than the panel and
+           overflowed back across the edge: at 360px a stray "New tab / Window"
+           toolbar sat on top of the open workspace, 152px of it in view. Only
+           the closed state is clipped, so nothing about the open panel changes. */
+        .chat-panel:not(.open) { overflow: hidden; }
 
         /* ── Undocked chat (?chrome=chat) ────────────────────────────────
            One conversation in its own browser window, so two models can be
@@ -1587,6 +1598,175 @@ window.addEventListener('DOMContentLoaded',function(){
         @media (prefers-reduced-motion: reduce) {
             :root { --dock-k: 0; }
             .dock-btn:active { animation: none; }
+        }
+
+        /* ═══ RESPONSIVE LAYOUT — full / narrow / compact ═══
+           The desktop is a window onto a scene, and the scene is the point, so
+           the rule as it narrows is: the avatar stays centred and uncovered,
+           and everything else gets out of its way in a fixed order — first the
+           decoration, then the group labels, then the dock's own depth.
+
+           What forced this: the dock is a single centred row of 22 buttons,
+           about 1450px of them. Between 769px and that width nothing handled
+           the overflow, so the row was simply CLIPPED at both ends. Measured at
+           1024px the buttons ran from -253 to 1276, which put Edition, Home,
+           News, Messages, Workflows, System and Settings — Settings — off the
+           screen with no way to reach them. Below 769px a scrollable strip
+           already saved it, so the bug lived only in the middle, which is
+           exactly the size a window gets dragged to.
+
+           The dock WRAPS rather than scrolls. A row you have to swipe hides
+           things just as effectively when you are using a mouse. */
+
+        /* Breakpoints are also written onto <html> as layout-full/narrow/compact
+           by the resize handler, so JS can make the same decision without
+           re-measuring — see applyLayoutMode(). */
+        /* 1449px, not a round number: the full-size row measures about 1450px
+           wide, so this is the width at which it stops fitting on one line. */
+        @media (max-width: 1449px) {
+            /* NARROW. Two or three shorter rows of dock, no group captions,
+               and much less depth: a floor that recedes under a wrapped dock
+               reads as a mistake rather than as a shelf. */
+            .dock {
+                flex-wrap: wrap;
+                justify-content: center;
+                row-gap: 2px;
+                padding-bottom: 6px;
+            }
+            .dock-group { padding: 0 4px; }
+            .dock-group-label { display: none; }
+            .dock-btn { min-width: 52px; padding: 5px 8px 4px; font-size: 10px; }
+            .dock-btn .ico img { width: 18px; height: 18px; }
+            .dock-sep, .dock-divider { display: none; }
+            :root { --dock-k: 0.45; }
+        }
+
+        @media (max-width: 860px) {
+            /* COMPACT. The dock is a plain wrapped grid of icons; labels under
+               them are what costs the width, so they go. A floating window
+               stops floating and becomes a sheet against the bottom of the
+               screen, because a draggable 662px panel in a 700px window is not
+               a window you can put anywhere. */
+            .dock-btn { min-width: 44px; font-size: 0; padding: 6px; gap: 0; }
+            .dock-btn > span:not(.ico):not(.dot) { display: none; }
+            .dock-btn .dot { width: 3px; height: 3px; }
+            :root { --dock-k: 0; }
+
+            .fwin {
+                left: 0 !important; right: 0 !important;
+                width: 100% !important;
+                max-width: 100vw !important;
+                border-radius: 12px 12px 0 0;
+                border-left: none; border-right: none;
+            }
+        }
+
+        /* A floating window must never hang off the edge at ANY width. At 860px
+           the Edition panel was measured 78px past the right edge; it is a
+           dragged, absolutely-positioned box, so nothing was stopping it. */
+        .fwin {
+            max-width: 100vw;
+            max-height: 100vh;
+        }
+
+        /* ═══ CONDENSED (WIDGET) MODE ═══
+           Mostly avatar, sitting on top of whatever else is being worked on.
+           Everything that is not the avatar, the voice control, what she is
+           saying, and anything waiting for a decision is hidden outright — not
+           shrunk. A widget with a miniature dock in it is not a widget.
+
+           Driven by a class rather than a width, because this is a MODE: it is
+           entered deliberately (or by the Picture-in-Picture window, which is
+           small but is not a phone). */
+        body.condensed .dock,
+        body.condensed .top-bar,
+        body.condensed .hud-header,
+        body.condensed .hud-corner,
+        body.condensed #hud-overlay,
+        body.condensed .fwin,
+        body.condensed .orb-label,
+        body.condensed #state-pill,
+        body.condensed .cmd-palette { display: none !important; }
+
+        body.condensed { overflow: hidden; }
+        body.condensed #friday-scene-canvas { z-index: 0; }
+
+        /* The widget's own furniture. Laid out so the avatar keeps the middle
+           of the window at any size the window is dragged to. */
+        #condensed-ui {
+            display: none;
+            position: fixed; inset: 0; z-index: 60;
+            grid-template-rows: 1fr auto auto;
+            pointer-events: none;
+        }
+        body.condensed #condensed-ui { display: grid; }
+        #condensed-ui > * { pointer-events: auto; }
+
+        #condensed-spacer { min-height: 0; }
+
+        #condensed-caption {
+            margin: 0 10px 6px;
+            font-family: 'Inter', sans-serif; font-size: 12px; line-height: 1.35;
+            color: rgba(226,246,255,0.92);
+            text-align: center;
+            text-shadow: 0 1px 6px rgba(0,0,0,0.95);
+            /* One line. A widget that grows a paragraph stops being a widget,
+               and the caption is a reassurance that she is saying something,
+               not a transcript. */
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            min-height: 16px;
+            pointer-events: none;
+        }
+
+        #condensed-bar {
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+            background: linear-gradient(to top, rgba(4,7,14,0.92), rgba(4,7,14,0.35) 70%, transparent);
+        }
+        #condensed-bar button {
+            display: flex; align-items: center; justify-content: center;
+            width: 40px; height: 40px; border-radius: 50%;
+            background: rgba(0,212,255,0.08);
+            border: 1px solid rgba(0,212,255,0.28);
+            color: #cfefff; cursor: pointer; font-size: 15px;
+            transition: background 0.2s, border-color 0.2s, transform 0.12s;
+        }
+        #condensed-bar button:hover { background: rgba(0,212,255,0.16); }
+        #condensed-bar button:active { transform: scale(0.94); }
+        #condensed-bar button.on {
+            background: rgba(0,255,180,0.18); border-color: rgba(0,255,180,0.6);
+            color: #d6fff1;
+        }
+
+        /* The one thing allowed to interrupt the widget: something waiting on a
+           decision. It takes the caption's place rather than stacking on top of
+           it, so the window never grows. */
+        #condensed-approval {
+            display: none;
+            margin: 0 10px 6px; padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(245,158,11,0.14);
+            border: 1px solid rgba(245,158,11,0.45);
+            font-family: 'Inter', sans-serif; font-size: 11px; color: #ffe9c2;
+            text-align: left;
+        }
+        body.condensed.has-approval #condensed-approval { display: block; }
+        body.condensed.has-approval #condensed-caption { display: none; }
+        #condensed-approval .ca-title {
+            font-weight: 600; margin-bottom: 4px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        #condensed-approval .ca-actions { display: flex; gap: 6px; }
+        #condensed-approval .ca-actions button {
+            width: auto; height: 24px; padding: 0 10px; border-radius: 6px;
+            font-size: 10px; font-family: 'Orbitron', monospace; letter-spacing: 0.06em;
+        }
+
+        /* In the PiP window the page IS the widget, so there is no expanding
+           back from inside it and no chrome to leave room for. */
+        @media all and (display-mode: picture-in-picture) {
+            #condensed-expand { display: none; }
+            #condensed-bar { padding-bottom: 8px; }
         }
 
         /* ═══ MOBILE RESPONSIVE — Android Chrome via Cloudflare tunnel ═══ */
