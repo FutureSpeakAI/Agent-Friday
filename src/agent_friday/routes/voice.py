@@ -1462,6 +1462,83 @@ def voice_warm():
     return jsonify({"status": "ok", **snap})
 
 
+@voice_bp.route('/api/voice/transcribe', methods=['POST'])
+@login_required
+def voice_transcribe():
+    """One shot of speech in, one line of text out, entirely on this machine.
+
+    Push-to-transcribe is the thing people reach for when they do not want a
+    conversation — a sentence into whatever window has focus. That makes it
+    the surface where "local by default" has to be literal rather than
+    aspirational: this route has NO cloud path, not even a fallback one, so a
+    dictated password or a sentence about someone's health cannot leave the
+    machine because a model failed to load. If the local ear is unavailable
+    this returns 503 and says why.
+
+    Accepts a WAV body (``audio/wav``) or JSON ``{audio_b64, rate}`` of raw
+    16-bit mono PCM. Returns ``{text, device, ms}``.
+    """
+    from agent_friday.services.local_voice import (
+        _wav_to_pcm16, _resample_pcm16, ASR_RATE, get_local_voice_engine)
+
+    raw = request.get_data() or b""
+    rate = ASR_RATE
+    if request.is_json or raw[:1] == b"{":
+        try:
+            body = request.get_json(force=True, silent=True) or {}
+        except Exception:
+            body = {}
+        b64 = body.get("audio_b64") or ""
+        try:
+            pcm = base64.b64decode(b64) if b64 else b""
+        except Exception:
+            return jsonify({"status": "error",
+                            "error": "audio_b64 is not valid base64"}), 400
+        rate = int(body.get("rate") or ASR_RATE)
+    elif raw[:4] == b"RIFF":
+        try:
+            pcm, rate = _wav_to_pcm16(raw)
+        except Exception as e:
+            return jsonify({"status": "error",
+                            "error": f"could not read the WAV: {e}"}), 400
+    else:
+        pcm = raw
+
+    if not pcm:
+        return jsonify({"status": "error", "error": "no audio"}), 400
+    if rate != ASR_RATE:
+        pcm = _resample_pcm16(pcm, rate, ASR_RATE)
+
+    # Long enough to be a sentence, short enough not to be a recording session
+    # someone forgot about. 16-bit mono at 16 kHz is 32000 bytes/second.
+    seconds = len(pcm) / float(ASR_RATE * 2)
+    if seconds > 120:
+        return jsonify({"status": "error",
+                        "error": "that is over two minutes of audio; "
+                                 "push-to-transcribe is for a sentence"}), 413
+
+    eng = get_local_voice_engine()
+    t0 = _time.time()
+    try:
+        asr = eng._get_asr()
+        text = asr.transcribe(pcm)
+    except Exception as e:
+        try:
+            from agent_friday.services.voice_manifest import plain_language_refusal
+            msg, _action = plain_language_refusal(e, "ear")
+        except Exception:
+            msg = f"{type(e).__name__}: {e}"
+        _log.warning("push-to-transcribe failed: %s: %s", type(e).__name__, e)
+        return jsonify({"status": "error", "error": msg,
+                        "engine": "local"}), 503
+
+    return jsonify({"status": "ok", "text": text, "engine": "local",
+                    "device": getattr(asr, "_device", None) or "cpu",
+                    "why_cpu": getattr(asr, "_why_cpu", "") or "",
+                    "audio_s": round(seconds, 2),
+                    "ms": int((_time.time() - t0) * 1000)})
+
+
 @voice_bp.route('/api/voice/setup/status')
 @login_required
 def voice_setup_status():
