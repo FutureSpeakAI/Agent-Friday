@@ -70,8 +70,9 @@ False by default. Turning it on is a better day's work than installing anything.
 
 ## 2. What was measured about Laya
 
-Installed 0.3.5, run on CPU against 40 real inbox messages with Stephen's own six
-lanes as the criteria (`tools/triage_laya.py`):
+Installed 0.3.5, run on CPU against 40 real inbox messages with the owner's own
+six lanes as the criteria (a local, one-off evaluation script; the messages and
+lanes are private and not in the repository):
 
 - **39 of 40 answers scored under 0.5 confidence.**
 - **20 of 40 collapsed into `career`** regardless of content.
@@ -265,8 +266,8 @@ re-run:
   citations retained in the session transcript.
 - Recursion depth and the depth-2 harmful-content block: instrumented call counting
   against `content_policies.evaluate_content` in the repo venv.
-- Laya's 39/40, 20/40 and 3.5 s: `tools/triage_laya.py` against
-  `~/.friday/eval/triage_set.jsonl`.
+- Laya's 39/40, 20/40 and 3.5 s: a one-off script run against a private,
+  locally labelled set of 40 messages.
 - Empty corpus: `~/.friday/decisions.jsonl` absent; `approvals.json` one record.
 - Installer tiers and sizes: `packaging/windows/requirements/*.txt`,
   `packaging/windows/lib/Deps.ps1`, `AgentFriday.spec`.

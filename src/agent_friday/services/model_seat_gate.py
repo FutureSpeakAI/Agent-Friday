@@ -194,9 +194,9 @@ def run_conformance_gate(model: str, *, provider: str = "local",
             # temperature 0.2, unchanged. RECORDED, not fixed: this gate is not
             # reproducible at 0.2 — gemma4:e2b scored 10/10, then 8/10, then
             # 8/10 across three consecutive runs, and the "failing" cases
-            # pass when replayed in isolation. honesty_battery.py:317 already
-            # documents the same effect on the other axis ("gemma4:latest at
-            # 0.2 swings between 9/10 and 7/10") and chose 0.0 for it.
+            # pass when replayed in isolation. The same variance was seen on
+            # the honesty axis ("gemma4:latest at 0.2 swings between 9/10 and
+            # 7/10"), which used 0.0.
             #
             # Setting 0.0 here was tried and is NOT an obvious improvement:
             # the `email` case then fails deterministically where it passed at
