@@ -6,9 +6,9 @@ Safety posture:
   * /scan accepts pushed raw listings (the fetcher seam) â€” the default
     LinkedIn fetcher is a stub, so no scraping happens unless a real fetcher
     is configured upstream.
-  * /apply defaults to dry_run=True; the default submitter never submits.
-    Real submission requires an explicit {"dry_run": false} AND passing the
-    engine's quality gates / confirmation thresholds.
+  * /apply PREPARES an application (cover letter, field plan) and never
+    submits it: the engine has no submitter and no result says "submitted".
+    The owner submits on the employer's site.
   * Cover letters get an optional LLM polish via the configured provider and
     fall back to the engine's template drafter.
 
@@ -123,7 +123,6 @@ def api_jobs_apply(job_id):
     result = app_engine.apply_to_job(
         job_id=job_id,
         tracker=tracker,
-        dry_run=bool(data.get("dry_run", True)),
         force_confirm=bool(data.get("force_confirm", False)),
         resume_variant=data.get("resume_variant"),
         cover_drafter=_llm_cover_drafter,

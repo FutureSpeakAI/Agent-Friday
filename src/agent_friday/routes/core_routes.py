@@ -825,14 +825,22 @@ def get_countdowns():
 
 
 # ═══════════════════════════════════════════════════════════════
-#  JOB MANAGEMENT (placeholder)
+#  JOB MANAGEMENT
 # ═══════════════════════════════════════════════════════════════
 
 @core_bp.route('/api/jobs/apply', methods=['POST'])
 def apply_job():
-    """Trigger LinkedIn Easy Apply (placeholder)."""
+    """Friday does not submit job applications. This says so plainly and
+    never reports a submission; preparing materials is
+    POST /api/pipeline/jobs/<job_id>/apply."""
     data = request.get_json(silent=True) or {}
-    return jsonify({"status": "placeholder", "message": f"Would apply to: {data.get('title', 'unknown')}"})
+    title = str(data.get('title') or 'this role')[:200]
+    return jsonify({
+        "status": "not_submitted", "submitted": False,
+        "message": (f"Friday did not apply to {title} and does not submit "
+                    f"applications. Submit it yourself on the employer's site; "
+                    f"Friday can prepare a tailored CV and cover letter first."),
+    })
 
 
 # ═══════════════════════════════════════════════════════════════

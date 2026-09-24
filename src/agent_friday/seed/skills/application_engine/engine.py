@@ -1,9 +1,14 @@
 """
-Application engine — drives the full application pipeline for a JobListing.
+Application engine — prepares an application for a JobListing.
 
-This module is deliberately I/O-light at the core: the actual resume
-generation, brand-voice check, and form submission are pluggable so
-server.py (which has the LLM clients + browser tools) can inject them.
+It builds the materials (resume reference, cover letter, ATS field plan) and
+records the preparation. It never submits: there is no submitter, and no
+result says "submitted". Submitting is irreversible and public-facing, so the
+owner does it on the employer's site. Answers to legal or demographic
+questions are left blank for the owner in every field plan.
+
+The resume builder, cover drafter and brand-voice check are pluggable so the
+routes (which have the LLM clients) can inject them.
 """
 from __future__ import annotations
 
@@ -86,6 +91,20 @@ def detect_ats(url: str, config: Dict[str, Any]) -> str:
             if needle.lower() in host or needle.lower() in url.lower():
                 return name
     return "unknown"
+
+
+def _without_sensitive_answers(plan: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Blank every planned answer to a legal or demographic question. A field
+    map that names one (an EEO block, a work-authorisation question) is the
+    owner's to answer on the form."""
+    from agent_friday.services.pdf_forms import sensitive_category
+    out = []
+    for row in plan:
+        cat = sensitive_category(row.get("field", ""), row.get("selector", ""))
+        if cat:
+            row = dict(row, value_preview="", owner_answers=cat)
+        out.append(row)
+    return out
 
 
 def ats_field_plan(ats: str, config: Dict[str, Any],
@@ -175,8 +194,13 @@ class VariantBandit:
 ResumeBuilder = Callable[[JobListing, str, Dict[str, Any]], Dict[str, Any]]
 CoverLetterDrafter = Callable[[JobListing, Dict[str, Any], Dict[str, Any]], str]
 BrandVoiceChecker = Callable[[str], Tuple[float, List[str]]]
-Submitter = Callable[[Dict[str, Any]], Dict[str, Any]]
 Notifier = Callable[[Dict[str, Any]], None]
+
+#: What the engine says about submission, on every result. The engine has no
+#: submitter: an application is sent by the owner on the employer's site.
+NOT_SUBMITTED = ("Friday did not submit this application and cannot submit "
+                 "applications. Review the prepared materials and submit it "
+                 "yourself on the employer's site.")
 
 
 def _default_resume_builder(listing: JobListing, variant: str,
@@ -216,12 +240,6 @@ def _default_brand_voice_checker(text: str) -> Tuple[float, List[str]]:
     found = [p for p in forbidden_default if p in text.lower()]
     score = 1.0 - (0.2 * len(found))
     return max(0.0, min(1.0, score)), found
-
-
-def _default_submitter(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Stub — pretends to submit, no real network call."""
-    return {"submitted": False, "reason": "no submitter wired up",
-            "would_submit_to": payload.get("source_url", "")}
 
 
 def _default_notifier(payload: Dict[str, Any]):
@@ -288,7 +306,7 @@ def evaluate_quality_gates(*, listing: JobListing, resume_pack: Dict[str, Any],
 
     # dedup_apply
     if any(a.is_active for a in tracker.applications_for(listing.job_id)):
-        failed.append("dedup_apply (already submitted)")
+        failed.append("dedup_apply (already prepared or applied)")
         hard_block = True
     else:
         passed.append("dedup_apply")
@@ -306,24 +324,29 @@ def apply_to_job(*, job_id: str,
                  candidate: Optional[Dict[str, str]] = None,
                  force_confirm: bool = False,
                  resume_variant: Optional[str] = None,
-                 dry_run: bool = False,
+                 dry_run: bool = True,
                  resume_builder: Optional[ResumeBuilder] = None,
                  cover_drafter: Optional[CoverLetterDrafter] = None,
                  brand_voice: Optional[BrandVoiceChecker] = None,
-                 submitter: Optional[Submitter] = None,
                  notifier: Optional[Notifier] = None) -> Dict[str, Any]:
     """
-    Run the application pipeline against a tracked job.
+    Prepare an application for a tracked job. Never submits it.
+
+    Builds the resume reference, the cover letter and the ATS field plan and
+    records a "triaged" application. The status is "prepared" or "blocked";
+    no status claims a submission, because nothing here can submit. The
+    owner submits on the employer's site. `dry_run` is accepted for older
+    callers and changes nothing: every run is a preparation.
 
     Returns the same shape as documented in SKILL.md.
     """
+    del dry_run
     started = time.monotonic()
     config = config or load_config()
     tracker = tracker or JobTracker().load()
     resume_builder = resume_builder or _default_resume_builder
     cover_drafter = cover_drafter or _default_cover_drafter
     brand_voice = brand_voice or _default_brand_voice_checker
-    submitter = submitter or _default_submitter
     notifier = notifier or _default_notifier
 
     listing = tracker.get_job(job_id)
@@ -365,47 +388,27 @@ def apply_to_job(*, job_id: str,
     if force_confirm:
         needs_confirm = True
 
-    # Decide outcome
-    status = "submitted"
-    submit_result: Dict[str, Any] = {}
-    if hard_block:
-        status = "blocked"
-    elif dry_run:
-        status = "dry_run"
-    elif needs_confirm:
-        status = "needs_confirmation"
-    else:
+    # Decide outcome. There is no submission branch: "prepared" hands the
+    # materials to the owner, "blocked" says a hard gate failed.
+    status = "blocked" if hard_block else "prepared"
+    field_plan: List[Dict[str, str]] = []
+    if not hard_block:
         candidate = candidate or _default_candidate_info()
         candidate.setdefault("cover_letter", cover_letter)
         candidate.setdefault("resume_path", resume_pack.get("path", ""))
-        plan = ats_field_plan(ats, config, candidate)
-        submit_payload = {
-            "ats": ats,
-            "source_url": listing.source_url,
-            "field_plan": plan,
-            "resume": resume_pack,
-            "cover_letter": cover_letter,
-        }
-        try:
-            submit_result = submitter(submit_payload) or {}
-            if not submit_result.get("submitted", False):
-                status = "submit_failed"
-        except Exception as e:
-            log.exception("submission error")
-            submit_result = {"submitted": False, "error": str(e)}
-            status = "submit_failed"
+        field_plan = _without_sensitive_answers(ats_field_plan(ats, config, candidate))
 
-    # Persist record
+    # Persist record: prepared is "triaged", never "applied".
     rec = ApplicationRecord(
         job_id=job_id,
-        stage=("applied" if status == "submitted" else "discovered"),
+        stage="triaged" if status == "prepared" else "discovered",
         ats_platform=ats,
         resume_variant=chosen_variant,
         cover_letter_variant=resume_pack.get("variant", chosen_variant) + "_cover",
         cover_letter_word_count=len(cover_letter.split()),
         quality_gates_passed=passed,
         quality_gates_failed=failed,
-        notes=(submit_result.get("reason") or submit_result.get("error") or ""),
+        notes="prepared, not submitted",
     )
     rec.history.append({"at": _now_iso(), "stage": rec.stage,
                         "note": f"status={status}"})
@@ -416,19 +419,17 @@ def apply_to_job(*, job_id: str,
         notifier({"title": f"Application blocked — {listing.title} @ {listing.company}",
                   "body": f"Gates failed: {failed}", "priority": "high",
                   "meta": {"kind": "application_blocked"}})
-    elif status == "needs_confirmation":
-        notifier({"title": f"Confirm application — {listing.title} @ {listing.company}",
-                  "body": f"Above confirmation threshold. Approve to submit.",
-                  "priority": "high",
-                  "meta": {"kind": "application_needs_confirmation",
-                           "application_id": rec.application_id}})
 
     duration_ms = _dt(started)
     result = {
         "application_id": rec.application_id,
         "job_id": job_id,
         "status": status,
+        "submitted": False,
+        "next_step": NOT_SUBMITTED,
+        "review_suggested": bool(needs_confirm),
         "ats": ats,
+        "field_plan": field_plan,
         "resume_variant": chosen_variant,
         "cover_letter": cover_letter,
         "cover_letter_word_count": rec.cover_letter_word_count,
@@ -436,7 +437,7 @@ def apply_to_job(*, job_id: str,
         "quality_gates_failed": failed,
         "brand_voice_score": voice_score,
         "brand_voice_violations": violations,
-        "submit_result": submit_result,
+        "submit_result": {"submitted": False, "reason": NOT_SUBMITTED},
         "duration_ms": duration_ms,
     }
     _record_to_skillopt(result, config)
@@ -504,11 +505,8 @@ def _record_to_skillopt(result: Dict[str, Any], config: Dict[str, Any]):
     status = result.get("status", "")
     # Treat blocked as a successful catch by the gate (accuracy=1).
     accuracy_map = {
-        "submitted": 1.0,
-        "needs_confirmation": 0.9,
+        "prepared": 0.8,
         "blocked": 1.0,        # the gate caught a bad fit
-        "dry_run": 0.8,
-        "submit_failed": 0.0,
     }
     try:
         record_skill_run(
@@ -524,7 +522,7 @@ def _record_to_skillopt(result: Dict[str, Any], config: Dict[str, Any]):
             },
             duration_ms=result.get("duration_ms", 0.0),
             cost_usd=0.0,
-            error=None if status != "submit_failed" else "submitter error",
+            error=None,
         )
     except Exception as e:
         log.warning("skillopt record failed: %s", e)
@@ -606,9 +604,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="application_engine")
     sub = parser.add_subparsers(dest="cmd")
 
-    p_apply = sub.add_parser("apply", help="Apply to a tracked job (dry-run by default)")
+    p_apply = sub.add_parser("apply", help="Prepare an application for a tracked job "
+                                           "(never submits)")
     p_apply.add_argument("job_id")
-    p_apply.add_argument("--dry-run", action="store_true", default=True)
     p_apply.add_argument("--variant", default=None)
 
     p_resp = sub.add_parser("response", help="Record a response on an application")
@@ -617,8 +615,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     if args.cmd == "apply":
-        out = apply_to_job(job_id=args.job_id, dry_run=args.dry_run,
-                           resume_variant=args.variant)
+        out = apply_to_job(job_id=args.job_id, resume_variant=args.variant)
         print(json.dumps(out, indent=2))
     elif args.cmd == "response":
         print(json.dumps(record_response(application_id=args.application_id,

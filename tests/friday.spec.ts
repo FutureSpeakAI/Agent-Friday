@@ -148,13 +148,14 @@ test.describe('Creative Endpoints', () => {
     }
   });
 
-  test('POST /api/jobs/apply returns placeholder', async ({ request }) => {
+  test('POST /api/jobs/apply never claims a submission', async ({ request }) => {
     const res = await request.post('/api/jobs/apply', {
       data: { role: 'Senior Engineer' },
     });
     expect(res.status()).toBe(200);
     const json = await res.json();
-    expect(json.status).toBe('placeholder');
+    expect(json.status).toBe('not_submitted');
+    expect(json.submitted).toBe(false);
   });
 
   test('POST /api/email/draft returns placeholder', async ({ request }) => {

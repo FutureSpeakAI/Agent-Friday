@@ -451,9 +451,12 @@ class TestJobs:
         finally:
             jfile.unlink(missing_ok=True)
 
-    def test_jobs_apply_placeholder(self, client):
+    def test_jobs_apply_never_claims_a_submission(self, client):
         resp = client.post("/api/jobs/apply", json={"title": "Staff Engineer"})
         assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["submitted"] is False and data["status"] == "not_submitted"
+        assert "would apply" not in data["message"].lower()
 
     def test_jobs_apply_response_mentions_title(self, client):
         data = client.post(

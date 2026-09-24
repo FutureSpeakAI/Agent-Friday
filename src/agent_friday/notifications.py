@@ -18,7 +18,7 @@ Every builder returns a dict with this shape:
         "body": str,            # markdown, multi-line
         "summary": str,         # one-liner for OS notifications
         "actions": [            # optional CTAs
-            {"label": "Apply", "kind": "apply_to_job", "payload": {...}}
+            {"label": "Prepare application", "kind": "apply_to_job", "payload": {...}}
         ],
         "meta": {"kind": "priority_job", "source": "job_scanner", ...},
     }
@@ -117,7 +117,7 @@ def priority_job_alert(job: Dict[str, Any]) -> Dict[str, Any]:
         meta={"kind": "priority_job", "source": "job_scanner",
               "job_id": job.get("job_id"), "score": job.get("relevance_score")},
         actions=[
-            {"label": "Apply", "kind": "apply_to_job", "payload": {"job_id": job.get("job_id")}},
+            {"label": "Prepare application", "kind": "apply_to_job", "payload": {"job_id": job.get("job_id")}},
             {"label": "Open posting", "kind": "open_url", "payload": {"url": url}} if url else None,
             {"label": "Snooze", "kind": "snooze_job", "payload": {"job_id": job.get("job_id")}},
         ],

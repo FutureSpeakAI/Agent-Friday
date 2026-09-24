@@ -2,26 +2,24 @@
 
 ## Identity
 
-Full-cycle job application skill for Agent Friday. Given a `JobListing` (and
-optional intel pack), the engine drives the entire pipeline:
+Job application preparation for Agent Friday. Given a `JobListing` (and
+optional intel pack), the engine prepares everything the owner needs to
+apply:
 
 ```
-  intel ──→ resume tailor ──→ cover letter ──→ form completion ──→ submission
-                                                                       │
-                                                                       ▼
-                                                                  tracker log
+  intel ──→ resume tailor ──→ cover letter ──→ field plan ──→ tracker log
 ```
 
-Lives at `agent_friday/seed/skills/application_engine/engine.py`. Designed to be invoked by
-the chat ("apply to this") or autonomously when `auto_apply=true` is set
-on a high-confidence priority job.
+It never submits. There is no submitter in the engine and no result status
+that claims a submission. Submitting is irreversible and public-facing, so the
+owner submits on the employer's site.
+
+Lives at `agent_friday/seed/skills/application_engine/engine.py`. Invoked by
+the chat ("prepare an application for this") or by the Career workspace.
 
 ## When this skill fires
 
-- The user says "apply to that one" / "submit application" / "tailor for X".
-- Auto-apply queue hits a job with `confidence ≥ auto_apply_threshold`.
-- Re-application: an old listing reposts with substantially changed
-  details and `quality_gates_passed` includes `relevance`.
+- The user says "prepare an application for that one" / "tailor for X".
 
 ## What this skill does
 
@@ -31,22 +29,22 @@ on a high-confidence priority job.
    role-specific bullets, ensure must-include items are present.
 3. **Cover letter.** Draft against the listing's stated priorities, cap
    at `cover_letter_max_words`. Run brand-voice check before saving.
-4. **Form completion.** Detect ATS platform (Greenhouse, Lever, Workable,
-   SmartRecruiters, other) and emit a field-by-field plan.
-5. **Submission.**
-   - Below salary floor → block and notify the user.
-   - Above confirmation threshold → require the user to OK before submit.
-   - Otherwise → submit and log.
-6. **Tracker log.** Persist an `ApplicationRecord` with the resume +
-   cover letter variants used and which quality gates passed.
+4. **Field plan.** Detect ATS platform (Greenhouse, Lever, Workable,
+   SmartRecruiters, other) and emit a field-by-field plan. Answers to legal
+   or demographic questions are left blank for the owner.
+5. **Outcome.**
+   - Below salary floor → `blocked`, and the user is notified.
+   - Otherwise → `prepared`; `review_suggested` is true above the
+     confirmation threshold.
+6. **Tracker log.** Persist an `ApplicationRecord` (stage `triaged`, never
+   `applied`) with the resume + cover letter variants used and which quality
+   gates passed.
 
 ## Inputs
 
-- `job_id` — the `JobListing` to apply to
-- `force_confirm` (optional) — request the user's explicit OK even when
-   under the confirmation threshold
+- `job_id` — the `JobListing` to prepare for
+- `force_confirm` (optional) — mark the result `review_suggested`
 - `resume_variant` (optional) — override A/B selection
-- `dry_run` (optional) — produce all artifacts but skip submission
 
 ## Outputs
 
@@ -54,7 +52,9 @@ on a high-confidence priority job.
 {
   "application_id": "app_...",
   "job_id": "job_...",
-  "status": "submitted" | "blocked" | "needs_confirmation" | "dry_run",
+  "status": "prepared" | "blocked",
+  "submitted": false,
+  "next_step": "Friday did not submit this application ...",
   "ats": "greenhouse" | "lever" | ...,
   "resume_variant": "AI_VP_v3",
   "cover_letter": "...",
@@ -70,7 +70,7 @@ on a high-confidence priority job.
 | Gate              | Pass condition                                    |
 |-------------------|---------------------------------------------------|
 | `salary_floor`    | `salary_max >= 150000` (configurable)             |
-| `salary_ceiling`  | If `salary_max >= 300000`, require confirmation   |
+| `salary_ceiling`  | If `salary_max >= 300000`, suggest a review      |
 | `must_include`    | Every must-include item appears in resume         |
 | `cover_voice`     | Cover letter passes brand-voice check             |
 | `cover_length`    | Word count ≤ `cover_letter_max_words` (450 default)|
@@ -78,7 +78,7 @@ on a high-confidence priority job.
 | `ats_supported`   | Detected ATS is in the supported list             |
 
 A failed `salary_floor` is a hard block; everything else surfaces a
-warning but doesn't stop submission unless `dry_run=true`.
+warning on the prepared result.
 
 ## A/B testing
 
@@ -105,8 +105,8 @@ finish manually.
 ## Quality bar
 
 - **Zero misfires** on the salary floor gate.
-- **No application submitted twice** for the same job_id.
-- Cover letter brand-voice score ≥ 0.75 before submission.
+- **No application prepared twice** for the same job_id.
+- Cover letter brand-voice score ≥ 0.75.
 
 ## How this skill improves itself
 
@@ -131,4 +131,4 @@ A run is successful if it:
 
 1. Surfaces a complete artifact bundle (resume + cover + field plan),
 2. Passes all configured quality gates,
-3. Either submits or hands off with all information ready for the user.
+3. Hands off with all information ready for the user to submit.
