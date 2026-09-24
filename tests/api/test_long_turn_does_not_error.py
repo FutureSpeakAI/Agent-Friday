@@ -222,18 +222,28 @@ def test_announce_tool_is_silent_with_no_sink():
     announce_tool("query_calendar", {})     # must not raise
 
 
-def test_the_agent_loop_announces_before_executing():
-    """Structural: both _execute_tool call sites announce FIRST."""
-    import pathlib
+def test_the_agent_loop_announces_before_executing(monkeypatch):
+    """Every tool call is announced before its handler runs.
+
+    Both agent loops execute through `_execute_tool`, which announces once the
+    governance check has allowed the call (an action held for approval is not
+    work that is happening, so it is not narrated). Checked by behaviour: the
+    announcement must come before the handler.
+    """
+    import agent_friday.services.agent as agent_mod
+    from agent_friday.services import model_router as mr
+    order = []
+    monkeypatch.setattr(mr, "announce_tool", lambda name, args=None: order.append(("say", name)))
+    monkeypatch.setitem(agent_mod.CLAUDE_TOOL_HANDLERS, "search_wiki",
+                        lambda inp: order.append(("run", "search_wiki")) or "ok")
+    agent_mod._execute_tool("search_wiki", {"query": "x"},
+                            session_ctx={"authenticated": True, "is_background_task": True})
+    assert order == [("say", "search_wiki"), ("run", "search_wiki")]
     src = (ROOT / "src" / "agent_friday" / "services" / "agent.py").read_text(
         encoding="utf-8", errors="replace")
-    assert src.count("announce_tool(") == 2, (
-        "expected both tool call sites to announce, found %d"
-        % src.count("announce_tool("))
-    for marker in ("announce_tool(tu.name", "announce_tool(tname"):
-        i = src.index(marker)
-        j = src.index("_execute_tool(", i)
-        assert j > i, "%s is announced AFTER the call, not before" % marker
+    loops = [src.index("def _call_claude_agent"), src.index("def _oai_agentic_loop")]
+    assert all(src.find("_execute_tool(", i) > i for i in loops), (
+        "an agent loop no longer executes through _execute_tool")
 
 
 def test_the_client_renders_tool_progress():
