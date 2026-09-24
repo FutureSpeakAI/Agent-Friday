@@ -74,11 +74,11 @@ Every action I take is classified into a permission ring and logged. Read-only
 and local writes are free; network and full-system actions require your
 authorization. The result is an auditable trail of what I did and why.
 
-### Liquid UI
+### Workspace Studio
 My interface isn't fixed. You can customize any workspace by chatting with me —
-change its look, pin notes, add quick actions — and I can grow new, purpose-built
-workspaces around how you actually work. The interface adapts to you, not the
-other way around.
+change its look, pin notes, add quick actions — and every change is versioned,
+so any of it can be rolled back. The interface adapts to you, not the other way
+around.
 
 ---
 
@@ -125,7 +125,7 @@ available; the rest you can switch on in Settings.
 - **Settings** — its own workspace (say "open settings"): providers and keys,
   model routing, voice engine and interruption mode, privacy, and appearance.
 
-Workspaces are configurable, and with the Liquid UI you can create your own.
+Workspaces are configurable, and the Workspace Studio lets you reshape each one.
 
 ---
 

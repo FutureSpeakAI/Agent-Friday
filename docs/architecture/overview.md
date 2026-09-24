@@ -49,7 +49,7 @@ graph TB
     subgraph Evolution["Self-Improvement"]
         SkillOpt["SkillOpt Engine<br/>(versioned skills)"]
         AutoRes["Auto-Research Loop<br/>(Karpathy-inspired)"]
-        LiquidUI["Liquid UI<br/>(self-evolving interface)"]
+        Studio["Workspace Studio<br/>(per-workspace customization)"]
         Personality[Personality Evolution]
         Epistemic[Epistemic Score]
     end
@@ -303,32 +303,22 @@ flowchart TD
 
 ---
 
-## Liquid UI Pipeline
+## Workspace Studio
+
+Each workspace window has a chat scoped to that workspace
+(`services/workspace_studio.py`, `routes/workspace_studio.py`). Friday either
+answers in words or returns a small declarative patch, which is sanitized,
+snapshotted and applied live without a rebuild.
 
 ```mermaid
 flowchart LR
-    Signal["Intent Signal<br/>(explicit wish or<br/>behavioral pattern)"] --> Generator["FeatureSpecGenerator<br/>Classify complexity"]
-
-    Generator --> Tier{Complexity tier?}
-
-    Tier -->|trivial < 1m| Auto["Auto-approve<br/>Hot reload"]
-    Tier -->|simple 1-5m| Quick[Quick confirm modal]
-    Tier -->|medium 5-30m| Review[Spec review + edits]
-    Tier -->|complex 30-120m| Detailed["Detailed review<br/>May spawn task"]
-    Tier -->|epic 2h+| Full["Full spec + roadmap<br/>Multi-step delivery"]
-
-    Auto --> Build["LiquidUIBuilder<br/>Generate React + Flask<br/>artifacts"]
-    Quick --> Build
-    Review --> Build
-    Detailed --> Build
-    Full --> Build
-
-    Build --> Snapshot[Create rollback snapshot]
-    Snapshot --> Deploy["Hot reload to UI<br/>(~/.friday/liquid_ui/features/)"]
-    Deploy --> SkillOpt["Register with SkillOpt<br/>Track usage as skill"]
-
-    Deploy --> Suggest["SuggestEngine watches:<br/>workspace ping-pong<br/>repeated filters<br/>error loops<br/>dwell-time collapse"]
-    Suggest -->|"≥4 occurrences"| Signal
+    Msg["Message in a<br/>workspace chat"] --> Turn["workspace_chat_turn()"]
+    Turn --> Patch{"friday-customize<br/>block in reply?"}
+    Patch -->|no| Reply[Plain reply]
+    Patch -->|yes| Sanitize["Sanitize patch<br/>(whitelisted keys,<br/>scoped CSS)"]
+    Sanitize --> Snapshot["Snapshot current state<br/>(last 40 versions kept)"]
+    Snapshot --> Apply["Apply live in the UI"]
+    Apply --> Revert["Undo / revert / restore-as-of<br/>(each itself snapshotted)"]
 ```
 
 ---
@@ -401,12 +391,8 @@ Every tool call passes through the governance gate, which:
 │       ├── best_skill.md      # Current champion artifact
 │       ├── config.json        # Weights + thresholds
 │       └── research_log.jsonl # Auto-research findings
-├── liquid_ui/                 # Self-evolving UI state
-│   ├── requests.jsonl         # Intent log
-│   ├── features/              # Feature specs + build artifacts
-│   ├── snapshots/             # Rollback snapshots (60-day retention)
-│   ├── usage.jsonl            # Feature usage events
-│   └── suggestions.jsonl      # Proactive suggestions
+├── workspace_studio/          # Per-workspace chat, customization, versions
+│   └── <workspace>.json
 ├── skills/                    # Lightweight YAML skill definitions
 ├── audio-cache/               # TTS audio cache
 └── vibe-code-logs/            # Vibe code terminal logs

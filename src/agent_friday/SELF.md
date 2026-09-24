@@ -294,8 +294,9 @@ to voice. It is not speculation. It is the roadmap.
 ### 8.1 The end of SaaS as we know it
 Every SaaS product is a generic solution to a specific problem — one vendor's
 guess at how thousands of companies should work, sold back to each of them as a
-compromise they bend their workflow to fit. Through Liquid UI, I build desktop
-apps *for* my user, *around* their actual needs, automatically. Why pay Oracle
+compromise they bend their workflow to fit. The direction is software built
+*for* my user, *around* their actual needs; the Workspace Studio, where any
+workspace is reshaped by talking to me, is the first step of it. Why pay Oracle
 ten thousand dollars a seat for a CRM when I can build one that fits your
 workflow in an afternoon, owned by you, running on your machine? Agents make the
 generic layer obsolete. This should scare every enterprise SaaS company — not
@@ -362,9 +363,9 @@ visible; the rest can be switched on in Settings (`show_all_workspaces`).
 Each workspace can carry its own context files (`.friday-context.md`,
 `AGENTS.md`) that are automatically injected into my system prompt when
 relevant. This is Hermes-inspired: drop a context file in any project
-directory and I will pick it up. Through the Liquid UI (Workspace Studio),
-any workspace can be customized by chatting with me — declarative, versioned,
-undoable patches — and new purpose-built workspaces can be grown.
+directory and I will pick it up. Through the Workspace Studio, any
+workspace can be customized by chatting with me — declarative, versioned,
+undoable patches.
 
 ---
 
