@@ -2160,7 +2160,7 @@ window.addEventListener('DOMContentLoaded',function(){
             grid-template-columns:repeat(auto-fill, minmax(min(100%, max(290px, calc((100% - 48px) / 5))), 1fr)); }
         @container news (min-width: 900px) { .news-masonry > .news-card.feature { grid-column: span 2; } }
         .news-card {
-            display:block; min-width:0; margin:0; overflow-wrap:anywhere;
+            display:block; min-width:0; margin:0;
             background:rgba(10,14,26,0.75); backdrop-filter:blur(16px) saturate(1.2);
             -webkit-backdrop-filter:blur(16px) saturate(1.2);
             border:1px solid rgba(255,255,255,0.06);
@@ -2182,7 +2182,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .news-card.feature { padding:18px; }
         .news-card.feature .news-headline { font-size:18px; line-height:1.25; }
 
-        .news-cardtop { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+        .news-cardtop { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 8px; margin-bottom:7px; }
+        /* Long headlines wrap inside their card; labels and badges keep their words whole */
+        .news-headline, .news-snippet, .fp-lead-headline, .fp-lead-snippet, .cluster-headline, .cluster-item-link { overflow-wrap:break-word; }
+        .cat-chip, .fp-badge, .breaking-badge, .source-badge, .cluster-badge { white-space:nowrap; flex-shrink:0; }
         .cat-chip {
             font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.09em; text-transform:uppercase;
             padding:2px 7px; border-radius:4px; color:var(--accent);
@@ -2191,6 +2194,15 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .src-actions { display:flex; gap:3px; opacity:0; transition:opacity 0.15s; }
         .news-card:hover .src-actions { opacity:1; }
+        /* On a card the hover actions float over its top corner, so the row
+           they would otherwise wrap onto is not left empty the rest of the time. */
+        .news-card { position:relative; }
+        .news-cardtop > .src-actions { position:absolute; top:8px; right:8px; z-index:2; padding:3px; border-radius:7px;
+            background:rgba(8,12,22,0.94); box-shadow:0 2px 10px rgba(0,0,0,0.5); pointer-events:none; }
+        .news-card:hover .news-cardtop > .src-actions, .fp-lead:hover .news-cardtop > .src-actions,
+        .news-cardtop > .src-actions:focus-within { opacity:1; pointer-events:auto; }
+        /* a touch screen has no hover: the actions stay in the row, always shown */
+        @media (hover: none) { .news-cardtop > .src-actions { position:static; opacity:1; pointer-events:auto; background:none; box-shadow:none; padding:0; } }
         .src-btn {
             border:none; cursor:pointer; font-size:12px; line-height:1; padding:3px 5px;
             border-radius:5px; background:rgba(255,255,255,0.05); color:#aeb4c2;
@@ -2349,7 +2361,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family:'Orbitron',monospace; font-size:11px; color:#ffae5b; letter-spacing:0.05em; margin-bottom:8px;
         }
         .cluster-card {
-            border-radius:10px; padding:11px 13px; margin-bottom:0; min-width:0; overflow-wrap:anywhere;
+            border-radius:10px; padding:11px 13px; margin-bottom:0; min-width:0;
             background:rgba(255,174,91,0.05); border:1px solid rgba(255,174,91,0.20); border-left:3px solid #ffae5b;
         }
         .cluster-cardtop { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
@@ -2477,7 +2489,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fp-lead.cat-science { --accent:var(--c-science); --glow:rgba(45,212,191,0.18); }
         .fp-lead.cat-media { --accent:var(--c-media); --glow:rgba(244,114,182,0.18); }
         .fp-lead-headline {
-            overflow-wrap:anywhere; font-size:clamp(19px, 2.4cqi, 30px); font-weight:700; line-height:1.18; color:#f4f6fa; cursor:pointer;
+            font-size:clamp(19px, 2.4cqi, 30px); font-weight:700; line-height:1.18; color:#f4f6fa; cursor:pointer;
             margin:6px 0 10px; transition:color 0.15s;
         }
         .fp-lead-headline:hover { color:var(--accent, #00d4ff); }
