@@ -269,3 +269,16 @@ def test_knowledge_opens_at_a_two_pane_window_size(ui):
     assert m, ui
     w, h, _ = map(int, m.groups())
     assert w >= 1000 and h >= 700
+
+
+@pytest.mark.parametrize("ui", sorted(UI))
+def test_icon_only_buttons_carry_an_aria_label(ui):
+    """A button shown as a glyph alone (the section's galaxy button; Big Bang
+    and Tour on a compact toolbar) is named for a screen reader: the rule
+    tests/icon_labels.spec.ts checks in a browser, pinned here per file."""
+    s = _text(ui)
+    for label in ("'aria-label': 'Show the ' + s.name + ' section in the galaxy'",
+                  "Big Bang: collapse everything to a point",
+                  "'Stop the tour':'Presentation tour'" if ui == "app.html"
+                  else "\"aria-label\": touring ? 'Stop the tour' : 'Presentation tour'"):
+        assert label in s, "%s: missing %r" % (ui, label)
