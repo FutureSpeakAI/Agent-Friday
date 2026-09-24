@@ -212,7 +212,7 @@ def _content_heavy_ask(model_id: str | None, *, vault: bool = False,
 
     `services.workflow_plan.looks_heavy()` was purpose-built for exactly this
     -- its own docstring says "Only ever decides whether to ASK" -- and this
-    is its wiring (see the 2026-09 gauntlet audit in docs/history/audits/).
+    is its wiring.
     A warm seat and a heavy job are independent
     facts; the load-time forecast above only ever sees the first. This is the
     second signal, OR'd in rather than replacing the first, so neither a

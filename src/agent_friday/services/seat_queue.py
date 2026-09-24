@@ -1,8 +1,8 @@
 """Per-seat task queue for Defect D (RSI loop): one job per local seat at a time.
 
-Regression case: 2026-09-21 (Monday) — multiple workflow tasks were dispatched
-onto the single-slot bonsai2 seat simultaneously. They serialized invisibly at
-the HTTP layer with no status, and the user had to cancel them by hand. This
+Regression case: multiple workflow tasks dispatched onto the single-slot bonsai2
+seat simultaneously serialize invisibly at the HTTP layer with no status, and
+the user has to cancel them by hand. This
 module gives the queue an honest, inspectable status: a second local task does
 not start — it waits, and the user can see *why* and *how long*.
 

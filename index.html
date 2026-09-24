@@ -147,9 +147,9 @@ window.addEventListener('DOMContentLoaded',function(){
         }
 
         /* ── TRACKING DEBUG OVERLAY ──────────────────────────────────────
-           Off unless Settings turns it on. Stephen tests with the camera
-           himself, and "it feels wrong" is much easier to act on when the
-           tracked point and the cursor path are visible. */
+           Off unless Settings turns it on. When testing with the camera,
+           "it feels wrong" is much easier to act on when the tracked point
+           and the cursor path are visible. */
         #tracking-debug { display: none; }
         body.tracking-debug #tracking-debug {
             display: block; position: fixed; inset: 0; z-index: 99998;
@@ -1139,10 +1139,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .task-card.running .task-card-status { color: #f59e0b; }
         .task-card.complete .task-card-status { color: #00ff80; }
         .task-card.failed .task-card-status { color: #ff0080; }
-        /* Task visibility states. Found in the browser 2026-09-06: without
-           these the INTERRUPTED and STOPPED labels inherited black on the
-           dark panel and were invisible, while the tests that pin the label
-           text stayed green. */
+        /* Task visibility states. Without these the INTERRUPTED and STOPPED
+           labels inherit black on the dark panel and are invisible, while the
+           tests that pin the label text stay green. */
         .task-card.interrupted .task-card-status { color: #f59e0b; }
         .task-card.cancelled .task-card-status { color: #aaa; }
         .task-card.running.stalled .task-card-status { color: #ff0080; }
@@ -4264,8 +4263,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 // which turns "claude-sonnet-5" into "5" and "claude-opus-5"
                 // into "5" as well, so two different models rendered the same
                 // single character and the label carried no information at
-                // all. Reported 2026-09-18: "right now when Sonnet 5 executes,
-                // I just see the numeral 5".
+                // all.
                 // Only a vendor prefix is stripped ("anthropic/claude-opus-5"
                 // -> "claude-opus-5"); everything after it is the name and is
                 // kept whole.
@@ -4621,8 +4619,8 @@ window.addEventListener('DOMContentLoaded',function(){
             // the display, Chrome takes this canvas's context away. Before this
             // handler existed the result was a permanently black desktop with no
             // explanation and no console error: the render loop kept calling a
-            // dead context, so nothing told the user what happened. Observed
-            // 2026-09-10 while NeMo loaded, with the display down to 448 MiB
+            // dead context, so nothing told the user what happened. Loading a
+            // voice model such as NeMo can take the display down to 448 MiB
             // against its 2560 MiB reserve.
             //
             // preventDefault() on the lost event is what makes a restore possible
@@ -7815,9 +7813,9 @@ function ChatSurface(props) {
       // A new conversation is not responsible for the old one's turn. Bump the
       // epoch so any reply still in flight lands in the conversation that
       // asked for it, and release the composer here immediately.
-      // Was: clear the ONE global transcript, deleting the chat he wanted to
-      // come back to. Now: create a conversation and switch to it. Nothing
-      // belonging to any other conversation is touched.
+      // Create a conversation and switch to it, rather than clearing the ONE
+      // global transcript and deleting a chat the user wants to come back to.
+      // Nothing belonging to any other conversation is touched.
       chatEpoch.current += 1;
       setChatLoad(false);
       setPausePending(null);
@@ -7889,7 +7887,7 @@ function ChatSurface(props) {
     /* THE THREAD AS A WINDOW, inside the holographic UI. This is the one the
        user actually asked for: several conversations open at once, each on
        its own seat, managed by Friday rather than by the browser. The tab
-       button beside it is the other thing he asked for and a different
+       button beside it is the other thing the user asked for and a different
        gesture - a tab leaves the machine's window manager in charge, a window
        keeps it here. */
     onClick: () => {
@@ -8054,8 +8052,8 @@ function ChatSurface(props) {
       display: 'block'
     },
     // Local-only refused (no local seat available) rather than silently
-    // answering from the cloud — this is the explicit choice the maintainer
-    // asked for: fail closed, say so, then let the user decide to switch.
+    // answering from the cloud. The rule: fail closed, say so, then let the
+    // user decide to switch.
     // Never applied automatically.
     onClick: () => apiFetch('/api/settings', {
       method: 'POST',
@@ -8186,8 +8184,8 @@ function ChatSurface(props) {
   }, /*#__PURE__*/React.createElement("span", {
     className: "label"
   },
-  /* A long turn stays his and says what it is doing. The alternative this
-     replaced was handing the chat back and pointing at another view. */
+  /* A long turn stays the user's and says what it is doing, rather than
+     handing the chat back and pointing at another view. */
   (() => {
     if (!turnStatus) return "Friday is thinking";
     const m = Math.floor((turnStatus.elapsed_s || 0) / 60);
@@ -8704,11 +8702,11 @@ function ConversationWindow({
      it a different size) cannot silently reintroduce the overlap. A constant
      here would be correct until the first time someone changed a padding.
 
-     GEOMETRY, NOT THE CLASS. The first version asked whether the dock carried
-     its `hidden` class and treated that as gone. It is not gone: `.dock.hidden`
+     GEOMETRY, NOT THE CLASS. A dock carrying its `hidden` class is not
+     necessarily gone: `.dock.hidden`
      slides away over 350ms, so for a third of a second the class says absent
-     while 86px of dock is still sitting on the screen. Worse, measured
-     2026-09-19: with the window's animations paused the transition never
+     while 86px of dock is still sitting on the screen. Worse, measured: with
+     the window's animations paused the transition never
      advances at all, and the dock sits fully visible wearing the hidden class
      indefinitely. Anything that pauses compositing does this - a background
      tab, a hidden pane, low-power mode - and prefers-reduced-motion is a
@@ -26488,8 +26486,8 @@ function NewsWS() {
   }, e.date + ' · ' + (e.slot === 'evening' ? 'PM' : 'AM'))))),
   // An edition whose editor never answered is still a real page of real
   // stories — it is just ranked, not curated. Saying so here is the whole
-  // point: this is the screen he refreshes, and for nine consecutive
-  // editions it looked identical to a curated one.
+  // point: this is the screen the user refreshes, and without it a degraded
+  // edition looks identical to a curated one.
   fp.editorial_status && fp.editorial_status.state === 'degraded' && /*#__PURE__*/React.createElement("div", {
     className: "fp-degraded"
   }, /*#__PURE__*/React.createElement("div", {
@@ -29340,10 +29338,9 @@ async function fridayChatTurn(body, onDelta, onTrace) {
                                        : 'Friday is still working on this — the '
                                          + 'connection dropped, not the turn.'));
   } catch (e) {
-    // NEVER re-send a turn that started. Re-POSTing ran it twice and billed it
-    // twice: on 2026-09-24 a dropped stream during bonsai2's silent reasoning
-    // phase produced a "connection error" AND a second execution the user could
-    // watch. `got` alone was the wrong test, because a silent turn produces no
+    // NEVER re-send a turn that started. Re-POSTing runs it twice and bills it
+    // twice: a dropped stream during bonsai2's silent reasoning phase produces
+    // a "connection error" AND a second execution the user can watch. `got` alone was the wrong test, because a silent turn produces no
     // bytes at all until its first token.
     if (started && turnId) {
       try {
@@ -29471,9 +29468,8 @@ function useModelCatalog() {
 }
 
 /* ── ModelSearchPicker ─────────────────────────────────────────────────────
-   Maintainer ruling: "This should show a dropdown with a selector and a typed
-   search input field so any model we have access to, or any model that's
-   installed, can operate within Agent Friday."
+   A dropdown with a typed search field, so any model Friday has access to, or
+   any installed model, can be picked.
 
    The old menu was a curated five-per-role list ordered by provider-declaration
    order, with Anthropic declared first — which is why the orchestrator and
@@ -29497,7 +29493,7 @@ function ModelSearchPicker({
   const needle = q.trim().toLowerCase();
   const rows = needle ? all.filter(m => ((m.id || '') + ' ' + (m.label || '') + ' ' + (m.provider_label || '') + ' ' + (m.provider || '') + ' ' + (m.seat || '')).toLowerCase().includes(needle)) : all.slice();
   // Local first, then ready, then declared order — the on-device seats are the
-  // ones he is most often reaching for and they used to be unreachable.
+  // ones the user most often reaches for, so they must never be unreachable.
   rows.sort((a, b) => (b.local ? 1 : 0) - (a.local ? 1 : 0) || (a.available === false ? 1 : 0) - (b.available === false ? 1 : 0));
   const shown = rows.slice(0, 60);
   return /*#__PURE__*/React.createElement("div", {
@@ -40563,10 +40559,9 @@ function SettingsTabGeneral({
 }
 // ── Work: what Friday intends to do, and the choice she is asking for ────────
 //
-// Maintainer ruling: "The user decides when a task is heavy; perhaps Friday
-// should present a custom workflow UI with a representation of the tasks it
-// will execute, and a series of config options for the workflow, so the user
-// can choose or select 'choose for me' as an option as well."
+// The user decides when a task is heavy. Friday presents the tasks it will
+// execute and the config options for the workflow, and the user chooses, or
+// picks 'choose for me'.
 //
 // So: Friday proposes, the user disposes. Three executions, and an option that
 // is unavailable is shown DISABLED WITH ITS REASON rather than hidden — a
@@ -40900,8 +40895,8 @@ function PauseWarning({
   onCancel,
   onNeverAsk
 }) {
-  /* Enter takes the first available option, Escape cancels. He should never
-     have to hunt for a mouse to unblock his own message. */
+  /* Enter takes the first available option, Escape cancels. The user should
+     never have to hunt for a mouse to unblock their own message. */
   useEffect(() => {
     const h = e => {
       if (e.key === 'Escape') { e.preventDefault(); onCancel && onCancel(); }
@@ -40930,8 +40925,8 @@ function PauseWarning({
       borderRadius: 9,
       padding: 12,
       // Opaque on purpose. This sits over the message list, and a translucent
-      // panel let the conversation bleed through the words he has to read to
-      // unblock himself.
+      // panel lets the conversation bleed through the words the user has to
+      // read to unblock the message.
       background: '#111726'
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -41296,9 +41291,8 @@ function suitability(m, need) {
 }
 
 /**
- * The consequence line. This is the whole point of the redesign: he could not
- * tell from the old list which choice was free and which cost a minute of
- * silence.
+ * The consequence line. This is the whole point of the picker: the user must
+ * be able to tell which choice is free and which costs a minute of silence.
  */
 function consequence(m, machine, serving) {
   const bits = [];
@@ -41339,8 +41333,8 @@ function useIntelligence(pollMs) {
   const [err, setErr] = useState(null);
   // `stalled` is the pill's third state (model-soup.md §11.3): the request
   // has been in flight for 10 s. Distinct from `err`, which only arrives at
-  // the 30 s abort; a wedged filesystem under /api/intelligence held the
-  // route for 25 s on 2026-09-17 and the pill showed "bound" throughout.
+  // the 30 s abort; a wedged filesystem under /api/intelligence can hold the
+  // route for 25 s, and without this state the pill shows "bound" throughout.
   const [stalled, setStalled] = useState(false);
   /* A fetch that fails has to SAY so. "Reading the machine..." forever is the
      same defect as everything else here — a surface that looks like it is
@@ -41365,8 +41359,8 @@ function useIntelligence(pollMs) {
       if (!r.ok) {
         // 401 after a restart is the commonest cause by far: the API token is
         // minted per process and baked into the page, so a tab opened before
-        // the restart carries a dead one. Say that, rather than making him
-        // guess whether the app is broken or half-built.
+        // the restart carries a dead one. Say that, rather than making the
+        // user guess whether the app is broken or half-built.
         setErr(r.status === 401 || r.status === 403
           ? { kind: 'stale-tab',
               what: 'This tab was loaded before the server restarted, so its access token is no longer valid.',
@@ -41516,7 +41510,7 @@ function ModelRow({ m, need, current, onPick, machine, servingId }) {
  * grouped by provider. Search widens to the whole catalogue.
  *
  * Unsuitable models are SHOWN, dimmed, with what they would need — hiding them
- * would leave him wondering where a model went.
+ * would leave the user wondering where a model went.
  */
 function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry }) {
   const [q, setQ] = useState('');
@@ -41616,7 +41610,7 @@ function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry
  *
  * It names the model that served the LAST ACTUAL TURN, from the cost ledger —
  * not the model bound in settings. Those drift apart, and a pill showing the
- * selection is how the app agreed with him for eleven minutes while serving
+ * selection lets the app agree with the user for minutes while serving
  * something else.
  */
 function QuickSwitch({ current, onPick, switching }) {
@@ -42739,7 +42733,7 @@ function SoupRow({ label, main, detail, state, reason, action }) {
 }
 
 /** The recorded cloud consent, and the one control that re-asks the question
- *  against the machine as it is now. Read-only until Stephen clicks a choice;
+ *  against the machine as it is now. Read-only until the owner clicks a choice;
  *  the POST is the same one the onboarding gate uses. */
 function CloudConsentRow({ consent, onChanged, compact }) {
   const [assess, setAssess] = useState(null);
@@ -42911,10 +42905,10 @@ function WeightsRows({ rows }) {
 }
 
 // ── TURN LIMITS (advanced) ─────────────────────────────────────────
-// Stephen: "Why does the local model seat only get 50 rounds? Bonsai2 can reason
-// across hundreds." It now gets the same 999 the cloud seat always had, and the
-// limits that actually protect anything are loop detection, a wall clock and a
-// token ceiling -- see services/turn_budget.py.
+// A local seat gets the same 999-round budget as a cloud seat: a local model
+// can reason across hundreds of rounds, and the limits that actually protect
+// anything are loop detection, a wall clock and a token ceiling -- see
+// services/turn_budget.py.
 //
 // Collapsed by default because nobody needs these to use Friday. Loop detection
 // is deliberately NOT a knob: a number nobody can reason about is how the 50
@@ -43887,7 +43881,7 @@ function VoiceStackCard({ s, save, mc }) {
 }
 // ── Settings → Voice → Mode (voice-system-clean-sheet.md §8.1 A) ─────────
 // One row of modes for the `voice_engine` setting. `auto` is gone from the
-// picker (it is read as `local`, settled 2026-09-09). A cloud mode shows its
+// picker (it is read as `local`). A cloud mode shows its
 // disclosure BEFORE it takes effect: Gemini's four lines here (with the §4.5
 // relay line), a synthesis provider's from /api/voice/cloud/disclosure.
 // Greyed rows carry the reason (no key, offline, local-only, GA rule).
@@ -44648,7 +44642,7 @@ function SettingsTabPrivacy({
     }
   }, eraseMsg)));
 }
-// WHICH SCANNER DECIDES WHETHER AN ACTION NEEDS HIS SIGN-OFF.
+// WHICH SCANNER DECIDES WHETHER AN ACTION NEEDS THE OWNER'S SIGN-OFF.
 //
 // Three states rather than two, because shadow is the whole point of the
 // rollout and a bare on/off hides it. The state lives in two generic settings
@@ -45034,10 +45028,9 @@ function SettingsTabEconomy() {
 // -- Account state: the STORE's verdict, never the record's existence -------
 // acc.health is derived server-side (services/google_accounts.account_health)
 // from the stored status plus last_sync. An account with no health block is
-// unknown-and-broken, not fine. On 2026-09-09 this surface showed two
-// needs_reauth accounts as "connected" for nine days because it rendered the
-// presence of a record as a working connection; every calendar answer Friday
-// gave in that window was confidently wrong.
+// unknown-and-broken, not fine. Rendering the presence of a record as a
+// working connection shows needs_reauth accounts as "connected" for days, and
+// every calendar answer Friday gives in that window is confidently wrong.
 const GA_STATE_COLORS = { connected: '#00ff80', needs_reauth: '#ff8c42', error: '#ff5470', disconnected: '#7a8699', unknown: '#888888' };
 function gaHealth(acc) {
   const h = acc && acc.health;
@@ -45232,8 +45225,8 @@ function DockSettingsPanel() {
       /*#__PURE__*/React.createElement("span", { style: { width: 20, textAlign: 'center' } }, w.ico),
       /*#__PURE__*/React.createElement("span", { style: { flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono' } }, w.label),
       /*#__PURE__*/React.createElement("span", { style: { ..._dim, fontSize: 10, minWidth: 44 } }, WS_GROUP_OF[id]),
-      // Stephen asked for history reachable "from the settings menu or the
-      // workspace in question." This is the settings half: open the workspace
+      // History is reachable from the settings menu or from the workspace
+      // itself. This is the settings half: open the workspace
       // with its history already showing, rather than duplicating the panel
       // in a second place where the two copies could drift.
       /*#__PURE__*/React.createElement("button", { "aria-label": "Earlier versions of " + w.label, 
@@ -48863,8 +48856,8 @@ function SettingsTabAdvanced({
 }
 
 // ── AE-0: the resource strip ────────────────────────────────────────────────
-// Shows what is claimed, by what, and what is free, so Stephen can look at his
-// machine and see WHY something is unavailable rather than watching an
+// Shows what is claimed, by what, and what is free, so the owner can look at
+// the machine and see WHY something is unavailable rather than watching an
 // operation fail with no cause attached.
 //
 // Every number here comes from /api/arbiter/status, which computes it from a
@@ -49287,7 +49280,7 @@ function App() {
       openConversation(convId);
       // Voice follows the OPEN thread, not the one that happened to be open
       // when the mic was pressed. The socket carries the thread as a query
-      // param at connect; this keeps a live session in step when he switches
+      // param at connect; this keeps a live session in step when the user switches
       // conversations mid-call. Safe no-op when voice is off.
       try {
         const _v = voiceRef.current;
@@ -49852,11 +49845,11 @@ function App() {
                           served either, so sustained silence IS the hang
                           signature. Four consecutive misses, not one, so a
                           dropped packet never masquerades as a hang. */
-  /* THE STOP BUTTON, on the turn he is watching.
+  /* THE STOP BUTTON, on the turn the user is watching.
      Raising the local round budget from 50 to parity removed the only thing
      that had ever ended a long interactive turn early. Loop detection, the
-     clock and the token ceiling are all automatic; none of them is him
-     deciding he has seen enough. The server checks between rounds, so the turn
+     clock and the token ceiling are all automatic; none of them is the user
+     deciding they have seen enough. The server checks between rounds, so the turn
      ends with its transcript intact rather than being killed mid-tool-call. */
   const stopTurn = useCallback(async () => {
     const turn = inFlightTurn.current;
@@ -49889,9 +49882,9 @@ function App() {
        guard below used to run only BEFORE the await. A poll can easily take
        longer than the 15s tick when the server is busy, so ticks overlapped:
        each one passed the guard while the previous answer was still in
-       flight, and each one released. Measured 2026-09-22 -- a single healthy
-       six-minute turn ("Please start my day", 15:12:16 to 15:18:19, which
-       streamed its reply correctly) produced about a dozen identical "that
+       flight, and each one released. Measured: a single healthy six-minute
+       turn (which streamed its reply correctly) produced about a dozen
+       identical "that
        turn ended without producing a reply" notices.
        `released` latches the verdict; `polling` keeps one poll outstanding,
        which is also what makes `misses` count CONSECUTIVE failures instead
@@ -49947,7 +49940,7 @@ function App() {
           + 'chat is yours again.');
         return;
       }
-      /* working or quiet: the turn is HIS. Report, never release. */
+      /* working or quiet: the turn is the USER'S. Report, never release. */
       setTurnStatus({
         elapsed_s: live.elapsed_s,
         label: live.label,
@@ -50537,8 +50530,8 @@ function App() {
     // is a way of typing into the conversation you are looking at; without this
     // the server fell back to conversations.resolve(None) -> Main for every
     // turn, so talking while a non-Main thread was open filed the exchange
-    // somewhere he wasn't -- the two-conversations-merging surprise he
-    // reported. convIdRef, not convId: this callback's closure can be older
+    // somewhere the user wasn't looking, and two conversations appeared to
+    // merge. convIdRef, not convId: this callback's closure can be older
     // than the thread currently on screen.
     const _qs = [];
     if (_ftok) _qs.push('t=' + encodeURIComponent(_ftok));
@@ -51766,9 +51759,7 @@ function App() {
   const [orbiting, setOrbiting] = useState([]);
   const [clearingOrbs, setClearingOrbs] = useState(false);
   /* One control that empties the desk.
-     Maintainer ruling: "there are a bunch of error orbs and reasoning orbs
-     floating on my desktop but I don't want or need them... I just hate how
-     cluttered the desktop is with all these dead orbs floating around."
+     Finished error and reasoning orbs left floating clutter the desktop.
      Per-orb dismissal and a failures-only clear-all inside a panel the user
      has to find are not enough. This lives in the top bar, appears the moment
      anything is in orbit, and says how many. */
@@ -52458,17 +52449,17 @@ function App() {
 
   // ── Never go quiet without saying so first ───────────────────────────────
   //
-  // Maintainer ruling: "Friday should always warn the user when local
-  // inference will (or might) cause her to go silent for any amount of time so
-  // they can decide if cloud or scheduling for idle time would be better."
+  // Friday always warns the user when local inference will (or might) make
+  // her go silent for any amount of time, so they can decide whether the cloud
+  // or scheduling for idle time would be better.
   //
   // The failure is not the pause, it is the UNANNOUNCED pause: the machine
   // looks hung, and you find out afterwards that the cloud would have taken
   // four seconds. So the message is HELD, not sent, until the user picks — a
   // warning they cannot act on is a notification, and notifications get ignored.
   const [pausePending, setPausePending] = useState(null); // {forecast, message}
-  /* His answer, remembered per seat. Without this the forecast was re-asked on
-     every single send and re-prompted for a question he had already answered.
+  /* The user's answer, remembered per seat. Without this the forecast is
+     re-asked on every single send, for a question already answered.
      Keyed on the model id: switching seats asks once more (correct — it is a
      genuinely new situation), and the same seat never asks twice. Persisted to
      localStorage so a reload does not restart the interrogation. */
@@ -52499,15 +52490,13 @@ function App() {
     const m = (overrideMsg || chatIn).trim();
     if (!m) return;
     opts = opts || {};
-    /* His own message renders IMMEDIATELY and synchronously. Nothing about
-       echoing what he just typed needs the server's permission.
-         This was my regression. The warn-before-silence work put an awaited
-       /api/work/forecast call ahead of the optimistic render, so on a busy
-       machine the input kept his text and the log stayed empty for several
-       seconds — at which point pressing enter again is the reasonable thing to
-       do, and he sent twice. His transcript shows it happening twice ("On the
-       agenda today is testing you", "yes please"). A latency I introduced cost
-       him duplicate turns and duplicate tokens. */
+    /* The user's own message renders IMMEDIATELY and synchronously. Nothing
+       about echoing what they just typed needs the server's permission.
+         An awaited /api/work/forecast call ahead of the optimistic render
+       leaves, on a busy machine, the text in the input and the log empty for
+       several seconds — at which point pressing enter again is the reasonable
+       thing to do, and the user sends twice: duplicate turns and duplicate
+       tokens. */
     if (!opts.alreadyShown) {
       setChatIn('');
       setChatMsgs(p => [...p, {
@@ -52652,8 +52641,8 @@ function App() {
         reasoning_sources: d.reasoning_sources || [],
         // local_only mode refused (no local seat available) rather than
         // silently answering from the cloud — offer the user an explicit
-        // choice to switch instead of a dead-end error (maintainer ruling:
-        // "fail... then ask the user if it can go into cloud only mode").
+        // choice to switch instead of a dead-end error: fail, then ask the
+        // user whether it may go into cloud-only mode.
         offer_cloud_switch: !!d.offer_cloud_switch,
         time: new Date().toLocaleTimeString()
       }]);

@@ -1,19 +1,16 @@
-"""Sending mail, which Friday could not do until 2026-09-20 and still cannot
-do alone.
+"""Sending mail, which Friday cannot do alone.
 
 THE POSITION, and why it is not the obvious one. Friday has deliberately never
 requested a Gmail send scope (`services/agent.py` refuses it in the system
 prompt, and `google_accounts.GOOGLE_MULTI_SCOPES` is read-only for mail). The
-maintainer's instruction on 2026-09-20 was "I definitely want the ability to
-send Gmail, but only with explicit authorization" — which is a different thing
-from "add a send tool".
+requirement is the ability to send Gmail, but only with explicit
+authorization — which is a different thing from "add a send tool".
 
 The difference matters because of what else is true of this machine: a nightly
-self-improvement loop runs unattended, spawns background tasks, and until
-today did so with no declared scope at all. Of every capability available
-here, "sends mail as Stephen while he is asleep" has the largest blast radius,
-and the failure is not technical — it is a real message to a real person he
-knows. So the gate is not a setting. It is structural:
+self-improvement loop runs unattended and spawns background tasks. Of every
+capability available here, "sends mail as the owner while they are asleep"
+has the largest blast radius, and the failure is not technical — it is a real
+message to a real person they know. So the gate is not a setting. It is structural:
 
   * `send()` REQUIRES an approval id and re-reads that approval from the queue
     itself. It does not accept a caller's word that approval happened.
@@ -32,7 +29,7 @@ SENDING NEEDS gmail.send, ALWAYS. The owner may also grant gmail.modify
 ("Reconnect with sending"), which Google would let send mail too; this module
 never sends on the strength of modify. Modify is used for one thing here:
 saving a draft into Gmail when the owner presses "Save draft" — writing to
-his own mailbox, not to anyone else, and never on Friday's own initiative.
+their own mailbox, not to anyone else, and never on Friday's own initiative.
 
 AFTER APPROVAL, A SHORT HOLD. An approved message waits UNDO_SECONDS (or
 until the time it was scheduled for) in a held queue on disk, and the owner
@@ -288,7 +285,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # Resolve WHICH identity this goes out as, now, and put it on the card.
     # "From" is the part of a message that cannot be corrected afterwards, and
     # an owner approving a send is approving it from a specific address of
-    # his. Guessing between two connected accounts is not a small wrong guess.
+    # theirs. Guessing between two connected accounts is not a small wrong guess.
     sendable = sendable_accounts()
     if not sendable:
         raise SendRefused(
@@ -535,7 +532,7 @@ def _mime_raw(payload: dict, extras: dict) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  DRAFTS — saved into the owner's own Gmail when he presses "Save draft"
+#  DRAFTS — saved into the owner's own Gmail when they press "Save draft"
 # ═══════════════════════════════════════════════════════════════════════════
 
 def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", cc=None,
@@ -543,7 +540,7 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
                in_reply_to: str | None = None, references: str | None = None,
                attachments=None) -> dict:
     """Write a draft into the account's Gmail Drafts. Sends nothing, asks
-    nothing: the draft sits in his own mailbox, and sending it from Friday
+    nothing: the draft sits in the owner's own mailbox, and sending it from Friday
     still goes through request_send and an approval card."""
     from agent_friday.services import google_accounts as G
     rec = G.get_account(account_id) if account_id else None
@@ -742,7 +739,7 @@ _SCHED_STARTED = False
 # and the two come apart in the only way that matters: an approved card whose
 # send failed looks, in the queue, exactly like an approved card whose send
 # worked. For anything else that would be a reporting nicety. For mail it is
-# the difference between "he thinks it went" and "it went".
+# the difference between "the owner thinks it went" and "it went".
 
 def _outbox_path():
     from agent_friday.core import FRIDAY_DIR

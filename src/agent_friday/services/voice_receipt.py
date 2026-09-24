@@ -5,14 +5,14 @@ Local voice had no log. Its entire diagnostic output was two bare ``print()``
 calls landing in a 136 MB unrotated ``server_stderr.log`` that the repo
 elsewhere describes as lost, while every other subsystem writes to
 ``friday.log``. The consequence was that a local voice failure could not be
-diagnosed after the fact — including the 2026-08-21 hang that "never speaks,
-never errors, and never times out."
+diagnosed after the fact — including a hang that "never speaks, never errors,
+and never times out."
 
 This module is the receipt channel. It writes into the logger tree that
 already exists (``friday.local_voice``), so records land in ``~/.friday/friday.log``
 under its existing ``RotatingFileHandler(10 MB x 3)`` and format. **No new log
 file and no new rotation policy** — a receipt written where nobody reads it is
-not a receipt (docs/audits/voice-session-2026-08-25-triage-and-spec.md §4).
+not a receipt.
 
 Two record shapes:
 
@@ -30,13 +30,13 @@ Two record shapes:
 **Silence is an outcome.** A turn that produces no audio leaves a record saying
 so (``outcome=silent``) rather than leaving no record at all. That is the direct
 answer to voice-mode.md's "Silence is the one failure mode audio cannot
-express" — the class of failure Stephen hit all week that left no trace.
+express" — the class of failure that otherwise leaves no trace.
 
 **No user content, ever.** The receipt records *routing*, not conversation:
 durations, byte counts, model identifiers, reason codes. No transcript text, no
 reply text, no audio. A diagnostic log that accumulates conversation content is
 a privacy liability in a product whose premise is local-first, and it would be
-read by anyone Stephen ever sends a log to.
+read by anyone the user ever sends a log to.
 """
 from __future__ import annotations
 

@@ -46,8 +46,7 @@ plain default-to-PRIVATE would still need Layer 3 to see anyway.
 `default` is a plain parameter any caller may override to whatever they
 need (this module's own callers outside egress do pass Tier.PRIVATE for
 their own reasons); it does not by itself make PRIVATE this classifier's
-built-in default (see the 2026-09 gauntlet audit in docs/history/audits/ for
-the history of this claim).
+built-in default.
 
 Import example:
     from agent_friday.services.sensitivity_classifier import classify, Tier, TIER_3_KEYWORDS

@@ -1,5 +1,5 @@
 
-<!-- NOTE (2026-08-18): the model quick switch and Settings -> Models were
+<!-- NOTE: the model quick switch and Settings -> Models were
      rebuilt in index.html, which is the file the server actually serves. This
      file is a hand-maintained JSX mirror that nothing builds from and nothing
      reads; mirroring 560 lines of new components here by hand would create a
@@ -5373,13 +5373,12 @@ function StudioWS(){
     </div>
     {loading?<div style={{color:'#999'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
     <div style={{display:'flex',flexDirection:'column',gap:12,maxWidth:680,margin:'0 auto'}}>
-      {/* NOT .reverse(). That one word is the whole of "I did not see any of
-          these creations appear in the studio": /api/creations returns newest
-          first, this flipped it to oldest first, and the nine images he had
-          just made landed at the BOTTOM of a 7,880-pixel page with
-          loading="lazy", so the browser never fetched them and he never
-          scrolled that far. Measured live: his newest image at offsetTop 7880,
-          naturalWidth 0. `filtered` is already sorted newest-first above. */}
+      {/* NOT .reverse(). /api/creations returns newest first; reversing it
+          puts the images just made at the BOTTOM of a long page with
+          loading="lazy", so the browser never fetches them and they never
+          appear unless the user scrolls that far (measured: newest image at
+          offsetTop 7880, naturalWidth 0). `filtered` is already sorted
+          newest-first above. */}
       {filtered.map((f,i)=>{
         const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';
         const dateStr=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'';
@@ -8244,7 +8243,7 @@ const VOICE_MODELS=[
   {id:'gemini-2.5-flash-native-audio-preview-09-2025',label:'Gemini 2.5 Flash Audio Preview (09-2025)',short:'Gemini 2.5 09'},
   {id:'gemini-3.1-flash-live-preview',label:'Gemini 3.1 Flash Live Preview',short:'3.1 Live'},
   {id:'gemini-2.5-flash-native-audio-preview-12-2025',label:'Gemini 2.5 Flash Audio Preview (12-2025)',short:'Gemini 2.5 12'},
-  // Both verified by a real bidiGenerateContent connect 2026-09-22.
+  // Both verified by a real bidiGenerateContent connect.
   {id:'gemini-3.8-live',label:'Gemini 3.8 Live',short:'3.8 Live'},
   {id:'gemini-3.8-live-extended-thinking',label:'Gemini 3.8 Live (extended thinking)',short:'3.8 Live+T'},
   {id:'gemini-2.5-flash',label:'Gemini 2.5 Flash',short:'Flash'},
@@ -8332,9 +8331,8 @@ function useModelCatalog(){
 }
 
 /* ── ModelSearchPicker ─────────────────────────────────────────────────────
-   Maintainer ruling: "This should show a dropdown with a selector and a typed
-   search input field so any model we have access to, or any model that's
-   installed, can operate within Agent Friday."
+   A dropdown with a typed search field, so any model Friday has access to, or
+   any installed model, can be picked.
 
    The old menu was a curated five-per-role list ordered by provider-declaration
    order, with Anthropic declared first — which is why the orchestrator and
@@ -8354,7 +8352,7 @@ function ModelSearchPicker({catalog,value,onPick,autoFocus,placeholder}){
     ? all.filter(m=>((m.id||'')+' '+(m.label||'')+' '+(m.provider_label||'')+' '+(m.provider||'')+' '+(m.seat||'')).toLowerCase().includes(needle))
     : all.slice();
   // Local first, then ready, then declared order — the on-device seats are the
-  // ones he is most often reaching for and they used to be unreachable.
+  // ones the user most often reaches for, so they must never be unreachable.
   rows.sort((a,b)=>((b.local?1:0)-(a.local?1:0))||((a.available===false?1:0)-(b.available===false?1:0)));
   const shown=rows.slice(0,60);
   return <div style={{display:'flex',flexDirection:'column',minHeight:0}}>
@@ -14001,7 +13999,7 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
   </div>;
 }
-// WHICH SCANNER DECIDES WHETHER AN ACTION NEEDS HIS SIGN-OFF.
+// WHICH SCANNER DECIDES WHETHER AN ACTION NEEDS THE OWNER'S SIGN-OFF.
 //
 // Three states rather than two, because shadow is the whole point of the
 // rollout and a bare on/off hides it. The state lives in two generic settings
@@ -14297,8 +14295,8 @@ function SettingsTabEconomy(){
 // Account state is read from the STORE's verdict (acc.health, derived server-side
 // from status + last_sync), never from the account record merely existing. An
 // account with no health block is treated as unknown-and-broken, not as fine:
-// on 2026-09-09 this surface showed two needs_reauth accounts as "connected"
-// for nine days because it rendered presence instead of function.
+// rendering presence instead of function shows needs_reauth accounts as
+// "connected" for days.
 const GA_STATE_COLORS={connected:'#00ff80',needs_reauth:'#ff8c42',error:'#ff5470',disconnected:'#7a8699',unknown:'#888888'};
 function gaHealth(acc){
   const h=(acc&&acc.health)||null;
@@ -16780,8 +16778,8 @@ function SettingsTabAdvanced({
 
 
 // ── AE-0: the resource strip ────────────────────────────────────────────────
-// Shows what is claimed, by what, and what is free, so Stephen can look at his
-// machine and see WHY something is unavailable rather than watching an
+// Shows what is claimed, by what, and what is free, so the owner can look at
+// the machine and see WHY something is unavailable rather than watching an
 // operation fail with no cause attached.
 //
 // Every number here comes from /api/arbiter/status, which computes it from a
@@ -18863,9 +18861,9 @@ function App(){
 
   // ── Never go quiet without saying so first ───────────────────────────────
   //
-  // Maintainer ruling: "Friday should always warn the user when local
-  // inference will (or might) cause her to go silent for any amount of time so
-  // they can decide if cloud or scheduling for idle time would be better."
+  // Friday always warns the user when local inference will (or might) make
+  // her go silent for any amount of time, so they can decide whether the cloud
+  // or scheduling for idle time would be better.
   //
   // The failure is not the pause, it is the UNANNOUNCED pause: the machine
   // looks hung, and you find out afterwards that the cloud would have taken
@@ -18874,16 +18872,14 @@ function App(){
   const[pausePending,setPausePending]=useState(null);   // {forecast, message}
   const sendChat=async(overrideMsg,opts)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;
     opts=opts||{};
-    /* His own message renders IMMEDIATELY and synchronously. Nothing about
-       echoing what he just typed needs the server's permission.
+    /* The user's own message renders IMMEDIATELY and synchronously. Nothing
+       about echoing what they just typed needs the server's permission.
 
-       This was my regression. The warn-before-silence work put an awaited
-       /api/work/forecast call ahead of the optimistic render, so on a busy
-       machine the input kept his text and the log stayed empty for several
-       seconds — at which point pressing enter again is the reasonable thing to
-       do, and he sent twice. His transcript shows it happening twice ("On the
-       agenda today is testing you", "yes please"). A latency I introduced cost
-       him duplicate turns and duplicate tokens. */
+       An awaited /api/work/forecast call ahead of the optimistic render
+       leaves, on a busy machine, the text in the input and the log empty for
+       several seconds — at which point pressing enter again is the reasonable
+       thing to do, and the user sends twice: duplicate turns and duplicate
+       tokens. */
     if(!opts.alreadyShown){
       setChatIn('');
       setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);
@@ -19056,7 +19052,7 @@ function App(){
             {orchModel.short}
             {/* When the last reply came from something other than the bound
                 seat, SAY SO in the pill rather than showing the selection and
-                letting him find out eleven minutes later. */}
+                letting the user find out minutes later. */}
             {seatMismatch&&<span title={'Your selection is '+curOrchId+', but the last reply was actually generated by '+lastServed.model+(lastServed.seat?' ('+lastServed.seat+' seat)':'')+'. The selection has not taken effect yet — it may still be loading, or it may not be the key this path dispatches on.'}
               style={{fontSize:9,padding:'0 4px',borderRadius:3,background:'rgba(245,158,11,0.14)',border:'1px solid rgba(245,158,11,0.45)',color:'#f59e0b',fontFamily:'JetBrains Mono',whiteSpace:'nowrap'}}>
               ⚠ serving {String(lastServed.model).split('/').pop().slice(0,18)}
@@ -19543,7 +19539,7 @@ function App(){
       </div>
       {/* Failed orbs — persistent, but now clearable.
           They were kept past the 30s success timer so a failure could not
-          vanish before he looked at it. Nothing could acknowledge one, so
+          vanish before the user looked at it. Nothing could acknowledge one, so
           "persistent" became "permanent" and they accumulated around the
           avatar. Each one leaves individually; the header clears them all. */}
       {failedProcs.length>0&&<div style={{padding:'6px 10px 2px'}}>

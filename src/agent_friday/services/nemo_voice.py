@@ -123,8 +123,8 @@ def nemo_deps_installed() -> bool:
     return bool(d["nemo"] and d["torch"] and d["nltk"])
 
 
-#: How long one GPU reading stays good for. Measured 2026-09-10 on the
-#: reference machine: every health poll re-ran a torch CUDA query AND an
+#: How long one GPU reading stays good for. Measured on the reference
+#: machine without a cache: every health poll re-ran a torch CUDA query AND an
 #: ``nvidia-smi`` subprocess, 12 times a minute steady and 47 in the minute a
 #: Gemini Live session was running -- with NeMo not in the loop at all. Those
 #: spawns share the process with the audio bridge, and the audio was skipping.
@@ -262,9 +262,9 @@ def _probe_gpu_status() -> dict:
                 info.update(_contention_probe(info["vram_free_gb"]))
                 # ADMISSION TAKES THE CONSERVATIVE FIGURE. torch's number is
                 # what an allocation would obtain by making the driver page
-                # other work out; admitting on it is how the display got
-                # starved to 448 MiB against a 2,560 MiB reserve (2026-09-10
-                # 08:38) and the holographic scene died. torch's verdict is
+                # other work out; admitting on it starves the display (to 448
+                # MiB against a 2,560 MiB reserve) and kills the holographic
+                # scene. torch's verdict is
                 # kept as `sufficient_reachable` for reporting; `sufficient`
                 # -- the field every admission path reads -- is nvidia-smi's
                 # whenever nvidia-smi answered.
@@ -346,11 +346,10 @@ def _contention_probe(torch_free_gb: float) -> dict:
     make it for the user. (This non-gating contract is deliberate; see
     docs/design/active/local-voice-repair-and-native-audio.md §4.4 R3.4.)
 
-    What changed, and why: this probe previously reported ``contended`` only
-    when the real figure fell below the ASR working set — so on the reference
-    machine, measured 2026-09-09, torch reported 11.6 GB free while nvidia-smi
-    reported 3.1 GB, and because 3.1 > 3.0 the probe said ``contended: False``
-    and health reported "NeMo GPU voice ready". A 8.5 GB disagreement between
+    Why: reporting ``contended`` only when the real figure falls below the
+    ASR working set fails like this — on the reference machine torch reported
+    11.6 GB free while nvidia-smi reported 3.1 GB, and because 3.1 > 3.0 the
+    probe said ``contended: False`` and health reported "NeMo GPU voice ready". A 8.5 GB disagreement between
     the two authorities produced a clean bill of health by a margin of 0.1 GB.
     That is not a measurement, it is a coin landing on its edge.
 
@@ -548,10 +547,10 @@ class NeMoASR:
             if self._model is not None:
                 return
             # ONLY say "downloading" when something is actually going to be
-            # downloaded. This line used to fire unconditionally on every GPU
-            # voice activation, so a user with 2.9 GB of correctly-cached
-            # checkpoints was told Friday was fetching 1.5 GB every single time
-            # he opened GPU voice — which is indistinguishable, from the
+            # downloaded. Firing unconditionally on every GPU voice
+            # activation tells a user with 2.9 GB of correctly-cached
+            # checkpoints that Friday is fetching 1.5 GB every single time
+            # they open GPU voice — which is indistinguishable, from the
             # outside, from Friday actually re-downloading them. The check is
             # one call that already existed.
             _cached = nemo_models_ready()

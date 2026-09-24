@@ -412,19 +412,19 @@ _LOOPBACK_ADDRS = {'127.0.0.1', '::1', 'localhost'}
 #:
 #: THIS IS A SECURITY BOUNDARY, and it has been wrong in both directions.
 #:
-#: Too permissive (found 2026-09-24): `friday_startup.bat`/`.vbs` ran
-#: `cloudflared tunnel --url http://localhost:3000`, publishing the whole API on
+#: Too permissive: a launcher that runs
+#: `cloudflared tunnel --url http://localhost:3000` publishes the whole API on
 #: a public trycloudflare URL. cloudflared connects from LOOPBACK, so every
-#: tunnelled request arrived with remote_addr == '127.0.0.1', read as local, and
-#: was auto-authenticated as the machine's owner -- `@login_required` routes and
-#: the approval endpoints included. A tunnel had been up about two days.
+#: tunnelled request arrives with remote_addr == '127.0.0.1', reads as local, and
+#: is auto-authenticated as the machine's owner -- `@login_required` routes and
+#: the approval endpoints included.
 #:
-#: Too strict (found the same day, minutes after the first fix): treating the
-#: mere PRESENCE of a forwarding header as proof of remoteness locked Stephen out
-#: of his own machine. He browses `https://agent.friday`, which is Friday's OWN
-#: presentation proxy -- `ops/Caddyfile`, `bind 127.0.0.1 ::1`, `reverse_proxy
-#: 127.0.0.1:3000` -- and Caddy adds `X-Forwarded-For: 127.0.0.1`. He was asked
-#: for a password that exists only because a launcher sets `FRIDAY_PASSWORD`.
+#: Too strict: treating the mere PRESENCE of a forwarding header as proof of
+#: remoteness locks the owner out of their own machine. The UI is browsed at
+#: `https://agent.friday`, which is Friday's OWN presentation proxy --
+#: `ops/Caddyfile`, `bind 127.0.0.1 ::1`, `reverse_proxy 127.0.0.1:3000` -- and
+#: Caddy adds `X-Forwarded-For: 127.0.0.1`. The owner is then asked for a
+#: password that exists only because a launcher sets `FRIDAY_PASSWORD`.
 #:
 #: So the question is not "was this forwarded" but "was it forwarded from
 #: somewhere on THIS MACHINE". A forwarded request is local only when all of:
@@ -811,7 +811,7 @@ def _persist_vibe_terminals() -> None:
     right now, so a write failure here is swallowed rather than raised.
 
     The temp file carries the pid so two writers cannot land on one name. A
-    shared temp name is exactly the defect fixed in _save_settings this week:
+    shared temp name is exactly the defect _save_settings guards against:
     concurrent writers interleave into a half-written file. Here that file is
     the sole evidence deciding whether a live terminal gets force-killed, so a
     torn write is not merely lost state.
@@ -853,7 +853,8 @@ def _read_vibe_state() -> dict:
 
 # ── Paths ─────────────────────────────────────────────────────
 # Two different questions, two different answers — conflating them is what
-# made FRIDAY_HOME decorative (docs/history/audits/friday-home-isolation-gap-2026-08-31.md).
+# made FRIDAY_HOME decorative: a setting that some paths honour and others
+# ignore isolates nothing.
 #
 #   HOME       — the human's own home directory. Desktop, ~/Projects, the
 #                sandbox root that bounds which files Friday may read, the
@@ -1014,11 +1015,10 @@ class _ResilientRotatingFileHandler(logging.handlers.RotatingFileHandler):
     handleError, which prints "--- Logging error ---" and a full traceback to
     stderr for every record it could not write.
 
-    Measured 2026-09-22: friday.log froze at 10,485,736 bytes at 15:10 and
-    never advanced again; server_stderr.log grew at 5.6 GB/hour. Three hours
-    with no application log -- and a dark friday.log is precisely the signal
-    readers use to conclude the process has silently hung, so a working Friday
-    looked like a wedged one.
+    Without this, friday.log freezes at its roll size (10,485,736 bytes) and
+    never advances again while server_stderr.log grows at gigabytes an hour.
+    A dark friday.log is precisely the signal readers use to conclude the
+    process has silently hung, so a working Friday looks like a wedged one.
 
     An oversized log is a far smaller problem than no log, so a roll that
     cannot happen is announced once and then skipped, with a backoff so the
@@ -2026,10 +2026,10 @@ DEFAULT_SETTINGS = {
     # Top-level wiki sections whose pages never enter the ambient knowledge
     # block for a cloud provider and are encrypted at rest with the vault
     # key (services/wiki_engine._wiki_encrypted_sections, knowledge_graph/
-    # integration.knowledge_context_block). Read by both since 2026-08, but
-    # ABSENT here until 2026-09-17, so the whitelist read above discarded it
-    # on every load: the feature could not be switched on from settings.json
-    # at all. The Privacy tab's checklist writes it (model-soup.md §11.4).
+    # integration.knowledge_context_block). Read by both, so it MUST be
+    # declared here: the whitelist read above discards an undeclared key on
+    # every load, and the feature could then not be switched on from
+    # settings.json at all. The Privacy tab's checklist writes it (model-soup.md §11.4).
     "wiki_encrypted_sections": [],
     # Absolute path of an owner-chosen folder that receives a copy of every
     # wiki write and delete (services/wiki_engine._wiki_mirror_dir). Empty =
@@ -2123,8 +2123,7 @@ DEFAULT_SETTINGS = {
     # These three MUST live here. `_load_settings_raw()` drops any persisted key
     # absent from DEFAULT_SETTINGS, so a key the service layer reads but this
     # dict does not declare is a control that saves, reports success, and
-    # reverts on the next read — the failure mode recorded in
-    # docs/history/audits/2026-09-04-five-dead-settings.md.
+    # reverts on the next read (docs/decisions/2026-09-04-five-dead-settings.md).
     "local_voice_tts_engine": "piper",
     "local_voice_kokoro_voice": "af_heart",   # Kokoro voice id, used when engine=kokoro
     "local_voice_kokoro_allow_cpu": False,    # let Kokoro run on CPU (slow; off by design)
@@ -2351,11 +2350,10 @@ DEFAULT_SETTINGS = {
     "daily_creation_free_choice": True,         # False reverts to the legacy text rotation
     "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
     # ── Turn budget (advanced) ──
-    # Stephen, 2026-09-24: "Why does the local model seat only get 50 rounds?
-    # Bonsai2 can reason across hundreds." The local path defaulted to 50 while
-    # the cloud path got 999 -- a leftover from the gemma3:4b era. Parity here,
-    # with loop detection, a wall clock and a token ceiling doing the actual
-    # safety work. These repeat services/turn_budget.py's defaults so the
+    # A local seat gets the same round budget as a cloud seat: a capable local
+    # model can reason across hundreds of rounds, and a lower local cap is a
+    # leftover from small-model days. Loop detection, a wall clock and a token
+    # ceiling do the actual safety work. These repeat services/turn_budget.py's defaults so the
     # figures are visible here; a missing or zero entry falls back to that
     # module, and a per-seat key (e.g. {"local": 200}) overrides one seat only.
     # `scheduled` is what unattended work gets, because nobody is watching it.
@@ -2365,10 +2363,9 @@ DEFAULT_SETTINGS = {
         "tokens": {"default": 1000000},
     },
     # ── Idle-time work ──
-    # Stephen: "Why doesn't the daily creation run by default during idle time?"
-    # It was not running at all -- its schedule carried `enabled: false`. This is
-    # the switch and the window for work that should happen while he is away
-    # rather than at a fixed hour. ON by default, which is what he asked for.
+    # The switch and the window for work that should happen while the user is
+    # away rather than at a fixed hour (the daily creation, among others).
+    # ON by default.
     "idle_work": {
         "enabled": True,
         "idle_after_s": 600,   # how long away before idle work starts
@@ -2438,14 +2435,13 @@ DEFAULT_SETTINGS = {
     # mail as you. `laya-union` adds a second opinion (a 421M encoder on CPU,
     # ~400 ms) and gates when EITHER votes to gate.
     #
-    # Measured on a 27-case adversarial set, 2026-09-22: the keyword scan
+    # Measured on a 27-case adversarial set: the keyword scan
     # missed 5 outward actions, Laya missed 1, and their misses were DISJOINT,
     # so taking either vote missed none. The union scores lower overall (22/27
     # vs Laya's 23) and is still the right mode, because a missed gate sends
     # mail with no human in the loop and a false gate costs one approval card.
     #
-    # ON BY DEFAULT as of 2026-09-22, Stephen's call with the eval in hand.
-    # What makes that safe is structural rather than statistical: `keyword` is
+    # ON BY DEFAULT. What makes that safe is structural rather than statistical: `keyword` is
     # one of the two inputs to the OR, so there is no input on which this
     # REMOVES a card the substring scan would have raised. A missing model, a
     # corrupt download or a load still in progress costs approval cards, never
@@ -2851,7 +2847,7 @@ def _sync_capability_routing(settings, changed=None):
                 # print() writes to a console nobody reads, so a seat repair
                 # left no trace anyone could find afterwards. A seat changing
                 # under the user, or an inventory we could not check, is
-                # exactly the state change he is entitled to discover later.
+                # exactly the state change the user is entitled to discover later.
                 #
                 # Once per distinct note, not once per settings load. This runs
                 # on every cache miss, so an unreachable daemon would otherwise

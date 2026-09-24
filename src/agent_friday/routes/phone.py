@@ -6,7 +6,7 @@ own port, which is the only thing the tunnel reaches.
 
 Every route here is LOCAL ONLY, on top of the app-wide login gate: entering a
 secret, changing who Friday may contact, and pointing the number somewhere are
-things the owner does at his own machine. A remote session, even an
+things the owner does at their own machine. A remote session, even an
 authenticated one, gets 403. Writes also require a same-origin JSON body.
 
 Secrets go in and never come back out: the status reports "stored",

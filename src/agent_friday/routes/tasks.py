@@ -131,8 +131,8 @@ def list_tasks():
                 # Orb's own log, else its step thread, else — when the orb is
                 # backed by a real task — that task's log. `get_task` already
                 # follows this link for the detail view; the list never did,
-                # which is why the row he clicks looked dead and the row he
-                # doesn't click had the lines.
+                # which is how the row the user clicks can look dead while the
+                # row they don't click has the lines.
                 'log': (list(p.get('log') or [])
                         or _steps_as_log(p.get('steps'))
                         or _linked_task_log(p.get('task_id'))),
@@ -141,7 +141,7 @@ def list_tasks():
             })
     # Sealed for a non-user principal like every other observer read: this
     # route served prompt, result and log raw with no ledger row while it sat
-    # on the observer allowlist (2026-09-06 audit).
+    # on the observer allowlist.
     return jsonify(_serve_sealed({"tasks": tasks}, None, "list", events=len(tasks)))
 
 
@@ -942,7 +942,7 @@ def clear_orbs():
     cancelled, timed out — and reaps orphaned `running` rows. Anything actually
     working is left alone.
 
-    "all" additionally retires live rows. Only for the case where he wants a
+    "all" additionally retires live rows. Only for the case where the user wants a
     clean desk and does not care what is mid-flight; it does not kill the work,
     it just stops the orb representing it from orbiting.
 

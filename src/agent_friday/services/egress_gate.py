@@ -255,10 +255,10 @@ _TRUSTED_LOCK = threading.Lock()
 # "Trump asks US Supreme Court to allow ballroom work to continue",
 # "Point2 Technology ... raised a $136M Series B". Those are the legal and
 # financial keyword rules doing their job on the wrong material: they exist to
-# keep STEPHEN's legal and financial affairs on the machine, and a headline the
-# BBC published is neither. One tainted paragraph made the whole weekly story
-# block tier-3, the gate withheld it, and Friday received a folder of redaction
-# notices and honestly refused to write an editorial from them.
+# keep the user's legal and financial affairs on the machine, and a headline the
+# BBC published is neither. One tainted paragraph makes a whole weekly story
+# block tier-3, the gate withholds it, and Friday receives a folder of redaction
+# notices and honestly refuses to write an editorial from them.
 #
 # What earns the exemption is PROVENANCE, established at INGEST:
 #
@@ -1638,12 +1638,11 @@ def startup_self_test() -> dict:
     if is_unrestricted_cloud():
         # The recorded consent says every safeguard is off, and seal_outbound
         # honours that by returning payloads untouched. A probe that survives
-        # under that ruling is the ruling working, not the gate failing. Before
-        # this branch existed the probe "leaked", the self-test reported the
-        # gate broken, and model_router then refused EVERY cloud send — an
-        # unrestricted-cloud install lost cloud entirely on its next restart
-        # (found live 2026-09-06: consent recorded 07:40, restart 15:45, every
-        # task and chat turn failed with "startup self-test failed"). The
+        # under that ruling is the ruling working, not the gate failing. Without
+        # this branch the probe "leaks", the self-test reports the gate
+        # broken, and model_router then refuses EVERY cloud send — an
+        # unrestricted-cloud install loses cloud entirely on its next restart,
+        # with every task and chat turn failing "startup self-test failed". The
         # deterministic gate is not exercised here because nothing routes
         # through it in this mode; the posture is logged at boot, loudly, by
         # the caller. The judgment battery is skipped for the same reason.

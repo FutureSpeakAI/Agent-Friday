@@ -1,6 +1,6 @@
 /* Client-side playback rule for cloud voice audio.
  *
- * Q3, tightened 2026-09-09. "Friday will not archive it" and "it is not cached
+ * "Friday will not archive it" and "it is not cached
  * anywhere" are different promises, and only the second is what NON-DURABLE
  * should mean. The server sends `Cache-Control: no-store` and
  * `X-Friday-Voice-Durable: 0` for non-durable audio; this is the other half.

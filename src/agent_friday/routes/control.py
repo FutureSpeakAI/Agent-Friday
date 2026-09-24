@@ -231,7 +231,7 @@ def list_unverified_file_grants():
     Every row is `verified: false`. Nothing here is an active grant -- while any
     unverified line remains, the ledger is in suspenders mode and every grant is
     treated as absent. This endpoint exists so the user can SEE what failed
-    before deciding, because a re-attestation he cannot read is not a decision.
+    before deciding, because a re-attestation they cannot read is not a decision.
     """
     from agent_friday.services import file_grants as _fg
     rows = _fg.list_unverified()

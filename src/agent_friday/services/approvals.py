@@ -172,7 +172,7 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
         #
         # This existed as an unrecorded substring scan for months, which is
         # why nobody can say how often it is right — including on the action
-        # that now sends mail as him. decide() logs question, state, answer
+        # that sends mail as the user. decide() logs question, state, answer
         # and method to ~/.friday/decisions.jsonl.
         #
         # Still fails closed. decide() falls back to the keyword backend on
@@ -386,7 +386,7 @@ def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
     send that crashed halfway should not leave an approval that looks spent,
     and an approval that has been spent must never authorise a second send.
 
-    Added 2026-09-20 for services/gmail_send.py, where the whole safety
+    Used by services/gmail_send.py, where the whole safety
     property is that one human decision buys exactly one message.
     """
     return _patch(approval_id, consumed=True, used_by=actor,

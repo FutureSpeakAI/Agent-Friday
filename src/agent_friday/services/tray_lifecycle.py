@@ -1,18 +1,16 @@
 """What stays in the tasks tray, and for how long.
 
-THE COMPLAINT. "There are tons of leftover notifications for interrupted and
-completed processes we ran previously; they never went away. We need to be
-able to remove them manually (I don't see an 'x' on these) and after a set
-amount of time because I feel like we're overwhelming the notifications panel
-at times."
+THE REQUIREMENT. Cards for interrupted and completed work must not pile up in
+the tray forever: the user can remove them by hand, and they age out after a
+set time, so the panel is not overwhelmed.
 
-WHAT IT ACTUALLY IS. Measured on this machine: the notification QUEUE is
-fine — 200 entries at the cap, 197 already dismissed, 3 unread. The tray's
-TASKS section is the problem: 81 task records, every one of them terminal,
-none of them ever leaving. The card only ever showed a ✕ while a task was
-running (it was a cancel button), so a finished card had no control at all;
-"Delete record" existed, but only inside the drawer, and it deletes the
-journal rather than tidying the view. Two different things wearing one name.
+WHAT THE PILE ACTUALLY IS. The notification QUEUE stays bounded (a cap, most
+entries already dismissed). The tray's TASKS section is where rows accumulate:
+task records, every one of them terminal, none of them ever leaving. A card
+that shows a ✕ only while a task is running (as a cancel button) leaves a
+finished card with no control at all; "Delete record" lives only inside the
+drawer, and it deletes the journal rather than tidying the view. Two
+different things wearing one name.
 
 TWO CONTROLS, TWO MEANINGS, KEPT APART:
 
@@ -33,10 +31,10 @@ LIFETIMES BY WHAT THE ROW IS FOR, not by one clock:
   * An **interrupted** task that still holds a resume checkpoint is a HANDLE
     ON UNFINISHED WORK, and expiring it would quietly throw away the very
     thing the resume path exists to offer. It never expires on a clock. It
-    leaves the tray when it is resumed, or when he dismisses it himself.
+    leaves the tray when it is resumed, or when the user dismisses it.
 
 That last rule is the reason this module exists rather than a single
-`max_age_hours` setting. A uniform sweep would have deleted his resume
+`max_age_hours` setting. A uniform sweep would delete the user's resume
 handles, which is the failure mode the whole checkpoint effort is trying to
 end.
 """
@@ -102,7 +100,7 @@ def visible(row: Dict[str, Any], now: Optional[float] = None) -> bool:
     """Should this row appear in the tray?
 
     Never raises and defaults to SHOWING the row: a bug in this function must
-    not be able to hide work from him.
+    not be able to hide work from the user.
     """
     try:
         now = now or time.time()
@@ -171,7 +169,7 @@ def dismiss_all(now: Optional[float] = None) -> int:
     """Dismiss every card that is currently dismissible. Returns the count.
 
     Live work is skipped, and so is anything holding a resume checkpoint: a
-    "clear all" that silently discarded his unfinished work would be the
+    "clear all" that silently discarded the user's unfinished work would be the
     same loss this codebase keeps removing, dressed as tidiness.
     """
     from agent_friday.services.agent import TASKS, TASKS_LOCK

@@ -38,23 +38,23 @@ the review boundary; nothing new was built to hold it.
 MANUAL FIRST, NIGHTLY OFF
 -------------------------
 Nothing here is scheduled. ``propose()`` is something the user RUNS, and its
-output is shown to him before any of it becomes durable. A model reading his
-private conversations and writing conclusions into his long-term memory,
+output is shown to them before any of it becomes durable. A model reading their
+private conversations and writing conclusions into their long-term memory,
 unattended, with nobody checking, is a thing that degrades silently if it is
 wrong -- and this codebase's whole problem is things that degrade silently.
 
-He turns the schedule on later, if he reads a batch and believes it.
+The user turns the schedule on later, if they read a batch and believe it.
 
 THE SEAT IS PINNED. THERE IS NO FALLBACK.
 -----------------------------------------
 This deliberately does NOT use ``model_router._generate_text``, which tries the
 routed provider and then falls back through EVERY other provider so generation
 "never hard-fails". On an unattended job over a growing history that helper is
-a billing hazard: one transient llama-server hiccup and consolidating his own
-diary silently walks the chain to Anthropic.
+a billing hazard: one transient llama-server hiccup and consolidating the
+user's own diary silently walks the chain to Anthropic.
 
 Here, if the assigned seat cannot answer, the run FAILS and stores nothing.
-A loud failure costs him a retry. A silent fallback costs him money.
+A loud failure costs the user a retry. A silent fallback costs them money.
 """
 from __future__ import annotations
 
@@ -187,8 +187,8 @@ def _ask_seat(prompt: str, model: str, provider: str, *,
     """Single-shot call to the assigned seat. Raises rather than falling back.
 
     Cloud seats are refused outright for now: this path reads the user's whole
-    private conversation history, and shipping that to a paid API on a job he
-    has not yet chosen to trust is not a default anyone should get by accident.
+    private conversation history, and shipping that to a paid API on a job they
+    have not yet chosen to trust is not a default anyone should get by accident.
     """
     if not _is_local(provider):
         raise SeatUnavailable(

@@ -1257,8 +1257,8 @@ def step_vault_password(total: int, existing: str, step: int = 2) -> str:
 
     # A BOUNDED LOOP, NOT RECURSION.
     #
-    # The first draft of this re-entered step_vault_password on every empty or
-    # mismatched answer. Under the input the installer actually produces -- a
+    # Re-entering step_vault_password on every empty or mismatched answer is
+    # the trap to avoid. Under the input the installer actually produces -- a
     # user holding Enter through an unattended-feeling flow -- that is an
     # infinite loop: Enter gives no passphrase, Enter again declines the skip,
     # and it asks again forever. The wizard runs in the foreground at installer

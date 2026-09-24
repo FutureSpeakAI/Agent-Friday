@@ -48,9 +48,9 @@ PRICING = {
     # page 2026-08-28. These rows must track the published page exactly: every
     # spend figure downstream inherits any error here, and the default model's
     # row is the one most often wrong.
-    # Fable 5.1 was already selectable (it is in the live /v1/models list)
-    # and was in none of these tables, so it metered at exactly $0.00 --
-    # the most expensive model in the lineup, billed as if it were local.
+    # Every selectable model (the live /v1/models list) needs a row: a model
+    # missing from these tables meters at exactly $0.00, so the most
+    # expensive model in the lineup would bill as if it were local.
     "claude-fable-5-1":           {"in": 0.010, "out": 0.050},   # $10 / $50
     "claude-fable-5":             {"in": 0.010, "out": 0.050},   # $10 / $50
     # Opus 5.5 is CHEAPER than the Opus 5 it supersedes, which is why it takes
@@ -59,19 +59,18 @@ PRICING = {
     "claude-opus-5":              {"in": 0.005, "out": 0.025},   # $5  / $25
     # $2 / $10. Announced as introductory pricing to 2026-08-31; the published
     # page now states it IS the standard price and the scheduled rise to $3/$15
-    # will not happen. This row said 3/15 -- a 50% overcharge on the model
+    # will not happen. 3/15 here would be a 50% overcharge on the model
     # DEFAULT_CLOUD_MODEL points at, i.e. the most-billed row in the table.
     "claude-sonnet-5":            {"in": 0.002, "out": 0.010},   # $2  / $10
-    # `claude-haiku-4-5` is the model id. The dated form is a legacy alias, and
-    # keying ONLY on it meant a canonical-id call missed the table, fell through
-    # the registry fallback (Haiku has no cost_per_1k there) and metered $0 --
-    # which reads as "local, on-device, free" for a cloud call.
-    # Still SERVED by the API and therefore still offered by the picker,
-    # which discovers them from /v1/models. They had no rows, so every one
-    # fell through to the provider blended rate -- and the anthropic
-    # provider has no cost_per_1k for them either, so they metered at
-    # exactly $0. Same defect as the canonical-Haiku-id and Fable 5.1
-    # zeros; found by listing what the picker actually offers rather than
+    # `claude-haiku-4-5` is the model id. The dated form is a legacy alias;
+    # keying ONLY on it would make a canonical-id call miss the table, fall
+    # through the registry fallback (Haiku has no cost_per_1k there) and meter
+    # $0 -- which reads as "local, on-device, free" for a cloud call.
+    # The older models below are still SERVED by the API and therefore still
+    # offered by the picker, which discovers them from /v1/models. Without
+    # rows they fall through to the provider blended rate -- and the anthropic
+    # provider has no cost_per_1k for them either, so they would meter at
+    # exactly $0. The rows cover what the picker actually offers, not only
     # what the shipped list names. Figures from the published price page,
     # 2026-09-23.
     "claude-opus-4-8":            {"in": 0.005, "out": 0.025},   # $5  / $25
@@ -103,14 +102,13 @@ PRICING = {
     # A live voice session is audio in and audio out, so the AUDIO rates are
     # the ones recorded here — using the text rate would under-meter a voice
     # call fourfold, and this table is read by the cost panel as fact.
-    # CONFIDENCE, stated plainly: these rates come from a documentation
-    # summary handed to this change, NOT from a fetch of
-    # ai.google.dev/gemini-api/docs/pricing by the author of this row. The
-    # same source's claim that enable_affective_dialog had been removed from
-    # the API was tested on 2026-09-22 and found FALSE (the server accepts
-    # it), so treat the numbers as best-effort and re-check them the next
-    # time this file is touched. What WAS independently confirmed by
-    # models.get on 2026-09-22 is the shape of the models: 131072 in /
+    # CONFIDENCE, stated plainly: these rates come from a secondary
+    # documentation summary, NOT from a direct fetch of
+    # ai.google.dev/gemini-api/docs/pricing. The same source claimed
+    # enable_affective_dialog had been removed from the API, which is FALSE
+    # (the server accepts it), so treat the numbers as best-effort and
+    # re-check them the next time this file is touched. What models.get
+    # confirms independently is the shape of the models: 131072 in /
     # 65536 out, bidiGenerateContent.
     "gemini-3.8-live":                    {"in": 0.003, "out": 0.012},
     "gemini-3.8-live-extended-thinking":  {"in": 0.003, "out": 0.012},
@@ -176,11 +174,10 @@ PRICING = {
     # "v2 Multilingual & v3" models bill at $0.10/1K chars; "Flash/Turbo"
     # models bill at $0.05/1K chars.
     "eleven_multilingual_v2":    {"in": 0.10, "out": 0.0},   # $0.10 / 1K chars
-    # REMOVED 2026-09-09: "eleven_multilingual_v3" was priced here but is
-    # not a real ElevenLabs model id -- it does not appear in their model
-    # table (verified 2026-09-09). A rate for a model that cannot be called
-    # is a small lie of the same family as an unverified rate, so it is
-    # deleted rather than left as harmless clutter.
+    # There is no "eleven_multilingual_v3" row: it is not a real ElevenLabs
+    # model id (it does not appear in their model table, verified 2026-09-09).
+    # A rate for a model that cannot be called is a small lie of the same
+    # family as an unverified rate, so it is not listed.
     "eleven_turbo_v2_5":         {"in": 0.05, "out": 0.0},   # flash/turbo tier
     "eleven_flash_v2_5":         {"in": 0.05, "out": 0.0},
 
@@ -300,11 +297,11 @@ def price_for(model, speed=None):
     # use are `anthropic/claude-opus-5.5` and `anthropic/claude-sonnet-5` -- a
     # vendor prefix, and a DOT where Anthropic's canonical id has a dash.
     # Neither is in PRICING, openrouter declares no `cost_per_1k` at all, and so
-    # both fell through to the zero below. Audited 2026-09-23: the reasoning,
-    # subagent and heavy_hitter seats -- the models Friday was actually thinking
-    # with -- metered at exactly $0.00. Every cost figure downstream inherits
-    # that, and `services/spend_guard` is denominated in dollars, so a $0 rate
-    # quietly disables the one stop that stops.
+    # both would fall through to the zero below: the reasoning, subagent and
+    # heavy_hitter seats -- the models Friday actually thinks with -- would
+    # meter at exactly $0.00. Every cost figure downstream inherits that, and
+    # `services/spend_guard` is denominated in dollars, so a $0 rate would
+    # quietly disable the one stop that stops.
     #
     # A `:` suffix is deliberately NOT normalised: `:batch` and `:free` are
     # different prices, and mapping them onto the standard row would trade a
@@ -344,8 +341,8 @@ CACHE_WRITE_MULT = 1.25
 #: multiplier is per-model: Opus 5.5 reads at 0.05x ($0.20 on a $4 base) and
 #: Fable 5.1 / Mythos 5.1 at 0.025x. Applying the flat tenth to Opus 5.5 would
 #: overstate every cached read by 2x -- and cache reads are not a rounding
-#: error here: the 4.09M-token turn audited on 2026-09-22 was 96.4% cache
-#: reads, so this multiplier decides almost the whole bill.
+#: error here: a long agentic turn (4.09M tokens) can be 96.4% cache reads,
+#: so this multiplier decides almost the whole bill.
 CACHE_READ_MULT_BY_MODEL = {
     "claude-opus-5-5": 0.05,
     "claude-fable-5-1": 0.025,

@@ -20,8 +20,8 @@
     Python on the machine. Deleting the folder uninstalls it completely, which
     is also what makes the uninstaller honest.
 
-    THE THREE EMBEDDABLE-PYTHON TRAPS (all verified on Windows 11, 2026-08-21)
-    -------------------------------------------------------------------------
+    THE THREE EMBEDDABLE-PYTHON TRAPS (all verified on Windows 11)
+    -------------------------------------------------------------
     1. `python312._pth` exists, and its presence puts the interpreter in
        isolated mode. That is what we want - but it also means PYTHONPATH is
        IGNORED. Verified: setting PYTHONPATH and asking sys.path about it

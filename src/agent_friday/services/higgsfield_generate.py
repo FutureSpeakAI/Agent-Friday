@@ -83,9 +83,8 @@ def _call(tool: str, arguments: dict, timeout: float = 120.0):
     # asking three call sites to remember.
     gate = getattr(_agent, "_mcp_gate_args", None)
     if gate is None:
-        # Fail closed: no gate means nothing may leave. The previous shape
-        # (skip gating when the attribute is missing) is the fail-open form
-        # the 2026-09-06 boundary audit flagged.
+        # Fail closed: no gate means nothing may leave. Skipping gating when
+        # the attribute is missing would be the fail-open form.
         raise EgressBlocked("the remote-MCP egress gate is unavailable; "
                             "nothing was submitted to Higgsfield")
     if gate is not None:

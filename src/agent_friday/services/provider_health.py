@@ -402,9 +402,8 @@ def resident_model_for(prov) -> str | None:
     silently return None for every one of them and the health probe would
     report "down — no base_url or model" regardless of whether the provider,
     the key, or the user's chosen model were fine — while Anthropic silently
-    absorbs the actual traffic (see
-    `docs/audits/orchestrator-fallback-cost-2026-09-03.md` for what that
-    fallback costs). A per-provider-type elif is exactly the shape that bug
+    absorbs the actual traffic, and that fallback is billed. A
+    per-provider-type elif is exactly the shape that bug
     keeps recurring in, so this reads the user's actual configuration
     instead of adding a third (or fourth, or fifth) name to a list.
     """
@@ -714,7 +713,7 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             # And the generation is not free. llama-server keeps ONE cached
             # prompt per slot, and Friday's seats run with a single slot, so
             # this probe's four-token prompt REPLACES whatever the slot was
-            # holding. Measured 2026-09-18: the probe runs every
+            # holding. Measured: the probe runs every
             # _PROBE_TTL_S (60s), which is almost always shorter than the gap
             # between a user reading one answer and typing the next — so the
             # probe reliably landed between turns and evicted the chat
@@ -810,7 +809,7 @@ def inference_health(providers=None) -> dict:
     # PARALLEL, WITH A HARD PER-PROBE CEILING.
     #
     # This loop used to be serial, and `/api/health` is what Settings >
-    # Intelligence reads. Measured on 2026-09-23, seven providers:
+    # Intelligence reads. Measured serially, seven providers:
     #
     #   ollama-local       12.06s  down  (no daemon: WinError 10061)
     #   fridayweaver-seat   8.04s  down  (nothing on :8095)

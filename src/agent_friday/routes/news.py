@@ -155,9 +155,9 @@ def briefing_status():
     # reported as the status of both Gmail and Calendar. It answered none of
     # the three questions that decide whether a service works: is any account
     # configured for it, are those accounts usable, and is it switched on at
-    # Google. Measured 2026-09-19: both accounts connected, `drive: true` on
-    # both, and every Drive call returning 403 because the API had never been
-    # enabled on the Cloud project - reported here as a green tick.
+    # Google. Accounts can be connected with `drive: true` on each while every
+    # Drive call returns 403 because the API was never enabled on the Cloud
+    # project - which a credential check reports as a green tick.
     from agent_friday.services.google_accounts import service_health
 
     def _svc(key, label, icon):
@@ -373,7 +373,7 @@ def generate_briefing():
 
         prompt = (
             "Generate a crisp daily briefing using the LIVE DATA below plus what "
-            "you know about me (career pipeline, active tasks, co-parenting "
+            "you know about me (projects, active tasks, personal "
             "context). Cover, in order:\n"
             "1. Today's calendar events — most important first\n"
             "2. Top news relevant to me\n"

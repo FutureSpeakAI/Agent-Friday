@@ -34,9 +34,8 @@ HEADER = "X-Friday-Observer"
 #
 # Every route here must seal free text for the observer principal
 # (routes/tasks._serve_sealed) or serve none. /api/processes and the
-# orchestrator status/workers/results routes were on this list without
-# sealing orb logs and worker outputs (2026-09-06 boundary audit); they are
-# off it until they seal. The three documented reads (list, digest, tail)
+# orchestrator status/workers/results routes do not seal orb logs and worker
+# outputs, so they stay off this list until they do. The three documented reads (list, digest, tail)
 # and the journal all live under /api/tasks.
 READ_ONLY_PREFIXES = (
     "/api/tasks",              # list, detail, journal, digest, events, retention (GET only; sealed)

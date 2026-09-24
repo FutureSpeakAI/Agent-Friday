@@ -411,8 +411,7 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     fallback ladder (below) can land the request on a DIFFERENT provider than
     predicted when the first leg fails operationally — and a prompt gated for
     'local' (full TIER_2/3 content) reused verbatim on a 'cloud' leg leaks
-    that content with no re-gating (see the 2026-09 gauntlet audit in
-    docs/history/audits/). When `system_builder` is given, each leg calls it
+    that content with no re-gating. When `system_builder` is given, each leg calls it
     with ITS OWN provider name and uses the result instead of the static
     `system` string, so the prompt is always gated for the provider actually
     about to see it. A builder that raises is treated as "no system prompt"
@@ -467,8 +466,7 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # leg failed fell through to the unconditional cloud/openai fallback
     # legs below, silently defeating vault_cloud_fallback's "deny"/"warn"
     # contract for every one of this function's many callers (briefings,
-    # digests, KG summarization, calendar/message drafting, wiki bootstrap;
-    # see the 2026-09 gauntlet audit in docs/history/audits/).
+    # digests, KG summarization, calendar/message drafting, wiki bootstrap).
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
@@ -725,8 +723,8 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 # A llama-server seat is served through the OpenAI dialect, so
                 # this forward is the REAL local path. Dropping catalogue_all
                 # here left `load_tools` with an empty registry and every name
-                # answered "No such tool" - observed live on the first run,
-                # with the model correctly told browse_web did not exist.
+                # answered "No such tool", with the model correctly told
+                # browse_web did not exist.
                 catalogue_all=catalogue_all,
             )
 
@@ -917,8 +915,7 @@ DELTA_SINK = _contextvars.ContextVar("friday_delta_sink", default=None)
 
 #: Live TOOL progress, same mechanism as DELTA_SINK.
 #:
-#: Stephen, 2026-09-24: "It'd be best if the model responded before executing tool
-#: calls though, that way the user knows that it's going to do that work for them."
+#: The user should hear what work is about to happen before a tool call runs.
 #: Two halves, because either alone is unreliable: the prompt ASKS the model to
 #: say what it is about to do (see TOOL_INTENT_POLICY), and this sink narrates the
 #: call itself when the model said nothing. The narration is generated FROM the
@@ -1046,20 +1043,19 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     the thinking live. They still never reach `on_delta`.
     """
     content_parts = []
-    # REASONING DELTAS WERE BEING THROWN ON THE FLOOR.
+    # REASONING DELTAS ARE KEPT, NOT THROWN ON THE FLOOR.
     #
     # A reasoning seat splits its output across two delta fields and
-    # `max_tokens` is spent on BOTH. Measured against the live bonsai2:27b
-    # llama-server seat on 2026-09-22 with a one-line prompt: 16 `content`
-    # deltas and 49 `reasoning_content` deltas. This reassembler read only
-    # `content`, so the thinking was discarded before anything upstream could
-    # see it.
+    # `max_tokens` is spent on BOTH. Measured against a bonsai2:27b
+    # llama-server seat with a one-line prompt: 16 `content` deltas and 49
+    # `reasoning_content` deltas. Reading only `content` discards the
+    # thinking before anything upstream can see it.
     #
     # On a long prompt that is not a cosmetic loss. The Front Page editorial
-    # (25,410 prompt tokens, max_tokens=1800) spent its entire budget in
-    # `reasoning_content`, came back finish_reason="length" with content="",
-    # and every layer above reported it as an EMPTY reply — 320s of real work
-    # reduced to silence, then mislabelled "Max iters".
+    # (25,410 prompt tokens, max_tokens=1800) can spend its entire budget in
+    # `reasoning_content` and come back finish_reason="length" with
+    # content="", which every layer above would report as an EMPTY reply —
+    # minutes of real work reduced to silence, then mislabelled "Max iters".
     #
     # Kept OUT of `content` deliberately: a scratchpad is not an answer and
     # must not reach a chat bubble or a transcript. It rides alongside, in the
@@ -1081,15 +1077,15 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     usage = None
     timings = None           # llama-server puts them on the last chunk
 
-    # THE EM-DASH BUG LIVED HERE. `decode_unicode=True` tells requests to
-    # decode using `resp.encoding`, and requests derives that from the
-    # Content-Type header. An SSE stream is `text/event-stream` with no
+    # DECODE THE STREAM AS UTF-8 EXPLICITLY. `decode_unicode=True` tells
+    # requests to decode using `resp.encoding`, and requests derives that from
+    # the Content-Type header. An SSE stream is `text/event-stream` with no
     # charset, and for any `text/*` without one, RFC 2616 says ISO-8859-1 and
-    # requests obeys. So every multi-byte UTF-8 sequence arrived as its
+    # requests obeys. So every multi-byte UTF-8 sequence would arrive as its
     # individual bytes reinterpreted as Latin-1 characters.
     #
-    # Observed 2026-09-18: Bonsai emits a correct em dash, U+2014, bytes
-    # E2 80 94. It reached chat_history.json as "â" -- three
+    # For example, a correct em dash from the model, U+2014, bytes
+    # E2 80 94, reached chat_history.json as "â" -- three
     # separate characters, one per byte. On screen: "â€”". The model was
     # innocent, the HTTP read through `r.json()` was innocent, and the
     # non-streaming path was fine; only the streamed path corrupted, which is
@@ -1263,11 +1259,11 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         # spawn time and publishes them, so the two drift apart the moment a
         # seat moves — and when they do, the descriptor wins, the call is
         # refused by a port with nothing behind it, and the turn escalates to
-        # the cloud. Observed 2026-09-18: bonsai2:27b was serving happily on
-        # :8090 while `bonsai2-local.provider.json` still said :8099, so the
-        # first message of every session was answered by Sonnet with
-        # "Max retries exceeded ... port=8099" buried in the fallback chain.
-        # The user sees a local model that silently stopped being local.
+        # the cloud. For example, bonsai2:27b serving happily on :8090 while
+        # `bonsai2-local.provider.json` still says :8099 gets the first message
+        # of every session answered by a cloud model, with "Max retries
+        # exceeded ... port=8099" buried in the fallback chain. The user sees
+        # a local model that silently stopped being local.
         #
         # So the published endpoint is consulted first for local providers.
         # It is written by the process that actually started the seat, which
@@ -1474,8 +1470,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             #
             # A reasoning model left at its own default thinks as hard as it
             # likes on every turn, including "what should I do with two free
-            # hours". Measured on the reference machine, 2026-09-18, same
-            # question four times against Bonsai 2 27B:
+            # hours". Measured on the reference machine, same question four
+            # times against Bonsai 2 27B:
             #
             #     default (xhigh)    159.8s   answer 1,288 chars
             #     medium              77.1s   answer 1,879 chars
@@ -1608,13 +1604,12 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             # PROMPT-CACHE FORENSICS, off unless asked for.
             #
             # A local seat reuses a cached prefix only as far as two requests
-            # agree byte for byte, and on 2026-09-18 Friday's turns were
-            # reprocessing their whole ~21,000-token prompt every time while
-            # the same seat, driven by hand with an equivalent payload, reused
-            # it and answered in 0.43s. Reasoning about which of system, tools
-            # and transcript moved, from the outside, cost hours and did not
-            # settle it. Recording what actually went on the wire settles it in
-            # one turn.
+            # agree byte for byte. A turn can reprocess its whole
+            # ~21,000-token prompt every time while the same seat, driven by
+            # hand with an equivalent payload, reuses it and answers in 0.43s.
+            # Reasoning from the outside about which of system, tools and
+            # transcript moved does not settle it; recording what actually went
+            # on the wire settles it in one turn.
             #
             # Switched on by CREATING the directory
             # `~/.friday/runtime/diag/payload-dump`, not by an environment
@@ -2695,8 +2690,7 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
     # Both exist for the same reason: a model with nothing legible to consult
     # improvises — refusing an image by inventing "hard-coded safety filters
     # in my underlying model", machinery that does not exist anywhere in the
-    # local stack (audited: see
-    # docs/history/audits/z-image-content-filtering-2026-08-16.md), or
+    # local stack, or
     # describing capabilities she does not have — and improvisation about
     # yourself is indistinguishable from lying about yourself.
     prefix += "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
@@ -2754,8 +2748,8 @@ def _get_friday_system_prompt(keywords='', workspace='', *, provider,
 
     # EVERY prompt carries the action policy, and it goes LAST.
     #
-    # Before 2026-09-24 only the two chat endpoints appended it, so 28 of the 30
-    # call sites -- background tasks, news, briefings, voice, research -- ran
+    # Appending it only at the two chat endpoints would leave 28 of the 30
+    # call sites -- background tasks, news, briefings, voice, research --
     # with the autonomous-operation text and no rule at all. Any of them can
     # reach a real-world action, so the policy belongs to this funnel rather
     # than to whichever caller remembers.
@@ -3531,9 +3525,9 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # it is true of the machine right now, not of anything remembered. It
     # rides in the volatile tail (after prompt_cache.VOLATILE_MARKER) so a
     # key appearing or a seat dying changes the model's picture on the next
-    # turn without churning the cached prefix. 2026-09-18: absent and
-    # unconfigured were one word to the model, and it told the user a wired,
-    # unkeyed backend "is not a tool". See services/capability_state.py.
+    # turn without churning the cached prefix. Absent and unconfigured must
+    # be different words to the model, or it tells the user a wired, unkeyed
+    # backend "is not a tool". See services/capability_state.py.
     try:
         from agent_friday.services import capability_state as _cs
         _cap_block = _cs.describe_for_model()
@@ -3646,12 +3640,12 @@ def _load_smart_context(user_message, workspace=None):
     elif workspace == 'career':
         _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
 
-    # THE CAP HERE USED TO BE 200,000 CHARACTERS, with the comment "1M context
-    # window means we can afford generous context". That was true of the cloud
-    # seat it was written for and is catastrophic on a local one.
+    # THE CAP IS NOT 200,000 CHARACTERS. "1M context window means we can
+    # afford generous context" is true of a cloud seat and catastrophic on a
+    # local one.
     #
-    # Measured 2026-09-18 on the reference machine. "what is on my calendar
-    # tomorrow" loads 563 characters. "email Mahesh about the interview" trips
+    # Measured on the reference machine. "what is on my calendar
+    # tomorrow" loads 563 characters. "email Alex about the interview" trips
     # the career branch and loads 41,760 — about 10,400 tokens — because that
     # branch alone passes max_bytes=40_000. The docstring above claims ~8KB;
     # nothing enforced it. On Bonsai at ~450 tokens/second of prompt

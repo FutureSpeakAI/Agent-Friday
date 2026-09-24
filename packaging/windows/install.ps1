@@ -40,7 +40,7 @@ param(
     # Skip the memory tier. Friday works without it; she just does not
     # remember across sessions.
     #
-    # Measured on Windows 11, 2026-08-21: core + recommended is about 800 MB of
+    # Measured on Windows 11: core + recommended is about 800 MB of
     # site-packages, and the memory tier adds roughly 1.5 GB on top (torch is
     # 490 MB of that on disk). It used to be far worse - headroom-ai[all] in the
     # recommended tier was quietly pulling torch, transformers,
@@ -348,10 +348,8 @@ if ($null -ne $cardGib) { $usableGib = [math]::Round($cardGib - 2.5, 1) }
 # do not hand-edit Id/Needs/Gb between the markers below; re-run the script
 # instead (`python scripts/gen_installer_ladder.py`). `Says` is installer copy
 # and is not derived — edit it in the script's own BLURBS table. HR14:
-# tests/unit/test_installer_ladder_matches_plan.py fails on drift. Before
-# 2026-09-04 this block was retyped by hand and had no drift check at all
-# (docs/design/implemented/headroom.md §2.9) — the figures below did not change, only
-# how they are kept honest going forward.
+# tests/unit/test_installer_ladder_matches_plan.py fails on drift
+# (docs/design/implemented/headroom.md §2.9).
 # BEGIN GENERATED: brainLadder
 $brainLadder = @(
     @{ Id = 'gemma4:e2b'; Needs =  1.77; Gb =  7.20; Says = 'a small model - good for quick questions, weaker at long multi-step jobs' },
@@ -714,11 +712,11 @@ $null = Invoke-Step -Id 'deps.control' -Title 'Installing the part that lets Fri
     -Action { Install-PyAutoGuiFamily -InstallRoot $InstallRoot -WheelhouseDir $WheelhouseDir } `
     -Verify { Test-ModulesImportable -InstallRoot $InstallRoot -Modules @('pyautogui') }
 
-# NOTE (2026-08-25): this step used to be titled '... and the privacy filter',
-# which overstated what installing presidio-analyzer buys. Presidio runs
+# NOTE: this step must not be titled '... and the privacy filter',
+# which would overstate what installing presidio-analyzer buys. Presidio runs
 # OBSERVE-ONLY -- it logs what it would have flagged and changes no egress
 # decision unless FRIDAY_PRESIDIO_ENFORCE=1 is set explicitly, which is not
-# recommended (measured 2026-08-24: TIER_2 where regex returns TIER_3, and 6 of
+# recommended (measured: TIER_2 where regex returns TIER_3, and 6 of
 # 12 benign prompts escalated). The always-on part of the gate is Layers 1a+1b,
 # which are built in and install nothing. Do not restore the old title.
 #

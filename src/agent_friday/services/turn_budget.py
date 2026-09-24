@@ -1,18 +1,15 @@
 """How long a turn may run, and what actually stops a runaway one.
 
-Stephen, 2026-09-24: "Why does the local model seat only get 50 rounds? Bonsai2
-can reason across hundreds."
+A local seat gets the same round budget as a cloud seat. A local round costs no
+money, and a 27B reasoner such as Bonsai2 can reason across hundreds of rounds.
 
-He was right, and the asymmetry was stark: `_call_claude_agent` took
-`max_iters=999`, while `_oai_agentic_loop` and both OpenAI-format transports in
-`model_router` took 50, and a subagent scope that named no figure of its own got
-25 steps.
-
-The cloud path got 999 rounds; the local path got 50. Twenty times less, with no
-reason recorded anywhere -- almost certainly a leftover from the gemma3:4b era,
-when a 4B model would loop and a low cap was the cheapest way to contain it.
-Bonsai2 is a 27B reasoner. For it, 50 rounds is a cliff mid-task, and all it
-produced was a truncated answer telling the USER to "Raise max_iters".
+An asymmetric cap -- `_call_claude_agent` at `max_iters=999` while
+`_oai_agentic_loop` and both OpenAI-format transports in `model_router` sit at
+50, and a subagent scope that names no figure of its own at 25 -- gives the
+local path twenty times less, for no reason beyond a 4B-model era when a small
+model would loop and a low cap was the cheapest way to contain it. For a 27B
+reasoner, 50 rounds is a cliff mid-task, and all it produces is a truncated
+answer telling the USER to "Raise max_iters".
 
 **50 was never safety. It was a proxy for safety**, and a bad one: it punished a
 model making steady progress exactly as hard as one stuck in a loop, and it let a

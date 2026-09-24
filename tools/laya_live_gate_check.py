@@ -16,7 +16,7 @@ actually loaded, driven through `approvals.classify` and the real policy table.
 Exits non-zero if enabling `laya-union` removed a single approval card. NOT run
 by pytest - it needs the model, ~800 MB resident and roughly a minute to load.
 
-MEASURED 2026-09-22 on this machine: 0 lost, 6 added (the five outward actions
+MEASURED on a machine with the checkpoint installed: 0 lost, 6 added (the five outward actions
 phrased with no marker word, which the substring scan cannot catch by design,
 plus one of the three cases marked `arguable`), 0 of 13 firm hard cases left
 ungated.

@@ -1,6 +1,6 @@
 """Send an index of the tools, not 13,300 tokens of their schemas.
 
-MEASURED ON THE REFERENCE MACHINE, 2026-09-19:
+MEASURED ON THE REFERENCE MACHINE:
 
     75 tools, ~13,324 tokens of JSON schema
       names + framing   ~  383
@@ -50,8 +50,7 @@ LOADER_NAME = "load_tools"
 ALWAYS_RESIDENT = ("search_web", "read_file", "search_files")
 
 
-#: ON by default as of 2026-09-19, at the maintainer's call, once the risk was
-#: understood rather than assumed.
+#: ON by default, because the risk is understood rather than assumed.
 #:
 #: WHY IT IS SAFE TO DEFAULT ON. `_execute_tool` dispatches by NAME out of
 #: CLAUDE_TOOL_HANDLERS and never consults the list the model was sent. So the

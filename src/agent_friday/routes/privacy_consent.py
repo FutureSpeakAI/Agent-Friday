@@ -5,7 +5,7 @@ grep `tool_registry`/`tool_list`/the MCP tool-schema builders for this
 module's name and it will not appear. A model directing its own consent
 decision is the exact shape of bug `enterprise_consent_grant` was removed
 for ("a tool that let Friday's own AI grant itself permission to send data
-to the cloud"; see the 2026-09 gauntlet audit in docs/history/audits/). This surface exists
+to the cloud"). This surface exists
 for the browser UI a human is looking at, and nowhere else.
 """
 

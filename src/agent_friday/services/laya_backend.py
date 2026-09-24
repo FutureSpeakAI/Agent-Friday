@@ -2,16 +2,16 @@
 
 WHAT THIS IS FOR
 
-`dissent_gate.classify_severity` decides whether an action needs Stephen's
-sign-off - including, since 2026-09-20, sending mail as him. It is a scan for
+`dissent_gate.classify_severity` decides whether an action needs the owner's
+sign-off - including sending mail as them. It is a scan for
 ~40 substrings. Its own docstring records the failure it could not avoid:
 "spend" and "order " are hard markers and also ordinary nouns, so "Analyze our
 spend trends" gated, and the fix was a hand-written regex for leading drafting
 verbs. That is a keyword classifier accumulating patches.
 
 Laya is a small typed-decision encoder (ModernBERT-large, 421M) that answers a
-fixed question over a state and returns calibrated probabilities. Measured on
-this machine 2026-09-22 against the severity question: ~300 ms on CPU, and it
+fixed question over a state and returns calibrated probabilities. Against the
+severity question it takes ~300 ms on CPU, and it
 answers the two patched cases correctly without the patches.
 
 HOW IT IS WIRED, AND WHY IT CHANGES NOTHING YET
@@ -22,7 +22,7 @@ argument. What this module adds on top is SHADOW MODE:
 
     FRIDAY_DECISION_SHADOW=laya
 
-With that set, `keyword` still decides - the verdict Stephen experiences is
+With that set, `keyword` still decides - the verdict the user experiences is
 byte-identical - and Laya scores the same state alongside it, on a background
 thread, with both answers written to the decision log. Disagreements become
 data instead of an argument.
@@ -53,8 +53,8 @@ from typing import Any, Dict, Optional
 _log = logging.getLogger("friday.laya")
 
 #: transformers deadlocks probing for TensorFlow in a frozen build, and the
-#: xet transfer backend was responsible for 2 of 7 crashes measured on
-#: 2026-09-21. Both are set before any import of laya, not after.
+#: xet transfer backend aborts natively (see services/crash_forensics.py).
+#: Both are set before any import of laya, not after.
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
@@ -89,13 +89,11 @@ _loading = False
 
 #: A FAILED load is retried, a few times, slowly. It used to be terminal.
 #:
-#: On 2026-09-22 the machine rebooted, Friday autostarted, and the boot-time
-#: load raised `ImportError: cannot import name 'AutoTokenizer' from
-#: 'transformers'`. A fresh interpreter imported it fine forty seconds later,
-#: so the failure was a boot-time race and nothing more. But `_load_error` was
-#: set, the no-retry guard in `union_backend` is keyed on it, and the gate
-#: therefore ran keyword-only for the rest of the process's life. The panel
-#: said so honestly, which is the only reason it was caught at all.
+#: A boot-time load can raise `ImportError: cannot import name 'AutoTokenizer'
+#: from 'transformers'` while a fresh interpreter imports it fine seconds
+#: later: a boot-time race and nothing more. A terminal `_load_error` would
+#: leave the no-retry guard in `union_backend` (keyed on it) holding the gate
+#: keyword-only for the rest of the process's life.
 #:
 #: That is the wrong shape of failure. A missing checkpoint SHOULD stay
 #: refused - retrying it per approval would be a thread per decision. A
@@ -190,8 +188,8 @@ def _load_now():
         # module - which surfaces as `cannot import name 'AutoTokenizer' from
         # 'transformers'` and looks, wrongly, like a broken install. The
         # memory tier imports the same stack on the main thread while this
-        # runs on a warm-up thread, and on 2026-09-22 that race cost the
-        # approval gate its second opinion across two consecutive boots.
+        # runs on a warm-up thread, and that race can cost the approval gate
+        # its second opinion for a whole boot.
         #
         # Doing the import here, eagerly, means the expensive namespace build
         # happens once where its failure is caught and retried, instead of
@@ -215,7 +213,7 @@ def _load_now():
             _load_error = "%s: %s" % (type(e).__name__, e)
         # SCHEDULE THE NEXT ATTEMPT RATHER THAN WAITING FOR A DECISION.
         #
-        # The boot-time failure on 2026-09-22 was an import race, not a
+        # A boot-time failure here is usually an import race, not a
         # missing model: this load runs on a background thread while the
         # memory tier is importing the same ML stack on the main one, and
         # transformers 5.x lazy-loads its submodules, so a concurrent
@@ -246,7 +244,7 @@ def start_warming(force: bool = False) -> None:
     """Kick the load on a background thread. Safe to call more than once.
 
     Called from the server's warm-up alongside the other caches, so the ~40 s
-    is spent while Friday is starting rather than in front of Stephen's first
+    is spent while Friday is starting rather than in front of the user's first
     approval card.
 
     RETRIES AFTER A FAILURE, within limits - see `_MAX_LOAD_ATTEMPTS`. A
@@ -352,7 +350,7 @@ def laya_backend(question: str, state: str, **kw):
 #
 #     FRIDAY_DECISION_SHADOW=laya        (or settings: decision_shadow)
 #
-# With that set, `keyword` still decides - the verdict Stephen experiences is
+# With that set, `keyword` still decides - the verdict the user experiences is
 # byte-identical - and Laya scores the same state on a background thread, with
 # both answers in the log. Disagreements become data instead of an argument.
 
@@ -367,7 +365,7 @@ def shadow_backend() -> Optional[str]:
 #  UNION MODE - the one worth actually turning on
 # ---------------------------------------------------------------------------
 #
-# MEASURED 2026-09-22 on tools/severity_eval.py, 27 firm cases:
+# MEASURED on tools/severity_eval.py, 27 firm cases:
 #
 #     rules only      17/27 (63%)   MISSED hard = 5   false hard = 5
 #     laya only       23/27 (85%)   MISSED hard = 1   false hard = 3
@@ -390,7 +388,7 @@ def shadow_backend() -> Optional[str]:
 # HONEST LIMIT ON THAT 63%. The eval set is adversarial BY CONSTRUCTION: it
 # deliberately carries five outward actions phrased with no marker word at
 # all, which a substring scan cannot catch by design. So 63% is where the
-# keyword scan's boundary is, NOT its accuracy on Stephen's real traffic,
+# keyword scan's boundary is, NOT its accuracy on real traffic,
 # which is mostly unambiguous and where it does much better. Nobody should
 # quote that number as a field measurement. The disjointness is the finding;
 # the percentages are a probe of the boundary.
@@ -522,7 +520,7 @@ def current_mode(settings=None) -> str:
 def register() -> None:
     """Make `laya` and `laya-union` selectable. Neither becomes the default.
 
-    The default stays `keyword` until Stephen chooses otherwise. Registering a
+    The default stays `keyword` until the owner chooses otherwise. Registering a
     backend is not adopting it - `decisions.active_backend()` reads a setting,
     and an unknown name falls back to keyword loudly.
     """

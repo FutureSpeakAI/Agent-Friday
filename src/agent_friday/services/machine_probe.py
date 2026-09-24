@@ -1,7 +1,7 @@
 """Reading the machine must never make a menu wait.
 
-Two menus were timing out, and measurement on 2026-09-23 showed neither was
-slow for the reason anyone expected. Neither was model discovery, a VRAM probe,
+Two menus can time out, and measurement shows neither is slow for the reason
+anyone would expect. Neither was model discovery, a VRAM probe,
 or the residency arbiter:
 
   * **The model picker** (`/api/models` -> `build_catalog`) spent **18s**, of

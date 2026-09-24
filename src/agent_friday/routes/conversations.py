@@ -317,7 +317,7 @@ def _why_this_seat_cannot_be_bound(seat) -> str | None:
     """A reason this seat cannot be given to a conversation, or None.
 
     ONE LOCAL MODEL AT A TIME ON THIS HARDWARE. Two 27B seats do not fit in
-    12 GB — measured on 2026-09-18, two bonsai2:27b servers held 11,605 MiB of
+    12 GB — measured: two bonsai2:27b servers held 11,605 MiB of
     12,282 between them and every turn sent into that state hung. Letting a
     second conversation quietly bind a different local model is offering the
     user something the machine cannot do, and they find out as a hang rather

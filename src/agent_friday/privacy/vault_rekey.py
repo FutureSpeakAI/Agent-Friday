@@ -1,22 +1,17 @@
 """Move vault-encrypted files off the passphrase and onto Friday's keystore.
 
-WHY THIS EXISTS. `vault_crypto` derives its key from a passphrase, and on
-2026-09-19 this machine held two different ones - one in friday_startup.bat,
-another in the Windows keychain - with the resolver preferring the keychain.
-Eleven genuinely encrypted files were sealed under the launcher one and opened
-with neither the current key nor anything a running Friday would try:
-
-    co-parenting context, legal co-parenting context, Janet's profile,
-    Stephen's profile, the family files, the VW knowledge base, finances,
-    the job applications package, the 25-roles job search
-
-Those are court material, a child, and a job hunt. They are not regenerable,
-and the passphrase in that .bat file was the only thing in the world that
-opened them.
+WHY THIS EXISTS. `vault_crypto` derives its key from a passphrase, and a
+machine can hold two different ones - one in a launcher script such as
+friday_startup.bat, another in the Windows keychain - with the resolver
+preferring the keychain. Files sealed under the launcher passphrase then open
+with neither the current key nor anything a running Friday would try. Those
+are the user's most personal files (profile, personal notes, knowledge base,
+finances); they are not regenerable, and the launcher passphrase may be the
+only thing that opens them.
 
 WHAT THIS DOES. Re-seals each one under the keystore root key
 (services/keystore.py): still encrypted at rest, no longer dependent on a
-passphrase living in a batch file that half the launchers do not set. After
+passphrase living in a batch file that not every launcher sets. After
 this runs the passphrase can be removed without losing anything.
 
 THE RULES ARE THE MIGRATION RULES, because this is the most expensive data on

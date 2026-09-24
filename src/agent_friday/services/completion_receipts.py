@@ -282,7 +282,7 @@ _INLINE_DELIVERY_RE = re.compile(r"\b(?:below|above|here(?:'s| is| are)?|"
 #: Where the clause carrying a claim ENDS. Sentence punctuation, a newline —
 #: and a dash or semicolon, which is where this guard went wrong.
 #:
-#: On 2026-09-22 Friday said, and it was not true:
+#: A reply of this shape, where the claim was not true:
 #:
 #:     "I saved the full brief to your creations folder as bold-panel-prep.md
 #:      — want me to open it, or are you good running off what's here?"

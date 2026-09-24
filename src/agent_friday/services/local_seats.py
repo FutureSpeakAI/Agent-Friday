@@ -39,11 +39,11 @@ def _names_a_cloud_model(model) -> bool:
     This module picks among LOCAL seats, so a cloud id in
     `capability_routing.<cap>.model` is not a preference it can act on -- and
     emphatically not a local model that has gone missing. Treating one as
-    missing produced, live on 2026-09-24:
+    missing produces:
 
         [seats] brain: 'claude-opus-5-5' is not installed - using 'bonsai2:27b'
 
-    about a model that cannot be installed here and was never absent.
+    about a model that cannot be installed here and is never absent.
 
     The classification matches `_route_chosen_seat` in the router so the two
     cannot disagree about the same string: a named cloud family is cloud, a
@@ -119,8 +119,8 @@ def _friday_store() -> list[tuple[str, float]]:
         # this still ignores FRIDAY_RUNTIME_DIR -- pre-existing, and
         # tracked separately from the FRIDAY_HOME fix.
         # `path_probe` rather than `Path.exists()`: a registered path on a
-        # wedged `\\wsl.localhost` share held this function (and the chat
-        # route above it) for the SMB timeout. Measured 2026-09-17.
+        # wedged `\\wsl.localhost` share holds this function (and the chat
+        # route above it) for the SMB timeout.
         from agent_friday.services import path_probe
         store_dir = pathlib.Path(friday_home(), "runtime", "models", "gguf")
         raw = pathlib.Path(friday_home(), "runtime", "models",
@@ -241,9 +241,9 @@ def installed(force: bool = False) -> list[tuple[str, float]]:
         # This probe sits on the chat path — `describe_for_model` builds the
         # system prompt for every turn and reaches here through `resolve()`.
         # Four seconds is cheap against a daemon that answers and ruinous
-        # against one that is not installed, which is now the normal case:
-        # Ollama was removed from this machine on 2026-09-18 and Friday serves
-        # every local model through its own llama.cpp seats.
+        # against one that is not installed, which is the normal case:
+        # Friday serves every local model through its own llama.cpp seats and
+        # does not need Ollama.
         #
         # A connect attempt on a closed loopback port is refused in about a
         # millisecond, so asking first costs nothing and skips the rest. The
@@ -378,8 +378,8 @@ def _announce(role: str, wanted: str | None, got: str) -> None:
         msg = f"  [seats] {role}: using {got!r}"
     print(msg)
     # A substitution is a WARNING: the user asked for one model and is being
-    # answered by another. At INFO this sat in friday.log unread on
-    # 2026-09-18 while the UI said the seat change had succeeded.
+    # answered by another. At INFO it sits in friday.log unread while the UI
+    # says the seat change succeeded.
     if wanted:
         _log.warning(msg.strip())
     else:
@@ -454,7 +454,7 @@ def resolve(role: str, configured: str | None = None) -> str | None:
         # owns the seats, so after any restart it can hold `{}` while a seat
         # is demonstrably answering.
         #
-        # Observed 2026-09-10 on Stephen's machine: endpoints.json held zero
+        # Failure shape: endpoints.json held zero
         # entries while the FridayWeaver seat was serving on 8095. So `_live`
         # said False for everything, the pool fell back to size ordering, and
         # the SMALLEST candidate won — which was `gemma4:e2b-friday-v1`, a
@@ -671,16 +671,14 @@ def heal(settings: dict) -> list[str]:
     notes: list[str] = []
     rows = installed()
     if not rows:
-        # Refusing to rewrite his choices on an unreachable daemon is right.
-        # Saying nothing about it is not, and that silence has a cost we paid.
+        # Refusing to rewrite the user's choices on an unreachable daemon is
+        # right. Saying nothing about it is not.
         #
-        # 2026-09-18: Friday booted at 17:01 the previous evening, before the
-        # FridayWeaver weights reached local disk. installed() was therefore
-        # empty, this returned no notes, capability_routing.reasoning kept
-        # pointing at a gemma4:12b that was installed nowhere, and every turn
-        # fell through to the cloud. The user asked for a local model four
-        # times and was answered by Sonnet four times, with nothing anywhere
-        # saying why. A seat we could not verify must announce itself as
+        # If Friday boots before the local weights reach disk, installed() is
+        # empty, a silent return leaves capability_routing.reasoning pointing
+        # at a model installed nowhere, and every turn falls through to the
+        # cloud: the user asks for a local model and is answered by a cloud
+        # one, with nothing anywhere saying why. A seat we could not verify must announce itself as
         # unverified, or "conservative" just means "wrong in silence".
         try:
             unchecked = sorted({

@@ -381,22 +381,20 @@ class ModelRouter:
         if not model_id:
             return None
         if provider in self._LOCAL_PROVIDERS:
-            # The probe stays advisory: a busy daemon must not cost him a seat
-            # he explicitly bound. But "the daemon is slow to answer" and "this
-            # model has never been on this machine" are different facts, and
-            # this branch conflated them. It returned local for ANY id whose
-            # provider merely LOOKED local, so a seat naming an uninstalled
-            # model was routed local, failed below the router, and was answered
-            # from the cloud with no badge, no substitution notice and no word
-            # in the log.
+            # The probe stays advisory: a busy daemon must not cost the user a
+            # seat they explicitly bound. But "the daemon is slow to answer" and
+            # "this model has never been on this machine" are different facts.
+            # Returning local for ANY id whose provider merely LOOKS local
+            # routes a seat naming an uninstalled model local; it fails below
+            # the router and is answered from the cloud with no badge, no
+            # substitution notice and no word in the log.
             #
-            # 2026-09-18 is the case in point: capability_routing.reasoning
-            # named gemma4:12b with provider ollama-local on a machine whose
-            # Ollama store was empty. He asked for that model four times and
-            # Sonnet answered four times. The honest branch at the bottom of
-            # this method — the one that sets `substituted_for` and says
-            # plainly that this is not what was asked for — was unreachable,
-            # because this early return fired first.
+            # For example, capability_routing.reasoning naming gemma4:12b with
+            # provider ollama-local on a machine whose Ollama store is empty:
+            # every request for that model is answered by Sonnet. The honest
+            # branch at the bottom of this method — the one that sets
+            # `substituted_for` and says plainly that this is not what was
+            # asked for — is unreachable if an early return fires first.
             #
             # So demote only on POSITIVE evidence of absence. An inventory we
             # could not read still yields to the binding, exactly as before.
@@ -405,7 +403,7 @@ class ModelRouter:
                     "provider": "local",
                     "model": model_id,
                     "task_type": task_type,
-                    "reason": "the model seat he chose (capability_routing.reasoning)",
+                    "reason": "the model seat the user chose (capability_routing.reasoning)",
                 }
         names = {m["name"] for m in self._local_candidates()}
         # `_is_registry_local` stays, because it is what rescues a custom-named
@@ -420,9 +418,9 @@ class ModelRouter:
                 "provider": "local",
                 "model": model_id,
                 "task_type": task_type,
-                "reason": "the model seat he chose (capability_routing.reasoning)",
+                "reason": "the model seat the user chose (capability_routing.reasoning)",
             }
-        # A cloud id he chose is equally a choice — carry it rather than
+        # A cloud id the user chose is equally a choice — carry it rather than
         # collapsing to the Anthropic default further down the stack.
         if model_id.startswith(("claude", "gpt", "gemini")) or (
                 "/" in model_id and not model_id.startswith("hf.co/")):
@@ -430,7 +428,7 @@ class ModelRouter:
                 "provider": "cloud",
                 "model": model_id,
                 "task_type": task_type,
-                "reason": "the model seat he chose (capability_routing.reasoning)",
+                "reason": "the model seat the user chose (capability_routing.reasoning)",
             }
 
         # The user named a model nothing here can serve. Dropping through to
@@ -454,9 +452,9 @@ class ModelRouter:
 
         Conservative by construction, and deliberately asymmetric: every way
         of failing to READ an inventory returns False, so an unreachable or
-        busy daemon never costs the user a seat he bound on purpose. Only a
+        busy daemon never costs the user a seat they bound on purpose. Only a
         clear answer that does not contain the model counts as absence, and
-        only after her own store, the registry and a live seat endpoint have
+        only after its own store, the registry and a live seat endpoint have
         all been asked. An empty inventory is treated as "nothing answered",
         not as "nothing exists".
         """
@@ -958,7 +956,7 @@ class ModelRouter:
                 "reason": "local_only mode — no local seat available",
             }
 
-        # His explicit seat is consulted BEFORE the speed/size heuristics for
+        # The user's explicit seat is consulted BEFORE the speed/size heuristics for
         # every ordinary class. Voice keeps its own pipeline and the vault
         # route has already run and taken precedence above; a task_override is
         # a deliberate per-class rule and still wins over a general seat.
@@ -1016,10 +1014,10 @@ class ModelRouter:
             # different statement — it is the user saying "this thread, that
             # model", per thread, which is the entire point of being able to
             # open several chats at once. Overriding it would make the
-            # per-chat picker decorative in the cloud direction: measured
-            # 2026-09-18, a conversation bound to claude-sonnet-5 was answered
-            # by bonsai2:27b while another bound to bonsai2:27b was answered
-            # correctly, so the picker worked in exactly one of two
+            # per-chat picker decorative in the cloud direction: a
+            # conversation bound to claude-sonnet-5 would be answered by
+            # bonsai2:27b while another bound to bonsai2:27b is answered
+            # correctly, so the picker would work in exactly one of two
             # directions.
             #
             # STATED PLAINLY BECAUSE IT COSTS SOMETHING: a chat bound to a

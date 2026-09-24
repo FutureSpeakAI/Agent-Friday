@@ -259,8 +259,7 @@ def list_routines():
 #: `last_status: "launched"` and return `"<label> launched"` -- without starting
 #: anything. No thread, no subprocess, and nothing anywhere consumes a pending
 #: VIBE_TERMINALS row, so the entry sat there forever while the UI reported a
-#: launch. That is why "I tried to launch the daily creation routine and nothing
-#: happened" (2026-09-24): nothing was ever started, and the API said otherwise.
+#: launch: nothing was ever started, and the API said otherwise.
 #:
 #: The scheduler already owns these jobs, so a routine button runs the SAME code
 #: the timer runs. One implementation, two triggers.

@@ -362,8 +362,7 @@ def generate_music(prompt: str, *,
 
     # Lyria is cloud. Gate every string that leaves — the composed prompt
     # (which carries Series-Bible/scene-DNA context), the lyrics and the
-    # negative prompt — the same way generate_image gates its prompt. Found
-    # ungated in the 2026-09-06 boundary audit.
+    # negative prompt — the same way generate_image gates its prompt.
     from agent_friday.services import egress_gate as _eg
     full_prompt = _eg.gate_text(full_prompt, "gemini", "music.prompt")
     if not full_prompt:

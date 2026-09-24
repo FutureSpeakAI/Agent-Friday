@@ -203,7 +203,7 @@ def serve(engine, inp, out) -> int:
 
     # LOAD BEFORE ANY OTHER THREAD EXISTS.
     #
-    # Measured on the reference machine, 2026-09-18: with the reader thread
+    # Measured on the reference machine: with the reader thread
     # already blocked in ReadFile on the stdin pipe, the engine's first
     # `import numpy` (faster-whisper and torch both pull it in on load)
     # never returned -- py-spy showed the main thread parked inside

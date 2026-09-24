@@ -222,7 +222,7 @@ def machine_level():
     """The 'I need my machine' / Resume button (headroom.md D1, now decided).
 
     This was a deliberate stub while D1 was open: it accepted the click and said
-    plainly that nothing was enforced. D1 was answered on 2026-09-24 and this is
+    plainly that nothing was enforced. D1 is answered and this is
     the real handler.
 
     `level`: "yield"/"away" stands Friday down, "working" resumes. `hours`

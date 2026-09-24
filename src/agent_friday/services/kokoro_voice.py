@@ -163,9 +163,9 @@ def kokoro_import_status(refresh: bool = False) -> dict:
     Caching that answer permanently meant one unlucky moment at startup
     disabled local voice until the process was restarted: ``models_ready()``
     stayed False, the engine resolver refused the local session, and the
-    microphone did nothing. Observed on the live server, which reported every
-    Kokoro dependency installed, reported the import broken, and then imported
-    Kokoro and spoke a sentence fine in a separate process seconds later.
+    microphone did nothing -- on a server that reports every Kokoro
+    dependency installed and the import broken, while a separate process
+    imports Kokoro and speaks a sentence fine seconds later.
 
     Returns ``{"ok", "error", "missing"}``; ``missing`` names the transitive
     module that was absent when the exception tells us.

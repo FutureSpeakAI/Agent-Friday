@@ -1,7 +1,7 @@
 """capability_state — one live answer to "what can Friday actually do right now",
 with ABSENT and UNCONFIGURED kept apart.
 
-THE DEFECT THIS EXISTS TO END (2026-09-18, four surfaces, one disease):
+THE DEFECT THIS EXISTS TO END (several surfaces, one disease):
 
   * The seat control announced a model change it never made.
   * The settings screen asserted Google accounts were connected when they

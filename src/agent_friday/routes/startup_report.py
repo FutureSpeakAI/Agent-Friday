@@ -1,9 +1,8 @@
 """Startup integrity endpoint - what loaded, what didn't, and what that costs.
 
-Exists because a whole API surface (routes/jobs.py, the career pipeline) went
-missing for seven weeks and ~70 restarts while the server reported itself
-healthy. The only trace was a WARNING in a log nobody opens. See
-docs/history/audits/server-death-forensics.md.
+Exists because a whole API surface can go missing across weeks of restarts
+while the server reports itself healthy, when the only trace is a WARNING in a
+log nobody opens.
 
 Standing principle: degradation must cost something visible. This is the
 machine-readable half of that - the UI and any monitoring can poll one endpoint

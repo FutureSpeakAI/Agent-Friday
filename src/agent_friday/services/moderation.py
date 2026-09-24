@@ -218,12 +218,12 @@ def scan(
     `apply_packs=False` runs the harm floor, NSFW detection and the family-mode
     block, then stops — it skips the subscribed-pack evaluation at the end.
 
-    It exists to break a mutual recursion, measured 2026-09-22. This function
-    called `content_policies.evaluate_content` for pack rules; that function
-    called this one back for the H1-H4 floor; neither had a depth guard, and
-    both call sites are wrapped in `except Exception: pass`. So a single
-    approval card cost **250 round-trips** terminating in a swallowed
-    RecursionError, and that swallowing is why nobody noticed.
+    It exists to break a mutual recursion. Without it this function calls
+    `content_policies.evaluate_content` for pack rules; that function calls
+    this one back for the H1-H4 floor; neither has a depth guard, and both
+    call sites are wrapped in `except Exception: pass`. So a single approval
+    card costs **250 round-trips** terminating in a swallowed RecursionError,
+    and the swallowing hides it.
 
     It was never a Law-1 hole: harmful content blocks at stack depth 2,
     because the floor runs before the pack step. Verified by instrumenting

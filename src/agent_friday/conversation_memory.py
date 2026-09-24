@@ -459,13 +459,13 @@ class ConversationMemory:
     # visible in get_session()/recent() (the history paths), flagged with a
     # reason. unsupersede() restores it, so the operation is reversible.
     #
-    # Why this exists (2026-09-09): Friday's settings page displayed two
-    # expired Google accounts as "connected". Stephen read that page and told
-    # Friday what he saw. Friday stored his sentence as a user-authored fact --
-    # its highest-trust source -- and from then on answered "are my Google
-    # accounts connected?" by retrieving his own sentence and citing him,
-    # without consulting anything live. The display's error was laundered
-    # through the person it was shown to and came back wearing his authority.
+    # Why this exists: a display bug can show expired accounts as "connected".
+    # A user who reads that page and repeats it to Friday produces a
+    # user-authored fact -- the highest-trust source -- and from then on "are
+    # my Google accounts connected?" is answered by retrieving the user's own
+    # sentence and citing them, without consulting anything live. The
+    # display's error is laundered through the person it was shown to and
+    # comes back wearing their authority.
     # See docs/DECISIONS.md, "Recall can be poisoned by a broken display".
 
     def supersede(self, ids, reason, superseded_by=""):

@@ -1,15 +1,13 @@
 """Make a hard crash name itself, and remove the one native crash we can name.
 
-WHAT HAPPENED, 2026-09-22
--------------------------
-Stephen reported console windows flashing on his desktop for days. Three
-fixes went in aimed at missing CREATE_NO_WINDOW flags; none of them stopped
-it, because the popups were never a console-flag problem. A window watcher
-finally caught one: the process that got a console was accompanied, in the
-same second, by `WerFault.exe` - Windows Error Reporting. The windows were
-crash reporters.
+THE FAILURE THIS ADDRESSES
+--------------------------
+Console windows flashing on the desktop look like a missing CREATE_NO_WINDOW
+flag, but they can be something else: a process that gets a console in the
+same second as `WerFault.exe` - Windows Error Reporting - is a crash reporter.
+Fixes aimed at console flags do not stop those.
 
-Seven Python crashes in 24 hours:
+A representative day held seven Python crashes in 24 hours:
 
     5 x python313.dll, exception 0xc0000005 (access violation), at repeating
         offsets 0x2b0b98 / 0x2b0d13 / 0xf4dd8
@@ -18,10 +16,8 @@ Seven Python crashes in 24 hours:
 Every one of them loaded ~280 modules out of friday-desktop's own venv, so
 they are Friday's processes, not something else on the machine.
 
-That also plausibly explains two other open mysteries: `rsi-nightly-implement`
-going `interrupted` at step 2/3 on three separate nights, and a pytest run
-that hung at 98% with a worker at 0% CPU. A process that has died without
-unwinding looks exactly like both.
+A process that has died without unwinding also looks exactly like a nightly
+job going `interrupted` mid-step, or a pytest run hung with a worker at 0% CPU.
 
 WHY THIS MODULE EXISTS
 ----------------------
@@ -32,8 +28,7 @@ library and was never called: it installs a handler for SIGSEGV and friends,
 so an access violation writes a Python traceback instead of vanishing into a
 WER dialog.
 
-The whole forensic problem today was that WER could tell me a fault offset in
-a DLL and nothing about which process it was or what it was doing. So the
+WER alone gives a fault offset in a DLL and nothing about which process it was or what it was doing. So the
 header written here records pid, argv and start time: the next crash
 identifies itself without anyone having to correlate timestamps by hand.
 

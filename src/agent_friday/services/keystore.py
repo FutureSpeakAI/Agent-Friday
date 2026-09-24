@@ -8,17 +8,16 @@ Which source wins decides the key. So two processes on the same machine, started
 two different ways, derive two different keys, and the one that did not write
 the token cannot read it.
 
-That is not a theory. Measured in Stephen's audit log on 2026-09-19: 11,508
-"GCM auth tag mismatch" failures on Sept 4th, 9,517 on the 11th, 8,109 on the
-17th - and a reconnect of both Google accounts every single morning to clear
-something that was never broken at Google. FRIDAY_PASSWORD is declared in
-friday_startup.bat and in neither of the other two launchers.
+That is not a theory: an audit log can show thousands of "GCM auth tag
+mismatch" failures a day (11,508 in one day is what this produces) and a
+Google account that needs reconnecting every morning to clear something that
+was never broken at Google. FRIDAY_PASSWORD is declared in friday_startup.bat
+and in neither of the other two launchers.
 
 TWO PROBLEMS, ONE ANSWER. The second problem is that two of those five sources
 are the Windows credential store (keyring, and DPAPI), which makes Friday's
-credentials depend on a platform Friday is not supposed to need. Stephen's
-call, 2026-09-19: "I don't want a dependency on the Windows credential store.
-Friday should have its own credential store."
+credentials depend on a platform Friday is not supposed to need. Friday has
+its own credential store and does not depend on the Windows one.
 
 So:
 

@@ -265,10 +265,9 @@ def comfy_root() -> Path:
 #
 # WHY THIS TABLE EXISTS: on a 12,282 MiB card with a 2,560 MiB Windows display
 # reserve, only 9,722 MiB can EVER be free for a render, even with every
-# language seat evicted. Z-Image needs 10,453. So the default local image model
-# cannot run on this machine and never could, and the refusal Stephen kept
-# hitting on 2026-09-10 was correct policy applied to an impossible default.
-# Nobody had put the two numbers next to each other.
+# language seat evicted. Z-Image needs 10,453. So that model cannot run on such
+# a card at all, and a lease refusal for it is correct policy applied to an
+# impossible default. This table puts the two numbers next to each other.
 MEASURED_PEAK_MIB: dict = {
     "z-image-turbo-fp8": 10453,
     "sd3.5-medium-fp8": 10621,
@@ -987,9 +986,8 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                 # And say WHAT TO DO, which needs one distinction the lease
                 # cannot make: whether this model could ever run here. "Free
                 # the card" is sound advice for a model that fits and useless
-                # for one that does not, and Friday spent 2026-09-10 giving
-                # the useless version because nothing compared the model's
-                # measured peak to the card's ceiling.
+                # for one that does not; telling them apart needs the model's
+                # measured peak compared to the card's ceiling.
                 env = {"status": "refused", "provider": PROVIDER,
                        "reason": lease.get("error"),
                        "rule_id": (lease.get("refused") or {}).get("rule_id")}
@@ -1053,10 +1051,10 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                 frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
                     else (0.1 if st == 0 else 0.9)
                 frac = (_i + min(frac, 0.99)) / _total
-                # A bar that goes BACKWARDS reads as a restart. Observed on a
-                # live run: sampling finished at 85%, then ComfyUI's
-                # per-node progress reset `value` to 0 for the decode node and
-                # the bar fell to 10% just before the image appeared. Progress
+                # A bar that goes BACKWARDS reads as a restart. Sampling can
+                # finish at 85%, then ComfyUI's per-node progress resets
+                # `value` to 0 for the decode node and the bar would fall to
+                # 10% just before the image appears. Progress
                 # only ever moves forward within a job.
                 frac = max(frac, _state.get("floor", 0.0))
                 _state["floor"] = frac

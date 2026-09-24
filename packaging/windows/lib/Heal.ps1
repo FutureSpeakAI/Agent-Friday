@@ -853,8 +853,8 @@ Diagnose and call propose_remediation once.
     # nothing should run, but it is not a model that went off-menu and it
     # should not cost her one of twelve repairs.
     #
-    # Observed on 2026-08-25, on the first execution of this loop: two heals
-    # spent on truncated responses at max_tokens = 700.
+    # At max_tokens = 700 responses do get truncated here, and each one would
+    # otherwise spend a heal.
     $stopReason = ''
     if ($resp.PSObject.Properties.Name -contains 'stop_reason') { $stopReason = [string]$resp.stop_reason }
     if ($stopReason -eq 'max_tokens') {

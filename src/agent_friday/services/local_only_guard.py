@@ -1,17 +1,15 @@
 """Mark a run local-only, and refuse any cloud call inside it.
 
-Stephen's product decision, 2026-09-24: "daily creation, briefings, and
-news/front page should default to the local reasoning model to eliminate cost. So
-should the heartbeat." And, with it: they must NOT silently fall back to a cloud
-model -- if the local model is down or busy they wait, retry inside their window,
-then SKIP with a visible reason. Cloud only if a job is explicitly opted in.
+The product rule: daily creation, briefings, the news front page and the
+heartbeat default to the local reasoning model, so that routine scheduled work
+costs nothing. And they must NOT silently fall back to a cloud model -- if the
+local model is down or busy they wait, retry inside their window, then SKIP with
+a visible reason. Cloud only if a job is explicitly opted in.
 
-This already half-existed, and the half that existed worked. `scheduler._run_task`
-honours `local_only: true` on an **agent_prompt** task: it resolves the local seat
-and raises `SkippedRun` rather than going to the cloud (Stephen, 2026-09-18: "I
-don't want to keep getting charged by Anthropic for checking my email and
-calendar"). The ledger shows it working -- 46 of the 47 heartbeat runs since then
-served on `arbiter-local/bonsai2:27b` at $0.00.
+`scheduler._run_task` honours `local_only: true` on an **agent_prompt** task: it
+resolves the local seat and raises `SkippedRun` rather than going to the cloud,
+so routine checks of email and calendar are not billed. Heartbeat runs under
+that rule serve on `arbiter-local/bonsai2:27b` at $0.00.
 
 Two gaps this closes.
 
@@ -23,10 +21,10 @@ Two gaps this closes.
 2. Even on the agent_prompt path, pinning a model at spawn time is not the same
    as forbidding cloud for the whole run. `_generate_agent`'s own fallback ladder
    can retry a failed leg on a DIFFERENT provider (`agent.py` journals
-   `ladder_fallback`), so one failed local leg could still reach Anthropic. One
-   heartbeat run did exactly that on 2026-09-22 and cost $0.42 -- almost all of it
-   112,045 CACHE-WRITE tokens, i.e. the price of shipping the full system prompt,
-   not of the 99 tokens it actually said.
+   `ladder_fallback`), so one failed local leg could still reach Anthropic. A
+   heartbeat run that does so costs around $0.42 -- almost all of it ~112,000
+   CACHE-WRITE tokens, i.e. the price of shipping the full system prompt, not of
+   the hundred or so tokens it actually says.
 
 So the flag becomes a property of the RUN, not of one dispatch decision, and the
 refusal lands at the cloud transports themselves -- the last place before the
@@ -89,12 +87,11 @@ def provider_name_of(provider) -> str:
     """The provider's NAME, whether it arrived as a string or a descriptor dict.
 
     `_call_openai` takes `provider` as EITHER a registry name or a full
-    descriptor dict (the multi-provider path). An early version of this guard did
-    `str(provider or "openai")`, which stringified the whole dict -- so
-    `{'name': 'arbiter-local', 'classification': 'local', ...}` did not match any
-    local name and the guard refused Friday's OWN LOCAL SEAT. Observed live
-    within half an hour of shipping: "Daily creation is local-only, so it will not
-    call {'name': 'arbiter-local', ...}". A guard that blocks the thing it is
+    descriptor dict (the multi-provider path). `str(provider or "openai")` would
+    stringify the whole dict -- so `{'name': 'arbiter-local', 'classification':
+    'local', ...}` matches no local name and the guard refuses Friday's OWN LOCAL
+    SEAT: "Daily creation is local-only, so it will not call {'name':
+    'arbiter-local', ...}". A guard that blocks the thing it is
     supposed to permit is worse than no guard.
     """
     if isinstance(provider, dict):

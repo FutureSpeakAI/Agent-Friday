@@ -22,7 +22,7 @@
     Console output is split in two:
       * Say-*      -> what SHE sees. Plain English. No paths, no exit codes,
                       no stack traces, no jargon, ever.
-      * Write-Log  -> what STEPHEN reads afterwards. Everything.
+      * Write-Log  -> what the maintainer reads afterwards. Everything.
 
     PowerShell 5.1 compatible (Windows 11 ships 5.1 as powershell.exe).
     No ternaries, no null-coalescing, no `e escapes.
@@ -117,8 +117,8 @@ function Protect-LogText {
 
         Note carefully what this does NOT do: it does not print the NAME of a
         secret either. A log line reading "ANTHROPIC_API_KEY was not found"
-        tells a reader which secrets exist on this machine and is exactly the
-        leak that was fixed on 2026-08-21 (commit c452f17). We redact the
+        tells a reader which secrets exist on this machine, which is itself a
+        leak (fixed in commit c452f17). We redact the
         value AND generalise the name to "<credential>".
 
         This is a belt-and-braces layer. The correct primary defence is not

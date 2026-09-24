@@ -1,22 +1,20 @@
 """Look at every credential Friday holds, on a schedule, and say what is wrong.
 
-THE REASON THIS EXISTS, stated plainly because it is the lesson of 2026-09-19:
-seven credentials were found stranded that day, and NOT ONE of them was found
-by anybody noticing a symptom. Every one turned up because something finally
-enumerated a whole class at once.
+THE REASON THIS EXISTS, stated plainly: stranded credentials are NOT found by
+anybody noticing a symptom. They turn up when something enumerates a whole
+class at once, because each one presents as something else:
 
-  * the Firecrawl key presented as "no API key set". It was present and
-    undecryptable, and the user had been told to supply something he had
-    already supplied
-  * the GitHub token presented as a broken MCP server
-  * Drive presented as working
-  * the OpenRouter, AtlasCloud and Kie keys presented as nothing at all,
-    because nothing looked
+  * a key that is present but undecryptable presents as "no API key set", and
+    the user is told to supply something they have already supplied
+  * a stale MCP token presents as a broken MCP server
+  * a Drive grant with the API disabled presents as working
+  * provider keys nothing reads present as nothing at all, because nothing
+    looks
 
-`credential_store._credential_files()` was written that morning as a one-off
-helper for the keystore migration, and its FIRST RUN found five dead
-credentials. A function that valuable should not be a migration detail that
-runs once. This is the standing version.
+`credential_store._credential_files()` began as a one-off helper for the
+keystore migration, and its first run found dead credentials. A function that
+valuable should not be a migration detail that runs once. This is the standing
+version.
 
 WHAT IT CHECKS, in the order the user cares about:
 
@@ -163,9 +161,9 @@ def _mcp_secret_findings() -> list:
 
     THE CLASS THAT HID THE GITHUB TOKEN. These are base64 inside a JSON
     document rather than blobs on disk, so `credential_store._credential_files`
-    cannot see them - which is why five credentials were recovered on
-    2026-09-19 while GitHub kept failing every spawn, and why it took reading
-    a connector-health endpoint to notice. A sweep that inherited the same
+    cannot see them - so file credentials can be recovered while an MCP
+    server keeps failing every spawn, and only a connector-health endpoint
+    shows it. A sweep that inherited the same
     blind spot would be the same mistake with a schedule attached.
 
     Reads the config directly rather than through the MCP manager: the question
@@ -216,9 +214,9 @@ def _mcp_secret_findings() -> list:
 def _vault_findings() -> list:
     """Files sealed with a key nothing currently derives.
 
-    Fifteen of these were found on 2026-09-19 - court records, family
-    profiles, a job hunt - openable only with a passphrase living in one of
-    three launchers. Reported rather than touched.
+    These can be the user's most private vault files, openable only with a
+    passphrase that no longer lives where the resolver looks. Reported rather
+    than touched.
     """
     out = []
     try:

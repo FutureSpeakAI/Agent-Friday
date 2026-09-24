@@ -6,7 +6,7 @@ nothing enforces machine levels yet ... This click does not release or stand
 anything down." The route said so itself: STUBBED, deliberately, because
 headroom.md **D1** (working/away/yield) was undecided.
 
-D1 is decided (2026-09-24). "I need my machine" releases the machine:
+D1 is decided. "I need my machine" releases the machine:
 
   * local models are unloaded from the GPU. Laya is CPU-resident, so it stays;
   * every background and scheduled job is paused;
@@ -172,8 +172,8 @@ def may_use_local_gpu(*, interactive: bool = False) -> bool:
     """Whether anything may load a model onto the card right now.
 
     False for both background AND interactive work while stood down: the machine
-    was handed to the user, and quietly reloading 20 GB because he typed a
-    message is exactly what he asked to stop. Interactive turns route to a cloud
+    was handed to the user, and quietly reloading 20 GB because they typed a
+    message is exactly what they asked to stop. Interactive turns route to a cloud
     seat instead, visibly.
     """
     if not is_stood_down():

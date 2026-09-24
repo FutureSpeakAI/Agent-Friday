@@ -771,13 +771,12 @@ def seat_files() -> dict:
     Built from Friday's own store (`~/.friday/runtime/models/models.json`)
     first, because that is the registry that knows a seat is a base plus an
     adapter plus a projector. The older `residency/gguf_models.json` is read
-    second, for weights-only entries it alone names. On 2026-09-17 that file
-    named seven GGUFs under a directory that no longer existed, the store's
-    only live seat was on a wedged network share, and the Arbiter's map came
-    back empty without a word: every pinned load then fell through to an
-    Ollama daemon with no models. An empty map is now announced, with the
-    reasons, so a Friday with no local seat says so instead of degrading
-    quietly.
+    second, for weights-only entries it alone names. If that file names GGUFs
+    under a directory that no longer exists and the store's only live seat is
+    on a wedged network share, the Arbiter's map comes back empty and every
+    pinned load falls through to an Ollama daemon with no models. An empty
+    map is therefore announced, with the reasons, so a Friday with no local
+    seat says so instead of degrading quietly.
     """
     out: dict = {}
     reasons: list = []
@@ -1031,16 +1030,15 @@ def duplicate_candidates(entries):
 def installed_entries(profile: dict) -> list:
     """A CatalogEntry for every locally available model.
 
-    **Friday's own store first.** It used to be `ollama list` first, which made
-    a running daemon a prerequisite for Friday knowing her own capabilities:
-    stop Ollama and a machine holding 38 GB of usable weights reported that it
-    had no local models, the plan had no seats, and there was nothing to
-    explain why.
+    **Friday's own store first.** Putting `ollama list` first would make a
+    running daemon a prerequisite for Friday knowing her own capabilities:
+    stop Ollama and a machine holding 38 GB of usable weights would report
+    that it had no local models, the plan would have no seats, and there would
+    be nothing to explain why.
 
     The daemon is still consulted, for anything in it that has not been
     imported yet — so a model pulled with `ollama pull` five minutes ago still
-    appears, and nothing that worked yesterday stops working today. It is a
-    fallback now, not the source.
+    appears. It is a fallback, not the source.
     """
     from agent_friday.services import model_store as ms
 

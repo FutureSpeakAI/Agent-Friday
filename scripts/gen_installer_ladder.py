@@ -50,9 +50,8 @@ sys.path.insert(0, str(REPO / "src"))
 #: A new BRAIN_MODELS id needs a line added here BY A PERSON before this
 #: script will offer it; that is the point, not an oversight.
 BLURBS = {
-    # 2026-09-05: Qwen removed from model_plan.BRAIN_MODELS entirely (Gemma 4
-    # only, per the 2026-09-03 product decision — see model_plan.py's own
-    # comment above _BRAINS). Blurbs below map each Gemma 4 rung to the same
+    # Qwen is not in model_plan.BRAIN_MODELS (Gemma 4 only — see
+    # model_plan.py's own comment above _BRAINS). Blurbs below map each Gemma 4 rung to the same
     # ROLE its Qwen predecessor played in the old 4-rung ladder (smallest,
     # small-everyday, tuned-against, largest) rather than inventing new
     # copy from nothing — the claims those sentences make are about the

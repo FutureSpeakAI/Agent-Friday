@@ -33,8 +33,7 @@ function Get-SpecialDir {
         four down together - including the desktop icon, which is the one thing
         the closing screen tells her to double-click.
 
-        Found on 2026-08-25, on the first cold install anyone had ever run.
-        The trigger there was a redirected %APPDATA% in a test harness, which
+        A redirected %APPDATA% in a test harness triggers it, which
         is not something a normal profile will have. A profile mid-provision, a roaming
         profile, or a OneDrive Known Folder Move that has not finished are, and
         they produce exactly the same empty string. #>

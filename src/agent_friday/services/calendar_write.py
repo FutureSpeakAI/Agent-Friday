@@ -297,8 +297,8 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
         targets = [dict(e, kind="single") for e in found["events"]]
 
     # Classification, same as create_event/update_event: these strings are
-    # model-authored and land in Google Calendar. This function skipped the
-    # gate its siblings use (2026-09-06 boundary audit).
+    # model-authored and land in Google Calendar, so this function uses the
+    # same gate as its siblings.
     if location:
         location, err = _gate_calendar_field(location, "location")
         if err:

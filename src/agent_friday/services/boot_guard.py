@@ -100,8 +100,9 @@ def _write(path: Path, obj) -> None:
 def note(message: str, **fields) -> None:
     """Append a plain-language line to the rollback trail.
 
-    In his language, not the system's: what changed, when, at whose request, and
-    how to undo it. A trail he cannot read is a trail that does not exist.
+    In the user's language, not the system's: what changed, when, at whose
+    request, and how to undo it. A trail the user cannot read is a trail that
+    does not exist.
     """
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -605,9 +606,9 @@ def status() -> dict:
         "would_auto_revert": failing_to_boot() and not a.get("restore_pending"),
         "restore_pending": bool(a.get("restore_pending")),
         "restored_at": a.get("restored_at"),
-        # The trail was written by note() and read by nobody: recent_notes() had
-        # no callers, so "a trail he cannot read is a trail that does not exist"
-        # described its own module.
+        # The trail written by note() must have a reader: a recent_notes() with
+        # no callers would make "a trail the user cannot read is a trail that
+        # does not exist" describe its own module.
         "recent_notes": recent_notes(10),
         "boot_critical_files": list(BOOT_CRITICAL),
         "recent_rollbacks": recent_notes(5),

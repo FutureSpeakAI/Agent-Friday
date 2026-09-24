@@ -1,16 +1,14 @@
 """Answer instantly from the last known good value, refresh behind the user.
 
-THE COMPLAINT, 2026-09-22: "it can't read the catalogue and times out,
-preventing me from switching... We need to populate this list once, upon
-startup (running in the background so it doesn't stop the UI from launching),
-and keep that list available for quick retrieval. I think that goes for all of
-our workspace data so that the user doesn't try to load something and then sit
-there for a minute or longer."
+THE REQUIREMENT. A list the UI needs (the model catalogue, and workspace data
+generally) is populated once at startup, in the background so it does not stop
+the UI from launching, and kept available for quick retrieval, so the user
+never loads something and then sits there for a minute or longer.
 
-Measured before building anything: build_catalog() takes 18.9 s and produces
-598 models. GET /api/models calls it synchronously, so the model picker spends
-nineteen seconds doing nothing visible, and under load it exceeds the client's
-timeout entirely - which is the failure he hit.
+Measured: build_catalog() takes 18.9 s and produces 598 models. Called
+synchronously from GET /api/models, the model picker spends nineteen seconds
+doing nothing visible, and under load it exceeds the client's timeout
+entirely, so the catalogue cannot be read and the model cannot be switched.
 
 THREE PROPERTIES, and the third is the one usually skipped.
 

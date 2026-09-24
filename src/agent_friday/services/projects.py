@@ -4,7 +4,7 @@ A project groups chats and carries what they should default to. It does NOT
 change what Friday knows. `conversations.py` states the rule this store is
 built under: transcripts are isolated, memory is shared. ChromaDB, the wiki,
 the knowledge graph and the vault stay global, and a project does not fork
-them. Decided 2026-09-19: most of what makes ChatGPT's projects useful is that
+them. The reasoning: most of what makes ChatGPT's projects useful is that
 they fake a memory their product does not otherwise have. Friday has the real
 thing, so narrowing it per folder would be paying a cost to buy something
 already owned - and it would mean Friday knew less inside a project than
@@ -17,8 +17,8 @@ What a project is for here, then, is DEFAULTS and ORGANISATION:
   * optional standing instructions prepended to chats inside it
 
 THE SEAT DEFAULT EARNS ITS KEEP. Only one local model fits in 12 GB at a time
-(measured 2026-09-18: two bonsai2:27b servers took 11,605 MiB of 12,282 and
-every turn into that state hung). Picking a seat per chat is therefore a chore
+(measured: two bonsai2:27b servers take 11,605 MiB of 12,282 and every turn
+into that state hangs). Picking a seat per chat is therefore a chore
 with a real constraint behind it. A project that declares "this one runs on
 Bonsai" gives every chat inside it that seat without asking, and because they
 are the SAME model they share one server rather than contending for the GPU.

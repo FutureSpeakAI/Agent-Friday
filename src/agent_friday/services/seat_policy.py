@@ -1,15 +1,13 @@
 """Which seats may never be pointed at a paid API, in one place.
 
-From a screenshot of Settings > Models, 2026-09-24: the "Memory keeper" seat read
-"Reads the day and decides what is worth keeping. Local only." while showing
-"Claude Opus 5.5 - cloud". Nothing leaked -- `memory_proposals._ask_seat()` was
-already refusing before any network call, its orb label appears zero times in
-friday.log, and zero of 486,810 egress-ledger entries mention memory -- but the
-UI had happily put the seat into a state where its whole purpose was disabled,
-and nothing said so.
+Settings > Models can show the "Memory keeper" seat reading "Reads the day and
+decides what is worth keeping. Local only." while showing "Claude Opus 5.5 -
+cloud". Nothing leaks -- `memory_proposals._ask_seat()` refuses before any
+network call -- but the UI puts the seat into a state where its whole purpose is
+disabled, and nothing says so.
 
-The fault was that the CLAIM lived in a description string and the RULE lived in
-an `if` a thousand lines away. Two copies of one fact drift; these did. So the
+The fault is the CLAIM living in a description string and the RULE living in an
+`if` a thousand lines away. Two copies of one fact drift. So the
 declaration lives here, and the label, the save-time refusal and the runtime
 refusal all read it.
 

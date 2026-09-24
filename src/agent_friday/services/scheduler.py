@@ -257,20 +257,17 @@ def delete_schedule(sid) -> bool:
 
 
 # ── Built-in task registration ───────────────────────────────────────────────
-#: Schedules that ship LOCAL-ONLY, by Stephen's decision (2026-09-24):
-#: "daily creation, briefings, and news/front page should default to the local
-#: reasoning model to eliminate cost. So should the heartbeat."
+#: Schedules that ship LOCAL-ONLY: daily creation, briefings, news/front page
+#: and the heartbeat default to the local reasoning model to eliminate cost.
 #:
 #: local-only means STRICTLY local: if no local seat is serving, the run is
 #: SKIPPED with a reason rather than quietly sent to a paid provider. Cloud is
 #: only ever used when a job is explicitly opted in.
 #:
-#: `sch_heartbeat` was already set this way on 2026-09-18 after his earlier
-#: request, and the ledger shows it worked: 2,357 runs / $438.76 before, then 47
-#: runs / $0.42 after, 46 of those 47 on arbiter-local/bonsai2:27b at $0.00. The
-#: one that escaped went through `_generate_agent`'s fallback ladder, which is why
-#: `local_only_guard` now refuses at the transports rather than only pinning a
-#: model at spawn.
+#: For scale: a cloud heartbeat cost $438.76 over 2,357 runs; pinned local, 46 of
+#: 47 runs cost $0.00. The one that escaped went through `_generate_agent`'s
+#: fallback ladder, which is why `local_only_guard` refuses at the transports
+#: rather than only pinning a model at spawn.
 #:
 #: A DEFAULT, not a lock. The user's edits in schedules.json still win --
 #: `_seed_and_reconcile` only seeds a schedule that does not exist yet.
@@ -335,7 +332,7 @@ def _spec_hm(spec):
 #: window. Overridable per schedule via `spec`, and globally in settings.
 _IDLE_DEFAULT_AFTER_S = 600          # 10 minutes away
 _IDLE_DEFAULT_WINDOW = (9, 23)       # 09:00-23:00, so it never runs overnight
-                                     # on a machine he left on by accident
+                                     # on a machine left on by accident
 
 
 def _idle_settings():
@@ -468,10 +465,9 @@ def _is_due(rec, now) -> bool:
     if trig == "idle_daily":
         # Once a day, but WHILE THE USER IS AWAY rather than at a fixed hour.
         #
-        # Stephen: "Why doesn't the daily creation run by default during idle
-        # time?" It was not running at all -- `sch_daily_creation` carried
-        # `enabled: false`, last ran 2026-09-09, and the newest artifact on disk
-        # is 2026-08-30. Not cost, not GPU contention: switched off.
+        # The daily creation runs by default during idle time. (An older seed
+        # shipped `sch_daily_creation` with `enabled: false`, so it never ran;
+        # the reconcile step turns it back on.)
         #
         # Every condition below is a reason to WAIT, not to fail, and the day's
         # mark is only set when it actually runs -- so a day the user never steps
@@ -769,9 +765,8 @@ def _run_task(rec):
     # seat, because nobody is watching when it does. The heartbeat checks mail
     # and calendar every run and reports "NO CHANGE" most of the time; paying
     # a frontier model to say nothing, twice a day, forever, is a bill nobody
-    # decided to incur. Stephen, 2026-09-18: "make sure it's only going to
-    # execute on a local seat. I don't want to keep getting charged by
-    # Anthropic for checking my email and calendar."
+    # decided to incur. A local-only schedule executes on a local seat and
+    # never incurs provider charges for checking email and calendar.
     #
     # `local_only: true` on the task means exactly that, and it means it in
     # the strict sense: if no local seat is actually serving, the run is
@@ -787,8 +782,8 @@ def _run_task(rec):
                 "now, and this job is not permitted to run in the cloud")
     # Pinning the model at spawn is not the same as forbidding cloud for the
     # whole run: `_generate_agent`'s fallback ladder can retry a failed leg on
-    # another provider, and one heartbeat run did exactly that on 2026-09-22 for
-    # $0.42 (almost all of it cache-write tokens). The context closes that.
+    # another provider, which is how a pinned-local heartbeat run can still
+    # cost money (mostly cache-write tokens). The context closes that.
     if task.get("local_only"):
         from agent_friday.services import local_only_guard as _log_guard
         with _log_guard.local_only(rec.get("name") or "this schedule"):
@@ -1022,11 +1017,10 @@ def _seed_and_reconcile():
         # Apply the local-only default to schedules that ALREADY exist and have
         # never been given an explicit answer. Absent is not the same as chosen:
         # these were seeded before the default existed, so leaving them cloud-
-        # capable would make the decision a no-op for every current install --
-        # including Stephen's, whose four target schedules all carry
-        # Daily creation moves from a fixed 08:00 slot to "once a day, while he
-        # is away", and is turned back ON. It carried `enabled: false` with its
-        # last run on 2026-09-09, which is the whole of why nothing happened.
+        # capable would make the decision a no-op for every current install.
+        # Daily creation moves from a fixed 08:00 slot to "once a day, while the
+        # user is away", and is turned back ON: an older seed carried
+        # `enabled: false`, so it never ran at all.
         # Applied only while the record still looks untouched on this point, so a
         # deliberate later choice is never overwritten.
         for r in recs:
@@ -1432,8 +1426,8 @@ def _tick():
     # unmarked, so the very next tick after the lease releases runs it — no
     # separate queue to drain and nothing silently dropped.
     #
-    # Manual dispatch is deliberately not gated: if he asks for it now, he gets
-    # it now, and he can see what else is running.
+    # Manual dispatch is deliberately not gated: if the user asks for it now,
+    # they get it now, and they can see what else is running.
     held = None
     try:
         from agent_friday.services.residency_arbiter import exclusive_lease

@@ -118,7 +118,7 @@ def cloud_voice_tts():
     # future caller cannot archive it without having been told.
     resp.headers["X-Friday-Voice-Durable"] = "1" if result.durable else "0"
     if not result.durable:
-        # Q3, tightened 2026-09-09. "Friday will not archive it" and "it is
+        # Q3. "Friday will not archive it" and "it is
         # not cached anywhere" are different promises, and only the second
         # is what non-durable should mean. Without this, the browser HTTP
         # cache and any intermediary would hold audio whose vendor terms
