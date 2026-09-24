@@ -982,6 +982,37 @@ def _check_voice_enums(new_settings):
     return None
 
 
+def _check_local_only_seats(new_settings):
+    """Refuse a cloud model on a seat declared local-only. 400, or None.
+
+    NOT a revival of `_check_local_model_seat_gate` below, which is a deliberate
+    no-op: that one refused a user's chosen model for failing a homegrown quality
+    eval. This is a coherence rule with a much narrower reach -- a seat that
+    exists specifically so a body of private text never leaves the machine cannot
+    be aimed off the machine.
+
+    Observed 2026-09-24: the Memory keeper seat, whose description reads "Local
+    only", had been set to Claude Opus 5.5. Nothing leaked (the runtime refuses
+    before any call), but the feature was silently off and the UI had offered the
+    choice.
+    """
+    try:
+        from agent_friday.services.seat_policy import local_only_violations
+        bad = local_only_violations((new_settings or {}).get("capability_routing"))
+    except Exception:
+        return None                      # never block a save on our own bug
+    if not bad:
+        return None
+    first = bad[0]
+    return {
+        "status": "error",
+        "error": "local_only_seat",
+        "detail": first["why"],
+        "message": first["why"],
+        "seats": bad,
+    }
+
+
 def _check_local_model_seat_gate(new_settings):
     """No-op. The seat gate is REMOVED (maintainer decision).
 
@@ -1136,6 +1167,10 @@ def api_settings():
         seat_error = _check_local_model_seat_gate(new_settings)
         if seat_error is not None:
             return jsonify(seat_error), 400
+
+        local_only_error = _check_local_only_seats(new_settings)
+        if local_only_error is not None:
+            return jsonify(local_only_error), 400
 
         installed_error = _check_seat_installed(new_settings)
         if installed_error is not None:

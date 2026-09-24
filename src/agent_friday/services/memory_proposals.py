@@ -137,10 +137,41 @@ def seat() -> Dict[str, Any]:
             "reason": ""}
 
 
-def _is_local(provider: str) -> bool:
+def _notify_seat_refusal(reason: str) -> None:
+    """Tell the user the Memory keeper stood down, and why.
+
+    The refusal used to be a log warning and an `ok: False` return. Nobody reads
+    either, so the seat sat misconfigured and the feature was simply absent --
+    which is the failure mode this whole module was written to prevent. A
+    capability that declines to run has to say so where the user is.
+    """
     try:
-        from agent_friday.routing.model_router import ModelRouter
-        return provider in ModelRouter._LOCAL_PROVIDERS
+        from agent_friday.services.voice_engine import _notif_engine
+    except Exception:
+        return
+    if not _notif_engine:
+        return
+    try:
+        _notif_engine.push(
+            title="Memory keeper stood down — nothing was sent",
+            body=reason,
+            priority="high", source="memory_proposals", kind="warning",
+            dedupe_key="memory_keeper_seat_refusal",
+        )
+    except Exception:
+        pass
+
+
+def _is_local(provider: str) -> bool:
+    """Delegates to `seat_policy`, which is where the local-only rule lives.
+
+    This used to carry its own copy of the provider set. Two copies of one fact
+    drift, and the drift here would mean the label and the enforcement disagreeing
+    about what "local" means.
+    """
+    try:
+        from agent_friday.services.seat_policy import is_local_provider_name
+        return is_local_provider_name(provider)
     except Exception:
         return provider in {"ollama-local", "arbiter-local", "llama-cpp-local",
                             "local"}
@@ -320,6 +351,7 @@ def propose(day: Optional[str] = None, *, memory=None,
         raw = _ask_seat(prompt, s["model"], s["provider"])
     except SeatUnavailable as exc:
         _log.warning("memory proposal FAILED for %s: %s", day, exc)
+        _notify_seat_refusal(str(exc))
         return {"ok": False, "day": day, "seat": s,
                 "turns_reviewed": len(turns), "facts": [], "stored": 0,
                 "reason": str(exc),
