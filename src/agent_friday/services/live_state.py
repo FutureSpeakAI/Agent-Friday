@@ -92,7 +92,7 @@ def _google_accounts_answer() -> str:
             for a in s["needs_attention"])
         return (f"LIVE: 0 of {s['total']} Google account(s) are working. NOT "
                 f"connected: {names}. Answer NO, name the accounts, and point "
-                f"the user at Settings -> Connectors -> Google -> Reconnect.")
+                f"the user at Settings -> Accounts & Keys -> Google -> Reconnect.")
     if s["degraded"]:
         names = "; ".join(
             f"{a.get('email') or a.get('label')} ({a.get('summary')})"

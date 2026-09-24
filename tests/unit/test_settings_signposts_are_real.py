@@ -119,10 +119,10 @@ def test_the_tab_list_was_actually_parsed():
     """Guard the guard: a regex that stopped matching would pass everything."""
     labels = _tab_labels()
     assert len(labels) >= 8, "parsed only %d tabs: %s" % (len(labels), labels)
-    assert "intelligence" in labels
-    assert "providers" in labels, (
-        "Providers is unreachable again -- the panel exists but has lost its "
-        "TABS entry or its render branch"
+    assert "models" in labels
+    assert "accounts & keys" in labels, (
+        "Accounts & Keys (provider keys) is unreachable again -- the panel "
+        "exists but has lost its TABS entry or its render branch"
     )
 
 

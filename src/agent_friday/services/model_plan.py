@@ -694,7 +694,7 @@ def plan(profile: dict, installed=None, conversational=None) -> dict:
                  else _conversational_fallback(installed))
         others = _local_alternatives(convo, pick["gib"])
         note_others = (f" Also already installed and possibly suitable: "
-                       f"{', '.join(others[:4])}. Set one in Settings -> Intelligence "
+                       f"{', '.join(others[:4])}. Set one in Settings -> Models "
                        f"if you prefer it." if others else "")
         # Every OTHER rung this machine could also run, so the caller can offer
         # a choice instead of announcing a decision. Smaller means faster and a
@@ -896,7 +896,7 @@ def render(p: dict) -> str:
                 out.append(f"        {flag} {a['id']:<14}{a['gib']:>6.2f} GB "
                            f"download   needs {a['vram_gib']:.2f} GiB on the card")
             out.append("        (* = what Friday will install. Change it in "
-                       "Settings -> Intelligence.)")
+                       "Settings -> Models.)")
     out.append("")
     if p["download"]:
         out.append(f"  Download: {p['download_gib']:.2f} GB "

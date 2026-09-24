@@ -15,7 +15,7 @@ REGRESSION GUARD: index.html is the file the server serves
 ui_parts/app.html — app.html says so in its own first eight
 lines. app.html is a strict SUBSET: every top-level component in it also
 exists in index.html, while eighteen components (the whole conversations
-feature, the model picker, Settings -> Intelligence) exist only in index.html.
+feature, the model picker, Settings -> Models) exist only in index.html.
 Running this build unguarded therefore DELETES real, shipped code, and does it
 silently. So the build now refuses to write output that drops any top-level
 component the existing index.html defines. Pass --force to override once you

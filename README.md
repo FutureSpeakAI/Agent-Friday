@@ -105,11 +105,11 @@ Friday can talk with no cloud key at all through a model on your own machine.
 Nothing is bundled: the installer sizes a local model to your graphics card and
 downloads one, or, on a small card, recommends a cloud key instead and
 downloads nothing. Every model the planner offers calls tools natively. You can
-change your mind at any time in **Settings → Intelligence**.
+change your mind at any time in **Settings → Models**.
 
 Cloud keys — Anthropic for sharper reasoning, Gemini for voice and creative
 work, OpenRouter for hundreds of models through one key — are optional and are
-added in **Settings → Providers**, where they are stored encrypted. The
+added in **Settings → Accounts & Keys**, where they are stored encrypted. The
 model ladder, the VRAM arithmetic, and the honest limits of small models are
 documented in [Installation](docs/getting-started/installation.md).
 

@@ -405,7 +405,7 @@ def _model_entries_for(provider: dict, registry) -> list:
                 "moment for a verdict.")
     if not available and hint is None:
         if needs_key:
-            hint = f"Add {needs_key} in Settings → Providers"
+            hint = f"Add {needs_key} in Settings → Accounts & Keys"
         elif engine_backend:
             hint = "Run the Voice Setup Wizard to enable this engine"
         elif ptype == "higgsfield":
@@ -413,7 +413,7 @@ def _model_entries_for(provider: dict, registry) -> list:
             # from the account having no models, and the row says which —
             # rather than presenting the last enumeration as a live list.
             hint = ("Higgsfield connector not connected — authorize it in "
-                    "Settings → Connectors")
+                    "Settings → Accounts & Keys")
 
     # Live-discovered models (OpenRouter's 300+, HF router's warm set, …) merge
     # AFTER the statics: statics keep their declared order (and any model_meta
@@ -614,7 +614,7 @@ def _voice_engines(registry) -> list:
         {"id": "gemini", "label": "Gemini Live (cloud)",
          "short": "Gemini Live", "available": gemini_ok,
          "hint": None if gemini_ok else
-         "Add GEMINI_API_KEY in Settings → Providers"},
+         "Add GEMINI_API_KEY in Settings → Accounts & Keys"},
     ]
 
 
@@ -1141,7 +1141,7 @@ def build_catalog() -> dict:
             "available": bool(prov and registry.is_provider_available(pname)),
             "needs_key": _needs_key(prov or {}),
             "hint": None if prov else
-                    f"Unknown provider '{pname}' — enable it in Settings → Providers",
+                    f"Unknown provider '{pname}' — enable it in Settings → Accounts & Keys",
             "cost_per_1k": None,
             "curated": False,
             "unverified": True,   # user-asserted id; nothing has confirmed it exists

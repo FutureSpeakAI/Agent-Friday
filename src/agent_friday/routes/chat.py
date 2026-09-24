@@ -1384,12 +1384,12 @@ def chat():
                     "I'm set to **cloud only**, and there's no cloud AI key on "
                     "this computer yet — so there's nothing for me to think "
                     "with. I haven't sent this anywhere.\n\n"
-                    "Add a key in **Settings → Providers**. Anthropic's Claude "
+                    "Add a key in **Settings → Accounts & Keys**. Anthropic's Claude "
                     "is what I use by default; the panel there has a button "
                     "through to the signup page and takes the key straight "
                     "from you — nothing to edit by hand.\n\n"
                     "If you would rather I ran on this laptop instead, switch "
-                    "to **Smart** in Settings → Intelligence and I will use a "
+                    "to **Smart** in Settings → Models and I will use a "
                     "local model whenever there is no key."
                 )
                 user_msg = {
@@ -1558,7 +1558,7 @@ def chat():
                         "You are in **local only** mode, so I did not send this "
                         "to a cloud model. Options: wait and try again once the "
                         "GPU is free, pick a smaller local model, or switch the "
-                        "mode to Local preferred in Settings -> Intelligence if "
+                        "mode to Local preferred in Settings -> Models if "
                         "you want me to fall back when local is busy."
                     )
                     user_msg = {

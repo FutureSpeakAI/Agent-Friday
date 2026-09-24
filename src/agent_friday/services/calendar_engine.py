@@ -1023,7 +1023,7 @@ GOOGLE_CALLBACK_PATH = "/api/google/auth/callback"
 # _google_redirect_uri's docstring. Google accepts any localhost/loopback
 # redirect for installed apps *without* registering it in the GCP console,
 # INCLUDING any port; for a Web client it must be pre-registered — see the
-# redirect_uri surfaced in Settings -> Connectors for the exact string to add.
+# redirect_uri surfaced in Settings -> Accounts & Keys for the exact string to add.
 #
 # Kept as a module constant for the default/not-running case only. Live callers
 # must go through _google_redirect_uri(), which follows the actually-bound port

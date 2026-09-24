@@ -307,7 +307,7 @@ class ModelRouter:
         today's behaviour.
 
         `capability_routing.reasoning` is what the model picker writes, what
-        Settings -> Intelligence displays, and what capability_router.resolve()
+        Settings -> Models displays, and what capability_router.resolve()
         reads. Until now the ROUTER consulted it in exactly one branch —
         unattended tool work — so an interactive turn never looked at it.
 

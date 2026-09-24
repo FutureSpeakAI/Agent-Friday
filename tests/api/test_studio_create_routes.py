@@ -67,7 +67,7 @@ def test_create_text_demo_mode_is_actionable(client, monkeypatch):
     monkeypatch.setattr(demo_mode, "is_demo", lambda *a, **k: True)
     d = client.post("/api/create/text", json={"prompt": "hello"}).get_json()
     assert d["status"] == "unavailable"
-    assert "Providers" in d["message"]
+    assert "Accounts & Keys" in d["message"]
 
 
 # ── /api/create/availability ─────────────────────────────────────────────────

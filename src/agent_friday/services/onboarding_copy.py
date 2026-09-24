@@ -164,7 +164,7 @@ What she builds less of, by default. That nightly map has two layers. The
 first links your pages together by what they reference, and works anywhere.
 The second reads the text and works out who and what you were talking about.
 By default that second layer runs on a model on this computer; you can point
-it at the cloud instead in Settings -> Knowledge Graph, the same choice as
+it at the cloud instead in Settings -> Privacy & Approvals, the same choice as
 everywhere else in this screen. Without a working local model, and without
 choosing cloud for it, you get the first layer and not the second, so the map
 is a set of connections rather than an understanding."""

@@ -14,7 +14,7 @@ the transport is a REAL DIFFERENCE, not a stylistic one:
   * Higgsfield is called over an MCP connector Friday already runs. kie.ai is
     a plain HTTPS API: this module is the direct HTTP client, gated through
     routing/provider_descriptors for the encrypted-store-then-env API key
-    (Settings -> Providers -> kie.ai, same flow as every other provider) and
+    (Settings -> Accounts & Keys -> kie.ai, same flow as every other provider) and
     through services/egress_gate for the prompt.
   * kie.ai's task model is submit -> POLL (services/kie_generate._poll) or a
     webhook callback. This module polls only — a webhook needs a publicly
@@ -294,7 +294,7 @@ def generate(kind: str, prompt: str, *, model: str, aspect_ratio=None,
     if not is_configured():
         return {"status": "unavailable", "provider": PROVIDER, "model": model,
                 "reason": "kie.ai has no API key configured — add one in "
-                          "Settings → Providers"}
+                          "Settings → Accounts & Keys"}
 
     try:
         from agent_friday.services import egress_gate as _eg

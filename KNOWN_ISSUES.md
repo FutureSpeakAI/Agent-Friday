@@ -37,10 +37,13 @@ an issue.
 - **Settings keys absent from `DEFAULT_SETTINGS` are silently discarded on
   save**, and the API reports success. A static guard now catches keys the UI
   writes; keys written by other paths are not covered.
-- **Some settings controls persist a value that nothing consumes**:
-  `stream_responses`, `auto_open_chat`, `compact_mode`, `startup_workspace`.
-  Each needs a product decision about what it should do (recorded in
+- **A settings control persists a value that nothing consumes**:
+  `stream_responses`. It needs a product decision about what it should do
+  (recorded in
   [docs/decisions/2026-09-04-five-dead-settings.md](docs/decisions/2026-09-04-five-dead-settings.md)).
+  `auto_open_chat`, `compact_mode` and `startup_workspace` are ruled to be
+  built for real; until they are, the Settings pane does not offer them, so
+  no control claims an effect it does not have.
 - **Local models without native tool calling cannot act.** A local model with
   native tool calling (the default Gemma 4 ladder) uses tools fully offline.
   The `function_manager` seat that would let a smaller specialist handle tool
@@ -145,7 +148,7 @@ credential storage.
 
 - **Keys written by the `friday setup` wizard are plaintext** in
   `~/.friday/settings.json`, `~/.friday/config.yaml` and the checkout's
-  `start.bat`. The in-app Settings → Providers path uses the encrypted store.
+  `start.bat`. The in-app Settings → Accounts & Keys path uses the encrypted store.
   See [SECURITY.md](SECURITY.md).
 - **Linux OS-mode has no durable secret store.** `vault_passphrase.store()`
   and `credential_store.protect()` fail closed under `FRIDAY_OS_MODE=1`, which
