@@ -6032,11 +6032,13 @@ def _get_governance_key() -> bytes:
         _GOVERNANCE_KEY = _poi_gk()
         return _GOVERNANCE_KEY
     except Exception as _e:
+        # No per-boot stand-in: a receipt signed with a key that dies with the
+        # process can never be verified, which is worse than an honestly
+        # unsigned one. The caller records the entry unsigned; the governance
+        # checkpoint holds outward actions while the key is unavailable.
         import logging as _log
         _log.getLogger(__name__).error("governance key unavailable: %s — BOM entries will not be signed", _e)
-    import os as _os
-    _GOVERNANCE_KEY = _os.urandom(32)  # ephemeral fallback, not persisted
-    return _GOVERNANCE_KEY
+        raise
 
 
 # ── Sovereign Vault: encryption-at-rest ──────────────────────────────

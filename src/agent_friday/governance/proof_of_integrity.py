@@ -413,18 +413,37 @@ def get_governance_key() -> bytes:
       3. Generate a new random key and persist it to whichever store works.
 
     The key is 32 random bytes (256 bits). It is generated once and reused;
-    rotating it invalidates all existing manifests (expected behaviour during
-    a governance reset).
+    rotating it invalidates all existing manifests and signed receipts
+    (expected only during a deliberate governance reset).
+
+    It is never replaced by accident. A key that exists but cannot be read
+    right now -- a keychain call that failed, a file that will not parse --
+    raises instead of minting a new one: minting would overwrite the stored
+    key and orphan every receipt signed with it. A new key that cannot be
+    saved also raises instead of living in memory for one session. Callers
+    treat the error as "cannot sign": outward actions are held, reads go on.
     """
     with _GOV_KEY_LOCK:
         # 1. Try OS keychain
+        keychain_absent = False     # no keyring library or backend at all
+        keychain_failed = None      # a keychain that exists but did not answer
         try:
             import keyring as _kr
-            stored = _kr.get_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT)
-            if stored:
-                return bytes.fromhex(stored)
-        except Exception as _kr_err:
-            _log.warning("keyring unavailable for governance key read: %s — falling back to file", _kr_err)
+            try:
+                from keyring.errors import NoKeyringError as _NoKr
+            except Exception:  # pragma: no cover - very old keyring
+                _NoKr = ()
+            try:
+                stored = _kr.get_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT)
+                if stored:
+                    return bytes.fromhex(stored)
+            except _NoKr:
+                keychain_absent = True
+            except Exception as _kr_err:
+                keychain_failed = _kr_err
+                _log.warning("keyring read failed for the governance key: %s", _kr_err)
+        except ImportError:
+            keychain_absent = True
 
         # 2. Try key file
         if _GOV_KEY_FILE.exists():
@@ -434,8 +453,16 @@ def get_governance_key() -> bytes:
                     return raw
                 # Hex-encoded in file
                 return bytes.fromhex(raw.decode().strip())
-            except Exception:
-                pass
+            except Exception as _file_err:
+                raise RuntimeError(
+                    "the governance key file exists but could not be read (%s); "
+                    "not minting a new key over it" % _file_err)
+
+        if keychain_failed is not None and not keychain_absent:
+            raise RuntimeError(
+                "the OS keychain did not answer (%s) and there is no key file; "
+                "not minting a new governance key, which would replace one the "
+                "keychain may hold" % keychain_failed)
 
         # 3. Generate a new key and persist it
         key = os.urandom(32)
@@ -454,7 +481,9 @@ def get_governance_key() -> bytes:
                 except Exception as _chmod_err:
                     _log.warning("could not set 0o600 on governance key file: %s", _chmod_err)
             except Exception as _file_err:
-                _log.error("GOVERNANCE KEY SAVE FAILED — key exists only in memory this session: %s", _file_err)
+                raise RuntimeError(
+                    "a new governance key could not be saved (%s); not using a "
+                    "key that would exist for this session only" % _file_err)
         return key
 
 
