@@ -516,6 +516,11 @@ class OllamaManager:
         out_msg = {"role": "assistant", "content": msg.get("content", "")}
         if msg.get("tool_calls"):
             out_msg["tool_calls"] = msg["tool_calls"]
+        # Ollama returns a thinking model's reasoning in `message.thinking`.
+        # Carried under the OpenAI-shape name the agent loop and the
+        # reasoning trace read; never merged into `content`.
+        if isinstance(msg.get("thinking"), str) and msg["thinking"]:
+            out_msg["reasoning_content"] = msg["thinking"]
         return {
             "choices": [{
                 "message": out_msg,

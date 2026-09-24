@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import functools as _functools
 import glob
 from contextvars import ContextVar
 
@@ -78,6 +79,7 @@ from agent_friday.services.model_router import (
     _seal_or_block,
 )  # noqa: E501
 from agent_friday.services import tool_hooks as _hooks
+from agent_friday.services import reasoning_trace as _rtrace
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -91,7 +93,7 @@ from agent_friday.services.wiki_engine import (
 
 
 
-def _generate_agent(messages, system=None, model=None, max_tokens=16384,
+def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
                     workspace=None, on_route=None, tools=None,
@@ -475,9 +477,25 @@ from agent_friday.services.action_policy import (  # noqa: E402
 )
 
 
+@_functools.wraps(_generate_agent_untraced)
+def _generate_agent(*args, **kwargs):
+    """`_generate_agent_untraced` under a reasoning trace.
+
+    Runs inside the caller's trace when there is one (a chat turn, a
+    subagent, a scheduled job); otherwise opens a background trace named
+    after the orb label, so a briefing or Front Page run that nothing else
+    wraps still has its reasoning captured and archived.
+    """
+    from agent_friday.services import reasoning_trace as _rt_scope
+    _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
+    with _rt_scope.scope("background", str(_label)):
+        return _generate_agent_untraced(*args, **kwargs)
+
+
 # ── Claude Tool-Use Agent ─────────────────────────────────────
 # Tools Claude can call when answering the user. Each tool has a handler
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
+
 CLAUDE_TOOLS = [
     {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If the user asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask the user for a detail they would reasonably expect you to find, and never invent one. Backends, tried in order: Firecrawl (preferred; needs FIRECRAWL_API_KEY), Brave (BRAVE_API_KEY), then a DuckDuckGo scrape that is often blocked by an anti-bot challenge. Firecrawl IS part of this tool — never say it is not wired up; if a search fails, report the backend's own error and what would enable Firecrawl.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
@@ -3062,6 +3080,29 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
 
 def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                  model=None, tools=None):
+    """`_task_worker_untraced` under the task's reasoning trace, nested under
+    the trace that spawned it. The trace is archived when the worker ends,
+    with the task's final status."""
+    with TASKS_LOCK:
+        rec = TASKS.get(task_id) or {}
+        tid, parent = rec.get('trace_id'), rec.get('parent_trace_id')
+    kind = "scheduled" if str(description or "").startswith("scheduled:") else "subagent"
+    trace = _rtrace.start(kind, name or description or "Background task", model=model,
+                          task_id=task_id, parent_id=parent, trace_id=tid)
+    try:
+        with _rtrace.activate(trace):
+            return _task_worker_untraced(task_id, name, prompt, description,
+                                         orb_icon=orb_icon, model=model, tools=tools)
+    finally:
+        if trace:
+            with TASKS_LOCK:
+                st = str((TASKS.get(task_id) or {}).get('status') or 'complete')
+            _rtrace.finish(trace, "complete" if st.startswith("complete") else st,
+                           reply=(TASKS.get(task_id) or {}).get('result'))
+
+
+def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰',
+                          model=None, tools=None):
     """Run a Claude agent prompt to completion and store results.
 
     Heuristic log lines come from inspecting the tool_trace returned by
@@ -3640,6 +3681,12 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'seat': (_admitted_seat := _admission_seat_for(model)),
             'seat_is_local': _admitted_seat.startswith('local/'),
             'tool_calls': 0,
+            # Reasoning trace: this task's own trace id, and the trace of
+            # whatever spawned it (the chat turn, a scheduled job) so the tray
+            # nests the subagent's reasoning under its parent. Captured HERE,
+            # on the spawning thread; the worker thread has no context of its own.
+            'trace_id': "tr_" + uuid.uuid4().hex[:16],
+            'parent_trace_id': _rtrace.current(),
         }
     # Durable from the first instant (TV2): the created event, the state
     # snapshot and the index row exist before the worker thread starts, so
@@ -6564,6 +6611,8 @@ def _task_log_tool(session_ctx, name, args):
     which is what "it still just says waiting for activity" describes. The
     lines existed; they simply arrived too late to be progress.
     """
+    # The reasoning trace shows the call while it runs, chat turns included.
+    _rtrace.tool_started(name, args)
     tid = (session_ctx or {}).get("task_id")
     if not tid:
         return
@@ -7685,6 +7734,8 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     Also the single place every executed tool call — allowed or vault-denied,
     on either loop — passes, so the task journal's tool_call event is written
     here (task-visibility.md TV3), before the orb early-return."""
+    _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
+                          duration_ms=int(duration_ms or 0))
     try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
@@ -7937,6 +7988,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
             if _sys:
                 kwargs["system"] = _sys
+            # Claude 5 models think by default but return empty thinking text
+            # unless asked; ask for the provider's summary so the trace has it.
+            _thinking_cfg = _rtrace.anthropic_thinking(kwargs["model"])
+            if _thinking_cfg:
+                kwargs["thinking"] = _thinking_cfg
             # NOTE: `temperature` intentionally NOT forwarded — newer Claude
             # models (Opus 4.8+, Sonnet 4.6+) 400 on the deprecated param.
             # Kept in the signature for backward-compat; model defaults are used.
@@ -7983,6 +8039,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 pass
             _t0 = _time.time()
             resp = client.messages.create(**kwargs)
+            _rtrace.after_anthropic_response(resp, model=kwargs.get("model"), seat="cloud",
+                                             thinking_requested=bool(_thinking_cfg))
             # B4: accumulate token counts for the activity-ledger record.
             _iter_tok_in = _iter_tok_out = 0
             try:
@@ -8363,6 +8421,11 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                iteration=_round, model=_meter_model, session_ctx=session_ctx)
         except Exception:
             pass
+        # Reasoning trace: this round's reasoning (unless the transport already
+        # streamed it in), its honesty label, tokens, and any words before tools.
+        _rtrace.after_oai_round(resp, msg, model=_meter_model, seat=_led_seat,
+                                provider=_meter_as,
+                                local=bool(resp.get("_reasoning_local", provider == "local")))
 
         # ── The gemma4 e-series speaks a channel format, not OpenAI shape ──
         #
@@ -8530,6 +8593,9 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                 "Answer with the tools you already have.")
                 tool_trace.append({"name": tname, "input": {"names": _want},
                                    "result": _msg})
+                # The trace shows the schema load too: it is a step the
+                # model took, and the reasoning around it refers to it.
+                _rtrace.tool_finished(tname, {"names": _want}, _msg)
                 convo.append({"role": "tool", "tool_call_id": tcid,
                               "content": _msg})
                 continue

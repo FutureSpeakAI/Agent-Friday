@@ -715,19 +715,23 @@ def _run_task(rec):
         meta = BUILTIN_TASKS.get(ref)
         if not meta:
             raise RuntimeError(f"unknown builtin task ref {ref!r}")
-        # `local_only` used to be read ONLY on the agent_prompt path below, so
-        # every builtin schedule -- daily creation, the briefings, the news front
-        # page -- ignored it completely and each job picked its own model. The
-        # flag is a property of the RUN, so it is applied here as a context that
-        # the cloud transports refuse inside.
-        if task.get("local_only"):
-            from agent_friday.services import local_only_guard as _log_guard
-            with _log_guard.local_only(meta.get("label") or ref):
-                try:
-                    return meta["fn"]()
-                except _log_guard.CloudRefused as exc:
-                    raise SkippedRun(str(exc)) from exc
-        return meta["fn"]()
+        # One reasoning trace per run: every model call the job makes (the
+        # Front Page editorial, the briefing, the daily creation) lands in it.
+        from agent_friday.services import reasoning_trace as _rt
+        with _rt.scope("scheduled", rec.get("name") or ref or "Scheduled job", nested=True):
+            # `local_only` used to be read ONLY on the agent_prompt path below, so
+            # every builtin schedule -- daily creation, the briefings, the news front
+            # page -- ignored it completely and each job picked its own model. The
+            # flag is a property of the RUN, so it is applied here as a context that
+            # the cloud transports refuse inside.
+            if task.get("local_only"):
+                from agent_friday.services import local_only_guard as _log_guard
+                with _log_guard.local_only(meta.get("label") or ref):
+                    try:
+                        return meta["fn"]()
+                    except _log_guard.CloudRefused as exc:
+                        raise SkippedRun(str(exc)) from exc
+            return meta["fn"]()
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
     prompt = task.get("prompt") or ""
