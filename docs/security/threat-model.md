@@ -88,15 +88,19 @@ python -c "from agent_friday.services.privacy_layers import describe; print(desc
 # Sensitivity classifier: 3/4 layers active (source checkout). DEGRADED - not running: presidio.
 ```
 
-Default on uncertainty: **REDACT** (fail-closed). Anything the gate cannot
-confidently classify as PUBLIC is withheld from cloud providers. The gate never
-sends content to cloud to determine if it is sensitive — all classification runs
-locally.
+**What "fail-closed" covers, precisely.** A failure of the gate itself (an
+exception, a scrub that cannot run, a startup self-test that failed) blocks the
+send. Content is different: the classifier's default for text that matches no
+rule is PUBLIC (`sensitivity_classifier.classify(default=Tier.PUBLIC)`, called
+that way by the gate). Only Layer 3, when it is installed, errs toward PRIVATE
+on uncertain similarity. So content the rules do not recognise is sent. The gate
+never sends content to the cloud to decide whether it is sensitive — all
+classification runs locally.
 
-**Guarantee:** No content above TIER_1 (PUBLIC) leaves your device to cloud
-providers via the normal call path — **except content you have explicitly
-granted**, which is a deliberate exception added in 5.6.0 and described in
-[docs/FILE_GRANTS.md](../user-guide/file-grants.md). The model router is an
+**Guarantee:** No content the classifier places above TIER_1 (PUBLIC) leaves
+your device to cloud providers via the normal call path — **except content you
+have explicitly granted**, a deliberate exception described in
+[File grants](../user-guide/file-grants.md). The model router is an
 optimization; the egress gate is the enforcement boundary and cannot be
 bypassed without modifying `services/egress_gate.py`.
 
@@ -135,8 +139,14 @@ separate mechanism, `_governance_check()` (`services/agent.py`): a ring-based
 allow/deny gate (Ring 0/1 always, Ring 2 requires auth, Ring 3 requires
 computer-control confirmation) that HMAC-signs its own audit-log entry but does
 not call `IntegrityEngine` or re-verify the signed constraint manifest. Drift in
-the constraints is detectable when the integrity-verification API is invoked,
-and logged to `~/.friday/vault/access-log.jsonl`.
+the full manifest is detectable when the integrity-verification API is invoked.
+
+A narrower check does run before every outward action: the per-action
+checkpoint (`governance/action_gate.authorize`, see §4) computes the HMAC of the
+cLaws text under the governance key and compares it with the pin in
+`~/.friday/governance/claws.pin.json`. If they differ, outward actions are held
+and reads continue. Its decisions are receipted in `~/.friday/decision-bom.jsonl`;
+the ring check writes its own signed entries to `~/.friday/vault/decision-bom.jsonl`.
 
 **Keyring fallback:** On systems without a supported keyring backend (e.g. a
 headless Linux server without Secret Service), `get_governance_key()` falls back
@@ -146,11 +156,14 @@ is weaker than OS keychain — the file is protected only by filesystem permissi
 Set up a keyring backend (`python-secretstorage` + D-Bus on Linux) to eliminate
 this risk.
 
-**Guarantee:** Constraint modifications are detectable (integrity drift) via the
-on-demand attestation API, not automatically before every action, and logged.
-The HMAC key lives in the OS keychain and is not stored in the repository. The
-ring-based `_governance_check()` gate does run before every tool call, but it
-enforces allow/deny policy — it is not the same thing as manifest verification.
+**Guarantee:** A change to the cLaws text stops outward actions at the next
+action. Drift in the rest of the signed manifest is detectable via the
+on-demand attestation API, not automatically before every action. The HMAC key
+lives in the OS keychain and is not stored in the repository, and it is never
+replaced automatically: an unreadable key is an error, not a reason to mint a
+new one. The ring-based `_governance_check()` gate runs before every tool call
+and enforces allow/deny policy — it is not the same thing as manifest
+verification.
 
 ---
 
@@ -176,6 +189,90 @@ at the HTTP call boundary.
 
 ---
 
+### 4. Actions the owner did not approve
+
+**Threat:** The agent sends, publishes, deletes, installs or changes something
+because a model decided to, without the owner having agreed.
+
+**Defence:** One per-action checkpoint, `governance/action_gate.authorize`,
+called from the first and critical hook of `_execute_tool`
+(`services/agent.py`), which is the only way a tool handler runs. Every call is
+classified:
+
+- **internal** — reading, drafting, and writing inside Friday's own output
+  folders — runs;
+- **outward** — anything that leaves the machine or changes something the owner
+  owns, and any tool the classifier does not know — waits for a decision;
+- **forbidden** — a shell command that names Friday's own local API — is
+  refused.
+
+An outward action is approved by a chat yes/no in a live conversation (bound to
+that exact action and arguments), by an approval card otherwise, or, for a
+scheduled job, by a grant the owner created that names the job, the tools, an
+expiry and a use count (`~/.friday/governance/grants.json`, created only through
+an owner session). Each decision is written as an HMAC-signed receipt to
+`~/.friday/decision-bom.jsonl`.
+
+Fail-closed: if classification, the cLaws integrity check, a configured
+second-opinion model or the receipt write fails, outward actions are held and
+reads continue.
+
+**Guarantee:** No outward action runs without a recorded decision.
+`tests/unit/test_every_action_is_governed.py` discovers every registered tool
+(including connector tools) and every direct handler call site in `src/`, and
+fails if any can run without passing the checkpoint first.
+
+---
+
+### 5. Prompt injection through content Friday reads
+
+**Threat:** An email, web page, document or tool result contains instructions,
+or supplies a recipient, link or command, that steers Friday into an action
+the owner did not ask for.
+
+**Defence:** Provenance tracking (`services/taint.py`; decision record
+[2026-09-24-injection-provenance-gate](../decisions/2026-09-24-injection-provenance-gate.md)).
+Every user message is recorded as trusted; every tool result is recorded as
+read content with a label naming its source. Before a tool runs, each sensitive
+argument (recipient, link, account number, file path, command, memory text) is
+matched against what was read. A value that came only from read content sends
+the action to an approval card that says where it came from, whatever its
+class, and a chat "yes" does not satisfy it. A link found only in read content
+that points at this machine is refused. A memory write asks when its text came
+from read content, or when read content was taken in during the same
+conversation in the previous 30 minutes. The action permission policy is the
+last part of every system prompt, and override attempts in assembled context
+are stripped before it.
+
+**Limits, stated in the decision record:** a value that was paraphrased or
+re-encoded is not tracked; a model's summary of read content is not tracked;
+and the provenance ledger is held in memory, so it does not survive a restart.
+The checkpoint in §4 still applies to every outward action in those cases.
+
+---
+
+### 6. Remote access through tunnels and proxies
+
+**Threat:** Friday trusts requests from this PC as the owner. A tunnel (for
+example `cloudflared`) or a reverse proxy makes remote requests arrive from
+loopback, which would hand the owner's session to anyone who finds the URL.
+
+**Defence:** `_is_local_request()` (`core/__init__.py`) requires the immediate
+peer to be loopback **and** the request not to look proxied. Any `CF-*` header,
+a forwarding hop with no address to check, a forwarded host that is not a local
+alias, or any non-loopback address in `X-Forwarded-For`, `X-Real-IP`,
+`True-Client-IP`, `X-Cluster-Client-IP` or `Forwarded` marks the request remote,
+and a remote request must log in. Friday's own local-address proxy
+(`https://agent.<name>`) binds to loopback and forwards a loopback chain, so it
+remains local. The phone ingress is a separate listener on `127.0.0.1:3011`
+with no Friday routes at all.
+
+**Limit:** a tunnel that forwards no headers still looks like loopback. Do not
+publish Friday's own port through a tunnel; if you must, set
+`FRIDAY_TRUST_LOOPBACK=0` so every request needs a login.
+
+---
+
 ## What We Do NOT Defend Against
 
 ### 1. A compromised or hostile local machine owner
@@ -189,6 +286,12 @@ The local machine owner can:
 **This is by design.** Agent Friday is a personal sovereign AI. The user is the
 sovereign. We defend against *remote exposure* to third parties (cloud providers),
 not against the local owner themselves. A hostile local owner is out of scope.
+
+The same holds for **a compromised Windows account or malware running with the
+owner's privileges**: it can read `~/.friday`, including
+`~/.friday/security/keystore.json`, which by default holds the credential root
+key unwrapped behind an owner-only file ACL. Friday is not a sandbox against the
+account it runs under.
 
 ### 2. Physical access attacks
 
@@ -264,14 +367,18 @@ requirements file use `>=` floors, not exact pins) and optional extras
 
 > **Nothing classified as PRIVATE or SENSITIVE leaves your device to cloud
 > providers via the normal call path. The gate is the enforcement boundary,
-> not the router. The default on uncertainty is REDACT.**
+> not the router. A failure of the gate blocks the send.**
 
 This guarantee holds as long as:
 - `services/egress_gate.py` is not modified
 - The shared fail-closed wrapper `_seal_or_block()` in `services/model_router.py`
-  is present and called at every cloud provider call site — `_call_claude()` and
-  `_call_openai`'s `_send()` — covering Anthropic and all OpenAI-compatible
-  providers, including OpenRouter
+  is present and called at every cloud provider call site — `_call_claude()`,
+  `_call_openai`'s `_send()`, and the two direct call sites in
+  `services/agent.py` — covering Anthropic and all OpenAI-compatible providers,
+  including OpenRouter. The same wrapper applies the hard spending cap and a
+  payload size ceiling before sealing.
+  `tests/unit/test_egress_paths_outside_the_router.py` covers the outbound paths
+  that do not go through the router.
 - The sensitivity classifier (`services/sensitivity_classifier.py`) is not modified
   to return PUBLIC for content it should classify as PRIVATE/SENSITIVE
 
@@ -281,11 +388,15 @@ This guarantee holds as long as:
 
 | Configuration | What leaves your device |
 |--------------|------------------------|
-| With Ollama (local routing) | Nothing — all processing on-device |
-| Cloud-only, no Ollama | TIER_1 (PUBLIC) content only; sensitive data redacted by egress gate |
-| Egress gate disabled (not recommended) | Everything in the assembled payload |
+| A local model answers | Nothing — processing on-device |
+| A cloud model answers (cloud mode, or local mode when no local model is reachable) | Content the classifier places in TIER_1 (PUBLIC); private content becomes a placeholder, sensitive content is withheld |
+| Unrestricted cloud (an explicit, recorded consent) | Everything in the assembled payload |
 
-The privacy posture is visible in the setup wizard and in Settings → Privacy.
+"On this computer only" (`local_only`) currently falls back to the cloud when no
+local model is reachable, rather than refusing; the first-run screen says so.
+There is no switch that turns the egress gate off; unrestricted cloud is the
+only bypass, and it requires the recorded consent in `privacy/cloud_consent.py`.
+The privacy posture is visible in the setup wizard and in Settings → Privacy & Approvals.
 
 ---
 
@@ -295,17 +406,19 @@ The privacy posture is visible in the setup wizard and in Settings → Privacy.
 |-----|----------|---------|
 | HMAC governance key | OS keychain (keyring) → `~/.friday/vault/.governance-key` (fallback) | Signs cLaws and behavioral constraints |
 | Ed25519 attestation keypair | `~/.friday/vault/.attestation-key-ed25519` | Federation and peer attestation |
-| Provider API keys (Anthropic / Gemini / OpenRouter / OpenAI-compatible) | `~/.friday/providers/keys/<provider>.key` (encrypted via credential_store: vault AES-256-GCM → Windows DPAPI → warned plaintext fallback) | Cloud model access |
+| Credential root key | `~/.friday/security/keystore.json` (owner-only; unwrapped by default, optionally Argon2id-wrapped) | Encrypts every credential at rest |
+| Provider API keys (Anthropic / Gemini / OpenRouter / OpenAI-compatible) | `~/.friday/providers/keys/<provider>.key` (AES-256-GCM under the keystore root key; blobs from older versions written with the vault key or Windows DPAPI remain readable and are migrated) | Cloud model access |
 
 API keys are encrypted at rest in per-provider files under
 `~/.friday/providers/keys/` and decrypted into the process environment at
-startup by `bootstrap_provider_env()`. The governance key and Ed25519
-private key are stored in the OS credential store when available; both are
-confined to `~/.friday/vault/` with 600 permissions as a fallback.
+startup by `bootstrap_provider_env()`. The governance key is stored in the OS
+credential store when available, with `~/.friday/vault/.governance-key` (600
+permissions) as the fallback. The Ed25519 private key is a file only,
+`~/.friday/vault/.attestation-key-ed25519`, with 600 permissions.
 
 ---
 
-*Last verified against the code: 2026-09-06. Update this document whenever the
+*Last verified against the code: 2026-09-24. Update this document whenever the
 security architecture changes. The egress gate guarantee is a functional
 invariant; any change that weakens it requires explicit security review. How to
 report a problem, and which versions receive fixes, is in the repository's
