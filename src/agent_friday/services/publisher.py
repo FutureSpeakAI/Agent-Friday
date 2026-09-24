@@ -522,6 +522,49 @@ def _final_texts(target: Dict[str, Any], post: Dict[str, Any]) -> List[str]:
     return [t for t in texts if t.strip()]
 
 
+#: How long a target whose new text is waiting on a card sleeps between checks.
+DECISION_RECHECK_S = 900
+
+
+def _regenerated_since_approval(target: Dict[str, Any], post: Dict[str, Any],
+                                texts: List[str]) -> bool:
+    """True when a recurrence occurrence no longer says what the series its
+    owner scheduled said. A clone whose wording matches its parent's for the
+    same platform is the approved text; anything else is new."""
+    src = post.get("source") or {}
+    if str(src.get("kind") or "") != "recurrence":
+        return False
+    parent_id = str(src.get("ref") or "")
+    got = store.get_post(parent_id) if parent_id else {"ok": False}
+    if not got.get("ok"):
+        return True
+    parent = got["post"]
+    platform = str(target.get("platform") or "")
+    for pt in (parent.get("targets") or []):
+        if str(pt.get("platform") or "") == platform:
+            return _final_texts(pt, parent) != texts
+    return True
+
+
+def _decide_new_text(target: Dict[str, Any], post: Dict[str, Any],
+                     texts: List[str]) -> str:
+    """allow | card | deny, from the governance checkpoint's card for exactly
+    this target and exactly this text."""
+    import hashlib
+    from agent_friday.governance import action_gate
+    platform = str(target.get("platform") or "")
+    joined = "\n\n".join(texts)
+    detail = {"target_id": str(target.get("id")), "post_id": str(target.get("post_id")),
+              "platform": platform,
+              "text_sha256": hashlib.sha256(joined.encode("utf-8")).hexdigest()}
+    v = action_gate.authorize_external(
+        "content: publish", detail, requested_by="publisher",
+        title=f"Publish this rewritten post to {platform}?",
+        description=joined[:600],
+        action_description=f"Publish to {platform}")
+    return v.action
+
+
 def _hold(target: Dict[str, Any], reason: str) -> str:
     """D3: hold-for-review, never silent redaction. Fail-closed on gate
     errors too."""
@@ -552,7 +595,9 @@ def _run_target(target: Dict[str, Any]) -> str:
     # the explicit-marker path — a target flagged options.needs_recompose is
     # re-adapted by the composer before dispatch. Best-effort: a recompose
     # failure dispatches the existing payload rather than wedging the target.
+    recomposed = False
     if (target.get("options") or {}).get("needs_recompose"):
+        recomposed = True
         try:
             from agent_friday.services import content_composer
             content_composer.adapt(post, [target.get("platform")],
@@ -623,6 +668,21 @@ def _run_target(target: Dict[str, Any]) -> str:
 
     # (3 STALENESS — see module notes: content edits pull SCHEDULED posts back
     #  to DRAFT in the store, so a claimed payload cannot be stale.)
+
+    # DECISION — text the owner never saw. Scheduling a post is the owner's
+    # decision about THAT text. A recurrence clone whose wording the composer
+    # regenerated, or a target recomposed before dispatch, is new text, so it
+    # goes out only after a card for exactly that text is approved.
+    if recomposed or _regenerated_since_approval(target, post, texts):
+        decision = _decide_new_text(target, post, texts)
+        if decision == "card":
+            store.defer_target(tid, time.time() + DECISION_RECHECK_S)
+            return "awaiting_approval"
+        if decision != "allow":
+            store.set_target_status(tid, "FAILED",
+                                    error="regenerated text was not approved")
+            _log_attempt(target, "failed", error="regenerated text was not approved")
+            return "failed"
 
     adapter = platform_registry.get_adapter(platform)
     if adapter is None:
