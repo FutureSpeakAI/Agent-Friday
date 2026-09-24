@@ -74,6 +74,12 @@ def _wiki_path_is_sensitive(path) -> bool:
         return False
 
 
+# What an encrypted page reads as while the vault is locked. It is a
+# placeholder, never the page: anything that would write it back (an edit
+# made from what was on screen) must be refused, or the ciphertext is lost.
+VAULT_LOCKED_PLACEHOLDER = "[vault-encrypted file — set FRIDAY_PASSWORD to read it]"
+
+
 def wiki_read_text(path) -> str:
     """Read a wiki file, transparently decrypting vault-encrypted content.
 
@@ -88,7 +94,7 @@ def wiki_read_text(path) -> str:
             from agent_friday.services.agent import _get_vault_key  # upper layer — lazy
             key = _get_vault_key()
             if key is None:
-                return "[vault-encrypted file — set FRIDAY_PASSWORD to read it]"
+                return VAULT_LOCKED_PLACEHOLDER
             return _vc.decrypt(raw, key).decode("utf-8")
     except Exception as e:
         if "decrypt" in str(type(e)).lower() or "InvalidTag" in str(type(e)):
