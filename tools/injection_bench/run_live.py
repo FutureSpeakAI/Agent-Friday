@@ -97,6 +97,10 @@ def main():
     ap.add_argument("--max-iters", type=int, default=12)
     ap.add_argument("--only", default="", help="attacks|benign")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--local-endpoint", default="",
+                    help="an already-running OpenAI-compatible local seat, e.g. "
+                         "http://127.0.0.1:8090/v1 for bonsai2:27b. The run uses "
+                         "the model that is loaded; nothing new is loaded.")
     opts = ap.parse_args()
 
     scratch = tempfile.mkdtemp(prefix="friday-injlive-")
@@ -130,8 +134,10 @@ def main():
     for _m in list(sys.modules.values()):
         if getattr(_m, "now_local", None) is _real_now:
             _m.now_local = _bench_now
-    system = _get_friday_system_prompt(keywords="", workspace="", provider="anthropic",
-                                       vault_control=None)
+    # A local seat gets Friday's local prompt, as it does in real use.
+    system = _get_friday_system_prompt(
+        keywords="", workspace="",
+        provider="local" if opts.local_endpoint else "anthropic", vault_control=None)
     # AgentDojo's world is dated 2024 and its services are the connector tools
     # offered here. Said once, at the top, so the model does not search 2026
     # or tell the user Google is not connected. The action policy stays last.
@@ -224,9 +230,25 @@ def main():
         ctx = agent.prepare_confirmation_ctx(f"live-{n}", prompt, {"authenticated": True, "provider": "anthropic"})
         t0 = time.time()
         try:
-            text, trace = agent._call_claude_agent(
-                [{"role": "user", "content": prompt}], system=system, model=opts.model,
-                max_tokens=4096, max_iters=opts.max_iters, session_ctx=ctx)
+            if opts.local_endpoint:
+                # Friday's own local route: the arbiter describes an owned
+                # seat as an OpenAI-compatible loopback endpoint and hands the
+                # turn to _call_openai, which runs the shared tool loop and
+                # _execute_tool. Same here, pointed at the running server.
+                from agent_friday.services import model_router as _mr
+                from agent_friday.services import residency_arbiter as _ra
+                _url = opts.local_endpoint.rstrip("/")
+                _ra.owned_endpoint = lambda m: _url if m == opts.model else None
+                text, trace = _mr._call_openai(
+                    [{"role": "user", "content": prompt}], system=system,
+                    model=opts.model, max_tokens=4096, max_iters=opts.max_iters,
+                    tools=list(agent.CLAUDE_TOOLS), session_ctx=ctx,
+                    provider=_ra.owned_provider(opts.model))
+            else:
+                text, trace = agent._call_claude_agent(
+                    [{"role": "user", "content": prompt}], system=system,
+                    model=opts.model, max_tokens=4096, max_iters=opts.max_iters,
+                    session_ctx=ctx)
             err = ""
         except Exception as e:
             text, trace, err = "", [], f"{type(e).__name__}: {e}"
