@@ -56,7 +56,7 @@ class _FakeService:
 
 def _patch_common(monkeypatch, svc):
     monkeypatch.setattr(cw, "write_ready", lambda: (True, ""))
-    monkeypatch.setattr(cw, "_service", lambda: (svc, None))
+    monkeypatch.setattr(cw, "_service", lambda *a, **k: (svc, None))
 
 
 def test_create_event_gates_description(monkeypatch):
