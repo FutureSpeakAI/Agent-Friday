@@ -2696,7 +2696,16 @@ function KnowledgeGraphWS(props){
       if (opt.fly !== false) {
         stopTour();
         camGoal.target.set(ent.x, ent.y, ent.z);
-        camGoal.r = Math.max(70, Math.min(170, cam.r * 0.6));
+        // Far enough to see most of its links (a few distant ones may run
+        // off the edge), never so close that the node fills the view.
+        const d = [];
+        set.forEach(id => {
+          const e = S.entById[id];
+          if (e && e !== ent) d.push(Math.hypot(e.x - ent.x, e.y - ent.y, e.z - ent.z));
+        });
+        d.sort((a, b) => a - b);
+        const reach = d.length ? d[Math.min(d.length - 1, Math.floor(d.length * 0.8))] : 0;
+        camGoal.r = Math.max(110, Math.min(420, reach * 1.6 + 60));
         idleSpin = false;
       }
       return true;
