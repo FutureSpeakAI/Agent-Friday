@@ -116,6 +116,35 @@ def test_it_is_served_and_referenced_by_both_uis():
             "%s does not load the in-page dictation handler" % path.name)
 
 
+def test_the_chat_box_selector_matches_the_attribute_the_ui_actually_carries():
+    """Checked against the running app, where the selector this started with
+    (`[data-friday-chat-input]`) matched nothing at all and the fallback landed
+    on a hidden textarea. A dictated sentence would have gone nowhere visible.
+
+    The attribute is the contract between the two, so it is pinned on both
+    sides rather than trusted.
+    """
+    src = SRC.read_text(encoding="utf-8")
+    assert "[data-chat-input]" in src
+    assert "data-friday-chat-input" not in src, (
+        "that attribute does not exist in this UI")
+    for path in (ROOT / "index.html", ROOT / "ui_parts" / "app.html"):
+        assert 'data-chat-input' in path.read_text(encoding="utf-8"), (
+            "%s no longer marks its chat box, so dictation cannot find it"
+            % path.name)
+
+
+def test_visibility_is_measured_not_inferred_from_offsetparent():
+    """offsetParent is null for anything inside a position:fixed ancestor,
+    which in this app is every chat box. Using it called them all hidden."""
+    # The comments here necessarily name offsetParent, so compare code only.
+    code = "\n".join(ln for ln in SRC.read_text(encoding="utf-8").splitlines()
+                     if not ln.lstrip().startswith(("//", "*", "/*")))
+    assert "offsetParent" not in code, (
+        "offsetParent misreports visibility inside fixed containers")
+    assert "checkVisibility" in code or "getClientRects" in code
+
+
 def test_the_audio_goes_only_to_the_local_route():
     src = SRC.read_text(encoding="utf-8")
     assert "/api/voice/transcribe" in src

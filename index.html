@@ -7936,7 +7936,16 @@ function ChatSurface(props) {
     // so there is one control and one source of truth for whether it is on.
     'data-friday-voice-toggle': '',
     'data-voice-on': voiceOn ? '1' : '0',
-    title: voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
+    // Which voice this starts, named. The tooltip used to say "Gemini Live"
+    // unconditionally, which stopped being true when local became the
+    // default — and a control that misnames what it is about to do is worse
+    // than one that says nothing, because cloud and on-device are exactly the
+    // distinction someone dictating a private sentence cares about.
+    'data-voice-engine': (agentSettings.voice_engine || 'local'),
+    title: voiceOn ? 'Stop voice mode'
+      : ((agentSettings.voice_engine || 'local') === 'gemini'
+        ? 'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
+        : 'Start voice mode — on-device voice (nothing leaves this machine)'),
     style: {
       background: voiceOn ? 'rgba(255,0,128,0.18)' : 'rgba(0,212,255,0.08)',
       border: '1px solid ' + (voiceOn ? 'rgba(255,0,128,0.55)' : 'rgba(0,212,255,0.3)'),
