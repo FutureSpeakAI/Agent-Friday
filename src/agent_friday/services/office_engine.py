@@ -66,7 +66,7 @@ import os
 import re
 import shlex
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import List, Optional, Tuple
 
 from agent_friday.core import FRIDAY_DIR
@@ -239,20 +239,29 @@ def resolve_in_workspace(name: str) -> Path:
     `create deck.pptx` mean something predictable. An absolute path is allowed
     only if it is already inside that folder, and the check is done after
     resolving, so `..` cannot walk out of it.
+
+    A drive, UNC or rooted path in Windows form is absolute on every OS. On
+    POSIX, pathlib reads a backslashed drive path as a relative FILE NAME and
+    would quietly create it inside the folder, which is not what was asked
+    for; it is refused as outside instead, the same answer Windows gives.
     """
     DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     root = DOCUMENTS_DIR.resolve()
+    outside = OfficeRefused(
+        "%s is outside Friday's documents folder. Office work stays in %s "
+        "so a wrong path cannot reach the rest of the disk." % (name, root))
     p = Path(name)
+    if not p.is_absolute():
+        win = PureWindowsPath(name)
+        if win.drive or win.root:
+            raise outside
     full = (p if p.is_absolute() else (root / p))
     try:
         full = full.resolve()
     except Exception as e:
         raise OfficeRefused("that path could not be resolved (%s)" % e)
     if full != root and root not in full.parents:
-        raise OfficeRefused(
-            "%s is outside Friday's documents folder. Office work stays in %s "
-            "so a wrong path cannot reach the rest of the disk."
-            % (name, root))
+        raise outside
     return full
 
 
