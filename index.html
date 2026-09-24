@@ -3056,15 +3056,13 @@ window.addEventListener('DOMContentLoaded',function(){
            .kw-root is a flex column: the header rows, the body (flex: 1;
            min-height: 0) and the bottom bar. The bar therefore stays in view
            at any window shape; nothing below the body can be pushed out.
-           Each host gives the root a real height: a desktop window body, the
-           standalone tab (/w/knowledge), and fullscreen (the Tour). */
+           The root is a .ws-fill, so its frame (a desktop window, the tab at
+           /w/knowledge) gives it exactly its own height and has nothing left
+           to scroll; fullscreen (the Tour) gives it the screen. The panes
+           scroll, and the bar (the workspace's footer, data-ws-footer) stays
+           at the foot. */
         .kw-root { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; box-sizing: border-box; color: #dbe6f5; font-family: Inter, system-ui, sans-serif; }
         .kw-root:fullscreen { height: 100vh; width: 100vw; padding: 12px; background: #070b14; }
-        .fwin-body:has(> .ws-custom-root > .kw-root) { overflow: hidden; }
-        .fwin-body > .ws-custom-root:has(> .kw-root) { height: 100%; }
-        .ws-tab:has(.kw-root) { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
-        .ws-tab:has(.kw-root) .ws-tab-body { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 12px; }
-        .ws-tab-body > .kw-root { flex: 1; height: auto; }
         .kw-head { flex-shrink: 0; display: flex; gap: 8px; align-items: center; }
         .kw-search-wrap { flex: 1; min-width: 160px; position: relative; display: flex; }
         .kw-search { flex: 1; background: rgba(255,255,255,0.04); border: 1px solid rgba(170,120,255,0.28); border-radius: 7px; padding: 7px 30px 7px 11px; color: #e6eefc; font-size: 12.5px; outline: none; font-family: inherit; }
@@ -3107,7 +3105,8 @@ window.addEventListener('DOMContentLoaded',function(){
         .kw-end { justify-content: flex-end; }
         .kw-pages-inner { flex: 1; min-height: 0; display: flex; }
         .kw-side { width: 230px; flex-shrink: 0; overflow-y: auto; padding: 10px; border-right: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 4px; }
-        .kw-side-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+        .kw-side-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 4px; }
+        .kw-side-top > .kw-small { white-space: nowrap; }
         .kw-create { display: flex; flex-direction: column; gap: 5px; padding: 8px; border: 1px solid rgba(0,255,128,0.22); border-radius: 7px; margin-bottom: 6px; }
         .kw-create input, .kw-create select, .kw-modal-box input { background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.14); border-radius: 5px; color: #e6eefc; font-size: 12px; padding: 5px 8px; font-family: inherit; outline: none; }
         .kw-group { margin-top: 6px; }
@@ -13090,12 +13089,16 @@ function KnowledgeWS() {
   }, [section, gv]);
 
   // Split stacks the graph above the page when the space is narrow or tall.
+  // Both observers read layout size (offsetWidth/Height): a desktop window
+  // opens by scaling up from its dock icon, and a transformed reading taken
+  // then would stay, since the layout size never changes afterwards.
   useEffect(() => {
     const el = rootRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      const r = el.getBoundingClientRect();
-      setStack(r.width < 860 || r.height > r.width * 1.1);
+      const w = el.offsetWidth,
+        ht = el.offsetHeight;
+      if (w > 0) setStack(w < 860 || ht > w * 1.1);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -13107,7 +13110,7 @@ function KnowledgeWS() {
     const el = graphPaneRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
-      const w = el.getBoundingClientRect().width;
+      const w = el.offsetWidth;
       if (w > 0) setToolbar(w < 700 ? 'compact' : w < 900 ? 'narrow' : 'full');
     });
     ro.observe(el);
@@ -13148,7 +13151,7 @@ function KnowledgeWS() {
   const selPath = sel && sel.type !== 'soul' ? kwPathOf(sel) : null;
   return h('div', {
     ref: rootRef,
-    className: 'kw-root',
+    className: 'kw-root ws-fill',
     'data-kw-view': view
   }, h('div', {
     className: 'kw-head'
@@ -13214,6 +13217,7 @@ function KnowledgeWS() {
   }))), h('div', {
     className: 'kw-bar',
     'data-kw-bar': '1',
+    'data-ws-footer': '1',
     role: 'status'
   }, crumb, links && page && !links.missing ? h('span', {
     className: 'kw-dim kw-counts'
