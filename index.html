@@ -403,6 +403,32 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin:hover .resize-h { opacity: 0.85; }
         .resize-h:hover { opacity: 1; }
+        /* Edge and corner grab zones (fridayEdgeHandles), on workspace and chat
+           windows. Invisible; the cursor says what they do. */
+        .win-edge { position: absolute; z-index: 5; }
+        .win-edge-n, .win-edge-s { left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+        .win-edge-n { top: 0; } .win-edge-s { bottom: 0; }
+        .win-edge-e, .win-edge-w { top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+        .win-edge-e { right: 0; } .win-edge-w { left: 0; }
+        .win-edge-ne, .win-edge-nw, .win-edge-se, .win-edge-sw { width: 14px; height: 14px; z-index: 6; }
+        .win-edge-ne { top: 0; right: 0; cursor: nesw-resize; }
+        .win-edge-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+        .win-edge-nw { top: 0; left: 0; cursor: nwse-resize; }
+        .win-edge-se { bottom: 0; right: 0; cursor: nwse-resize; }
+        .fwin .win-edge-se { display: none; }   /* the visible grip is that corner */
+        /* A chat window's title strip: the handle it is moved by. */
+        .chat-win-bar {
+            display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+            padding: 5px 12px 4px; user-select: none;
+            background: rgba(0,212,255,0.05);
+            border-bottom: 1px solid rgba(0,212,255,0.14);
+        }
+        .chat-win-grip { color: rgba(0,212,255,0.55); font-size: 11px; }
+        .chat-win-title {
+            font-family: 'Orbitron'; font-size: 10px; letter-spacing: .06em; color: #7fdcff;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .chat-win textarea.input, .chat-panel textarea.input { min-height: 32px; }
 
         /* Cards — frosted glass tiles */
         .card {
@@ -1573,6 +1599,7 @@ window.addEventListener('DOMContentLoaded',function(){
           }
           .fwin-bar { cursor: default; }
           .resize-h { display: none; }
+          .win-edge { display: none; }
 
           /* Chat panel — full-width slide up from bottom.
              bottom must clear the mobile dock height (no labels, ~58px) plus
@@ -6018,16 +6045,29 @@ function FWin({
       removeEventListener('mouseup', up);
     };
   }, [dragging]);
+  // Resize from any edge or corner (fridayEdgeHandles); the dragged side
+  // moves and the opposite one stays where it is.
+  const startResize = (e, dir) => {
+    rStart.current = { px: e.clientX, py: e.clientY, x: pos.x, y: pos.y, w: size.w, h: size.h, dir };
+    setResizing(dir);
+    onFocus();
+  };
   useEffect(() => {
     if (!resizing) return;
-    const mv = e => setSize({
-      w: clampW(rStart.current.w + e.clientX - rStart.current.x),
-      h: clampH(rStart.current.h + e.clientY - rStart.current.y)
-    });
+    fridayResizeCursor(resizing);
+    const mv = e => {
+      const r = fridayResizeRect(rStart.current, rStart.current.dir || 'se', e.clientX, e.clientY, {
+        minW: 400, minH: 280, maxW: vw() - 20, maxH: vh() - 50, minY: 30,
+        maxRight: vw() - 4, maxBottom: vh() - 4
+      });
+      setSize({ w: Math.round(r.w), h: Math.round(r.h) });
+      setPos({ x: Math.round(r.x), y: Math.round(r.y) });
+    };
     const up = () => setResizing(false);
     addEventListener('mousemove', mv);
     addEventListener('mouseup', up);
     return () => {
+      fridayResizeCursor(null);
       removeEventListener('mousemove', mv);
       removeEventListener('mouseup', up);
     };
@@ -6252,16 +6292,10 @@ function FWin({
     title: "Drag to resize",
     onMouseDown: e => {
       e.stopPropagation();
-      setResizing(true);
-      rStart.current = {
-        x: e.clientX,
-        y: e.clientY,
-        w: size.w,
-        h: size.h
-      };
-      onFocus();
+      e.preventDefault();
+      startResize(e, 'se');
     }
-  }));
+  }), fridayEdgeHandles(startResize));
 }
 
 // ═══ WORKSPACE STUDIO CHAT ═══
@@ -6695,12 +6729,7 @@ function WorkspaceChat({
     ref: inRef,
     value: input,
     onChange: e => setInput(e.target.value),
-    onKeyDown: e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        send();
-      }
-    },
+    onKeyDown: e => fridayEnterSends(e, send),
     placeholder: `Ask Friday to change ${label}…`,
     rows: 1,
     style: {
@@ -6797,6 +6826,975 @@ class Safe extends React.Component {
   }
 }
 
+// ═══ CHAT KEYS ═══
+// Every chat box follows one rule: Enter sends, Shift+Enter starts a new line.
+// Enter does nothing while an input method is composing (Japanese, Chinese,
+// Korean and others confirm a word with Enter). keyCode 229 covers browsers
+// that report composition only that way.
+function fridayIsComposing(e) {
+  const n = (e && e.nativeEvent) || e || {};
+  return !!(e && (e.isComposing || n.isComposing || e.keyCode === 229 || n.keyCode === 229));
+}
+function fridayEnterSends(e, send) {
+  if (!e || e.key !== 'Enter' || e.shiftKey || fridayIsComposing(e)) return false;
+  e.preventDefault();
+  send();
+  return true;
+}
+window.fridayEnterSends = fridayEnterSends;
+
+// A chat text box: one line to start, grows with what is typed (up to
+// maxHeight, then scrolls), Enter sends and Shift+Enter is a new line.
+function FridayChatInput({ value, onChange, onSend, placeholder, disabled, inputRef, className, style, maxHeight, autoFocus }) {
+  const own = useRef(null);
+  const ref = inputRef || own;
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight + 2, maxHeight || 160) + 'px';
+  }, [value]);
+  return /*#__PURE__*/React.createElement("textarea", {
+    ref: ref,
+    rows: 1,
+    className: className,
+    value: value,
+    disabled: disabled,
+    autoFocus: autoFocus,
+    placeholder: placeholder,
+    "aria-label": placeholder,
+    "data-chat-input": "",
+    onChange: e => onChange(e.target.value),
+    onKeyDown: e => fridayEnterSends(e, onSend),
+    style: {
+      resize: 'none',
+      overflowY: 'auto',
+      boxSizing: 'border-box',
+      lineHeight: 1.45,
+      fontFamily: 'Inter, sans-serif',
+      display: 'block',
+      ...(style || {})
+    }
+  });
+}
+
+// ═══ WINDOW EDGES ═══
+// Eight grab zones (four edges, four corners) for resizing a floating window.
+// fridayResizeRect turns the drag into a new rectangle: the dragged side moves,
+// the opposite side stays put, and the size stays inside the limits.
+const FRIDAY_EDGES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+function fridayEdgeHandles(onStart) {
+  return FRIDAY_EDGES.map(d => /*#__PURE__*/React.createElement("div", {
+    key: 'edge-' + d,
+    className: 'win-edge win-edge-' + d,
+    "data-edge": d,
+    onMouseDown: e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onStart(e, d);
+    }
+  }));
+}
+function fridayResizeRect(s, dir, cx, cy, lim) {
+  const dx = cx - s.px, dy = cy - s.py;
+  const minX = lim.minX || 0, minY = lim.minY || 0;
+  const cw = v => Math.max(lim.minW, Math.min(lim.maxW, v));
+  const ch = v => Math.max(lim.minH, Math.min(lim.maxH, v));
+  let x = s.x, y = s.y, w = s.w, h = s.h;
+  if (dir.indexOf('e') >= 0) w = cw(s.w + dx);
+  if (dir.indexOf('w') >= 0) {
+    w = cw(s.w - dx);
+    x = s.x + (s.w - w);
+    if (x < minX) { w = s.x + s.w - minX; x = minX; }
+  }
+  if (dir.indexOf('s') >= 0) h = ch(s.h + dy);
+  if (dir.indexOf('n') >= 0) {
+    h = ch(s.h - dy);
+    y = s.y + (s.h - h);
+    if (y < minY) { h = s.y + s.h - minY; y = minY; }
+  }
+  // The dragged edge stays on screen, so it can always be grabbed again.
+  if (lim.maxRight != null && dir.indexOf('e') >= 0) w = Math.min(w, Math.max(lim.minW, lim.maxRight - x));
+  if (lim.maxBottom != null && dir.indexOf('s') >= 0) h = Math.min(h, Math.max(lim.minH, lim.maxBottom - y));
+  return { x, y, w, h };
+}
+// While a window is being resized the page must not select text under the
+// pointer, and the cursor keeps the edge's shape even off the handle.
+function fridayResizeCursor(dir) {
+  const c = !dir ? '' : (dir === 'n' || dir === 's') ? 'ns-resize'
+    : (dir === 'e' || dir === 'w') ? 'ew-resize'
+    : (dir === 'ne' || dir === 'sw') ? 'nesw-resize' : 'nwse-resize';
+  document.body.style.cursor = c;
+  document.body.style.userSelect = dir ? 'none' : '';
+}
+
+// ═══ CHAT SURFACE ═══
+//
+// THE chat: header (conversation and model switcher, new chat, heartbeat,
+// window/tab, close), transcript (markdown, sources, model badges, pause
+// warnings, the typing line) and composer (cite/show sources, voice, audio
+// devices, attach, the text box). The docked panel and every in-desktop chat
+// window render this one component, so a button added here reaches all of
+// them. It used to live inline in App's return, and the chat window was a
+// separate, smaller copy that had lost voice, sources, attachments, the model
+// switcher and markdown along the way.
+//
+// Props keep the names the code had when it lived inside App, so the body
+// reads exactly as it did. App passes its own state; a ConversationWindow
+// passes its own conversation (transcript, input, seat, send) plus the
+// shared services (settings, voice, audio devices). `mode` is 'panel' or
+// 'window'.
+function ChatSurface(props) {
+  const {
+    mode,
+    agentSettings,
+    audioDevicePopup,
+    audioDevicePopupRef,
+    audioInputDevices,
+    audioOutputDevices,
+    bindConvSeat,
+    chatEnd,
+    chatEpoch,
+    chatFileRef,
+    chatIn,
+    chatLoad,
+    chatMsgs,
+    convId,
+    convList,
+    convOpen,
+    convPickerOpen,
+    convSeat,
+    micLevel,
+    micTestActive,
+    micTestLevel,
+    micTestMsg,
+    openConversation,
+    pausePending,
+    refreshAudioDevicesRef,
+    refreshConvs,
+    rememberPauseChoice,
+    saveAgentSettings,
+    sendChat,
+    setAgentSettings,
+    setAudioDevicePopup,
+    setChatIn,
+    setChatLoad,
+    setChatMsgs,
+    setChatOpen,
+    setConvId,
+    setConvOpen,
+    setConvPickerOpen,
+    setPausePending,
+    showSources,
+    speakerTestActive,
+    speakerTestMsg,
+    testMicrophone,
+    testSpeaker,
+    toggleCiteSources,
+    toggleVoice,
+    turnStatus,
+    uploadFile,
+    uploading,
+    voiceContract,
+    voiceEgress,
+    voiceNotices,
+    voiceOn,
+    voicePartial,
+    voiceReach,
+    voiceStages,
+    voiceStatus
+  } = props;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, React.createElement("div", {
+    "data-chat-head": "",
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      rowGap: 6,
+      padding: '10px 14px',
+      borderBottom: '1px solid rgba(255,255,255,0.04)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 11,
+      color: '#00d4ff'
+    }
+  }, /*#__PURE__*/React.createElement(ConversationBar, {
+    convList: convList, convId: convId, convSeat: convSeat,
+    open: convOpen, setOpen: setConvOpen,
+    pickerOpen: convPickerOpen, setPickerOpen: setConvPickerOpen,
+    onOpenConversation: openConversation, onBindSeat: bindConvSeat,
+    onRefresh: refreshConvs,
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      // A new conversation is not responsible for the old one's turn. Bump the
+      // epoch so any reply still in flight lands in the conversation that
+      // asked for it, and release the composer here immediately.
+      // Was: clear the ONE global transcript, deleting the chat he wanted to
+      // come back to. Now: create a conversation and switch to it. Nothing
+      // belonging to any other conversation is touched.
+      chatEpoch.current += 1;
+      setChatLoad(false);
+      setPausePending(null);
+      setChatMsgs([]);
+      apiFetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New chat' }),
+      }).then(r => r.json()).then(d => {
+        const id = (d.conversation || {}).id;
+        if (id) setConvId(id);
+        refreshConvs();
+      }).catch(() => {});
+    },
+    title: "Start a new conversation (the current one is kept)",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
+    /* HEARTBEAT, ON ONE CLICK.
+       The heartbeat runs twice a day and checks calendar and inbox for
+       anything time-sensitive. Running it on demand was already possible —
+       Settings, find the schedules list, find this row, Run Now — which is
+       four clicks and knowing where to look, and so it was never used.
+
+       The result lands in the chat as a system line rather than a toast,
+       because the answer to "anything I should know about?" is something you
+       read, not something that fades. 409 is the scheduler refusing to
+       double-fire a run already in progress; that is a real answer and is
+       reported as one. */
+    onClick: () => {
+      const say = t => setChatMsgs(p => [...p, {
+        role: 'system', kind: 'heartbeat', text: t,
+        time: new Date().toLocaleTimeString(),
+      }]);
+      say('Running the heartbeat now — checking calendar and inbox.');
+      apiFetch('/api/schedules/sch_heartbeat/run-now', { method: 'POST' })
+        .then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })))
+        .then(({ ok, status, d }) => {
+          if (ok) return;
+          say(status === 409
+                ? 'The heartbeat is already running — its result will arrive '
+                  + 'on its own.'
+                : 'The heartbeat could not start: '
+                  + ((d && d.message) || ('HTTP ' + status)) + '.');
+        })
+        .catch(e => say('The heartbeat could not start: ' + e + '.'));
+    },
+    title: "Run the heartbeat now (calendar + inbox check)",
+    "aria-label": "Run the heartbeat now",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "♥ Heartbeat"), window.__FRIDAY_CHROME__ !== 'chat' && mode !== 'window' && /*#__PURE__*/React.createElement("button", {
+    /* THE THREAD AS A WINDOW, inside the holographic UI. This is the one the
+       user actually asked for: several conversations open at once, each on
+       its own seat, managed by Friday rather than by the browser. The tab
+       button beside it is the other thing he asked for and a different
+       gesture - a tab leaves the machine's window manager in charge, a window
+       keeps it here. */
+    onClick: () => {
+      if (!convId) return;
+      const c = (convList || []).find(x => x.id === convId);
+      window.fridayOpenChatWindow
+        && window.fridayOpenChatWindow(convId, (c && c.title) || 'Conversation');
+    },
+    title: "Open this conversation as a window in the workspace",
+    "aria-label": "Open this conversation as a window",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "⧉ Window"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
+    /* UNDOCK. This conversation, in its own window, so a second one can be
+       worked alongside it — the point being two MODELS at once, since each
+       conversation carries its own seat binding.
+
+       A real browser window rather than a floating div: Friday is served over
+       HTTP, so the OS already knows how to give a window a position, a size
+       and a place in the alt-tab order, and none of that has to be rebuilt.
+       The undocked window drops the holographic shell (?chrome=chat) because
+       one scene, one HUD and one camera are what the machine has.
+
+       Hidden in an already-undocked window, where it would only ever open a
+       duplicate of itself. */
+    onClick: () => {
+      const cid = convId;
+      if (!cid) return;
+      /* A TAB, NOT A POPUP. Passing a feature string ('width=...,height=...')
+         is what tells Chrome to make a chrome-less popup window; omitting it
+         entirely gives an ordinary tab. The first version of this specified a
+         size, got a popup, and was wrong about what the user wanted in a way
+         only the user could see. */
+      const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
+      const w = window.open(url, '_blank');
+      if (!w) {
+        alert('The browser blocked that tab. Allow pop-ups for Friday and '
+              + 'try again.');
+        return;
+      }
+      try { w.focus(); } catch (e) {}
+    },
+    title: "Open this conversation in a new tab",
+    "aria-label": "Open this conversation in a new tab",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 11,
+      padding: '3px 8px',
+      borderRadius: 4,
+      fontFamily: 'Inter'
+    }
+  }, "↗ New tab"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setChatOpen(false),
+    title: "Close chat",
+    "aria-label": "Close chat",
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#999',
+      cursor: 'pointer'
+    }
+  }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      padding: 12
+    }
+  }, chatMsgs.length === 0 && !pausePending && /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'center',
+      color: '#888',
+      fontSize: 12,
+      marginTop: 30
+    }
+  }, "Talk to Friday. Type, speak, or drop a file."), chatMsgs.map((m, i) => m.role === 'system'
+  /* B2: system lines — seat changes and other transparency notices.
+     Amber, centered, unmistakably NOT Friday speaking. Never sent to
+     the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      textAlign: 'center',
+      margin: '10px 0'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    title: m.kind === 'seat_change' ? 'Model seat configuration changed — this notice is generated by the server, not the model.' : 'System notice',
+    style: {
+      display: 'inline-block',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#f59e0b',
+      background: 'rgba(245,158,11,0.07)',
+      border: '1px solid rgba(245,158,11,0.25)',
+      borderRadius: 5,
+      padding: '3px 10px',
+      maxWidth: '92%',
+      textAlign: 'left',
+      lineHeight: 1.5
+    }
+  }, m.text)) : /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      textAlign: m.role === 'user' ? 'right' : 'left',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'inline-flex',
+      alignItems: 'flex-start',
+      gap: 4,
+      maxWidth: '80%',
+      minWidth: 0,
+      justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '7px 11px',
+      borderRadius: 8,
+      fontSize: 12,
+      background: m.role === 'user' ? 'rgba(124,58,237,0.12)' : 'rgba(255,255,255,0.03)',
+      color: m.role === 'user' ? '#b794f6' : '#bbb',
+      minWidth: 0,
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word',
+      // Lines typed with Shift+Enter stay lines.
+      whiteSpace: m.role === 'friday' && m.via !== 'voice' ? undefined : 'pre-wrap'
+    }
+  }, m.role === 'friday' && m.via !== 'voice' ? /*#__PURE__*/React.createElement("div", {
+    dangerouslySetInnerHTML: {
+      __html: renderFridayMarkdown(m.text || '', {
+        compact: true
+      })
+    }
+  }) : m.text), m.role !== 'user' && /*#__PURE__*/React.createElement(SendTo, {
+    content: m.text,
+    dataType: "general",
+    options: [{
+      label: 'Copy to Clipboard',
+      dest: 'clipboard',
+      ico: '📋'
+    }]
+  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      marginTop: 6,
+      fontSize: 10,
+      display: 'block'
+    },
+    // Local-only refused (no local seat available) rather than silently
+    // answering from the cloud — this is the explicit choice the maintainer
+    // asked for: fail closed, say so, then let the user decide to switch.
+    // Never applied automatically.
+    onClick: () => apiFetch('/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        settings: {
+          model_routing: {
+            mode: 'cloud_only'
+          }
+        }
+      })
+    }).then(r => r.json()).then(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Switched to Cloud-Only mode — send your message again.',
+      time: new Date().toLocaleTimeString()
+    }])).catch(() => setChatMsgs(p => [...p, {
+      role: 'system',
+      kind: 'seat_change',
+      text: '⚙ Could not switch modes — try Settings → Intelligence directly.',
+      time: new Date().toLocaleTimeString()
+    }]))
+  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      marginTop: 1
+    }
+  }, m.role === 'user' ? 'You' : 'Friday', " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 6,
+      padding: '1px 5px',
+      borderRadius: 3,
+      background: 'rgba(0,212,255,0.12)',
+      border: '1px solid rgba(0,212,255,0.3)',
+      color: '#00d4ff',
+      fontSize: 9,
+      letterSpacing: '0.05em'
+    }
+  }, "\uD83C\uDFA4 VOICE"), m.role === 'friday' && m.model && /*#__PURE__*/React.createElement("span", {
+    title: 'Actually generated by ' + m.model + ' (' + (m.seat || 'unknown') + ' seat)' + (m.fallback_chain && m.fallback_chain.length ? '\nFallbacks this turn:\n· ' + m.fallback_chain.join('\n· ') : ''),
+    style: {
+      marginLeft: 6,
+      padding: '1px 5px',
+      borderRadius: 3,
+      background: m.seat === 'local' ? 'rgba(245,158,11,0.10)' : 'rgba(0,212,255,0.08)',
+      border: '1px solid ' + (m.seat === 'local' ? 'rgba(245,158,11,0.35)' : 'rgba(0,212,255,0.25)'),
+      color: m.seat === 'local' ? '#f59e0b' : '#00d4ff',
+      fontSize: 9,
+      letterSpacing: '0.05em',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, m.model, m.seat ? ' · ' + m.seat : '', m.fallback_chain && m.fallback_chain.length ? /*#__PURE__*/React.createElement("span", {
+    title: "This reply reached this model via fallback \u2014 hover for the chain",
+    style: {
+      marginLeft: 3,
+      color: '#f59e0b'
+    }
+  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, /*#__PURE__*/React.createElement(PauseWarning, {
+    f: pausePending.forecast,
+    msg: pausePending.message,
+    onChoose: id => {
+      const m = pausePending.message;
+      if (id === 'when_away') {
+        setPausePending(null);
+        apiFetch('/api/work/proposals', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: m.slice(0, 60),
+            tasks: [{
+              title: m.slice(0, 60),
+              detail: m,
+              cls: 'heavy'
+            }]
+          })
+        }).then(r => r.json()).then(d => d && d.proposal && apiFetch('/api/work/proposals/' + d.proposal.id + '/decide', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            execution: 'when_away'
+          })
+        })).then(() => setChatMsgs(p => [...p, {
+          role: 'system',
+          kind: 'queued',
+          text: 'Parked for when you are away. It will run in a batch with anything else waiting.'
+        }])).catch(() => {});
+        return;
+      }
+      rememberPauseChoice(pausePending.seatId, id);
+      sendChat(m, {
+        skipForecast: true,
+        alreadyShown: true,
+        routeMode: id === 'now_cloud' ? 'cloud' : undefined
+      });
+    },
+    onNeverAsk: () => {
+      /* The escape hatch. A confirmation that cannot be turned off becomes
+         noise, and noise is how a safety prompt gets ignored on the day it
+         matters. This sticks in settings, not just in this tab. */
+      const m = pausePending.message;
+      rememberPauseChoice(pausePending.seatId, 'wait_now');
+      setAgentSettings(a => ({ ...a, pause_warnings_off: true }));
+      apiFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: { pause_warnings_off: true } })
+      }).catch(() => {});
+      sendChat(m, { skipForecast: true, alreadyShown: true });
+    },
+    onCancel: () => {
+      const m = pausePending.message;
+      setChatIn(m);
+      setPausePending(null);
+      setChatMsgs(p => {
+        const i = p.map(x => x.role === 'user' && x.text === m).lastIndexOf(true);
+        return i < 0 ? p : p.filter((_, j) => j !== i);
+      });
+    }
+  })), chatLoad && /*#__PURE__*/React.createElement("div", {
+    className: "typing-indicator"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "label"
+  },
+  /* A long turn stays his and says what it is doing. The alternative this
+     replaced was handing the chat back and pointing at another view. */
+  (() => {
+    if (!turnStatus) return "Friday is thinking";
+    const m = Math.floor((turnStatus.elapsed_s || 0) / 60);
+    const el = m >= 1 ? m + "m" : Math.round(turnStatus.elapsed_s) + "s";
+    if (turnStatus.quiet) {
+      return "Still working (" + el + ") — nothing reported for "
+        + Math.round(turnStatus.quiet_for_s) + "s. A single model call can "
+        + "run this long in silence; still holding the thread.";
+    }
+    return "Still working (" + el + ")"
+      + (turnStatus.label ? " — " + turnStatus.label : "");
+  })()), /*#__PURE__*/React.createElement("span", {
+    className: "dot"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dot"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dot"
+  })), /*#__PURE__*/React.createElement("div", {
+    ref: chatEnd
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 10,
+      borderTop: '1px solid rgba(255,255,255,0.04)'
+    }
+  }, voiceOn && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#00d4ff',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.05em',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    title: 'Mic level: ' + (micLevel || 0).toFixed(3),
+    style: {
+      display: 'inline-block',
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      background: micLevel > 0.005 ? '#3effa1' : '#4a5364',
+      boxShadow: micLevel > 0.005 ? '0 0 ' + Math.min(14, Math.round(micLevel * 70)) + 'px #3effa1' : 'none',
+      transform: 'scale(' + (1 + Math.min(0.6, micLevel * 4)).toFixed(2) + ')',
+      transition: 'background .12s, box-shadow .12s, transform .12s'
+    }
+  }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
+    const st = voiceStages[k] && voiceStages[k].state || 'idle';
+    const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
+    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
+  }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
+    title: voiceEgress.text || '',
+    style: {
+      fontSize: 10,
+      color: '#ffb347',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.05em'
+    }
+  }, "\u2601 MIC \u2192 ", voiceEgress.label || voiceEgress.provider), voiceOn && voiceReach && !voiceReach.full_context && voiceReach.notice && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#ffb347',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono',
+      lineHeight: 1.4
+    }
+  }, "\u26A0 ", voiceReach.notice), !voiceOn && voiceEgress && !voiceEgress.active && voiceEgress.bytes > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#8a94a6',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u2601 ", voiceEgress.text), !voiceOn && voiceStatus && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#ff6699',
+      marginBottom: 4,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, voiceStatus), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 6,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: toggleCiteSources,
+    title: agentSettings.cite_sources
+      ? 'Cited mode ON — citations are checked against what a tool actually retrieved; unbacked ones render flagged. An uncited answer is judged, asked again, and marked if it stays unsourced (about 12s more when that happens; nothing when it does not). Click to turn off.'
+      : 'Turn on Source Production Mode — inline citations, each checked against what was actually retrieved.',
+    style: {
+      cursor: 'pointer',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.03em',
+      padding: '3px 8px',
+      borderRadius: 5,
+      background: agentSettings.cite_sources ? 'rgba(52,211,153,0.14)' : 'rgba(255,255,255,0.03)',
+      border: '1px solid ' + (agentSettings.cite_sources ? 'rgba(52,211,153,0.5)' : 'rgba(255,255,255,0.1)'),
+      color: agentSettings.cite_sources ? '#34d399' : '#888',
+      transition: 'all .15s'
+    }
+  }, "\uD83D\uDCCE Cite Sources", agentSettings.cite_sources ? ' · ON' : ''), /*#__PURE__*/React.createElement("button", {
+    onClick: showSources,
+    title: "Generate a source dossier for this conversation \u2014 every claim, its source, confidence, and link",
+    style: {
+      cursor: 'pointer',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.03em',
+      padding: '3px 8px',
+      borderRadius: 5,
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.2)',
+      color: '#00d4ff',
+      transition: 'all .15s'
+    }
+  }, "\uD83D\uDCCB Show Sources")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      minWidth: 0,
+      alignItems: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    onClick: toggleVoice,
+    title: voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
+    style: {
+      background: voiceOn ? 'rgba(255,0,128,0.18)' : 'rgba(0,212,255,0.08)',
+      border: '1px solid ' + (voiceOn ? 'rgba(255,0,128,0.55)' : 'rgba(0,212,255,0.3)'),
+      color: voiceOn ? '#ff6699' : '#00d4ff',
+      minWidth: 42,
+      flexShrink: 0
+    }
+  }, voiceOn ? '■' : '🎤'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      flexShrink: 0,
+      zIndex: 1
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    "data-audio-device-toggle": "",
+    className: "btn",
+    onClick: () => setAudioDevicePopup(o => !o),
+    /* 🎚 and not 🎙. This picks the microphone and speaker; the button beside
+       it starts and stops voice mode. Two different jobs that were wearing 🎙
+       and 🎤 — two Unicode microphones, side by side, indistinguishable at
+       10px. The pair reads as one control rendered twice, which is a
+       fair reading of what they look like. The titles say which is
+       which rather than relying on the glyph alone. */
+    title: (() => {
+      const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
+      const name = inp ? inp.label.split('(')[0].trim() : 'default device';
+      return 'Choose microphone and speaker — currently ' + name +
+             '. This does not start voice mode; the 🎤 button beside it does.';
+    })(),
+    style: {
+      padding: '4px 7px',
+      fontSize: 13,
+      color: audioDevicePopup ? '#00d4ff' : '#666',
+      border: '1px solid ' + (audioDevicePopup ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.1)'),
+      background: audioDevicePopup ? 'rgba(0,212,255,0.08)' : 'rgba(255,255,255,0.03)'
+    }
+  }, "\uD83C\uDF9A"), audioDevicePopup && /*#__PURE__*/React.createElement("div", {
+    ref: audioDevicePopupRef,
+    style: {
+      position: 'absolute',
+      bottom: 'calc(100% + 8px)',
+      left: 0,
+      width: 226,
+      background: 'rgba(10,14,26,0.75)',
+      backdropFilter: 'blur(16px) saturate(1.2)',
+      WebkitBackdropFilter: 'blur(16px) saturate(1.2)',
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 8,
+      padding: '8px 0',
+      zIndex: 200,
+      boxShadow: '0 4px 30px rgba(0,0,0,0.3)',
+      fontSize: 11,
+      fontFamily: 'Inter'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '4px 10px 6px',
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: 'rgba(0,212,255,0.75)',
+      letterSpacing: '.14em'
+    }
+  }, "MIC INPUT"), [{
+    deviceId: '',
+    label: 'System Default'
+  }, ...audioInputDevices].map(d => {
+    const sel = agentSettings.audio_input_device_id === d.deviceId;
+    const lbl = d.label || (d.deviceId ? 'Mic (' + d.deviceId.slice(0, 8) + '...)' : 'System Default');
+    return /*#__PURE__*/React.createElement("div", {
+      key: d.deviceId,
+      onClick: () => {
+        saveAgentSettings({
+          audio_input_device_id: d.deviceId
+        });
+        setAudioDevicePopup(false);
+      },
+      style: {
+        padding: '5px 10px',
+        cursor: 'pointer',
+        color: sel ? '#00d4ff' : '#ccc',
+        background: sel ? 'rgba(0,212,255,0.1)' : 'transparent',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        transition: 'background .1s'
+      },
+      onMouseOver: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.05)',
+      onMouseOut: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.1)' : 'transparent'
+    }, sel && /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginRight: 5,
+        color: '#00d4ff'
+      }
+    }, "\u2713"), lbl);
+  }), audioOutputDevices.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 1,
+      background: 'rgba(0,212,255,0.1)',
+      margin: '5px 0'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '4px 10px 6px',
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: 'rgba(0,212,255,0.75)',
+      letterSpacing: '.14em'
+    }
+  }, "SPEAKER OUT"), [{
+    deviceId: '',
+    label: 'System Default'
+  }, ...audioOutputDevices].map(d => {
+    const sel = agentSettings.audio_output_device_id === d.deviceId;
+    const lbl = d.label || (d.deviceId ? 'Speaker (' + d.deviceId.slice(0, 8) + '...)' : 'System Default');
+    return /*#__PURE__*/React.createElement("div", {
+      key: d.deviceId,
+      onClick: () => {
+        saveAgentSettings({
+          audio_output_device_id: d.deviceId
+        });
+        setAudioDevicePopup(false);
+      },
+      style: {
+        padding: '5px 10px',
+        cursor: 'pointer',
+        color: sel ? '#00d4ff' : '#ccc',
+        background: sel ? 'rgba(0,212,255,0.1)' : 'transparent',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        transition: 'background .1s'
+      },
+      onMouseOver: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.05)',
+      onMouseOut: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.1)' : 'transparent'
+    }, sel && /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginRight: 5,
+        color: '#00d4ff'
+      }
+    }, "\u2713"), lbl);
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 1,
+      background: 'rgba(255,255,255,0.06)',
+      margin: '5px 0'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      padding: '4px 10px'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px',
+      flex: 1
+    },
+    onClick: testMicrophone,
+    disabled: micTestActive
+  }, micTestActive ? 'Listening…' : '🎙 Test Mic'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px',
+      flex: 1
+    },
+    onClick: testSpeaker,
+    disabled: speakerTestActive
+  }, speakerTestActive ? 'Playing…' : '🔊 Test Speaker')), micTestActive && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '2px 10px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 6,
+      background: 'rgba(255,255,255,0.08)',
+      borderRadius: 3,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: '100%',
+      width: Math.min(100, Math.round(micTestLevel * 100)) + '%',
+      background: micTestLevel > 0.02 ? '#00ff80' : '#f59e0b',
+      transition: 'width .08s'
+    }
+  }))), micTestMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '3px 10px',
+      fontSize: 10,
+      color: micTestMsg.startsWith('✓') ? '#00ff80' : '#f59e0b',
+      whiteSpace: 'normal'
+    }
+  }, micTestMsg), speakerTestMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '3px 10px',
+      fontSize: 10,
+      color: speakerTestMsg.startsWith('✓') ? '#00ff80' : '#f59e0b',
+      whiteSpace: 'normal'
+    }
+  }, speakerTestMsg), /*#__PURE__*/React.createElement("div", {
+    onClick: () => {
+      refreshAudioDevicesRef.current?.();
+    },
+    style: {
+      padding: '4px 10px',
+      cursor: 'pointer',
+      color: 'rgba(255,255,255,0.45)',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '.04em'
+    },
+    onMouseOver: e => e.currentTarget.style.color = '#00d4ff',
+    onMouseOut: e => e.currentTarget.style.color = 'rgba(255,255,255,0.45)'
+  }, "\u21BA refresh list"))), /*#__PURE__*/React.createElement("input", {
+    /* The composer has invited "Type, speak, or drop a file" since before
+       there was anywhere to drop one: /api/analyze has existed for months
+       with no caller and no file input anywhere in the UI. */
+    ref: chatFileRef,
+    type: "file",
+    accept: ".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.py,.js,.html,.css,.json,.ts,.tsx,.yaml,.yml,.toml",
+    style: { display: 'none' },
+    onChange: e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) uploadFile(f); }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    disabled: !!uploading,
+    title: uploading ? ('Analysing ' + uploading) : 'Attach a file — image, PDF or text',
+    /* 📁 and not 📎. The paperclip was already taken by "📎 Cite Sources" two
+       controls away in the same cluster, so shipping attach as a second
+       paperclip put two identical glyphs side by side doing unrelated things,
+       which reads as duplicate buttons. */
+    style: { flexShrink: 0, opacity: uploading ? 0.55 : 1 },
+    onClick: () => { if (!uploading && chatFileRef.current) chatFileRef.current.click(); }
+  }, uploading ? '⋯' : '📁'), /*#__PURE__*/React.createElement(FridayChatInput, {
+    className: "input",
+    style: {
+      flex: 1,
+      minWidth: 0
+    },
+    value: chatIn,
+    onChange: setChatIn,
+    // Enter sends, Shift+Enter is a new line (fridayEnterSends).
+    onSend: () => sendChat(),
+    placeholder: voiceOn ? 'Voice mode active — just speak…' : 'Talk to Friday...'
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      flexShrink: 0
+    },
+    onClick: () => sendChat()
+  }, "Send"))));
+}
+
 // ═══ CONVERSATION WINDOW ═══
 //
 // A chat thread as a window INSIDE the holographic UI, not a browser tab and
@@ -6804,37 +7802,64 @@ class Safe extends React.Component {
 // own conversation and therefore to its own model seat — which is the whole
 // point: two windows, two models, one machine.
 //
-// Modelled on WorkspaceChat directly above, which had already solved the hard
-// parts (self-contained state, a draggable frame, a composer that behaves).
-// That one is bound to /api/workspace/<id>/chat and exists to edit a
-// workspace; this is its sibling against /api/chat/send. Sharing the frame by
-// copying it rather than by extracting a base component is deliberate: one of
-// them is about a workspace and one is about a conversation, they will drift,
-// and a premature abstraction over two things that are about to diverge costs
-// more than the duplication.
+// The inside is ChatSurface, the same component as the docked panel, so a
+// window has everything the panel has: the model switcher, voice, cite and
+// show sources, attachments, markdown and model badges. The window supplies
+// the frame (drag, resize from any edge or corner, stay above the dock) and
+// its own conversation.
 //
-// EVERY WINDOW IS A CONVERSATION, so nothing here is global. The transcript
-// comes from /api/conversations/<cid>/messages, the send carries
-// conversation_id, and the seat shown in the header is that conversation's
-// own binding — read from the server rather than from app state, because the
-// docked panel and three windows disagreeing about which model a thread uses
-// would be worse than not having windows at all.
+// EVERY WINDOW IS A CONVERSATION, so the transcript, the input, the seat and
+// the send are the window's own. The transcript comes from
+// /api/conversations/<cid>/messages, the send carries conversation_id, and
+// the seat is that conversation's own binding, read from the server rather
+// than from app state. What is shared comes in `shared`: settings, the
+// conversation list, and voice. Voice is one microphone for the whole app, so
+// the window's mic button points it at this window's thread.
 function ConversationWindow({
   convId,
   title,
   zIndex,
   offset,
   onClose,
-  onFocus
+  onFocus,
+  shared
 }) {
+  const SH = shared || {};
+  const [cid, setCid] = useState(convId);
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [seat, setSeat] = useState(null);
+  const [convOpen, setConvOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pausePending, setPausePending] = useState(null);
+  const [uploading, setUploading] = useState(null);
+  const [devPopup, setDevPopup] = useState(false);
+  const devPopupRef = useRef(null);
+  const epoch = useRef(0);
+  const endRef = useRef(null);
+  const fileRef = useRef(null);
+
+  /* SIZE. Chosen by dragging any edge or corner, remembered for the next
+     window (one size for all chat windows; where each one sits still
+     cascades). The minimum keeps the whole composer row usable. */
+  const SIZE_KEY = 'friday_chatwin_size';
+  const MIN_W = 380, MIN_H = 340;
+  const [size, setSize] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(SIZE_KEY));
+      if (s && s.w > 0 && s.h > 0) return { w: Math.max(MIN_W, s.w), h: Math.max(MIN_H, s.h) };
+    } catch (_) {}
+    return { w: 480, h: Math.min(640, Math.round((window.innerHeight || 800) * 0.78)) };
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SIZE_KEY, JSON.stringify({ w: size.w, h: size.h })); } catch (_) {}
+  }, [size.w, size.h]);
+
   const [pos, setPos] = useState(() => ({
     // Cascade, so a second window does not land exactly on the first and look
     // like nothing happened.
-    x: Math.max(16, (window.innerWidth || 1280) - 440 - (offset || 0) * 34),
+    x: Math.max(16, (window.innerWidth || 1280) - size.w - 20 - (offset || 0) * 34),
     // The cascade is capped the same way dragging is, so the eighth window
     // does not open already half-buried under the dock.
     y: Math.min(76 + (offset || 0) * 30,
@@ -6842,8 +7867,8 @@ function ConversationWindow({
   }));
   const [dragging, setDragging] = useState(false);
   const dOff = useRef({ x: 0, y: 0 });
-  const endRef = useRef(null);
-  const inRef = useRef(null);
+  const [resizing, setResizing] = useState(null);
+  const rStart = useRef(null);
 
   /* THE DOCK IS A FLOOR, NOT A BACKGROUND.
      The dock is fixed to the bottom of the screen, and a chat window that
@@ -6919,6 +7944,9 @@ function ConversationWindow({
 
   // What the window may occupy between its top edge and the dock.
   const roomBelow = Math.max(220, vh - pos.y - floor - 14);
+  const vwNow = window.innerWidth || 1280;
+  const shownW = Math.min(size.w, vwNow - 8);
+  const shownH = Math.min(size.h, roomBelow);
 
   useEffect(() => {
     if (!dragging) return;
@@ -6946,73 +7974,229 @@ function ConversationWindow({
     // - the drag's own state lives in a ref, not in this closure.
   }, [dragging, floor]);
 
-  // The thread's own transcript and its own seat. Both per-conversation; see
-  // the note above about disagreement between surfaces.
+  // Resizing from an edge or corner. The bottom edge stops at the dock.
+  const startResize = (e, dir) => {
+    rStart.current = { px: e.clientX, py: e.clientY, x: pos.x, y: pos.y, w: shownW, h: shownH, dir };
+    setResizing(dir);
+    onFocus && onFocus();
+  };
   useEffect(() => {
-    if (!convId) return;
-    let live = true;
-    apiFetch('/api/conversations/' + encodeURIComponent(convId) + '/messages')
+    if (!resizing) return;
+    fridayResizeCursor(resizing);
+    const mv = e => {
+      const s = rStart.current;
+      const vw = window.innerWidth || 1280, vhh = window.innerHeight || 800;
+      const r = fridayResizeRect(s, s.dir, e.clientX, e.clientY, {
+        minW: MIN_W, minH: MIN_H, maxW: vw - 8, maxH: Math.max(MIN_H, vhh - floor - 14), maxRight: vw - 4
+      });
+      r.h = Math.min(r.h, Math.max(MIN_H, vhh - floor - 14 - r.y));
+      setSize({ w: Math.round(r.w), h: Math.round(r.h) });
+      setPos({ x: Math.round(r.x), y: Math.round(r.y) });
+    };
+    const up = () => setResizing(null);
+    window.addEventListener('mousemove', mv);
+    window.addEventListener('mouseup', up);
+    return () => {
+      fridayResizeCursor(null);
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', up);
+    };
+  }, [resizing, floor]);
+
+  // The thread's own transcript and its own seat. Switching threads inside
+  // the window (the switcher, + New Chat) lands here too.
+  const openConv = React.useCallback(id => {
+    if (!id) return;
+    epoch.current += 1;
+    setLoading(false);
+    setPausePending(null);
+    setCid(id);
+    setConvOpen(false);
+    apiFetch('/api/conversations/' + encodeURIComponent(id) + '/messages')
       .then(r => r.json())
       .then(d => {
-        if (!live) return;
         setMsgs((d.messages || []).map(m => ({
-          role: m.role === 'friday' ? 'friday'
-                : (m.role === 'user' ? 'user' : 'system'),
+          role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
           text: m.text || '',
-          model: (m.meta || {}).model
+          time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
+          model: (m.meta || {}).model,
+          seat: (m.meta || {}).seat,
+          kind: (m.meta || {}).kind
         })));
       })
-      .catch(() => { if (live) setMsgs([]); });
-    apiFetch('/api/conversations/' + encodeURIComponent(convId))
+      .catch(() => setMsgs([]));
+    apiFetch('/api/conversations/' + encodeURIComponent(id))
       .then(r => r.json())
-      .then(d => { if (live) setSeat((d.conversation || {}).seat || null); })
-      .catch(() => {});
-    return () => { live = false; };
-  }, [convId]);
+      .then(d => setSeat((d.conversation || {}).seat || null))
+      .catch(() => setSeat(null));
+  }, []);
+  useEffect(() => { openConv(convId); }, [convId, openConv]);
 
   useEffect(() => {
     endRef.current && endRef.current.scrollIntoView({ block: 'end' });
   }, [msgs, loading]);
 
-  const send = async text => {
-    const m = (text === undefined ? input : text).trim();
-    if (!m || loading) return;
-    setInput('');
-    setMsgs(p => [...p, { role: 'user', text: m }]);
-    setLoading(true);
-    try {
-      const r = await apiFetch('/api/chat/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // conversation_id is the whole feature. Without it every window would
-        // write into Main and the threads would be one thread wearing three
-        // frames.
-        body: JSON.stringify({ message: m, conversation_id: convId,
-                               workspace: 'chat' })
-      });
-      const d = await r.json();
-      const fm = d.friday_msg || {};
-      setMsgs(p => [...p, {
-        role: 'friday',
-        text: fm.text || d.response || '[no response]',
-        model: fm.model || d.model
-      }]);
-    } catch (e) {
-      setMsgs(p => [...p, { role: 'system', text: '[Connection error]' }]);
+  /* Voice is one microphone for the whole app and it speaks into whichever
+     thread the docked chat has open. The mic here points it at THIS thread
+     first, and while it runs the window re-reads its transcript as turns
+     land, so what was said shows up here. */
+  const voiceHere = SH.voiceOn && SH.mainConvId === cid;
+  useEffect(() => {
+    if (!voiceHere) return;
+    const t = setTimeout(() => openConvQuiet(cid), 500);
+    return () => clearTimeout(t);
+  }, [voiceHere, SH.mainMsgCount]);
+  const openConvQuiet = id => apiFetch('/api/conversations/' + encodeURIComponent(id) + '/messages')
+    .then(r => r.json())
+    .then(d => {
+      if (id !== cid) return;
+      setMsgs((d.messages || []).map(m => ({
+        role: m.role === 'friday' ? 'friday' : (m.role === 'user' ? 'user' : 'system'),
+        text: m.text || '',
+        time: m.ts ? new Date(m.ts * 1000).toLocaleTimeString() : '',
+        model: (m.meta || {}).model,
+        seat: (m.meta || {}).seat,
+        kind: (m.meta || {}).kind
+      })));
+    }).catch(() => {});
+  const talk = () => {
+    // Already talking in another thread: move the conversation here and keep
+    // the microphone running. Otherwise it is an on/off switch.
+    if (SH.mainConvId !== cid && SH.openMainConversation) {
+      SH.openMainConversation(cid);
+      if (SH.voiceOn) return;
     }
-    setLoading(false);
-    inRef.current && inRef.current.focus();
+    SH.toggleVoice && SH.toggleVoice();
   };
 
+  /** Bind a model to THIS conversation, the same way the docked chat does. */
+  const bindSeat = m => {
+    const s = m ? { model: m.id, provider: (m.providers || [])[0] } : null;
+    setSeat(s);
+    setPickerOpen(false);
+    apiFetch('/api/conversations/' + encodeURIComponent(cid), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seat: s })
+    }).then(r => r.json()).then(d => {
+      const got = ((d.conversation || {}).seat || {}).model || null;
+      if ((s && got !== s.model) || (!s && got)) {
+        alert('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
+        setSeat((d.conversation || {}).seat || null);
+        return;
+      }
+      setMsgs(p => [...p, {
+        role: 'system', kind: 'seat_change',
+        text: s ? ('This chat now uses ' + prettyModel(s.model) + '.')
+                : 'This chat now follows your default model.'
+      }]);
+      SH.refreshConvs && SH.refreshConvs();
+    }).catch(() => {});
+  };
+
+  /* One turn, streamed, into this conversation. Same request and the same
+     reply handling as the docked chat (seat changes, vision notices, model
+     badge, fallback chain, actions); a turn that finishes after the window
+     switched threads is dropped rather than written into the wrong one. */
+  const send = async (overrideMsg, opts) => {
+    const m = (overrideMsg || input).trim();
+    if (!m) return;
+    opts = opts || {};
+    const stamp = () => new Date().toLocaleTimeString();
+    if (!opts.alreadyShown) {
+      setInput('');
+      setMsgs(p => [...p, { role: 'user', text: m, time: stamp() }]);
+    }
+    if (loading) {
+      setMsgs(p => [...p, {
+        role: 'system', kind: 'busy',
+        text: 'Still finishing the previous message here. This one was not sent — '
+          + 'send it again once she replies.'
+      }]);
+      return;
+    }
+    setPausePending(null);
+    const ep = epoch.current;
+    const mine = f => { if (epoch.current === ep) f(); };
+    setLoading(true);
+    const body = {
+      message: m,
+      voice_mode: false,
+      cite_sources: !!(SH.agentSettings || {}).cite_sources,
+      // conversation_id is the whole feature. Without it every window would
+      // write into Main and the threads would be one thread wearing three
+      // frames.
+      conversation_id: cid,
+      workspace: 'chat',
+      turn_id: 'turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
+    };
+    if (opts.routeMode) body.route_mode = opts.routeMode;
+    setMsgs(p => [...p, { role: 'friday', text: '', streaming: true, time: stamp() }]);
+    try {
+      let d;
+      try {
+        d = await fridayChatTurn(body, piece => mine(() => setMsgs(p => {
+          const q = p.slice();
+          for (let i = q.length - 1; i >= 0; i--) {
+            if (q[i].streaming) { q[i] = { ...q[i], text: (q[i].text || '') + piece }; break; }
+          }
+          return q;
+        })));
+      } finally {
+        mine(() => setMsgs(p => p.filter(x => !x.streaming)));
+      }
+      mine(() => {
+        const add = [];
+        (d.seat_events || []).forEach(ev => add.push({ role: 'system', kind: 'seat_change', text: '⚙ ' + ev.text, time: stamp() }));
+        (d.vision_events || []).forEach(ev => add.push({ role: 'system', kind: ev.kind || 'vision_egress', text: ev.text, time: stamp() }));
+        add.push({
+          role: 'friday',
+          text: d.response || (d.friday_msg || {}).text || '[no response]',
+          model: d.model || (d.friday_msg || {}).model,
+          seat: d.seat,
+          fallback_chain: d.fallback_chain || [],
+          offer_cloud_switch: !!d.offer_cloud_switch,
+          time: stamp()
+        });
+        setMsgs(p => [...p, ...add]);
+      });
+      fridayRunActions(d.actions);
+    } catch (e) {
+      mine(() => setMsgs(p => [...p, { role: 'friday', text: '[Connection error]', time: stamp() }]));
+    }
+    mine(() => setLoading(false));
+  };
+
+  const uploadFile = file => fridayAnalyzeFile(file, setMsgs, setUploading);
+  const showSources = () => fridayShowSources(setMsgs, setLoading);
+
+  // The audio-device popup is this window's own, closed by a click elsewhere.
+  useEffect(() => {
+    if (!devPopup) return;
+    const h = e => {
+      if (devPopupRef.current && devPopupRef.current.contains(e.target)) return;
+      if (e.target.closest('[data-audio-device-toggle]')) return;
+      setDevPopup(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [devPopup]);
+
+  const conv = (SH.convList || []).find(c => c.id === cid);
+  const winTitle = (conv && conv.title) || title || 'Conversation';
+
   return /*#__PURE__*/React.createElement("div", {
+    className: "chat-win",
+    "data-chat-window": cid,
+    role: "dialog",
+    "aria-label": winTitle,
     onMouseDown: onFocus,
     style: {
       position: 'fixed', left: pos.x, top: pos.y,
-      width: 420, maxWidth: '94vw',
-      // Tall as it likes, but never taller than the gap above the dock. The
-      // composer is the bottom row of this box, so this is what keeps the
-      // input reachable.
-      height: Math.min(640, Math.round(vh * 0.78), roomBelow),
+      width: shownW,
+      // Never taller than the gap above the dock. The composer is the bottom
+      // row of this box, so this is what keeps the input reachable.
+      height: shownH,
       zIndex: zIndex || 132,
       display: 'flex', flexDirection: 'column',
       background: 'rgba(10,14,24,0.97)',
@@ -7024,111 +8208,93 @@ function ConversationWindow({
     }
   },
     /*#__PURE__*/React.createElement("div", {
+      className: "chat-win-bar",
+      title: "Drag to move",
       onMouseDown: e => {
-        if (e.target.closest('button')) return;
+        if (e.button !== 0 || e.target.closest('button')) return;
         setDragging(true);
         dOff.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
       },
-      style: {
-        cursor: dragging ? 'grabbing' : 'grab',
-        padding: '9px 12px',
-        borderBottom: '1px solid rgba(0,212,255,0.18)',
-        display: 'flex', alignItems: 'center', gap: 8,
-        background: 'rgba(0,212,255,0.05)'
-      }
-    },
-      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-        /*#__PURE__*/React.createElement("div", {
-          style: {
-            fontFamily: 'Orbitron', fontSize: 12, color: '#00d4ff',
-            letterSpacing: '.04em', whiteSpace: 'nowrap',
-            overflow: 'hidden', textOverflow: 'ellipsis'
-          }
-        }, title || 'Conversation'),
-        /*#__PURE__*/React.createElement("div", {
-          style: { fontSize: 10, color: '#7d8da3', marginTop: 1 }
-        }, seat && seat.model ? seat.model : 'default model')),
-      /*#__PURE__*/React.createElement("button", {
-        title: "Open this conversation in a new tab",
-        onClick: e => {
-          e.stopPropagation();
-          const w = window.open('/?conversation=' + encodeURIComponent(convId)
-                                + '&chrome=chat', '_blank');
-          if (w) { try { w.focus(); } catch (err) {} }
-        },
-        style: {
-          background: 'none', border: 'none', color: '#00d4ff',
-          cursor: 'pointer', fontSize: 12
-        }
-      }, "↗"),
-      /*#__PURE__*/React.createElement("button", {
-        title: "Close this window (the conversation is kept)",
-        onClick: e => { e.stopPropagation(); onClose && onClose(); },
-        style: {
-          background: 'none', border: 'none', color: '#999',
-          cursor: 'pointer', fontSize: 13
-        }
-      }, "✕")),
+      style: { cursor: dragging ? 'grabbing' : 'grab' }
+    }, /*#__PURE__*/React.createElement("span", { className: "chat-win-grip", "aria-hidden": "true" }, "⠿"),
+       /*#__PURE__*/React.createElement("span", { className: "chat-win-title" }, winTitle)),
+    /*#__PURE__*/React.createElement(ChatSurface, {
+      ...SH,
+      mode: 'window',
+      chatMsgs: msgs, setChatMsgs: setMsgs,
+      chatIn: input, setChatIn: setInput,
+      chatLoad: loading, setChatLoad: setLoading,
+      convId: cid, setConvId: openConv, convSeat: seat,
+      convOpen: convOpen, setConvOpen: setConvOpen,
+      convPickerOpen: pickerOpen, setConvPickerOpen: setPickerOpen,
+      openConversation: openConv, bindConvSeat: bindSeat,
+      chatEpoch: epoch, chatEnd: endRef, chatFileRef: fileRef,
+      pausePending: pausePending, setPausePending: setPausePending,
+      turnStatus: null,
+      sendChat: send, uploadFile: uploadFile, uploading: uploading, showSources: showSources,
+      audioDevicePopup: devPopup, setAudioDevicePopup: setDevPopup, audioDevicePopupRef: devPopupRef,
+      toggleVoice: talk,
+      voiceOn: voiceHere,
+      setChatOpen: v => { if (!v && onClose) onClose(); }
+    }),
+    fridayEdgeHandles(startResize));
+}
 
-    /*#__PURE__*/React.createElement("div", {
-      style: { flex: 1, overflowY: 'auto', padding: '10px 12px' }
-    },
-      msgs.length === 0 && !loading && /*#__PURE__*/React.createElement("div", {
-        style: { color: '#5d6b80', fontSize: 12, padding: '8px 2px' }
-      }, "Nothing in this thread yet."),
-      msgs.map((m, i) => /*#__PURE__*/React.createElement("div", {
-        key: i,
-        style: {
-          margin: '7px 0', display: 'flex',
-          justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          maxWidth: '86%', padding: '7px 10px', borderRadius: 10,
-          fontSize: 12.5, lineHeight: 1.5, whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          background: m.role === 'user' ? 'rgba(0,212,255,0.12)'
-                      : m.role === 'system' ? 'rgba(255,140,66,0.10)'
-                      : 'rgba(255,255,255,0.045)',
-          color: m.role === 'system' ? '#ffb27d' : '#dfe7f2'
-        }
-      }, m.text))),
-      loading && /*#__PURE__*/React.createElement("div", {
-        style: { color: '#00d4ff', fontSize: 11, padding: '6px 2px' }
-      }, "Friday is thinking…"),
-      /*#__PURE__*/React.createElement("div", { ref: endRef })),
+// Attach a file to a chat: /api/analyze decides on the server whether the
+// file may leave the machine; this only shows the file, the answer and any
+// disclosure the server attached. Shared by the docked chat and the windows.
+async function fridayAnalyzeFile(file, setMsgs, setUploading) {
+  if (!file) return;
+  setUploading(file.name);
+  const stamp = () => new Date().toLocaleTimeString();
+  setMsgs(p => [...p, {
+    role: 'user', text: '📎 ' + file.name +
+      ' (' + (file.size < 1024 ? file.size + ' B'
+            : file.size < 1048576 ? Math.round(file.size / 1024) + ' KB'
+            : (file.size / 1048576).toFixed(1) + ' MB') + ')',
+    time: stamp(),
+  }]);
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await apiFetch('/api/analyze', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.vision_events && d.vision_events.length) {
+      setMsgs(p => [...p, ...d.vision_events.map(ev => ({
+        role: 'system', kind: ev.kind || 'vision_egress',
+        text: ev.text, time: stamp(),
+      }))]);
+    }
+    setMsgs(p => [...p, {
+      role: 'friday',
+      text: d.analysis || d.error || 'No analysis came back.',
+      model: d.analysed_by || null,
+      time: stamp(),
+    }]);
+  } catch (e) {
+    setMsgs(p => [...p, {
+      role: 'friday',
+      text: 'I could not read ' + file.name + ' — the upload failed: ' + e,
+      time: stamp(),
+    }]);
+  } finally {
+    setUploading(null);
+  }
+}
 
-    /*#__PURE__*/React.createElement("div", {
-      style: {
-        padding: 9, borderTop: '1px solid rgba(0,212,255,0.14)',
-        display: 'flex', gap: 7
-      }
-    },
-      /*#__PURE__*/React.createElement("input", {
-        ref: inRef,
-        value: input,
-        onChange: e => setInput(e.target.value),
-        onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } },
-        placeholder: loading ? 'Waiting for Friday…' : 'Message this thread…',
-        disabled: loading,
-        style: {
-          flex: 1, background: 'rgba(255,255,255,0.05)',
-          border: '1px solid rgba(0,212,255,0.18)', borderRadius: 8,
-          color: '#e8eef7', padding: '7px 10px', fontSize: 12.5,
-          fontFamily: 'Inter', outline: 'none'
-        }
-      }),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => send(),
-        disabled: loading || !input.trim(),
-        style: {
-          background: 'rgba(0,212,255,0.12)',
-          border: '1px solid rgba(0,212,255,0.3)',
-          color: '#00d4ff', borderRadius: 8, padding: '7px 13px',
-          fontSize: 12, cursor: loading ? 'default' : 'pointer',
-          fontFamily: 'Inter'
-        }
-      }, "Send")));
+// "📋 Show Sources": the source dossier for today's conversation, dropped into
+// the chat as a copyable Friday message.
+async function fridayShowSources(setMsgs, setLoad) {
+  setLoad(true);
+  try {
+    const r = await fetch('/api/sources/dossier/current');
+    const d = await r.json();
+    const md = d.markdown || '[Dossier error] ' + (d.error || 'no sources');
+    setMsgs(p => [...p, { role: 'friday', text: md, time: new Date().toLocaleTimeString() }]);
+  } catch (e) {
+    setMsgs(p => [...p, { role: 'friday', text: '[Could not generate source dossier]', time: new Date().toLocaleTimeString() }]);
+  }
+  setLoad(false);
 }
 
 // ═══ FRIDAY SAYS (proactive insight) ═══
@@ -15711,12 +16877,7 @@ function StudioPromptBar({
     value: prompt,
     onChange: e => setPrompt(e.target.value),
     placeholder: "Describe what you want to create...",
-    onKeyDown: e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        go();
-      }
-    }
+    onKeyDown: e => fridayEnterSends(e, go)
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -24754,17 +25915,19 @@ function NewsWS() {
   }, "Thinking...")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      gap: 4
+      gap: 4,
+      alignItems: 'flex-end'
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement(FridayChatInput, {
     className: "input",
     style: {
       flex: 1,
       fontSize: 11
     },
+    maxHeight: 110,
     value: chatIn,
-    onChange: e => setChatIn(e.target.value),
-    onKeyDown: e => e.key === 'Enter' && sendBriefingChat(),
+    onChange: setChatIn,
+    onSend: sendBriefingChat,
     placeholder: "Ask about this briefing..."
   }), /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -47281,44 +48444,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
      whatever disclosure the server attached. */
   const chatFileRef = React.useRef(null);
   const [uploading, setUploading] = useState(null);
-  const uploadFile = async (file) => {
-    if (!file) return;
-    setUploading(file.name);
-    const stamp = () => new Date().toLocaleTimeString();
-    setChatMsgs(p => [...p, {
-      role: 'user', text: '📎 ' + file.name +
-        ' (' + (file.size < 1024 ? file.size + ' B'
-              : file.size < 1048576 ? Math.round(file.size / 1024) + ' KB'
-              : (file.size / 1048576).toFixed(1) + ' MB') + ')',
-      time: stamp(),
-    }]);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const r = await apiFetch('/api/analyze', { method: 'POST', body: fd });
-      const d = await r.json();
-      if (d.vision_events && d.vision_events.length) {
-        setChatMsgs(p => [...p, ...d.vision_events.map(ev => ({
-          role: 'system', kind: ev.kind || 'vision_egress',
-          text: ev.text, time: stamp(),
-        }))]);
-      }
-      setChatMsgs(p => [...p, {
-        role: 'friday',
-        text: d.analysis || d.error || 'No analysis came back.',
-        model: d.analysed_by || null,
-        time: stamp(),
-      }]);
-    } catch (e) {
-      setChatMsgs(p => [...p, {
-        role: 'friday',
-        text: 'I could not read ' + file.name + ' — the upload failed: ' + e,
-        time: stamp(),
-      }]);
-    } finally {
-      setUploading(null);
-    }
-  };
+  const uploadFile = file => fridayAnalyzeFile(file, setChatMsgs, setUploading);
 
   const sendChat = async (overrideMsg, opts) => {
     const m = (overrideMsg || chatIn).trim();
@@ -47497,26 +48623,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const toggleCiteSources = () => saveAgentSettings({
     cite_sources: !agentSettings.cite_sources
   });
-  const showSources = async () => {
-    setChatLoad(true);
-    try {
-      const r = await fetch('/api/sources/dossier/current');
-      const d = await r.json();
-      const md = d.markdown || '[Dossier error] ' + (d.error || 'no sources');
-      setChatMsgs(p => [...p, {
-        role: 'friday',
-        text: md,
-        time: new Date().toLocaleTimeString()
-      }]);
-    } catch (e) {
-      setChatMsgs(p => [...p, {
-        role: 'friday',
-        text: '[Could not generate source dossier]',
-        time: new Date().toLocaleTimeString()
-      }]);
-    }
-    setChatLoad(false);
-  };
+  const showSources = () => fridayShowSources(setChatMsgs, setChatLoad);
 
   // Existing installs see the full FutureSpeak business pipeline under "Sites";
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
@@ -47568,6 +48675,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const sortedBgTasks = [...bgTasks].sort((a, b) => (b.created || 0) - (a.created || 0));
   const noWindows = openWins.size === 0;
   const structures = window.fridayVibe?.getStructures?.() ?? [];
+  /* What a chat window shares with the docked chat: settings, the list of
+     conversations, and the one microphone. Each window brings its own
+     conversation (see ConversationWindow). */
+  const chatShared = {
+    agentSettings, setAgentSettings, saveAgentSettings, toggleCiteSources,
+    rememberPauseChoice, convList, refreshConvs,
+    voiceOn, toggleVoice, voiceStatus, voicePartial, voiceNotices, voiceStages,
+    voiceReach, voiceEgress, voiceContract, micLevel, micTestActive, micTestLevel,
+    micTestMsg, speakerTestActive, speakerTestMsg, testMicrophone, testSpeaker,
+    audioInputDevices, audioOutputDevices, refreshAudioDevicesRef,
+    openMainConversation: openConversation, mainConvId: convId,
+    mainMsgCount: chatMsgs.length
+  };
   const moods = window.fridayVibe?.getMoods?.() ?? ['LISTENING', 'REASONING', 'EXECUTING', 'EXCITED', 'CALM'];
   // A workspace in its own tab: that workspace, full-tab, and nothing else of
   // the desktop (no dock, windows, HUD or scene). Settings never gets here
@@ -48233,10 +49353,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       gap: 8,
       alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement(FridayChatInput, {
     value: promptText,
-    onChange: e => setPromptText(e.target.value),
-    onKeyDown: e => e.key === 'Enter' && sendPrompt(),
+    onChange: setPromptText,
+    onSend: sendPrompt,
+    maxHeight: 120,
     placeholder: "Ask Friday anything...",
     style: {
       width: 360,
@@ -48427,7 +49548,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     // which is not a reason to leave a number that says otherwise.
     zIndex: zMap['chat:' + cw.cid] || Math.min(Z_WIN_TOP, Z_WIN_BASE + i),
     onFocus: () => bringFront('chat:' + cw.cid),
-    onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid))
+    onClose: () => setConvWins(p => p.filter(x => x.cid !== cw.cid)),
+    shared: chatShared
   })), wsChat && /*#__PURE__*/React.createElement(WorkspaceChat, {
     key: wsChat.wsId + ':' + wsChat.key,
     wsId: wsChat.wsId,
@@ -48483,787 +49605,65 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       };
       setChatResize('h');
     }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '10px 14px',
-      borderBottom: '1px solid rgba(255,255,255,0.04)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 11,
-      color: '#00d4ff'
-    }
-  }, /*#__PURE__*/React.createElement(ConversationBar, {
-    convList: convList, convId: convId, convSeat: convSeat,
-    open: convOpen, setOpen: setConvOpen,
-    pickerOpen: convPickerOpen, setPickerOpen: setConvPickerOpen,
-    onOpenConversation: openConversation, onBindSeat: bindConvSeat,
-    onRefresh: refreshConvs,
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      // A new conversation is not responsible for the old one's turn. Bump the
-      // epoch so any reply still in flight lands in the conversation that
-      // asked for it, and release the composer here immediately.
-      // Was: clear the ONE global transcript, deleting the chat he wanted to
-      // come back to. Now: create a conversation and switch to it. Nothing
-      // belonging to any other conversation is touched.
-      chatEpoch.current += 1;
-      setChatLoad(false);
-      setPausePending(null);
-      setChatMsgs([]);
-      apiFetch('/api/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'New chat' }),
-      }).then(r => r.json()).then(d => {
-        const id = (d.conversation || {}).id;
-        if (id) setConvId(id);
-        refreshConvs();
-      }).catch(() => {});
-    },
-    title: "Start a new conversation (the current one is kept)",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 11,
-      padding: '3px 8px',
-      borderRadius: 4,
-      fontFamily: 'Inter'
-    }
-  }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
-    /* HEARTBEAT, ON ONE CLICK.
-       The heartbeat runs twice a day and checks calendar and inbox for
-       anything time-sensitive. Running it on demand was already possible —
-       Settings, find the schedules list, find this row, Run Now — which is
-       four clicks and knowing where to look, and so it was never used.
-
-       The result lands in the chat as a system line rather than a toast,
-       because the answer to "anything I should know about?" is something you
-       read, not something that fades. 409 is the scheduler refusing to
-       double-fire a run already in progress; that is a real answer and is
-       reported as one. */
-    onClick: () => {
-      const say = t => setChatMsgs(p => [...p, {
-        role: 'system', kind: 'heartbeat', text: t,
-        time: new Date().toLocaleTimeString(),
-      }]);
-      say('Running the heartbeat now — checking calendar and inbox.');
-      apiFetch('/api/schedules/sch_heartbeat/run-now', { method: 'POST' })
-        .then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })))
-        .then(({ ok, status, d }) => {
-          if (ok) return;
-          say(status === 409
-                ? 'The heartbeat is already running — its result will arrive '
-                  + 'on its own.'
-                : 'The heartbeat could not start: '
-                  + ((d && d.message) || ('HTTP ' + status)) + '.');
-        })
-        .catch(e => say('The heartbeat could not start: ' + e + '.'));
-    },
-    title: "Run the heartbeat now (calendar + inbox check)",
-    "aria-label": "Run the heartbeat now",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 11,
-      padding: '3px 8px',
-      borderRadius: 4,
-      fontFamily: 'Inter'
-    }
-  }, "♥ Heartbeat"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
-    /* THE THREAD AS A WINDOW, inside the holographic UI. This is the one the
-       user actually asked for: several conversations open at once, each on
-       its own seat, managed by Friday rather than by the browser. The tab
-       button beside it is the other thing he asked for and a different
-       gesture - a tab leaves the machine's window manager in charge, a window
-       keeps it here. */
-    onClick: () => {
-      if (!convId) return;
-      const c = (convList || []).find(x => x.id === convId);
-      window.fridayOpenChatWindow
-        && window.fridayOpenChatWindow(convId, (c && c.title) || 'Conversation');
-    },
-    title: "Open this conversation as a window in the workspace",
-    "aria-label": "Open this conversation as a window",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 11,
-      padding: '3px 8px',
-      borderRadius: 4,
-      fontFamily: 'Inter'
-    }
-  }, "⧉ Window"), window.__FRIDAY_CHROME__ !== 'chat' && /*#__PURE__*/React.createElement("button", {
-    /* UNDOCK. This conversation, in its own window, so a second one can be
-       worked alongside it — the point being two MODELS at once, since each
-       conversation carries its own seat binding.
-
-       A real browser window rather than a floating div: Friday is served over
-       HTTP, so the OS already knows how to give a window a position, a size
-       and a place in the alt-tab order, and none of that has to be rebuilt.
-       The undocked window drops the holographic shell (?chrome=chat) because
-       one scene, one HUD and one camera are what the machine has.
-
-       Hidden in an already-undocked window, where it would only ever open a
-       duplicate of itself. */
-    onClick: () => {
-      const cid = convId;
-      if (!cid) return;
-      /* A TAB, NOT A POPUP. Passing a feature string ('width=...,height=...')
-         is what tells Chrome to make a chrome-less popup window; omitting it
-         entirely gives an ordinary tab. The first version of this specified a
-         size, got a popup, and was wrong about what the user wanted in a way
-         only the user could see. */
-      const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
-      const w = window.open(url, '_blank');
-      if (!w) {
-        alert('The browser blocked that tab. Allow pop-ups for Friday and '
-              + 'try again.');
-        return;
-      }
-      try { w.focus(); } catch (e) {}
-    },
-    title: "Open this conversation in a new tab",
-    "aria-label": "Open this conversation in a new tab",
-    style: {
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      color: '#00d4ff',
-      cursor: 'pointer',
-      fontSize: 11,
-      padding: '3px 8px',
-      borderRadius: 4,
-      fontFamily: 'Inter'
-    }
-  }, "↗ New tab"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setChatOpen(false),
-    title: "Close chat",
-    "aria-label": "Close chat",
-    style: {
-      background: 'none',
-      border: 'none',
-      color: '#999',
-      cursor: 'pointer'
-    }
-  }, "\u2715"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      overflowY: 'auto',
-      overflowX: 'hidden',
-      padding: 12
-    }
-  }, chatMsgs.length === 0 && !pausePending && /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: 'center',
-      color: '#888',
-      fontSize: 12,
-      marginTop: 30
-    }
-  }, "Talk to Friday. Type, speak, or drop a file."), chatMsgs.map((m, i) => m.role === 'system'
-  /* B2: system lines — seat changes and other transparency notices.
-     Amber, centered, unmistakably NOT Friday speaking. Never sent to
-     the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      textAlign: 'center',
-      margin: '10px 0'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    title: m.kind === 'seat_change' ? 'Model seat configuration changed — this notice is generated by the server, not the model.' : 'System notice',
-    style: {
-      display: 'inline-block',
-      fontSize: 10,
-      fontFamily: 'JetBrains Mono',
-      color: '#f59e0b',
-      background: 'rgba(245,158,11,0.07)',
-      border: '1px solid rgba(245,158,11,0.25)',
-      borderRadius: 5,
-      padding: '3px 10px',
-      maxWidth: '92%',
-      textAlign: 'left',
-      lineHeight: 1.5
-    }
-  }, m.text)) : /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      textAlign: m.role === 'user' ? 'right' : 'left',
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'inline-flex',
-      alignItems: 'flex-start',
-      gap: 4,
-      maxWidth: '80%',
-      minWidth: 0,
-      justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '7px 11px',
-      borderRadius: 8,
-      fontSize: 12,
-      background: m.role === 'user' ? 'rgba(124,58,237,0.12)' : 'rgba(255,255,255,0.03)',
-      color: m.role === 'user' ? '#b794f6' : '#bbb',
-      minWidth: 0,
-      overflowWrap: 'anywhere',
-      wordBreak: 'break-word'
-    }
-  }, m.role === 'friday' && m.via !== 'voice' ? /*#__PURE__*/React.createElement("div", {
-    dangerouslySetInnerHTML: {
-      __html: renderFridayMarkdown(m.text || '', {
-        compact: true
-      })
-    }
-  }) : m.text), m.role !== 'user' && /*#__PURE__*/React.createElement(SendTo, {
-    content: m.text,
-    dataType: "general",
-    options: [{
-      label: 'Copy to Clipboard',
-      dest: 'clipboard',
-      ico: '📋'
-    }]
-  }), m.role === 'friday' && m.offer_cloud_switch && /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      marginTop: 6,
-      fontSize: 10,
-      display: 'block'
-    },
-    // Local-only refused (no local seat available) rather than silently
-    // answering from the cloud — this is the explicit choice the maintainer
-    // asked for: fail closed, say so, then let the user decide to switch.
-    // Never applied automatically.
-    onClick: () => apiFetch('/api/settings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        settings: {
-          model_routing: {
-            mode: 'cloud_only'
-          }
-        }
-      })
-    }).then(r => r.json()).then(() => setChatMsgs(p => [...p, {
-      role: 'system',
-      kind: 'seat_change',
-      text: '⚙ Switched to Cloud-Only mode — send your message again.',
-      time: new Date().toLocaleTimeString()
-    }])).catch(() => setChatMsgs(p => [...p, {
-      role: 'system',
-      kind: 'seat_change',
-      text: '⚙ Could not switch modes — try Settings → Intelligence directly.',
-      time: new Date().toLocaleTimeString()
-    }]))
-  }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#888',
-      marginTop: 1
-    }
-  }, m.role === 'user' ? 'You' : 'Friday', " \xB7 ", m.time || '', m.via === 'voice' && /*#__PURE__*/React.createElement("span", {
-    style: {
-      marginLeft: 6,
-      padding: '1px 5px',
-      borderRadius: 3,
-      background: 'rgba(0,212,255,0.12)',
-      border: '1px solid rgba(0,212,255,0.3)',
-      color: '#00d4ff',
-      fontSize: 9,
-      letterSpacing: '0.05em'
-    }
-  }, "\uD83C\uDFA4 VOICE"), m.role === 'friday' && m.model && /*#__PURE__*/React.createElement("span", {
-    title: 'Actually generated by ' + m.model + ' (' + (m.seat || 'unknown') + ' seat)' + (m.fallback_chain && m.fallback_chain.length ? '\nFallbacks this turn:\n· ' + m.fallback_chain.join('\n· ') : ''),
-    style: {
-      marginLeft: 6,
-      padding: '1px 5px',
-      borderRadius: 3,
-      background: m.seat === 'local' ? 'rgba(245,158,11,0.10)' : 'rgba(0,212,255,0.08)',
-      border: '1px solid ' + (m.seat === 'local' ? 'rgba(245,158,11,0.35)' : 'rgba(0,212,255,0.25)'),
-      color: m.seat === 'local' ? '#f59e0b' : '#00d4ff',
-      fontSize: 9,
-      letterSpacing: '0.05em',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, m.model, m.seat ? ' · ' + m.seat : '', m.fallback_chain && m.fallback_chain.length ? /*#__PURE__*/React.createElement("span", {
-    title: "This reply reached this model via fallback \u2014 hover for the chain",
-    style: {
-      marginLeft: 3,
-      color: '#f59e0b'
-    }
-  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, /*#__PURE__*/React.createElement(PauseWarning, {
-    f: pausePending.forecast,
-    msg: pausePending.message,
-    onChoose: id => {
-      const m = pausePending.message;
-      if (id === 'when_away') {
-        setPausePending(null);
-        apiFetch('/api/work/proposals', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            title: m.slice(0, 60),
-            tasks: [{
-              title: m.slice(0, 60),
-              detail: m,
-              cls: 'heavy'
-            }]
-          })
-        }).then(r => r.json()).then(d => d && d.proposal && apiFetch('/api/work/proposals/' + d.proposal.id + '/decide', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            execution: 'when_away'
-          })
-        })).then(() => setChatMsgs(p => [...p, {
-          role: 'system',
-          kind: 'queued',
-          text: 'Parked for when you are away. It will run in a batch with anything else waiting.'
-        }])).catch(() => {});
-        return;
-      }
-      rememberPauseChoice(pausePending.seatId, id);
-      sendChat(m, {
-        skipForecast: true,
-        alreadyShown: true,
-        routeMode: id === 'now_cloud' ? 'cloud' : undefined
-      });
-    },
-    onNeverAsk: () => {
-      /* The escape hatch. A confirmation that cannot be turned off becomes
-         noise, and noise is how a safety prompt gets ignored on the day it
-         matters. This sticks in settings, not just in this tab. */
-      const m = pausePending.message;
-      rememberPauseChoice(pausePending.seatId, 'wait_now');
-      setAgentSettings(a => ({ ...a, pause_warnings_off: true }));
-      apiFetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { pause_warnings_off: true } })
-      }).catch(() => {});
-      sendChat(m, { skipForecast: true, alreadyShown: true });
-    },
-    onCancel: () => {
-      const m = pausePending.message;
-      setChatIn(m);
-      setPausePending(null);
-      setChatMsgs(p => {
-        const i = p.map(x => x.role === 'user' && x.text === m).lastIndexOf(true);
-        return i < 0 ? p : p.filter((_, j) => j !== i);
-      });
-    }
-  })), chatLoad && /*#__PURE__*/React.createElement("div", {
-    className: "typing-indicator"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "label"
-  },
-  /* A long turn stays his and says what it is doing. The alternative this
-     replaced was handing the chat back and pointing at another view. */
-  (() => {
-    if (!turnStatus) return "Friday is thinking";
-    const m = Math.floor((turnStatus.elapsed_s || 0) / 60);
-    const el = m >= 1 ? m + "m" : Math.round(turnStatus.elapsed_s) + "s";
-    if (turnStatus.quiet) {
-      return "Still working (" + el + ") — nothing reported for "
-        + Math.round(turnStatus.quiet_for_s) + "s. A single model call can "
-        + "run this long in silence; still holding the thread.";
-    }
-    return "Still working (" + el + ")"
-      + (turnStatus.label ? " — " + turnStatus.label : "");
-  })()), /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "dot"
-  })), /*#__PURE__*/React.createElement("div", {
-    ref: chatEnd
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 10,
-      borderTop: '1px solid rgba(255,255,255,0.04)'
-    }
-  }, voiceOn && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: '#00d4ff',
-      marginBottom: 4,
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '0.05em',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    title: 'Mic level: ' + (micLevel || 0).toFixed(3),
-    style: {
-      display: 'inline-block',
-      width: 9,
-      height: 9,
-      borderRadius: 5,
-      background: micLevel > 0.005 ? '#3effa1' : '#4a5364',
-      boxShadow: micLevel > 0.005 ? '0 0 ' + Math.min(14, Math.round(micLevel * 70)) + 'px #3effa1' : 'none',
-      transform: 'scale(' + (1 + Math.min(0.6, micLevel * 4)).toFixed(2) + ')',
-      transition: 'background .12s, box-shadow .12s, transform .12s'
-    }
-  }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
-    const st = voiceStages[k] && voiceStages[k].state || 'idle';
-    const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
-    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
-  }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
-    title: voiceEgress.text || '',
-    style: {
-      fontSize: 10,
-      color: '#ffb347',
-      marginBottom: 4,
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '0.05em'
-    }
-  }, "\u2601 MIC \u2192 ", voiceEgress.label || voiceEgress.provider), voiceOn && voiceReach && !voiceReach.full_context && voiceReach.notice && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: '#ffb347',
-      marginBottom: 4,
-      fontFamily: 'JetBrains Mono',
-      lineHeight: 1.4
-    }
-  }, "\u26A0 ", voiceReach.notice), !voiceOn && voiceEgress && !voiceEgress.active && voiceEgress.bytes > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: '#8a94a6',
-      marginBottom: 4,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "\u2601 ", voiceEgress.text), !voiceOn && voiceStatus && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: '#ff6699',
-      marginBottom: 4,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, voiceStatus), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      marginBottom: 6,
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: toggleCiteSources,
-    title: agentSettings.cite_sources
-      ? 'Cited mode ON — citations are checked against what a tool actually retrieved; unbacked ones render flagged. An uncited answer is judged, asked again, and marked if it stays unsourced (about 12s more when that happens; nothing when it does not). Click to turn off.'
-      : 'Turn on Source Production Mode — inline citations, each checked against what was actually retrieved.',
-    style: {
-      cursor: 'pointer',
-      fontSize: 10,
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '0.03em',
-      padding: '3px 8px',
-      borderRadius: 5,
-      background: agentSettings.cite_sources ? 'rgba(52,211,153,0.14)' : 'rgba(255,255,255,0.03)',
-      border: '1px solid ' + (agentSettings.cite_sources ? 'rgba(52,211,153,0.5)' : 'rgba(255,255,255,0.1)'),
-      color: agentSettings.cite_sources ? '#34d399' : '#888',
-      transition: 'all .15s'
-    }
-  }, "\uD83D\uDCCE Cite Sources", agentSettings.cite_sources ? ' · ON' : ''), /*#__PURE__*/React.createElement("button", {
-    onClick: showSources,
-    title: "Generate a source dossier for this conversation \u2014 every claim, its source, confidence, and link",
-    style: {
-      cursor: 'pointer',
-      fontSize: 10,
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '0.03em',
-      padding: '3px 8px',
-      borderRadius: 5,
-      background: 'rgba(0,212,255,0.06)',
-      border: '1px solid rgba(0,212,255,0.2)',
-      color: '#00d4ff',
-      transition: 'all .15s'
-    }
-  }, "\uD83D\uDCCB Show Sources")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    onClick: toggleVoice,
-    title: voiceOn ? 'Stop voice mode' : 'Start voice mode (Gemini Live)',
-    style: {
-      background: voiceOn ? 'rgba(255,0,128,0.18)' : 'rgba(0,212,255,0.08)',
-      border: '1px solid ' + (voiceOn ? 'rgba(255,0,128,0.55)' : 'rgba(0,212,255,0.3)'),
-      color: voiceOn ? '#ff6699' : '#00d4ff',
-      minWidth: 42,
-      flexShrink: 0
-    }
-  }, voiceOn ? '■' : '🎤'), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      flexShrink: 0,
-      zIndex: 1
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    "data-audio-device-toggle": "",
-    className: "btn",
-    onClick: () => setAudioDevicePopup(o => !o),
-    /* 🎚 and not 🎙. This picks the microphone and speaker; the button beside
-       it starts and stops voice mode. Two different jobs that were wearing 🎙
-       and 🎤 — two Unicode microphones, side by side, indistinguishable at
-       10px. The pair reads as one control rendered twice, which is a
-       fair reading of what they look like. The titles say which is
-       which rather than relying on the glyph alone. */
-    title: (() => {
-      const inp = audioInputDevices.find(d => d.deviceId === agentSettings.audio_input_device_id);
-      const name = inp ? inp.label.split('(')[0].trim() : 'default device';
-      return 'Choose microphone and speaker — currently ' + name +
-             '. This does not start voice mode; the 🎤 button beside it does.';
-    })(),
-    style: {
-      padding: '4px 7px',
-      fontSize: 13,
-      color: audioDevicePopup ? '#00d4ff' : '#666',
-      border: '1px solid ' + (audioDevicePopup ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.1)'),
-      background: audioDevicePopup ? 'rgba(0,212,255,0.08)' : 'rgba(255,255,255,0.03)'
-    }
-  }, "\uD83C\uDF9A"), audioDevicePopup && /*#__PURE__*/React.createElement("div", {
-    ref: audioDevicePopupRef,
-    style: {
-      position: 'absolute',
-      bottom: 'calc(100% + 8px)',
-      left: 0,
-      width: 226,
-      background: 'rgba(10,14,26,0.75)',
-      backdropFilter: 'blur(16px) saturate(1.2)',
-      WebkitBackdropFilter: 'blur(16px) saturate(1.2)',
-      border: '1px solid rgba(0,212,255,0.15)',
-      borderRadius: 8,
-      padding: '8px 0',
-      zIndex: 200,
-      boxShadow: '0 4px 30px rgba(0,0,0,0.3)',
-      fontSize: 11,
-      fontFamily: 'Inter'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 10px 6px',
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: 'rgba(0,212,255,0.75)',
-      letterSpacing: '.14em'
-    }
-  }, "MIC INPUT"), [{
-    deviceId: '',
-    label: 'System Default'
-  }, ...audioInputDevices].map(d => {
-    const sel = agentSettings.audio_input_device_id === d.deviceId;
-    const lbl = d.label || (d.deviceId ? 'Mic (' + d.deviceId.slice(0, 8) + '...)' : 'System Default');
-    return /*#__PURE__*/React.createElement("div", {
-      key: d.deviceId,
-      onClick: () => {
-        saveAgentSettings({
-          audio_input_device_id: d.deviceId
-        });
-        setAudioDevicePopup(false);
-      },
-      style: {
-        padding: '5px 10px',
-        cursor: 'pointer',
-        color: sel ? '#00d4ff' : '#ccc',
-        background: sel ? 'rgba(0,212,255,0.1)' : 'transparent',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        transition: 'background .1s'
-      },
-      onMouseOver: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.05)',
-      onMouseOut: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.1)' : 'transparent'
-    }, sel && /*#__PURE__*/React.createElement("span", {
-      style: {
-        marginRight: 5,
-        color: '#00d4ff'
-      }
-    }, "\u2713"), lbl);
-  }), audioOutputDevices.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 1,
-      background: 'rgba(0,212,255,0.1)',
-      margin: '5px 0'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 10px 6px',
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: 'rgba(0,212,255,0.75)',
-      letterSpacing: '.14em'
-    }
-  }, "SPEAKER OUT"), [{
-    deviceId: '',
-    label: 'System Default'
-  }, ...audioOutputDevices].map(d => {
-    const sel = agentSettings.audio_output_device_id === d.deviceId;
-    const lbl = d.label || (d.deviceId ? 'Speaker (' + d.deviceId.slice(0, 8) + '...)' : 'System Default');
-    return /*#__PURE__*/React.createElement("div", {
-      key: d.deviceId,
-      onClick: () => {
-        saveAgentSettings({
-          audio_output_device_id: d.deviceId
-        });
-        setAudioDevicePopup(false);
-      },
-      style: {
-        padding: '5px 10px',
-        cursor: 'pointer',
-        color: sel ? '#00d4ff' : '#ccc',
-        background: sel ? 'rgba(0,212,255,0.1)' : 'transparent',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        transition: 'background .1s'
-      },
-      onMouseOver: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.05)',
-      onMouseOut: e => e.currentTarget.style.background = sel ? 'rgba(0,212,255,0.1)' : 'transparent'
-    }, sel && /*#__PURE__*/React.createElement("span", {
-      style: {
-        marginRight: 5,
-        color: '#00d4ff'
-      }
-    }, "\u2713"), lbl);
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 1,
-      background: 'rgba(255,255,255,0.06)',
-      margin: '5px 0'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      padding: '4px 10px'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 10,
-      padding: '3px 8px',
-      flex: 1
-    },
-    onClick: testMicrophone,
-    disabled: micTestActive
-  }, micTestActive ? 'Listening…' : '🎙 Test Mic'), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 10,
-      padding: '3px 8px',
-      flex: 1
-    },
-    onClick: testSpeaker,
-    disabled: speakerTestActive
-  }, speakerTestActive ? 'Playing…' : '🔊 Test Speaker')), micTestActive && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '2px 10px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 6,
-      background: 'rgba(255,255,255,0.08)',
-      borderRadius: 3,
-      overflow: 'hidden'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: '100%',
-      width: Math.min(100, Math.round(micTestLevel * 100)) + '%',
-      background: micTestLevel > 0.02 ? '#00ff80' : '#f59e0b',
-      transition: 'width .08s'
-    }
-  }))), micTestMsg && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '3px 10px',
-      fontSize: 10,
-      color: micTestMsg.startsWith('✓') ? '#00ff80' : '#f59e0b',
-      whiteSpace: 'normal'
-    }
-  }, micTestMsg), speakerTestMsg && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '3px 10px',
-      fontSize: 10,
-      color: speakerTestMsg.startsWith('✓') ? '#00ff80' : '#f59e0b',
-      whiteSpace: 'normal'
-    }
-  }, speakerTestMsg), /*#__PURE__*/React.createElement("div", {
-    onClick: () => {
-      refreshAudioDevicesRef.current?.();
-    },
-    style: {
-      padding: '4px 10px',
-      cursor: 'pointer',
-      color: 'rgba(255,255,255,0.45)',
-      fontSize: 10,
-      fontFamily: 'JetBrains Mono',
-      letterSpacing: '.04em'
-    },
-    onMouseOver: e => e.currentTarget.style.color = '#00d4ff',
-    onMouseOut: e => e.currentTarget.style.color = 'rgba(255,255,255,0.45)'
-  }, "\u21BA refresh list"))), /*#__PURE__*/React.createElement("input", {
-    /* The composer has invited "Type, speak, or drop a file" since before
-       there was anywhere to drop one: /api/analyze has existed for months
-       with no caller and no file input anywhere in the UI. */
-    ref: chatFileRef,
-    type: "file",
-    accept: ".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.py,.js,.html,.css,.json,.ts,.tsx,.yaml,.yml,.toml",
-    style: { display: 'none' },
-    onChange: e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) uploadFile(f); }
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    disabled: !!uploading,
-    title: uploading ? ('Analysing ' + uploading) : 'Attach a file — image, PDF or text',
-    /* 📁 and not 📎. The paperclip was already taken by "📎 Cite Sources" two
-       controls away in the same cluster, so shipping attach as a second
-       paperclip put two identical glyphs side by side doing unrelated things,
-       which reads as duplicate buttons. */
-    style: { flexShrink: 0, opacity: uploading ? 0.55 : 1 },
-    onClick: () => { if (!uploading && chatFileRef.current) chatFileRef.current.click(); }
-  }, uploading ? '⋯' : '📁'), /*#__PURE__*/React.createElement("input", {
-    className: "input",
-    style: {
-      flex: 1,
-      minWidth: 0
-    },
-    value: chatIn,
-    onChange: e => setChatIn(e.target.value),
-    onKeyDown: e => e.key === 'Enter' && sendChat(),
-    placeholder: voiceOn ? 'Voice mode active — just speak…' : 'Talk to Friday...'
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      flexShrink: 0
-    },
-    onClick: () => sendChat()
-  }, "Send")))), threadOrb && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*//*#__PURE__*/React.createElement(ChatSurface, {
+    mode: 'panel',
+    agentSettings: agentSettings,
+    audioDevicePopup: audioDevicePopup,
+    audioDevicePopupRef: audioDevicePopupRef,
+    audioInputDevices: audioInputDevices,
+    audioOutputDevices: audioOutputDevices,
+    bindConvSeat: bindConvSeat,
+    chatEnd: chatEnd,
+    chatEpoch: chatEpoch,
+    chatFileRef: chatFileRef,
+    chatIn: chatIn,
+    chatLoad: chatLoad,
+    chatMsgs: chatMsgs,
+    convId: convId,
+    convList: convList,
+    convOpen: convOpen,
+    convPickerOpen: convPickerOpen,
+    convSeat: convSeat,
+    micLevel: micLevel,
+    micTestActive: micTestActive,
+    micTestLevel: micTestLevel,
+    micTestMsg: micTestMsg,
+    openConversation: openConversation,
+    pausePending: pausePending,
+    refreshAudioDevicesRef: refreshAudioDevicesRef,
+    refreshConvs: refreshConvs,
+    rememberPauseChoice: rememberPauseChoice,
+    saveAgentSettings: saveAgentSettings,
+    sendChat: sendChat,
+    setAgentSettings: setAgentSettings,
+    setAudioDevicePopup: setAudioDevicePopup,
+    setChatIn: setChatIn,
+    setChatLoad: setChatLoad,
+    setChatMsgs: setChatMsgs,
+    setChatOpen: setChatOpen,
+    setConvId: setConvId,
+    setConvOpen: setConvOpen,
+    setConvPickerOpen: setConvPickerOpen,
+    setPausePending: setPausePending,
+    showSources: showSources,
+    speakerTestActive: speakerTestActive,
+    speakerTestMsg: speakerTestMsg,
+    testMicrophone: testMicrophone,
+    testSpeaker: testSpeaker,
+    toggleCiteSources: toggleCiteSources,
+    toggleVoice: toggleVoice,
+    turnStatus: turnStatus,
+    uploadFile: uploadFile,
+    uploading: uploading,
+    voiceContract: voiceContract,
+    voiceEgress: voiceEgress,
+    voiceNotices: voiceNotices,
+    voiceOn: voiceOn,
+    voicePartial: voicePartial,
+    voiceReach: voiceReach,
+    voiceStages: voiceStages,
+    voiceStatus: voiceStatus
+  })), threadOrb && /*#__PURE__*/React.createElement("div", {
     className: "thread-panel open",
     style: {
       left: threadPos.x,
