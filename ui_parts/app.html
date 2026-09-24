@@ -625,7 +625,17 @@ function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,au
           </button>
         </div>
         <div style={{display:'flex',gap:6,minWidth:0,alignItems:'flex-end'}}>
-          <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
+          {/* Which voice this starts, named. The tooltip used to say "Gemini
+              Live" unconditionally, which stopped being true when local became
+              the default — and a control that misnames what it is about to do
+              is worse than one that says nothing, because cloud and on-device
+              are exactly the distinction someone dictating a private sentence
+              cares about. */}
+          <button className="btn" onClick={toggleVoice}
+            title={voiceOn?'Stop voice mode':((agentSettings.voice_engine||'local')==='gemini'
+              ?'Start voice mode — Gemini Live (cloud; your speech is sent to Google)'
+              :'Start voice mode — on-device voice (nothing leaves this machine)')}
+            data-voice-engine={agentSettings.voice_engine||'local'}
             data-friday-voice-toggle="" data-voice-on={voiceOn?'1':'0'}
             style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>
             {voiceOn?'■':'🎤'}

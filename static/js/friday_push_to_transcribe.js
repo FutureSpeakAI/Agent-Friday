@@ -51,6 +51,24 @@
   }
 
   // ── where the words go ────────────────────────────────────────────────
+  function visible(el) {
+    // The app keeps several chat boxes in the DOM and shows one. Picking a
+    // hidden one drops the sentence somewhere nobody is looking.
+    //
+    // Measured rather than inferred from offsetParent, which is null for
+    // anything inside a position:fixed ancestor and would have called every
+    // chat box in this app hidden.
+    if (!el || el.disabled || el.readOnly) return false;
+    if (typeof el.checkVisibility === 'function') return el.checkVisibility();
+    return el.getClientRects().length > 0;
+  }
+
+  function firstVisible(sel) {
+    var all = document.querySelectorAll(sel);
+    for (var i = 0; i < all.length; i++) if (visible(all[i])) return all[i];
+    return null;
+  }
+
   function editableTarget() {
     var el = document.activeElement;
     if (el && (el.tagName === 'TEXTAREA' ||
@@ -58,10 +76,13 @@
                  .test(el.type || '')) ||
                el.isContentEditable)) return el;
     // Nothing focused that can take text: the chat box is what someone
-    // dictating into Friday almost always means.
-    return document.querySelector('[data-friday-chat-input]') ||
-           document.querySelector('.chat-input textarea') ||
-           document.querySelector('textarea');
+    // dictating into Friday almost always means. `data-chat-input` is the
+    // attribute FridayChatInput actually carries — checked against the
+    // running app, where the invented selector this used to try matched
+    // nothing at all and the fallback landed on a hidden textarea.
+    return firstVisible('[data-chat-input]') ||
+           firstVisible('textarea') ||
+           document.querySelector('[data-chat-input]');
   }
 
   function insertInto(el, text) {
