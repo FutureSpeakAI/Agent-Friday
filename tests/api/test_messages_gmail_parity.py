@@ -176,7 +176,7 @@ def _state(monkeypatch, tmp_path):
 
 
 def test_bulk_archive_is_undone_exactly(client, _state):
-    r = client.post("/api/messages/action", json={"ids": ["a", "b"], "action": "archive"}).get_json()
+    r = client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["a", "b"], "action": "archive"}).get_json()
     assert r["status"] == "ok" and sorted(r["ids"]) == ["a", "b"]
     assert _state["s"]["a"] == {"flagged": True, "archived": True} and _state["s"]["b"] == {"archived": True}
     client.post("/api/messages/restore", json={"states": r["before"]})
@@ -191,7 +191,7 @@ def test_mark_unread_after_reading_makes_it_unread():
 
 
 def test_unknown_action_is_refused(client, _state):
-    assert client.post("/api/messages/action", json={"ids": ["a"], "action": "delete"}).status_code == 400
+    assert client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["a"], "action": "delete"}).status_code == 400
 
 
 def test_a_conversation_is_one_row_not_one_per_message(client, monkeypatch):

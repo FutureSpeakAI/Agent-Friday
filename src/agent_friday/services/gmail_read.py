@@ -104,6 +104,8 @@ def _message(msg, account_id):
         'internal_ms': int(ts) if ts else None,
         'message_id_header': headers.get('message-id', ''),
         'references': headers.get('references', ''),
+        'list_unsubscribe': headers.get('list-unsubscribe', ''),
+        'list_unsubscribe_post': headers.get('list-unsubscribe-post', ''),
         'labels': msg.get('labelIds') or [],
         'snippet': msg.get('snippet') or '',
         'body': parts['text'] or re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', html)).strip() or msg.get('snippet') or '',
@@ -144,6 +146,16 @@ def get_thread(thread_id: str, account_id: str | None = None) -> dict:
                 'thread_id': thread_id, 'messages': [_message(m, rec['id']) for m in t.get('messages') or []]}
     last = last or {'kind': 'not_found', 'error': 'Gmail could not find that thread.'}
     return {'status': 'error', **last}
+
+
+def get_raw(account_id: str, message_id: str) -> bytes:
+    """The whole message as Gmail holds it (RFC 822 source)."""
+    from agent_friday.services import google_accounts as ga
+    creds = ga.credentials_for(account_id)
+    if not creds:
+        raise gmail_api.GmailError('auth', 'That account needs reconnecting.')
+    r = gmail_api.execute(_service(creds).users().messages().get(userId='me', id=message_id, format='raw'))
+    return _b64(r.get('raw') or '')
 
 
 def get_attachment(account_id: str, message_id: str, attachment_id: str) -> bytes:

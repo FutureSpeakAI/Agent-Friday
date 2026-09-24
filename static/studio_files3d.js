@@ -450,7 +450,13 @@
       '  float held = vState.z;',
       '  if (held > 0.0) { float pulse = 0.7 + 0.3*sin(t*4.0); float hb = 1.0 - smoothstep(0.02, 0.1, edge);',
       '    col = mix(col, uAmber*1.35, hb*held*pulse*0.95); col += uAmber*0.09*held*pulse; }',
-      '  if (vState.y > 0.5) { float mb = 1.0 - smoothstep(0.02, 0.085, edge);',   // marked: one of several selected
+      // y packs "marked" (1) and "waiting" (2); unpacked with steps, because
+      // mod() can round 2.0 up to a whole "marked" on some GPUs
+      '  float gw = step(1.5, vState.y), mk = step(0.5, vState.y - 2.0*gw);',
+      // waiting: a slow green breath round the edge (a reply is owed)
+      '  if (gw > 0.5) { float gp = 0.55 + 0.45*sin(t*1.7 + vTile.y*9.0); float gb = 1.0 - smoothstep(0.0, 0.16, edge);',
+      '    col = mix(col, vec3(0.42, 1.0, 0.72)*1.25, gb*0.85*gp); col += vec3(0.05, 0.22, 0.13)*gp; }',
+      '  if (mk > 0.5) { float mb = 1.0 - smoothstep(0.02, 0.085, edge);',   // marked: one of several selected
       '    col = mix(col, uMagenta*1.3, mb*0.9); col += uMagenta*0.07; }',
       '  col += mix(uCyan, uMagenta, burn)*burn*1.6;',
       '  float f = 1.0 - exp(-uFogDensity*uFogDensity*vDepth*vDepth);',
@@ -485,7 +491,7 @@
     // ── per-item state ──
     let items = [], n = 0;
     let cards = null, boxes = null, lines = null, lineGeo = null, edges = null, refl = null;
-    let heldArr = new Uint8Array(1), markArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
+    let heldArr = new Uint8Array(1), markArr = new Uint8Array(1), glowArr = new Uint8Array(1), diss = new Float32Array(1), materialize = null;
     let aTile, aColor, aState;
     let P, Q, S, fP, fQ, fS, tP, tQ, tS, delay;           // cards: current / from / to
     let BP, BS, fBP, fBS, tBP, tBS;                        // boxes (city): position / size
@@ -538,7 +544,7 @@
       refl.instanceMatrix = cards.instanceMatrix;
       refl.count = n; refl.frustumCulled = false; refl.matrixAutoUpdate = false; refl.visible = false;
       scene.add(refl);
-      heldArr = new Uint8Array(cap); markArr = new Uint8Array(cap); diss = new Float32Array(cap);
+      heldArr = new Uint8Array(cap); markArr = new Uint8Array(cap); glowArr = new Uint8Array(cap); diss = new Float32Array(cap);
       boxes = new THREE.InstancedMesh(boxGeo, boxMat, cap);
       boxes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       boxes.frustumCulled = false; boxes.count = n;
@@ -784,6 +790,10 @@
         weekLayout(L, act, put);
       } else if (v === 'orbit') {
         orbitLayout(L, act, put);
+      } else if (v === 'constellation') {
+        constellationLayout(L, act, put);
+      } else if (v === 'river') {
+        riverLayout(L, act, put);
       } else if (v === 'stack') {
         stackLayout(L, act, put);
       } else {
@@ -791,7 +801,7 @@
       }
       if (!L.cam) L.cam = { t: [0, 0, 0], theta: 0, phi: 1.2, r: 60 };
       // A floor under everything, for the views that stand on one.
-      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster' || v === 'week' || v === 'stack')) {
+      if (m && (v === 'wall' || v === 'tree' || v === 'city' || v === 'cluster' || v === 'week' || v === 'stack' || v === 'river')) {
         let y0 = Infinity, x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
         for (const i of act) {
           const hs = (L.S[i * 2 + 1] || 0) / 2;
@@ -1045,6 +1055,88 @@
       L.cam = fitCam(L, act, 0, 1.12);
     }
 
+    // Constellation: one star per person (item.person), on a sunflower
+    // spiral with the busiest person at the centre. A person's cards orbit
+    // their star; the star is as big as their volume, and it rises and turns
+    // amber with the number of their conversations waiting for a reply.
+    function constellationLayout(L, act, put) {
+      const groups = new Map();
+      act.forEach(i => { const k = items[i].person || items[i].cat; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+      const keys = Array.from(groups.keys()).sort((a, b) => groups.get(b).length - groups.get(a).length || (a < b ? -1 : 1));
+      const order = [];
+      keys.forEach((k, gi) => {
+        const mem = groups.get(k).sort((a, b) => items[b].mtime - items[a].mtime);
+        const nm = mem.length, waiting = mem.filter(i => items[i].awaiting).length;
+        const rr = 1.6 + 0.6 * Math.sqrt(nm);
+        const d = gi === 0 ? 0 : 7 * Math.sqrt(gi) + rr;
+        const a = gi * GOLD;
+        const cx = d * Math.cos(a), cz = d * Math.sin(a), cy = Math.min(7, Math.log2(1 + waiting) * 2.2);
+        const hot = waiting > 0;
+        mem.forEach((i, j) => {
+          const th = j / nm * Math.PI * 2 + gi;
+          put(i, cx + rr * Math.cos(th), cy + 0.9 + rr * 0.35 * Math.sin(th), cz + rr * Math.sin(th), IDQ, 1.2 + Math.min(0.8, (items[i].size || 0) * 0.1));
+          order.push(i);
+        });
+        let label = String(k);
+        if (label.length > 22) label = label.slice(0, 21) + '…';
+        L.labels.push({ text: '✦', pos: [cx, cy + 0.9, cz], color: hot ? BRAND.amber : 0x9fd0ff, size: 0.9 + 0.45 * Math.sqrt(nm) });
+        L.labels.push({ text: label + ' · ' + nm + (waiting ? ' · ' + waiting + ' waiting' : ''), pos: [cx, cy + rr * 0.4 + 2.3, cz], color: hot ? BRAND.amber : 0x9fd0ff, size: Math.min(1.2, 0.55 + 0.1 * Math.sqrt(nm)), maxW: 8 });
+        L.rings.push({ flat: true, r: rr, y: cy + 0.9, x: cx, cz, color: hot ? BRAND.amber : 0x3fa9ff });
+      });
+      L.bb = 1; L.order = order;
+      L.cam = fitCam(L, act, 0.35, 0.95);
+    }
+
+    // River: the inbox as a stream through time, newest nearest. Each day is
+    // a stretch of river with its date on the bank; each group keeps its own
+    // current across the stream; the river bends as it goes. A conversation
+    // of several messages stands as a stack of cards, as deep as it is long.
+    function riverLayout(L, act, put) {
+      const ord = act.slice().sort((a, b) => items[b].mtime - items[a].mtime);
+      const rank = k => (catInfo(k).rank != null ? catInfo(k).rank : 50);
+      const cats = Array.from(new Set(ord.map(i => items[i].cat))).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
+      const lane = new Map(cats.map((c, k) => [c, k]));
+      const LW = 3.2, STEP = 1.9, CW = 2.7, CH = 1.75;
+      const bend = s => Math.sin(s * 0.075) * 7;
+      const dayKey = t => { const d = new Date(t * 1000); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+      const at = new Map(cats.map(c => [c, 0]));
+      let lastDay = null;
+      const order = [];
+      ord.forEach(i => {
+        const it = items[i], dk = dayKey(it.mtime);
+        if (dk !== lastDay) {
+          const s = lastDay === null ? 0 : Math.max.apply(null, Array.from(at.values())) + 2.6;
+          cats.forEach(c => at.set(c, s));
+          const d = new Date(dk);
+          L.labels.push({ text: DAYS[d.getDay()] + ' ' + d.getDate() + ' ' + MONTHS[d.getMonth()], pos: [bend(s) - (cats.length / 2) * LW - 2.8, 1.2, -s - 0.8], color: 0x6fb6ff, size: 0.7 });
+          lastDay = dk;
+        }
+        const s = at.get(it.cat);
+        at.set(it.cat, s + STEP);
+        const x = bend(s) + (lane.get(it.cat) - (cats.length - 1) / 2) * LW, y = CH / 2 + 0.25, z = -s;
+        put(i, x, y, z, IDQ, CW, CH);
+        const depth = Math.min(7, Math.max(1, it.thread || 1));
+        if (depth > 1) {                                   // the conversation's other messages, behind it
+          const t = 0.22 * (depth - 1);
+          L.BP[i * 3] = x; L.BP[i * 3 + 1] = y - CH / 2 + 0.02; L.BP[i * 3 + 2] = z - t / 2 - 0.03;
+          L.BS[i * 3] = CW * 0.97; L.BS[i * 3 + 1] = CH * 0.97; L.BS[i * 3 + 2] = t;
+        }
+        order.push(i);
+      });
+      cats.forEach((c, k) => {
+        const info = catInfo(c);
+        L.labels.push({ text: info.label || c, pos: [bend(0) + (k - (cats.length - 1) / 2) * LW, 0.2, 1.5], color: info.color || 0x9fd0ff, size: 0.45, maxW: LW * 0.9 });
+      });
+      L.order = order;
+      // frame the newest stretch of the river, not the whole of its length
+      const near = ord.slice(0, 48), far = near.length ? Math.min.apply(null, near.map(i => L.P[i * 3 + 2])) - 3 : -1e9;
+      const all = L.labels;
+      L.labels = all.filter(l => l.pos[2] >= far);
+      L.cam = fitCam(L, near.length ? near : act, 0, 1.08, 1.12);
+      L.cam.t[1] -= 1.2;          // a little low in the frame, clear of the drop zones
+      L.labels = all;
+    }
+
     // Stack: one fanned pile per group, newest on top and nearest; the
     // piles stand side by side, biggest first.
     function stackLayout(L, act, put) {
@@ -1161,7 +1253,7 @@
           const m = new THREE.LineBasicMaterial({ color: r.color || 0x3fa9ff, transparent: true, opacity: 0 });
           const loop = new THREE.Line(cg, m);
           if (r.flat) {                    // orbit path: a ring lying in the x-z plane
-            loop.rotation.x = Math.PI / 2; loop.scale.setScalar(r.r / 8.4); loop.position.y = r.y || 0;
+            loop.rotation.x = Math.PI / 2; loop.scale.setScalar(r.r / 8.4); loop.position.set(r.x || 0, r.y || 0, r.cz || 0);
             g.add(loop); g.userData.mats.push(m);
             return;
           }
@@ -1373,7 +1465,7 @@
     function setStates() {
       for (let i = 0; i < n; i++) {
         const fx = fxOf.size ? fxOf.get(i) : null;
-        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, markArr[i], heldArr[i], diss[i]);
+        aState.setXYZW(i, fx && fx.kind === 'fail' ? 3 : i === selIdx ? 2 : i === hoverIdx ? 1 : 0, markArr[i] + 2 * glowArr[i], heldArr[i], diss[i]);
       }
       aState.needsUpdate = true;
       dirty = true;
@@ -1943,6 +2035,8 @@
       setHeld(i, on) { if (aState && i >= 0 && i < n) { heldArr[i] = on ? 1 : 0; setStates(); } },
       // several cards selected at once (ctrl/shift click); indices into the data
       setMarked(list) { if (!aState) return; markArr.fill(0); (list || []).forEach(i => { if (i >= 0 && i < n) markArr[i] = 1; }); setStates(); },
+      // cards that glow: in Messages, conversations waiting for the owner's reply
+      setGlow(list) { if (!aState) return; glowArr.fill(0); (list || []).forEach(i => { if (i >= 0 && i < n) glowArr[i] = 1; }); setStates(); },
       fx: playFx,
       skipFx,
       isAnimating: () => fxOf.size > 0,

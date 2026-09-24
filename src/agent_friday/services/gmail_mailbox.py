@@ -1,12 +1,17 @@
 """Changes to the owner's own mailbox in Gmail itself: archive, read/unread,
-star, and labels, one conversation at a time.
+star, important, labels, spam and Trash, one conversation at a time.
 
-Every change records exactly which labels it added and which it removed, per
-conversation, so undo reverses that change and nothing else: archiving a
-conversation that was already out of the inbox records nothing to put back.
+Every change records exactly what it did per conversation, so undo reverses
+that change and nothing else: archiving a conversation that was already out of
+the inbox records nothing to put back, and a conversation moved to Trash is
+taken back out with Gmail's own untrash.
+
 It needs gmail.modify on the account ("Reconnect with sending"); without it
-nothing is attempted and the caller is told so, and Friday's own view is the
-only thing that changes. Nothing here deletes or trashes mail.
+nothing is attempted and the caller is told so.
+
+Delete means Trash: Gmail keeps it for 30 days and it can be restored.
+Permanent deletion is not offered here at all (threads.delete is never
+called), and neither is emptying the Trash.
 """
 from __future__ import annotations
 
@@ -24,11 +29,22 @@ ACTIONS = {
     "unread": (("UNREAD",), ()),
     "flag": (("STARRED",), ()),
     "unflag": ((), ("STARRED",)),
+    "important": (("IMPORTANT",), ()),
+    "unimportant": ((), ("IMPORTANT",)),
+    # Report spam / not spam: Gmail's own buttons make exactly this label move.
+    "spam": (("SPAM",), ("INBOX",)),
+    "notspam": (("INBOX",), ("SPAM",)),
 }
 
-# Labels Friday will never add or remove: moving mail to spam or trash is not
-# an undoable view change, and SENT/DRAFT are Gmail's own bookkeeping.
-_FORBIDDEN = {"TRASH", "SPAM", "SENT", "DRAFT", "CHAT"}
+#: Trash is not a label change: Gmail's trash/untrash calls move whole
+#: conversations and keep their other labels for the way back.
+TRASH_ACTIONS = ("trash", "untrash")
+
+# Labels no label change may touch: Trash goes through trash/untrash, and
+# SENT/DRAFT/CHAT are Gmail's own bookkeeping.
+_FORBIDDEN = {"TRASH", "SENT", "DRAFT", "CHAT"}
+# SPAM moves only as the explicit spam / not-spam action (and its undo).
+_SPAM_ONLY = {"SPAM"}
 
 
 class NotPermitted(RuntimeError):
@@ -60,13 +76,16 @@ def _thread_labels(svc, thread_id: str) -> set:
     return out
 
 
-def modify_threads(account_id: str, thread_ids, add=(), remove=()) -> dict:
+def modify_threads(account_id: str, thread_ids, add=(), remove=(), _allow=()) -> dict:
     """Apply label changes to whole conversations. Returns
     {"changed": {thread_id: {"added": [...], "removed": [...]}}, "failed": {thread_id: error}}.
     `changed` holds only what was actually different before, which is what undo reverses."""
     add, remove = [l for l in add if l], [l for l in remove if l]
-    if _FORBIDDEN & (set(add) | set(remove)):
-        raise ValueError("Friday does not move mail to spam or trash")
+    touched = set(add) | set(remove)
+    if _FORBIDDEN & touched:
+        raise ValueError("Trash and Gmail's own labels are not changed as labels")
+    if (_SPAM_ONLY & touched) - set(_allow):
+        raise ValueError("spam is reported with the spam action, not as a label")
     svc = _svc(account_id)
     changed, failed = {}, {}
     for tid in dict.fromkeys(t for t in thread_ids if t):
@@ -87,18 +106,47 @@ def modify_threads(account_id: str, thread_ids, add=(), remove=()) -> dict:
     return {"changed": changed, "failed": failed}
 
 
+def trash_threads(account_id: str, thread_ids, restore: bool = False) -> dict:
+    """Move whole conversations to Gmail's Trash (restore=False) or back out
+    of it. Gmail keeps trashed mail for 30 days. Same result shape as
+    modify_threads; each changed conversation records {"trashed": True} or
+    {"untrashed": True} so undo can do the opposite."""
+    svc = _svc(account_id)
+    changed, failed = {}, {}
+    for tid in dict.fromkeys(t for t in thread_ids if t):
+        try:
+            call = svc.users().threads().untrash if restore else svc.users().threads().trash
+            gmail_api.execute(call(userId="me", id=tid))
+            changed[tid] = {"untrashed": True} if restore else {"trashed": True}
+        except gmail_api.GmailError as e:
+            failed[tid] = str(e)
+        except Exception as e:                   # one bad conversation never stops the rest
+            failed[tid] = gmail_api.describe(e).get("message") or str(e)
+    return {"changed": changed, "failed": failed}
+
+
 def apply_action(account_id: str, thread_ids, action: str) -> dict:
+    if action in TRASH_ACTIONS:
+        return trash_threads(account_id, thread_ids, restore=(action == "untrash"))
     if action not in ACTIONS:
         raise ValueError("unknown mailbox action %r" % action)
     add, remove = ACTIONS[action]
-    return modify_threads(account_id, thread_ids, add, remove)
+    return modify_threads(account_id, thread_ids, add, remove,
+                          _allow=_SPAM_ONLY if action in ("spam", "notspam") else ())
 
 
 def undo(account_id: str, changed: dict) -> dict:
-    """Reverse exactly what modify_threads reported it changed."""
+    """Reverse exactly what modify_threads or trash_threads reported."""
     svc = _svc(account_id)
     failed = {}
     for tid, ch in (changed or {}).items():
+        if ch.get("trashed") or ch.get("untrashed"):
+            try:
+                call = svc.users().threads().untrash if ch.get("trashed") else svc.users().threads().trash
+                gmail_api.execute(call(userId="me", id=tid))
+            except Exception as e:
+                failed[tid] = str(e)
+            continue
         add, remove = list(ch.get("removed") or []), list(ch.get("added") or [])
         if _FORBIDDEN & (set(add) | set(remove)):
             failed[tid] = "refused"
@@ -113,9 +161,20 @@ def undo(account_id: str, changed: dict) -> dict:
     return {"failed": failed}
 
 
+def _read_svc(account_id: str):
+    """Reading needs only gmail.readonly: browsing by label works on an
+    account that has not allowed changes."""
+    from agent_friday.services import google_accounts as G
+    creds = G.credentials_for(account_id)
+    if not creds:
+        raise NotPermitted("this account's credentials could not be read")
+    from agent_friday.services.gmail_read import _service
+    return _service(creds)
+
+
 def list_labels(account_id: str) -> list:
     """The account's own labels (not Gmail's system ones), by name."""
-    svc = _svc(account_id)
+    svc = _read_svc(account_id)
     d = gmail_api.execute(svc.users().labels().list(userId="me"))
     return sorted(({"id": l["id"], "name": l.get("name") or l["id"]}
                    for l in d.get("labels") or [] if l.get("type") == "user"),
