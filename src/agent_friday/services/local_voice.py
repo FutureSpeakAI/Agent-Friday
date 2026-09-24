@@ -368,6 +368,62 @@ class WhisperASR:
                 return baked
         return WHISPER_DIR
 
+    def _pick_device(self):
+        """CUDA when this machine has it and can spare the memory, else CPU.
+
+        Tier-1's promise is that local voice runs ANYWHERE, and CPU int8 is
+        what makes that true — so CPU stays the floor, not the ceiling.
+        Measured on an RTX 4070 against 4.49s of speech, warm, identical
+        transcript both ways:
+
+            cpu  int8     2.13s  =  2.1x realtime
+            cuda float16  0.13s  = 34.2x realtime
+
+        Two seconds of silence after every sentence is not a conversation,
+        and that was with the model already warm. Refusing a GPU that is
+        sitting there is not a safety property.
+
+        The memory floor matters because the brain is usually resident on the
+        same card: whisper-base in float16 wants well under a gigabyte, so ask
+        for a comfortable margin and stand down rather than push the model
+        that answers the question off the GPU.
+        """
+        # The arbiter owns this card. If it is mid-transition, or holds a heavy
+        # lease (an image model, a displacing brain load), the ear is the one
+        # thing here that has a perfectly good CPU path — so it stands down
+        # rather than competing for memory the arbiter has already promised.
+        try:
+            from agent_friday.services import residency_arbiter as _ra
+            arb = getattr(_ra, "ARBITER", None)
+            if arb is not None:
+                st = arb.status()
+                if (st.get("state") or "") not in ("", "default", _ra.STATE_DEFAULT):
+                    return "cpu", "int8", (
+                        "the residency arbiter is %s" % st.get("state"))
+                lease = st.get("lease")
+                if lease:
+                    return "cpu", "int8", (
+                        "the arbiter holds a %s lease on the GPU"
+                        % lease.get("kind"))
+        except Exception:
+            pass                              # no arbiter here: fall through
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return "cpu", "int8", "no CUDA device"
+            free, _total = torch.cuda.mem_get_info()
+            # Bonsai2 is usually resident on this same card. whisper-base in
+            # float16 wants well under a gigabyte; ask for a comfortable margin
+            # so the ear never pushes the brain off the GPU to hear better.
+            need = 1.5 * (1024 ** 3)
+            if free < need:
+                return "cpu", "int8", (
+                    "only %.1f GiB free on the GPU; the brain has it"
+                    % (free / (1024 ** 3)))
+            return "cuda", "float16", ""
+        except Exception as exc:              # torch missing, driver trouble
+            return "cpu", "int8", str(exc)[:80]
+
     def load(self, progress=None):
         if self._model is not None:
             return
@@ -381,13 +437,30 @@ class WhisperASR:
             # exist_ok=True makes this a no-op against a read-only baked
             # directory that already exists (the OS-mode branch above).
             download_root.mkdir(parents=True, exist_ok=True)
-            # CPU INT8 — the whole point of Tier-1. download_root keeps the
-            # checkpoint under ~/.friday so it survives and is inspectable
-            # (or, under OS mode with a baked copy present, reads straight
-            # from the sealed image's own asset directory instead).
-            self._model = WhisperModel(
-                self.model_size, device="cpu", compute_type="int8",
-                download_root=str(download_root))
+            # download_root keeps the checkpoint under ~/.friday so it survives
+            # and is inspectable (or, under OS mode with a baked copy present,
+            # reads straight from the sealed image's own asset directory).
+            device, compute, why_cpu = self._pick_device()
+            try:
+                self._model = WhisperModel(
+                    self.model_size, device=device, compute_type=compute,
+                    download_root=str(download_root))
+            except Exception as exc:
+                # A CUDA build that will not initialise must not take local
+                # voice down with it — fall back to the floor and say so.
+                if device == "cpu":
+                    raise
+                log.warning("local voice: whisper on CUDA failed (%s); "
+                             "falling back to CPU int8", str(exc)[:160])
+                device, compute, why_cpu = "cpu", "int8", str(exc)[:80]
+                self._model = WhisperModel(
+                    self.model_size, device=device, compute_type=compute,
+                    download_root=str(download_root))
+            self._device = device
+            self._compute = compute
+            self._why_cpu = why_cpu
+            log.info("local voice: whisper %s on %s/%s%s", self.model_size,
+                      device, compute, (" (" + why_cpu + ")") if why_cpu else "")
 
     def transcribe(self, pcm16_16k: bytes) -> str:
         if not pcm16_16k:

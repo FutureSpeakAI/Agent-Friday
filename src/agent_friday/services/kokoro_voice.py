@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 from agent_friday.services.local_voice import PLAYBACK_RATE, _module_installed
 
@@ -120,6 +121,25 @@ def kokoro_deps_installed() -> bool:
 #: every health poll -- but it IS run before anything claims Kokoro is usable.
 _import_check = None
 _import_check_lock = threading.Lock()
+#: When the last FAILED import was attempted. Success is cached forever; a
+#: failure is retried after this cooldown. See kokoro_import_status.
+_import_check_at = 0.0
+_IMPORT_RETRY_S = 30.0
+
+
+def _named_dep_is_installed(name) -> bool:
+    """Is the module the ImportError blamed actually present?
+
+    If it is, "you installed with --no-deps" is the wrong story, and sending
+    someone to reinstall a package they already have wastes their evening.
+    """
+    if not name:
+        return False
+    try:
+        import importlib.util
+        return importlib.util.find_spec(str(name)) is not None
+    except Exception:
+        return False
 
 
 def kokoro_import_status(refresh: bool = False) -> dict:
@@ -133,14 +153,32 @@ def kokoro_import_status(refresh: bool = False) -> dict:
     built on ``find_spec`` calls that installation ready, the settings UI
     offers it, and the user discovers otherwise when Friday does not speak.
 
-    So availability is decided by performing the import once and caching the
-    result. Returns ``{"ok", "error", "missing"}``; ``missing`` names the
-    transitive module that was absent when the exception tells us.
+    SUCCESS is cached forever. FAILURE is retried after a cooldown, and that
+    distinction is the whole point of this function's memory. Importing Kokoro
+    pulls in torch and transformers, and when several subsystems reach for them
+    at once during boot the import can lose a race and raise ``cannot import
+    name 'AlbertModel' from 'transformers'`` against a transformers that is
+    present and perfectly healthy.
+
+    Caching that answer permanently meant one unlucky moment at startup
+    disabled local voice until the process was restarted: ``models_ready()``
+    stayed False, the engine resolver refused the local session, and the
+    microphone did nothing. Observed on the live server, which reported every
+    Kokoro dependency installed, reported the import broken, and then imported
+    Kokoro and spoke a sentence fine in a separate process seconds later.
+
+    Returns ``{"ok", "error", "missing"}``; ``missing`` names the transitive
+    module that was absent when the exception tells us.
     """
-    global _import_check
+    global _import_check, _import_check_at
     with _import_check_lock:
         if _import_check is not None and not refresh:
-            return dict(_import_check)
+            if _import_check.get("ok"):
+                return dict(_import_check)
+            if (time.monotonic() - _import_check_at) < _IMPORT_RETRY_S:
+                return dict(_import_check)
+            # Failed, and the cooldown has passed: ask again rather than
+            # repeat an answer that may have been a boot-time accident.
         try:
             from kokoro import KPipeline  # noqa: F401
             res = {"ok": True, "error": "", "missing": ""}
@@ -151,6 +189,7 @@ def kokoro_import_status(refresh: bool = False) -> dict:
             log.warning("kokoro import failed: %s (missing=%s)",
                         res["error"], res["missing"] or "?")
         _import_check = res
+        _import_check_at = time.monotonic()
         return dict(res)
 
 
@@ -217,12 +256,25 @@ def kokoro_health() -> dict:
             _miss = imp.get("missing") or ""
             return {
                 "engine": "local-kokoro", "status": "broken",
+                # Two very different faults wear the same ImportError, and the
+                # advice for one is a waste of an evening for the other. If the
+                # module the error blamed is actually installed, this is the
+                # boot race, not a `--no-deps` install -- so say that, and say
+                # it heals itself, rather than sending someone to reinstall a
+                # package they already have.
                 "detail": ("Kokoro is installed but fails to import"
                            + (" -- no module named '%s'" % _miss if _miss else "")
-                           + ". This is what a `--no-deps` install looks like. "
-                             "Reinstall it with its dependencies: "
-                             "`pip install kokoro misaki espeakng-loader`. "
-                             "Piper is unaffected and remains available."),
+                           + (". That module IS installed, so this is very "
+                              "likely a transient import race during startup "
+                              "rather than a broken install. It is retried "
+                              "automatically; if it persists past a restart, "
+                              "reinstall with `pip install kokoro misaki "
+                              "espeakng-loader`. "
+                              if _named_dep_is_installed(_miss)
+                              else ". This is what a `--no-deps` install looks "
+                                   "like. Reinstall it with its dependencies: "
+                                   "`pip install kokoro misaki espeakng-loader`. ")
+                           + "Piper is unaffected and remains available."),
                 "deps": deps, "import": imp,
                 "available": False, "gpu_ready": False,
             }
