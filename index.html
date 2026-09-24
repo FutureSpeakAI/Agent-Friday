@@ -44738,92 +44738,11 @@ function App() {
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       return new Int16Array(bytes.buffer);
     };
-    // AudioWorklet PCM player. Runs on the audio RENDER thread (not the main
-    // thread), so it is immune to the React/GC/console jank that progressively
-    // glitches the context over a long call. It keeps ONE persistent node fed by
-    // a ring buffer and resamples srcRate->ctxRate CONTINUOUSLY — carrying the
-    // fractional read cursor across chunks — so there is no per-chunk resampler
-    // reset (the real source of progressive rasp) and no churn of thousands of
-    // short-lived BufferSource/AudioBuffer objects. The ring is the jitter buffer
-    // that absorbs Gemini's faster-than-realtime bursts; underruns emit clean
-    // silence rather than distortion. registerProcessor name: 'friday-pcm-player'.
-    const PCM_PLAYER_WORKLET_SRC = `
-class FridayPCMPlayer extends AudioWorkletProcessor {
-  constructor(o){
-    super();
-    this.srcRate = (o.processorOptions && o.processorOptions.srcRate) || 24000;
-    this.step = this.srcRate / sampleRate;     // src samples consumed per output sample
-    // Ring sized for the WHOLE of even a long read-aloud: Gemini streams a
-    // response faster than realtime, so the buffer legitimately holds the entire
-    // pending utterance (a 90s answer arrives in ~30s → ~60s buffered). Consumed
-    // at exactly realtime, it drains to zero between turns. 180s covers any
-    // realistic single turn without the overflow guard ever truncating it.
-    this.size = Math.ceil(this.srcRate * 180); // 180s ring at source rate
-    this.ring = new Float32Array(this.size);
-    this.writeIdx = 0;                          // absolute samples written
-    this.readIdx = 0;                           // absolute fractional read cursor
-    this.lastPlaying = false;
-    // Jitter buffer: Gemini streams 24kHz PCM in faster-than-realtime bursts
-    // over a jittery network. Playing the instant the first sample lands makes
-    // the ring underrun on the next network gap — each underrun is a click, and
-    // over a long call the accumulated clicks read as progressive rasp. So we
-    // PRIME: hold ~120ms before starting, and re-prime after any underrun, so
-    // playback only ever runs off a cushioned buffer.
-    this.prefill = Math.max(1, Math.round(this.srcRate * 0.12));   // 120ms cushion
-    // Anti-wrap guard ONLY (not latency management): if the producer somehow
-    // gets within a hair of lapping the read pointer — a >~3min continuous
-    // monologue delivered faster than realtime — fast-forward the reader to
-    // drop the oldest audio rather than let the write pointer overwrite unread
-    // samples (silent corruption = rasp). Sits just under the ring so it NEVER
-    // fires on a normal multi-second turn (which must buffer fully, not be
-    // truncated). A dropped 3-minutes-ago sample is inaudible; a lapped pointer
-    // is not.
-    this.maxLag = this.size - Math.round(this.srcRate * 2);        // ~178s, anti-wrap only
-    this.priming = true;                        // waiting for the initial cushion
-    this.port.onmessage = (e) => {
-      const m = e.data;
-      if (m.type === 'samples') {
-        const f = m.data;
-        for (let i = 0; i < f.length; i++) { this.ring[this.writeIdx % this.size] = f[i]; this.writeIdx++; }
-        // Overflow guard: keep the producer at most maxLag ahead of the reader.
-        const lag = this.writeIdx - Math.floor(this.readIdx);
-        if (lag > this.maxLag) this.readIdx = this.writeIdx - this.maxLag;
-      } else if (m.type === 'flush') {
-        this.readIdx = this.writeIdx;            // drop everything pending
-        this.priming = true;                      // re-cushion before next audio
-      }
-    };
-  }
-  _avail(){ return this.writeIdx - Math.floor(this.readIdx); }     // src samples ahead of read
-  process(inputs, outputs) {
-    const out = outputs[0][0];
-    if (!out) return true;
-    if (this.priming) {
-      // Still building the cushion — emit silence until we have prefill samples,
-      // so we never start into an immediate underrun.
-      if (this._avail() < this.prefill) { for (let i=0;i<out.length;i++) out[i]=0; return true; }
-      this.priming = false;
-    }
-    for (let i = 0; i < out.length; i++) {
-      const base = Math.floor(this.readIdx);
-      if (base + 1 < this.writeIdx) {
-        const frac = this.readIdx - base;
-        const s0 = this.ring[base % this.size];
-        const s1 = this.ring[(base + 1) % this.size];
-        out[i] = s0 * (1 - frac) + s1 * frac;
-        this.readIdx += this.step;
-      } else {
-        out[i] = 0;                              // underrun -> clean silence
-        this.priming = true;                     // re-cushion before resuming
-      }
-    }
-    const playing = !this.priming && (Math.floor(this.readIdx) + 1) < this.writeIdx;
-    if (playing !== this.lastPlaying) { this.lastPlaying = playing; this.port.postMessage({ type: playing ? 'active' : 'drained' }); }
-    return true;
-  }
-}
-registerProcessor('friday-pcm-player', FridayPCMPlayer);
-`;
+    // THE one PCM player, shared with the FRIDAY LIVE PWA so the two cannot
+    // drift apart. One always-running node fed by a ring buffer, resampling
+    // continuously — never a node per chunk, which steps the waveform at every
+    // boundary and grains up over a long reply. See the file for the numbers.
+    const PCM_PLAYER_WORKLET_URL = '/static/js/friday_pcm_player.worklet.js';
     try {
       // Pin the context to Gemini's 24kHz output rate. (A device-native-rate
       // experiment — worklet resampling 24k→48k — coincided with heavy
@@ -44852,14 +44771,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       v.fridaySpeaking = false;
       try {
         if (v.audioCtx.audioWorklet) {
-          const _blob = new Blob([PCM_PLAYER_WORKLET_SRC], {
-            type: 'application/javascript'
-          });
-          const _url = URL.createObjectURL(_blob);
-          await v.audioCtx.audioWorklet.addModule(_url);
-          try {
-            URL.revokeObjectURL(_url);
-          } catch (_) {}
+          await v.audioCtx.audioWorklet.addModule(PCM_PLAYER_WORKLET_URL);
           v.playerNode = new AudioWorkletNode(v.audioCtx, 'friday-pcm-player', {
             numberOfInputs: 0,
             numberOfOutputs: 1,
@@ -45293,31 +45205,16 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           setVoiceStatus('speaking');
           return;
         }
-        const buf = v.audioCtx.createBuffer(1, int16.length, PCM_OUT_RATE);
-        const ch = buf.getChannelData(0);
-        for (let i = 0; i < int16.length; i++) ch[i] = int16[i] / 32768;
-        const now = v.audioCtx.currentTime;
-        const startAt = Math.max(now, v.playCursor);
-        const src = v.audioCtx.createBufferSource();
-        src.buffer = buf;
-        src.connect(v.audioCtx.destination);
-        if (v.holoAnalyser) {
-          try {
-            src.connect(v.holoAnalyser);
-          } catch (_) {}
-        }
-        // Track the node so a barge-in / disconnect can stop it mid-playback;
-        // self-evict from the queue when it finishes cleanly.
-        if (!v.activeSources) v.activeSources = [];
-        v.activeSources.push(src);
-        src.onended = () => {
-          const i = v.activeSources ? v.activeSources.indexOf(src) : -1;
-          if (i >= 0) v.activeSources.splice(i, 1);
-          if (!v.activeSources || v.activeSources.length === 0) _wsSpeak(false);
-          window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: chunk ended naturally, remaining=' + (v.activeSources ? v.activeSources.length : 0));
-        };
-        src.start(startAt);
-        _wsSpeak(true);
+        // NO PER-CHUNK FALLBACK. Scheduling one AudioBufferSourceNode per
+        // arriving chunk is the thing that grains: every boundary restarts the
+        // browser's resampler and carries a scheduling rounding error, which
+        // measured 34 discontinuities in six seconds of a pure tone on Chrome
+        // 153 — steps of 0.62 where the signal can only move 0.07. It also
+        // exposed the Chrome 152 repeated-render-block screech. Audio that is
+        // audibly wrong is not a safer outcome than audio that is missing, and
+        // the missing case is loud in the console rather than silent.
+        console.warn('[voice] no AudioWorklet player — dropping a ' + int16.length +
+                     '-sample chunk rather than playing it through per-chunk scheduling');
         window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: playing audio chunk, activeSources=' + v.activeSources.length);
         v.playCursor = startAt + buf.duration;
         setVoiceStatus('speaking');
