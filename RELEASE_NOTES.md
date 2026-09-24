@@ -1,80 +1,116 @@
-# Agent Friday v5.13.0
+# Agent Friday 5.14.0
 
-*2026-09-06 · FutureSpeak.AI*
+*Draft. Date to be set at release. FutureSpeak.AI*
 
-This release merges two branches that had drifted apart since 5.10.0, closes
-a privacy control that was reversed twice in one day before it shipped
-correctly, and fixes the last surviving public reference to a model this
-product no longer uses. Full technical detail lives in
-[CHANGELOG.md](CHANGELOG.md).
+This release is about trust. Friday now asks before every outward action, from
+every surface, and keeps a signed receipt of each decision. It also gains a
+proper mail client, a phone line you control, real Office documents, dictation
+anywhere in Windows, and a Settings screen reorganised around what you are
+trying to do. Full detail is in the [CHANGELOG](CHANGELOG.md); what is not
+right yet is in [KNOWN_ISSUES](KNOWN_ISSUES.md).
 
 ---
 
-## The thing we'd rather not have had to report
+## What's new
 
-**A privacy control was wrong for a few hours, in production, before it
-shipped.** Earlier the same day, `is_unrestricted_cloud()` — the one flag
-capable of turning off every safeguard this codebase has for cloud sends —
-was changed to treat selecting "cloud only" as a provider preference as
-itself sufficient consent to send everything unrestricted. That reasoning
-sounded right in isolation: if you've picked cloud-only, why ask twice? It
-falls apart against one fact: **cloud-only is this app's factory default.**
-The change meant a stranger who never opened Settings inherited "no privacy
-safeguards" the instant they picked cloud-only as their provider — which is
-what most people do, since it needs no local model and no setup.
+**Friday asks before it acts.** Reading, searching and drafting run on their
+own. Sending, publishing, calendar changes, installing, overwriting your files
+and most commands now wait for you, whether the request came from chat, voice,
+a scheduled job or a text message. In a conversation you answer yes or no in
+the chat, and your yes covers exactly that action. Otherwise an approval card
+shows exactly what will happen. Every decision is written to a signed receipt
+file, and if the receipt cannot be written, the action does not run.
+[Approvals and receipts](docs/user-guide/approvals-and-receipts.md)
 
-We didn't catch this by inspection. We caught it because the full test
-suite went from 7 failures to 123 the moment the change landed, all in
-tests that had assumed cloud-only-with-nothing-else-configured was still a
-protected state. It was — until that afternoon.
+**Cards say where a detail came from.** Emails and web pages can contain
+instructions written by someone else. When a recipient, link, account number
+or command came from something Friday read rather than from you, the card says
+so, and a quick yes in chat is not enough.
 
-## What actually shipped instead
+**Grants for scheduled jobs.** A scheduled job can take an outward action on
+its own only with a grant you create in Settings → Privacy & Approvals: which
+job, which actions, for how long, how many times. Every email still gets its
+own card.
 
-**Unrestricted cloud access is now earned, never inherited.** A new,
-explicit `cloud_consent` record is the only thing the egress gate reads for
-this decision — not `mode`, not any value you can set through the general
-settings API. Two screens, depending on your own hardware:
+**Messages, with Gmail parity.** Search, threads, labels, drafts, scheduled
+send, undo send, Delete to Gmail's Trash with undo, keyboard shortcuts and 3D
+triage. Friday drafts; nothing is sent until you approve that exact message.
+[Mail](docs/user-guide/mail.md)
 
-- **If your machine can genuinely run local models well enough** —
-  reasoning, voice, image, and video, including the resource planner's own
-  check that it can juggle between them — you get a real, durable choice
-  between private-local and unrestricted-cloud.
-- **If it can't** — no local option is offered at all, because that would
-  be a promise the hardware breaks. The screen says plainly what won't run
-  locally and asks you to explicitly accept unrestricted cloud instead.
-  Nothing defaults to it; silence changes nothing.
+**Knowledge.** Your wiki pages and the knowledge galaxy are now one workspace,
+with graph, split and page views.
 
-The capability check looks at what your machine can *actually* serve, not
-which specific runtime is installed — Ollama, a GGUF fetched directly into
-Friday's own runtime store, and ComfyUI (for image and video) are all
-checked the same way, because a check that only recognized one of them
-would call a real, working setup "incapable" for no reason.
+**Dictate anywhere with Alt+T.** Hold Alt+T in any Windows app, speak, and let
+go: the words are transcribed on your PC and typed where you were. Local voice
+also uses your GPU when it can and is ready faster.
+[Voice](docs/user-guide/voice.md)
 
-The setting itself is written by exactly one code path, which is not
-reachable from the general settings API a model's own tools can already
-call — the same class of fix as removing `enterprise_consent_grant` a few
-days ago, applied here before this one ever shipped for real.
+**Real Office documents.** Friday makes Word, Excel and PowerPoint files on
+your PC and looks at each one before calling it done.
+[Documents](docs/user-guide/documents.md)
 
-## Also in this release
+**A phone line (off by default).** Texts, voicemail and approvals by text
+through your own Twilio number. Friday may contact only your verified cell on
+its own. [Phone](docs/user-guide/phone.md)
 
-- **`main` and the release-integration branch are merged** for the first
-  time since 5.10.0 — the OS-mode subsystem, `FRIDAY_HOME` isolation, and
-  fail-closed credential storage now sit alongside the gauntlet audit's 82
-  fixes and the Gemma 4 model rebuild, in one tree, with the full suite
-  green.
-- **The public README no longer names Qwen.** It was found still describing
-  the retired model family — the third independent place this same fact
-  had to be fixed since the 2026-09-03 removal decision, after the setup
-  wizard and the installer's own ladder. A standing check
-  (`scripts/check_stale_model_names.py`, wired into pytest and the
-  pre-commit hook) now catches the next one automatically instead of
-  needing a fourth documentation pass to find it by hand.
+**A local address.** Open Friday at `https://agent.friday` instead of
+`localhost:3000`, if you want to. [Getting started](docs/user-guide/getting-started.md#open-friday-at-a-local-address)
 
-## What this release does not fix
+**Reasoning traces.** See how Friday reasoned through a turn, with its tool
+calls, nested under the conversation; archived encrypted on your PC.
 
-The repository's git history contains a real vault passphrase from earlier
-in this project's life, and it has been reachable from a published branch
-on GitHub since 2026-08-30 — not merely sitting in local history. That is a
-publication and rotation decision, not a code fix, and it remains
-explicitly not acted on here: no history rewrite, no force push, no branch
-or tag deletion. Those stay yours to decide.
+**Also:** workspaces in their own browser tabs, a chat sidebar with projects,
+a stop button for a running reply, a floating widget when the window is small,
+task resume after a crash, keyless local web search, an optional hard spending
+cap, and Claude Opus 5.5 in the model picker.
+
+## What changed
+
+- **Settings has eight tabs** organised by task: General, Models, Accounts &
+  Keys, Privacy & Approvals, Appearance & 3D, Voice & Tracking, Spending,
+  Advanced, plus About.
+- **Scheduled jobs run on your local model by default.** The built-in
+  briefings, heartbeat, news front page and daily creation never fall back to a
+  paid cloud model. On a cloud-only install they are skipped until you add a
+  local model or allow a job the cloud; see
+  [Scheduled jobs](docs/user-guide/scheduled-jobs.md).
+- **Daily creation runs while you are away**, once a day, between 09:00 and
+  23:00, when the GPU is free.
+- **Local models get the same working budget as cloud models**, and the token
+  ceiling now warns instead of stopping a reply mid-way.
+- **Every reply says which model answered.**
+- **The Friday Edition and the Home workspace are gone.** The desktop is the
+  landing screen, and the briefings carry the morning read.
+- **Requests through a tunnel or proxy are never treated as you.** They must
+  log in.
+- **Sonnet 5 costs are metered at the published $2 / $10 per million tokens**
+  (they were overstated by half), so reported spend drops.
+
+## Upgrade notes
+
+- **Your data and your vault passphrase are preserved.** Run the new installer
+  over the old one. It replaces the program in `%LOCALAPPDATA%\AgentFriday` and
+  does not touch `%USERPROFILE%\.friday` or the passphrase in Windows
+  Credential Manager. [Updating](docs/user-guide/updating-and-uninstalling.md)
+- **The update check now asks.** New installs are asked at first run whether
+  Friday may check GitHub for a new version once a week; unanswered means off.
+  An existing install keeps its current setting, and earlier versions had the
+  check on by default, so if you upgrade and do not want it, turn it off in
+  Settings → About. Nothing ever downloads or installs on its own.
+- **The Lessac voice is no longer offered.** Its training data is licensed for
+  non-commercial research only. If you already use it, it keeps working; new
+  installs use Amy.
+- **The phone stays off until you configure it**, and needs your own Twilio
+  account.
+- **Scheduled jobs may pause on approval cards.** A job that used to send or
+  change something on its own now waits on a card until you give it a grant.
+- **Documents need OfficeCLI**, which the installer does not yet provide; see
+  [Documents](docs/user-guide/documents.md).
+
+## Known issues
+
+The most likely to affect you: the tray assumes port 3000; the first-run
+routing screen describes "On this computer only" as falling back to the cloud,
+when it actually refuses and offers the cloud; and moving your `.friday` folder
+to another PC holds outward actions until you re-pin. All of them, with
+workarounds, are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
