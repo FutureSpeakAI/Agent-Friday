@@ -206,6 +206,16 @@ def mid_call_request(call_sid: str, what: str, party: str) -> dict:
 
 # ── the bridge ───────────────────────────────────────────────────────────────
 
+def _gate_spoken(text: str) -> str:
+    """The egress gate on a spoken reply. If the gate cannot run, a fixed line
+    is spoken instead of the reply."""
+    try:
+        from agent_friday.services.channels.manager import gate_reply
+        return gate_reply(text, "phone")
+    except Exception:
+        return "I can't share that on this call."
+
+
 class CallBridge:
     """One call's audio loop. Engine, agent and clock are injectable for tests."""
 
@@ -261,12 +271,18 @@ class CallBridge:
         self.speaking_until = 0.0
 
     def _default_agent(self, history: list) -> str:
+        """One read-only turn, with the same system prompt a text gets: the
+        vault's private sections are held back from a caller's conversation."""
         from agent_friday.services.agent import _generate_agent
+        from agent_friday.services.channels.manager import _gated_system_prompt
         msgs = [{"role": "user" if h["who"] == "caller" else "assistant",
                  "content": h["text"]} for h in history[-12:]]
         msgs[0]["content"] = CALL_NOTE + "\n\n" + msgs[0]["content"]
-        reply, _ = _generate_agent(msgs, session_ctx={"origin": "phone", "authenticated": False},
-                                   workspace="chat", max_tokens=400)
+        last = history[-1]["text"] if history else ""
+        reply, _ = _generate_agent(
+            msgs, session_ctx={"origin": "phone", "authenticated": False},
+            system_builder=lambda provider: _gated_system_prompt(provider, keywords=last),
+            workspace="chat", max_tokens=400)
         return reply or ""
 
     def poll_asks(self) -> None:
@@ -306,6 +322,9 @@ class CallBridge:
                 self.asks.append(card.get("approval_id"))
             except Exception as e:
                 _log.warning("mid-call approval not raised: %s", e)
+        # Everything said on a call leaves the machine: Twilio carries the
+        # audio and the caller hears it. It passes the egress gate a text does.
+        spoken = _gate_spoken(spoken)
         self.history.append({"who": "friday", "text": spoken})
         self.say(spoken)
 
