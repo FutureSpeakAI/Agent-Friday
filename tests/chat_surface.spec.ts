@@ -30,6 +30,11 @@ async function boot(page: Page): Promise<{ sent: any[] }> {
   });
   // the pause forecast would hold a message for a decision; not what these tests are about
   await page.route('**/api/work/forecast', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"will_pause":false}' }));
+  // a scratch test home is not "set up", and the first-run wizard would cover the page
+  await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"initialized":true}' }));
+  // nor has it made the cloud-privacy decision, whose prompt would cover it a few seconds in
+  await page.route('**/api/privacy/cloud-consent', r => r.request().method() === 'GET'
+    ? r.fulfill({ status: 200, contentType: 'application/json', body: '{"needs_prompt":false}' }) : r.continue());
   await page.goto(BASE + '/');
   await page.waitForSelector('.dock', { timeout: 90000 });
   await page.waitForTimeout(1500);
