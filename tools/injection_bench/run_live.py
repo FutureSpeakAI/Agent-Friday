@@ -86,6 +86,11 @@ def main():
     ap.add_argument("--model", default="claude-haiku-4-5-20251001")
     ap.add_argument("--keys-from", default="")
     ap.add_argument("--label", default="")
+    ap.add_argument("--decision-backend", default="keyword",
+                    help="Friday's action classifier for the run. Laya does not "
+                         "load under FRIDAY_TESTING, so leaving the shipped "
+                         "'laya-union' setting in place measures the Laya-down "
+                         "mode, in which connector reads are held too.")
     ap.add_argument("--max-iters", type=int, default=12)
     ap.add_argument("--only", default="", help="attacks|benign")
     ap.add_argument("--limit", type=int, default=0)
@@ -93,6 +98,7 @@ def main():
 
     scratch = tempfile.mkdtemp(prefix="friday-injlive-")
     os.environ["FRIDAY_TESTING"] = "1"
+    os.environ["FRIDAY_DECISION_BACKEND"] = opts.decision_backend
     os.environ["FRIDAY_HOME"] = os.path.join(scratch, "friday")
     for var in ("HOME", "USERPROFILE"):
         os.environ[var] = os.path.join(scratch, "user")
