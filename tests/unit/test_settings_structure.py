@@ -153,3 +153,13 @@ def test_default_settings_has_no_key_written_twice():
             assert not dupes, "DEFAULT_SETTINGS repeats %s" % dupes
             return
     pytest.fail("DEFAULT_SETTINGS literal not found")
+
+
+@UI_FILES
+def test_settings_shell_sets_its_own_text_colour(path):
+    """Panels that do not colour their own labels (the dock list, the dock
+    chips) inherit from the shell. Without a colour here they inherit the
+    window's near-black and render all but invisible on the dark pane."""
+    body = _settings_ws(path.read_text(encoding="utf-8"))
+    assert re.search(r'className: "st-root",\s*style: \{[^}]*color: \'var\(--st-text\)\'', body), (
+        "%s: the Settings shell does not set a text colour" % path.name)
