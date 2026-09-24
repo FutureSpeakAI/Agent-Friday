@@ -79,6 +79,28 @@ def serve_ui():
     to every API request as the X-Friday-Token header.  It lives only in browser
     JS memory and rotates on each server restart — never persisted to disk.
     """
+    return _serve_index()
+
+
+# A workspace as its own browser tab: /w/<id>. The same page, the same token
+# and the same before_request auth as '/'; the only difference is a marker set
+# before anything renders, so the page draws that one workspace full-tab and
+# never starts the holographic scene. Settings stays in the desktop.
+_WS_ID = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
+
+
+@core_bp.route('/w/<ws_id>')
+def serve_workspace_tab(ws_id):
+    if not _WS_ID.match(ws_id or ''):
+        return "Not a workspace name.", 404
+    if ws_id == 'settings':
+        return redirect('/?workspace=settings')
+    return _serve_index(
+        f'<script>window.__FRIDAY_STANDALONE__="{ws_id}";'
+        'document.documentElement.classList.add("ws-standalone");</script>')
+
+
+def _serve_index(extra_head: str = ''):
     try:
         with open('index.html', encoding='utf-8') as _f:
             _html = _f.read()
@@ -86,7 +108,7 @@ def serve_ui():
             f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";</script>'  # pragma: allowlist secret
         )
         # Inject early in <head> so the token is available before any fetch calls.
-        _html = _html.replace('<head>', f'<head>\n{_token_script}', 1)
+        _html = _html.replace('<head>', f'<head>\n{_token_script}{extra_head}', 1)
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
         return ("index.html not found. It is tracked in git — restore it with "
