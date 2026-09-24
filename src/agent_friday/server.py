@@ -712,6 +712,57 @@ def _enforce_blueprint_policy():
 _enforce_blueprint_policy()
 
 
+def warm_voice_after_boot(base_url, delay_s=25.0, opener=None):
+    """Pay the local voice model load at boot, not at the first sentence.
+
+    Measured on this machine: a cold Kokoro load is 91s and a warm one is
+    0.19s, and the cold one was paid on the first spoken turn. From the
+    outside, a minute and a half of nothing after pressing the mic is
+    indistinguishable from voice being broken, which is what it was reported
+    as.
+
+    It asks the server's own ``/api/voice/warm`` instead of reaching into the
+    engine, so the decision about whether there is anything to warm — cloud
+    voice selected, models absent, already loaded — stays in the one place
+    that already makes it. Loopback is auth-trusted, so this needs no
+    credentials.
+
+    It runs AFTER boot, not during it. Importing Kokoro pulls in torch and
+    transformers, and doing that while the rest of startup is importing them
+    too is precisely the race that used to leave local voice dead until a
+    restart. Warming is best effort: every failure here costs only the cold
+    load it was trying to avoid.
+
+    Returns the thread so a caller can join it; never raises.
+    """
+    import threading as _th
+
+    def _run():
+        import time as _t
+        import urllib.request as _ur
+        _t.sleep(delay_s)
+        try:
+            req = _ur.Request(base_url.rstrip("/") + "/api/voice/warm",
+                              method="POST", data=b"{}",
+                              headers={"Content-Type": "application/json"})
+            _open = opener or _ur.urlopen
+            with _open(req, timeout=10) as r:
+                import json as _j
+                snap = _j.load(r)
+            state = snap.get("state")
+            if state == "skipped":
+                print("  Voice warm: %s" % snap.get("reason", "nothing to warm"))
+            else:
+                print("  Voice warm: loading the local voice engine in the "
+                      "background so the first spoken turn does not pay for it")
+        except Exception as e:
+            print("  Voice warm: skipped (%s)" % e)
+
+    t = _th.Thread(target=_run, name="voice-warm-boot", daemon=True)
+    t.start()
+    return t
+
+
 def _acquire_single_instance_lock():
     """OS-level exclusive lock, held for this process's entire lifetime —
     the authoritative guard against a second production server ever running
@@ -1127,6 +1178,14 @@ if __name__ == '__main__':
         _th.Thread(target=_confirm_boot, daemon=True).start()
     except Exception as _bg_err:
         print(f"  Boot guard: unavailable ({_bg_err})")
+
+    # Deliberately after the boot-guard thread and before app.run(): the warm
+    # waits on its own, so this only registers the intention.
+    try:
+        warm_voice_after_boot(
+            "%s://127.0.0.1:%s" % ("https" if _ssl_context else "http", _port))
+    except Exception as _warm_err:
+        print(f"  Voice warm: unavailable ({_warm_err})")
 
     try:
         app.run(host=bind_host, port=_port, debug=False, threaded=True,
