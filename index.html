@@ -855,6 +855,16 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
         .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.12); box-shadow: 0 0 10px rgba(0,212,255,0.15); }
         .settings-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        /* A visible file picker looks like the Settings buttons, not the
+           browser's native control. */
+        input[type="file"] { color: rgba(255,255,255,0.55); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+        input[type="file"]::file-selector-button {
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 5px; padding: 6px 10px; margin-right: 10px; color: rgba(255,255,255,0.78);
+            font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer; transition: all 0.2s;
+        }
+        input[type="file"]::file-selector-button:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
+        input[type="file"]:disabled::file-selector-button { opacity: 0.45; cursor: not-allowed; }
         /* Settings pane tokens. Every Settings tab reads these instead of
            hard-coding its own greys, so the pane has one type scale and one
            palette. */
