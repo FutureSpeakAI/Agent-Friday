@@ -142,6 +142,7 @@ INTERNAL_TOOLS = frozenset({
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "generate_video",
     "generate_music", "compose_timeline", "create_presentation", "create_website",
+    "office_check",                 # validates and renders; writes nothing
     "create_workflow", "run_workflow", "workflow_status", "creative_project",
     "start_creative_pipeline", "compare_image_takes", "content_post_status",
     "content_repurpose", "knowledge_query", "knowledge_related",
@@ -155,7 +156,7 @@ INTERNAL_TOOLS = frozenset({
 
 #: Classified by argument: run_command by its command, content_create_post by
 #: whether it schedules.
-BY_ARGUMENT = frozenset({"run_command", "content_create_post"})
+BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -279,6 +280,16 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
     a = args or {}
     if tool_name == "run_command":
         return classify_command(str(a.get("command") or ""))
+    if tool_name == "office":
+        # By argument, like run_command: the verb and the target decide.
+        # Reading a document and building a new one inside Friday's own
+        # documents folder are internal; overwriting a file that already
+        # exists is not reversible, so it waits for a decision.
+        try:
+            from agent_friday.services import office_engine as _oe
+            return _oe.classify(a)
+        except Exception as e:
+            return OUTWARD, f"the office command could not be classified ({e})"
     if tool_name == "write_file" and _writes_friday_state(a.get("path")):
         return OUTWARD, "it rewrites Friday's own settings, memory or rules"
     if tool_name == "content_create_post":

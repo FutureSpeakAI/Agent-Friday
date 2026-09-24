@@ -56,15 +56,47 @@ def list_creations():
     except Exception:
         pass
     files = []
+    seen = set()
+
+    def _add(f, source):
+        if not f.is_file() or f.name in seen:
+            return
+        seen.add(f.name)
+        files.append({
+            "name": f.name,
+            "size": f.stat().st_size,
+            "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+            "type": f.suffix.lstrip('.'),
+            "source": source,
+        })
+
     if CREATIONS_DIR.exists():
-        for f in sorted(CREATIONS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-            if f.is_file():
-                files.append({
-                    "name": f.name,
-                    "size": f.stat().st_size,
-                    "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
-                    "type": f.suffix.lstrip('.')
-                })
+        for f in sorted(CREATIONS_DIR.iterdir(),
+                        key=lambda x: x.stat().st_mtime, reverse=True):
+            _add(f, "creations")
+
+    # Office documents are made by the `office` tool and live in their own
+    # folder, which is what keeps a wrong path from reaching the rest of the
+    # disk (services/office_engine.py). They still belong in the gallery: a
+    # .pptx nobody can find was not really delivered. Each document's render --
+    # written by the delivery gate -- rides along as its thumbnail, and the
+    # gallery already knows how to show a PNG and already maps `pptx` to an
+    # icon, so this needs no UI change.
+    try:
+        from agent_friday.services.office_engine import (
+            DOC_SUFFIXES, DOCUMENTS_DIR, RENDER_DIR)
+        if DOCUMENTS_DIR.exists():
+            docs = [f for f in DOCUMENTS_DIR.iterdir()
+                    if f.is_file() and f.suffix.lower() in DOC_SUFFIXES]
+            for f in sorted(docs, key=lambda x: x.stat().st_mtime, reverse=True):
+                _add(f, "documents")
+                thumb = DOCUMENTS_DIR / RENDER_DIR / (f.stem + ".png")
+                if thumb.exists():
+                    _add(thumb, "documents")
+    except Exception:
+        pass                      # the gallery still works without Office
+
+    files.sort(key=lambda x: x["modified"], reverse=True)
     return jsonify({"status": "ok", "files": files[:50]})
 
 
@@ -73,6 +105,21 @@ def serve_creation(filename):
     """Serve a file from friday-creations (raw — used by the in-app gallery)."""
     try:
         _sync_daily_creation_files()
+    except Exception:
+        pass
+    # An office document (or its render) lives in the documents folder, not
+    # the creations one. Resolve inside that folder rather than trusting the
+    # name: `serve_creation` is reachable from the browser, and `..` in a
+    # filename must not become a way to read the disk.
+    try:
+        from agent_friday.services import office_engine as _oe
+        if not (CREATIONS_DIR / filename).exists():
+            base = _oe.DOCUMENTS_DIR.resolve()
+            for candidate in (base / filename,
+                              base / _oe.RENDER_DIR / filename):
+                full = candidate.resolve()
+                if (full.is_file() and base in full.parents):
+                    return send_from_directory(str(full.parent), full.name)
     except Exception:
         pass
     return send_from_directory(str(CREATIONS_DIR), filename)

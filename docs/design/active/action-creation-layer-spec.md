@@ -1,8 +1,8 @@
 # Agent Friday — The Action & Creation Layer: Technical Specification
 
 > **Status:** partially-implemented
-> **Last verified:** 2026-09-06
-> **Implementation:** `services/calendar_write.py`, `services/tool_receipts.py`, `services/completion_receipts.py`, `services/approvals.py`
+> **Last verified:** 2026-09-24
+> **Implementation:** `services/calendar_write.py`, `services/tool_receipts.py`, `services/completion_receipts.py`, `services/approvals.py`, `services/office_engine.py`
 > **Supersedes / superseded by:** detail under [`v6-wholeness-spec.md`](v6-wholeness-spec.md)
 > **Written:** 2026-07-08
 
@@ -10,7 +10,10 @@
 
 - Roughly half the outcomes shipped, none of the scaffold, and the work landed under the V6 "Phase A" track rather than under this document's name.
 - Built: the calendar half of Phase 4 (`services/calendar_write.py` — `write_ready`, `find_events`, `annotate_events`, `create_event`, `update_event`; this spec listed calendar as read-only); receipts (`services/tool_receipts.py`, `services/completion_receipts.py`) satisfy the "every action logged" requirement without the envelope wrapper; the durable approval queue this spec deferred to V6 P5 (`services/approvals.py`) now exists, so §3's swap from inline `confirmed=true` to `approvals.require(...)` is a concrete outstanding item; agent-initiated Google OAuth is human-gated.
-- Not built: `services/action_envelope.py` (the Phase 1 keystone that §3 says every new tool must route through — zero references anywhere); Phase 1's voice creative tools (`_VOICE_LIVE_TOOLS` in `services/voice_engine.py` still carries no `generate_image`/`generate_music`/`create_presentation`, though `_voice_shared_tool_specs()` now pulls from `CLAUDE_TOOLS`, so the surface is no longer hardcoded at four); Pillar 4 (OfficeCLI) entirely — no `services/office_engine.py`, no `officecli` anywhere.
+- Not built: `services/action_envelope.py` (the Phase 1 keystone that §3 says every new tool must route through — zero references anywhere); Phase 1's voice creative tools (`_VOICE_LIVE_TOOLS` in `services/voice_engine.py` still carries no `generate_image`/`generate_music`/`create_presentation`, though `_voice_shared_tool_specs()` now pulls from `CLAUDE_TOOLS`, so the surface is no longer hardcoded at four); Phase 1's Action Envelope remains unbuilt.
+- **Pillar 4 (OfficeCLI) SHIPPED 2026-09-24**, in `services/office_engine.py` with the `office` and `office_check` tools, the binary pinned at `~/.friday/runtime/officecli/officecli.exe` (v1.0.152, sha256 in its `INSTALL.json`, auto-update off).
+  **It departs from §4.4's recommendation, deliberately.** The spec says to consume OfficeCLI's own stdio MCP server for "zero wrapping code" and to fall back to a curated subprocess wrapper only "if the full MCP tool list proves too large/noisy". Measured against v1.0.152, that test pointed the other way for a reason the spec did not anticipate: the server exposes exactly ONE tool whose only argument is a raw officecli COMMAND LINE. So the size concern never arose, and "zero wrapping code" would mean registering an un-inspected CLI — any path on the disk, the `raw` verb's direct XML surgery, and officecli's own remote fetches, which are a subprocess and so never pass the egress gate. Worse, as `mcp_officecli_officecli` the verb `action_gate.classify` reads is "officecli", which is not a read verb, so EVERY operation — including reading a document — would have been classified outward and raised an approval card.
+  So the command line is inspected in Friday's own process instead, and `office` is classified BY ARGUMENT like `run_command`: reading and building inside the documents folder is internal; overwriting an existing file is outward; `raw`, a path outside the folder and any remote or UNC location are refused outright. §6.3's sovereignty hardening is implemented as specified. The signature caveat is stated plainly rather than implied: upstream publishes no detached signature and the executable carries no Authenticode signature, so integrity rests on the checksum.
 - Gmail send is refused by policy, not pending: `services/agent.py` states "Friday never requests the gmail.send…". Treat Phase 4's email half as decided against, not as a gap.
 - Read the body's line numbers and "verified in-tree" claims as of 2026-07-08; the four-pillar framing and §3 contract still describe the intended design.
 
