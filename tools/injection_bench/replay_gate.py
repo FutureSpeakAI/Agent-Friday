@@ -98,11 +98,17 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--src", required=True)
     ap.add_argument("--label", default="")
+    ap.add_argument("--decision-backend", default="keyword",
+                    help="Friday's action classifier for the run. Laya does not "
+                         "load under FRIDAY_TESTING, so leaving the shipped "
+                         "'laya-union' setting in place measures the Laya-down "
+                         "mode, in which connector reads are held too.")
     ap.add_argument("--limit", type=int, default=0)
     opts = ap.parse_args()
 
     scratch = tempfile.mkdtemp(prefix="friday-injbench-")
     os.environ["FRIDAY_TESTING"] = "1"
+    os.environ["FRIDAY_DECISION_BACKEND"] = opts.decision_backend
     os.environ["FRIDAY_HOME"] = os.path.join(scratch, "friday")
     for var in ("HOME", "USERPROFILE"):
         os.environ[var] = os.path.join(scratch, "user")
