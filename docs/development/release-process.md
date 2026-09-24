@@ -26,28 +26,51 @@ The full matrix, with what each path can and cannot do, is in
 3. Add the release's entry to `CHANGELOG.md` and rewrite `RELEASE_NOTES.md`
    for it. Move anything in `KNOWN_ISSUES.md` that the release resolves into
    the changelog entry.
-4. Commit, tag `v<version>`, and push the tag by name (never `--tags`).
-5. Build the Windows installer from a **clean worktree at the tag**:
+4. Run the `installer` workflow on `main` (Actions → installer → Run workflow).
+   It builds the zip on a fresh Windows runner and proves it on two more:
+   `fresh-install` installs, starts Friday, checks first run (no login on
+   localhost, the consent flow, scheduled jobs on a local seat, the phone
+   off, agent.<name> once its hosts entry exists) and uninstalls;
+   `upgrade` installs the previous published release, creates a vault,
+   upgrades in place and requires the passphrase and data to survive. Both
+   upload their `RESULT.json` as evidence. Certificate trust raises a Windows
+   security dialog and is checked by hand on a real machine.
+5. Commit, tag `v<version>`, and push the tag by name (never `--tags`). The
+   tag must match `pyproject.toml`; the workflow refuses a mismatch.
+6. The tag runs the same workflow. When both verification jobs pass it
+   creates a **draft** release carrying the zip, its SHA-256 and
+   `RELEASE_NOTES.md`. A draft is visible only to maintainers.
+7. Review the draft, then publish it. Publishing is the public act; nothing
+   in CI does it.
 
-   ```powershell
-   cd packaging\windows
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
-   ```
+To build locally instead, use a clean worktree at the tag:
 
-   The build aborts rather than producing a degraded artifact if the payload
-   is incomplete, the wheelhouse is empty, or anything credential-shaped
-   survives into the payload. It excludes launch scripts, `.env`, key files,
-   tests, packaging sources, and root-level scratch files by pattern.
+```powershell
+git worktree add ..\friday-release v<version>
+cd ..\friday-release\packaging\windows
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build-installer.ps1
+```
 
-   "Clean worktree" is enforced, not advised: the build refuses to continue
-   if any payload file is not tracked by git at the commit being built or
-   any tracked file has uncommitted changes, and names the strays. A
-   long-lived working tree will fail this on purpose; use
-   `git worktree add <dir> v<version>` and build from there. The outer zip
-   is not byte-reproducible (entry timestamps), so compare payload file
-   lists and per-file hashes, not the zip's hash.
-6. Run the installer tests: `packaging\windows\tests\Test-Installer.ps1`.
-7. Create the GitHub release for the tag and attach the zip.
+The build aborts rather than producing a degraded artifact if the payload is
+incomplete, the wheelhouse is empty, or anything credential-shaped survives
+into the payload. It refuses to continue if any payload file is not tracked by
+git at the commit being built or any tracked file has uncommitted changes. The
+outer zip is not byte-reproducible (entry timestamps), so compare payload file
+lists and per-file hashes, not the zip's hash. `packaging\windows\tests\Test-Installer.ps1`
+runs the installer's own assertions.
+
+## Branch protection
+
+Recommended settings for `main` (Settings → Branches → Add rule):
+
+- Require a pull request before merging, with at least one approval.
+- Require status checks to pass: `pytest (windows-latest, py3.12)`,
+  `pytest (ubuntu-latest, py3.12)`, `repository guards`, `package build`,
+  and `codeql`.
+- Require branches to be up to date before merging.
+- Require linear history; block force pushes and branch deletion.
+- Restrict who can push tags matching `v*` (Settings → Tags → protection
+  rules), since a version tag starts a release.
 
 ## What never ships
 
