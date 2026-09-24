@@ -253,3 +253,10 @@ def test_generate_text_opens_a_background_trace_when_none_is_active(monkeypatch)
     tr = rt.live_trace(seen["trace"])
     assert tr["kind"] == "background" and tr["label"] == "📰 Front Page" and tr["status"] == "complete"
     assert rt.verify()["records"] == 1
+
+
+def test_traced_wrappers_keep_their_names_and_signatures():
+    import inspect
+    for fn, name in ((mr._generate_text, "_generate_text"), (ag._generate_agent, "_generate_agent")):
+        assert fn.__name__ == name
+        assert "messages" in inspect.signature(fn).parameters
