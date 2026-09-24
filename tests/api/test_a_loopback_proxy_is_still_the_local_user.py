@@ -35,6 +35,8 @@ every loopback claim, because refusing them all locked the user out of his own
 machine.
 """
 
+import io
+
 import pytest
 
 import agent_friday.core as core
@@ -179,3 +181,88 @@ def test_the_trust_switch_still_forces_a_login(monkeypatch, flask_app):
     with _ctx(flask_app, CADDY):
         assert core._is_local_request() is True      # still local...
         assert core._loopback_trusted() is False     # ...but not auto-trusted
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google OAuth must keep working through the alias.
+#
+# The redirect_uri is pinned to loopback on purpose: Google's secure-response
+# policy rejects ANY plain-HTTP non-loopback redirect_uri, so a hosts-file alias
+# like http://agent.friday/... fails every time. That means a consent STARTED on
+# agent.friday finishes on localhost:3000 -- a different origin, whose cookie the
+# browser will not send. Pinned here because it constrains two things at once:
+# the callbacks must not sit behind the login wall, and the redirect must not be
+# "improved" into following request.host_url.
+# ─────────────────────────────────────────────────────────────────────────────
+
+OAUTH_CALLBACKS = ("/api/google/auth/callback", "/api/google/accounts/callback")
+
+
+@pytest.mark.parametrize("path", OAUTH_CALLBACKS)
+@pytest.mark.parametrize("headers", [
+    pytest.param({}, id="direct-loopback"),
+    pytest.param(CADDY, id="through-the-local-proxy"),
+])
+def test_the_oauth_callback_is_never_behind_the_login_wall(
+        flask_app, path, headers):
+    """Google sends the browser here. A 401 would end the connect flow with a
+    password prompt the user never set.
+
+    Called with no `code`, so each callback answers with its OWN 4xx error. What
+    matters is that it is the endpoint's error and not the auth decorator's.
+    """
+    fresh = flask_app.test_client()
+    r = fresh.get(path, headers=headers,
+                  environ_base={"REMOTE_ADDR": "127.0.0.1"})
+    assert r.status_code not in (401, 403), (
+        "%s behind %s returned HTTP %s -- Google's redirect would hit a login "
+        "screen" % (path, headers or "direct loopback", r.status_code))
+    body = r.get_data(as_text=True).lower()
+    assert 'name="password"' not in body, (
+        "%s served a login form to Google's redirect" % path)
+
+
+@pytest.mark.parametrize("host_header", [
+    "agent.friday", "localhost:3000", "127.0.0.1:3000",
+])
+def test_the_google_redirect_uri_stays_pinned_to_loopback(flask_app, host_header):
+    """Never derived from the request's Host.
+
+    If this ever followed `request.host_url`, a user reaching Friday through the
+    alias would send Google `http://agent.friday/...`, which Google rejects
+    outright with 400 invalid_request -- not a DNS problem, and not something
+    propagation fixes.
+    """
+    from agent_friday.services.calendar_engine import _google_redirect_uri
+
+    with flask_app.test_request_context(
+            "/api/google/auth", headers={"Host": host_header},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+        uri = _google_redirect_uri({})
+
+    assert uri.startswith(("http://localhost:", "http://127.0.0.1:")), (
+        "redirect_uri %r is not loopback-pinned (Host was %r)"
+        % (uri, host_header))
+    assert "agent.friday" not in uri
+    assert uri.endswith("/api/google/auth/callback")
+
+
+def test_the_multi_account_flow_does_not_need_the_session_cookie():
+    """Why the CURRENT connector survives the origin change.
+
+    `routes/google_accounts.py` keeps the PKCE verifier in a server-side
+    `_PENDING` map keyed by `state`, and reads `state` from the query string, so
+    a consent begun on agent.friday can complete on localhost:3000. The legacy
+    single-account flow in `routes/google.py` keeps its verifier in the Flask
+    session and therefore cannot; it fails with an explicit "your session cookie
+    was dropped" 400 rather than silently. That path is superseded by
+    "+ Add Account", and the verifier is a secret that cannot move to the query
+    string, so this records the asymmetry rather than pretending to fix it.
+    """
+    import agent_friday.routes.google_accounts as ga_routes
+
+    assert hasattr(ga_routes, "_PENDING"), (
+        "the server-side pending-auth map is gone; the multi-account flow would "
+        "now depend on a cookie that does not cross the origin change")
+    src = io.open(ga_routes.__file__, encoding="utf-8", errors="replace").read()
+    assert 'request.args.get("state")' in src, (
+        "the callback no longer prefers the state from the query string")
