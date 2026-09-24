@@ -23,6 +23,9 @@ from flask import Blueprint, jsonify, request
 
 # Imported for its side effect as much as its functions — see the docstring.
 from agent_friday.services import gmail_send as _gs
+# The same reason: its approval hook carries out mail changes Friday proposed
+# and the owner approved.
+from agent_friday.services import mail_proposals as _mp  # noqa: F401
 
 gmail_send_bp = Blueprint("gmail_send", __name__)
 
@@ -152,6 +155,77 @@ def mail_modify():
 def mail_modify_undo():
     b = request.get_json(silent=True) or {}
     return _mailbox_call(lambda gm: gm.undo((b.get("account_id") or "").strip(), b.get("changed") or {}))
+
+
+@gmail_send_bp.route("/api/mail/signature")
+def mail_signature():
+    """?account= : the account's own Gmail signature (read-only permission is
+    enough), so a message written in Friday ends the way one written in Gmail does."""
+    aid = (request.args.get("account") or "").strip()
+
+    def read(gm):
+        from agent_friday.services import gmail_api
+        svc = gm._read_svc(aid)
+        d = gmail_api.execute(svc.users().settings().sendAs().list(userId="me"))
+        rows = d.get("sendAs") or []
+        pick = next((r for r in rows if r.get("isDefault")), None) or next((r for r in rows if r.get("isPrimary")), None) or {}
+        return {"signature": pick.get("signature") or "", "email": pick.get("sendAsEmail") or "",
+                "name": pick.get("displayName") or ""}
+    return _mailbox_call(read)
+
+
+@gmail_send_bp.route("/api/mail/original")
+def mail_original():
+    """?account=&message= : the message exactly as Gmail holds it (headers and
+    MIME source), for "Show original" and printing headers. ?dl=1 downloads it
+    as a .eml file."""
+    from flask import Response
+    from agent_friday.services import gmail_read
+    aid = (request.args.get("account") or "").strip()
+    mid = (request.args.get("message") or "").strip()
+    if not aid or not mid:
+        return jsonify({"status": "error", "message": "account and message are required"}), 400
+    try:
+        raw = gmail_read.get_raw(aid, mid)
+    except Exception as e:
+        from agent_friday.services import gmail_api
+        d = gmail_api.describe(e)
+        return jsonify({"status": "error", "kind": d.get("kind"), "message": d.get("message") or str(e)}), 502
+    if request.args.get("dl"):
+        resp = Response(raw, mimetype="message/rfc822")
+        resp.headers["Content-Disposition"] = 'attachment; filename="message-%s.eml"' % "".join(c for c in mid if c.isalnum())[:40]
+        return resp
+    from email.parser import BytesHeaderParser
+    hdr = BytesHeaderParser().parsebytes(raw)
+    cap = 2 * 1024 * 1024
+    return jsonify({"status": "ok", "size": len(raw), "truncated": len(raw) > cap,
+                    "headers": [[k, str(v)] for k, v in hdr.items()],
+                    "source": raw[:cap].decode("utf-8", "replace")})
+
+
+@gmail_send_bp.route("/api/mail/unsubscribe", methods=["GET", "POST"])
+def mail_unsubscribe():
+    """GET ?account=&message= : how this list says to leave it (for the
+    confirm dialog). POST {account_id, message_id, confirmed}: leave it.
+    The owner's own confirmed click acts; a request from Friday itself
+    becomes an approval card."""
+    from agent_friday.services import mail_unsubscribe as mu
+    if request.method == "GET":
+        aid = (request.args.get("account") or "").strip()
+        mid = (request.args.get("message") or "").strip()
+        return _mailbox_call(lambda gm: mu.options(aid, mid))
+    b = request.get_json(silent=True) or {}
+    aid, mid = (b.get("account_id") or "").strip(), (b.get("message_id") or "").strip()
+    if not aid or not mid:
+        return jsonify({"status": "error", "message": "account_id and message_id are required"}), 400
+    from agent_friday.routes.messages import _is_owner
+    if not _is_owner(b.get("requested_by")):
+        return jsonify(_mp.propose("unsubscribe", [mid], [], requested_by=str(b.get("requested_by")),
+                                   reason=str(b.get("reason") or ""),
+                                   extra={"account_id": aid, "message_id": mid, "sender": str(b.get("sender") or "")})), 202
+    if not b.get("confirmed"):
+        return jsonify({"status": "error", "message": "Unsubscribing tells the sender this address is read; confirm it first."}), 400
+    return _mailbox_call(lambda gm: mu.unsubscribe(aid, mid))
 
 
 @gmail_send_bp.route("/api/mail/held")

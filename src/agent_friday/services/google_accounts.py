@@ -990,7 +990,7 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
         ids = ids[:limit]
         got, failed = gmail_api.batch_get(
             svc, ids, fmt="metadata",
-            headers=["From", "To", "Cc", "Subject", "Date", "Content-Type", "Message-ID"])
+            headers=["From", "To", "Cc", "Subject", "Date", "Content-Type", "Message-ID", "List-Unsubscribe"])
         for mid in ids:
             msg = got.get(mid)
             if not msg:
@@ -1018,6 +1018,7 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
                 "thread_id": msg.get("threadId", ""),
                 "labels": labels,
                 "unread": "UNREAD" in labels,
+                "list_unsubscribe": bool(headers.get("list-unsubscribe")),
                 # multipart/mixed is how mail carries attachments; metadata
                 # format has no part list, so this is the cheap signal
                 "has_attachment": ctype.startswith("multipart/mixed"),

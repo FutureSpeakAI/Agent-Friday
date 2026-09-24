@@ -513,6 +513,13 @@ window.addEventListener('DOMContentLoaded',function(){
         .progress-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
 
         /* Inputs */
+        /* Native controls in a dark UI. A select's open list, and a date
+           picker, are drawn by the browser from the page's colour scheme, not
+           from the control's own colours: without this the options are painted
+           on white while inheriting the control's light text, so they read
+           white on white. */
+        select, input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"] { color-scheme: dark; }
+        select option, select optgroup { background-color: #0b1220; color: #e6f0ff; }
         .input {
             background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
             border-radius: 6px; padding: 7px 10px; color: #ddd; font-size: 12px;
@@ -27621,6 +27628,7 @@ function MessagesWS() {
         },
         body: JSON.stringify({
           id: m.id,
+          requested_by: 'ui:messages-classic',
           action
         })
       });

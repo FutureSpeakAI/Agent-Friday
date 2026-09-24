@@ -2,22 +2,28 @@
  *
  * What it does, and what it deliberately does not:
  * - Reads both connected accounts (All / each account), with Gmail's own
- *   search (Enter sends the query to Gmail's q=). A failure is shown as a
- *   failure, never as "0" or "No messages"; a partial result says which
- *   account is missing.
- * - Threads open from the account they belong to, as formatted mail in a
- *   sandboxed frame with no scripts and remote images off until asked for,
- *   with attachments to preview or download.
- * - Archive, flag (star) and read/unread also change Gmail itself for an
- *   account reconnected with sending (gmail.modify); otherwise, and for snooze
- *   and lane moves, they are Friday's own. Labels are Gmail's. Every change
- *   can be undone (toast, or Z), in Gmail too.
- * - Drafts can be saved into Gmail Drafts; a message can be scheduled, and
- *   after approval it waits 10 seconds (or until its time) and can be taken back.
+ *   search (Enter sends the query to Gmail's q=) and Gmail's folders and
+ *   labels down the side. A failure is shown as a failure, never as "0" or
+ *   "No messages"; a partial result says which account is missing.
+ * - Every row acts without being opened: hover buttons, checkboxes with a
+ *   bulk bar, the Gmail keyboard shortcuts and a right-click menu.
+ * - The owner's own clicks act at once and can be undone (toast, or Z):
+ *   archive, Delete (Gmail's Trash, kept 30 days and restorable), spam,
+ *   star, important, read/unread, labels, snooze and mute. Trash, spam,
+ *   importance and labels exist only in Gmail and need an account
+ *   reconnected with sending (gmail.modify); without it they are refused and
+ *   the page says so. Archive, star and read state then change in Friday
+ *   only. Snooze and mute are always Friday's own. Nothing deletes
+ *   permanently.
+ * - Threads open from the account they belong to, as mail in a sandboxed
+ *   frame with no scripts and remote images off until asked for, adapted to
+ *   Friday's dark theme (or shown as sent, per message, remembered per
+ *   sender), with attachments to preview or download, the original source,
+ *   and print.
  * - Reply, reply all, forward and compose never send. They file an approval
  *   card; the message goes out only after it is approved, and only from an
- *   account that granted sending.
- * - No delete. Nothing here can remove mail.
+ *   account that granted sending. Unsubscribing tells the sender the address
+ *   is read, so it is confirmed first.
  *
  * Loaded after studio_files3d.js; defines window.FridayMailPanel.
  */
@@ -34,12 +40,22 @@
     return fetch(url, Object.assign({}, opts, { headers }));
   };
   const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(r => r.json().then(j => ({ ok: r.ok, j })));
+    .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j })));
   const LANES = {
     all: ['All', '📥'], career: ['Career', '💼'], finance: ['Finance', '💰'], futurespeak: ['Projects', '🚀'],
     family: ['Family', '👪'], subscriptions: ['Subscriptions', '📰'], noise: ['Noise', '🔇']
   };
   const laneLabel = id => (LANES[id] || [id])[0];
+  // Gmail's folders; '' is Friday's own triage view.
+  const FOLDERS = [
+    ['', '✨', 'Priority', 'Friday’s triage: what is recent or unread, sorted into lanes'],
+    ['inbox', '📥', 'Inbox'], ['starred', '⭐', 'Starred'], ['important', '❗', 'Important'], ['snoozed', '⏰', 'Snoozed', 'Snoozed in Gmail itself'],
+    ['sent', '📤', 'Sent'], ['drafts', '📝', 'Drafts'], ['scheduled', '🗓', 'Scheduled'], ['all', '🗂', 'All Mail'],
+    ['spam', '⚠', 'Spam'], ['trash', '🗑', 'Trash']
+  ];
+  const CATEGORIES = [['primary', 'Primary'], ['social', 'Social'], ['promotions', 'Promotions'], ['updates', 'Updates'], ['forums', 'Forums']];
+  const folderName = f => { if (!f) return 'Priority'; if (f.indexOf('label:') === 0) return f.slice(6); if (f.indexOf('category:') === 0) return 'Inbox · ' + f.slice(9); const x = FOLDERS.find(r => r[0] === f); return x ? x[2] : f; };
+  const SEARCH_CHIPS = [['has:attachment', '📎 Has attachment'], ['is:unread', '● Unread'], ['is:starred', '⭐ Starred'], ['newer_than:7d', '🕑 Last 7 days'], ['to:me', '→ To me'], ['from:me', '← From me'], ['larger:5M', '⬛ Over 5 MB']];
   const addrOf = s => { const m = /<([^>]+)>/.exec(s || ''); return (m ? m[1] : (s || '')).trim().toLowerCase(); };
   const nameOf = s => { const m = /^\s*"?([^"<]*?)"?\s*</.exec(s || ''); return (m && m[1].trim()) || addrOf(s); };
   const splitAddrs = s => String(s || '').split(/[,;]/).map(x => x.trim()).filter(Boolean);
@@ -51,6 +67,29 @@
         : d.toLocaleDateString();
   };
   const esc = s => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const store = {
+    get: (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } },
+    set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} }
+  };
+
+  // Snooze choices, Gmail's: later today, tomorrow, this weekend, next week.
+  const at = (d, hr) => { const x = new Date(d); x.setHours(hr, 0, 0, 0); return x; };
+  const snoozeChoices = () => {
+    const now = new Date(), out = [];
+    const later = now.getHours() < 17 ? at(now, 18) : new Date(now.getTime() + 3 * 3600e3);
+    out.push(['Later today', later]);
+    const tmr = new Date(now); tmr.setDate(now.getDate() + 1); out.push(['Tomorrow', at(tmr, 8)]);
+    const sat = new Date(now); sat.setDate(now.getDate() + ((6 - now.getDay() + 7) % 7 || 7)); out.push(['This weekend', at(sat, 8)]);
+    const mon = new Date(now); mon.setDate(now.getDate() + ((1 - now.getDay() + 7) % 7 || 7)); out.push(['Next week', at(mon, 8)]);
+    return out;
+  };
+  const fmtUntil = d => d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  // Friday keeps snooze times as local wall-clock ISO (no zone), like the server's own now().
+  const localIso = d => { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':00'; };
+  // Gmail sends snippets HTML-escaped ("it&#39;s"); a textarea decodes them without running anything.
+  const unent = s => { if (!/&[#a-z0-9]+;/i.test(s || '')) return s || ''; const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+  // An account record lists its services as a list or as {service: true}.
+  const hasGmail = a => { const s = a && a.services; return Array.isArray(s) ? s.includes('gmail') : !!(s && s.gmail); };
 
   // ── styles (scoped by .fm-) ─────────────────────────────────────────────
   if (!document.getElementById('fm-style')) {
@@ -58,63 +97,101 @@
     st.id = 'fm-style';
     st.textContent = `
       .fm { display:flex; flex-direction:column; gap:8px; font-family: Inter, sans-serif; color:#dbe6f5; }
-      /* The panes take the height of the frame (a tab or a window), not a guess from the viewport */
-      .fm.ws-fill { min-height:420px; }
+      .fm select { color-scheme: dark; }
+      .fm select option, .fm select optgroup { background-color:#0b1220; color:#e6f0ff; }
       .fm-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
       .fm-chip { display:inline-flex; gap:6px; align-items:center; padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer;
         border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.03); color:#b8c7dc; user-select:none; }
       .fm-chip:hover { border-color:rgba(0,212,255,0.5); color:#e6f4ff; }
       .fm-chip.on { border-color:#00d4ff; color:#e6f9ff; background:rgba(0,212,255,0.12); }
-      .fm-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+      .fm-chip.sm { padding:3px 8px; font-size:10.5px; }
+      .fm-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex:none; }
       .fm-count { font-family:'JetBrains Mono',monospace; font-size:10px; opacity:.85; }
       .fm-search { flex:1 1 260px; min-width:180px; background:#0b1220; color:#e6f0ff; border:1px solid #24406a; border-radius:8px; padding:8px 10px; font-size:12px; }
       .fm-search:focus { outline:none; border-color:#00d4ff; box-shadow:0 0 0 2px rgba(0,212,255,0.15); }
-      .fm-banner { padding:8px 12px; border-radius:8px; font-size:12px; display:flex; gap:8px; align-items:center; }
+      .fm-banner { padding:8px 12px; border-radius:8px; font-size:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .fm-banner.err { background:rgba(239,68,68,0.10); border:1px solid rgba(239,68,68,0.45); color:#ffb4b4; }
       .fm-banner.warn { background:rgba(245,158,11,0.10); border:1px solid rgba(245,158,11,0.45); color:#ffd699; }
       .fm-banner.info { background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.3); color:#aee9ff; }
-      .fm-main { display:flex; gap:10px; min-height:0; flex:1 1 auto; }
-      .fm-list { flex:1 1 42%; min-width:300px; min-height:0; overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; }
-      .fm-row { display:grid; grid-template-columns: 22px 10px minmax(90px,170px) 1fr auto; gap:8px; align-items:center; padding:8px 10px;
+      .fm-main { display:flex; gap:10px; min-height:0; }
+      .fm-side { flex:0 0 170px; display:flex; flex-direction:column; gap:1px; max-height:calc(100vh - 300px); overflow:auto; font-size:12px; }
+      .fm-side button { display:flex; gap:8px; align-items:center; text-align:left; background:transparent; border:0; border-radius:0 999px 999px 0; color:#b8c7dc; padding:6px 10px; cursor:pointer; font-size:12px; }
+      .fm-side button:hover { background:rgba(0,212,255,0.06); color:#e6f4ff; }
+      .fm-side button.on { background:rgba(0,212,255,0.14); color:#e6f9ff; font-weight:700; }
+      .fm-side .h { font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:#5f7896; padding:10px 10px 4px; }
+      .fm-listwrap { flex:1 1 42%; min-width:320px; display:flex; flex-direction:column; border:1px solid rgba(0,212,255,0.12); border-radius:10px; overflow:hidden; }
+      .fm-listhead { display:flex; gap:8px; align-items:center; padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.06); font-size:11px; color:#8fa6c4; background:rgba(255,255,255,0.015); }
+      .fm-list { flex:1; max-height:calc(100vh - 360px); overflow:auto; }
+      .fm-row { position:relative; display:grid; grid-template-columns: 22px 10px minmax(90px,170px) 1fr auto; gap:8px; align-items:center; padding:8px 10px;
         border-bottom:1px solid rgba(255,255,255,0.05); cursor:pointer; font-size:12px; }
       .fm-row:hover { background:rgba(0,212,255,0.05); }
       .fm-row.focus { box-shadow: inset 3px 0 0 #00d4ff; background:rgba(0,212,255,0.07); }
       .fm-row.open { background:rgba(123,97,255,0.12); }
+      .fm-row.sel { background:rgba(123,97,255,0.16); }
+      .fm-row.busy { opacity:.55; pointer-events:none; }
       .fm-row.unread .fm-from, .fm-row.unread .fm-subj { font-weight:700; color:#fff; }
+      .fm-row.await .fm-from::after { content:'↩'; color:#7df0b0; margin-left:5px; font-weight:400; }
       .fm-from { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#c6d4e8; }
       .fm-line { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .fm-subj { color:#dbe6f5; } .fm-snip { color:#7f93ad; }
       .fm-when { color:#7f93ad; font-size:11px; white-space:nowrap; font-family:'JetBrains Mono',monospace; }
+      .fm-acts { display:none; gap:2px; }
+      .fm-row:hover .fm-acts, .fm-row.focus .fm-acts { display:flex; }
+      .fm-row:hover .fm-when, .fm-row.focus .fm-when { display:none; }
+      .fm-act { background:rgba(8,12,22,0.9); border:1px solid rgba(255,255,255,0.12); color:#cfe3ff; border-radius:6px; width:28px; height:26px; cursor:pointer; font-size:13px; line-height:1; padding:0; }
+      .fm-act:hover { border-color:#00d4ff; background:rgba(0,212,255,0.15); }
+      .fm-act.danger:hover { border-color:#ef4444; background:rgba(239,68,68,0.18); }
       .fm-badge { font-size:9px; padding:1px 6px; border-radius:999px; border:1px solid; margin-right:5px; }
-      .fm-thread { flex:1 1 58%; min-width:360px; min-height:0; overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; padding:12px; }
+      .fm-lab { font-size:9px; padding:1px 6px; border-radius:4px; background:rgba(255,255,255,0.08); color:#cfe3ff; margin-right:5px; }
+      .fm-thread { flex:1 1 58%; min-width:360px; max-height:calc(100vh - 330px); overflow:auto; border:1px solid rgba(0,212,255,0.12); border-radius:10px; padding:12px; }
       .fm-msg { border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:10px; margin-bottom:10px; background:rgba(255,255,255,0.02); }
-      .fm-hdr { font-size:11px; color:#8fa6c4; line-height:1.6; }
+      .fm-hdr { font-size:11px; color:#8fa6c4; line-height:1.6; display:flex; gap:8px; align-items:flex-start; }
       .fm-hdr b { color:#e6f0ff; }
-      .fm-body { width:100%; border:0; background:#fff; border-radius:6px; margin-top:8px; min-height:60px; }
+      .fm-link { background:none; border:0; color:#7dd3fc; cursor:pointer; font-size:11px; padding:0; text-decoration:underline; }
+      .fm-body { width:100%; border:0; border-radius:6px; margin-top:8px; min-height:60px; background:#fff; }
+      .fm-body.adapted { background:#0f1522; }
       .fm-text { white-space:pre-wrap; font-size:12.5px; line-height:1.55; color:#dbe6f5; margin-top:8px; }
       .fm-atts { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
       .fm-att { display:inline-flex; gap:6px; align-items:center; font-size:11px; padding:5px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.25); color:#cfe3ff; text-decoration:none; }
       .fm-att:hover { border-color:#00d4ff; }
       .fm-btn { font-size:11px; padding:5px 10px; min-height:28px; }
+      .fm-btn.danger { border-color:rgba(239,68,68,0.6); color:#ffb4b4; }
       .fm-bulk { display:flex; gap:6px; align-items:center; padding:6px 10px; border-radius:8px; background:rgba(123,97,255,0.12); border:1px solid rgba(123,97,255,0.4); font-size:12px; flex-wrap:wrap; }
+      .fm-menu { position:fixed; z-index:90; min-width:220px; max-width:320px; max-height:70vh; overflow:auto; background:#0a1020; border:1px solid rgba(0,212,255,0.4); border-radius:10px; padding:5px; box-shadow:0 14px 40px rgba(0,0,0,.6); font-size:12px; }
+      .fm-menu .it { display:flex; gap:9px; align-items:center; padding:7px 10px; border-radius:6px; cursor:pointer; color:#dbe6f5; }
+      .fm-menu .it:hover, .fm-menu .it.hi { background:rgba(0,212,255,0.14); }
+      .fm-menu .it.off { opacity:.45; cursor:default; }
+      .fm-menu .it .k { margin-left:auto; font-family:'JetBrains Mono',monospace; font-size:10px; color:#6f86a6; }
+      .fm-menu .it .ic { width:16px; text-align:center; }
+      .fm-menu .hd { padding:7px 10px 3px; font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:#5f7896; }
+      .fm-menu .sp { height:1px; background:rgba(255,255,255,0.08); margin:4px 2px; }
+      .fm-menu input { width:100%; box-sizing:border-box; background:#0b1220; color:#e6f0ff; border:1px solid #24406a; border-radius:6px; padding:6px 8px; font-size:12px; color-scheme:dark; }
+      .fm-dialog { position:fixed; inset:0; z-index:95; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; }
+      .fm-dialog > div { background:#0a1020; border:1px solid rgba(0,212,255,0.4); border-radius:12px; padding:18px 20px; font-size:12.5px; color:#cfe3ff; width:min(560px, 92vw); max-height:84vh; overflow:auto; }
+      .fm-dialog h4 { margin:0 0 10px; color:#fff; font-size:14px; }
+      .fm-dialog pre { white-space:pre-wrap; word-break:break-all; font-size:11px; background:#05080f; border:1px solid #1d2c47; border-radius:6px; padding:8px; max-height:40vh; overflow:auto; }
+      .fm-dialog table { font-size:11px; border-collapse:collapse; width:100%; }
+      .fm-dialog td { border-bottom:1px solid rgba(255,255,255,0.06); padding:3px 6px; vertical-align:top; word-break:break-all; }
+      .fm-dialog td:first-child { color:#8fa6c4; white-space:nowrap; }
       .fm-compose { position:fixed; right:24px; bottom:78px; width:min(620px, 92vw); max-height:78vh; z-index:66; display:flex; flex-direction:column;
         background:rgba(8,12,22,0.97); border:1px solid rgba(0,212,255,0.35); border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.6), 0 0 30px rgba(0,212,255,0.12); }
       .fm-compose-h { display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.08); font-family:Orbitron,Inter,sans-serif; font-size:11px; letter-spacing:.1em; color:#00d4ff; }
       .fm-field { display:flex; gap:8px; align-items:center; padding:4px 12px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:12px; position:relative; }
       .fm-field label { color:#7f93ad; width:52px; }
       .fm-field input, .fm-field select { flex:1; background:transparent; border:0; color:#e6f0ff; padding:6px 0; font-size:12.5px; outline:none; }
-      .fm-field select option { background:#0b1220; }
       .fm-editor { min-height:180px; max-height:40vh; overflow:auto; padding:10px 12px; font-size:13px; line-height:1.55; outline:none; color:#e6f0ff; }
       .fm-editor blockquote { border-left:2px solid #3d5a80; margin:6px 0; padding-left:10px; color:#9fb0c8; }
+      .fm-editor .fm-sig { color:#9fb0c8; }
       .fm-tools { display:flex; gap:4px; padding:6px 12px; border-top:1px solid rgba(255,255,255,0.06); align-items:center; flex-wrap:wrap; }
       .fm-tool { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:#cfe3ff; border-radius:5px; min-width:28px; height:26px; cursor:pointer; font-size:12px; }
       .fm-tool:hover { border-color:#00d4ff; }
       .fm-sugg { position:absolute; left:64px; top:100%; z-index:5; background:#0b1220; border:1px solid #24406a; border-radius:6px; min-width:260px; max-height:200px; overflow:auto; }
       .fm-sugg div { padding:6px 10px; font-size:12px; cursor:pointer; } .fm-sugg div:hover, .fm-sugg div.on { background:rgba(0,212,255,0.12); }
       .fm-toast { position:fixed; left:50%; bottom:84px; transform:translateX(-50%); z-index:70; background:rgba(8,12,22,0.96); border:1px solid #2e5a8f;
-        color:#e6f0ff; padding:8px 12px; border-radius:8px; font-size:12px; display:flex; gap:10px; align-items:center; box-shadow:0 8px 30px rgba(0,0,0,.5); }
+        color:#e6f0ff; padding:8px 12px; border-radius:8px; font-size:12px; display:flex; gap:10px; align-items:center; box-shadow:0 8px 30px rgba(0,0,0,.5); max-width:80vw; }
+      .fm-toast.err { border-color:rgba(239,68,68,0.6); color:#ffd0d0; }
       .fm-help { position:fixed; inset:0; z-index:80; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; }
-      .fm-help > div { background:#0a1020; border:1px solid rgba(0,212,255,0.4); border-radius:12px; padding:18px 22px; font-size:12px; color:#cfe3ff; columns:2; column-gap:30px; max-width:640px; }
+      .fm-help > div { background:#0a1020; border:1px solid rgba(0,212,255,0.4); border-radius:12px; padding:18px 22px; font-size:12px; color:#cfe3ff; columns:2; column-gap:30px; max-width:680px; }
       .fm-help kbd { font-family:'JetBrains Mono',monospace; background:#16213a; border:1px solid #2b4470; border-radius:4px; padding:1px 6px; margin-right:6px; color:#fff; }
       .fm-preview { position:fixed; inset:4vh 4vw; z-index:82; background:#05080f; border:1px solid rgba(0,212,255,0.4); border-radius:12px; display:flex; flex-direction:column; }
       .fm-preview iframe, .fm-preview img { flex:1; border:0; object-fit:contain; max-width:100%; min-height:0; background:#111; }
@@ -122,7 +199,6 @@
     document.head.appendChild(st);
   }
 
-  // ── a message body in a sandboxed frame ─────────────────────────────────
   // ── links in a message ──────────────────────────────────────────────────
   // Only web and mail links do anything. A web link opens in a new browser
   // tab from Friday's own page, with no opener and no referrer, so the page
@@ -153,19 +229,87 @@
     return h('div', { className: 'fm-text' }, out);
   }
 
+  // ── matching Friday's theme ─────────────────────────────────────────────
+  // Mail is designed for a white page. "Match Friday's theme" re-colours it
+  // for a dark one: light, greyish backgrounds turn dark (keeping their hue),
+  // text that would then be unreadable turns light, and hard light borders
+  // soften. Saturated colours (brand bars, buttons) and every image are left
+  // as they are, and text on them keeps its own colour. It runs on the
+  // message's own document after it loads; nothing in the message runs.
+  const PAGE = { r: 15, g: 21, b: 34 };                          // #0f1522
+  const rgbOf = s => { const m = /rgba?\(([^)]+)\)/.exec(s || ''); if (!m) return null; const p = m[1].split(/[,\s/]+/).filter(Boolean).map(parseFloat); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+  const lumOf = c => { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const contrast = (a, b) => { const x = lumOf(a), y = lumOf(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const toHsl = c => {
+    const r = c.r / 255, g = c.g / 255, b = c.b / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+    if (mx === mn) return [0, 0, l];
+    const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    const hh = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [hh / 6, s, l];
+  };
+  const fromHsl = (hh, s, l) => {
+    const f = n => { const k = (n + hh * 12) % 12, a = s * Math.min(l, 1 - l); return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+    return { r: f(0), g: f(8), b: f(4), a: 1 };
+  };
+  const css = c => 'rgb(' + c.r + ',' + c.g + ',' + c.b + ')';
+  function adaptToDark(d) {
+    const win = d.defaultView;
+    if (!win || !d.body) return 0;
+    let changed = 0;
+    const bgOf = new Map();
+    const set = (el, prop, val) => { el.style.setProperty(prop, val, 'important'); changed++; };
+    d.documentElement.style.setProperty('background', css(PAGE), 'important');
+    set(d.body, 'background-color', css(PAGE));
+    bgOf.set(d.body, PAGE);
+    const all = [d.body].concat(Array.from(d.body.querySelectorAll('*')));
+    all.forEach(el => {
+      if (el === d.body || /^(IMG|PICTURE|SVG|VIDEO|CANVAS)$/i.test(el.tagName)) return;
+      const cs = win.getComputedStyle(el);
+      const bg = rgbOf(cs.backgroundColor);
+      if (bg && bg.a > 0.05) {
+        const [hh, s, l] = toHsl(bg);
+        if (l > 0.8 || (l > 0.55 && s < 0.2)) {                 // white, grey, pastel: a page, not a brand
+          const dark = fromHsl(hh, Math.min(s, 0.3), 0.06 + (1 - l) * 0.45);
+          set(el, 'background-color', css(dark));
+          bgOf.set(el, dark);
+        } else bgOf.set(el, bg);
+      }
+      ['Top', 'Right', 'Bottom', 'Left'].forEach(side => {
+        if (parseFloat(cs['border' + side + 'Width']) > 0) {
+          const bc = rgbOf(cs['border' + side + 'Color']);
+          if (bc && bc.a > 0.05) { const [, s, l] = toHsl(bc); if (l > 0.75 && s < 0.25) set(el, 'border-' + side.toLowerCase() + '-color', 'rgba(255,255,255,0.14)'); }
+        }
+      });
+    });
+    const behind = el => { for (let n = el; n; n = n.parentElement) if (bgOf.has(n)) return bgOf.get(n); return PAGE; };
+    all.forEach(el => {
+      if (/^(IMG|PICTURE|SVG|VIDEO|CANVAS|BR|HR)$/i.test(el.tagName)) return;
+      const fg = rgbOf(win.getComputedStyle(el).color), bg = behind(el);
+      if (!fg || contrast(fg, bg) >= 4.5 || lumOf(bg) > 0.25) return;  // readable, or on a light brand colour of its own
+      const [hh, s, l] = toHsl(fg);
+      let light = fromHsl(hh, s, Math.max(1 - l, 0.78));
+      if (contrast(light, bg) < 4.5) light = fromHsl(hh, Math.min(s, 0.4), 0.9);
+      set(el, 'color', css(light));
+    });
+    return changed;
+  }
+  window.__fridayAdaptMailToDark = adaptToDark;              // for tests
+
   // ── a message body in a sandboxed frame ─────────────────────────────────
-  function MailBody({ html, text, showImages, onMailto }) {
+  function MailBody({ html, text, showImages, onMailto, adapt }) {
     const ref = useRef(null);
     const [height, setHeight] = useState(120);
     if (!html) return h(Linkified, { text, onMailto });
     const origin = window.location.origin;
     const csp = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data: " + origin + (showImages ? ' https: http:' : '');
+    const base = adapt ? 'html,body{background:#0f1522;color:#dbe6f5}a{color:#7dd3fc}' : 'body{color:#1b1f24}';
     const doc = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
-      '<base target="_blank"><style>body{margin:12px;font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;color:#1b1f24;word-wrap:break-word}img{max-width:100%;height:auto}a{cursor:pointer}</style></head><body>' + html + '</body></html>';
+      '<base target="_blank"><style>body{margin:12px;font:13px/1.5 -apple-system,Segoe UI,Arial,sans-serif;word-wrap:break-word}' + base + 'img{max-width:100%;height:auto}a{cursor:pointer}</style></head><body>' + html + '</body></html>';
     const onLoad = () => {
       let d;
       try { d = ref.current.contentDocument; } catch (_) { return; }
       if (!d) return;
+      if (adapt) { try { adaptToDark(d); } catch (_) { /* a message that cannot be adapted is shown as sent */ } }
       setHeight(Math.min(4000, Math.max(80, d.documentElement.scrollHeight + 4)));
       // Friday's page listens inside the frame (the frame is same-origin
       // but runs no scripts of its own) and opens the link itself.
@@ -180,9 +324,44 @@
       d.querySelectorAll('a[href]').forEach(a => { if (!a.title) a.title = a.getAttribute('href'); });
     };
     // allow-same-origin WITHOUT allow-scripts: nothing in the mail can run,
-    // and Friday can size the frame and handle its links. No allow-popups:
-    // the frame opens nothing itself.
-    return h('iframe', { ref, className: 'fm-body', title: 'Message', sandbox: 'allow-same-origin', srcDoc: doc, onLoad, style: { height } });
+    // and Friday can size the frame, adapt its colours and handle its links.
+    // No allow-popups: the frame opens nothing itself.
+    return h('iframe', { key: adapt ? 'a' : 'o', ref, className: 'fm-body' + (adapt ? ' adapted' : ''), title: 'Message', sandbox: 'allow-same-origin', srcDoc: doc, onLoad, style: { height }, 'data-adapted': adapt ? '1' : '0' });
+  }
+
+  // ── menus and dialogs ───────────────────────────────────────────────────
+  // One small menu for the right-click menu, labels, lanes and snooze.
+  // items: {label, ico, hint, onClick, off, checked, title} | {head} | {sep} | {input}
+  function Menu({ menu, onClose }) {
+    const ref = useRef(null);
+    const [pos, setPos] = useState({ left: menu.x, top: menu.y });
+    useEffect(() => {
+      const el = ref.current; if (!el) return;
+      const r = el.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+      setPos({ left: Math.max(6, Math.min(menu.x, W - r.width - 8)), top: Math.max(6, Math.min(menu.y, H - r.height - 8)) });
+      const off = e => { if (!el.contains(e.target)) onClose(); };
+      const key = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+      setTimeout(() => document.addEventListener('mousedown', off), 0);
+      document.addEventListener('keydown', key, true);
+      return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key, true); };
+    }, [menu]);
+    return h('div', { ref, className: 'fm-menu', role: 'menu', 'aria-label': menu.title || 'Menu', style: pos, onContextMenu: e => e.preventDefault() },
+      menu.items.map((it, k) => it.sep ? h('div', { key: k, className: 'sp' })
+        : it.head ? h('div', { key: k, className: 'hd' }, it.head)
+          : it.input ? h('div', { key: k, style: { padding: '4px 6px' } }, it.input)
+            : h('div', { key: k, role: 'menuitem', className: 'it' + (it.off ? ' off' : ''), title: it.title || '', 'aria-disabled': !!it.off,
+              onClick: () => { if (it.off) return; const keep = it.onClick && it.onClick(); if (keep !== true) onClose(); } },
+            h('span', { className: 'ic' }, it.checked === true ? '☑' : it.checked === false ? '☐' : (it.ico || '')), it.label, it.hint && h('span', { className: 'k' }, it.hint))));
+  }
+
+  function Dialog({ title, children, onClose }) {
+    useEffect(() => {
+      const key = e => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+      document.addEventListener('keydown', key, true);
+      return () => document.removeEventListener('keydown', key, true);
+    }, []);
+    return h('div', { className: 'fm-dialog', onMouseDown: e => { if (e.target === e.currentTarget) onClose(); } },
+      h('div', { role: 'dialog', 'aria-label': title }, h('h4', null, title), children));
   }
 
   // ── compose / reply / forward ───────────────────────────────────────────
@@ -216,8 +395,20 @@
         (c.name ? c.name + ' · ' : '') + c.email, h('span', { style: { color: '#6f86a6', marginLeft: 6, fontSize: 10 } }, c.source)))));
   }
 
+  // A Gmail signature is the owner's own HTML, but it goes into Friday's page,
+  // so anything active is removed first. Its images (a logo) stay.
+  const cleanSig = html => {
+    const d = new DOMParser().parseFromString(html || '', 'text/html');
+    d.querySelectorAll('script,style,link,meta,base,iframe,frame,object,embed,form,input,button,svg').forEach(n => n.remove());
+    d.querySelectorAll('*').forEach(n => [...n.attributes].forEach(at => {
+      const k = at.name.toLowerCase(), v = String(at.value || '');
+      if (k.startsWith('on') || (k === 'style' && /url\s*\(/i.test(v)) || ((k === 'href' || k === 'src') && !/^(https?:|mailto:|data:image\/)/i.test(v.trim()))) n.removeAttribute(at.name);
+    }));
+    return d.body.innerHTML;
+  };
+
   function Composer({ init, accounts, canSend, onClose, say }) {
-    const [from, setFrom] = useState(init.account_id || (canSend[0] && canSend[0].id) || '');
+    const [from, setFrom] = useState(init.account_id || (canSend[0] && canSend[0].id) || (accounts[0] && accounts[0].id) || '');
     const [to, setTo] = useState(init.to || '');
     const [cc, setCc] = useState(init.cc || '');
     const [bcc, setBcc] = useState('');
@@ -238,6 +429,26 @@
         try { const r = document.createRange(); r.setStart(ed.current, 0); r.collapse(true); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); } catch (_) {}
       }
     }, []);
+    // The sending account's own Gmail signature, where Gmail would put it:
+    // under what is typed and above anything quoted.
+    useEffect(() => {
+      if (!from || init.noSignature) return;
+      let live = true;
+      api('/api/mail/signature?account=' + encodeURIComponent(from)).then(r => r.json()).then(d => {
+        const el = ed.current;
+        if (!live || !el) return;
+        let slot = el.querySelector('.fm-sig');
+        const sig = d && d.status === 'ok' && d.signature ? cleanSig(d.signature) : '';
+        if (!sig) { if (slot) slot.innerHTML = ''; return; }
+        if (!slot) {
+          slot = document.createElement('div'); slot.className = 'fm-sig';
+          const q = el.querySelector('.fm-quote');
+          if (q) el.insertBefore(slot, q); else { el.appendChild(document.createElement('br')); el.appendChild(slot); }
+        }
+        slot.innerHTML = '-- <br>' + sig;
+      }).catch(() => {});
+      return () => { live = false; };
+    }, [from]);
     const cmd = (c, v) => { document.execCommand(c, false, v); ed.current && ed.current.focus(); };
     const upload = files => {
       Array.from(files || []).forEach(f => {
@@ -247,7 +458,6 @@
         }).catch(() => say('Could not attach ' + f.name));
       });
     };
-    const sendable = canSend.find(a => a.id === from);
     const fromAcct = accounts.find(a => a.id === from);
     const canDraft = !!(fromAcct && fromAcct.mail && fromAcct.mail.modify);
     const fields = () => {
@@ -343,15 +553,47 @@
         (!state || state.status === 'refused') && canDraft && h('button', { className: 'btn fm-btn', disabled: drafting, onClick: saveDraft, title: 'Save into your Gmail Drafts. Sends nothing.' }, drafting ? 'Saving…' : 'Save draft'),
         (!state || state.status === 'refused') && h('span', { style: { fontSize: 11, color: '#7f93ad', marginLeft: 4 } }, '⏰ Later'),
         (!state || state.status === 'refused') && h('input', { type: 'datetime-local', value: sendAt, onChange: e => setSendAt(e.target.value), title: 'Send later (optional). The time is part of what you approve.',
-          'aria-label': 'Send later', style: { background: '#0b1220', color: sendAt ? '#e6f0ff' : '#6f86a6', border: '1px solid #24406a', borderRadius: 6, fontSize: 11, padding: '4px 6px', minHeight: 28 } }),
+          'aria-label': 'Send later', style: { background: '#0b1220', color: sendAt ? '#e6f0ff' : '#6f86a6', border: '1px solid #24406a', borderRadius: 6, fontSize: 11, padding: '4px 6px', minHeight: 28, colorScheme: 'dark' } }),
         (!state || state.status === 'refused') && h('button', { className: 'btn fm-btn', disabled: busy, onClick: request, title: 'Files an approval card. Nothing is sent until you approve it.', style: { borderColor: '#00d4ff', color: '#00d4ff' } },
           busy ? 'Asking…' : sendAt ? 'Send later — asks for approval' : 'Send — asks for approval')));
   }
+
+  // Printing opens a plain copy of the conversation in a new window of
+  // Friday's own, with no scripts, and asks the browser to print it.
+  function printThread(subject, messages, showImages) {
+    const w = window.open('', '_blank');
+    if (!w) { alert('The browser blocked the print window. Allow pop-ups for Friday and try again.'); return; }
+    const clean = html => {
+      const d = new DOMParser().parseFromString(html || '', 'text/html');
+      d.querySelectorAll('script,iframe,frame,object,embed,form,base,link,meta').forEach(n => n.remove());
+      d.querySelectorAll('*').forEach(n => [...n.attributes].forEach(at => { if (/^on/i.test(at.name) || /^\s*javascript:/i.test(at.value)) n.removeAttribute(at.name); }));
+      if (!showImages) d.querySelectorAll('img').forEach(img => { if (/^https?:/i.test(img.getAttribute('src') || '')) img.removeAttribute('src'); });
+      return d.body.innerHTML;
+    };
+    const parts = messages.map(m => '<section><div class="h"><b>' + esc(m.sender) + '</b><br>' + esc(m.date || '') + (m.to ? '<br>To: ' + esc(m.to) : '') + (m.cc ? '<br>Cc: ' + esc(m.cc) : '') + '</div>' +
+      (m.html ? clean(m.html) : '<pre>' + esc(m.body) + '</pre>') + '</section>');
+    w.document.open();
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(subject) + '</title><meta http-equiv="Content-Security-Policy" content="script-src \'none\'">' +
+      '<style>body{font:13px/1.5 Arial,sans-serif;margin:24px;color:#111}h1{font-size:18px}section{border-top:1px solid #ccc;padding:12px 0}.h{color:#444;font-size:12px;margin-bottom:8px}pre{white-space:pre-wrap;font:inherit}img{max-width:100%}</style></head><body><h1>' +
+      esc(subject) + '</h1>' + parts.join('') + '</body></html>');
+    w.document.close();
+    try { w.opener = null; } catch (_) {}
+    setTimeout(() => { try { w.focus(); w.print(); } catch (_) {} }, 300);
+  }
+
+  // Settings › Connectors, where an account is reconnected with sending.
+  const openReconnect = () => {
+    window.__fridaySettingsTab = 'connectors';
+    try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'connectors' } })); } catch (_) {}
+    if (window.__FRIDAY_STANDALONE__ || !window.fridayRunActions) window.open('/?workspace=settings', '_blank');
+    else window.fridayRunActions([{ type: 'navigate', workspace: 'settings', tab: 'connectors' }]);
+  };
 
   // ── the panel ───────────────────────────────────────────────────────────
   function FridayMailPanel() {
     const [acct, setAcct] = useState('all');
     const [lane, setLane] = useState('all');
+    const [folder, setFolder] = useState('');
     const [data, setData] = useState(null);          // /api/messages response
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -362,6 +604,7 @@
     const [focus, setFocus] = useState(0);
     const [open, setOpen] = useState(null);           // {card, loading, res}
     const [showImages, setShowImages] = useState(false);
+    const [original, setOriginal] = useState(() => store.get('fm_show_original', {}));   // sender -> true
     const [compose, setCompose] = useState(null);
     const [toast, setToast] = useState(null);
     const [labelsBy, setLabelsBy] = useState({});      // account id -> its own Gmail labels
@@ -370,104 +613,137 @@
     const [accounts, setAccounts] = useState([]);
     const [canSend, setCanSend] = useState([]);
     const [aiDraft, setAiDraft] = useState(null);
+    const [menu, setMenu] = useState(null);
+    const [dialog, setDialog] = useState(null);
+    const [busyIds, setBusyIds] = useState(() => new Set());
+    const [sideOpen, setSideOpen] = useState(() => store.get('fm_side', null));
+    const [wide, setWide] = useState(true);
     const undoStack = useRef([]);
-    const boxRef = useRef(null), searchRef = useRef(null), listRef = useRef(null);
+    const boxRef = useRef(null), searchRef = useRef(null), listRef = useRef(null), starRef = useRef(0);
 
-    const say = (text, undo) => { setToast({ text, undo, t: Date.now() }); };
-    useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(x => x === toast ? null : x), toast.undo ? 7000 : 3500); return () => clearTimeout(t); }, [toast]);
+    const say = (text, undo, err) => { setToast({ text, undo, err, t: Date.now() }); };
+    useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(x => x === toast ? null : x), toast.undo ? 8000 : 4500); return () => clearTimeout(t); }, [toast]);
+    // the folders go down the side when there is room for them
+    useEffect(() => {
+      const el = boxRef.current; if (!el || !window.ResizeObserver) return;
+      const ro = new ResizeObserver(() => setWide(el.offsetWidth >= 980));
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, []);
+    const showSide = sideOpen == null ? wide : sideOpen;
 
     const seq = useRef(0);
-    const load = useCallback((q) => {
+    const load = useCallback((q, f) => {
       const n = ++seq.current;
       setLoading(true);
-      // results of a different search are never shown under this one's name
-      setData(d => (d && (d.query || '') === (q || '')) ? d : null);
-      const url = '/api/messages?limit=80' + (q ? '&q=' + encodeURIComponent(q) : '');
-      const done = d => { if (n !== seq.current) return; setData(d); setLoading(false); };
-      api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, query: q || null, error: "Couldn't reach Friday: " + e }));
-      if (!q) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
+      // results of a different search or folder are never shown under this one's name
+      setData(d => (d && (d.query || '') === (q || '') && (d.folder || '') === (f || '')) ? d : null);
+      const url = '/api/messages?limit=80' + (q ? '&q=' + encodeURIComponent(q) : '') + (f ? '&folder=' + encodeURIComponent(f) : '');
+      const done = d => { if (n !== seq.current) return; if (d) { d.query = q || ''; d.folder = f || ''; } setData(d); setLoading(false); };
+      api(url).then(r => r.json()).then(done).catch(e => done({ status: 'error', search_failed: true, error: "Couldn't reach Friday: " + e }));
+      if (!q && !f) api('/api/messages/stats').then(r => r.json()).then(d => { setStats(d); if (d.actionable != null) window._fridayMsgActionable = d.actionable; }).catch(() => {});
     }, []);
-    useEffect(() => { load(query); }, [query]);
-    useEffect(() => { const iv = setInterval(() => { if (!query) load(''); }, 60000); return () => clearInterval(iv); }, [query]);
+    useEffect(() => { load(query, folder); setSel(new Set()); setFocus(0); }, [query, folder]);
+    useEffect(() => { const iv = setInterval(() => { if (!query && !folder && document.visibilityState !== 'hidden') load('', ''); }, 60000); return () => clearInterval(iv); }, [query, folder]);
     useEffect(() => {
-      api('/api/google/accounts').then(r => r.json()).then(d => setAccounts((d.accounts || []).filter(a => (a.services || []).includes('gmail')))).catch(() => {});
+      api('/api/google/accounts').then(r => r.json()).then(d => setAccounts((d.accounts || []).filter(hasGmail))).catch(() => {});
       api('/api/mail/can-send').then(r => r.json()).then(d => setCanSend(d.accounts || [])).catch(() => {});
     }, []);
+    // every account's own labels, for the side, the rows and the label menu
+    useEffect(() => { accounts.forEach(a => loadLabels(a.id)); }, [accounts.length]);
 
-    // deep link {workspace:'messages', lane, thread_id}
+    // deep link {workspace:'messages', lane, thread_id, folder}
     const pending = useRef(null);
     useEffect(() => {
-      const apply = t => { if (!t || t.workspace !== 'messages') return; if (t.lane) setLane(t.lane); if (t.thread_id) pending.current = t.thread_id; };
+      const apply = t => { if (!t || t.workspace !== 'messages') return; if (t.lane) setLane(t.lane); if (t.folder != null) setFolder(t.folder); if (t.thread_id) pending.current = { id: t.thread_id, reply: !!t.reply }; };
       apply(window.__fridayNavTarget);
       const f = e => apply(e.detail || {});
       window.addEventListener('friday-nav', f);
       return () => window.removeEventListener('friday-nav', f);
     }, []);
-    // what its own tab (↗) opens on: the same keys as the deep link above
-    (window.fridayUseTabState || function () {})('messages', () => ({
-      lane: lane !== 'all' ? lane : '', thread_id: open ? (open.card.thread_id || open.card.id) : '' }));
 
     const all = (data && data.messages) || [];
     const shown = all.filter(m => (acct === 'all' || m.account_id === acct) && (lane === 'all' || m.lane === lane) && (!unreadOnly || m.unread));
+    const replyWhenOpen = useRef(null);
     useEffect(() => {
       if (!pending.current || !all.length) return;
-      const m = all.find(x => x.thread_id === pending.current || x.id === pending.current);
-      if (m) { pending.current = null; openThread(m); }
+      const want = pending.current;
+      const m = all.find(x => x.thread_id === want.id || x.id === want.id);
+      if (m) { pending.current = null; if (want.reply) replyWhenOpen.current = m.id; openThread(m); }
     }, [data]);
+    // "Reply" from 3D triage: open the conversation, then start the reply
+    useEffect(() => {
+      if (open && replyWhenOpen.current === open.card.id && open.res && open.res.status === 'ok') { replyWhenOpen.current = null; startReply('reply'); }
+    }, [open]);
     useEffect(() => { if (focus >= shown.length) setFocus(Math.max(0, shown.length - 1)); }, [shown.length]);
 
     const patch = (ids, fn) => setData(d => d && Object.assign({}, d, { messages: (d.messages || []).map(m => ids.includes(m.id) ? fn(m) : m) }));
     const drop = ids => setData(d => d && Object.assign({}, d, { messages: (d.messages || []).filter(m => !ids.includes(m.id)) }));
 
-    // Friday-local actions; each one can be undone exactly.
-    const canModify = aid => { const a = accounts.find(x => x.id === aid); return !!(a && a.mail && a.mail.modify); };
+    const acctOf = aid => accounts.find(x => x.id === aid);
+    const canModify = aid => { const a = acctOf(aid); return !!(a && a.mail && a.mail.modify); };
+    const readOnlyAccts = accounts.filter(a => !(a.mail && a.mail.modify));
     const loadLabels = aid => {
-      if (!aid || labelsBy[aid] || !canModify(aid)) return;
-      api('/api/mail/labels?account=' + encodeURIComponent(aid)).then(r => r.json()).then(d => {
-        if (d.status === 'ok') setLabelsBy(m => Object.assign({}, m, { [aid]: d.labels || [] }));
-      }).catch(() => {});
+      if (!aid || labelsBy[aid]) return Promise.resolve(labelsBy[aid] || []);
+      return api('/api/mail/labels?account=' + encodeURIComponent(aid)).then(r => r.json()).then(d => {
+        const list = d.status === 'ok' ? d.labels || [] : [];
+        setLabelsBy(m => Object.assign({}, m, { [aid]: list }));
+        return list;
+      }).catch(() => []);
     };
-    // A Gmail label on a whole conversation; undo takes off exactly what was put on.
-    const applyLabel = (card, labelId, name) => {
-      const aid = card.account_id, tid = card.thread_id || card.gmail_id;
-      post('/api/mail/modify', { account_id: aid, thread_ids: [tid], add: [labelId] }).then(({ ok, j }) => {
-        if (!ok || j.status !== 'ok' || (j.failed && j.failed[tid])) { say((j && j.message) || (j && j.failed && j.failed[tid]) || 'Gmail did not add the label.'); return; }
-        const u = { label: 'label', gmailOnly: { account_id: aid, changed: j.changed } };
-        undoStack.current.push(u);
-        say('Labelled “' + name + '” in Gmail', u);
-      }).catch(() => say('Could not reach Friday.'));
-    };
-    const newLabel = card => {
-      const name = (window.prompt('New Gmail label name') || '').trim();
-      if (!name) return;
-      post('/api/mail/labels', { account_id: card.account_id, name }).then(({ ok, j }) => {
-        if (!ok || j.status !== 'ok') { say(j.message || 'Gmail did not create the label.'); return; }
-        setLabelsBy(m => Object.assign({}, m, { [card.account_id]: (m[card.account_id] || []).concat([j.label]) }));
-        applyLabel(card, j.label.id, j.label.name);
-      }).catch(() => say('Could not reach Friday.'));
-    };
+    const labelName = (aid, id) => { const l = (labelsBy[aid] || []).find(x => x.id === id); return l ? l.name : null; };
+    const allLabelNames = () => Array.from(new Set([].concat.apply([], Object.keys(labelsBy).filter(a => acct === 'all' || a === acct).map(a => (labelsBy[a] || []).map(l => l.name))))).sort((a, b) => a.localeCompare(b));
+
+    // ── acting on conversations ──
+    // The row stays where it is (dimmed) until Friday answers; it changes
+    // only after the server, and Gmail where it applies, confirm.
+    const NOUN = { archive: 'Archived', trash: 'Moved to Trash', untrash: 'Restored from Trash', spam: 'Reported as spam', notspam: 'Marked not spam',
+      snooze: 'Snoozed', flag: 'Starred', unflag: 'Unstarred', read: 'Marked read', unread: 'Marked unread', important: 'Marked important',
+      unimportant: 'Marked not important', mute: 'Muted', unmute: 'Unmuted', unarchive: 'Moved to Inbox' };
+    const AWAY = ['archive', 'trash', 'untrash', 'spam', 'notspam', 'snooze', 'mute'];
     const act = (cards, action, opts) => {
       cards = cards.filter(Boolean);
+      opts = opts || {};
       if (!cards.length) return Promise.resolve();
       const asked = cards.map(c => c.id);
       const prev = cards.map(c => Object.assign({}, c));
       // each card's account and conversation, so Gmail itself changes where allowed
       const gmail = cards.map(c => ({ id: c.id, account_id: c.account_id, thread_id: c.thread_id || c.gmail_id }));
-      return post('/api/messages/action', { ids: asked, action, gmail }).then(({ ok, j }) => {
-        if (!ok || j.status === 'error') { say(j.message || 'That did not work.'); return; }
+      setBusyIds(s => new Set([].concat(Array.from(s), asked)));
+      const body = { ids: asked, action, gmail, requested_by: 'ui:messages' };
+      if (opts.until) body.until = opts.until;
+      return post('/api/messages/action', body).then(({ ok, j }) => {
+        setBusyIds(s => { const n = new Set(s); asked.forEach(i => n.delete(i)); return n; });
+        const refusedMap = (j && j.not_changed) || {};
+        if (!ok || j.status === 'error') {
+          const why = j.message || 'That did not work.';
+          say(why, null, true);
+          if (/Reconnect/.test(why)) setDialog({ kind: 'reconnect', why });
+          return;
+        }
         const ids = j.ids || asked;                    // conversations Gmail refused are left as they were
         const st = Object.values(j.gmail_status || {});
-        const where = st.includes('synced') && !st.includes('not_permitted') ? ' (also in Gmail)'
-          : st.includes('synced') ? ' (in Gmail where allowed; the rest in Friday only)'
-            : ' (in Friday only' + (st.includes('not_permitted') ? ' — Reconnect with sending to change Gmail too' : '') + ')';
-        const refused = Object.keys(j.not_changed || {}).length;
-        if (action === 'archive' || action === 'snooze') { drop(ids); if (open && ids.includes(open.card.id)) setOpen(null); }
-        else patch(ids, m => Object.assign({}, m, action === 'flag' ? { flagged: true } : action === 'unflag' ? { flagged: false } : action === 'read' ? { unread: false } : action === 'unread' ? { unread: true } : {}));
-        const undo = { before: j.before, gmail: j.gmail_changes || {}, cards: prev.filter(c => ids.includes(c.id)), label: action };
+        const where = ['snooze', 'mute', 'unmute'].includes(action) ? ' (in Friday only)'
+          : ['trash', 'untrash', 'spam', 'notspam', 'important', 'unimportant'].includes(action) ? ' in Gmail'
+            : st.includes('synced') && !st.includes('not_permitted') ? ' (also in Gmail)'
+              : st.includes('synced') ? ' (in Gmail where allowed; the rest in Friday only)'
+                : ' (in Friday only' + (st.includes('not_permitted') ? ' — Reconnect with sending to change Gmail too' : '') + ')';
+        const refused = Object.keys(refusedMap).length;
+        const leaves = AWAY.includes(action) || (folder === 'starred' && action === 'unflag') || (folder === 'important' && action === 'unimportant');
+        if (leaves) { drop(ids); if (open && ids.includes(open.card.id)) setOpen(null); }
+        else patch(ids, m => Object.assign({}, m, { flag: { flagged: true }, unflag: { flagged: false }, read: { unread: false }, unread: { unread: true },
+          important: { important: true }, unimportant: { important: false } }[action] || {}));
+        if (open && ids.includes(open.card.id) && !leaves) setOpen(o => o && Object.assign({}, o, { card: Object.assign({}, o.card, { flag: { flagged: true }, unflag: { flagged: false }, read: { unread: false }, unread: { unread: true }, important: { important: true }, unimportant: { important: false } }[action] || {}) }));
+        const undo = { before: j.before, gmail: j.gmail_changes || {}, cards: prev.filter(c => ids.includes(c.id)), label: action, away: leaves };
         undoStack.current.push(undo);
-        if (!(opts && opts.silent)) say(({ archive: 'Archived', snooze: 'Snoozed for 4 hours', flag: 'Flagged', unflag: 'Unflagged', read: 'Marked read', unread: 'Marked unread' }[action] || action) + (ids.length > 1 ? ' · ' + ids.length + ' messages' : '') + (action === 'snooze' ? ' (in Friday only)' : where) + (refused ? ' · ' + refused + ' not changed (Gmail refused)' : ''), undo);
+        if (!opts.silent) {
+          const msg = (NOUN[action] || action) + (action === 'snooze' && opts.untilText ? ' until ' + opts.untilText : '') + (ids.length > 1 ? ' · ' + ids.length + ' conversations' : '') + where +
+            (action === 'trash' ? '. Gmail keeps it in Trash for 30 days.' : '') +
+            (refused ? ' · ' + refused + ' not changed: ' + Object.values(refusedMap)[0] : '');
+          say(msg, ids.length ? undo : null, refused > 0);
+        }
         setSel(new Set());
-      });
+      }).catch(() => { setBusyIds(s => { const n = new Set(s); asked.forEach(i => n.delete(i)); return n; }); say('Could not reach Friday. Nothing changed.', null, true); });
     };
     const moveLane = (cards, newLane) => {
       cards = cards.filter(Boolean);
@@ -475,24 +751,66 @@
         const before = {};
         const moved = cards.filter((c, k) => rs[k].ok);
         rs.forEach(r => r.ok && Object.assign(before, (r.j && r.j.before) || {}));
-        if (!moved.length) { say('Nothing moved: ' + ((rs[0] && rs[0].j && rs[0].j.message) || 'Friday refused the change.')); return; }
+        if (!moved.length) { say('Nothing moved: ' + ((rs[0] && rs[0].j && rs[0].j.message) || 'Friday refused the change.'), null, true); return; }
         patch(moved.map(c => c.id), m => Object.assign({}, m, { lane: newLane }));
+        if (open && moved.some(c => c.id === open.card.id)) setOpen(o => o && Object.assign({}, o, { card: Object.assign({}, o.card, { lane: newLane }) }));
         const undo = { before, cards: moved.map(c => Object.assign({}, c)), label: 'move' };
         undoStack.current.push(undo);
-        say('Moved to ' + laneLabel(newLane) + (moved.length > 1 ? ' · ' + moved.length + ' messages' : '') + (moved.length < cards.length ? ' · ' + (cards.length - moved.length) + ' could not be moved' : ''), undo);
+        say('Moved to ' + laneLabel(newLane) + (moved.length > 1 ? ' · ' + moved.length + ' conversations' : '') + ' (Friday learns from it)' + (moved.length < cards.length ? ' · ' + (cards.length - moved.length) + ' could not be moved' : ''), undo);
         setSel(new Set());
       });
+    };
+    // Gmail labels, by name: each account has its own, so the same name is
+    // looked up per account. Adding a label an account lacks is refused for
+    // that account and said so.
+    const setLabel = (cards, name, on) => {
+      cards = cards.filter(Boolean);
+      const byAcct = {};
+      cards.forEach(c => { (byAcct[c.account_id] = byAcct[c.account_id] || []).push(c); });
+      const accts = Object.keys(byAcct);
+      Promise.all(accts.map(aid => loadLabels(aid).then(list => {
+        if (!canModify(aid)) return { aid, err: (acctOf(aid) || {}).label + ' has not allowed Friday to change Gmail labels' };
+        const lab = list.find(l => l.name === name);
+        if (!lab) return { aid, err: (acctOf(aid) || {}).label + ' has no label “' + name + '”' };
+        const tids = byAcct[aid].map(c => c.thread_id || c.gmail_id);
+        return post('/api/mail/modify', { account_id: aid, thread_ids: tids, add: on ? [lab.id] : [], remove: on ? [] : [lab.id] })
+          .then(({ ok, j }) => ok && j.status === 'ok' ? { aid, changed: j.changed, lab, cards: byAcct[aid] } : { aid, err: j.message || 'Gmail refused' });
+      }))).then(rs => {
+        const done = rs.filter(r => r.changed), bad = rs.filter(r => r.err);
+        done.forEach(r => patch(r.cards.map(c => c.id), m => Object.assign({}, m, { labels: on ? Array.from(new Set((m.labels || []).concat([r.lab.id]))) : (m.labels || []).filter(x => x !== r.lab.id) })));
+        if (!done.length) { say('Label not changed: ' + (bad[0] ? bad[0].err : 'nothing to change'), null, true); if (bad.some(b => /allowed/.test(b.err))) setDialog({ kind: 'reconnect', why: bad[0].err }); return; }
+        const u = { label: 'label', gmailMulti: done.map(r => ({ account_id: r.aid, changed: r.changed })), cards: done.reduce((a, r) => a.concat(r.cards), []), labelPatch: { id: done.map(r => r.lab.id), on } };
+        undoStack.current.push(u);
+        say((on ? 'Labelled “' : 'Removed “') + name + '”' + (on ? '' : ' label') + ' in Gmail' + (bad.length ? ' · ' + bad.map(b => b.err).join('; ') : ''), u, !!bad.length);
+        setSel(new Set());
+      });
+    };
+    const newLabel = cards => {
+      const name = (window.prompt('New Gmail label name') || '').trim();
+      if (!name) return;
+      const aids = Array.from(new Set(cards.map(c => c.account_id)));
+      Promise.all(aids.map(aid => post('/api/mail/labels', { account_id: aid, name }).then(({ ok, j }) => {
+        if (ok && j.status === 'ok') setLabelsBy(m => Object.assign({}, m, { [aid]: (m[aid] || []).concat([j.label]) }));
+        return ok && j.status === 'ok' ? j.label : null;
+      }))).then(made => {
+        if (!made.some(Boolean)) { say('Gmail did not create the label (the account may be read-only).', null, true); return; }
+        setTimeout(() => setLabel(cards, name, true), 50);
+      }).catch(() => say('Could not reach Friday.', null, true));
     };
     const undo = u => {
       u = u || undoStack.current.pop();
       if (!u) { say('Nothing to undo.'); return; }
       undoStack.current = undoStack.current.filter(x => x !== u);
-      if (u.gmailOnly) {
-        post('/api/mail/modify/undo', u.gmailOnly).then(({ ok, j }) => { setToast(null); say(ok && j.status === 'ok' ? 'Undone in Gmail.' : 'Undo failed in Gmail.'); });
+      if (u.gmailMulti) {
+        Promise.all(u.gmailMulti.map(g => post('/api/mail/modify/undo', g))).then(rs => {
+          const ok = rs.every(r => r.ok && r.j.status === 'ok');
+          if (ok) load(query, folder);
+          setToast(null); say(ok ? 'Undone in Gmail.' : 'Undo failed in Gmail.', null, !ok);
+        });
         return;
       }
-      post('/api/messages/restore', { states: u.before, gmail_changes: u.gmail || {} }).then(({ ok }) => {
-        if (!ok) { say('Undo failed.'); return; }
+      post('/api/messages/restore', { states: u.before, gmail_changes: u.gmail || {} }).then(({ ok, j }) => {
+        if (!ok || (j.gmail_failed && Object.keys(j.gmail_failed).length)) { say('Undo failed' + (ok ? ' in Gmail for some conversations.' : '.'), null, true); if (!ok) return; }
         setData(d => {
           if (!d) return d;
           const map = new Map(u.cards.map(c => [c.id, c]));
@@ -510,8 +828,8 @@
       setShowImages(false); setAiDraft(null);
       if (m.unread) act([m], 'read', { silent: true });
       api('/api/messages/' + encodeURIComponent(m.thread_id || m.id) + (m.account_id ? '?account=' + encodeURIComponent(m.account_id) : ''))
-        .then(r => r.json()).then(res => setOpen(o => o && o.card.id === m.id ? { card: m, loading: false, res } : o))
-        .catch(e => setOpen(o => o && o.card.id === m.id ? { card: m, loading: false, res: { status: 'error', error: "Couldn't reach Friday: " + e } } : o));
+        .then(r => r.json()).then(res => setOpen(o => o && o.card.id === m.id ? { card: o.card, loading: false, res } : o))
+        .catch(e => setOpen(o => o && o.card.id === m.id ? { card: o.card, loading: false, res: { status: 'error', error: "Couldn't reach Friday: " + e } } : o));
     };
 
     // The quoted original goes into an editor in Friday's own page, outside
@@ -529,9 +847,9 @@
       return d.body.innerHTML;
     };
     const bodyOf = msg => msg.html ? quotable(msg.html) : esc(msg.body).replace(/\n/g, '<br>');
-    const quoteOf = msg => '<br><br><div>On ' + esc(msg.date || '') + ', ' + esc(msg.sender) + ' wrote:</div><blockquote>' + bodyOf(msg) + '</blockquote>';
+    const quoteOf = msg => '<br><div class="fm-sig"></div><div class="fm-quote"><br><div>On ' + esc(msg.date || '') + ', ' + esc(msg.sender) + ' wrote:</div><blockquote>' + bodyOf(msg) + '</blockquote></div>';
     // a mailto: link in a message starts a new message (sent only on approval)
-    const mailtoCompose = href => {
+    const mailtoCompose = (href, extra) => {
       let to = '', subject = '', body = '';
       try {
         const u = new URL(href);
@@ -539,7 +857,7 @@
         subject = u.searchParams.get('subject') || '';
         body = u.searchParams.get('body') || '';
       } catch (_) { to = String(href).replace(/^mailto:/i, '').split('?')[0]; }
-      setCompose({ mode: 'new', account_id: open && open.res && open.res.account_id, to, subject, html: esc(body).replace(/\n/g, '<br>') });
+      setCompose(Object.assign({ mode: 'new', account_id: open && open.res && open.res.account_id, to, subject, html: esc(body).replace(/\n/g, '<br>') }, extra || {}));
     };
     const startReply = mode => {
       const msgs = open && open.res && open.res.messages;
@@ -549,7 +867,7 @@
       const subj = last.subject || '';
       if (mode === 'forward') {
         setCompose({ mode, account_id: open.res.account_id, to: '', subject: /^fwd?:/i.test(subj) ? subj : 'Fwd: ' + subj,
-          html: '<br><br><div>---------- Forwarded message ---------<br>From: ' + esc(last.sender) + '<br>Date: ' + esc(last.date) + '<br>Subject: ' + esc(subj) + '<br>To: ' + esc(last.to) + '</div><br>' + bodyOf(last),
+          html: '<br><div class="fm-sig"></div><div class="fm-quote"><br><div>---------- Forwarded message ---------<br>From: ' + esc(last.sender) + '<br>Date: ' + esc(last.date) + '<br>Subject: ' + esc(subj) + '<br>To: ' + esc(last.to) + '</div><br>' + bodyOf(last) + '</div>',
           forward: (last.attachments || []).map(a => ({ account_id: open.res.account_id, message_id: last.id, attachment_id: a.attachment_id, filename: a.filename, mime: a.mime })) });
         return;
       }
@@ -573,9 +891,109 @@
         .catch(() => setAiDraft({ busy: false, text: '', error: 'Friday could not draft a reply.' }));
     };
 
+    // ── unsubscribe, original, filter-like-these ──
+    const firstMessageId = card => {
+      const msgs = open && open.card.id === card.id && open.res && open.res.messages;
+      if (msgs && msgs.length) return Promise.resolve(msgs[msgs.length - 1].id);
+      return api('/api/messages/' + encodeURIComponent(card.thread_id || card.id) + '?account=' + encodeURIComponent(card.account_id || ''))
+        .then(r => r.json()).then(d => { const ms = d.messages || []; return ms.length ? ms[ms.length - 1].id : null; });
+    };
+    const unsubscribe = card => {
+      firstMessageId(card).then(mid => {
+        if (!mid) { say('Could not read that message to find its unsubscribe link.', null, true); return; }
+        api('/api/mail/unsubscribe?account=' + encodeURIComponent(card.account_id) + '&message=' + encodeURIComponent(mid)).then(r => r.json()).then(opt => {
+          if (opt.status !== 'ok') { say(opt.message || 'This message does not say how to unsubscribe.', null, true); return; }
+          setDialog({ kind: 'unsub', card, mid, opt });
+        });
+      }).catch(() => say('Could not reach Friday.', null, true));
+    };
+    const doUnsubscribe = d => {
+      setDialog(null);
+      if (d.opt.method === 'link') { openLink(d.opt.url); say('Opened the list’s own unsubscribe page in your browser.'); return; }
+      post('/api/mail/unsubscribe', { account_id: d.card.account_id, message_id: d.mid, confirmed: true, requested_by: 'ui:messages' }).then(({ ok, j }) => {
+        if (j.status === 'done') { say(j.message || 'Unsubscribed.'); return; }
+        if (j.status === 'next' && j.method === 'mailto') {
+          mailtoCompose('mailto:' + j.mailto.to + '?subject=' + encodeURIComponent(j.mailto.subject) + '&body=' + encodeURIComponent(j.mailto.body), { account_id: d.card.account_id, noSignature: true });
+          say('The unsubscribe message is ready; sending it asks for your approval.');
+          return;
+        }
+        if (j.status === 'next' && j.method === 'link') { openLink(j.url); return; }
+        say(j.message || 'Could not unsubscribe.', null, true);
+      }).catch(() => say('Could not reach Friday.', null, true));
+    };
+    const showOriginal = (card, msg) => {
+      setDialog({ kind: 'original', loading: true, card, msg });
+      api('/api/mail/original?account=' + encodeURIComponent(card.account_id) + '&message=' + encodeURIComponent(msg.id)).then(r => r.json())
+        .then(d => setDialog(x => x && x.kind === 'original' ? Object.assign({}, x, { loading: false, d }) : x))
+        .catch(e => setDialog(x => x && x.kind === 'original' ? Object.assign({}, x, { loading: false, d: { status: 'error', message: String(e) } }) : x));
+    };
+    const filterLike = card => {
+      const who = card.sender_email || addrOf(card.sender);
+      setFolder(''); setQInput('from:' + who); setQuery('from:' + who);
+      say('Showing everything from ' + who + '. Saving this as a Gmail filter needs Gmail’s settings permission, which Friday has not asked for.');
+    };
+    const toggleOriginal = sender => {
+      const k = (sender || '').toLowerCase();
+      setOriginal(o => { const n = Object.assign({}, o); if (n[k]) delete n[k]; else n[k] = true; store.set('fm_show_original', n); return n; });
+    };
+
     const selected = () => shown.filter(m => sel.has(m.id));
     const targets = () => { const s = selected(); return s.length ? s : open ? [open.card] : shown[focus] ? [shown[focus]] : []; };
     const toggleSel = (m, e) => { setSel(s => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; }); if (e) e.stopPropagation(); };
+    const inTrash = folder === 'trash', inSpam = folder === 'spam';
+
+    // ── menus ──
+    const rowPoint = () => {
+      const row = listRef.current && listRef.current.querySelector('.fm-row.focus');
+      const r = row ? row.getBoundingClientRect() : { left: 200, bottom: 200, width: 0 };
+      return { x: r.left + Math.min(260, r.width / 2), y: r.bottom };
+    };
+    const snoozeMenu = (cards, p) => setMenu(Object.assign({ title: 'Snooze until', items: [{ head: 'Snooze until… (in Friday only)' }].concat(
+      snoozeChoices().map(([label, d]) => ({ label, hint: fmtUntil(d), ico: '⏰', onClick: () => act(cards, 'snooze', { until: localIso(d), untilText: fmtUntil(d) }) })),
+      [{ sep: true }, { label: 'Pick date & time…', ico: '📅', onClick: () => { setDialog({ kind: 'snooze', cards }); } }]) }, p));
+    const laneMenu = (cards, p) => setMenu(Object.assign({ title: 'Move to lane', items: [{ head: 'Friday’s lanes (Friday learns from it)' }].concat(
+      Object.keys(LANES).filter(k => k !== 'all').map(k => ({ label: LANES[k][0], ico: LANES[k][1], checked: cards.length === 1 ? cards[0].lane === k : undefined, onClick: () => moveLane(cards, k) }))) }, p));
+    const labelMenu = (cards, p) => {
+      const aids = Array.from(new Set(cards.map(c => c.account_id)));
+      Promise.all(aids.map(loadLabels)).then(() => {
+        const names = Array.from(new Set([].concat.apply([], aids.map(a => (labelsBy[a] || []).map(l => l.name))))).sort((a, b) => a.localeCompare(b));
+        const has = name => cards.every(c => (c.labels || []).some(id => labelName(c.account_id, id) === name));
+        const ro = aids.filter(a => !canModify(a));
+        setMenu(Object.assign({ title: 'Label as', items: [{ head: 'Gmail labels' + (ro.length ? ' (read-only account)' : '') }].concat(
+          names.length ? names.map(n => ({ label: n, checked: has(n), off: ro.length === aids.length, title: ro.length === aids.length ? 'Reconnect with sending to label in Gmail' : '', onClick: () => setLabel(cards, n, !has(n)) })) : [{ label: 'No labels yet', off: true }],
+          [{ sep: true }, { label: 'New label…', ico: '＋', off: ro.length === aids.length, onClick: () => newLabel(cards) },
+            { sep: true }, { head: 'Friday’s lanes' }],
+          Object.keys(LANES).filter(k => k !== 'all').map(k => ({ label: LANES[k][0], ico: LANES[k][1], checked: cards.length === 1 ? cards[0].lane === k : undefined, onClick: () => moveLane(cards, k) }))) }, p));
+      });
+    };
+    const moreItems = (cards) => {
+      const one = cards.length === 1 ? cards[0] : null;
+      return [
+        { label: 'Mute', ico: '🔕', hint: 'm', title: 'Hide this conversation and keep new replies out of view (in Friday only)', onClick: () => act(cards, 'mute') },
+        inSpam ? { label: 'Not spam', ico: '✅', onClick: () => act(cards, 'notspam') } : { label: 'Report spam', ico: '⚠', hint: '!', onClick: () => act(cards, 'spam') },
+        { label: cards.every(c => c.important) ? 'Mark not important' : 'Mark important', ico: '❗', hint: cards.every(c => c.important) ? '-' : '+', onClick: () => act(cards, cards.every(c => c.important) ? 'unimportant' : 'important') },
+        one && { sep: true },
+        one && one.list_unsubscribe && { label: 'Unsubscribe…', ico: '✂', title: 'Leave this mailing list (confirms first)', onClick: () => unsubscribe(one) },
+        one && { label: 'Filter messages like these', ico: '⧩', onClick: () => filterLike(one) },
+        one && { label: 'Block sender', ico: '⛔', off: true, title: 'Blocking is a Gmail filter; it needs Gmail’s settings permission, which Friday has not asked for yet.' }
+      ].filter(Boolean);
+    };
+    const contextMenu = (m, e) => {
+      e.preventDefault();
+      const cards = sel.has(m.id) ? selected() : [m];
+      const one = cards.length === 1;
+      setMenu({ x: e.clientX, y: e.clientY, title: 'Message actions', items: [
+        one && { label: 'Open', ico: '↗', hint: 'o', onClick: () => openThread(m) },
+        one && { sep: true },
+        inTrash ? { label: 'Restore to Inbox', ico: '↩', onClick: () => act(cards, 'untrash') } : { label: 'Archive', ico: '🗄', hint: 'e', onClick: () => act(cards, 'archive') },
+        !inTrash && { label: 'Delete (to Trash)', ico: '🗑', hint: '#', onClick: () => act(cards, 'trash') },
+        { label: cards.every(c => c.unread) ? 'Mark read' : 'Mark unread', ico: '✉', hint: cards.every(c => c.unread) ? 'Shift+I' : 'Shift+U', onClick: () => act(cards, cards.every(c => c.unread) ? 'read' : 'unread') },
+        { label: cards.every(c => c.flagged) ? 'Unstar' : 'Star', ico: '⭐', hint: 's', onClick: () => act(cards, cards.every(c => c.flagged) ? 'unflag' : 'flag') },
+        { label: 'Snooze…', ico: '⏰', hint: 'b', onClick: () => { snoozeMenu(cards, { x: e.clientX, y: e.clientY }); return true; } },
+        { label: 'Label as…', ico: '🏷', hint: 'l', onClick: () => { labelMenu(cards, { x: e.clientX, y: e.clientY }); return true; } },
+        { label: 'Move to lane…', ico: '🗂', hint: 'v', onClick: () => { laneMenu(cards, { x: e.clientX, y: e.clientY }); return true; } },
+        { sep: true }].concat(moreItems(cards)).filter(Boolean) });
+    };
 
     const onKey = e => {
       const tag = (e.target.tagName || '').toLowerCase();
@@ -583,9 +1001,15 @@
         if (e.key === 'Escape' && e.target === searchRef.current) { searchRef.current.blur(); boxRef.current && boxRef.current.focus(); }
         return;
       }
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || menu || dialog) return;
       const k = e.key;
       const cur = shown[focus];
+      // * then a / n / r / u : select all, none, read, unread (Gmail's)
+      if (starRef.current && Date.now() - starRef.current < 1500) {
+        starRef.current = 0;
+        const pick = { a: () => shown, n: () => [], r: () => shown.filter(m => !m.unread), u: () => shown.filter(m => m.unread), s: () => shown.filter(m => m.flagged) }[k];
+        if (pick) { e.preventDefault(); setSel(new Set(pick().map(m => m.id))); return; }
+      }
       const handled = {
         j: () => { setFocus(f => Math.min(shown.length - 1, f + 1)); },
         k: () => { setFocus(f => Math.max(0, f - 1)); },
@@ -594,11 +1018,20 @@
         o: () => openThread(cur), Enter: () => openThread(cur),
         u: () => setOpen(null), Escape: () => { if (help) setHelp(false); else if (preview) setPreview(null); else if (sel.size) setSel(new Set()); else setOpen(null); },
         x: () => cur && toggleSel(cur),
-        e: () => act(targets(), 'archive'), s: () => { const t = targets(); act(t, t.every(m => m.flagged) ? 'unflag' : 'flag'); },
-        U: () => act(targets(), 'unread'), I: () => act(targets(), 'read'), b: () => act(targets(), 'snooze'),
+        '*': () => { starRef.current = Date.now(); say('Select: a all · n none · r read · u unread · s starred'); },
+        e: () => act(targets(), inTrash ? 'untrash' : 'archive'), y: () => act(targets(), 'archive'),
+        '#': () => act(targets(), inTrash ? 'untrash' : 'trash'), Delete: () => act(targets(), inTrash ? 'untrash' : 'trash'),
+        '!': () => act(targets(), inSpam ? 'notspam' : 'spam'),
+        s: () => { const t = targets(); act(t, t.every(m => m.flagged) ? 'unflag' : 'flag'); },
+        '+': () => act(targets(), 'important'), '=': () => act(targets(), 'important'), '-': () => act(targets(), 'unimportant'),
+        m: () => act(targets(), 'mute'),
+        U: () => act(targets(), 'unread'), I: () => act(targets(), 'read'),
+        b: () => { const t = targets(); if (t.length) snoozeMenu(t, rowPoint()); },
+        l: () => { const t = targets(); if (t.length) labelMenu(t, rowPoint()); },
+        v: () => { const t = targets(); if (t.length) laneMenu(t, rowPoint()); },
         r: () => startReply('reply'), a: () => startReply('replyAll'), f: () => startReply('forward'),
         c: () => setCompose({ mode: 'new' }), '/': () => searchRef.current && searchRef.current.focus(),
-        z: () => undo(), '?': () => setHelp(v => !v), g: () => load(query)
+        z: () => undo(), '?': () => setHelp(v => !v), g: () => load(query, folder)
       }[k];
       if (!handled) return;
       e.preventDefault(); e.stopPropagation();
@@ -615,92 +1048,146 @@
     const errs = (data && data.errors) || [];
     const failed = data && data.search_failed;
     const counts = (stats && stats.counts) || {};
+    const searchToks = qInput.trim().split(/\s+/).filter(Boolean);
+    const toggleChip = tok => {
+      const has = searchToks.includes(tok);
+      const next = (has ? searchToks.filter(t => t !== tok) : searchToks.concat([tok])).join(' ');
+      setQInput(next); setQuery(next.trim());
+    };
 
     const Row = (m, i) => {
       const L = LANES[m.lane] || [m.lane, '•'];
+      const labs = (m.labels || []).map(id => labelName(m.account_id, id)).filter(Boolean).slice(0, 3);
+      const stop = f => e => { e.stopPropagation(); f(e); };
+      const btn = (ico, title, f, cls) => h('button', { className: 'fm-act' + (cls ? ' ' + cls : ''), title, 'aria-label': title, onClick: stop(f), onMouseDown: e => e.stopPropagation() }, ico);
       return h('div', {
-        key: (m.account_id || '') + ':' + m.id, className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : ''),
+        key: (m.account_id || '') + ':' + m.id, 'data-id': m.id,
+        className: 'fm-row' + (m.unread ? ' unread' : '') + (i === focus ? ' focus' : '') + (open && open.card.id === m.id ? ' open' : '') + (sel.has(m.id) ? ' sel' : '') + (busyIds.has(m.id) ? ' busy' : '') + (m.awaiting_reply && !folder ? ' await' : ''),
         onClick: e => { setFocus(i); if (e.shiftKey || e.ctrlKey || e.metaKey) toggleSel(m, e); else openThread(m); },
-        role: 'row', 'aria-selected': sel.has(m.id)
+        onContextMenu: e => { setFocus(i); contextMenu(m, e); },
+        role: 'row', 'aria-selected': sel.has(m.id), title: m.awaiting_reply && !folder ? 'Waiting for your reply' : undefined
       },
-        h('input', { type: 'checkbox', checked: sel.has(m.id), onClick: e => toggleSel(m, e), onChange: () => {}, 'aria-label': 'Select message' }),
+        h('input', { type: 'checkbox', checked: sel.has(m.id), onClick: e => toggleSel(m, e), onChange: () => {}, 'aria-label': 'Select conversation' }),
         h('span', { className: 'fm-dot', style: { background: m.account_color || '#7c8aa5' }, title: m.account_label }),
-        h('div', { className: 'fm-from' }, (m.flagged ? '🚩 ' : '') + (m.sender || m.sender_email), m.thread_count > 1 && h('span', { className: 'fm-count', style: { marginLeft: 6, opacity: 0.8 }, title: m.thread_count + ' messages in this conversation' }, m.thread_count)),
+        h('div', { className: 'fm-from' }, (m.flagged ? '⭐ ' : '') + (m.important ? '❗' : '') + (m.sender || m.sender_email), m.thread_count > 1 && h('span', { className: 'fm-count', style: { marginLeft: 6, opacity: 0.8 }, title: m.thread_count + ' messages in this conversation' }, m.thread_count)),
         h('div', { className: 'fm-line' },
-          h('span', { className: 'fm-badge', style: { borderColor: 'rgba(0,212,255,0.35)', color: '#8fd3ff' } }, L[1] + ' ' + L[0]),
-          h('span', { className: 'fm-subj' }, m.subject), h('span', { className: 'fm-snip' }, ' — ' + (m.snippet || ''))),
-        h('div', { className: 'fm-when' }, (m.has_attachment ? '📎 ' : '') + fmtWhen(m.timestamp)));
+          !folder && h('span', { className: 'fm-badge', style: { borderColor: 'rgba(0,212,255,0.35)', color: '#8fd3ff' } }, L[1] + ' ' + L[0]),
+          labs.map(n => h('span', { key: n, className: 'fm-lab' }, n)),
+          h('span', { className: 'fm-subj' }, m.subject), h('span', { className: 'fm-snip' }, ' — ' + unent(m.snippet))),
+        h('div', { className: 'fm-when' }, (m.has_attachment ? '📎 ' : '') + fmtWhen(m.timestamp)),
+        h('div', { className: 'fm-acts', role: 'group', 'aria-label': 'Actions' },
+          inTrash ? btn('↩', 'Restore to Inbox', () => act([m], 'untrash')) : btn('🗄', 'Archive (e)', () => act([m], 'archive')),
+          !inTrash && btn('🗑', 'Delete — to Trash (#)', () => act([m], 'trash'), 'danger'),
+          btn(m.unread ? '✉' : '📭', m.unread ? 'Mark read (Shift+I)' : 'Mark unread (Shift+U)', () => act([m], m.unread ? 'read' : 'unread')),
+          btn('⏰', 'Snooze (b)', e => { const r = e.currentTarget.getBoundingClientRect(); snoozeMenu([m], { x: r.left, y: r.bottom + 2 }); }),
+          btn('🏷', 'Label or move to a lane (l)', e => { const r = e.currentTarget.getBoundingClientRect(); labelMenu([m], { x: r.left, y: r.bottom + 2 }); })));
     };
 
     const T = open && open.res;
-    return h('div', { className: 'fm ws-fill', ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
+    const allChecked = shown.length > 0 && shown.every(m => sel.has(m.id));
+    const someChecked = shown.some(m => sel.has(m.id));
+    const headRef = useRef(null);
+    useEffect(() => { if (headRef.current) headRef.current.indeterminate = someChecked && !allChecked; }, [someChecked, allChecked]);
+    const bulk = selected();
+    const sideLabels = allLabelNames();
+    return h('div', { className: 'fm', ref: boxRef, tabIndex: 0, onKeyDown: onKey, style: { outline: 'none' } },
       // row 1: accounts, search, actions
       h('div', { className: 'fm-bar' },
+        h('button', { className: 'btn fm-btn', onClick: () => { const v = !showSide; setSideOpen(v); store.set('fm_side', v); }, title: showSide ? 'Hide folders' : 'Show folders and labels', 'aria-pressed': showSide }, '☰'),
         h('span', { className: 'fm-chip' + (acct === 'all' ? ' on' : ''), onClick: () => setAcct('all') }, '📬 All accounts',
           data && !data.search_failed && h('span', { className: 'fm-count' }, all.filter(m => m.unread).length + ' unread')),
-        accounts.map(a => h('span', { key: a.id, className: 'fm-chip' + (acct === a.id ? ' on' : ''), onClick: () => setAcct(a.id), title: a.email },
+        accounts.map(a => h('span', { key: a.id, className: 'fm-chip' + (acct === a.id ? ' on' : ''), onClick: () => setAcct(a.id), title: a.email + (a.mail && a.mail.modify ? '' : ' — read-only in Gmail') },
           h('span', { className: 'fm-dot', style: { background: a.color || '#7c8aa5' } }), a.label || a.email,
           data && !data.search_failed && !errs.some(x => x.account_id === a.id) && h('span', { className: 'fm-count' }, (unreadBy[a.id] || 0) + ' unread'),
+          !(a.mail && a.mail.modify) && h('span', { title: 'Read-only in Gmail', style: { opacity: 0.7 } }, '🔒'),
           errs.some(x => x.account_id === a.id) && h('span', { title: 'This account could not be read', style: { color: '#ff8a8a' } }, '⚠'))),
         h('input', { ref: searchRef, className: 'fm-search', value: qInput, placeholder: 'Search mail — Gmail search: from:ada is:unread has:attachment newer_than:7d …  (press /)',
           'aria-label': 'Search mail', onChange: e => setQInput(e.target.value), onKeyDown: e => { if (e.key === 'Enter') setQuery(qInput.trim()); } }),
         query && h('button', { className: 'btn fm-btn', onClick: () => { setQInput(''); setQuery(''); } }, '✕ Clear search'),
-        h('button', { className: 'btn fm-btn', onClick: () => load(query), title: 'Refresh (g)' }, '↻'),
+        h('button', { className: 'btn fm-btn', onClick: () => load(query, folder), title: 'Refresh (g)' }, '↻'),
         h('button', { className: 'btn fm-btn', onClick: () => setCompose({ mode: 'new' }), style: { borderColor: '#00d4ff', color: '#00d4ff' }, title: 'Compose (c)' }, '✎ Compose'),
         h('button', { className: 'btn fm-btn', onClick: () => setHelp(true), title: 'Keyboard shortcuts (?)' }, '⌨')),
-      // row 2: lanes
-      !query && h('div', { className: 'fm-bar' },
+      // search chips
+      h('div', { className: 'fm-bar', role: 'group', 'aria-label': 'Search chips' },
+        SEARCH_CHIPS.map(([tok, lbl]) => h('span', { key: tok, className: 'fm-chip sm' + (searchToks.includes(tok) ? ' on' : ''), role: 'switch', 'aria-checked': searchToks.includes(tok), onClick: () => toggleChip(tok), title: tok }, lbl))),
+      // row 2: lanes (Friday's triage) or Gmail's categories (Inbox)
+      !query && !folder && h('div', { className: 'fm-bar' },
         Object.keys(LANES).map(id => h('span', { key: id, className: 'fm-chip' + (lane === id ? ' on' : ''), onClick: () => setLane(id) },
           LANES[id][1] + ' ' + LANES[id][0], id !== 'all' && counts[id] ? h('span', { className: 'fm-count' }, counts[id]) : null)),
         h('span', { className: 'fm-chip' + (unreadOnly ? ' on' : ''), onClick: () => setUnreadOnly(v => !v) }, '● Unread only')),
+      (folder === 'inbox' || folder.indexOf('category:') === 0) && h('div', { className: 'fm-bar', role: 'tablist', 'aria-label': 'Categories' },
+        h('span', { className: 'fm-chip' + (folder === 'inbox' ? ' on' : ''), role: 'tab', onClick: () => setFolder('inbox') }, 'All inbox'),
+        CATEGORIES.map(([k, l]) => h('span', { key: k, role: 'tab', className: 'fm-chip' + (folder === 'category:' + k ? ' on' : ''), onClick: () => setFolder('category:' + k) }, l))),
       // honest status
-      loading && !data && h('div', { className: 'fm-banner info' }, query ? 'Searching Gmail for “' + query + '”…' : 'Reading your mail…'),
+      readOnlyAccts.length > 0 && h('div', { className: 'fm-banner warn', 'data-testid': 'fm-readonly' },
+        '🔒 Read-only in Gmail: ' + readOnlyAccts.map(a => a.label || a.email).join(', ') + '. Delete, spam, importance and labels need Gmail’s permission to change mail; archive, star and read changes there stay in Friday.',
+        h('button', { className: 'btn fm-btn', onClick: openReconnect, style: { marginLeft: 'auto' } }, 'Reconnect with sending…')),
+      loading && !data && h('div', { className: 'fm-banner info' }, query ? 'Searching Gmail for “' + query + '”…' : folder ? 'Reading ' + folderName(folder) + '…' : 'Reading your mail…'),
       failed && h('div', { className: 'fm-banner err', role: 'alert' }, '⚠ ' + (data.error || "Couldn't read mail.") + ' This is not an empty inbox — the read did not happen.'),
       !failed && data && data.partial && h('div', { className: 'fm-banner warn' }, '⚠ Showing only part of your mail: ' + errs.map(e => (e.label || 'an account') + ' — ' + e.error).join('; ')),
       !failed && data && /^cache/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing Friday’s saved copy of your mail, not a live read: Gmail could not be reached.'),
       !failed && data && /^legacy/.test(data.source || '') && h('div', { className: 'fm-banner warn' }, 'Showing only your main account: the read across all accounts failed.'),
-      query && !failed && data && h('div', { className: 'fm-banner info' }, 'Gmail search for “' + query + '”: ' + (data.total || 0) + ' result' + (data.total === 1 ? '' : 's') + ' across ' + (acct === 'all' ? 'all accounts' : 'this account') + (data.partial ? ' (partial)' : '')),
+      query && !failed && data && h('div', { className: 'fm-banner info' }, 'Gmail search for “' + query + '”' + (folder ? ' in ' + folderName(folder) : '') + ': ' + (data.total || 0) + ' result' + (data.total === 1 ? '' : 's') + ' across ' + (acct === 'all' ? 'all accounts' : 'this account') + (data.partial ? ' (partial)' : '')),
+      inTrash && h('div', { className: 'fm-banner info' }, '🗑 Gmail’s Trash. Gmail deletes what is here for good after 30 days. Restore (e or #) puts a conversation back in the inbox. Friday never empties the Trash.'),
+      inSpam && h('div', { className: 'fm-banner info' }, '⚠ Gmail’s Spam. “Not spam” (!) moves a conversation back to the inbox.'),
       // bulk bar
-      sel.size > 0 && h('div', { className: 'fm-bulk' }, sel.size + ' selected',
-        h('button', { className: 'btn fm-btn', onClick: () => act(selected(), 'archive') }, '🗄 Archive'),
-        h('button', { className: 'btn fm-btn', onClick: () => act(selected(), 'read') }, 'Mark read'),
-        h('button', { className: 'btn fm-btn', onClick: () => act(selected(), 'unread') }, 'Mark unread'),
-        h('button', { className: 'btn fm-btn', onClick: () => act(selected(), 'flag') }, '🚩 Flag'),
-        h('button', { className: 'btn fm-btn', onClick: () => act(selected(), 'snooze') }, '😴 Snooze 4h'),
-        h('select', { className: 'btn fm-btn', value: '', onChange: e => e.target.value && moveLane(selected(), e.target.value), 'aria-label': 'Move to lane' },
-          h('option', { value: '' }, 'Move to lane…'), Object.keys(LANES).filter(k => k !== 'all').map(k => h('option', { key: k, value: k }, LANES[k][0]))),
+      sel.size > 0 && h('div', { className: 'fm-bulk', role: 'toolbar', 'aria-label': 'Selected conversations' }, sel.size + ' selected',
+        inTrash ? h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'untrash') }, '↩ Restore') : h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'archive') }, '🗄 Archive'),
+        !inTrash && h('button', { className: 'btn fm-btn danger', onClick: () => act(bulk, 'trash') }, '🗑 Delete'),
+        h('button', { className: 'btn fm-btn', onClick: () => act(bulk, inSpam ? 'notspam' : 'spam') }, inSpam ? '✅ Not spam' : '⚠ Spam'),
+        h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'read') }, 'Mark read'),
+        h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'unread') }, 'Mark unread'),
+        h('button', { className: 'btn fm-btn', onClick: () => act(bulk, 'flag') }, '⭐ Star'),
+        h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); snoozeMenu(bulk, { x: r.left, y: r.bottom + 2 }); } }, '⏰ Snooze ▾'),
+        h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); labelMenu(bulk, { x: r.left, y: r.bottom + 2 }); } }, '🏷 Label ▾'),
+        h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); laneMenu(bulk, { x: r.left, y: r.bottom + 2 }); } }, '🗂 Lane ▾'),
+        h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom + 2, title: 'More', items: moreItems(bulk) }); } }, '⋯ More'),
         h('button', { className: 'btn fm-btn', onClick: () => setSel(new Set(shown.map(m => m.id))) }, 'Select all ' + shown.length),
         h('button', { className: 'btn fm-btn', onClick: () => setSel(new Set()) }, 'Clear')),
-      // list + thread
+      // folders, list, thread
       h('div', { className: 'fm-main' },
-        h('div', { className: 'fm-list', ref: listRef, role: 'grid', 'aria-label': 'Messages' },
-          failed ? h('div', { style: { padding: 20, color: '#ff9a9a', fontSize: 12 } }, 'No list: the read failed (see above).')
-            : shown.length ? shown.map(Row)
-              : data && !loading ? h('div', { style: { padding: 20, color: '#7f93ad', fontSize: 12 } }, query ? 'Gmail found nothing for that search.' : 'Nothing here.') : null),
+        showSide && h('nav', { className: 'fm-side', 'aria-label': 'Folders and labels' },
+          FOLDERS.map(([id, ico, lbl, tip]) => h('button', { key: id || 'priority', className: folder === id || (id === 'inbox' && folder.indexOf('category:') === 0) ? 'on' : '', title: tip || lbl, onClick: () => { setFolder(id); setOpen(null); } },
+            h('span', null, ico), lbl, id === '' && stats && stats.actionable ? h('span', { className: 'fm-count', style: { marginLeft: 'auto' } }, stats.actionable) : null)),
+          sideLabels.length > 0 && h('div', { className: 'h' }, 'Labels'),
+          sideLabels.map(n => h('button', { key: n, className: folder === 'label:' + n ? 'on' : '', onClick: () => { setFolder('label:' + n); setOpen(null); } }, h('span', null, '🏷'), n))),
+        h('div', { className: 'fm-listwrap' },
+          h('div', { className: 'fm-listhead' },
+            h('input', { ref: headRef, type: 'checkbox', checked: allChecked, onChange: () => setSel(allChecked ? new Set() : new Set(shown.map(m => m.id))), 'aria-label': 'Select all shown', title: 'Select all shown (* a)' }),
+            h('span', { style: { fontWeight: 700, color: '#dbe6f5' } }, folderName(folder)),
+            h('span', null, shown.length + (shown.length === 1 ? ' conversation' : ' conversations')),
+            h('span', { style: { marginLeft: 'auto' } }, 'Right-click a row for everything')),
+          h('div', { className: 'fm-list', ref: listRef, role: 'grid', 'aria-label': 'Messages' },
+            failed ? h('div', { style: { padding: 20, color: '#ff9a9a', fontSize: 12 } }, 'No list: the read failed (see above).')
+              : shown.length ? shown.map(Row)
+                : data && !loading ? h('div', { style: { padding: 20, color: '#7f93ad', fontSize: 12 } }, query ? 'Gmail found nothing for that search.' : folder ? 'Nothing in ' + folderName(folder) + '.' : 'Nothing here.') : null)),
         open && h('div', { className: 'fm-thread' },
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'flex-start', justifyContent: 'space-between' } },
             h('div', null,
               h('div', { style: { fontSize: 15, fontWeight: 700, color: '#fff' } }, open.card.subject),
               h('div', { style: { fontSize: 11, color: '#8fa6c4', marginTop: 2 } },
-                h('span', { className: 'fm-dot', style: { background: open.card.account_color, marginRight: 5 } }), open.card.account_label + ' · ' + laneLabel(open.card.lane))),
+                h('span', { className: 'fm-dot', style: { background: open.card.account_color, marginRight: 5 } }), open.card.account_label + ' · ' + laneLabel(open.card.lane),
+                (open.card.labels || []).map(id => labelName(open.card.account_id, id)).filter(Boolean).map(n => h('span', { key: n, className: 'fm-lab', style: { marginLeft: 6 } }, n)))),
             h('button', { className: 'btn fm-btn', onClick: () => setOpen(null), 'aria-label': 'Close thread' }, '✕')),
-          h('div', { className: 'fm-bar', style: { margin: '8px 0' } },
+          h('div', { className: 'fm-bar', style: { margin: '8px 0' }, role: 'toolbar', 'aria-label': 'Conversation actions' },
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('reply'), title: 'r' }, '↩ Reply'),
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('replyAll'), title: 'a' }, '↩↩ Reply all'),
             h('button', { className: 'btn fm-btn', disabled: !(T && T.status === 'ok'), onClick: () => startReply('forward'), title: 'f' }, '↪ Forward'),
             h('button', { className: 'btn fm-btn', onClick: fridayDraft }, '💬 Draft with Friday'),
-            h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'archive'), title: 'e' }, '🗄 Archive'),
-            h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'snooze'), title: 'b' }, '😴 4h'),
-            h('button', { className: 'btn fm-btn', onClick: () => act([open.card], open.card.flagged ? 'unflag' : 'flag'), title: 's' }, open.card.flagged ? 'Unflag' : '🚩 Flag'),
+            inTrash ? h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'untrash') }, '↩ Restore') : h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'archive'), title: 'e' }, '🗄 Archive'),
+            !inTrash && h('button', { className: 'btn fm-btn danger', onClick: () => act([open.card], 'trash'), title: 'Delete — to Trash, kept 30 days (#)' }, '🗑 Delete'),
+            h('button', { className: 'btn fm-btn', onClick: () => act([open.card], inSpam ? 'notspam' : 'spam'), title: '!' }, inSpam ? '✅ Not spam' : '⚠ Spam'),
+            h('button', { className: 'btn fm-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); snoozeMenu([open.card], { x: r.left, y: r.bottom + 2 }); }, title: 'b' }, '⏰ Snooze ▾'),
+            h('button', { className: 'btn fm-btn', onClick: () => act([open.card], open.card.flagged ? 'unflag' : 'flag'), title: 's' }, open.card.flagged ? '★ Unstar' : '⭐ Star'),
             h('button', { className: 'btn fm-btn', onClick: () => act([open.card], 'unread'), title: 'Shift+U' }, 'Mark unread'),
-            h('select', { className: 'btn fm-btn', value: open.card.lane, onChange: e => moveLane([open.card], e.target.value), 'aria-label': 'Lane' },
-              Object.keys(LANES).filter(k => k !== 'all').map(k => h('option', { key: k, value: k }, LANES[k][1] + ' ' + LANES[k][0]))),
-            canModify(open.card.account_id) && h('select', { className: 'btn fm-btn', value: '', 'aria-label': 'Gmail label', title: 'Add a Gmail label to this conversation (undoable)',
-              onFocus: () => loadLabels(open.card.account_id), onMouseDown: () => loadLabels(open.card.account_id),
-              onChange: e => { const v = e.target.value; if (v === '__new') newLabel(open.card); else if (v) { const l = (labelsBy[open.card.account_id] || []).find(x => x.id === v); applyLabel(open.card, v, l ? l.name : v); } } },
-              h('option', { value: '' }, '🏷 Label…'),
-              (labelsBy[open.card.account_id] || []).map(l => h('option', { key: l.id, value: l.id }, l.name)),
-              h('option', { value: '__new' }, '+ New label…')),
+            h('button', { className: 'btn fm-btn', 'data-testid': 'fm-label-btn', onClick: e => { const r = e.currentTarget.getBoundingClientRect(); labelMenu([open.card], { x: r.left, y: r.bottom + 2 }); }, title: 'Gmail labels and Friday’s lanes (l)' }, '🏷 ' + laneLabel(open.card.lane) + ' ▾'),
+            h('button', { className: 'btn fm-btn', onClick: e => {
+              const r = e.currentTarget.getBoundingClientRect(), msgs = (T && T.messages) || [], last = msgs[msgs.length - 1];
+              setMenu({ x: r.left, y: r.bottom + 2, title: 'More', items: moreItems([open.card]).concat([{ sep: true },
+                { label: 'Print', ico: '🖨', off: !msgs.length, onClick: () => printThread(open.card.subject, msgs, showImages) },
+                { label: 'Show original', ico: '🧾', off: !last, onClick: () => showOriginal(open.card, last) },
+                { label: 'Download message (.eml)', ico: '⬇', off: !last, onClick: () => { if (last) window.open('/api/mail/original?account=' + encodeURIComponent(open.card.account_id) + '&message=' + encodeURIComponent(last.id) + '&dl=1', '_blank'); } }]) });
+            } }, '⋯ More'),
             h('label', { style: { fontSize: 11, color: '#8fa6c4', display: 'flex', gap: 4, alignItems: 'center' } }, h('input', { type: 'checkbox', checked: showImages, onChange: e => setShowImages(e.target.checked) }), 'Show remote images')),
           aiDraft && h('div', { className: 'fm-banner info', style: { flexDirection: 'column', alignItems: 'stretch' } },
             aiDraft.busy ? 'Friday is drafting a reply…' : aiDraft.error ? aiDraft.error : [h('div', { key: 't', style: { whiteSpace: 'pre-wrap' } }, aiDraft.text),
@@ -708,25 +1195,72 @@
           open.loading && h('div', { className: 'fm-banner info' }, 'Opening the thread…'),
           T && T.status !== 'ok' && h('div', { className: 'fm-banner err', role: 'alert' }, '⚠ ' + (T.error || 'Could not open this thread.')),
           T && T.source === 'cache' && h('div', { className: 'fm-banner warn' }, 'Showing Friday’s saved copy: ' + (T.note || 'Gmail was not reachable.')),
-          T && (T.messages || []).map(msg => h('div', { key: msg.id, className: 'fm-msg' },
-            h('div', { className: 'fm-hdr' }, h('b', null, msg.sender), ' · ', msg.date || fmtWhen(msg.timestamp), h('br'),
-              msg.to && ['to ', msg.to], msg.cc && [h('br', { key: 'b' }), 'cc ', msg.cc]),
-            h(MailBody, { html: msg.html, text: msg.body, showImages, onMailto: mailtoCompose }),
-            (msg.attachments || []).length > 0 && h('div', { className: 'fm-atts' }, msg.attachments.map(a => h('span', { key: a.attachment_id, style: { display: 'inline-flex', gap: 4 } },
-              (/^image\/(png|jpe?g|gif|webp)$/.test(a.mime) || a.mime === 'application/pdf') && h('button', { className: 'fm-att', onClick: () => setPreview(a) }, '👁 ' + a.filename),
-              h('a', { className: 'fm-att', href: a.url + '&dl=1', download: a.filename, title: 'Download' }, '⬇ ' + (/^image|pdf/.test(a.mime) ? '' : a.filename + ' ') + '· ' + Math.max(1, Math.round((a.size || 0) / 1024)) + ' KB')))))))),
+          T && (T.messages || []).map(msg => {
+            const who = addrOf(msg.sender), asSent = !!original[who];
+            return h('div', { key: msg.id, className: 'fm-msg' },
+              h('div', { className: 'fm-hdr' },
+                h('div', { style: { flex: 1 } }, h('b', null, msg.sender), ' · ', msg.date || fmtWhen(msg.timestamp),
+                  msg.list_unsubscribe && [' · ', h('button', { key: 'u', className: 'fm-link', onClick: () => unsubscribe(open.card), title: 'Leave this mailing list (confirms first)' }, 'Unsubscribe')], h('br'),
+                  msg.to && ['to ', msg.to], msg.cc && [h('br', { key: 'b' }), 'cc ', msg.cc]),
+                msg.html && h('button', { className: 'fm-link', 'data-testid': 'fm-theme-toggle', onClick: () => toggleOriginal(who),
+                  title: asSent ? 'Re-colour this sender’s mail for Friday’s dark theme' : 'Show this sender’s mail exactly as it was sent (remembered for this sender)' }, asSent ? '🌙 Match Friday’s theme' : '☀ Show original colours'),
+                h('button', { className: 'fm-link', onClick: () => showOriginal(open.card, msg), title: 'The message source and all its headers' }, 'Headers')),
+              h(MailBody, { html: msg.html, text: msg.body, showImages, onMailto: mailtoCompose, adapt: !asSent }),
+              (msg.attachments || []).length > 0 && h('div', { className: 'fm-atts' }, msg.attachments.map(a => h('span', { key: a.attachment_id, style: { display: 'inline-flex', gap: 4 } },
+                (/^image\/(png|jpe?g|gif|webp)$/.test(a.mime) || a.mime === 'application/pdf') && h('button', { className: 'fm-att', onClick: () => setPreview(a) }, '👁 ' + a.filename),
+                h('a', { className: 'fm-att', href: a.url + '&dl=1', download: a.filename, title: 'Download' }, '⬇ ' + (/^image|pdf/.test(a.mime) ? '' : a.filename + ' ') + '· ' + Math.max(1, Math.round((a.size || 0) / 1024)) + ' KB')))));
+          }))),
       compose && h(Composer, { key: compose.mode + (compose.thread_id || '') + (compose.subject || ''), init: compose, accounts, canSend, onClose: () => setCompose(null), say }),
       preview && h('div', { className: 'fm-preview', onClick: () => setPreview(null) },
         h('div', { style: { display: 'flex', justifyContent: 'space-between', padding: 10, fontSize: 12 } }, preview.filename,
           h('span', null, h('a', { className: 'fm-att', href: preview.url, download: preview.filename, onClick: e => e.stopPropagation() }, '⬇ Download'), ' ', h('button', { className: 'btn fm-btn' }, '✕'))),
         /^image\//.test(preview.mime) ? h('img', { src: preview.url, alt: preview.filename }) : h('iframe', { src: preview.url, title: preview.filename })),
+      menu && h(Menu, { menu, onClose: () => setMenu(null) }),
+      dialog && dialog.kind === 'unsub' && h(Dialog, { title: 'Unsubscribe?', onClose: () => setDialog(null) },
+        h('p', null, 'Leave the mailing list that sent “' + (dialog.card.subject || '') + '”' + (dialog.opt.sender ? ' (' + dialog.opt.sender + ')' : '') + '?'),
+        h('p', { style: { color: '#ffd699' } }, dialog.opt.method === 'one_click' ? 'Friday will send the list’s own one-click unsubscribe request to ' + dialog.opt.host + '. That tells the sender this address is read.'
+          : dialog.opt.method === 'mailto' ? 'This list unsubscribes by email to ' + dialog.opt.mailto.to + '. Friday will write that message; sending it asks for your approval.'
+            : 'This list unsubscribes on its own web page (' + dialog.opt.host + '). Friday will open it in your browser.'),
+        h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
+          h('button', { className: 'btn fm-btn', onClick: () => setDialog(null) }, 'Cancel'),
+          h('button', { className: 'btn fm-btn', style: { borderColor: '#00d4ff', color: '#00d4ff' }, autoFocus: true, onClick: () => doUnsubscribe(dialog) }, 'Unsubscribe'))),
+      dialog && dialog.kind === 'original' && h(Dialog, { title: 'Original message', onClose: () => setDialog(null) },
+        dialog.loading ? h('div', null, 'Reading it from Gmail…')
+          : dialog.d.status !== 'ok' ? h('div', { className: 'fm-banner err' }, dialog.d.message || 'Gmail did not return the message.')
+            : h(React.Fragment, null,
+              h('table', null, h('tbody', null, dialog.d.headers.map(([k, v], i) => h('tr', { key: i }, h('td', null, k), h('td', null, v))))),
+              h('div', { style: { margin: '10px 0 4px', color: '#8fa6c4' } }, 'Source (' + Math.round(dialog.d.size / 1024) + ' KB' + (dialog.d.truncated ? ', first 2 MB shown' : '') + ')'),
+              h('pre', null, dialog.d.source)),
+        h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 10 } },
+          h('a', { className: 'btn fm-btn', href: '/api/mail/original?account=' + encodeURIComponent(dialog.card.account_id) + '&message=' + encodeURIComponent(dialog.msg.id) + '&dl=1', target: '_blank', rel: 'noopener' }, '⬇ Download .eml'),
+          h('button', { className: 'btn fm-btn', onClick: () => setDialog(null) }, 'Close'))),
+      dialog && dialog.kind === 'snooze' && h(SnoozePicker, { onClose: () => setDialog(null), onPick: d => { const cards = dialog.cards; setDialog(null); act(cards, 'snooze', { until: localIso(d), untilText: fmtUntil(d) }); } }),
+      dialog && dialog.kind === 'reconnect' && h(Dialog, { title: 'Gmail has not allowed this yet', onClose: () => setDialog(null) },
+        h('p', null, dialog.why + '.'),
+        h('p', null, 'Friday can delete (to Trash), label, report spam and mark importance in Gmail once the account is reconnected with “allow sending and mailbox changes” ticked. Nothing else about the account changes.'),
+        h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
+          h('button', { className: 'btn fm-btn', onClick: () => setDialog(null) }, 'Not now'),
+          h('button', { className: 'btn fm-btn', style: { borderColor: '#00d4ff', color: '#00d4ff' }, onClick: () => { setDialog(null); openReconnect(); } }, 'Open Settings › Connectors'))),
       help && h('div', { className: 'fm-help', onClick: () => setHelp(false) }, h('div', null,
-        [['j / k', 'next / previous'], ['o or Enter', 'open'], ['u', 'back to list'], ['x', 'select'], ['e', 'archive'], ['s', 'flag / unflag'], ['Shift+U', 'mark unread'], ['Shift+I', 'mark read'],
-         ['b', 'snooze 4 hours'], ['z', 'undo'], ['r', 'reply'], ['a', 'reply all'], ['f', 'forward'], ['c', 'compose'], ['/', 'search'], ['g', 'refresh'], ['?', 'this help'], ['Esc', 'close / clear']]
+        [['j / k', 'next / previous'], ['o or Enter', 'open'], ['u', 'back to list'], ['x', 'select'], ['* a / * n', 'select all / none'], ['e', 'archive'], ['#  or Delete', 'delete (to Trash)'], ['!', 'report spam'],
+         ['s', 'star / unstar'], ['+ / -', 'important / not'], ['Shift+U', 'mark unread'], ['Shift+I', 'mark read'], ['b', 'snooze…'], ['l', 'label…'], ['v', 'move to lane…'], ['m', 'mute'],
+         ['z', 'undo'], ['r', 'reply'], ['a', 'reply all'], ['f', 'forward'], ['c', 'compose'], ['/', 'search'], ['g', 'refresh'], ['?', 'this help'], ['Esc', 'close / clear'], ['right-click', 'every action']]
           .map(([k, d]) => h('div', { key: k, style: { breakInside: 'avoid', margin: '3px 0' } }, h('kbd', null, k), d)),
-        h('div', { style: { marginTop: 10, color: '#7f93ad', columnSpan: 'all' } }, 'Archive, flag (star) and read/unread also change Gmail for accounts reconnected with sending; otherwise Friday’s view only. Snooze is Friday’s own. Everything can be undone (Z). Sending always waits for your approval, then 10 seconds you can take it back in.'))),
-      toast && h('div', { className: 'fm-toast', role: 'status' }, toast.text,
+        h('div', { style: { marginTop: 10, color: '#7f93ad', columnSpan: 'all' } }, 'Your own clicks act at once and can be undone (Z). Delete moves to Gmail’s Trash, kept 30 days; nothing here deletes for good. Delete, spam, importance and labels need an account reconnected with sending; archive, star and read there stay in Friday. Snooze and mute are Friday’s own. Sending always waits for your approval, then 10 seconds you can take it back in.'))),
+      toast && h('div', { className: 'fm-toast' + (toast.err ? ' err' : ''), role: 'status' }, toast.text,
         toast.undo && h('button', { className: 'btn fm-btn', onClick: () => undo(toast.undo) }, 'Undo (z)')));
+  }
+
+  function SnoozePicker({ onClose, onPick }) {
+    const def = (() => { const d = new Date(Date.now() + 86400e3); d.setHours(8, 0, 0, 0); const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T08:00'; })();
+    const [v, setV] = useState(def);
+    const d = new Date(v), ok = !isNaN(d) && d.getTime() > Date.now();
+    return h(Dialog, { title: 'Snooze until', onClose },
+      h('input', { type: 'datetime-local', value: v, onChange: e => setV(e.target.value), style: { background: '#0b1220', color: '#e6f0ff', border: '1px solid #24406a', borderRadius: 6, padding: 6, colorScheme: 'dark' }, 'aria-label': 'Snooze until' }),
+      h('div', { style: { marginTop: 8, color: '#8fa6c4', fontSize: 11 } }, 'Snooze is Friday’s own: the conversation leaves Friday’s view and comes back then. Gmail is not changed.'),
+      h('div', { className: 'fm-bar', style: { justifyContent: 'flex-end', marginTop: 12 } },
+        h('button', { className: 'btn fm-btn', onClick: onClose }, 'Cancel'),
+        h('button', { className: 'btn fm-btn', disabled: !ok, onClick: () => onPick(d), style: { borderColor: '#00d4ff', color: '#00d4ff' } }, 'Snooze')));
   }
 
   window.FridayMailPanel = FridayMailPanel;

@@ -542,6 +542,7 @@ def collect(limit_per_account: int = 25, use_cache_on_error: bool = True,
 
     cards.sort(key=lambda c: c.get("_sort_ts") or 0, reverse=True)
     cards = _one_row_per_conversation(cards)
+    _mark_awaiting(cards, _my_addresses())
     for card in cards:
         card.pop("_sort_ts", None)
 
@@ -678,10 +679,60 @@ def _build_card(
         card["lane_overridden"] = False
 
     card["is_bulk"] = _is_bulk(card)
+    _mailbox_state(card, raw, state)
     dt = _parse_ts(card.get("timestamp"))
     card["_sort_ts"] = dt.timestamp() if dt else 0
     card["age_hours"] = round((time.time() - dt.timestamp()) / 3600.0, 1) if dt else None
     return card
+
+
+_NO_REPLY = re.compile(r"(^|[._+-])(no-?reply|do-?not-?reply|notifications?|mailer-daemon|bounces?)([._+-]|@)", re.I)
+_NOT_PERSONAL_LANES = ("subscriptions", "noise")
+
+
+def _mailbox_state(card: Dict[str, Any], raw: Dict[str, Any], state: Dict[str, Any]) -> None:
+    """Star and importance as Gmail reports them unless Friday has changed
+    them since (a star set in Friday alone, on an account that has not allowed
+    changes, is still a star here); Trash and spam as Gmail reports them; mute
+    is Friday's own. A Gmail search can return trashed or spam mail, so
+    the card says where it is."""
+    labels = set(card.get("labels") or raw.get("labels") or [])
+    st = (state.get(card.get("id"), {}) or {}) if isinstance(state, dict) else {}
+    card["flagged"] = bool(st["flagged"]) if "flagged" in st else "STARRED" in labels
+    card["important"] = bool(st["important"]) if "important" in st else "IMPORTANT" in labels
+    # Trash and spam change only in Gmail, so a card Gmail has just described
+    # is right about them; Friday's record stands in for a card read offline.
+    card["trashed"] = ("TRASH" in labels) if labels else bool(st.get("trashed"))
+    card["spam"] = ("SPAM" in labels) if labels else bool(st.get("spam"))
+    card["muted"] = bool(st.get("muted"))
+    card["in_inbox"] = "INBOX" in labels if labels else None
+    cats = [lab[len("CATEGORY_"):].lower() for lab in labels if lab.startswith("CATEGORY_")]
+    card["category"] = cats[0] if cats else None
+    if raw.get("list_unsubscribe"):
+        card["list_unsubscribe"] = True
+
+
+def _mark_awaiting(cards: List[Dict[str, Any]], my_addresses: set) -> None:
+    """A conversation is waiting for the owner when its newest message is
+    from someone else, a person rather than a list, and not already dealt
+    with. Cards arrive one per conversation, newest message first."""
+    for c in cards:
+        sender = (c.get("sender_email") or "").lower()
+        c["from_me"] = bool(sender) and sender in my_addresses
+        c["awaiting_reply"] = bool(
+            sender and not c["from_me"]
+            and not c.get("is_bulk")
+            and c.get("lane") not in _NOT_PERSONAL_LANES
+            and not _NO_REPLY.search(sender)
+            and not (c.get("archived") or c.get("trashed") or c.get("spam") or c.get("muted")))
+
+
+def _my_addresses() -> set:
+    try:
+        from agent_friday.services import google_accounts as ga
+        return {(a.get("email") or "").lower() for a in ga.list_accounts() or [] if a.get("email")}
+    except Exception:
+        return set()
 
 
 def _one_row_per_conversation(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
