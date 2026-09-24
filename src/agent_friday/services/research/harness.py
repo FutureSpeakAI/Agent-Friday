@@ -283,17 +283,61 @@ JSON: {"answer":"...","findings":[{"claim":"...","quote":"...","source_id":"..."
        "gaps":["..."],"best_followup":"...","done":false}"""
 
 
+def _snapshot_source(c: Commission, passage: dict) -> None:
+    """Seal the page a finding cites, once per commission and source.
+
+    The text sealed is the extraction the passage was taken from, so a quote
+    can be checked later against exactly what Friday read. Never raises into
+    the grind: a snapshot that cannot be written is logged, and verification
+    still has the fetch cache to check against.
+    """
+    from agent_friday.services.research import snapshots
+    sid = passage.get("source_id") or ""
+    if not sid or snapshots.exists(c.id, sid):
+        return
+    text = web_fetch.load_extraction(sid)
+    rec = snapshots.snapshot(c.id, sid, url=passage.get("url") or "",
+                             text=text, fetched_at=passage.get("fetched_at"),
+                             title=passage.get("title") or "")
+    if rec is None:
+        c.log(f"could not snapshot the cited source {sid}", source_id=sid)
+    else:
+        c.log(f"snapshotted cited source {sid}", source_id=sid,
+              sha256=rec.get("sha256"), protection=rec.get("protection"))
+
+
 def grind(c: Commission) -> None:
-    """Run the simulated conversation per sub-question. Code drives the loop."""
+    """Run the simulated conversation per sub-question. Code drives the loop.
+
+    Each sub-question is one resumable step. A completed one is recorded in
+    `c.steps` with what it spent and what it learned about the tools, so a
+    run resumed after a restart skips it and still keeps honest budgets and
+    an honest "was search working?" answer. A sub-question interrupted part
+    way is redone from a clean slate: its partial findings are dropped first.
+    """
     c.set_stage(GRINDING)
     plan = c.plan
     assert plan is not None
     started = time.time()
-    fetches_total = 0
-    search_ok_any = False
-    model_failures: list[str] = []
+    done = {k: v for k, v in (c.steps or {}).items() if k.startswith("sq:")}
+    fetches_total = sum(int((v or {}).get("fetches") or 0) for v in done.values())
+    search_ok_any = any((v or {}).get("search_ok") for v in done.values())
+    model_failures: list[str] = [k[3:] for k, v in done.items()
+                                 if (v or {}).get("model_failed")]
+    c.progress["fetches"] = fetches_total
+    if done:
+        c.log(f"resuming the grind: {len(done)} of {len(plan.sub_questions)} "
+              f"sub-questions already complete; they are not redone",
+              resumed=True, done=sorted(done))
 
     for idx, sq in enumerate(plan.sub_questions, 1):
+        step_key = f"sq:{sq.id}"
+        if c.step_done(step_key):
+            continue
+        dropped = c.drop_findings(sq.id)
+        if dropped:
+            c.log(f"redoing {sq.id} from the start: dropped {dropped} partial "
+                  f"finding(s) left by the interrupted run", sq_id=sq.id)
         c.progress.update({"sub_question": idx, "note": sq.text[:120]})
         c.save()
         c.log(f"sub-question {idx}/{len(plan.sub_questions)}: {sq.text}",
@@ -302,6 +346,8 @@ def grind(c: Commission) -> None:
         corpus: list[dict] = []
         q = sq.text
         sq_fetches = 0
+        sq_search_ok = False
+        sq_model_failed = False
 
         for depth in range(c.budget["followup_depth"]):
             if time.time() - started > c.budget["wall_clock_soft_s"]:
@@ -321,6 +367,7 @@ def grind(c: Commission) -> None:
                 out = web_search.search(query, count=8)
                 if out.get("status") == web_search.SearchStatus.OK:
                     search_ok_any = True
+                    sq_search_ok = True
                     results.extend(out["results"])
                 else:
                     c.log(f"search returned nothing for {query!r}",
@@ -363,7 +410,8 @@ def grind(c: Commission) -> None:
                         corpus.append({"text": ptext,
                                        "source_id": rec["id"],
                                        "url": rec.get("final_url") or r["url"],
-                                       "title": rec.get("title", "")})
+                                       "title": rec.get("title", ""),
+                                       "fetched_at": rec.get("fetched_at")})
 
             if not corpus:
                 c.log("no usable passages at this depth")
@@ -382,6 +430,7 @@ def grind(c: Commission) -> None:
                 # a timeout as an absence is a fabricated empirical result,
                 # the same defect §7.2 fixes for search.
                 model_failures.append(sq.id)
+                sq_model_failed = True
                 c.log("MODEL FAILURE: the conversation step returned nothing "
                       "usable (timeout or unparseable output) — this is NOT "
                       "evidence the sources had no answer", sq_id=sq.id)
@@ -395,6 +444,8 @@ def grind(c: Commission) -> None:
                 src = _as_text(f.get("source_id"))
                 match = next((p for p in corpus if p["source_id"] == src), None) \
                     or next((p for p in corpus if quote[:60] in p["text"]), None)
+                if match:
+                    _snapshot_source(c, match)
                 c.add_finding(Finding(
                     id=uuid.uuid4().hex[:10], sub_question_id=sq.id,
                     claim=claim, quote=quote,
@@ -411,6 +462,9 @@ def grind(c: Commission) -> None:
                 break
             q = nxt
             c.log(f"following up: {nxt}", sq_id=sq.id, depth=depth + 1)
+
+        c.mark_step(step_key, fetches=sq_fetches, search_ok=sq_search_ok,
+                    model_failed=sq_model_failed)
 
     # A grind whose models failed on EVERY sub-question did not establish an
     # absence; it established that the machine could not answer. Recorded so
@@ -632,7 +686,14 @@ def verify(c: Commission, draft: dict) -> dict:
         if not f.source_id:
             killed.append((fid, "no source recorded"))
             continue
-        page = _norm(web_fetch.load_extraction(f.source_id))
+        raw = web_fetch.load_extraction(f.source_id)
+        if not raw:
+            # The shared fetch cache can be cleared; the commission's own
+            # sealed snapshot is the same text, and counts only if intact.
+            from agent_friday.services.research import snapshots
+            snap = snapshots.load(c.id, f.source_id) or {}
+            raw = snap.get("text", "") if snap.get("intact") else ""
+        page = _norm(raw)
         if not page:
             killed.append((fid, "the cached source could not be read"))
             continue

@@ -25,7 +25,7 @@ from agent_friday.services.research.objects import (
 _log = logging.getLogger("friday.research")
 
 __all__ = ["propose", "run", "run_async", "status", "list_commissions",
-           "Commission"]
+           "Commission", "is_running"]
 
 
 def propose(question: str, *, context: str | None = None,
@@ -65,8 +65,38 @@ def propose(question: str, *, context: str | None = None,
     }
 
 
+_RUNNING: set = set()
+_RUNNING_LOCK = threading.Lock()
+
+
+def is_running(commission_id: str) -> bool:
+    """True while this process is running the commission."""
+    with _RUNNING_LOCK:
+        return commission_id in _RUNNING
+
+
 def run(commission_id: str) -> dict:
-    """Run a commission to completion. Blocking. Returns its status dict."""
+    """Run a commission to completion. Blocking. Returns its status dict.
+
+    Resumable: a commission that already has a plan is not scoped again, and
+    the grind skips every sub-question recorded as complete (see
+    `Commission.steps`). A commission that already reached a terminal state
+    is returned as it is, never run twice; so is one this process is already
+    running (a boot-time adoption and a second caller cannot both drive it).
+    """
+    with _RUNNING_LOCK:
+        if commission_id in _RUNNING:
+            c = Commission.load(commission_id)
+            return c.status_dict() if c else {"error": f"no commission {commission_id!r}"}
+        _RUNNING.add(commission_id)
+    try:
+        return _run(commission_id)
+    finally:
+        with _RUNNING_LOCK:
+            _RUNNING.discard(commission_id)
+
+
+def _run(commission_id: str) -> dict:
     # The inventory can change between commissions — and did, mid-flight.
     try:
         harness.refresh_seats()
@@ -75,13 +105,24 @@ def run(commission_id: str) -> dict:
     c = Commission.load(commission_id)
     if c is None:
         return {"error": f"no commission {commission_id!r}"}
+    if c.status in (DELIVERED, FAILED):
+        return c.status_dict()
     t0 = time.time()
     ground_by: list[str] = []
     try:
-        plan = harness.scope(c)
-        if plan is None:
-            return _fail(c, "I could not turn this into a research plan — the "
-                            "scoping model did not return a usable one.")
+        if c.plan is not None and c.plan.sub_questions:
+            plan = c.plan
+            if not c.step_done("scope"):
+                c.mark_step("scope", scoped_by=plan.scoped_by or "given")
+            else:
+                c.log("resuming: the plan is already recorded; not scoping again",
+                      resumed=True)
+        else:
+            plan = harness.scope(c)
+            if plan is None:
+                return _fail(c, "I could not turn this into a research plan — the "
+                                "scoping model did not return a usable one.")
+            c.mark_step("scope", scoped_by=plan.scoped_by)
 
         harness.grind(c)
         ground_by = [harness.BRAIN, harness.EXTRACTOR, harness.SIDEKICK]

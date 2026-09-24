@@ -149,6 +149,9 @@ INTERNAL_TOOLS = frozenset({
     "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "open_path", "navigate", "switch_model", "list_sending_accounts",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
+    # Background research reads the web and runs local models; its report
+    # lands in the conversation. Nothing it does reaches another person.
+    "deep_research",
     "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "generate_video",
     "generate_music", "compose_timeline", "create_presentation", "create_website",
