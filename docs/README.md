@@ -8,6 +8,7 @@ document it is.
 
 | Document | Audience | Purpose |
 |---|---|---|
+| [Getting started](user-guide/getting-started.md) | New users | Install on Windows, the first-run questions, opening Friday, the local address. |
 | [Tutorial](getting-started/tutorial.md) | New users | From nothing to a first conversation, then it stops. |
 | [Installation](getting-started/installation.md) | Users, operators | Every supported install path, prerequisites, GPU and Ollama setup, troubleshooting. |
 
@@ -15,9 +16,19 @@ document it is.
 
 | Document | Purpose |
 |---|---|
-| [Configuration](user-guide/configuration.md) | Every `settings.json` option, environment variable, and provider key. |
+| [Approvals and receipts](user-guide/approvals-and-receipts.md) | What Friday asks before it acts, cards, grants for scheduled jobs, and the signed receipts. |
+| [Privacy: local and cloud](user-guide/privacy.md) | What stays on your PC, what can leave, and the egress gate's limits. |
+| [Mail](user-guide/mail.md) | Messages and Gmail: connecting, what Friday can do, how sending is approved. |
+| [Calendar](user-guide/calendar.md) | Google Calendar and Tasks, and which changes ask first. |
+| [Voice](user-guide/voice.md) | Voice engines, local voice, and push-to-transcribe (Alt+T). |
+| [Documents](user-guide/documents.md) | Word, Excel and PowerPoint files through OfficeCLI. |
+| [Scheduled jobs](user-guide/scheduled-jobs.md) | Where jobs run, local-only defaults, and grants. |
+| [Phone](user-guide/phone.md) | Texts, voicemail and calls over your own Twilio account (off by default). |
+| [Backup and restore](user-guide/backup-and-restore.md) | What to back up, what cannot be recovered, restoring on a new PC. |
+| [Updating and uninstalling](user-guide/updating-and-uninstalling.md) | Keeping your data across versions, and removing Friday. |
+| [Configuration](user-guide/configuration.md) | Every setting, environment variable, provider key, and the `~/.friday` layout. |
 | [File grants](user-guide/file-grants.md) | Letting Friday send a specific document to the cloud, deliberately and on the record. |
-| [Background network activity](user-guide/background-network.md) | Every outbound connection a default install makes, and how to disable each. |
+| [Background network activity](user-guide/background-network.md) | Every connection Friday makes on its own, and how to disable each. |
 | [PDF documents](user-guide/pdf-documents.md) | Reading scans with local OCR, filling forms into a new file, and signing only on an approval card. |
 | [Skills](user-guide/skills.md) | The skill system, versioned optimisation, and the auto-research loop. |
 | [Local voice, GPU tier](user-guide/local-voice-gpu-tier.md) | The NVIDIA NeMo voice tier behind the same WebSocket contract as the CPU tier. |
@@ -34,7 +45,8 @@ document it is.
 
 | Document | Purpose |
 |---|---|
-| [Architecture overview](architecture/overview.md) | System diagrams, pipeline flows, routing decision tree, storage layout. |
+| [Architecture](../ARCHITECTURE.md) | Processes, the request flow, tool dispatch and the governance hook chain. |
+| [Architecture overview](architecture/overview.md) | Diagrams: system, a chat turn, the checkpoint, vault tiers, voice. |
 | [Threat model](security/threat-model.md) | What is defended against, what is not, and the guarantee each mechanism provides. |
 | [Security policy](../SECURITY.md) | Reporting, supported versions, where credentials live, what the runtime enforces. |
 
@@ -86,7 +98,7 @@ documents above.
 |---|---|
 | Version number | `pyproject.toml` (`project.version`); `package.json` mirrors it for the Playwright tooling. |
 | Supported Python versions | `pyproject.toml` (`requires-python`); CI tests the versions listed in `.github/workflows/tests.yml`. |
-| Supported operating systems | README, *Platform support*. |
+| Supported operating systems | README, *Requirements*. |
 | Installation methods | [Installation](getting-started/installation.md), *Supported installation paths*. |
 | Local model ladder | `src/agent_friday/services/model_plan.py` and `routing/ollama_manager.py`; `scripts/gen_installer_ladder.py` regenerates the installer's copy. |
 | Provider capabilities | `src/agent_friday/services/provider_registry.py` and `routing/provider_descriptors.py`. |

@@ -1,399 +1,185 @@
-# Architecture
+# Architecture overview
 
-Agent Friday's architecture is organized around three pillars: **intelligence** (how Friday thinks), **data sovereignty** (how Friday protects), and **self-improvement** (how Friday evolves).
+> Status: current for 5.14.0. Last verified against the code: 2026-09-24.
+> The top-level [ARCHITECTURE.md](../../ARCHITECTURE.md) is the short
+> description of processes, the request flow and the governance hook chain.
+> This page adds diagrams. Paths are relative to `src/agent_friday/`.
 
 ---
 
-## System Overview
+## System overview
 
 ```mermaid
 graph TB
-    subgraph Frontend["Holographic UI (Browser)"]
-        UI[Three.js WebGL Scene]
-        Audio[Web Audio API]
-        PWA[PWA / Service Worker]
-        Chat[Chat Interface]
-        Orbs[Process Orbs]
+    subgraph Browser["UI (browser, index.html)"]
+        UI[Workspaces and 3D views]
+        Chat[Chat panel, windows, tabs]
+        Cards[Approval cards]
     end
 
-    subgraph Server["Flask Backend (server.py · port 3000)"]
-        Auth[Authentication]
-        Routes[80+ API Routes]
-        Pipeline[Chat Pipeline]
-        WS["WebSocket /ws/live"]
+    subgraph Tray["friday_tray.py"]
+        PTT[Push-to-transcribe hook]
     end
 
-    subgraph Intelligence["Intelligence Layer"]
-        Pruner["Context Pruner<br/>(sentence-transformers)"]
-        Compressor["Context Compressor<br/>(Headroom)"]
-        Router[Model Router]
-        VaultGate[Vault Access Control]
-        PII["Privacy Shield<br/>(PII Scrubber)"]
+    subgraph Server["Flask server (127.0.0.1:3000)"]
+        Auth[Auth and locality rule]
+        Routes[Blueprints in routes/]
+        Loop[Agent loops]
+        Exec["_execute_tool + hook chain"]
+        Gate[Egress gate]
+        Sched[Scheduler]
+        Phone["Phone ingress (127.0.0.1:3011)"]
     end
 
-    subgraph Providers["Model Providers"]
-        Claude["Anthropic Claude<br/>(Cloud)"]
-        Gemini["Google Gemini<br/>(Cloud + Voice)"]
-        OAI["OpenAI-compatible<br/>(OpenRouter · OpenAI · Groq · Together<br/>HuggingFace · vLLM · LM Studio)"]
-        Ollama["Ollama<br/>(Local Models)"]
+    subgraph Local["Local runtimes"]
+        Llama[llama-server seats]
+        Ollama[Ollama]
+        Voice[Voice workers]
+        Comfy[ComfyUI]
+        Office[officecli.exe]
     end
 
-    subgraph Sovereignty["Data Sovereignty"]
-        Vault["Sovereign Vault<br/>(AES-256-GCM)"]
-        TrustGraph["Trust Graph<br/>(6-dimension scoring)"]
-        Memory["Cognitive Memory<br/>(3-tier)"]
-        Wiki["Personal Wiki<br/>(~/.friday/wiki/)"]
-        HMAC["HMAC Integrity<br/>(SHA-256 signed constraints)"]
+    subgraph Cloud["Cloud providers (optional)"]
+        Anthropic
+        Gemini
+        OAI["OpenAI-compatible (OpenRouter and others)"]
     end
 
-    subgraph Evolution["Self-Improvement"]
-        SkillOpt["SkillOpt Engine<br/>(versioned skills)"]
-        AutoRes["Auto-Research Loop<br/>(Karpathy-inspired)"]
-        Studio["Workspace Studio<br/>(per-workspace customization)"]
-        Personality[Personality Evolution]
-        Epistemic[Epistemic Score]
-    end
+    Data[("~/.friday")]
 
-    Frontend --> Server
-    Server --> Intelligence
-    Intelligence --> Providers
-    Intelligence --> Sovereignty
-    Server --> Evolution
-    Evolution --> Intelligence
+    Tray --> Server
+    Browser --> Auth --> Routes --> Loop
+    Loop --> Exec
+    Loop --> Local
+    Loop --> Gate --> Cloud
+    Sched --> Loop
+    Phone --> Loop
+    Exec --> Data
+    Server --> Data
 ```
 
-Any provider exposing an OpenAI-compatible `/v1` endpoint (OpenRouter, OpenAI, Groq, Together, HuggingFace, vLLM, LM Studio, ...) dispatches through the same shared agentic tool loop.
+Every OpenAI-compatible endpoint, local or cloud, runs through the same agentic
+tool loop (`services/agent._oai_agentic_loop`); Anthropic models run the Claude
+tool loop. Both dispatch tools through `_execute_tool`.
 
 ---
 
-## Chat Pipeline
-
-Every user message flows through this pipeline before reaching a model:
+## A chat turn
 
 ```mermaid
 flowchart TD
-    A[User Message] --> B{Conversation<br/>exceeds max_turns?}
-
-    B -->|Yes| C["Context Pruner<br/>Embed current prompt +<br/>archive turns with<br/>all-MiniLM-L6-v2.<br/>Keep system msgs sacred.<br/>Keep recent N turn pairs.<br/>Score archive by cosine<br/>similarity → top-k."]
-    B -->|No| D[Skip pruning]
-
-    C --> E{Estimated tokens<br/>≥ min_tokens_to_compress?}
-    D --> E
-
-    E -->|Yes| F["Context Compressor<br/>Headroom compresses<br/>tool outputs, JSON,<br/>code, and prose.<br/>60-95% token savings."]
-    E -->|No| G[Skip compression]
-
-    F --> H[Model Router]
-    G --> H
-
-    H --> I{Vault keywords<br/>detected in message?}
-    I -->|Yes| J{Local model<br/>available via Ollama?}
-    I -->|No| K["Route by mode:<br/>cloud_only / local_preferred / smart / local_only"]
-
-    J -->|Yes| L["Force-route to<br/>Ollama local model<br/>(vault_allowed=true)"]
-    J -->|No| M{vault_cloud_fallback<br/>setting?}
-
-    M -->|redact| N["Route to cloud<br/>with gated content<br/>(vault content redacted)"]
-    M -->|deny / warn| O[Refuse request]
-
-    K --> P[Selected Provider + Model]
-    L --> P
-    N --> P
-
-    P --> Q["Vault Gate<br/>Classify each content block<br/>TIER 1 / 2 / 3.<br/>Gate by provider."]
-
-    Q --> R{Cloud provider?}
-    R -->|Yes| S["PII Scrubber<br/>Privacy Shield strips<br/>remaining patterns:<br/>SSN, phone, email, etc."]
-    R -->|No| T["Skip PII scrub<br/>(local model is trusted)"]
-
-    S --> U[Dispatch to Model]
-    T --> U
-
-    U --> V["Response<br/>+ CostTracker records<br/>provider, model, tokens, cost"]
-
-    style L fill:#2d5016,color:#fff
-    style O fill:#5c1a1a,color:#fff
-    style N fill:#5c4a00,color:#fff
+    A[Message from the UI] --> B{Direct loopback<br/>and not proxied?}
+    B -->|No| L[Login required]
+    B -->|Yes| C[Assemble context<br/>system prompt with explicit vault control,<br/>memory, pruning and compression]
+    C --> D{Vault request and<br/>vault_local_only?}
+    D -->|Yes| E[Local seat, or refuse]
+    D -->|No| F{Seat chosen for this<br/>conversation or globally?}
+    F -->|Yes| G[Use the chosen seat]
+    F -->|No| H[Routing mode and task class]
+    H --> I{local_only and<br/>no local seat?}
+    I -->|Yes| J[Refuse; offer to answer in the cloud]
+    I -->|No| G
+    E --> K{Cloud provider?}
+    G --> K
+    K -->|No| M[Call the local model]
+    K -->|Yes| N["_seal_or_block:<br/>spending cap, size ceiling,<br/>egress gate seal_outbound"]
+    N -->|Gate failed| O[Send blocked]
+    N -->|Sealed| P[Call the cloud model]
+    M --> Q[Agent loop: tool calls via _execute_tool]
+    P --> Q
+    Q --> R[Stream reply with the model that answered;<br/>record cost and reasoning trace]
 ```
 
 ---
 
-## Model Routing Decision Tree
+## The governance checkpoint
 
 ```mermaid
 flowchart TD
-    Start[Incoming Request] --> VaultCheck{Contains vault<br/>keywords?}
-
-    VaultCheck -->|Yes| VaultRoute[Force Vault Route]
-    VaultCheck -->|No| ModeCheck{Routing mode?}
-
-    VaultRoute --> OllamaAvail{Ollama available<br/>with models?}
-    OllamaAvail -->|Yes| LocalVault["Route to local model<br/>vault_allowed=true<br/>scrub_pii=false"]
-    OllamaAvail -->|No| Fallback{vault_cloud_fallback?}
-    Fallback -->|redact| CloudRedact["Cloud with redaction<br/>vault content gated downstream"]
-    Fallback -->|deny| Refuse[Refuse request outright]
-    Fallback -->|warn| RefuseWarn["Refuse + tell user<br/>to install Ollama"]
-
-    ModeCheck -->|cloud_only| CloudOnly["Route to Claude<br/>(default_cloud_model)"]
-    ModeCheck -->|local_preferred| LocalPref[Try Ollama first]
-    ModeCheck -->|smart| SmartRoute[Classify task type]
-    ModeCheck -->|local_only| LocalOnly["First available Ollama model<br/>(never falls back to cloud)"]
-
-    LocalPref --> OllamaCheck{Ollama available<br/>with models?}
-    OllamaCheck -->|Yes| PickLocal["Pick best local model<br/>by task type + size"]
-    OllamaCheck -->|No| FallbackCloud[Fallback to cloud]
-
-    SmartRoute --> TaskType{Task type?}
-    TaskType -->|simple| SmallLocal["Smallest local model<br/>(fast response)"]
-    TaskType -->|code / research| LargeLocal["Largest local model<br/>(≥4GB preferred)"]
-    TaskType -->|tool_use| CloudTools["Cloud model required<br/>(tool support)"]
-    TaskType -->|voice| GeminiVoice[Gemini Live pipeline]
-    TaskType -->|vault_access| VaultRoute
-
-    style LocalVault fill:#2d5016,color:#fff
-    style Refuse fill:#5c1a1a,color:#fff
-    style RefuseWarn fill:#5c1a1a,color:#fff
+    T[Tool call from any surface] --> R1["Priority 1: governance_rings (critical)"]
+    R1 --> G1{Ring and scope allowed?}
+    G1 -->|No| DENY[Deny: the model is told it did not run]
+    G1 -->|Yes| P1{"Sensitive argument<br/>came from read content?<br/>(services/taint.py)"}
+    P1 -->|Refused pattern| DENY
+    P1 --> A1["action_gate.authorize:<br/>cLaws pin check, classify"]
+    A1 --> C1{Class}
+    C1 -->|internal, untainted| ALLOW[Allow]
+    C1 -->|forbidden| DENY
+    C1 -->|outward, live chat, untainted| CONF[Chat yes/no for this exact action]
+    C1 -->|outward, scheduled, grant matches| ALLOW
+    C1 -->|otherwise| CARD[Approval card; one approval, one call]
+    A1 -->|any failure| HOLD[Hold outward actions]
+    ALLOW --> RCPT[Signed receipt in decision-bom.jsonl]
+    CONF --> RCPT
+    CARD --> RCPT
+    RCPT --> NEXT["Priority 10-40: confirmation gate, vault_zt,<br/>sandbox policy, rate limiter"]
+    NEXT --> H[Handler runs]
+    H --> POST["Post-hooks: cost, provenance record,<br/>audit log, PII scrub, file-grant registration"]
 ```
 
-### Task Classification
-
-The router classifies the last user message by scanning for intent signals:
-
-| Task Type | Detection | Preferred Route |
-|-----------|-----------|-----------------|
-| `simple` | Short message (<200 chars), no tools | Smallest local model |
-| `code` | Keywords: write code, implement, refactor, debug, function, class, def, import, algorithm | Largest local model (≥4GB) |
-| `research` | Keywords: research, analyze, compare, deep dive, explain in detail, comprehensive | Largest local model (≥4GB) |
-| `tool_use` | Request includes tool definitions | Cloud (tool support required) |
-| `voice` | Voice pipeline active | Gemini Live |
-| `vault_access` | Vault keywords or vault tool definitions | Forced local |
+The table of hooks and what each one does is in
+[ARCHITECTURE.md](../../ARCHITECTURE.md#tool-dispatch-and-the-governance-hook-chain).
+The privilege rings still exist inside `_governance_check`: ring 0 and 1 tools
+always pass the ring check, ring 2 needs an authenticated or background
+session, and ring 3 (mouse, keyboard, screen) needs computer control to be
+enabled. The rings decide whether a tool may be considered at all; the action
+gate decides whether it may act without you.
 
 ---
 
-## Vault Access Control Flow
+## Vault tiers
 
 ```mermaid
 flowchart TD
-    Content[Content to gate] --> Classify{Classify sensitivity<br/>by keyword scan}
-
-    Classify --> T1["TIER 1 — Public<br/>Wiki, news, general docs"]
-    Classify --> T2["TIER 2 — Private<br/>Contacts, family, trust graph,<br/>personal notes"]
-    Classify --> T3["TIER 3 — Sensitive<br/>Financial, medical, legal,<br/>custody, SSN, encrypted"]
-
-    T1 --> ProvCheck1{Provider?}
-    T2 --> ProvCheck2{Provider?}
-    T3 --> ProvCheck3{Provider?}
-
-    ProvCheck1 -->|Local| Allow1[ALLOW — full content]
-    ProvCheck1 -->|Cloud| Allow2[ALLOW — full content]
-
-    ProvCheck2 -->|Local| Allow3[ALLOW — full content]
-    ProvCheck2 -->|Cloud| Redact["REDACT — placeholder:<br/>[VAULT-PROTECTED — private<br/>content withheld from cloud<br/>models. Switch to local<br/>routing to access it.]"]
-
-    ProvCheck3 -->|Local| Allow4[ALLOW — full content]
-    ProvCheck3 -->|Cloud| Drop["DROP — empty string<br/>Cloud gets nothing"]
-
-    Allow1 --> Log["Log decision to<br/>~/.friday/vault/context-log/<br/>(append-only JSONL)"]
-    Allow2 --> Log
-    Allow3 --> Log
-    Allow4 --> Log
-    Redact --> Log
-    Drop --> Log
-
-    style Allow1 fill:#2d5016,color:#fff
-    style Allow2 fill:#2d5016,color:#fff
-    style Allow3 fill:#2d5016,color:#fff
-    style Allow4 fill:#2d5016,color:#fff
-    style Redact fill:#5c4a00,color:#fff
-    style Drop fill:#5c1a1a,color:#fff
+    Content[Content bound for a model] --> Classify{privacy/vault_access<br/>classification}
+    Classify --> T1["TIER 1: public"]
+    Classify --> T2["TIER 2: private<br/>contacts, family, personal notes"]
+    Classify --> T3["TIER 3: sensitive<br/>financial, medical, legal, identity"]
+    T1 --> Any[Any provider: full content]
+    T2 --> L2[Local: full content]
+    T2 --> C2[Cloud: placeholder]
+    T3 --> L3[Local: full content]
+    T3 --> C3[Cloud: withheld]
 ```
 
-### TIER 3 Keywords (Sensitive)
-Financial, bank account, routing number, investment, portfolio, tax return, salary, income, health record, medical, medication, prescription, diagnosis, insurance, legal, custody, court, SSN, social security, passport, driver's license, encrypted, sovereign vault.
-
-### TIER 2 Keywords (Private)
-Contact, phone number, home address, family, partner, personal note, memory, trust graph, relationship, todo.
+Assembly-time gating happens while the prompt is built; the egress gate
+enforces the same policy again on the finished payload. Egress decisions are
+logged to `~/.friday/vault/egress-log.jsonl`. The classifier's layers, and what
+each build actually runs, are in the [threat model](../security/threat-model.md).
 
 ---
 
-## Voice Mode Pipeline
+## Voice
 
-Voice supports two engines behind one mic button. When the user clicks the microphone, the client calls `GET /api/voice/session-info`, which returns the WebSocket URL for the active engine:
+The microphone button asks `GET /api/voice/session-info` which WebSocket to
+use for the configured engine:
 
-- **`/ws/voice-local`** — the default, fully on-device pipeline: Tier-1 (faster-whisper ASR + Piper TTS on CPU) or Tier-2 (NeMo on GPU, with automatic CPU fallback).
-- **`/ws/live`** — the cloud branch (Gemini Live), used only when the user selects the `gemini` voice engine; it auto-reconnects if the session drops.
+- **`/ws/voice-local`** (the default): on-device speech recognition
+  (faster-whisper) and speech (Piper, or Kokoro on a GPU), or the NVIDIA NeMo
+  GPU tier. GPU engines run in leased worker processes
+  (`services/voice_workers.py`) that the residency arbiter can evict to the
+  CPU with a notice.
+- **`/ws/live`**: Gemini Live, used only when the voice engine is `gemini`.
 
-The audio plumbing and event contract are identical on both paths. The sequence below shows the cloud (Gemini Live) branch:
+Tools called from voice go through `_execute_tool` like any other, and the
+action permission policy ends both voice prompts.
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Browser
-    participant Flask as Flask Server
-    participant Gemini as Gemini Live API<br/>(gemini-3.1-flash-live-preview)
-
-    User->>Browser: Click microphone
-    Browser->>Flask: GET /api/voice/session-info → ws_url
-    Browser->>Flask: WebSocket connect /ws/live
-    Flask->>Gemini: Open Gemini Live session
-    Flask->>Browser: Send greeting audio
-
-    loop Conversation
-        User->>Browser: Speak
-        Browser->>Flask: Audio chunks (base64 PCM)
-
-        Flask->>Flask: Check for vault keywords
-        alt Vault content detected
-            Flask->>Browser: Spoken refusal +<br/>suggest local model or typing
-        else Normal query
-            Flask->>Gemini: Forward audio
-            Gemini->>Flask: Response audio chunks
-            Flask->>Browser: Stream audio response
-            Browser->>User: Play audio
-        end
-
-        alt User interrupts
-            Browser->>Flask: Interruption signal
-            Flask->>Gemini: Cancel current response
-            Flask->>Browser: Acknowledge interruption
-        end
-    end
-
-    User->>Browser: End session
-    Browser->>Flask: WebSocket close
-    Flask->>Gemini: Close session
-```
+Push-to-transcribe is separate from conversation: the tray's keyboard hook
+(`services/push_to_talk.py`) records while the key is held and asks the
+server's local speech recogniser for the text, then types it into the window
+that had focus when the key went down.
 
 ---
 
-## Skill Self-Improvement Loop
+## Components that exist but are not wired
 
-```mermaid
-flowchart TD
-    Exec[Skill Execution] --> Score["Composite Score<br/>accuracy (40%) · satisfaction (25%)<br/>latency (15%) · completeness (10%) · cost (10%)"]
-
-    Score --> Log[Append to metrics.jsonl]
-    Log --> Rolling[Calculate 10-execution<br/>rolling mean]
-
-    Rolling --> Check{Rolling mean dropped<br/>>10% below all-time best?}
-
-    Check -->|No| Wait[Continue monitoring]
-    Check -->|Yes| Research[Auto-Research Loop fires]
-
-    Research --> Hypotheses["Generate hypotheses<br/>Error patterns? Latency spikes?<br/>Quality drift? Prompt issues?"]
-
-    Hypotheses --> Edits["Propose skill edits<br/>ops: replace / patch / append"]
-
-    Edits --> NewVersion["Create candidate version<br/>(v001 → v002 → ...)"]
-
-    NewVersion --> Epoch["Training Epoch<br/>Score candidate vs baseline<br/>over evaluation batch"]
-
-    Epoch --> Gate{"Validation Gate<br/>1. Within 5% of all-time best?<br/>2. Beats or matches baseline?<br/>(gains under 0.5% = marginal pass, not rejected)"}
-
-    Gate -->|Pass| Promote["Promote new version<br/>Update best_skill.md<br/>Demote previous champion"]
-    Gate -->|Fail| Reject["Reject candidate<br/>Log reason<br/>AutoResearch continues"]
-
-    Promote --> Wait
-    Reject --> Wait
-    Wait --> Exec
-
-    style Promote fill:#2d5016,color:#fff
-    style Reject fill:#5c1a1a,color:#fff
-```
+- **Federation and Economy** Settings panels are hidden
+  (`SETTINGS_SHOW_HELD_FEATURES = false`); their routes and data remain.
 
 ---
 
-## Workspace Studio
+## Storage
 
-Each workspace window has a chat scoped to that workspace
-(`services/workspace_studio.py`, `routes/workspace_studio.py`). Friday either
-answers in words or returns a small declarative patch, which is sanitized,
-snapshotted and applied live without a rebuild.
-
-```mermaid
-flowchart LR
-    Msg["Message in a<br/>workspace chat"] --> Turn["workspace_chat_turn()"]
-    Turn --> Patch{"friday-customize<br/>block in reply?"}
-    Patch -->|no| Reply[Plain reply]
-    Patch -->|yes| Sanitize["Sanitize patch<br/>(whitelisted keys,<br/>scoped CSS)"]
-    Sanitize --> Snapshot["Snapshot current state<br/>(last 40 versions kept)"]
-    Snapshot --> Apply["Apply live in the UI"]
-    Apply --> Revert["Undo / revert / restore-as-of<br/>(each itself snapshotted)"]
-```
-
----
-
-## Governance: Privilege Rings
-
-```mermaid
-graph LR
-    subgraph Ring0["Ring 0 — Read-only (Always)"]
-        R0["read_file · read_wiki · search_wiki<br/>query_trust_graph · query_calendar<br/>get_career_pipeline · get_briefing"]
-    end
-
-    subgraph Ring1["Ring 1 — Local Write (Always)"]
-        R1["write_file · write_clipboard<br/>propose_wiki_update · correct_wiki<br/>learn_skill"]
-    end
-
-    subgraph Ring2["Ring 2 — Network (Authenticated)"]
-        R2["search_web · browse_web · search_email<br/>draft_email · open_url · spawn_task<br/>run_command"]
-    end
-
-    subgraph Ring3["Ring 3 — OS Control (User-enabled)"]
-        R3["install_package · move_mouse · click<br/>type_text · press_key · screenshot · scroll"]
-    end
-
-    Ring0 --> Ring1 --> Ring2 --> Ring3
-
-    style Ring0 fill:#1a3a1a,color:#fff
-    style Ring1 fill:#2d4a1a,color:#fff
-    style Ring2 fill:#4a3a00,color:#fff
-    style Ring3 fill:#4a1a1a,color:#fff
-```
-
-Every tool call passes through the governance gate, which:
-1. Checks the privilege ring
-2. Verifies the HMAC-SHA256 signature on behavioral constraints
-3. Applies rate limiting (token bucket: 20 Ring-3 actions/minute, 60 Ring-2 actions/minute; configurable via the `rate_limiter` setting)
-4. Blocks destructive operations (`rm`, `del`, `format`, `shutdown`, `reg delete`)
-5. Logs the decision to `~/.friday/vault/decision-bom.jsonl`
-
----
-
-## Data Storage Layout
-
-```
-~/.friday/
-├── settings.json              # All configuration (routing, capability_routing, etc. — NO secrets)
-├── providers/
-│   └── keys/                  # Provider API keys, encrypted via the credential store
-├── personality.json           # Personality evolution state
-├── epistemic_scores.json      # Epistemic self-calibration
-├── trust_graph.json           # Relationship trust scores
-├── privacy_shield.json        # PII scrubber config + watchlist
-├── voice_debug.log            # Voice mode diagnostics
-├── memory/                    # Long-term memory entries
-├── wiki/                      # Personal wiki (by domain)
-│   ├── identity/
-│   ├── family/
-│   ├── professional/
-│   ├── health/
-│   ├── legal/
-│   └── finance/
-├── vault/
-│   ├── .governance-key        # HMAC signing key (generated on first run)
-│   ├── context-log/           # Access decision audit trail (JSONL)
-│   └── decision-bom.jsonl     # Governance decision log
-├── skillopt/                  # Skill optimization data
-│   └── <skill_name>/
-│       ├── versions/          # v001.md, v002.md, ...
-│       ├── metrics.jsonl      # Execution log (append-only)
-│       ├── best_skill.md      # Current champion artifact
-│       ├── config.json        # Weights + thresholds
-│       └── research_log.jsonl # Auto-research findings
-├── workspace_studio/          # Per-workspace chat, customization, versions
-│   └── <workspace>.json
-├── skills/                    # Lightweight YAML skill definitions
-├── audio-cache/               # TTS audio cache
-└── vibe-code-logs/            # Vibe code terminal logs
-```
+Everything Friday keeps is under `~/.friday` (or `$FRIDAY_HOME`). The full
+layout, with what is encrypted, is in the
+[configuration reference](../user-guide/configuration.md#what-lives-in-friday).
