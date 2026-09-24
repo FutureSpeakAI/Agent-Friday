@@ -189,6 +189,72 @@ def create_deny_mark():
     return jsonify({"status": "ok", "deny": event})
 
 
+@control_bp.route('/api/privacy/file-grants/unverified', methods=['GET'])
+@login_required
+def list_unverified_file_grants():
+    """Ledger lines that do not verify, with their content, for review.
+
+    Every row is `verified: false`. Nothing here is an active grant -- while any
+    unverified line remains, the ledger is in suspenders mode and every grant is
+    treated as absent. This endpoint exists so the user can SEE what failed
+    before deciding, because a re-attestation he cannot read is not a decision.
+    """
+    from agent_friday.services import file_grants as _fg
+    rows = _fg.list_unverified()
+    return jsonify({"status": "ok", "unverified": rows, "count": len(rows)})
+
+
+@control_bp.route('/api/privacy/file-grants/reattest', methods=['POST'])
+@login_required
+def reattest_file_grant():
+    """Re-sign one reviewed line under the current key, on explicit confirmation.
+
+    Body: {"line_sha256": "...", "confirmed_by": "<who>"}
+
+    Never automatic: a line is re-signed only when the user names himself as the
+    confirmer. The original is quarantined verbatim rather than rewritten, so a
+    tampered line can never be laundered into a valid one.
+    """
+    from agent_friday.services import file_grants as _fg
+    data = request.get_json(silent=True) or {}
+    sha = (data.get("line_sha256") or "").strip()
+    who = (data.get("confirmed_by") or "").strip()
+    if not sha or not who:
+        return jsonify({"status": "error",
+                        "message": "line_sha256 and confirmed_by are both "
+                                   "required"}), 400
+    out = _fg.reattest(sha, confirmed_by=who)
+    if not out.get("ok"):
+        return jsonify({"status": "error", "message": out.get("error")}), 400
+    _log_context("file_grant_reattested",
+                 {"line_sha256": sha, "confirmed_by": who})
+    return jsonify({"status": "ok", "reattest": out})
+
+
+@control_bp.route('/api/privacy/file-grants/dismiss', methods=['POST'])
+@login_required
+def dismiss_file_grant():
+    """Quarantine an unverified line WITHOUT re-signing it.
+
+    For a line the user does not recognise or no longer wants. The grant does not
+    come back; the line is kept for inspection.
+    """
+    from agent_friday.services import file_grants as _fg
+    data = request.get_json(silent=True) or {}
+    sha = (data.get("line_sha256") or "").strip()
+    who = (data.get("confirmed_by") or "").strip()
+    if not sha or not who:
+        return jsonify({"status": "error",
+                        "message": "line_sha256 and confirmed_by are both "
+                                   "required"}), 400
+    out = _fg.dismiss_unverified(sha, confirmed_by=who)
+    if not out.get("ok"):
+        return jsonify({"status": "error", "message": out.get("error")}), 400
+    _log_context("file_grant_dismissed",
+                 {"line_sha256": sha, "confirmed_by": who})
+    return jsonify({"status": "ok", "dismiss": out})
+
+
 @control_bp.route('/api/privacy/file-grants/<grant_id>/revoke', methods=['POST'])
 @login_required
 def revoke_file_grant(grant_id):

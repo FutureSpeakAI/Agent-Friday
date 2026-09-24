@@ -46,7 +46,7 @@ test('each workspace renders alone in its own tab: no desktop, dock, windows or 
     expect(dom.windows, w.id).toBe(0);
     expect(dom.scene, w.id).toBe(false);
     expect(dom.canvas, w.id).toBe(false);
-    expect(dom.title, w.id).toBe(w.label + ' — Friday');
+    expect(dom.title, w.id).toBe(w.label + ' · Agent Friday');
     expect(dom.back, w.id).toBe('/?workspace=' + w.id);
     expect(dom.approvals, w.id).toBe(true);
     expect(errors, w.id).toEqual([]);
