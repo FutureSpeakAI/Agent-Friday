@@ -65,7 +65,7 @@ Line numbers are at bf1d5866, before this work.
 | 4 | `services/agent.py:1107/1120` → `calendar_write.py:307` | Calendar create/update/annotate sent invites with no question (the docstring said a card covered it; no code did) | Outward |
 | 5 | `agent.py:5467` `content_create_post` / `content_schedule_post` → `publisher.py:682` | Scheduling a post to any of the platforms asked nothing; the publisher then posts whatever is scheduled | Scheduling is outward; drafting stays internal |
 | 6 | `agent.py:7545-7553` connector tools | Every MCP write ran with ring 2 alone | Outward unless a read by name and by the union classifier |
-| 7 | `agent.py:3185` background tasks, `scheduler.py:593` | Scheduled jobs held every outward power (`is_background_task` counted as authenticated and skipped the question) | Outward actions need a scoped, expiring grant; schedule id now reaches the task context |
+| 7 | `agent.py:3185` background tasks, `scheduler.py:593` | Scheduled jobs held every outward power (`is_background_task` counted as authenticated and skipped the question) | Outward actions need a scoped, expiring grant. The schedule id is set by the scheduler alone (`_spawn_task(schedule_id=)`), never parsed from a task description a model wrote |
 | 8 | `agent.py:5313-5316` create/run_workflow (ring 1) from unauthenticated contexts (channels `manager.py:267`, creative pipeline `:511`) | Ring escalation: steps ran as authenticated background tasks | Steps are background work, so every outward step needs a grant or a card |
 | 9 | `agent.py:4271-4306` `correct_wiki` | Text replace across every `~/.friday/*.json`, immediately: settings, approvals, connector commands, schedules, credentials | Only fact files (`CORRECTABLE_JSON`) |
 | 10 | `write_file` into `~/.friday` or a file Friday loads as instructions | Could overwrite settings, approvals, SOUL.md, skills | Outward |
@@ -73,6 +73,13 @@ Line numbers are at bf1d5866, before this work.
 | 12 | `routes/chat.py:1131-1157`, `2133-2159` | Both chat endpoints built their own prompt: no action policy, no override strip on memory, continuity, user model or heuristics | `seal_system_prompt`: strip, then the policy exactly once, last. Background prompts put their suffix before it |
 | 13 | `agent.py:5959` `_get_governance_key` | An unavailable key became a throwaway random key, so receipts were signed with nothing checkable | The checkpoint takes the key from `proof_of_integrity` directly and holds outward actions when it cannot |
 | 14 | the checkpoint's own first draft (found by the replay's harmless pass, fixed in bda86641) | A connector tool counted as a read if any word of its name was a read verb, so `update_user_info` ran unasked | The first word after the server name must be the read verb |
+| 15 | `write_file` outside `~/.friday` from a background task, a channel message or a live voice session | Internal, so it ran with no question anywhere but typed chat (a script into the Startup folder, for one) | Internal only inside Friday's output folders (creations and office documents); anywhere else is outward |
+| 16 | `learn_skill` create, modify, delete | Internal, while `write_file` to the same folder was outward | Classified by argument: listing is internal, changing a skill is outward |
+| 17 | `agent._task_worker` built `schedule_id` from the task description | A model could spawn a task described `scheduled:<id>` and use that schedule's grants | Set only by the scheduler |
+| 18 | `office` edits (`set`, `add`, `remove`, `move`) to a document already in the folder | Internal whoever made the document | Internal only for documents Friday created (`documents/.made-by-friday.json`); edits to anything else are outward |
+| 19 | `gmail_send.send` | An approved card, but no cLaws check or signed receipt, unlike every tool call | `action_gate.record_external` before the card is spent; a hold leaves the card usable |
+| 20 | `phone/live_call.py` agent turn and spoken reply | No gated system prompt and no egress gate, unlike a text | The same `_gated_system_prompt` and `gate_reply` a text gets |
+| 21 | `publisher._run_target` for a recurring post whose wording the composer regenerated | Published text nobody had seen | A card for exactly that text; the target waits and rechecks every 15 minutes |
 
 Deliberately outside the checkpoint, with the reason:
 
@@ -89,8 +96,14 @@ Deliberately outside the checkpoint, with the reason:
   connector call fails until someone reviews it.
 * **Paid generation** (image, video, music, speech) is internal to the
   checkpoint; spend is governed by the budget guard, not a card.
-* **OfficeCLI and Twilio** have no code yet. Their tools will be found by the
-  discovery test and must be classified before it passes.
+* **Scheduler builtins** (the news sweep, briefings, memory jobs, repo sync,
+  the update check) run as functions, not tool calls. Each one is listed with
+  its reason in `tests/unit/test_governance_off_chat_paths.py`; a new builtin
+  fails that test until it is reviewed.
+* **Side-effect sinks outside a tool call** (Gmail send and modify, SMS,
+  calls, calendar insert, platform publish): the same test file scans `src/`
+  for them and names each enclosing function with how it is gated. A new one
+  fails until it is gated and listed.
 
 ## Provenance on the card
 
