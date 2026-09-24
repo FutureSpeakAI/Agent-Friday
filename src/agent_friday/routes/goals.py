@@ -246,7 +246,7 @@ def create_governance_grant():
         g = action_gate.create_grant(
             tools=list(body.get("tools") or []), scope=str(body.get("scope") or ""),
             expires_in_seconds=float(body.get("expires_in_seconds") or 0),
-            max_uses=int(body.get("max_uses") or 1), created_by="owner",
+            max_uses=int(body.get("max_uses", 1)), created_by="owner",
             note=str(body.get("note") or ""))
     except (TypeError, ValueError) as e:
         return jsonify({"error": str(e)}), 400
@@ -258,3 +258,49 @@ def create_governance_grant():
 def revoke_governance_grant(grant_id):
     from agent_friday.governance import action_gate
     return jsonify({"revoked": action_gate.revoke_grant(grant_id)})
+
+
+@goals_bp.route("/api/governance/outward-tools", methods=["GET"])
+@login_required
+def list_outward_tools():
+    """The actions a grant can cover: every registered tool the governance
+    checkpoint classifies as outward, in its own words. Read from the live
+    registry and the checkpoint's classifier, so the Grants screen offers
+    exactly what the gate would otherwise hold."""
+    from agent_friday.governance import action_gate
+    from agent_friday.services import agent as _agent
+    out = []
+    for name in sorted(_agent.CLAUDE_TOOL_HANDLERS):
+        probe = {"publish_at": "x"} if name == "content_create_post" else \
+                {"command": "Remove-Item x"} if name == "run_command" else {}
+        try:
+            klass, why = action_gate.classify(name, probe)
+        except Exception:
+            klass, why = action_gate.OUTWARD, "unclassified"
+        if klass == action_gate.OUTWARD and name not in action_gate.SELF_GATED:
+            out.append({"name": name, "why": why, "label": _GRANT_LABELS.get(name)
+                        or _connector_label(name)})
+    return jsonify({"tools": out})
+
+
+#: Plain words for the Grants screen. A tool missing here still appears, under
+#: a label built from its name, so a new outward tool is never hidden.
+_GRANT_LABELS = {
+    "create_calendar_event": "Create calendar events and send invites",
+    "update_calendar_event": "Change calendar events",
+    "annotate_calendar_events": "Add notes to calendar events",
+    "content_create_post": "Schedule a new social post",
+    "content_schedule_post": "Schedule an existing social post",
+    "delete_task": "Delete tasks",
+    "install_package": "Install software",
+    "run_command": "Run commands that change things",
+    "spawn_interactive_session": "Start a terminal session",
+    "send_to_session": "Type into an open terminal session",
+}
+
+
+def _connector_label(name):
+    words = name[4:].split("_") if name.startswith("mcp_") else name.split("_")
+    if name.startswith("mcp_") and len(words) > 1:
+        return "%s: %s" % (words[0].capitalize(), " ".join(words[1:]))
+    return " ".join(words).capitalize()
