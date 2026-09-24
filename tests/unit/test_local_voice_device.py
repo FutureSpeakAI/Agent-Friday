@@ -70,6 +70,36 @@ def test_a_card_the_brain_is_using_is_left_alone(monkeypatch, asr):
     assert "free" in why.lower()
 
 
+def test_a_busy_arbiter_gets_the_card(monkeypatch, asr):
+    """The arbiter owns the GPU; the ear has a perfectly good CPU path."""
+    import agent_friday.services.residency_arbiter as ra
+    _with_torch(monkeypatch, _fake_torch(available=True, free_gib=8.0))
+    monkeypatch.setattr(ra, "ARBITER", types.SimpleNamespace(
+        status=lambda: {"state": ra.STATE_DEFAULT,
+                        "lease": {"kind": "image"}}), raising=False)
+    device, _c, why = asr._pick_device()
+    assert device == "cpu", "an image lease means the card is spoken for"
+    assert "lease" in why
+
+
+def test_an_arbiter_mid_transition_gets_the_card(monkeypatch, asr):
+    import agent_friday.services.residency_arbiter as ra
+    _with_torch(monkeypatch, _fake_torch(available=True, free_gib=8.0))
+    monkeypatch.setattr(ra, "ARBITER", types.SimpleNamespace(
+        status=lambda: {"state": "transitioning", "lease": None}), raising=False)
+    device, _c, why = asr._pick_device()
+    assert device == "cpu"
+    assert "arbiter" in why.lower()
+
+
+def test_an_idle_arbiter_does_not_block_the_gpu(monkeypatch, asr):
+    import agent_friday.services.residency_arbiter as ra
+    _with_torch(monkeypatch, _fake_torch(available=True, free_gib=8.0))
+    monkeypatch.setattr(ra, "ARBITER", types.SimpleNamespace(
+        status=lambda: {"state": ra.STATE_DEFAULT, "lease": None}), raising=False)
+    assert asr._pick_device()[0] == "cuda"
+
+
 def test_a_broken_torch_does_not_take_voice_down(monkeypatch, asr):
     broken = types.SimpleNamespace()
 
