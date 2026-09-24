@@ -1470,11 +1470,12 @@ def _tool_query_calendar(_inp):
 
 
 def _email_query_matches(query: str, blob: str) -> bool:
-    """Word-boundary match for the local email search filter.
+    """Word-boundary match for searching the offline email cache.
 
-    A plain substring test (`query in blob`) makes "test" match "latest",
-    "contest", "protest" -- false positives on top of whatever Gmail's own
-    q= already filtered. \b anchors the match to whole-word boundaries
+    Live searches go to Gmail's own q= and are not filtered here; this is
+    for the cache a never-connected install searches locally. A plain
+    substring test (`query in blob`) makes "test" match "latest",
+    "contest", "protest". \b anchors the match to whole-word boundaries
     instead. An empty query matches everything (unchanged prior behavior).
     Multi-word queries (e.g. "budget forecast") require each word to appear
     somewhere in the blob as its own word, in any order -- this keeps a
@@ -1636,12 +1637,12 @@ def _tool_search_email(inp):
     if source == "empty" or not cards:
         return json.dumps({"connected": False, "messages": [], "integration": "gmail",
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(what="Gmail", reads="your email")})
-    ql = q.lower()
     hits = []
     for c in (cards or []):
         blob = " ".join(str(c.get(k) or "") for k in
                         ("sender", "from", "subject", "title", "snippet", "preview")).lower()
-        if not ql or ql in blob:
+        # Whole words: a substring test makes "test" match "latest".
+        if _email_query_matches(q, blob):
             hits.append({
                 "from": c.get("sender") or c.get("from") or "",
                 "subject": c.get("subject") or c.get("title") or "",

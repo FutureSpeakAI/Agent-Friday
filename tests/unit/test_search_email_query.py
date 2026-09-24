@@ -181,25 +181,48 @@ class TestGmailQueryReachesTheApi:
 
 
 class TestSearchEmailWordBoundary:
-    """Defect 2: substring filter has no word-boundary check."""
+    """Defect 2: substring filter has no word-boundary check.
 
-    def test_query_test_does_not_match_latest(self, monkeypatch):
+    A live search sends the query to Gmail and does no local filtering, so
+    the word-boundary rule applies where Friday still matches text itself:
+    the offline cache a never-connected install searches."""
+
+    def test_the_live_search_is_gmails_and_is_not_refiltered(self, monkeypatch):
         monkeypatch.setattr(ga, "has_accounts", lambda: True)
         monkeypatch.setattr(agent_mod, "_google_connectivity",
                              lambda: (_summary(), {"connected": True}))
-        monkeypatch.setattr(ga, "merged_gmail", lambda **kw: {
-            "accounts": [{"id": "acc1", "label": "Personal", "email": "a@example.com"}],
-            "messages": [
-                {"sender": "x@example.com", "subject": "the latest updates from the team",
-                 "snippet": "nothing relevant here", "timestamp": "2026-09-19",
-                 "account_id": "acc1", "account_label": "Personal"},
-            ],
-            "errors": [],
-        })
-        blob = agent_mod._tool_search_email({"query": "test"})
-        result = json.loads(blob)
+        seen = []
+
+        def merged(**kw):
+            seen.append(kw.get("query"))
+            return {
+                "accounts": [{"id": "acc1", "label": "Personal", "email": "a@example.com"}],
+                # Gmail matched this one (on its body, say); it is Gmail's answer.
+                "messages": [
+                    {"sender": "x@example.com", "subject": "the latest updates from the team",
+                     "snippet": "nothing relevant here", "timestamp": "2026-09-19",
+                     "account_id": "acc1", "account_label": "Personal"},
+                ],
+                "errors": [],
+            }
+        monkeypatch.setattr(ga, "merged_gmail", merged)
+        result = json.loads(agent_mod._tool_search_email({"query": "test"}))
+        assert seen == ["test"], "the query must be Gmail's q=, not a local filter"
+        assert [m["subject"] for m in result["messages"]] == [
+            "the latest updates from the team"]
+
+    def test_query_test_does_not_match_latest_in_the_offline_cache(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        from agent_friday.services import calendar_engine
+        monkeypatch.setattr(calendar_engine, "_collect_messages", lambda limit=25: ([
+            {"sender": "x@example.com", "subject": "the latest updates from the team",
+             "snippet": "nothing relevant here"},
+            {"sender": "y@example.com", "subject": "quarterly test results attached",
+             "snippet": "see attached"},
+        ], "cache"))
+        result = json.loads(agent_mod._tool_search_email({"query": "test"}))
         subjects = [m["subject"] for m in result.get("messages", [])]
-        assert "the latest updates from the team" not in subjects, (
+        assert subjects == ["quarterly test results attached"], (
             "searching 'test' matched 'latest' — no word-boundary check")
 
     def test_query_test_does_match_a_real_word_boundary_hit(self, monkeypatch):
