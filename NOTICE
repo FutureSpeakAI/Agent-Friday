@@ -14,6 +14,20 @@ static/vendor/, each under its own license as noted in the file headers:
   highlight.js 11.9.0 and the atom-one-dark theme
     BSD-3-Clause License.
 
+Friday can run OfficeCLI (https://github.com/iOfficeAI/OfficeCLI) to create and
+edit .docx/.xlsx/.pptx files locally:
+
+  OfficeCLI
+    Copyright (c) the OfficeCLI authors. Apache License 2.0.
+    Bundles DocumentFormat.OpenXml (MIT), System.CommandLine (MIT) and the
+    .NET runtime (MIT).
+
+It is NOT redistributed here: no copy lives in this repository or in any build.
+The pinned Windows release binary is downloaded to ~/.friday/runtime/officecli/
+and verified against the sha256 recorded in its INSTALL.json before it is run.
+This attribution is kept because Friday integrates and invokes it, not because
+the tree contains it.
+
 Python dependencies are declared in pyproject.toml and installed from PyPI
 under their own licenses. Two optional extras carry copyleft licenses and
 are not bundled into any binary distribution: mutagen (GPL-2.0, the

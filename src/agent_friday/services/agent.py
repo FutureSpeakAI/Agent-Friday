@@ -4599,6 +4599,62 @@ CLAUDE_TOOLS.append({
     },
 })
 CLAUDE_TOOLS.append({
+    "name": "office",
+    "description": (
+        "Create and edit REAL Office files — .docx, .xlsx, .pptx — locally, with "
+        "no Microsoft Office and nothing sent anywhere. Use this when the user "
+        "wants a file they can open in Word/Excel/PowerPoint or attach to an "
+        "email. (`create_presentation` makes a self-contained HTML deck instead; "
+        "use that when they want something that opens in a browser.)\n"
+        "Pass one officecli command line in `command`. Verbs: create, view, get, "
+        "query, set, add, remove, move, swap, validate, batch, save, help, "
+        "load_skill. Paths inside a document are 1-based: /slide[1]/shape[2], "
+        "/body/p[3], /Sheet1/A1. Props are key=value.\n"
+        "GIVE LENGTHS A UNIT — x=2cm, width=20cm, size=28pt. A bare number is "
+        "EMU, which is about a 1600th of a centimetre, so `width=600` makes a "
+        "shape a few millimetres wide and the text renders one letter per line.\n"
+        "Files live in Friday's documents folder; use a bare filename. Start with "
+        "`help` or `help pptx shape` if unsure of a verb or property. When you "
+        "think a document is done, call `office_check` — it is not finished until "
+        "that passes."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": ["string", "array"],
+                "items": {"type": "string"},
+                "description": (
+                    "The officecli command line, e.g. \"create deck.pptx\" or "
+                    "\"add deck.pptx /slide[1] --type shape --prop text=Hello "
+                    "--prop x=2cm --prop width=20cm\". Use the array form when an "
+                    "argument contains spaces."),
+            },
+        },
+        "required": ["command"],
+    },
+})
+CLAUDE_TOOLS.append({
+    "name": "office_check",
+    "description": (
+        "The delivery gate for an Office document: run this before you tell the "
+        "user a document is ready. It saves the file, validates the schema, "
+        "looks for layout and content issues, scans for unfinished placeholder "
+        "text, and RENDERS the document so you can see it. Judge the picture "
+        "adversarially — assume something overlaps, overflows or sits off the "
+        "slide — then fix it with `office set ...` and check again. A clean "
+        "`validate` is not delivery; the render is. If it reports NOT VISUALLY "
+        "VERIFIED, say so to the user rather than claiming the document looks "
+        "right."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file": {"type": "string",
+                     "description": "The document's filename, e.g. deck.pptx"},
+        },
+        "required": ["file"],
+    },
+})
+CLAUDE_TOOLS.append({
     "name": "create_website",
     "description": (
         "Create a REAL multi-page website as ONE self-contained HTML file (hash "
@@ -4709,6 +4765,76 @@ def _tool_compose_timeline(inp):
                 "exports": inp.get("exports") or ["mp4-1080p"]}
     res = timeline_engine.compose(timeline)
     return _creative_result_summary(res, "production")
+
+
+def _tool_office(inp):
+    """Run one officecli command, after the wrapper has read it.
+
+    The governance checkpoint has already classified this call (see
+    `action_gate.classify`), so by the time we are here an overwrite has either
+    been approved or never reached us. What is left is to run it and report
+    honestly -- including handing back a rendering as an image when the command
+    asked for one, so the model can actually look at what it made.
+    """
+    from agent_friday.services import office_engine as _oe
+    try:
+        res = _oe.run_command(inp.get("command"))
+    except _oe.OfficeRefused as e:
+        return "office refused: %s" % e
+    except Exception as e:
+        return "office error: %s" % e
+    body = (res.get("stdout") or "").strip()
+    err = (res.get("stderr") or "").strip()
+    if not res.get("ok"):
+        return "office failed (exit %s): %s" % (res.get("rc"), err or body or "no output")
+    # A screenshot written to a file is of no use to a model that cannot see it,
+    # so a render is returned as an image block the same way the desktop
+    # screenshot tool does.
+    argv = res.get("argv") or []
+    if "screenshot" in [a.lower() for a in argv]:
+        for a in argv:
+            if str(a).lower().endswith(".png"):
+                try:
+                    import base64 as _b64
+                    from pathlib import Path as _P
+                    data = _P(a).read_bytes()
+                    return json.dumps({
+                        "note": "Rendered %s. Look at it before you call this done."
+                                % _P(a).name,
+                        "media_type": "image/png",
+                        "image_b64": _b64.b64encode(data).decode("ascii"),
+                    })
+                except Exception:
+                    break
+    # Everything else is document text, which somebody else wrote.
+    if res.get("verb") in _oe.READ_VERBS and body:
+        return _oe.as_untrusted(body)
+    return body or "done."
+
+
+def _tool_office_check(inp):
+    """Validate, inspect and RENDER a document, and report what is wrong."""
+    from agent_friday.services import office_engine as _oe
+    try:
+        out = _oe.deliver_check(inp.get("file"))
+    except _oe.OfficeRefused as e:
+        return "office_check refused: %s" % e
+    except Exception as e:
+        return "office_check error: %s" % e
+    lines = []
+    if out.get("ok"):
+        lines.append("%s passes the delivery gate: schema valid, no issues "
+                     "found, no placeholder text left." % out.get("file"))
+    else:
+        lines.append("%s is NOT ready yet:" % out.get("file"))
+        for f in out.get("findings", []):
+            lines.append("  - %s" % f)
+    lines.append("Look at the render before you decide it is done.")
+    note = "\n".join(lines)
+    if out.get("image_b64"):
+        return json.dumps({"note": note, "media_type": "image/png",
+                           "image_b64": out["image_b64"]})
+    return note
 
 
 def _tool_create_presentation(inp):
@@ -4881,6 +5007,8 @@ CLAUDE_TOOL_HANDLERS = {
     "generate_video": _tool_generate_video,
     "generate_music": _tool_generate_music,
     "compose_timeline": _tool_compose_timeline,
+    "office": _tool_office,
+    "office_check": _tool_office_check,
     "create_presentation": _tool_create_presentation,
     "create_website": _tool_create_website,
 }
@@ -5249,6 +5377,8 @@ TOOL_RINGS: dict[str, int] = {
     "generate_video":       2,   # calls the Google Veo API (network)
     "generate_music":       2,   # calls the Lyria 3 API (network)
     "compose_timeline":     1,   # local FFmpeg assembly — no network
+    "office":               2,   # a local subprocess that writes files
+    "office_check":         1,   # reads and renders only
     "create_presentation":  2,   # routed text model may be a cloud provider
     "create_website":       2,   # routed text model may be a cloud provider
     # Ring 3 — FULL OS CONTROL (requires CC permission)
@@ -8568,15 +8698,17 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
                 _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
 
-                # Screenshot results carry a base64 image — hand it to the model as
-                # an actual vision block so it can SEE the screen and pick coords.
-                if tu.name == 'screenshot':
-                    img_block = _screenshot_result_to_block(tu.id, result)
-                    if img_block is not None:
-                        tool_trace.append({"name": tu.name, "input": tu.input, "result": "[screenshot image returned to model]"})
-                        _bmon_log(tu.name, tu.input, "[screenshot image returned to model]")
-                        tool_results.append(img_block)
-                        continue
+                # A tool result carrying a base64 image becomes an actual vision
+                # block so the model can SEE it. Keyed on the PAYLOAD, not the
+                # tool's name: the desktop screenshot tool was the first to
+                # return one, but `office`/`office_check` render a document for
+                # the same reason -- a rendering nobody looks at proves nothing.
+                img_block = _screenshot_result_to_block(tu.id, result)
+                if img_block is not None:
+                    tool_trace.append({"name": tu.name, "input": tu.input, "result": "[image returned to model]"})
+                    _bmon_log(tu.name, tu.input, "[image returned to model]")
+                    tool_results.append(img_block)
+                    continue
 
                 tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
                 _bmon_log(tu.name, tu.input, result)
@@ -9125,8 +9257,20 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             _ledger_tool_call(tname, result, _tool_ms, orb_id, session_ctx)
             # Screenshots return a base64 blob — useless as text here, and CC
             # already forces the Anthropic path, so degrade gracefully.
-            if tname == 'screenshot':
-                result = "[screenshot captured — vision is only available on the Anthropic path]"
+            if tname in ('screenshot', 'office', 'office_check'):
+                # This seat has no vision. Rather than drop the payload
+                # silently, keep the words and say the picture was not seen --
+                # a document nobody looked at must not be reported as checked.
+                try:
+                    _payload = json.loads(result)
+                except Exception:
+                    _payload = None
+                if isinstance(_payload, dict) and _payload.get("image_b64"):
+                    result = ((_payload.get("note") or "").strip()
+                              + "\n[a rendering was produced but THIS model "
+                                "cannot see images, so the document is NOT "
+                                "visually verified \u2014 say so rather than "
+                                "claiming it looks right]")
             tool_trace.append({"name": tname, "input": targs, "result": result[:2000]})
             convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
 
