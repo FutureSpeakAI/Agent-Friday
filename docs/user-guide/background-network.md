@@ -1,137 +1,133 @@
 # Background Network Activity
 
-Agent Friday starts several background threads that make outbound network
-connections. This document lists every one of them, what they connect to,
-why, and how to disable each if you prefer a stricter network posture.
+> Status: current for 5.14.0. Last verified against the code: 2026-09-24.
 
-Friday is a sovereignty-focused tool — every outbound call is opt-in at the
-design level. None of these threads send conversation content, vault data, or
-PII anywhere; they are limited to connectivity probes, RSS feeds, and provider
-health checks.
+This page lists every network connection Agent Friday makes on its own, without
+you asking for something in the moment: what it connects to, how often, what it
+sends, and how to turn it off. Requests you cause directly (a chat with a cloud
+model, a web search, sending an email) are not listed here; they go through the
+egress gate and, for outward actions, the approval checkpoint.
 
----
-
-## 1. Network Monitor (`_network_monitor_loop`)
-
-**What it does:** Attempts a TCP connection to port 443 of `dns.google`,
-falling back to `8.8.8.8` (Google DNS) and then `1.1.1.1` (Cloudflare DNS),
-every 30 seconds to determine whether Friday is online or offline.
-
-**Why:** When offline, Friday automatically switches the model router to
-local-only inference (Ollama) so you keep getting responses even without
-internet. The probe result also drives the offline badge in the UI.
-
-**Data sent:** A bare TCP handshake (no ICMP ping) — no payload, no identity,
-no headers.
-
-**Disable:** Set `offline_auto_local: false` in Settings → Privacy, or set
-`FRIDAY_TESTING=1`. The probe still runs but the offline overlay is not applied.
+Friday contains **no telemetry, analytics, crash reporting or license check**,
+and it never contacts FutureSpeak.AI. None of the connections below carries
+conversation content, vault data or personal details.
 
 ---
 
-## 2. News Archiver (`_news_archiver_loop`)
+## Summary
 
-**What it does:** Fetches RSS feeds from news sources in your news_priorities
-list at the same cadence the briefing runs (typically every hour or on the
-briefing schedule).
-
-**Data sent:** Standard HTTP GET requests to the RSS endpoints. No auth
-headers, no user identifiers, no content from your conversations.
-
-**Disable:** Clear your news_priorities list in Settings, or toggle off
-"Include Sources" in the briefing panel.
-
----
-
-## 3. Connector Health Monitor (`connector_health_monitor_loop`)
-
-**What it does:** Polls the health of connected services (Google OAuth token
-validity, MCP server reachability) roughly every 2 minutes. Fires a
-notification if a connector you rely on goes down.
-
-**Data sent:** Lightweight presence/status checks. For Google: a token
-validity check (no email or calendar content). For MCP: a TCP connection test.
-
-**Disable:** Disconnect the connector in Settings → Accounts & Keys / Account &
-Security.
+| What | Destination | When | Turn it off |
+|---|---|---|---|
+| Update check (opt-in) | `api.github.com` | At most once a week, only if you said yes | First-run question, or Settings → About |
+| Connectivity probe | `dns.google`, `8.8.8.8`, `1.1.1.1` (TCP 443) | Every 30 seconds | Cannot be switched off (see below) |
+| News feeds | Built-in RSS feeds (news sites, Google News) | Every 5 minutes | Turn news categories off in the News workspace |
+| Web fonts | `fonts.googleapis.com`, `fonts.gstatic.com` | Every page load | Not configurable yet |
+| MediaPipe scripts | `cdn.jsdelivr.net` | Every page load; model files only when tracking is on | Tracking off stops the model downloads; the scripts still load |
+| Embedding model | `huggingface.co` | At startup, only if not already cached | Pre-fetched by the installer |
+| Local voice models | `huggingface.co` | First use of local voice, if not already downloaded | Leave local voice off |
+| Connector health | Your connected services (Google, MCP servers) | About every 2 minutes | Disconnect the connector |
+| Scheduled jobs | Your model provider, feeds, git remotes | Per schedule | Workflows workspace |
+| Phone (off by default) | Twilio API | Only when the phone is on | Off unless you turn it on |
 
 ---
 
-## 4. MCP Server Boot (`_mcp_boot`)
+## 1. Update check (opt-in)
 
-**What it does:** Launches any stdio MCP servers you have configured in
-`~/.friday/mcp_servers.json` and registers their tools. MCP servers are local
-processes, not remote services — but some MCP servers (e.g. a Slack MCP) may
-themselves make outbound network calls as part of their tool implementations.
+**What it does:** Asks GitHub for the list of published Agent Friday releases
+and, if a newer version exists, shows you a notification with a link.
 
-**Data sent:** Depends entirely on which MCP servers you enable. The core
-Friday server only communicates with them over local stdio.
+**How often:** The scheduler looks every 6 hours, but a request is made only
+when the last successful check was at least 7 days ago.
 
-**Disable:** Remove entries from `~/.friday/mcp_servers.json` or toggle them
-off in Settings → Accounts & Keys.
+**Data sent:** One HTTPS GET to
+`https://api.github.com/repos/FutureSpeakAI/Agent-Friday/releases` with only an
+`Accept` header: no account, no key, no version, no identifier. GitHub sees the
+IP address the request came from, as it would for any web page.
 
----
+**What it never does:** Download or install anything. Updating means running
+the new installer, when you choose to.
 
-## 5. Predictive Prewarm (`_predictive_prewarm_loop`, `_prewarm_predicted_boot`)
+**On or off:** First-run setup asks, and an unanswered install stays off. You
+can change your answer in Settings → About.
 
-**What it does:** At boot and on a recurring timer, estimates which workspaces
-you are likely to use next (based on time-of-day usage patterns) and pre-loads
-their data. This is entirely local — it reads from your wiki and stored
-briefings, never from the network.
+## 2. Connectivity probe
 
-**Data sent:** None.
+**What it does:** Opens a TCP connection to port 443 of `dns.google`, falling
+back to `8.8.8.8` and then `1.1.1.1`, every 30 seconds (first probe about 5
+seconds after startup), to tell whether this PC is online.
 
----
+**Why:** It drives the offline badge and, if `offline_auto_local` is on, the
+switch to a local model while offline.
 
-## 6. Internal Scheduler (`start_scheduler`)
+**Data sent:** A bare TCP handshake. No payload, no headers. It reveals your IP
+address and that Friday is running.
 
-**What it does:** Runs the Friday job scheduler — a 60-second tick loop that
-fires registered background jobs (daily briefing generation, self-improvement
-report, repo-sync, etc.) at their configured times.
+**Turn it off:** There is no switch today. Setting `offline_auto_local` to
+`false` stops the automatic switch to local models; the probe keeps running.
 
-**Network activity:** Depends on which jobs are scheduled. Briefing generation
-makes LLM API calls to your configured provider (Anthropic / Gemini /
-OpenRouter / other OpenAI-compatible endpoints) and fetches news RSS. Repo-sync runs
-`git pull` on repositories you specify. All scheduled jobs are listed in
-`~/.friday/schedules.json` and can be removed there.
+## 3. News feeds
 
-**Disable individual jobs:** Edit `~/.friday/schedules.json` or use Settings →
-Scheduled Tasks.
+**What it does:** Fetches Friday's built-in RSS feeds (general news sites and
+Google News, by category) every 5 minutes, starting about 12 seconds after
+startup, to keep the News workspace current. If you have added a Brave Search
+key, it may also be used as a fallback source.
 
----
+**Data sent:** Ordinary HTTP GET requests to each feed. No identifiers and
+nothing from your conversations.
 
-## 7. Provider Key Bootstrap (`bootstrap_provider_env`)
+**Turn it off:** Turn categories off in the News workspace's preferences
+(`categories_enabled`). Clearing `news_priorities` does not stop the archiver.
 
-**What it does:** Reads encrypted provider API keys from the credential store
-(`~/.friday/providers/keys/`) and sets them in the process environment so the
-configured provider clients (Anthropic, Gemini, OpenRouter, and other
-OpenAI-compatible providers) can find them.
+## 4. Web fonts and MediaPipe
 
-**Network activity:** None — this is a local decryption step.
+`index.html` loads its typefaces from Google Fonts and three MediaPipe scripts
+(for head and hand tracking) from `cdn.jsdelivr.net` on every page load. The
+script tags carry integrity hashes. The tracking model files are fetched from
+jsdelivr only when you turn tracking on in Settings → Voice & Tracking.
+Three.js and the rest of the interface are served locally.
 
----
+These requests reveal your IP address to Google and jsDelivr. Serving them
+locally is not done yet; see [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).
 
-## Summarized traffic table
+## 5. Model downloads on first use
 
-| Thread | Destination | Frequency | Disable |
-|--------|------------|-----------|---------|
-| Network monitor | dns.google / 8.8.8.8 / 1.1.1.1 (TCP :443) | Every 30s | `offline_auto_local: false` |
-| News archiver | RSS feed URLs | Hourly (briefing cadence) | Clear `news_priorities` |
-| Connector health | Google OAuth · MCP servers | Every 2min | Disconnect connector |
-| MCP boot | Local stdio (+ whatever MCP servers call) | Once at startup | Remove from mcp_servers.json |
-| Scheduler jobs | Configured LLM provider APIs · git remotes | Per schedule | Delete job from schedules.json |
-| Predictive prewarm | None (local only) | Boot + periodic | n/a |
-| Key bootstrap | None (local only) | Once at startup | n/a |
+- The privacy classifier's embedding model (`all-MiniLM-L6-v2`) is loaded at
+  startup. If it is not already cached, it is downloaded from Hugging Face. The
+  Windows installer pre-fetches it.
+- Local voice downloads its speech-recognition and voice models from Hugging
+  Face the first time you use it, if they are not already on disk.
+- Local chat models are downloaded only when you ask for one (installer,
+  Hardware Check, or Settings → Models).
 
----
+## 6. Connector health
 
-## What Friday does NOT do
+Roughly every 2 minutes Friday checks that the services you connected still
+work: a token-validity check for Google (no mail or calendar content) and a
+reachability check for MCP servers. A standing credential sweep also runs
+locally. Disconnect a connector in Settings → Accounts & Keys to stop its check.
 
-- Send conversation content to any third party (other than the LLM provider
-  you have explicitly configured and paid for).
-- Send vault data (financial, health, legal records) outside your machine.
-  Vault content is local-model-only by policy; the egress gate rejects any
-  attempt to send it to a cloud model.
-- Collect telemetry, usage statistics, or crash reports.
-- Phone home to FutureSpeak.AI.
-- Auto-update itself.
+MCP servers you configure in `~/.friday/mcp_servers.json` are local processes
+that Friday talks to over stdio, but a server may make its own network calls.
+That depends entirely on the server.
+
+## 7. Scheduled jobs
+
+The scheduler ticks every 60 seconds and runs jobs at their configured times:
+briefings, the heartbeat, daily creation, repo sync and others. What a job
+sends depends on the job and on the seat it runs on. The costly built-in jobs
+run on the local seat by default. Manage jobs in the Workflows workspace; the
+list is stored in `~/.friday/schedules.json`. An outward action inside a
+scheduled job still needs a grant or an approval card.
+
+## 8. Phone
+
+Off by default. When you turn it on, Friday talks to Twilio's API to send
+approved texts and calls, to fetch prices, and to delete message bodies and
+recordings once delivered. The inbound listener binds to `127.0.0.1:3011` only;
+see [Phone](phone.md).
+
+## Purely local work
+
+These run in the background with no network activity: predictive pre-warming
+of workspaces, provider-key bootstrap (a local decryption step), the task
+watchdog and boot reconciliation.

@@ -1,338 +1,421 @@
 # Configuration Reference
 
-All configuration lives in `~/.friday/settings.json`. Settings can be updated via the UI, the `POST /api/settings` endpoint, or by editing the file directly (restart required for some changes).
+> Status: current for 5.14.0. Last verified against `DEFAULT_SETTINGS` in
+> `src/agent_friday/core/__init__.py` on 2026-09-24. Where this page and the
+> code disagree, the code is right; please open an issue.
+
+Most people never need this page: everything here that matters day to day has
+a control in Settings. This reference is for checking a default, reading
+`settings.json`, or configuring Friday by environment variable.
+
+- [How settings are stored](#how-settings-are-stored)
+- [Settings keys](#settings-keys), grouped by what they control
+- [Settings kept in their own files](#settings-kept-in-their-own-files)
+- [Environment variables](#environment-variables)
+- [Provider keys](#provider-keys)
+- [What lives in `~/.friday`](#what-lives-in-friday)
 
 ---
 
-## API Keys
+## How settings are stored
 
-Keys entered in **Settings → Accounts & Keys** are stored encrypted in Friday's credential store (one file per provider under `~/.friday/providers/keys/`). Keys entered through the `friday setup` wizard are written in plaintext to `~/.friday/settings.json`, `~/.friday/config.yaml` and a `start.bat` launcher; prefer the Settings path for keys. Where each credential lives, and how it is protected, is stated in [SECURITY.md](../../SECURITY.md).
+Settings live in `~/.friday/settings.json` (or `$FRIDAY_HOME/settings.json`).
+You change them in Settings, through `POST /api/settings`, or by editing the
+file while Friday is stopped.
 
-You can also supply keys as environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the stored credentials.
+- **Only known keys survive.** On every read, a top-level key that is not in
+  `DEFAULT_SETTINGS` is dropped. A misspelt key is silently ignored.
+- **A file that will not parse** makes Friday run on factory defaults and log
+  an error; saving is then refused so the file is not overwritten.
+- **Partial saves.** `capability_routing`, `model_routing`, `content`,
+  `turn_budget` and `local_address` are merged field by field. Every other
+  block is replaced whole by a partial write, so send the complete block.
+- **Some values are written by exactly one code path.**
+  `model_routing.cloud_consent` is set only by the consent screen and is
+  removed from any other save.
+- **Mirrored keys.** `orchestrator_model`, `subagent_model`, `creative_model`,
+  `music_model` and `voice_model` are kept in step with `capability_routing`
+  (`reasoning`, `subagent`, `creative_image`, `creative_music`, `voice`).
+- **Offline overlay.** While the PC is offline and `offline_auto_local` is on,
+  Friday routes as `local_only` without writing that to disk.
 
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude (`sk-ant-...`). Required for cloud reasoning. |
-| `GEMINI_API_KEY` | Google AI Studio key (`AIza...`). Optional — enables TTS, creative tools, and voice mode. |
-
-When the legacy OpenAI-compatible cloud provider is enabled (see [Model Routing](#model-routing)), an API key may also be supplied via environment variables:
-
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | Fallback API key for the OpenAI-compatible provider (used when `model_routing.openai_api_key` is blank). |
-| `OPENROUTER_API_KEY` | Alternate fallback API key for the OpenAI-compatible provider (e.g. OpenRouter). |
-
-Each of the other built-in providers has its own env-var key — see [Providers](#providers).
-
----
-
-## Model Settings
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `orchestrator_model` | string | `claude-sonnet-5` | Model for the main agent brain. Pick from Settings → Models (catalog-driven via `GET /api/models`): Claude Sonnet 5 / Opus 5.5 / Opus 5 / Fable 5 / Haiku 4.5, GPT-4o family, or any installed Ollama model. Opus 4.8/4.7/4.6 and Sonnet 4.6 were removed from the shipped list and are no longer named here. |
+Keys marked *internal* below are listed for completeness; do not edit them by
+hand.
 
 ---
 
-## Model Routing
+## Settings keys
 
-Settings under the `model_routing` key (top-level copies of these keys are ignored):
+### Identity
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `mode` | string | `cloud_only` | Routing mode: `cloud_only`, `smart`, `local_preferred`, `local_only`. |
-| `default_cloud_model` | string | `claude-sonnet-5` | Cloud model used by the router when no override is specified. |
-| `local_model` | string | `gemma4:e2b` | Default Ollama model for local routes — Friday's zero-cloud-key default brain (runs on ~8GB RAM; upgrade to `gemma4:e4b`, `gemma4:12b`, or `gemma4:26b` with more RAM/VRAM). A placeholder until FutureSpeak's own model ships. |
-| `fallback_to_cloud` | boolean | `true` | Fall back to cloud when Ollama is unavailable. |
-| `ollama_url` | string | `http://localhost:11434` | Ollama API endpoint. |
-| `vault_local_only` | boolean | `true` | When `true`, vault TIER_2/TIER_3 content reaches local models only; vault-touching requests are force-routed to Ollama. |
-| `vault_cloud_fallback` | string | `redact` | Behavior when vault access is needed but no local model is available: `redact` (proceed with gated content), `deny` (refuse), `warn` (refuse and notify). |
-| `task_overrides` | object | `{}` | Per-task-type routing overrides. Keys: `simple`, `tool_use`, `code`, `research`, `voice`, `vault_access`. Values: `{"provider": "local"|"cloud", "model": "..."}`. |
-| `cloud_provider` | string | `anthropic` | Provider for cloud turns: `anthropic` (default) or `openai` (route through an OpenAI-compatible endpoint). Legacy single-slot path — see [Providers](#providers) for the multi-provider layer. |
-| `openai_base_url` | string | `https://openrouter.ai/api/v1` | Base URL for the OpenAI-compatible endpoint (legacy single-slot path). Works with OpenRouter and any `/v1` endpoint (Together, Groq, vLLM, LM Studio, OpenAI). |
-| `openai_model` | string | `anthropic/claude-3.7-sonnet` | Model name passed to the OpenAI-compatible endpoint (legacy single-slot path). |
-| `openai_api_key` | string | _(empty)_ | API key for the OpenAI-compatible endpoint (legacy single-slot path). Blank → falls back to env `OPENAI_API_KEY` / `OPENROUTER_API_KEY`. |
+| Key | Default | Meaning |
+|---|---|---|
+| `agent_name` | `"AGENT FRIDAY"` | The agent's display name, used in prompts and to derive the local address (`AGENT FRIDAY` → `agent.friday`). |
+| `user_email` | `""` | Your own email address, which the PII scrubber leaves alone. |
+| `distribution` | `"default"` | The active persona preset. Display only. |
 
-> **OpenAI-compatible provider.** When `cloud_provider` is `openai`, cloud turns route through the configured `/v1` endpoint with a full agentic tool loop (parity with the Anthropic path) when the model supports tool-calling. The default settings leave Anthropic behavior unchanged. Vault and TIER_2/TIER_3 requests always stay on the local/Anthropic path and are never sent to the OpenAI endpoint.
+### Models and seats
 
-### Routing configuration example
+| Key | Default | Meaning |
+|---|---|---|
+| `orchestrator_model` | `"claude-sonnet-5"` | The main model. Mirror of `capability_routing.reasoning`. Choose it in Settings → Models. |
+| `subagent_model` | `"claude-sonnet-5"` | Background tasks, drafts and compaction. Mirror of `capability_routing.subagent`. |
+| `creative_model` | `"gemini-nano-banana-2"` | Image generation. |
+| `music_model` | `"lyria-clip"` | `lyria-clip` (up to 30 s) or `lyria-pro`. |
+| `voice_model` | `"gemini-2.5-flash-native-audio-latest"` | The Gemini Live model, used only when the voice engine is `gemini`. |
+| `custom_models` | `[]` | Your own `{"provider", "id"}` entries, shown in the picker as unverified. |
+| `temperature` | `0.7` | Sampling temperature for chat. |
+| `workspace_temperatures` | per workspace, 0.2 to 0.75 | Temperature by workspace (for example `research` 0.25, `studio` 0.75). |
+| `turn_budget` | rounds 999 (scheduled 300), wall clock 1800 s, tokens 1,000,000 | Limits for one turn. A seat-specific entry overrides the default for that seat. The same budget applies to local and cloud seats. |
+| `runtime_dir` | `""` | Where local runtimes and model weights live. Empty means `~/.friday/runtime`. `FRIDAY_RUNTIME_DIR` overrides it. |
+| `demo_mode` | `null` | `null` shows canned replies only when no provider is set up; `true`/`false` forces it. |
+| `providers` | `{}` | Per-provider `{"enabled", "base_url"}`. Never holds keys. |
 
-```json
-{
-  "model_routing": {
-    "mode": "smart",
-    "default_cloud_model": "claude-sonnet-5",
-    "ollama_url": "http://localhost:11434",
-    "fallback_to_cloud": true,
-    "vault_cloud_fallback": "deny",
-    "task_overrides": {
-      "code": { "provider": "local", "model": "gemma4:26b" }
-    }
-  }
-}
-```
+`capability_routing` maps each capability to `{"provider", "model"}`:
 
----
+| Capability | Default |
+|---|---|
+| `reasoning`, `subagent` | `anthropic` / `claude-sonnet-5` |
+| `heavy_hitter`, `orchestrator`, `sidekick_fast`, `function_manager`, `memory_manager`, `researcher` | `ollama-local` / empty until you choose a local model |
+| `creative_image` | `google-gemini` / `gemini-nano-banana-2` |
+| `creative_video` | `google-gemini` / `veo-3` |
+| `creative_music` | `google-gemini` / `lyria-clip` |
+| `voice` | `google-gemini` / `gemini-2.5-flash-native-audio-latest` |
+| `asr` | `local-voice-lite` / `whisper-small` |
+| `tts` | `local-voice-lite` / `piper-en_US-amy-medium` |
+| `embedding` | `local` / `all-MiniLM-L6-v2` |
+| `local` | `ollama-local` / `gemma4:e2b` (the smallest model in the local plan) |
 
-## Providers
+A capability that is not in the defaults is removed on the next save.
 
-Beyond the legacy single-slot `cloud_provider` path above, Friday ships a model-agnostic provider layer with 16 built-in providers, managed via the `/api/providers/*` routes and Settings → Accounts & Keys.
+### Where your words go (`model_routing`)
 
-### `providers` settings key
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `"cloud_only"` | `cloud_only`, `smart`, `local_preferred` or `local_only`. First-run setup asks. In `local_only`, a turn with no local model running is refused with an offer to answer it in the cloud. |
+| `default_cloud_model` | `"claude-sonnet-5"` | The router's default cloud model. |
+| `local_model` | `"gemma4:e2b"` | The default local model. |
+| `ollama_url` | `"http://localhost:11434"` | Ollama endpoint. |
+| `fallback_to_cloud` | `true` | Use the cloud when no local model is available. |
+| `task_overrides` | `{}` | Per-task routing: keys `simple`, `tool_use`, `code`, `research`, `voice`, `vault_access`; values `{"provider": "local"\|"cloud", "model"}`. |
+| `vault_local_only` | `true` | Private and sensitive vault content goes only to local models. |
+| `vault_cloud_fallback` | `"redact"` | When a vault request cannot run locally: `redact` (the cloud gets a placeholder), `deny`, or `warn` (refuse and say why). |
+| `cost_tracking` | `true` | Meter the cost of chat turns. |
+| `cloud_provider` | `"anthropic"` | Older single-slot path: `anthropic`, or `openai` to send cloud turns to an OpenAI-compatible endpoint. |
+| `openai_base_url` | `"https://openrouter.ai/api/v1"` | Endpoint for that path. |
+| `openai_model` | `"anthropic/claude-sonnet-5"` | Model for that path. |
+| `openai_api_key` | `""` | Key for that path, **stored in plain text**. Leave blank and use the encrypted store or `OPENAI_API_KEY` / `OPENROUTER_API_KEY` instead. |
+| `cloud_consent` | not answered | *Internal.* Your recorded answer to the unrestricted-cloud screen. The only thing that can turn the egress gate's safeguards off. |
+| `unrestricted_cloud` | `false` | *Internal.* Legacy; read once to migrate into `cloud_consent`. |
+| `local_inference_slots` | `3` | *Internal.* Not currently read. |
 
-Per-provider configuration: `name → {"enabled": bool, "base_url"?: string}`. API keys are **never** stored here — they always go to the encrypted credential store (see [API Keys](#api-keys)).
+### Offline
 
-```json
-{
-  "providers": {
-    "openrouter": { "enabled": true },
-    "groq": { "enabled": true }
-  }
-}
-```
+| Key | Default | Meaning |
+|---|---|---|
+| `offline_auto_local` | `true` | Route to local models while this PC is offline. |
+| `offline_queue_cloud_tasks` | `true` | Queue cloud content tasks while offline. |
 
-### `capability_routing` settings key
+### Chat and context
 
-The canonical capability → provider/model map: `capability → {"provider": "...", "model": "..."}`. Capabilities include `reasoning`, `subagent`, `creative_image`, `creative_video`, `creative_music`, `voice`, `asr`, `tts`, `embedding`, and `local`. The flat keys (`orchestrator_model`, `creative_model`, `voice_model`, …) are derived mirrors kept in sync automatically — edit `capability_routing`, not the mirrors.
+| Key | Default | Meaning |
+|---|---|---|
+| `response_length` | `"standard"` | `concise`, `standard` or `detailed`. |
+| `communication_style` | `"professional"` | `professional`, `casual` or `technical`. |
+| `include_sources` | `true` | Ask the model to include sources. |
+| `cite_sources` | `false` | Inline citation on every factual claim. |
+| `news_priorities` | `["AI/Tech", "Politics", "Media", "Local", "Business"]` | News topics Friday prioritises in conversation. Does not control the news feeds. |
+| `memory_recall_enabled` | `true` | Recall from past conversations. |
+| `compaction` | on; trigger at 70% of a 200,000-token window; keep 3 head and 10 tail messages | Summarises the middle of a long transcript. |
+| `context_pruning` | on; over 50 turns keep the 4 most recent and the 10 most relevant | Keeps relevant past turns by meaning (MiniLM embeddings). |
+| `context_compression` | on above 1,000 tokens | Compresses kept turns with Headroom when installed. |
+| `qa_gates` | on; threshold 0.7; 1 retry; mode `improve` | Friday scores its own output before showing it (`improve` rewrites, `flag` marks). |
+| `auto_open_created_files` | `false` | Open files Friday creates as soon as they are done. |
+| `confirm_before_opening` | `false` | Ask before opening files or links. |
 
-### Built-in providers and env-var keys
+### Privacy and records
 
-The six original providers: `anthropic`, `openai`, `ollama-local`, `google-gemini`, `local-voice-lite`, `nvidia-nemo`. Ten additional OpenAI-compatible cloud providers (OpenRouter ships enabled; the rest are one-click templates):
+| Key | Default | Meaning |
+|---|---|---|
+| `off_record` | `false` | Do not log chat at all. |
+| `context_logging_enabled` | `true` | The append-only context log in `~/.friday/vault/context-log/`. |
+| `context_retention_days` | `0` | 0 keeps the log forever; otherwise prune after 30, 90, 180 or 365 days. |
+| `wiki_encrypted_sections` | `[]` | Wiki sections to encrypt with the vault key, for example `["health", "legal", "family"]`. Needs a vault passphrase. Encrypted sections are also kept out of the cloud knowledge block. |
+| `judgment_gate` | off; model `gemma4:e2b` | A local model that judges ambiguous privacy cases. |
+| `task_journal` | keep forever; capture reasoning; encrypted | The background-task journal in `~/.friday/tasks/`. |
+| `reasoning_traces` | capture on; keep forever | The reasoning-trace archive in `~/.friday/traces/`. See [reasoning traces](../reference/reasoning-traces.md). |
+| `knowledge_graph` | see below | The knowledge graph behind the Knowledge workspace. |
 
-| Provider | Env-var key |
-|----------|-------------|
-| `openrouter` | `OPENROUTER_API_KEY` |
-| `huggingface` | `HF_TOKEN` (aliases: `HUGGINGFACE_API_KEY`, `HUGGING_FACE_HUB_TOKEN`) |
-| `groq` | `GROQ_API_KEY` |
-| `together` | `TOGETHER_API_KEY` |
-| `fireworks` | `FIREWORKS_API_KEY` |
-| `mistral` | `MISTRAL_API_KEY` |
-| `deepseek` | `DEEPSEEK_API_KEY` |
-| `xai` | `XAI_API_KEY` |
-| `perplexity` | `PERPLEXITY_API_KEY` |
-| `cohere` | `COHERE_API_KEY` |
+`knowledge_graph` defaults: `enabled: true`; `indexing_mode: "local"` (the
+semantic layer runs on a local model; `"cloud"` sends it through the egress
+gate); `power_indexer: "native"`; all sources indexed (wiki, conversations,
+cognitive memory, soul); `nightly_reindex: true`; `max_visible_nodes: 2000`.
 
-### Custom providers
+### Approvals and safety
 
-Drop a provider descriptor (JSON or YAML) into `~/.friday/providers/` and it is loaded automatically — any OpenAI-compatible `/v1` endpoint can be added this way.
+| Key | Default | Meaning |
+|---|---|---|
+| `decision_backend` | `"laya-union"` | What decides whether an ambiguous action needs your sign-off: the keyword rules, or the rules plus the local Laya model (which can only add a card, never remove one). Off / Shadow / On in Settings → Privacy & Approvals. |
+| `decision_shadow` | `""` | A second backend scored alongside and logged, never changing a decision. |
+| `approvals_policy` | outward, irreversible, spend and external messages gated, cards expire after 24 h; internal not gated | Which classes of action wait for approval. |
+| `tool_hooks` | every built-in hook on | Switches for the tool hooks. The governance, confirmation and vault hooks are critical and cannot be switched off. |
+| `rate_limiter` | 60 ring-2 and 20 ring-3 calls per minute | Per-minute limits on tool calls; 0 means unlimited. |
+| `computer_control_enabled` | `false` | Allow mouse and keyboard control. Each use is still confirmed. |
+| `creative_policy` | harm floor enforced; refusals in plain words | What Friday will not generate. The harm floor cannot be turned off. |
+| `minor_mode` | `false` | An age-appropriate filter on generation. |
+| `hang_watchdog` | on; heartbeat 15 s; stall after 90 s | Writes a thread dump to `~/.friday/logs/` when the server stalls. |
 
----
+Grants for scheduled jobs are not a setting; they are kept in
+`~/.friday/governance/grants.json` and managed in Settings → Privacy & Approvals.
 
-## Context Pruning
+### Spending
 
-Settings under the `context_pruning` key:
+| Key | Default | Meaning |
+|---|---|---|
+| `cost_budget` | alert at $5/day and $50/month (both off); hard stop $0 (off) | The alert cap warns at 80% and alerts at 100% and never blocks. The hard stop, when enabled, refuses further cloud calls for the rest of its period. Local models are never affected. |
+| `daily_creation_free_choice` | `true` | Daily creation chooses freely across media. |
+| `daily_creation_budget_usd` | `0.50` | Soft cap on a day's creative spend. |
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `model` | string | `all-MiniLM-L6-v2` | Sentence-transformer model for embeddings. |
-| `max_turns` | integer | `50` | Number of turn pairs before pruning kicks in. |
-| `keep_recent` | integer | `4` | Always keep this many recent turn pairs verbatim. |
-| `top_k` | integer | `10` | Number of semantically relevant archived turns to retrieve. |
+### Scheduled and background work
 
-### Example
+| Key | Default | Meaning |
+|---|---|---|
+| `idle_work` | on; after 600 s idle; between 09:00 and 23:00 | Work that runs once a day while you are away, such as daily creation. |
+| `away_drain` | off | Drain queued heavy GPU work on a timer. |
+| `away_drain_after_s` | `900` | Idle time before queued work may take the GPU. |
+| `repo_sync` | no repositories | Git working trees the repo-sync job pulls. |
+| `learning_loop` | on; up to 50 active skills; weekly epoch on Sunday | Learns heuristics from task outcomes. |
+| `memory_dreaming` | on; 03:00; 12 topics | Nightly local consolidation of conversations. |
+| `user_modeling` | on; summary in the prompt | A model of how you work, used to tailor replies. |
 
-```json
-{
-  "context_pruning": {
-    "max_turns": 40,
-    "keep_recent": 6,
-    "top_k": 15
-  }
-}
-```
+The jobs themselves are in `~/.friday/schedules.json` and are managed in the
+Workflows workspace. See [scheduled jobs](scheduled-jobs.md).
 
----
+### Voice
 
-## Context Compression
+| Key | Default | Meaning |
+|---|---|---|
+| `voice_engine` | `"local"` | `local` (CPU), `local-gpu` (NVIDIA NeMo), `gemini`, `auto`, `elevenlabs`, `inworld`. |
+| `local_voice_asr_model` | `"small"` | faster-whisper size: `tiny`, `base`, `small` or `medium`. |
+| `local_voice_tts_engine` | `"piper"` | `piper`, or `kokoro` (needs an NVIDIA GPU unless `local_voice_kokoro_allow_cpu`). |
+| `local_voice_tts_voice` | `"en_US-amy-medium"` | Piper voice. |
+| `local_voice_kokoro_voice` | `"af_heart"` | Kokoro voice. |
+| `local_voice_kokoro_allow_cpu` | `false` | Let Kokoro run on the CPU. |
+| `local_voice_gpu_asr_model` | `"nvidia/nemotron-3.5-asr-streaming-0.6b"` | Speech recognition on the GPU tier. |
+| `local_voice_gpu_tts` | `"fastpitch-hifigan"` | Speech on the GPU tier. |
+| `voice_silence_ms` | `800` | Silence that ends your turn. |
+| `voice_ear_gpu`, `voice_mouth_gpu` | `"if_free"` | GPU use for listening and speaking: `never`, `if_free` or `required`. |
+| `voice_idle_unload_s` | `600` | Unload idle GPU voice workers after this long. |
+| `voice_tools` | `true` | Let voice sessions use tools (through the same approval checkpoint). |
+| `offline_voice_fallback` | `true` | Fall back to the system voice when the cloud voice cannot be reached. |
+| `push_to_transcribe` | `true` | The system-wide hold-to-dictate key, run by the tray. |
+| `push_to_transcribe_hotkey` | `"alt+t"` | The key. |
+| `push_to_transcribe_hold_ms` | `150` | A shorter tap is passed through to the window as a normal keypress. |
 
-Settings under the `context_compression` key:
+Gemini Live (`voice_engine: "gemini"`) tuning: `tts_voice` (`"Aoede"`),
+`voice_language` (blank: server default), `voice_style_prompt`,
+`voice_temperature` (`null`: SDK default), `voice_max_tokens` (0: unlimited),
+`voice_affective` (`true`), `voice_proactive` (`true`),
+`voice_context_compression` (`true`), `voice_barge_grace_ms` (`800`),
+`voice_barge_sustain_ms` (`200`), and `voice_interruption_mode` (`"auto"`;
+`headphones` also allows barge-in; `no-barge` turns it off).
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | boolean | `true` | Enable Headroom compression. |
-| `min_tokens_to_compress` | integer | `1000` | Minimum estimated token count before compression is attempted. |
+Cloud voices: `elevenlabs_model` (`"eleven_flash_v2_5"`), `elevenlabs_voice_id`,
+`inworld_model` (`"inworld-tts-2-flash"`), `inworld_voice_id`,
+`inworld_plan_tier` (`"on_demand"`). `elevenlabs_api_key` and `inworld_api_key`
+are **stored in plain text** in `settings.json`; prefer the
+`ELEVENLABS_API_KEY` and `INWORLD_API_KEY` environment variables.
 
-### Example
+### Appearance, dock and tracking
 
-```json
-{
-  "context_compression": {
-    "enabled": true,
-    "min_tokens_to_compress": 500
-  }
-}
-```
+| Key | Default | Meaning |
+|---|---|---|
+| `show_all_workspaces` | `true` (`false` on a new install) | The full dock, or the core set. |
+| `dock_custom` | no changes | Your own dock order and hidden workspaces. |
+| `studio_dazzle` | `"full"` | 3D intensity: `off`, `subtle` or `full`. |
+| `tracking` | parallax and depth 1.0; pinch to click | Camera head and hand tracking tuning. |
+| `camera_interval_sec` | `3` | Camera capture interval: 1, 3 or 5 seconds. |
+| `audio_input_device_id`, `audio_output_device_id` | `""` | Preferred microphone and speaker. |
+| `pause_warnings_off` | `false` | "Don't warn me again" when pausing a seat. |
 
----
+### Network, address and content
 
-## Privacy Shield
+| Key | Default | Meaning |
+|---|---|---|
+| `local_address` | off; ports 443 and 80; name from `agent_name` | The optional `https://agent.<name>` address. Set up in Settings → General. See [getting started](getting-started.md#open-friday-at-a-local-address). |
+| `google_oauth` | no override | `redirect_base_override`, only for a reverse proxy that terminates HTTPS. |
+| `content` | on; 2-hour conflict window | The publishing pipeline. |
 
-Configuration lives in `~/.friday/privacy_shield.json`:
+### Not currently read
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `watchlist` | string[] | Tokens to redact from cloud-bound messages. Add names, account numbers, or other sensitive strings. |
-
-### Example
-
-```json
-{
-  "watchlist": [
-    "John Q. Public",
-    "ACCT-12345"
-  ]
-}
-```
-
-Built-in patterns (always active, no configuration needed):
-- SSN format: `XXX-XX-XXXX`
-- Credit card numbers: 13-19 digit sequences that pass the Luhn checksum
-- Phone numbers (US/NANP and international `+country-code` formats)
-- Email addresses (except owner's)
-- Street addresses (US format)
-
-Watchlist tokens match on word boundaries ("Smith" never corrupts
-"SmithKline"); tokens with non-word edges (account numbers) match literally.
-
-PII in Friday's spoken replies never transits Gemini TTS: text containing PII
-is synthesized with the local engine, and when that is unavailable Gemini
-speaks the scrubbed text only.
-
----
-
-## Wiki Encryption (opt-in)
-
-The personal wiki (`~/wiki/`) is hand-editable and stays plaintext by
-default. To encrypt specific sections at rest with the vault key
-(AES-256-GCM + Argon2id, requires `FRIDAY_VAULT_PASSPHRASE` or a passphrase
-stored via `friday vault-setup`; `FRIDAY_PASSWORD` works as a legacy fallback):
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `wiki_encrypted_sections` | string[] | `[]` | Wiki top-level sections to encrypt at rest, e.g. `["health", "legal", "family"]`. Existing files are encrypted in place on the next server start; reads, search, smart context, and the Knowledge workspace's Pages view work transparently. The Google Drive mirror receives ciphertext, never plaintext. Direct file editing of listed sections is no longer possible — use the Pages view. While the vault is locked, encrypted pages show as locked and cannot be edited. |
-
----
-
-## Knowledge Graph
-
-The two-tier knowledge graph behind the 🌌 Knowledge workspace (its Graph
-view; the Pages view reads and edits the same wiki). All
-keys live under one `knowledge_graph` object; defaults apply when the block
-is absent. Derived artifacts live in `~/.friday/knowledge-graph/` and are
-always safe to delete (the wiki is the source of truth). Records derived
-from encrypted wiki sections or other TIER_2/3 sources are vault-encrypted
-at rest.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `knowledge_graph.enabled` | bool | `true` | Master switch for graph builds, context injection, and live fact ignition. |
-| `knowledge_graph.indexing_mode` | string | `local_only` | Where Tier-B LLM extraction runs. `local_only` = nothing ever leaves the machine. `gated_cloud` = TIER_1 (public) chunks may use the routed cloud model through the egress gate; TIER_2/3 stay local in every mode, and a failed gate self-test disables cloud indexing outright. |
-| `knowledge_graph.index_sources` | object | all `true` | Which corpora Tier B indexes: `wiki`, `soul`, `conversations`, `cognitive`. |
-| `knowledge_graph.mention_edges` | bool | `true` | Tier-A implicit edges from page titles appearing in other pages' bodies — what keeps a vault without authored `[[wikilinks]]` connected. |
-| `knowledge_graph.community_mode` | string | `auto` | How pages cluster into constellations: `section` (wiki folders), `links` (label propagation over explicit links), `auto` (links when authored wikilinks are dense enough, else sections). |
-| `knowledge_graph.nightly_reindex` | bool | `true` | 03:30 daily job (after memory dreaming): Tier A rebuild + Tier B delta. |
-| `knowledge_graph.max_visible_nodes` | int | `2000` | `/graph` node cap; above ~2.5k the 3D view switches to community super-nodes. |
-| `knowledge_graph.layout_seed` | int | `1337` | Seed for the deterministic 3D layout. |
-
----
-
-## Voice
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `voice_engine` | string | `local` | Voice engine: `local` (Tier-1 on-device, faster-whisper + Piper on CPU — private/offline), `local-gpu` (Tier-2 NVIDIA NeMo on GPU, falls back to Tier-1 without CUDA), `gemini` (Gemini Live cloud voice — needs a key + network), `auto` (GPU tier when ready, else CPU; local preferred over cloud). |
-| `voice_model` | string | `gemini-3.1-flash-live-preview` | Gemini Live model used when `voice_engine` is `gemini`. |
-| `voice_interruption_mode` | string | `speaker` | Barge-in (`START_OF_ACTIVITY_INTERRUPTS`) is the default in every mode — speak and Friday stops within a frame. `speaker` keeps echo mitigations on (LOW start sensitivity + browser echo cancellation); choose the explicit "no interruption (open speakers)" opt-out only if loud speaker bleed makes Friday cut herself off. |
-| `local_voice_asr_model` | string | `small` | Tier-1 faster-whisper model size: `tiny`, `base`, `small`, `medium`. |
-| `local_voice_tts_voice` | string | `en_US-amy-medium` | Tier-1 Piper voice id. |
-| `voice_silence_ms` | integer | `800` | Trailing silence (ms) that ends a local-voice turn. |
+These keys exist in `DEFAULT_SETTINGS` but nothing acts on them: `setup`,
+`onboarding`, `dock_layout`, `channels` (the channel bridges read
+`~/.friday/channels.json` instead) and `model_routing.local_inference_slots`.
 
 ---
 
-## Owner Identity
+## Settings kept in their own files
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `user_email` | string | Owner's primary email (passed through PII scrubber unscrubbed). |
-| `owner_email` | string | Alias for `user_email`. |
-| `owner_identities` | string[] | Additional email addresses belonging to the owner. |
+| File | What it configures |
+|---|---|
+| `~/.friday/phone/config.json` | The phone: on/off (off by default), Twilio account and number, your verified cell, what Friday may do by text and call, limits. Secrets are stored separately and encrypted. See [Phone](phone.md). |
+| `~/.friday/privacy_shield.json` | `watchlist`: extra strings (names, account numbers) to redact from anything bound for the cloud. |
+| `~/.friday/schedules.json` | Scheduled jobs. |
+| `~/.friday/governance/grants.json` | Grants for scheduled jobs. |
+| `~/.friday/mcp_servers.json` | MCP servers Friday starts. |
+| `~/.friday/channels.json` | Telegram and Discord bridges. |
+| `~/.friday/providers/*.json` or `*.yaml` | Custom OpenAI-compatible provider descriptors, loaded automatically. |
+| `~/.friday/onboarding.json` | Your first-run answers, including the update-check choice. |
 
----
-
-## Context Logging
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `context_logging_enabled` | boolean | `true` | Enable append-only context logging to `~/.friday/vault/context-log/`. |
-
----
-
-## Authentication
-
-Set via environment variables (not in `settings.json`):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FRIDAY_USERNAME` | `admin` | Login username (only for remote access). |
-| `FRIDAY_REMOTE_KEY` | _(empty)_ | Login password for non-loopback clients (e.g. via Cloudflare Tunnel). Empty = falls back to `FRIDAY_PASSWORD`; if that is also empty, no auth is required. |
-| `FRIDAY_VAULT_PASSPHRASE` | _(empty)_ | Vault-encryption passphrase (AES-256-GCM key derivation via Argon2id). Also settable via `friday vault-setup` (OS keychain). Empty = falls back to `FRIDAY_PASSWORD`. |
-| `FRIDAY_PASSWORD` | _(empty)_ | Legacy fallback used for both HTTP auth and the vault KDF when the dedicated variables above are unset. |
-| `FRIDAY_SECRET_KEY` | _(auto-generated)_ | Flask session secret. If unset, a random secret is generated once and persisted to `~/.friday/secret_key` (mode `0600`). Set this to pin a fixed value (e.g. across instances). |
-| `FRIDAY_TRUST_LOOPBACK` | `1` | When `1`, same-machine (loopback) requests are auto-authenticated. Set to `0` to require login for loopback requests too (only matters when a login password is set). |
-| `FRIDAY_WS_TOKEN` | _(empty)_ | Optional shared token required on the `/ws/live` WebSocket regardless of loopback trust (defense-in-depth for voice when remotely exposed). Pass as `?token=…`. |
-| `FRIDAY_COOKIE_SECURE` | _(unset)_ | Set to `1`/`true` to mark the session cookie `Secure` (use behind HTTPS / a tunnel). |
+The Privacy Shield always redacts, with no configuration: SSNs, card numbers
+that pass the Luhn check, phone numbers, email addresses (except yours) and US
+street addresses. Watchlist entries match on word boundaries.
 
 ---
 
-## Server
+## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FRIDAY_PORT` | `3000` | Server port. |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5` | Default Claude model (env var override). |
+Set these for the process that starts Friday. Provider keys are listed under
+[Provider keys](#provider-keys).
+
+### Server and authentication
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FRIDAY_PORT` | `3000` | Port. If it is busy the server tries the next ten. (The tray assumes 3000; see [KNOWN_ISSUES.md](../../KNOWN_ISSUES.md).) |
+| `FRIDAY_BIND_HOST` | `127.0.0.1` | Bind address. Binding to anything else needs a login key unless `FRIDAY_ALLOW_KEYLESS_BIND` is set. |
+| `FRIDAY_TLS_CERT`, `FRIDAY_TLS_KEY` | unset | Serve HTTPS directly. `FRIDAY_REQUIRE_TLS` refuses to start remotely without it; `FRIDAY_SKIP_TLS_WARN` silences the warning. |
+| `FRIDAY_USERNAME` | `admin` | Login username for remote access. |
+| `FRIDAY_REMOTE_KEY` | falls back to `FRIDAY_PASSWORD` | Login key for remote access. |
+| `FRIDAY_TRUST_LOOPBACK` | `1` | Treat direct requests from this PC as the owner. `0` requires a login locally too. Proxied requests are never trusted. |
+| `FRIDAY_COOKIE_SECURE` | unset | Mark the session cookie `Secure`. |
+| `FRIDAY_WS_TOKEN` | unset | Token required on the voice WebSocket. |
+| `FRIDAY_SECRET_KEY` | stored in `~/.friday/secret_key` | Session secret. |
+| `FRIDAY_API_TOKEN_ROTATE_HOURS` | `24` | How often the page's API token rotates; 0 disables rotation. |
+| `FRIDAY_MAX_REQUEST_MB` | `25` | Largest request body. |
+
+### Paths
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FRIDAY_HOME` | `~/.friday` | Friday's data folder itself. |
+| `FRIDAY_RUNTIME_DIR` | `~/.friday/runtime` | Local runtimes and model weights. |
+| `FRIDAY_MODELS_DIR` | `$FRIDAY_HOME/models` | Model files. |
+| `FRIDAY_VOICE_ASSETS` | `$FRIDAY_HOME/voice_assets` | Voice assets. |
+| `FRIDAY_SANDBOX_MODE` | `confine` | `off`, `confine` (file writes confined to `FRIDAY_SANDBOX_ROOT`) or `strict` (also a command allowlist). |
+| `FRIDAY_SANDBOX_ROOT` | your user folder | The confinement root. |
+
+### Vault
+
+| Variable | Meaning |
+|---|---|
+| `FRIDAY_VAULT_PASSPHRASE` | The vault passphrase. Friday looks for it in this order: an environment variable you set, Windows Credential Manager, the DPAPI file in `~/.friday/security/`, then a launch script (legacy). |
+| `FRIDAY_PASSWORD` | Legacy fallback for both the vault passphrase and the remote login key. |
+
+### Behaviour
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FRIDAY_SAFE_MODE` | unset | Turn off self-modification. |
+| `FRIDAY_NO_ARBITER` | unset | Skip the GPU residency arbiter at startup. |
+| `FRIDAY_TOOL_CATALOGUE` | on | `0` sends every tool's full schema to the model instead of an index. |
+| `FRIDAY_DECISION_BACKEND`, `FRIDAY_DECISION_SHADOW` | unset | Override `decision_backend` and `decision_shadow`. |
+| `FRIDAY_TASK_TIMEOUT` | `1800` | Seconds before a background task times out. |
+| `FRIDAY_EGRESS_CLASSIFY_RATE` | `40` | Egress classifier calls per second. |
+| `FRIDAY_PRESIDIO_SHADOW`, `FRIDAY_PRESIDIO_ENFORCE` | unset | Presidio PII detection: observe only, or enforce. Enforcing is not recommended; see the [threat model](../security/threat-model.md). |
+| `FRIDAY_DISTRO` | `default` | Default persona preset. |
+| `FRIDAY_LIVE_MODEL`, `FRIDAY_LIVE_VOICE` | Gemini Live defaults | Used only when the matching settings are empty. |
+| `FRIDAY_OS_MODE` | unset | Sealed Linux kiosk mode: credentials never fall back to plain text. |
+| `FRIDAY_LOG_TARGET` | unset | `stdout` sends logs to journald (OS mode). |
+| `FRIDAY_DEPLOYMENT_ID` | `unknown` | A label reported by the health check. |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5` | The built-in default Claude model. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint for the CLI. |
+
+### For developers and tests
+
+`FRIDAY_TESTING` (no background threads at import), `FRIDAY_NO_SYSTEM_CHANGES`
+(the local-address feature never touches the hosts file or certificates),
+`FRIDAY_VOICE_DEBUG`, `FRIDAY_VOICE_FAKE_TEXT`, `FRIDAY_VOICE_FAKE_SLOW_MS`,
+`FRIDAY_PERSONA_EVAL_LIVE`, `FRIDAY_PERSONA_GOLDEN_DIR`,
+`FRIDAY_PERSONA_FIXTURES_DIR`, and the voice installer's `FRIDAY_TORCH_PIN`,
+`FRIDAY_TORCHAUDIO_PIN`, `FRIDAY_TORCH_CUDA_INDEX`. Friday sets
+`FRIDAY_SESSION_DEPTH`, `FRIDAY_SESSION_ID` and `FRIDAY_WORKER` for its own
+child processes.
 
 ---
 
-## Sandbox
+## Provider keys
 
-Constrains the `write_file` and `run_command` tools. Set via environment variables (not in `settings.json`):
+The recommended place for a key is **Settings → Accounts & Keys**, which
+encrypts it under Friday's keystore (`~/.friday/providers/keys/`). Where every
+credential lives is in [SECURITY.md](../../SECURITY.md#where-secrets-live).
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FRIDAY_SANDBOX_MODE` | `confine` | Sandbox enforcement level: `off`, `confine`, or `strict`. |
-| `FRIDAY_SANDBOX_ROOT` | _(user HOME)_ | Root directory that `write_file` is confined to. |
+| Provider | Environment variable |
+|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` |
+| Google Gemini | `GEMINI_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Hugging Face | `HF_TOKEN` (or `HUGGINGFACE_API_KEY`, `HUGGING_FACE_HUB_TOKEN`) |
+| Groq | `GROQ_API_KEY` |
+| Together | `TOGETHER_API_KEY` |
+| Fireworks | `FIREWORKS_API_KEY` |
+| Mistral | `MISTRAL_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| Perplexity | `PERPLEXITY_API_KEY` |
+| Cohere | `COHERE_API_KEY` |
+| kie.ai | `KIE_API_KEY` |
+| ElevenLabs, Inworld | `ELEVENLABS_API_KEY`, `INWORLD_API_KEY` |
+| Brave Search, Firecrawl | `BRAVE_SEARCH_API_KEY`, `FIRECRAWL_API_KEY` |
+| Google OAuth client (your own) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
 
-**Modes:**
-- `off` — No sandbox restrictions.
-- `confine` (default) — `write_file` is confined to `FRIDAY_SANDBOX_ROOT`, and `run_command` is filtered through a destructive-command blocklist.
-- `strict` — Everything `confine` does, plus `run_command`'s leading command must be on an allowlist.
+**Which wins.** For Anthropic and Gemini, an environment variable you set
+yourself wins over the stored key. For the OpenAI-compatible providers, the
+stored key wins. A key read from a launch script (`start.bat`,
+`launch_now.bat`, `friday_startup.bat` in the application folder) loses to the
+stored key.
+
+**The terminal wizard.** `friday setup` stores keys in the encrypted store and
+also writes plaintext copies to `~/.friday/config.yaml`, `~/.friday/settings.json`
+and `start.bat`. Delete those copies if you do not need them.
 
 ---
 
-## Full Settings Example
+## What lives in `~/.friday`
 
-API keys are intentionally absent from this example — they live in the encrypted credential store, not `settings.json` (see [API Keys](#api-keys)). Legacy `anthropic_api_key` / `gemini_api_key` fields found in `settings.json` are migrated into the encrypted store on save.
+`~/.friday` (or `$FRIDAY_HOME`) holds everything Friday knows and keeps. It is
+yours: open it, back it up, or delete it. The application folder
+(`%LOCALAPPDATA%\AgentFriday`) holds only the program. "Encrypted" below means
+encrypted at rest on this disk.
 
-```json
-{
-  "orchestrator_model": "claude-sonnet-5",
-  "model_routing": {
-    "mode": "smart",
-    "default_cloud_model": "claude-opus-4-8",
-    "ollama_url": "http://localhost:11434",
-    "fallback_to_cloud": true,
-    "vault_cloud_fallback": "redact"
-  },
-  "user_email": "you@example.com",
-  "context_logging_enabled": true,
-  "context_pruning": {
-    "max_turns": 50,
-    "keep_recent": 4,
-    "top_k": 10
-  },
-  "context_compression": {
-    "enabled": true,
-    "min_tokens_to_compress": 1000
-  }
-}
-```
+| Path | Holds | At rest |
+|---|---|---|
+| `settings.json` | Settings | Plain text (includes any plaintext keys listed above) |
+| `config.yaml` | Keys written by the terminal wizard | Plain text |
+| `wiki/` | Your wiki pages | Plain text, except sections in `wiki_encrypted_sections` |
+| `memory/`, `chat_history.json` | Conversations and conversation memory | Plain text |
+| `knowledge-graph/` | The graph derived from your pages; safe to delete, it is rebuilt | Private and sensitive records encrypted |
+| `finance/`, `health/`, `vault/legal/`, `vault/finances/`, `vault/family/` | The vault | Encrypted when a vault passphrase is set |
+| `security/keystore.json` | The credential root key | Owner-only file; unwrapped by default |
+| `security/vault-passphrase.dpapi` | A backup copy of the vault passphrase | Windows DPAPI (this Windows account only) |
+| `providers/keys/`, `google_accounts/tokens/`, `mcp_oauth/`, `platforms/` | Provider keys and connected-account tokens | Encrypted |
+| `phone/` | Phone settings, encrypted Twilio secrets, message log | Secrets encrypted; the rest plain text |
+| `decision-bom.jsonl` | Signed receipts of approval decisions | Plain text, HMAC-signed |
+| `governance/` | Grants and the pinned constraint hash | Plain text |
+| `vault/decision-bom.jsonl`, `vault/access-log.jsonl`, `vault/egress-log.jsonl`, `vault/context-log/` | Governance and privacy logs | Plain text |
+| `vault/.governance-key` | Governance signing key (fallback copy) | Owner-only file |
+| `traces/ledger.jsonl` | Reasoning traces | Each record encrypted; hash-chained and signed |
+| `tasks/` | Background-task journal | Encrypted by default |
+| `decisions.jsonl` | Verdicts of the approval scanner | Plain text |
+| `privacy/file_grants.jsonl` | File grants | Plain text, signed |
+| `costs.db`, `spend_halts.jsonl` | Spend records | Plain text |
+| `schedules.json`, `schedule_runs.jsonl` | Scheduled jobs and their runs | Plain text |
+| `documents/` | Word, Excel and PowerPoint files Friday makes | Plain files |
+| `runtime/`, `local_voice/`, `models/` | Local runtimes and model weights | Not personal data |
+| `local-address/`, `tls/` | Local-address certificate authority and certificate | Private keys stored as plain files |
+| `logs/`, `friday.log`, `server_stderr.log` | Logs | Plain text |
+| `SOUL.md`, `personality.json` | Friday's persona | Plain text |
+
+Backing up and restoring this folder, and what is lost without the vault
+passphrase, is covered in [backup and restore](backup-and-restore.md).
