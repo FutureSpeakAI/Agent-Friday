@@ -320,6 +320,87 @@ def _persist_turn(cid, user_msg, friday_msg, meta=None):
 _SEAT_NOTICES_SENT = set()
 
 
+#: How the routing mode reads in Settings, so a notice names the control the
+#: user actually sees rather than the settings key.
+_ROUTING_MODE_LABELS = {
+    "local_preferred": "Local preferred",
+    "local_only": "Local only",
+    "cloud_only": "Cloud only",
+    "smart": "Smart",
+}
+
+
+def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
+                          cc_override=False, overridden_local_model=None):
+    """Plain English for "the model that answered is not the one you picked".
+
+    Returns None when there is nothing to report: no pick, or the pick answered.
+
+    One helper builds every seat notice, so every chat surface says the same
+    thing and there is a single place for the REASON to be right. The live
+    wording on 2026-09-24 was wrong in exactly that way: a cloud seat kept local
+    by the routing mode was reported as "not installed on this machine", which
+    told the user to install Opus 5.5 -- impossible -- and hid the setting that
+    actually caused it.
+    """
+    if cc_override:
+        return (
+            "Computer Control is on, and only a cloud model can drive it, so "
+            "this turn ran on the cloud model instead of your local seat"
+            + (" (%s)" % overridden_local_model if overridden_local_model else "")
+            + ". Turn Computer Control off to be answered by the local model.")
+
+    chosen = str(chosen_model or "").strip()
+    actual = str(actual_model or "").strip()
+    if not chosen or not actual or chosen == actual:
+        return None
+
+    # One classifier for "is this a cloud id", shared with local_seats, so the
+    # router, the seat resolver and this notice cannot disagree about a string.
+    try:
+        from agent_friday.services.local_seats import _names_a_cloud_model
+    except Exception:
+        def _names_a_cloud_model(_m):
+            return False
+
+    chosen_is_cloud = _names_a_cloud_model(chosen)
+    actual_is_cloud = _names_a_cloud_model(actual)
+
+    # A cloud pick answered by a local model. Say WHY only when the cause is
+    # known: a local-preferring mode explains it outright. Under any other mode
+    # something else kept the turn here -- a missing provider key, a vault-forced
+    # local turn, a per-chat binding -- and naming the mode would be a guess
+    # dressed as a diagnosis, which is how "not installed" got here in the first
+    # place.
+    if chosen_is_cloud and not actual_is_cloud:
+        mode = str(routing_mode or "").strip().lower()
+        if mode in ("local_preferred", "local_only"):
+            label = _ROUTING_MODE_LABELS.get(mode) or mode
+            return (
+                "You chose %s for the reasoning seat, but routing mode is '%s', "
+                "so this turn stayed on this machine and was answered by %s. %s "
+                "is a cloud model and cannot be installed here -- to be answered "
+                "by it, set routing mode to Smart or Cloud only in Settings > "
+                "Intelligence." % (chosen, label, actual, chosen))
+        return (
+            "You chose %s for the reasoning seat, but this turn was answered on "
+            "this machine by %s. %s is a cloud model, so nothing was missing "
+            "from this machine -- something kept the turn local. Check routing "
+            "mode and the provider key in Settings > Intelligence."
+            % (chosen, actual, chosen))
+
+    # Two cloud models: not an absent local install, so offer no install advice.
+    if chosen_is_cloud and actual_is_cloud:
+        return (
+            "You chose %s for the reasoning seat, but this turn was answered by "
+            "%s instead." % (chosen, actual))
+
+    return (
+        "You chose %s for the reasoning seat, but it is not installed on this "
+        "machine; this turn was answered by %s instead. Install %s or pick an "
+        "installed model in the seat picker." % (chosen, actual, chosen))
+
+
 def _announce_seat_notice(conversation_id, text):
     """Put a seat discrepancy where the user reads: a system line in the
     transcript and a notification, once per conversation and wording.
@@ -1012,20 +1093,14 @@ def chat():
                 {"conversation_seat": _conv_seat})
         except Exception:
             _chosen_m, _chosen_p = None, None
-        if _route_info.get('override') == 'computer_control':
-            _seat_notice = (
-                "Computer Control is on, and only a cloud model can drive it, so "
-                f"this turn ran on the cloud model instead of your local seat"
-                + (f" ({_route_info.get('overridden_local_model')})"
-                   if _route_info.get('overridden_local_model') else "")
-                + ". Turn Computer Control off to be answered by the local model.")
-        elif (_chosen_m and _routed_local
-              and (_route_info.get('model') or '') != _chosen_m):
-            _seat_notice = (
-                f"You chose {_chosen_m} for the reasoning seat, but it is not "
-                f"installed on this machine; this turn was answered by "
-                f"{_route_info.get('model')} instead. Install {_chosen_m} or pick "
-                f"an installed model in the seat picker.")
+        # The old condition required `_routed_local`, which silently excluded
+        # the reverse case (a local pick answered from the cloud). Divergence
+        # is divergence; the helper decides what to SAY about it.
+        _seat_notice = _seat_divergence_text(
+            _chosen_m, _route_info.get('model'),
+            routing_mode=(_routing_cfg or {}).get('mode'),
+            cc_override=(_route_info.get('override') == 'computer_control'),
+            overridden_local_model=_route_info.get('overridden_local_model'))
         if _seat_notice:
             _announce_seat_notice(_conversation_id, _seat_notice)
 
@@ -2201,6 +2276,29 @@ def chat_send():
         except Exception:
             pass
 
+        # ── The seat the user chose vs the seat that answered ──────────────
+        #
+        # This endpoint backs the "new window" surface (`ConversationWindow` in
+        # index.html) and is a SECOND full dispatch path: it had the seat CHANGE
+        # feed above but no divergence check, so on 2026-09-24 it answered from
+        # bonsai2:27b while the reasoning seat held claude-opus-5-5 and said
+        # nothing at all. `_seat_model` is the model that actually generated the
+        # reply, so this compares fact against intent rather than two settings.
+        _send_seat_notice = None
+        try:
+            _chosen_send = (_conv_seat_model or '').strip() or None
+            if not _chosen_send:
+                _cr_send = (settings.get('capability_routing') or {})
+                _chosen_send = ((_cr_send.get('reasoning') or {}).get('model')
+                                or '').strip() or None
+            _send_seat_notice = _seat_divergence_text(
+                _chosen_send, _seat_model,
+                routing_mode=((settings.get('model_routing') or {}).get('mode')))
+            if _send_seat_notice:
+                _announce_seat_notice(_conversation_id, _send_seat_notice)
+        except Exception as _sne:
+            print(f"  [chat/send] seat notice failed: {_sne}")
+
         # Create persistent message objects
         user_msg = {
             'id': str(uuid.uuid4()),
@@ -2222,6 +2320,8 @@ def chat_send():
         }
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
+        if _send_seat_notice:
+            friday_msg['seat_notice'] = _send_seat_notice
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class})
 
@@ -2246,6 +2346,7 @@ def chat_send():
                         "sources": sources, "tool_trace": tool_trace,
                         "model": _seat_model, "seat": _seat_class,
                         "seat_events": _seat_events,
+                        "seat_notice": _send_seat_notice,
                         "fallback_chain": _fallback_chain})
     except Exception as e:
         traceback.print_exc()
