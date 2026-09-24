@@ -5030,7 +5030,7 @@ function ProductionPanel({onCreated}){
 // ── Studio › Creative Project Manager ──────────────────────────────────────
 // Per-project Series Bible (cast/locations/continuity/style) + multi-stage
 // creative pipelines with milestone progress and checkpoint resume. Wired to
-// /api/projects/* and /api/pipelines/*. Characters added here propagate their
+// /api/creative/projects/* and /api/pipelines/*. Characters added here propagate their
 // visual description into every downstream generation.
 function ProjectsPanel(){
   const[projects,setProjects]=useState([]);const[activeId,setActiveId]=useState('');
@@ -5038,15 +5038,15 @@ function ProjectsPanel(){
   const[cName,setCName]=useState('');const[cDesc,setCDesc]=useState('');const[cVoice,setCVoice]=useState('');
   const[templates,setTemplates]=useState([]);const[pipeId,setPipeId]=useState('research-brief-draft-review');
   const[topic,setTopic]=useState('');const[runs,setRuns]=useState([]);const[busy,setBusy]=useState(false);
-  const loadProjects=()=>fetch('/api/projects').then(r=>r.json()).then(d=>{setProjects(d.projects||[]);}).catch(()=>{});
-  const loadActive=()=>fetch('/api/projects/active').then(r=>r.json()).then(d=>{setActiveId(d.active_id||'');setBible(d.project||null);}).catch(()=>{});
+  const loadProjects=()=>fetch('/api/creative/projects').then(r=>r.json()).then(d=>{setProjects(d.projects||[]);}).catch(()=>{});
+  const loadActive=()=>fetch('/api/creative/projects/active').then(r=>r.json()).then(d=>{setActiveId(d.active_id||'');setBible(d.project||null);}).catch(()=>{});
   const loadRuns=()=>fetch('/api/pipelines/runs').then(r=>r.json()).then(d=>setRuns(d.runs||[])).catch(()=>{});
   useEffect(()=>{loadProjects();loadActive();loadRuns();fetch('/api/pipelines/templates').then(r=>r.json()).then(d=>setTemplates(d.templates||[])).catch(()=>{});},[]);
-  const createProject=async()=>{if(!name.trim())return;await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type:ptype})});setName('');loadProjects();loadActive();};
-  const activate=async(id)=>{await fetch('/api/projects/'+id+'/activate',{method:'POST'});loadActive();};
-  const delProject=async(id)=>{await fetch('/api/projects/'+id,{method:'DELETE'});loadProjects();loadActive();};
-  const addChar=async()=>{if(!activeId||!cName.trim())return;await fetch('/api/projects/'+activeId+'/characters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:cName,visual_description:cDesc,voice_profile:cVoice})});setCName('');setCDesc('');setCVoice('');loadActive();};
-  const rmChar=async(nm)=>{await fetch('/api/projects/'+activeId+'/characters/'+encodeURIComponent(nm),{method:'DELETE'});loadActive();};
+  const createProject=async()=>{if(!name.trim())return;await fetch('/api/creative/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type:ptype})});setName('');loadProjects();loadActive();};
+  const activate=async(id)=>{await fetch('/api/creative/projects/'+id+'/activate',{method:'POST'});loadActive();};
+  const delProject=async(id)=>{await fetch('/api/creative/projects/'+id,{method:'DELETE'});loadProjects();loadActive();};
+  const addChar=async()=>{if(!activeId||!cName.trim())return;await fetch('/api/creative/projects/'+activeId+'/characters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:cName,visual_description:cDesc,voice_profile:cVoice})});setCName('');setCDesc('');setCVoice('');loadActive();};
+  const rmChar=async(nm)=>{await fetch('/api/creative/projects/'+activeId+'/characters/'+encodeURIComponent(nm),{method:'DELETE'});loadActive();};
   const runPipeline=async()=>{if(!topic.trim())return;setBusy(true);try{await fetch('/api/pipelines/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pipeline_id:pipeId,input:{topic,logline:topic},project_id:activeId,start:true})});setTopic('');setTimeout(loadRuns,400);}finally{setBusy(false);}};
   const resumeRun=async(rid)=>{await fetch('/api/pipelines/runs/'+rid+'/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_to_end:false})});setTimeout(loadRuns,400);};
   const stateColor={completed:'#22c55e',awaiting_checkpoint:'#f59e0b',running:'#00d4ff',failed:'#ff0080',pending:'#888'};

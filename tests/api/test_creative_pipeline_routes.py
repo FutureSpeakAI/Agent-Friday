@@ -9,40 +9,40 @@ import pytest
 
 # ── projects ────────────────────────────────────────────────────────────────
 def test_project_crud_and_bible(client):
-    r = client.post("/api/projects", json={"name": "Route Saga", "type": "video-series"})
+    r = client.post("/api/creative/projects", json={"name": "Route Saga", "type": "video-series"})
     assert r.status_code == 200
     pid = r.get_json()["project"]["id"]
 
     # appears in the list
-    lst = client.get("/api/projects").get_json()
+    lst = client.get("/api/creative/projects").get_json()
     assert any(p["id"] == pid for p in lst["projects"])
 
     # add a character with a propagating visual description
-    rc = client.post(f"/api/projects/{pid}/characters",
+    rc = client.post(f"/api/creative/projects/{pid}/characters",
                      json={"name": "Maya", "visual_description": "silver-haired pilot"})
     assert rc.get_json()["status"] == "ok"
 
     # full bible reflects the cast
-    bible = client.get(f"/api/projects/{pid}").get_json()["project"]
+    bible = client.get(f"/api/creative/projects/{pid}").get_json()["project"]
     assert bible["characters"][0]["name"] == "Maya"
 
     # activate + active endpoint
-    client.post(f"/api/projects/{pid}/activate")
-    assert client.get("/api/projects/active").get_json()["active_id"] == pid
+    client.post(f"/api/creative/projects/{pid}/activate")
+    assert client.get("/api/creative/projects/active").get_json()["active_id"] == pid
 
     # continuity + style
-    client.post(f"/api/projects/{pid}/continuity", json={"note": "It rains", "scene": "1"})
-    client.post(f"/api/projects/{pid}/style", json={"style_guide": {"genre": "noir"}})
-    bible = client.get(f"/api/projects/{pid}").get_json()["project"]
+    client.post(f"/api/creative/projects/{pid}/continuity", json={"note": "It rains", "scene": "1"})
+    client.post(f"/api/creative/projects/{pid}/style", json={"style_guide": {"genre": "noir"}})
+    bible = client.get(f"/api/creative/projects/{pid}").get_json()["project"]
     assert bible["continuity"][0]["note"] == "It rains"
     assert bible["style_guide"]["genre"] == "noir"
 
     # cleanup
-    assert client.delete(f"/api/projects/{pid}").get_json()["deleted"] is True
+    assert client.delete(f"/api/creative/projects/{pid}").get_json()["deleted"] is True
 
 
 def test_create_project_requires_name(client):
-    r = client.post("/api/projects", json={})
+    r = client.post("/api/creative/projects", json={})
     assert r.get_json()["status"] == "error"
 
 
