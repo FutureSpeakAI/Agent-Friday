@@ -317,8 +317,9 @@ def test_run_command_refuses_the_local_api_even_if_reached():
     assert "not run" in out
 
 
-def test_a_connector_write_with_a_read_sounding_word_is_outward():
+def test_a_connector_write_with_a_read_sounding_word_is_outward(monkeypatch):
     from agent_friday.governance import action_gate as g
+    monkeypatch.setattr(g, "_laya_down", lambda: False)   # classifier answering
     assert g.classify("mcp_bank_update_user_info", {})[0] == g.OUTWARD
     assert g.classify("mcp_slack_send_status", {})[0] == g.OUTWARD
     assert g.classify("mcp_bank_get_balance", {})[0] == g.INTERNAL
