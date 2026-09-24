@@ -388,14 +388,11 @@ def test_worker_pushes_its_task_and_pops_it(monkeypatch):
     monkeypatch.setattr(ag, "_gated_vault_control", lambda *a, **k: None)
     monkeypatch.setattr(ag, "_evaluate_output", lambda *a, **k: "GRADE: PASS\nREASON: fine")
     monkeypatch.setattr(ag, "_report_task_completion", lambda *a, **k: None)
-    # NOTE: the worker's evaluator gate imports `_vault_local_only` from
-    # agent_friday.core, where no such name exists (it lives in
-    # services/model_router), so the gate fails closed and the evaluator is
-    # skipped on every task. Pre-existing; not fixed in this phase because
-    # re-enabling it turns a cloud call per task back on. The journal now
-    # says so instead of claiming the task was vault-protected — this
-    # assertion pins the truthful reason and will need updating when the
-    # import is repaired.
+    # The evaluator runs only on a serving local seat; with one resolved, its
+    # grade is the journal's `evaluate` decision
+    # (test_task_evaluator_local_seat.py covers the no-seat branch).
+    from agent_friday.services import scheduler
+    monkeypatch.setattr(scheduler, "_resolve_local_seat", lambda: "local-model:7b")
     with ag.TASKS_LOCK:
         ag.TASKS[TID] = {"task_id": TID, "name": "t", "prompt": "p", "status": "queued",
                          "created": time.time(), "log": [], "result": ""}
@@ -407,5 +404,5 @@ def test_worker_pushes_its_task_and_pops_it(monkeypatch):
     assert seen["current"] == TID
     assert tj.current_task() is None
     ev = next(e for e in tj.read(TID) if e["kind"] == "decision" and e["point"] == "evaluate")
-    assert ev["chosen"] == "skipped"
-    assert "could not determine the vault policy" in ev["reason"] and "ImportError" in ev["reason"], ev
+    assert ev["chosen"] == "GRADE: PASS", ev
+    assert ev["reason"] == "REASON: fine", ev

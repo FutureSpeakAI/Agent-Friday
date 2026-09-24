@@ -60,6 +60,14 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 - The configuration guide still listed Opus 4.8 / 4.7 / 4.6 and Sonnet 4.6 as
   pickable. They were removed from the shipped registry some time ago; the
   guide now names what is actually offered.
+- **The background task's quality evaluator runs again, on a local seat
+  only.** It had never run: it imported `_vault_local_only` from
+  `agent_friday.core`, where that name does not exist, and failed closed on
+  every task. It no longer makes a cloud call at all. It grades on the local
+  model that is actually serving (the same resolution `local_only` schedules
+  use); with none serving it is skipped, and the task journal's `evaluate`
+  decision records why. A background task never adds a paid call for its
+  grade.
 
 
 The sections below come from the hardening pass of 2026-09-06, after the

@@ -3032,69 +3032,61 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         return {"interrupted": [], "restored": [], "loaded": 0, "error": str(e)}
 
 
-def _evaluate_output(task_id, goal, output, *, local_only=False):
-    """Grade task output with a fresh Claude call that has no build history.
+#: How long the worker waits for a local grade. The task's own status is already
+#: set when the evaluator starts, but its completion notice waits for the grade,
+#: so a cold or busy seat must not hold that notice for the local-call default.
+EVALUATOR_TIMEOUT_S = 90
 
-    TWO THINGS WORTH KNOWING BEFORE READING ON.
+_EVAL_SYSTEM = ("You are a strict, impartial evaluator. You grade whether an "
+                "output achieved its goal. You reply in exactly two lines.")
 
-    First: this runs at the end of EVERY background task, not only the ones
-    anyone is watching. It is a cloud call per task that nobody had counted,
-    and it sends the goal and up to 4,000 characters of the output.
+_GRADE_RE = re.compile(r"^[\s*_#>`-]*GRADE[\s*_:]*\s*\[?\s*(PASS|PARTIAL|FAIL)\b",
+                       re.IGNORECASE | re.MULTILINE)
+_REASON_RE = re.compile(r"^[\s*_#>`-]*REASON[\s*_:]*\s*(.+)$",
+                        re.IGNORECASE | re.MULTILINE)
 
-    Second, and the reason for `local_only`: a vault-protected task refuses
-    the cloud for the work itself and tells the user "It was NOT sent to a
-    cloud provider". This evaluator must honor that same policy for the
-    task's goal and output; otherwise vault-derived text goes to Anthropic
-    silently, inside the feature whose message promised it would not.
 
-    The payload is gated — `_seal_or_block` classifies and redacts before the
-    send — but that is not sufficient. The same distinction applies to
-    routes/chat.py's screen capture and /api/analyze's uploads, so it is a
-    class of bug rather than an incident:
+def _evaluate_output(task_id, goal, output, *, model):
+    """Grade a background task's output on the local seat `model`.
 
-        Gating the CONTENT is not the same as gating the DECISION TO SEND.
-        A redactor answers "what may leave?". It never answers "should this
-        call happen at all?" — and on a vault turn the answer is no, whatever
-        the redactor would have made of the text.
+    This runs at the end of every background task, so it is never a cloud
+    call: one paid call per task is a cost nobody chose, and the goal and up to
+    4,000 characters of output would leave the machine, vault-derived text
+    included. The caller resolves a local seat that is actually serving and
+    skips the evaluator, with a recorded reason, when there is none.
 
-    Returns None when it must not or cannot run, so the caller records no
-    grade rather than a misleading one.
+    The call goes through `local_call.call`, which speaks only to the local
+    daemon or an Arbiter seat, inside `local_only_guard.local_only`, so any
+    cloud transport reached from here refuses rather than spends.
+
+    The reply is normalised to `GRADE: PASS|PARTIAL|FAIL` and `REASON: ...`.
+    A reply with no recognisable grade, or no reply, is `GRADE: UNAVAILABLE`:
+    an evaluator that did not produce a verdict must never read as one that
+    found the work middling.
     """
-    if local_only:
-        return None
-    client = get_anthropic_client()
-    if client is None:
-        return None
+    from agent_friday.services import local_call as _lc
+    from agent_friday.services import local_only_guard as _log_guard
+    user = (f"GOAL:\n{(goal or '')[:1500]}\n\n"
+            f"OUTPUT:\n{(output or '')[:4000]}\n\n"
+            f"Grade the output against the goal. Respond ONLY in this format:\n"
+            f"GRADE: PASS or PARTIAL or FAIL\n"
+            f"REASON: one sentence")
     try:
-        eval_prompt = (
-            f"You are a strict, impartial evaluator. Read the goal and output below, "
-            f"then grade the output.\n\n"
-            f"GOAL:\n{goal[:1500]}\n\n"
-            f"OUTPUT:\n{output[:4000]}\n\n"
-            f"Respond ONLY in this exact format:\n"
-            f"GRADE: [PASS/PARTIAL/FAIL]\n"
-            f"REASON: [one sentence]"
-        )
-        # Egress gate (fail-closed): the goal + task output can carry whatever the
-        # task touched (files, vault reads, PII). This evaluator call went to the
-        # cloud ungated; route it through the shared wrapper like every other path.
-        _eval_kwargs = _seal_or_block({
-            "model": ANTHROPIC_MODEL_DEFAULT,
-            "max_tokens": 128,
-            "messages": [{"role": "user", "content": eval_prompt}],
-        }, "anthropic")
-        resp = client.messages.create(**_eval_kwargs)
-        if resp.content:
-            return resp.content[0].text.strip()
-        # An evaluator that could not run must not return the same verdict as
-        # one that ran and found the work middling. Answering "GRADE: PARTIAL"
-        # to both would grade a step that produced NOTHING as PARTIAL — the
-        # grader's own failure becoming the score, in a place people read as
-        # a judgement of the work.
-        return "GRADE: UNAVAILABLE\nREASON: The evaluator returned no content."
+        with _log_guard.local_only("the quality evaluator"):
+            raw = _lc.call(_EVAL_SYSTEM, user, model, max_tokens=128,
+                           timeout=EVALUATOR_TIMEOUT_S) or ""
     except Exception as e:
         return ("GRADE: UNAVAILABLE\nREASON: The evaluator could not run, so "
                 "this output has NOT been assessed: %s" % str(e)[:200])
+    grade = _GRADE_RE.search(raw)
+    if not grade:
+        why = ("The local evaluator returned nothing" if not raw.strip()
+               else "The local evaluator's reply contained no grade")
+        return ("GRADE: UNAVAILABLE\nREASON: %s, so this output has NOT been "
+                "assessed." % why)
+    reason = _REASON_RE.search(raw)
+    reason_text = (reason.group(1).strip(" *_`") if reason else "") or "(no reason given)"
+    return "GRADE: %s\nREASON: %s" % (grade.group(1).upper(), reason_text[:300])
 
 
 TASK_TIMEOUT_SECONDS = int(os.environ.get('FRIDAY_TASK_TIMEOUT', 1800))  # 30 min default
@@ -3422,32 +3414,33 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                   verified=verified, verification_evidence=verification_summary)
 
         # ── Fresh-context evaluator ────────────────────────────────
-        # The evaluator is a CLOUD call. A task that refused the cloud for its
-        # own work must not be graded by it — see _evaluate_output. Same signal
-        # the work used, read the same way, so the two cannot drift apart.
-        _eval_local_only = False
-        _eval_skip_reason = "vault-protected task: the evaluator is a cloud call and was not run"
+        # Local seat only, resolved the way `local_only` schedules resolve
+        # theirs: a model that is actually serving, not one that is merely
+        # configured. With none serving, the evaluator is skipped and the
+        # journal says why; it never falls back to the cloud (see
+        # _evaluate_output). Running locally also keeps a vault-protected
+        # task's goal and output on the machine.
+        _eval_seat = None
+        _eval_skip_reason = ("no local seat is serving; the evaluator runs only "
+                             "on a local seat and was not run")
         try:
-            from agent_friday.core import _vault_local_only as _vlo
-            _eval_local_only = bool(_vlo())
-        except Exception as _vlo_err:
-            _eval_local_only = True   # cannot tell → do not send
-            # The journal must say WHY it was skipped. "Cannot tell" and
-            # "vault-protected" are different facts; conflating them hid the
-            # case where this import itself fails and the evaluator never runs.
-            _eval_skip_reason = (f"could not determine the vault policy "
-                                 f"({type(_vlo_err).__name__}: {str(_vlo_err)[:120]}); "
-                                 f"fail closed, evaluator not run")
-        if _eval_local_only:
-            _task_log(task_id, 'Skipping quality evaluation — it is a cloud '
-                               'call and this task is vault-protected.')
+            from agent_friday.services import scheduler as _sched
+            _eval_seat = _sched._resolve_local_seat()
+        except Exception as _seat_err:
+            _eval_seat = None
+            _eval_skip_reason = (f"could not resolve a local seat "
+                                 f"({type(_seat_err).__name__}: {str(_seat_err)[:120]}); "
+                                 f"the evaluator runs only on a local seat and was not run")
+        if not _eval_seat:
+            _task_log(task_id, 'Skipping quality evaluation — it runs only on '
+                               'a local seat, and none is serving.')
             evaluation = None
             _tj.decision("evaluate", "skipped", task_id=task_id, reason=_eval_skip_reason,
                          alternatives=["GRADE: PASS", "GRADE: PARTIAL", "GRADE: FAIL"])
         else:
-            _task_log(task_id, 'Running quality evaluation (cloud)…')
+            _task_log(task_id, 'Running quality evaluation on the local seat %s…' % _eval_seat)
             evaluation = _evaluate_output(task_id, prompt, reply or '',
-                                          local_only=_eval_local_only)
+                                          model=_eval_seat)
         if evaluation:
             _task_set(task_id, evaluation=evaluation)
             lines = evaluation.splitlines()
