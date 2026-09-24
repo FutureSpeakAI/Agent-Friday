@@ -796,7 +796,7 @@ def inference_health(providers=None) -> dict:
         return {"status": "unknown", "providers": []}
 
     probe_types = {"ollama", "anthropic", "openai-compatible", "google"}
-    results = []
+    wanted = []
     for p in allp:
         pname = p.get("name", "")
         if providers is not None and pname not in providers:
@@ -805,21 +805,73 @@ def inference_health(providers=None) -> dict:
             continue
         if not _has_key(p):
             continue          # unconfigured is not unhealthy
-        res = inference_probe(pname, prov=p)
-        if res is not None:
-            results.append(res)
+        wanted.append((pname, p))
+
+    # PARALLEL, WITH A HARD PER-PROBE CEILING.
+    #
+    # This loop used to be serial, and `/api/health` is what Settings >
+    # Intelligence reads. Measured on 2026-09-23, seven providers:
+    #
+    #   ollama-local       12.06s  down  (no daemon: WinError 10061)
+    #   fridayweaver-seat   8.04s  down  (nothing on :8095)
+    #   openrouter          6.34s  ok    (a REAL billable call, 6322ms)
+    #   google-gemini       4.93s  down  (404)
+    #   openai              4.76s  down  (HTTP 401)
+    #   anthropic           4.07s  missing
+    #   bonsai2-local       4.03s  ok
+    #   ----------------------------------
+    #   TOTAL              44.23s
+    #
+    # and `_PROBE_TTL_S` is 60, so it went slow again every minute. The four
+    # slowest were FAILURES whose verdict was settled the moment the connection
+    # was refused; waiting the full timeout bought nothing. In parallel with a
+    # ceiling the same sweep costs about one probe's worth of time, and a probe
+    # that overruns is reported unreachable rather than waited on.
+    from agent_friday.services import machine_probe as _mp
+
+    def _one(pname, prov):
+        return lambda: inference_probe(pname, prov=prov)
+
+    swept = _mp.probe_all({n: _one(n, p) for n, p in wanted},
+                          timeout=_mp.DEFAULT_PROBE_TIMEOUT_S)
+    results = []
+    for pname, _p in wanted:
+        r = swept.get(pname) or {}
+        if r.get("ok") and r.get("value") is not None:
+            results.append(r["value"])
+        elif r.get("timed_out"):
+            # Not "down": we did not find out. Saying down would invent a
+            # verdict, and a provider that is merely slow is not broken.
+            results.append({"provider": pname, "status": "unknown",
+                            "detail": "no answer within %.1fs"
+                                      % _mp.DEFAULT_PROBE_TIMEOUT_S,
+                            "proved": False})
+        elif r.get("error"):
+            results.append({"provider": pname, "status": "down",
+                            "detail": r["error"], "proved": False})
 
     if not results:
         return {"status": "unknown", "providers": [],
                 "detail": "no configured inference provider to probe"}
     oks = [r for r in results if r.get("status") == "ok"]
-    if not oks:
-        status = "down"
-    elif len(oks) < len(results):
-        status = "degraded"
-    else:
+    # "unknown" is a third thing and must not collapse into "down". A probe that
+    # did not answer inside its ceiling tells us nothing about the provider, and
+    # reporting "Friday cannot currently think" on the strength of a slow
+    # network is the same class of error as reporting a stale value as live.
+    unknowns = [r for r in results if r.get("status") == "unknown"]
+    decided = [r for r in results if r.get("status") != "unknown"]
+    if oks and len(oks) == len(results):
         status = "ok"
-    return {"status": status, "providers": results}
+    elif oks:
+        status = "degraded"
+    elif not decided:
+        status = "unknown"        # every probe timed out; we did not find out
+    else:
+        status = "down"           # something answered, and all of it failed
+    out = {"status": status, "providers": results}
+    if unknowns:
+        out["unread"] = [r.get("provider") for r in unknowns]
+    return out
 
 
 def check_provider(name, deep=False, use_cache=True) -> dict:

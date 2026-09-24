@@ -1007,6 +1007,23 @@ if __name__ == '__main__':
     except Exception:
         pass
 
+    # Warm the slow machine readings so the first menu open does not pay them.
+    # Measured 2026-09-23: the model picker's first open after a restart cost
+    # 18s, 14.3s of which was `_tts_engines()` importing torch to learn whether
+    # Kokoro loads. Warming runs on background threads and is never waited on --
+    # boot must not get slower in order to make a menu fast, which would only
+    # move the same stall somewhere less visible.
+    try:
+        from agent_friday.services import machine_probe as _mp
+        from agent_friday.services import model_catalog as _mc
+        _mc.register_warmers()
+        _warmed = _mp.warm_all()
+        if _warmed:
+            print("  Warming %d machine reading(s) in the background: %s"
+                  % (len(_warmed), ", ".join(_warmed)))
+    except Exception as _we:
+        print(f"  (machine readings will warm on first use: {_we})")
+
     # Hang watchdog: arm before app.run() so a hang during request serving
     # (the silent-hang scenario) gets caught. auto_restart_after_dump self-exits
     # after a dump so the tray relaunches; default off, so a dump alone

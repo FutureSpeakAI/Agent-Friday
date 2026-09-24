@@ -37,9 +37,17 @@ def test_nemo_provider_registered_and_gpu_gated(monkeypatch):
     # nobody reads, which is how it sat red while GPU voice was genuinely
     # broken for an unrelated reason (missing nltk). Assert the GATE: whatever
     # gpu_tier_ready() says, availability must say the same, both ways.
+    # Availability is now SNAPSHOT-CACHED for 60s, because the real probe
+    # imports torch (2.8s) and used to run on the request path -- part of
+    # why the model picker took 18s to open. The gate is unchanged; a flip
+    # of gpu_tier_ready is simply not observed through a cached verdict, so
+    # drop it between the halves instead of asserting through it.
+    from agent_friday.services import swr_cache
     import agent_friday.services.nemo_voice as nv
+    swr_cache.invalidate("provider_available:")
     monkeypatch.setattr(nv, "gpu_tier_ready", lambda: False)
     assert reg.is_provider_available("nvidia-nemo") is False
+    swr_cache.invalidate("provider_available:")
     monkeypatch.setattr(nv, "gpu_tier_ready", lambda: True)
     assert reg.is_provider_available("nvidia-nemo") is True
 
