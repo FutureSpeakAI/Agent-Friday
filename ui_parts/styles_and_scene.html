@@ -1,12 +1,57 @@
 <body>
     <style>
+    /* Edge and corner grab zones (fridayEdgeHandles) on workspace and chat windows. */
+    .win-edge{position:absolute;z-index:5}
+    .win-edge-n,.win-edge-s{left:12px;right:12px;height:6px;cursor:ns-resize}
+    .win-edge-n{top:0}.win-edge-s{bottom:0}
+    .win-edge-e,.win-edge-w{top:12px;bottom:12px;width:6px;cursor:ew-resize}
+    .win-edge-e{right:0}.win-edge-w{left:0}
+    .win-edge-ne,.win-edge-nw,.win-edge-se,.win-edge-sw{width:14px;height:14px;z-index:6}
+    .win-edge-ne{top:0;right:0;cursor:nesw-resize}.win-edge-sw{bottom:0;left:0;cursor:nesw-resize}
+    .win-edge-nw{top:0;left:0;cursor:nwse-resize}.win-edge-se{bottom:0;right:0;cursor:nwse-resize}
+    .fwin .win-edge-se{display:none}
+    .chat-win-bar{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:5px 12px 4px;user-select:none;background:rgba(0,212,255,0.05);border-bottom:1px solid rgba(0,212,255,0.14)}
+    .chat-win-grip{color:rgba(0,212,255,0.55);font-size:11px}
+    .chat-win-title{font-family:'Orbitron';font-size:10px;letter-spacing:.06em;color:#7fdcff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .chat-win textarea.input,.chat-panel textarea.input{min-height:32px}
+    @media (max-width: 768px){.win-edge{display:none}}
     /* Offline-first: desaturate the holographic scene when the network monitor
        reports we're offline, so the environment visibly (but calmly) reflects
        the degraded state. Eased in/out so the transition isn't jarring. */
     #friday-scene-canvas{transition:filter 1s ease}
     body.net-offline #friday-scene-canvas{filter:saturate(0.45) brightness(0.82)}
     body.net-degraded #friday-scene-canvas{filter:saturate(0.78) brightness(0.93)}
-    </style>
+            /* ── A workspace as its own tab (/w/<id>) ───────────────────────
+           The server marks <html class="ws-standalone"> before anything
+           renders. The scene never starts (window.onload is skipped) and
+           the HUD, camera and hand-tracking layers are not shown; App draws
+           the one workspace full-tab under .ws-tab-head. */
+        html.ws-standalone #friday-scene-canvas,
+        html.ws-standalone #hud-overlay,
+        html.ws-standalone #camera-indicator,
+        html.ws-standalone #hand-cursor,
+        html.ws-standalone #state-indicator,
+        html.ws-standalone #chrome-orb-exit { display: none !important; }
+        html.ws-standalone body { background: #070b14; overflow: auto; }
+        .ws-tab { min-height: 100vh; display: flex; flex-direction: column; color: #dbe6f5; }
+        .ws-tab-head { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+            background: rgba(6,10,18,0.96); border-bottom: 1px solid rgba(0,212,255,0.18); backdrop-filter: blur(6px); }
+        .ws-tab-mark { font-family: Orbitron, Inter, sans-serif; font-size: 12px; letter-spacing: .14em; color: #00d4ff; text-decoration: none; white-space: nowrap; }
+        .ws-tab-name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #fff; }
+        .ws-tab-name img { width: 20px; height: 20px; }
+        .ws-tab-sp { flex: 1; }
+        .ws-tab-link { font-size: 12px; color: #9fd0ff; text-decoration: none; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.3); border-radius: 7px; background: transparent; cursor: pointer; }
+        .ws-tab-link:hover { border-color: #00d4ff; color: #e6f9ff; }
+        .ws-tab-ask { font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; border: 1px solid rgba(245,158,11,0.6); background: rgba(245,158,11,0.12); color: #ffd699; }
+        .ws-tab-ask.none { border-color: rgba(255,255,255,0.12); background: transparent; color: #7f93ad; }
+        .ws-tab-body { flex: 1; padding: 14px 18px 24px; min-height: 0; }
+        .ws-tab-drawer { position: fixed; top: 48px; right: 14px; width: min(460px, 94vw); max-height: 78vh; overflow: auto; z-index: 70;
+            background: rgba(8,12,22,0.98); border: 1px solid rgba(245,158,11,0.45); border-radius: 12px; padding: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+        .ws-tab-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
+        .ws-tab-toast { position: fixed; right: 16px; bottom: 16px; z-index: 80; display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 9px;
+            background: rgba(8,12,22,0.97); border: 1px solid rgba(245,158,11,0.6); color: #ffe2ad; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+
+</style>
     <!-- Hand Cursor -->
     <div id="hand-cursor" class="hidden">
         <svg id="pinch-progress">
@@ -1514,7 +1559,10 @@
             if (composer && !(window.__fridayBackdropHold > 0)) composer.render();
         }
 
-        window.onload = init;
+        // A workspace in its own tab (/w/<id>), or an undocked chat
+        // (?chrome=chat), has no room around it: the scene, its GPU context
+        // and its render loop are never started. The orb mode is the scene.
+        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat') window.onload = init;
     </script>
 
 <script>

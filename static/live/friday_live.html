@@ -106,7 +106,7 @@ const btnMic = el('btnMic'), btnCam = el('btnCam'), btnFlip = el('btnFlip'), btn
 const camPip = el('camPip'), camVideo = el('camVideo');
 
 let ws = null, audioCtx = null, micStream = null, camStream = null;
-let micNode = null, micSource = null, playQueue = [], playCursor = 0;
+let micNode = null, micSource = null, playerNode = null;
 let camFacing = 'environment', camTimer = null, camCanvas = null;
 let wakeLock = null, keepAliveOsc = null;
 let micOn = false, camOn = false, sessionActive = false;
@@ -168,6 +168,33 @@ async function openAudioContext(){
   if (audioCtx) return audioCtx;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
+  // ONE always-running player fed by a ring buffer, shared with the desktop UI.
+  // Never a node per chunk: every chunk boundary restarts the browser resampler
+  // and carries a scheduling rounding error, which is the grain that builds up
+  // over a long reply. It is also what exposed the Chrome 152 repeated-block
+  // screech. Measured on Chrome 153 with a pure tone, the old path stepped the
+  // waveform 38 times in six seconds; this one does not step at all.
+  try {
+    await audioCtx.audioWorklet.addModule('/static/js/friday_pcm_player.worklet.js');
+    playerNode = new AudioWorkletNode(audioCtx, 'friday-pcm-player', {
+      numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+      processorOptions: { srcRate: PCM_OUT_RATE }
+    });
+    playerNode.connect(audioCtx.destination);
+    playerNode.port.onmessage = e => {
+      const t = e.data && e.data.type;
+      if (t === 'active') {
+        orb.classList.add('speaking'); orb.classList.remove('listening');
+        setStatus('live', 'SPEAKING');
+      } else if (t === 'drained') {
+        orb.classList.remove('speaking'); orb.classList.add('listening');
+        setStatus('live', 'LISTENING');
+      }
+    };
+  } catch (e) {
+    playerNode = null;
+    console.error('[live] AudioWorklet player unavailable — speech will not play:', e);
+  }
   // Silent keep-alive oscillator — prevents Android Chrome from suspending the tab in background
   keepAliveOsc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
@@ -251,38 +278,22 @@ async function flipCam(){
   await startCam(camFacing === 'environment' ? 'user' : 'environment');
 }
 
-// ── Audio playback: queued PCM16 @ 24kHz ──
+// ── Audio playback: PCM16 @ 24kHz into the shared ring-buffer player ──
 function playPcm16(int16, rate){
-  if (!audioCtx) return;
-  const buf = audioCtx.createBuffer(1, int16.length, rate);
-  const ch = buf.getChannelData(0);
-  for (let i = 0; i < int16.length; i++) ch[i] = int16[i] / 32768;
-  const now = audioCtx.currentTime;
-  const startAt = Math.max(now, playCursor);
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf; src.connect(audioCtx.destination);
-  src.start(startAt);
-  playCursor = startAt + buf.duration;
-  // Track every scheduled source so an interruption can actually SILENCE the
-  // buffered tail — Gemini streams faster than real-time, so by barge-in time
-  // the whole response is usually already scheduled here.
-  playQueue.push(src);
+  if (!playerNode) return;
+  const f = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) f[i] = int16[i] / 32768;
+  // Transfer rather than copy; the ring lives on the audio thread.
+  try { playerNode.port.postMessage({ type: 'samples', data: f }, [f.buffer]); } catch(_){}
   orb.classList.add('speaking'); orb.classList.remove('listening');
   setStatus('live', 'SPEAKING');
-  src.onended = () => {
-    const qi = playQueue.indexOf(src); if (qi >= 0) playQueue.splice(qi, 1);
-    if (playCursor - audioCtx.currentTime < 0.05){
-      orb.classList.remove('speaking'); orb.classList.add('listening');
-      setStatus('live', 'LISTENING');
-    }
-  };
 }
 
 function flushPlayback(){
-  // Stop + release every scheduled source (barge-in / server interrupt).
-  playQueue.forEach(s => { try { s.onended = null; s.stop(); } catch(_){} try { s.disconnect(); } catch(_){} });
-  playQueue = [];
-  playCursor = audioCtx ? audioCtx.currentTime : 0;
+  // Barge-in / server interrupt: drop everything still buffered. Gemini streams
+  // faster than real-time, so by this point the rest of the turn is usually
+  // already sitting in the ring and would otherwise keep talking over you.
+  if (playerNode) { try { playerNode.port.postMessage({ type: 'flush' }); } catch(_){} }
 }
 
 // ── WebSocket bridge ──

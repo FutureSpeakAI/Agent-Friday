@@ -144,7 +144,7 @@ def run_audit():
 
         try:
             page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_selector(".dock, input[placeholder*='Ask Friday']", timeout=15000)
+            page.wait_for_selector(".dock, textarea[placeholder*='Ask Friday']", timeout=15000)
             page.wait_for_timeout(2200)
         except Exception as e:
             report["issues"].append({"severity": "critical", "area": "load",
