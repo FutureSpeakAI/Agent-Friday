@@ -131,12 +131,22 @@ def test_api_token_rotates_after_interval(monkeypatch):
     assert core._api_token_valid(None) is False
 
 
-def test_served_html_uses_current_token():
-    """serve_ui must embed the CURRENT (rotating) token, not a startup constant."""
-    import inspect
+def test_served_html_uses_current_token(monkeypatch):
+    """serve_ui must embed the CURRENT (rotating) token, not a startup constant.
+
+    Checked on the served bytes rather than the handler's source text, so it
+    holds however the handler is factored."""
+    from pathlib import Path
+    from agent_friday import core
     from agent_friday.routes import core_routes
-    src = inspect.getsource(core_routes.serve_ui)
-    assert "_current_api_token()" in src
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])   # index.html lives here
+    served = []
+    for tok in ("first-test-token", "rotated-test-token"):  # pragma: allowlist secret
+        monkeypatch.setattr(core, "_current_api_token", lambda tok=tok: tok)
+        served.append(core_routes.serve_ui().get_data(as_text=True))
+    assert 'window.__FRIDAY_API_TOKEN="first-test-token"' in served[0]  # pragma: allowlist secret
+    assert 'window.__FRIDAY_API_TOKEN="rotated-test-token"' in served[1]  # pragma: allowlist secret
+    assert "first-test-token" not in served[1]
 
 
 # ── v5 service hardening ──────────────────────────────────────────────────────
