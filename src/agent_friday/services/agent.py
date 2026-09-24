@@ -2883,6 +2883,12 @@ TASKS_LOCK = threading.Lock()
 # finish, which is later than the task's status turning terminal.
 TASK_THREADS = {}
 
+# Set once the boot restore has rebuilt TASKS from the journal (and marked the
+# previous process's casualties interrupted). Boot reconciliation waits on it
+# before resuming a task on its own record, so the restore cannot overwrite
+# the resumed task's status.
+TASKS_RESTORED = threading.Event()
+
 # Per-task follow-up queue for dual-loop steering (POST /api/agent/steer)
 _FOLLOW_UP_QUEUES: dict = {}
 _FOLLOW_UP_LOCK = threading.Lock()
@@ -3116,6 +3122,8 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         import logging as _lg
         _lg.getLogger(__name__).error("task journal restore failed: %s", e)
         return {"interrupted": [], "restored": [], "loaded": 0, "error": str(e)}
+    finally:
+        TASKS_RESTORED.set()
 
 
 #: How long the worker waits for a local grade. The task's own status is already
@@ -3777,8 +3785,18 @@ def _report_task_completion(task_id, name, status, result_text):
 
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
-                model=None, tools=None, conversation_id=None, schedule_id=None):
+                model=None, tools=None, conversation_id=None, schedule_id=None,
+                runner=None):
     """Spawn a background task.
+
+    runner: optional callable ``runner(task_id) -> {"status", "result"}`` that
+        does the task's work INSTEAD of the agent loop, for structured work
+        that has its own engine (the deep_research tool runs the research
+        harness this way). The task still gets everything a task gets: the
+        TASKS record, the journal, the heartbeat, the tray. It is not
+        admitted through the seat supervisor, which queues agent-loop turns;
+        a runner manages its own model calls. Its outward actions, if any,
+        still pass the governance checkpoint one by one.
 
     schedule_id: set only by the scheduler, for a run of that schedule. It is
         the scope a pre-approved governance grant is matched against, so it
@@ -3895,6 +3913,15 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         )
     except Exception:
         pass
+    if runner is not None:
+        th = threading.Thread(target=_runner_task_worker, args=(task_id, runner),
+                              daemon=True, name=f"task-{task_id[:8]}")
+        with TASKS_LOCK:
+            for _dead in [k for k, v in TASK_THREADS.items() if not v.is_alive()]:
+                TASK_THREADS.pop(_dead, None)
+            TASK_THREADS[task_id] = th
+        th.start()
+        return task_id
     th = threading.Thread(target=_task_worker,
                           args=(task_id, name, prompt, description),
                           kwargs={'orb_icon': orb_icon, 'model': model,
@@ -4471,6 +4498,183 @@ CLAUDE_TOOLS.append({
             },
         },
         "required": ["name", "prompt"],
+    },
+})
+
+
+def _runner_task_worker(task_id, runner, resumed=False):
+    """Thread body for a task whose work is a `runner`, not the agent loop.
+
+    Same record discipline as `_task_worker_untraced`: the journal's
+    thread-local task id (so decisions made deeper down land in this task's
+    record), a heartbeat while it runs, and a terminal status with the result
+    when it ends. A runner that raises fails the task with the reason; it
+    never leaves the record saying `running`.
+    """
+    _tj = _journal()
+    _tj.push_task(task_id)
+    _hb = _tj.Heartbeat(task_id).start()
+    with TASKS_LOCK:
+        _started = (TASKS.get(task_id) or {}).get('started')
+    _task_set(task_id, status='running', started=_started or _time.time(), ended=None)
+    if resumed:
+        _task_log(task_id, 'Resumed after a restart: completed steps are not redone.')
+    try:
+        out = runner(task_id) or {}
+        status = out.get('status') or 'complete'
+        _task_set(task_id, status=status, result=str(out.get('result') or ''),
+                  ended=_time.time())
+    except Exception as e:
+        _task_log(task_id, f'Stopped: {type(e).__name__}: {e}')
+        _task_set(task_id, status='failed', result=f'{type(e).__name__}: {e}',
+                  ended=_time.time())
+    finally:
+        try:
+            _hb.stop()
+        except Exception:
+            pass
+        _tj.pop_task()
+
+
+def resume_runner_task(task_id, runner):
+    """Pick a runner task back up on its own task id after a restart.
+
+    The record the person was watching is the one that finishes, rather than
+    an 'interrupted' tombstone next to a second, unexplained task.
+    """
+    with TASKS_LOCK:
+        rec = TASKS.get(task_id)
+        if rec is not None:
+            rec['status_reason'] = ('Interrupted by a restart and resumed from '
+                                    'its last completed step.')
+    if rec is None:
+        return False
+    th = threading.Thread(target=_runner_task_worker, args=(task_id, runner),
+                          kwargs={'resumed': True}, daemon=True,
+                          name=f"task-{task_id[:8]}")
+    with TASKS_LOCK:
+        TASK_THREADS[task_id] = th
+    th.start()
+    return True
+
+
+def _research_runner(commission_id):
+    """The runner for a deep_research task: run (or resume) the commission and
+    turn its outcome into a task result. A commission that fails is a failed
+    task, with the commission's own account of why."""
+    def _run(task_id):
+        from agent_friday.services import research as _research
+        from agent_friday.services.research.objects import Commission
+        # Bind the commission to this task before it runs, so a restart
+        # adopts the run onto the same task record.
+        c = Commission.load(commission_id)
+        if c is not None and c.task_id != task_id:
+            c.task_id = task_id
+            c.save()
+        _task_log(task_id, f'Research commission {commission_id}: running')
+        st = _research.run(commission_id) or {}
+        if st.get('error'):
+            return {'status': 'failed', 'result': st['error']}
+        if st.get('status') == 'failed':
+            return {'status': 'failed',
+                    'result': st.get('failure') or 'The research run failed.'}
+        where = st.get('styled_path') or st.get('report_path') or '(no report path)'
+        return {'status': 'complete',
+                'result': (f"Research finished: {st.get('findings', 0)} finding(s). "
+                           f"Report: {where}")}
+    return _run
+
+
+#: Upper bound on pages one deep_research call may read. Matches the harness
+#: default total; a caller may ask for fewer, never more.
+DEEP_RESEARCH_MAX_SOURCES = 80
+
+
+def _tool_deep_research(inp):
+    """Claude-facing tool: start a deep-research commission as a background task.
+
+    Reading only: the harness searches and reads the web and runs local
+    models, and delivers its report into the conversation. Anything it did
+    that reached outside would come back through the governance checkpoint on
+    its own. Every page a finding cites is sealed as a snapshot, so each quote
+    can be checked later against what was read.
+    """
+    inp = inp or {}
+    question = (inp.get('question') or inp.get('topic') or '').strip()
+    if not question:
+        return "deep_research error: 'question' is required."
+    subs = inp.get('sub_questions') or []
+    if isinstance(subs, str):
+        subs = [subs]
+    subs = [str(s).strip() for s in subs if str(s or '').strip()][:10]
+    budget = {}
+    if inp.get('max_sources') is not None:
+        try:
+            n = max(1, min(int(inp.get('max_sources')), DEEP_RESEARCH_MAX_SOURCES))
+        except (TypeError, ValueError):
+            return "deep_research error: 'max_sources' must be a whole number."
+        budget = {'fetches_total': n, 'fetches_per_sq': min(8, n)}
+
+    from agent_friday.services import research as _research
+    from agent_friday.services.research.objects import (
+        Commission, ResearchPlan, SubQuestion)
+    try:
+        prop = _research.propose(question, context=inp.get('context'),
+                                 disposition='now_local', budget=budget or None)
+    except Exception as e:
+        return f"deep_research error: could not start the commission ({type(e).__name__}: {e})"
+    cid = prop['commission_id']
+    c = Commission.load(cid)
+    if c is None:
+        return "deep_research error: the commission was not recorded."
+    if subs:
+        c.plan = ResearchPlan(
+            commission_id=cid, working_title=question[:160], scoped_by='given',
+            sub_questions=[SubQuestion(id=f"sq{i}", text=s) for i, s in enumerate(subs)])
+        c.progress['sub_questions_total'] = len(subs)
+    c.conversation_id = _CURRENT_CONVERSATION.get()
+    # Queued, not proposed: boot reconciliation adopts a queued commission,
+    # so a restart before the first step still resumes it.
+    c.status = 'queued'
+    c.progress['stage'] = 'queued'
+    c.save()
+    tid = _spawn_task(f"Research: {question[:80]}",
+                      f"Deep research commission {cid}: {question}",
+                      description=f"Deep research · commission {cid}",
+                      conversation_id=c.conversation_id,
+                      runner=_research_runner(cid))
+    with TASKS_LOCK:
+        if tid in TASKS:
+            TASKS[tid]['research_commission_id'] = cid
+    _journal_state(tid)
+    return json.dumps({
+        'task_id': tid,
+        'commission_id': cid,
+        'status': 'running',
+        'protection': prop.get('protection'),
+        'max_sources': c.budget.get('fetches_total'),
+        'message': (f"Started deep research on '{question[:120]}'. It reads up to "
+                    f"{c.budget.get('fetches_total')} pages on local models, keeps a "
+                    f"sealed copy of every page it cites, and reports into this "
+                    f"conversation when it is done. It survives a restart. Progress "
+                    f"is in the Task Tray."),
+    })
+
+
+CLAUDE_TOOLS.append({
+    "name": "deep_research",
+    "description": "Start a deep-research job in the background: Friday plans sub-questions, searches and reads the web on local models, verifies every quote against the page it came from, and reports back with a cited report. Use for questions that need many sources and would take a person hours; use search_web for a quick lookup. Returns a task id at once; the report arrives later and the job resumes after a restart.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "The research question or topic."},
+            "sub_questions": {"type": "array", "items": {"type": "string"},
+                              "description": "Optional. Specific questions to answer; omit to let Friday plan them."},
+            "max_sources": {"type": "integer",
+                            "description": "Optional. Most pages to read (1-80, default 80)."},
+            "context": {"type": "string", "description": "Optional background that shapes the research."},
+        },
+        "required": ["question"],
     },
 })
 
@@ -5094,6 +5298,7 @@ CLAUDE_TOOL_HANDLERS = {
     "get_career_pipeline": _tool_get_career_pipeline,
     "get_briefing": _tool_get_briefing,
     "spawn_task": _tool_spawn_task,
+    "deep_research": _tool_deep_research,
     "propose_wiki_update": _tool_propose_wiki_update,
     "correct_wiki": _tool_correct_wiki,
     "learn_skill": _tool_learn_skill,
@@ -5474,6 +5679,7 @@ TOOL_RINGS: dict[str, int] = {
     "open_url":             2,
     "open_path":            2,
     "spawn_task":           2,
+    "deep_research":        2,   # searches and reads the web (network)
     "run_command":          2,
     "generate_image":       2,   # calls the Gemini image API (network)
     "generate_video":       2,   # calls the Google Veo API (network)
@@ -7644,6 +7850,8 @@ def _taint_title(name, inp):
         return "Save something into Friday's memory"
     if name == "spawn_task":
         return f"Start a background task: {_short_txt(inp.get('name') or inp.get('description'))}"
+    if name == "deep_research":
+        return f"Research in the background: {_short_txt(inp.get('question'))}"
     if name.startswith("mcp_") and name.count("_") >= 2:
         # A connector action in words: "mcp_travel_reserve_hotel" ->
         # "Use the travel connector to reserve hotel".

@@ -27,7 +27,8 @@ import time
 
 
 # Stages that mean "this was running when the process died".
-RUNNING_STAGES = {"scoping", "grinding", "verifying", "writing", "queued", "running"}
+RUNNING_STAGES = {"scoping", "grinding", "synthesizing", "verifying", "writing",
+                  "queued", "running"}
 
 
 def _report(conversation_id: str, text: str, meta: dict | None = None) -> None:
@@ -124,6 +125,11 @@ def reconcile_research(resume: bool = True) -> dict:
         if resume:
             adopted.append(cid)
             print(f"  [reconcile] resuming research {cid} from stage {stage!r}")
+            task_id = getattr(c, "task_id", None)
+            if task_id and _resume_research_task(task_id, cid):
+                # The task the person was watching resumes and finishes; the
+                # commission's own delivery reports into its conversation.
+                continue
 
             def _run(_cid=cid, _owner=owner):
                 try:
@@ -156,6 +162,45 @@ def reconcile_research(resume: bool = True) -> dict:
         reported.append(cid)
     return {"resumed": adopted, "reported": reported,
             "unreadable": sorted(UNREADABLE)}
+
+
+#: How long boot reconciliation waits for the task cache to be rebuilt from
+#: the journal before it re-attaches a research run to its task.
+TASK_RESTORE_WAIT_S = 120.0
+
+
+def _resume_research_task(task_id: str, commission_id: str) -> bool:
+    """Resume a deep_research commission on the task that started it.
+
+    Waits (in the background) for the task cache to be restored from the
+    journal, because server boot starts this reconciliation before that
+    restore runs, and the restore marks the task interrupted: resuming first
+    would be overwritten by it. Returns False if resuming on the task is not
+    possible, so the caller falls back to resuming the bare commission.
+    """
+    try:
+        from agent_friday.services import agent as _agent
+    except Exception as e:
+        print(f"  [reconcile] cannot reach the task runner: {e}")
+        return False
+
+    def _go():
+        _agent.TASKS_RESTORED.wait(TASK_RESTORE_WAIT_S)
+        ok = False
+        try:
+            ok = _agent.resume_runner_task(task_id, _agent._research_runner(commission_id))
+        except Exception as e:
+            print(f"  [reconcile] could not resume research task {task_id}: {e}")
+        if not ok:
+            try:
+                from agent_friday.services import research as _r
+                _r.run(commission_id)
+            except Exception as e:
+                print(f"  [reconcile] research {commission_id} could not resume: {e}")
+
+    threading.Thread(target=_go, daemon=True,
+                     name=f"resume-research-{commission_id}").start()
+    return True
 
 
 def _tasks():

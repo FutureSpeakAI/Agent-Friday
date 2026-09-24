@@ -4,7 +4,8 @@ Research objects — commission, plan, findings, report. All on disk.
 Persistent from the first byte (deep-research.md §3.0). A commission that dies
 with the process is not a promise Friday can make, and the work-queue precedent
 already settled that argument. The directory on disk IS the state: a restart
-resumes from the last recorded finding rather than silently starting over, and
+resumes after the last completed step (`Commission.steps`: the plan, then one
+entry per sub-question) rather than silently starting over, and
 §6's progress endpoint reads the same structure the orb reads, so the UI can
 never invent progress it does not have.
 
@@ -155,6 +156,16 @@ class Commission:
         self.styled_path: str | None = None
         self.colophon: dict = {}
         self.failure: str | None = None
+        # Where this commission reports, and the background task that runs it
+        # (set when the deep_research tool started it). Persisted, so a run
+        # adopted after a restart still reports to the conversation that
+        # asked and still updates the task the person can see.
+        self.conversation_id: str | None = None
+        self.task_id: str | None = None
+        # Completed steps, keyed "scope" and "sq:<id>". A step is recorded
+        # only once its work is on disk; a resumed run skips every step here
+        # and redoes, from a clean slate, the one it was in the middle of.
+        self.steps: dict = {}
         # Live counters the progress endpoint reads (§6).
         self.progress: dict = {"stage": PROPOSED, "sub_question": 0,
                                "sub_questions_total": 0, "fetches": 0,
@@ -190,6 +201,8 @@ class Commission:
             "report_path": self.report_path, "styled_path": self.styled_path,
             "colophon": self.colophon, "failure": self.failure,
             "progress": self.progress,
+            "conversation_id": self.conversation_id, "task_id": self.task_id,
+            "steps": self.steps,
         }
         tmp = self.meta_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -213,6 +226,9 @@ class Commission:
         c.colophon = d.get("colophon") or {}
         c.failure = d.get("failure")
         c.progress = d.get("progress") or c.progress
+        c.conversation_id = d.get("conversation_id")
+        c.task_id = d.get("task_id")
+        c.steps = d.get("steps") or {}
         pd = d.get("plan")
         if pd:
             c.plan = ResearchPlan(
@@ -265,6 +281,39 @@ class Commission:
                 continue
         return out
 
+    # ── steps: what a resumed run does not redo ──
+    def step_done(self, key: str) -> bool:
+        return key in self.steps
+
+    def mark_step(self, key: str, **detail) -> None:
+        """Record a step as complete. Saved atomically with the rest of the
+        commission, so a crash either keeps the mark or loses it whole."""
+        self.steps[key] = {"ts": time.time(), **detail}
+        self.save()
+        self.log(f"step complete: {key}", step=key)
+
+    def drop_findings(self, sub_question_id: str) -> int:
+        """Remove the findings of a sub-question that did not finish.
+
+        A step interrupted part-way left some of its findings behind. The
+        resumed run redoes that step, so those partial findings would
+        otherwise be counted twice. Returns how many were dropped.
+        """
+        keep, dropped = [], 0
+        for f in self.findings():
+            if f.sub_question_id == sub_question_id:
+                dropped += 1
+            else:
+                keep.append(f)
+        if not dropped:
+            return 0
+        tmp = self.findings_path.with_suffix(".jsonl.tmp")
+        tmp.write_text("".join(json.dumps(asdict(f)) + "\n" for f in keep),
+                       encoding="utf-8")
+        tmp.replace(self.findings_path)
+        self.progress["findings"] = len(keep)
+        return dropped
+
     # ── findings: append-only ──
     def add_finding(self, f: Finding) -> None:
         try:
@@ -299,6 +348,8 @@ class Commission:
             "findings": self.progress.get("findings", 0),
             "report_path": self.report_path, "styled_path": self.styled_path,
             "colophon": self.colophon, "failure": self.failure,
+            "task_id": self.task_id,
+            "steps_done": sorted(self.steps),
             "elapsed_s": round(time.time() - self.created_at, 1),
         }
 
