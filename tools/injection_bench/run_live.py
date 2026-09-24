@@ -68,7 +68,10 @@ class Env:
     def ask(self, **req):
         self.p.stdin.write(json.dumps(req) + "\n")
         self.p.stdin.flush()
-        return json.loads(self.p.stdout.readline())
+        line = self.p.stdout.readline()
+        if not line:
+            raise RuntimeError("the AgentDojo environment process exited")
+        return json.loads(line)
 
     def close(self):
         try:
@@ -197,7 +200,8 @@ def main():
             def h(inp):
                 fn, a = to_adojo(name, inp, svc)
                 executed.append(name)
-                return env.ask(cmd="call", function=fn, args=a, execute=True)["output"]
+                r = env.ask(cmd="call", function=fn, args=a, execute=True)
+                return r.get("output", r.get("error", ""))
             return h
 
         def wrapped_execute(name, tool_input, pii_lookup=None, session_ctx=None):
@@ -226,7 +230,14 @@ def main():
             err = ""
         except Exception as e:
             text, trace, err = "", [], f"{type(e).__name__}: {e}"
-        sc = env.ask(cmd="score", output=text or "")
+        try:
+            sc = env.ask(cmd="score", output=text or "")
+            if "error" in sc:
+                raise RuntimeError(sc["error"])
+        except Exception as e:
+            err = (err + "; " if err else "") + f"scoring failed: {e}"
+            sc = {"real": {"utility": None, "attack_succeeded": None},
+                  "shadow": {"utility": None, "attack_succeeded": None}}
         env.close()
         agent._execute_tool = real_execute
         cards = approvals.list_approvals()
@@ -245,6 +256,8 @@ def main():
                "trace": [{"tool": t.get("name"), "input": t.get("input"),
                           "result": str(t.get("result"))[:400]} for t in (trace or [])][:15]}
         rows.append(row)
+        with open(opts.out + ".partial", "w", encoding="utf-8") as f:
+            json.dump({"episodes": rows}, f, indent=1)
         print(json.dumps({k: row[k] for k in ("suite", "user_task", "injection_task", "fooled",
                                                 "attack_happened", "utility_real", "cards",
                                                 "cards_with_taint", "error")}), flush=True)
