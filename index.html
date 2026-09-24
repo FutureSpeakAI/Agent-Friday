@@ -45259,6 +45259,475 @@ function SettingsTabConnectors({
     }
   }), c.name || c.id)))));
 }
+// ── Settings → Accounts & Keys → Phone (Twilio). Off by default. Secrets go in, never come back:
+// the server reports "stored"/"missing"/"unreadable" for each one. Every
+// route behind this tab is refused unless the request comes from this computer.
+function SettingsTabPhone() {
+  const [st, setSt] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [d, setD] = useState({});
+  const set = (k, v) => setD(p => ({
+    ...p,
+    [k]: v
+  }));
+  const refresh = useCallback(() => {
+    apiFetch('/api/phone/status').then(r => r.json()).then(j => {
+      if (j && j.ok) setSt(j);else setMsg('✗ ' + (j && j.error || 'Phone status unavailable'));
+    }).catch(() => setMsg('✗ Could not reach the server.'));
+  }, []);
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 15000);
+    return () => clearInterval(t);
+  }, [refresh]);
+  const call = (url, body, ok, method) => {
+    setBusy(true);
+    setMsg('');
+    return apiFetch(url, {
+      method: method || 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body || {})
+    }).then(r => r.json()).then(j => {
+      setMsg(j.ok ? '✓ ' + (ok || 'Saved') : '✗ ' + (j.error || 'Failed'));
+      refresh();
+      return j;
+    }).catch(() => setMsg('✗ Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const patch = (p, ok) => call('/api/phone/config', {
+    patch: p
+  }, ok);
+  const saveSecret = (name, key, ok) => {
+    const v = (d[key] || '').trim();
+    if (!v) return;
+    call('/api/phone/secret', {
+      name,
+      value: v
+    }, ok).then(() => set(key, ''));
+  };
+  if (!st) return /*#__PURE__*/React.createElement("div", {
+    id: "settings-phone"
+  }, /*#__PURE__*/React.createElement(StSection, {
+    title: "PHONE"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.45)'
+    }
+  }, msg || 'Loading…')));
+  const c = st.config || {},
+    num = st.number,
+    pr = st.prices,
+    costs = st.costs || {},
+    log = st.log || [];
+  const secretLabel = v => v === 'stored' ? '✓ stored in the vault on this computer' : v === 'unreadable' ? '✗ stored but will not decrypt — enter it again' : 'not set';
+  const IS = {
+    flex: 1,
+    minWidth: 0
+  };
+  const row = {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center'
+  };
+  const note = {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.45)',
+    lineHeight: 1.55,
+    marginTop: 6
+  };
+  const cap = k => num && num.capabilities ? num.capabilities[k] ? '✓ ' + k.toUpperCase() : '✗ ' + k.toUpperCase() + ' off' : '';
+  const usd = v => v == null ? '—' : '$' + Number(v).toFixed(4);
+  const ready = c.api_key_secret === 'stored' && c.account_sid && c.api_key_sid && c.phone_number;
+  return /*#__PURE__*/React.createElement("div", {
+    id: "settings-phone"
+  }, msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 12,
+      color: msg[0] === '✓' ? '#00ff80' : '#ff6b8a'
+    }
+  }, msg), /*#__PURE__*/React.createElement(StSection, {
+    title: "PHONE"
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Phone line",
+    value: !!c.enabled,
+    onChange: () => patch({
+      enabled: !c.enabled
+    }, c.enabled ? 'Phone switched off' : 'Phone switched on'),
+    desc: "Off by default. When off, nothing listens for Twilio and Friday sends nothing."
+  }), /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, st.ingress && st.ingress.running ? 'Listening for Twilio on 127.0.0.1:' + st.ingress.port + ' (only the phone webhooks; nothing else of Friday is reachable there).' : c.enabled ? 'Not listening yet: the auth token is needed before the webhook listener starts.' : 'Not listening.')), /*#__PURE__*/React.createElement(StSection, {
+    title: "TWILIO ACCOUNT"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Account SID",
+    desc: "Starts with AC. An identifier, not a secret."
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    placeholder: c.account_sid || 'AC…',
+    value: d.account_sid || '',
+    onChange: e => set('account_sid', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.account_sid,
+    onClick: () => patch({
+      account_sid: d.account_sid.trim()
+    }).then(() => set('account_sid', ''))
+  }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "API key SID",
+    desc: "Starts with SK. Console \u2192 Account \u2192 API keys & tokens."
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    placeholder: c.api_key_sid || 'SK…',
+    value: d.api_key_sid || '',
+    onChange: e => set('api_key_sid', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.api_key_sid,
+    onClick: () => patch({
+      api_key_sid: d.api_key_sid.trim()
+    }).then(() => set('api_key_sid', ''))
+  }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "API key secret",
+    desc: 'Used for everything Friday sends. Status: ' + secretLabel(c.api_key_secret)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    type: "password",
+    autoComplete: "off",
+    placeholder: c.api_key_secret === 'stored' ? 'Saved — paste a new one to replace it' : 'Paste the secret shown once when the key was made',
+    value: d.key_secret || '',
+    onChange: e => set('key_secret', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.key_secret,
+    onClick: () => saveSecret('api_key_secret', 'key_secret', 'API key secret stored')
+  }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Auth token",
+    desc: 'Twilio signs every webhook with the account auth token, not the API key, so Friday needs it to check that a text or call really came from Twilio. Status: ' + secretLabel(c.auth_token)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    type: "password",
+    autoComplete: "off",
+    placeholder: c.auth_token === 'stored' ? 'Saved — paste a new one to replace it' : 'Console → Account → API keys & tokens → Auth token',
+    value: d.auth_token || '',
+    onChange: e => set('auth_token', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.auth_token,
+    onClick: () => saveSecret('auth_token', 'auth_token', 'Auth token stored')
+  }, "Save"))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Friday's number"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    placeholder: c.phone_number || '+1…',
+    value: d.phone_number || '',
+    onChange: e => set('phone_number', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.phone_number,
+    onClick: () => patch({
+      phone_number: d.phone_number
+    }).then(() => set('phone_number', ''))
+  }, "Save")))), /*#__PURE__*/React.createElement(StSection, {
+    title: "YOUR CELL"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Your cell number",
+    desc: "The only number Friday will text or call without you naming another one. A one-time code proves it is yours."
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    placeholder: c.owner_cell || '+1…',
+    value: d.owner_cell || '',
+    onChange: e => set('owner_cell', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.owner_cell,
+    onClick: () => patch({
+      owner_cell: d.owner_cell
+    }).then(() => set('owner_cell', ''))
+  }, "Save"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono',
+      color: c.owner_cell_verified ? '#00ff80' : '#ffb347',
+      marginBottom: 10
+    }
+  }, c.owner_cell ? c.owner_cell_verified ? '✓ Verified: ' + c.owner_cell : 'Not verified yet: ' + c.owner_cell : 'No cell entered'), c.owner_cell && !c.owner_cell_verified && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !ready || !c.enabled,
+    onClick: () => call('/api/phone/verify/start', {
+      method: 'sms'
+    }, 'Code texted to your cell')
+  }, "Text me a code"), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !ready || !c.enabled,
+    onClick: () => call('/api/phone/verify/start', {
+      method: 'call'
+    }, 'Calling your cell with the code')
+  }, "Call me with a code")), /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, !c.enabled ? 'Switch the phone on first. ' : '', !ready ? 'Enter the account SID, API key and secret, and Friday’s number first. ' : '', "While carrier registration is pending, a text may be filtered; the call works either way."), st.verification_pending && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...row,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    inputMode: "numeric",
+    maxLength: 6,
+    placeholder: "6-digit code",
+    value: d.code || '',
+    onChange: e => set('code', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.code,
+    onClick: () => call('/api/phone/verify/confirm', {
+      code: d.code
+    }, 'Your cell is verified').then(() => set('code', ''))
+  }, "Confirm")))), /*#__PURE__*/React.createElement(StSection, {
+    title: "THE NUMBER"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !ready,
+    onClick: () => call('/api/phone/check-number', {}, 'Checked with Twilio')
+  }, "Check SMS and voice with Twilio")), num && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono',
+      marginTop: 8,
+      color: 'rgba(255,255,255,0.8)'
+    }
+  }, cap('sms'), " \xB7 ", cap('voice'), " \xB7 ", cap('mms'), /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, "Checked ", new Date(num.checked_at * 1000).toLocaleString(), ". Texts go to: ", num.webhooks && num.webhooks.sms || 'nowhere set', ". Calls go to: ", num.webhooks && num.webhooks.voice || 'nowhere set', ".")), /*#__PURE__*/React.createElement(StRow, {
+    label: "Public address of the phone tunnel",
+    desc: "The https:// hostname your Cloudflare tunnel serves. It must reach only the phone listener, never Friday itself."
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    placeholder: c.public_base_url || 'https://phone.example.com',
+    value: d.public_base_url || '',
+    onChange: e => set('public_base_url', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.public_base_url,
+    onClick: () => patch({
+      public_base_url: d.public_base_url
+    }).then(() => set('public_base_url', ''))
+  }, "Save"))), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !ready || !c.public_base_url,
+    onClick: () => call('/api/phone/point-webhooks', {}, 'The number now points at Friday')
+  }, "Point the number at Friday"), /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, "Changes the number's SMS and voice webhooks in Twilio to ", c.public_base_url || 'the address above', "/twilio/\u2026")), /*#__PURE__*/React.createElement(StSection, {
+    title: "TEXTING REGISTRATION (A2P 10DLC)"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Status",
+    desc: "US carriers filter or block texts from numbers whose registration is not approved. Calls are not affected."
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    value: c.a2p_10dlc_status || 'unknown',
+    onChange: e => patch({
+      a2p_10dlc_status: e.target.value
+    })
+  }, ['unknown', 'not_started', 'submitted', 'in_review', 'approved', 'rejected'].map(v => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, v.replace('_', ' '))))), c.a2p_10dlc_status !== 'approved' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...note,
+      color: '#ffb347'
+    }
+  }, "Registration is ", String(c.a2p_10dlc_status).replace('_', ' '), ": texts may be filtered or blocked until carriers approve it. A blocked text shows in the log below as undelivered.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "WHO FRIDAY MAY CONTACT"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.78)',
+      lineHeight: 1.6
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "\u2713 ", c.owner_cell_verified ? c.owner_cell : 'your cell, once verified', ": alerts, approval codes and replies, within ", c.owner_sms_per_hour, " texts an hour and ", c.owner_sms_per_day, " a day."), /*#__PURE__*/React.createElement("div", null, "\u2022 Anyone else: only when you type their number in your message, and only after you approve a card for that exact text or call."), /*#__PURE__*/React.createElement("div", null, "\u2022 Every call, including to you, waits for your approval. Calls to anyone else start by saying Friday is an AI assistant."), /*#__PURE__*/React.createElement("div", null, "\u2022 Nothing that arrives by phone can make Friday contact anyone. A text from your number is still treated as unverified and can only get answers, not actions."))), /*#__PURE__*/React.createElement(StSection, {
+    title: "BEHAVIOUR"
+  }, /*#__PURE__*/React.createElement(StToggle, {
+    label: "Answer my texts",
+    value: !!c.sms_conversation,
+    onChange: () => patch({
+      sms_conversation: !c.sms_conversation
+    }),
+    desc: "Texts from your verified cell get a reply. Read-only: Friday can look things up but not act."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Approve by text",
+    value: !!c.sms_approvals,
+    onChange: () => patch({
+      sms_approvals: !c.sms_approvals
+    }),
+    desc: "Pending approvals are texted to you with a one-time code. Reply YES or NO with the code; a bare yes does nothing. Weaker than the app: anyone holding your phone or number can answer. Five wrong codes switch it off."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Voicemail",
+    value: !!c.voicemail,
+    onChange: () => patch({
+      voicemail: !c.voicemail
+    }),
+    desc: "Callers hear the greeting and can leave a message. It is transcribed on this computer, then deleted from Twilio."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Live calls from your cell (early)",
+    value: !!c.live_calls,
+    onChange: () => patch({
+      live_calls: !c.live_calls
+    }),
+    desc: "Talk with Friday in its own voice. Needs local voice ready; falls back to voicemail when it is not. Not yet tested on a real call."
+  }), /*#__PURE__*/React.createElement(StToggle, {
+    label: "Ask Twilio to forget",
+    value: !!c.redact_after_delivery,
+    onChange: () => patch({
+      redact_after_delivery: !c.redact_after_delivery
+    }),
+    desc: "Blank message bodies at Twilio once delivered and delete voicemail recordings once transcribed."
+  }), /*#__PURE__*/React.createElement(StRow, {
+    label: "Greeting",
+    desc: "Said to every caller. Keep the part saying Friday is an AI."
+  }, /*#__PURE__*/React.createElement("div", {
+    style: row
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: IS,
+    placeholder: c.greeting,
+    value: d.greeting || '',
+    onChange: e => set('greeting', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !d.greeting,
+    onClick: () => patch({
+      greeting: d.greeting
+    }).then(() => set('greeting', ''))
+  }, "Save")))), /*#__PURE__*/React.createElement(StSection, {
+    title: "COSTS"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono',
+      color: 'rgba(255,255,255,0.8)'
+    }
+  }, "To date: $", Number(costs.total_usd || 0).toFixed(4), costs.unpriced ? ' (+' + costs.unpriced + ' not priced by Twilio yet)' : '', Object.entries(costs.by_channel || {}).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    style: {
+      color: 'rgba(255,255,255,0.55)'
+    }
+  }, k, ": ", v.count, " \xB7 $", Number(v.usd).toFixed(4), k === 'voice' ? ' · ' + Math.round((v.units || 0) / 60) + ' min' : ''))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...note,
+      marginTop: 10
+    }
+  }, "Current US rates: text out ", usd(pr && pr.sms_outbound_usd), " \xB7 text in ", usd(pr && pr.sms_inbound_usd), " per segment \xB7 calls out ", usd(pr && pr.voice_outbound_per_min_usd), " \xB7 in ", usd(pr && pr.voice_inbound_per_min_usd), " per minute. Carrier fees are extra. Also counted under Cost & Usage as \"phone\"."), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      marginTop: 8
+    },
+    disabled: busy || !ready,
+    onClick: () => call('/api/phone/refresh-prices', {}, 'Rates read from Twilio')
+  }, "Read current rates")), /*#__PURE__*/React.createElement(StSection, {
+    title: "TEST"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    disabled: busy || !c.owner_cell_verified || !c.enabled,
+    onClick: () => call('/api/phone/test-sms', {}, 'Test text queued: approve it in Approvals to send it')
+  }, "Send one test text to my cell"), /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, "Creates an approval card; nothing is sent until you approve it.")), /*#__PURE__*/React.createElement(StSection, {
+    title: "CALL AND TEXT LOG"
+  }, log.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, "Nothing yet.") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, log.map(r => /*#__PURE__*/React.createElement("div", {
+    key: r.id,
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '130px 70px 110px 1fr 70px',
+      gap: 8,
+      padding: '4px 0',
+      borderBottom: '1px solid rgba(255,255,255,0.05)',
+      color: 'rgba(255,255,255,0.75)'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, new Date(r.at * 1000).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })), /*#__PURE__*/React.createElement("span", null, r.channel, " ", r.direction === 'in' ? '←' : '→'), /*#__PURE__*/React.createElement("span", null, r.party), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.5)'
+    }
+  }, r.status, r.detail ? ' · ' + r.detail : ''), /*#__PURE__*/React.createElement("span", null, usd(r.price_usd)))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "WHAT TWILIO CAN STILL SEE"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: note
+  }, "Twilio carries every text and call, so it sees the numbers, times, durations, and message text while a text is in flight. With \"Ask Twilio to forget\" on, bodies are blanked and recordings deleted afterwards, but the records (numbers, times, prices) stay in your Twilio account. Friday never asks Twilio to record calls or transcribe them. The carriers see the same in-flight content.")));
+}
+// Phone (Twilio) spend inside Cost & Usage: what it has cost so far and the
+// current per-text and per-minute rates, read from /api/phone/status.
+function PhoneCostsSection() {
+  const [p, setP] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/phone/status').then(r => r.json()).then(j => {
+      if (j && j.ok) setP(j);
+    }).catch(() => {});
+  }, []);
+  if (!p || !p.config) return null;
+  const costs = p.costs || {},
+    pr = p.prices || {};
+  const usd = v => v == null ? '—' : '$' + Number(v).toFixed(4);
+  const line = {
+    fontSize: 10,
+    color: '#ccc',
+    fontFamily: 'JetBrains Mono',
+    padding: '2px 0'
+  };
+  return /*#__PURE__*/React.createElement(StSection, {
+    title: "PHONE (TWILIO)"
+  }, !p.config.enabled && !costs.total_usd ? /*#__PURE__*/React.createElement("div", {
+    style: line
+  }, "The phone is off. Settings \u2192 Phone.") : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: line
+  }, "To date: ", usd(costs.total_usd || 0), costs.unpriced ? ' (+' + costs.unpriced + ' not priced by Twilio yet)' : ''), Object.entries(costs.by_channel || {}).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    style: line
+  }, k, ": ", v.count, " \xB7 ", usd(v.usd), k === 'voice' ? ' · ' + Math.round((v.units || 0) / 60) + ' min' : '')), /*#__PURE__*/React.createElement("div", {
+    style: line
+  }, "Per text: out ", usd(pr.sms_outbound_usd), " \xB7 in ", usd(pr.sms_inbound_usd), " \xB7 per minute: out ", usd(pr.voice_outbound_per_min_usd), " \xB7 in ", usd(pr.voice_inbound_per_min_usd))));
+}
 function SettingsTabAbout() {
   const [h, setH] = useState(null);
   const [evo, setEvo] = useState(null);
@@ -46255,7 +46724,7 @@ function SettingsTabCosts() {
       marginTop: 12,
       lineHeight: 1.5
     }, mono)
-  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")));
+  }, "A request already in flight finishes; the next cloud call is refused. A halted task keeps its log and files and can be re-run. Every halt is logged and notified — never silent.")), /*#__PURE__*/React.createElement(PhoneCostsSection, null));
 }
 // Federation and Economy are on hold: the V6 wholeness spec says they must
 // not surface. Their panels, routes and data are untouched; setting this to
@@ -46267,6 +46736,7 @@ const SETTINGS_SHOW_HELD_FEATURES = false;
 const SETTINGS_TAB_ALIASES = {
   providers: 'accounts',
   connectors: 'accounts',
+  phone: 'accounts',
   dock: 'appearance',
   knowledge: 'advanced',
   work: 'advanced',
@@ -46306,6 +46776,16 @@ function SettingsWS() {
     window.addEventListener('friday:settings-tab', h);
     return () => window.removeEventListener('friday:settings-tab', h);
   }, []);
+  // A notification's target ({workspace:'settings', tab}) lands on that tab;
+  // 'phone' opens Accounts & Keys scrolled to the Phone section.
+  useNavTarget('settings', t => {
+    if (!t || !t.tab) return;
+    setTab(settingsTabId(t.tab));
+    if (t.tab === 'phone') setTimeout(() => {
+      const el = document.getElementById('settings-phone');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 250);
+  });
   const {
     s,
     save,
@@ -46467,7 +46947,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  })), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'appearance' && /*#__PURE__*/React.createElement(SettingsTabAppearance, {
