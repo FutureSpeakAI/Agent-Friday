@@ -118,11 +118,14 @@ OUTWARD_TOOLS = frozenset({
     "install_package",
     "spawn_interactive_session", "send_to_session",
     "content_schedule_post",
+    # Phone (agent_friday/phone): a text reaches a person the moment it is
+    # sent; a call only ever raises its own card (SELF_GATED below).
+    "text_by_phone", "call_by_phone",
 })
 
 #: Tools whose handler raises its own approval card and cannot complete the
 #: action itself (draft_email only queues; gmail_send sends on approval).
-SELF_GATED = frozenset({"draft_email"})
+SELF_GATED = frozenset({"draft_email", "call_by_phone"})
 
 #: Friday's own tools that stay inside: reading, searching, drafting, local
 #: files the confirmation gate already asks about, memory writes the taint

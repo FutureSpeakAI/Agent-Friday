@@ -406,6 +406,8 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "draft_email": {"to": "recipient", "cc": "recipient", "bcc": "recipient",
                     "body": "message_body"},
     "create_calendar_event": {"attendees": "recipient", "description": "message_body"},
+    "text_by_phone": {"to": "recipient", "body": "message_body"},
+    "call_by_phone": {"to": "recipient", "message": "message_body"},
     "browse_web": {"url": "fetch_url"},
     "save_output": {"url": "fetch_url", "folder": "write_path", "filename": "write_path"},
     "open_url": {"url": "open_url"},
@@ -427,7 +429,7 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
 
 #: Tools that create their own approval card. A flag on these goes ON that
 #: card instead of raising a second one.
-SELF_CARDING = {"draft_email"}
+SELF_CARDING = {"draft_email", "call_by_phone"}
 
 #: Roles judged by overlap of word runs rather than exact match.
 FREE_TEXT_ROLES = {"command", "instruction", "memory_write", "publish_body"}
