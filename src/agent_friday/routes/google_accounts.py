@@ -141,6 +141,12 @@ def connect_google_account():
     # capability has to be as deliberate as granting it was, and someone fixing
     # a broken token is not in a state to read a consent screen carefully.
     include_send = bool(body.get("include_send"))
+    # "Reconnect with sending": send AND mailbox changes, in ONE consent
+    # screen, only from that explicit button (never inherited either).
+    include_modify = bool(body.get("include_modify"))
+    if body.get("mailbox"):
+        include_send = include_modify = True
+    existing = None
     if account_id:
         existing = ga.get_account(account_id)
         if existing:
@@ -148,7 +154,7 @@ def connect_google_account():
             label = label or (existing.get("label") or "")
     try:
         flow, redirect_uri, client_type = ga.build_auth_flow(
-            include_send=include_send)
+            include_send=include_send, include_modify=include_modify)
         auth_kwargs = {
             "access_type": "offline",
             "include_granted_scopes": "true",
@@ -171,7 +177,8 @@ def connect_google_account():
                                # if it rebuilds it without send, the token is
                                # exchanged for a different scope set than the
                                # one the person just approved.
-                               "include_send": include_send}
+                               "include_send": include_send,
+                               "include_modify": include_modify}
             # prune stale (>15 min) pending entries
             for s in [k for k, v in _PENDING.items() if _time.time() - v["ts"] > 900]:
                 _PENDING.pop(s, None)
@@ -188,6 +195,11 @@ def connect_google_account():
                 # worth more than the rest of this feature.
                 "client_kind": _kind,
                 "requesting_send": include_send,
+                "requesting_modify": include_modify,
+                "requested_scopes": [x for x in ga.mailbox_scopes(
+                                        (existing or {}).get("scopes") if existing else None)
+                                     if (x["scope"] != ga.GMAIL_SEND or include_send)
+                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)],
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (
@@ -242,7 +254,8 @@ def google_account_callback():
     label = pending.get("label") or session.get("ga_oauth_label") or ""
     try:
         flow, _, _ = ga.build_auth_flow(
-            state=state, include_send=bool(pending.get("include_send")))
+            state=state, include_send=bool(pending.get("include_send")),
+            include_modify=bool(pending.get("include_modify")))
         # Replay the verifier the START leg generated — the freshly rebuilt
         # flow above has none of its own (it never called authorization_url()).
         flow.code_verifier = pending["verifier"]
@@ -259,6 +272,14 @@ def google_account_callback():
             "for your approval.</p>" if can_send else
             "<p>This account is <b>read-only for mail</b>. Friday cannot send "
             "from it.</p>")
+        if pending.get("include_modify"):
+            can_modify = ga.GMAIL_MODIFY in (rec.get("scopes") or [])
+            send_line += (
+                "<p>Friday <b>can update this mailbox</b> (labels, archive, star, "
+                "read/unread, drafts) — every change can be undone.</p>"
+                if can_modify else
+                "<p>Mailbox changes were <b>not</b> granted; archive and labels "
+                "stay in Friday only.</p>")
         return (
             "<h2>✅ Google account connected</h2>"
             f"<p><b>{rec.get('email','')}</b> ({rec.get('label','')}) is now linked "
@@ -267,6 +288,14 @@ def google_account_callback():
         )
     except Exception as e:
         return f"<h2>Token exchange failed</h2><p>{e}</p>", 500
+
+
+@google_accounts_bp.route("/api/google/accounts/mailbox-scopes")
+def google_mailbox_scopes():
+    """Exactly what "Reconnect with sending" will ask Google for, in plain words.
+    Read-only; starts nothing."""
+    acct = ga.get_account(request.args.get("account") or "") if request.args.get("account") else None
+    return jsonify({"status": "ok", "scopes": ga.mailbox_scopes(acct.get("scopes") if acct else None)})
 
 
 @google_accounts_bp.route("/api/google/oauth/byo", methods=["GET", "POST", "DELETE"])

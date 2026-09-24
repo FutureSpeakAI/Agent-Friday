@@ -32,6 +32,39 @@ import urllib.request
 
 _log = logging.getLogger("friday.local_seats")
 
+
+def _names_a_cloud_model(model) -> bool:
+    """True when `model` is a cloud id rather than a local seat name.
+
+    This module picks among LOCAL seats, so a cloud id in
+    `capability_routing.<cap>.model` is not a preference it can act on -- and
+    emphatically not a local model that has gone missing. Treating one as
+    missing produced, live on 2026-09-24:
+
+        [seats] brain: 'claude-opus-5-5' is not installed - using 'bonsai2:27b'
+
+    about a model that cannot be installed here and was never absent.
+
+    The classification matches `_route_chosen_seat` in the router so the two
+    cannot disagree about the same string: a named cloud family is cloud, a
+    vendor-prefixed gateway id is cloud, and everything else -- including
+    `hf.co/...` ids, which ARE local -- stays local, so its installation is
+    still checked exactly as before.
+    """
+    mid = str(model or "").strip()
+    if not mid:
+        return False
+    try:
+        from agent_friday.routing.model_router import provider_family
+        fam = provider_family(mid)
+    except Exception:
+        fam = None
+    if fam == "local":
+        return False
+    if fam:
+        return True
+    return "/" in mid and not mid.startswith("hf.co/")
+
 # role -> the capability_routing key that names its preferred seat
 _ROLE_TO_CAPABILITY = {
     "brain": "reasoning",
@@ -324,7 +357,13 @@ def _configured(role: str) -> str | None:
             cr = (json.loads(raw) or {}).get("capability_routing") or {}
         except Exception:
             return None
-    return ((cr.get(key) or {}).get("model")) or None
+    configured = ((cr.get(key) or {}).get("model")) or None
+    # A cloud seat is a real choice, just not one this module can serve.
+    # Returning it would make `resolve` hunt for it in the Ollama store,
+    # fail, and announce a substitution for a model that was never here.
+    if _names_a_cloud_model(configured):
+        return None
+    return configured
 
 
 def _announce(role: str, wanted: str | None, got: str) -> None:

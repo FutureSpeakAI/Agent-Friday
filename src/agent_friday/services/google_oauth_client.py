@@ -228,8 +228,11 @@ def byo_scopes() -> list:
     and one that half-works a week afterwards.
     """
     try:
-        from agent_friday.services.google_accounts import GOOGLE_MULTI_SCOPES
-        return list(GOOGLE_MULTI_SCOPES)
+        # Send and modify are listed too: they are requested only from
+        # "Reconnect with sending", but a client missing them fails there.
+        from agent_friday.services.google_accounts import (
+            GOOGLE_MULTI_SCOPES, GMAIL_SEND, GMAIL_MODIFY)
+        return list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]
     except Exception:
         # Kept in step with services/google_accounts.py; the import above is
         # the source of truth and this is only for an import-time failure.

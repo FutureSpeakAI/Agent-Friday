@@ -28,11 +28,18 @@ knows. So the gate is not a setting. It is structural:
     later felt like sending.
   * A used approval is burned. One decision, one message.
 
-NARROWEST SCOPE THAT DOES THE JOB. `gmail.send` only — not `gmail.compose`.
-Compose would let Friday create, read, alter and delete drafts in the real
-mailbox; send lets it do exactly the thing that was authorised and nothing
-else. The review copy lives on the approval card, where the person already is,
-rather than in a Gmail draft nobody asked to have written.
+SENDING NEEDS gmail.send, ALWAYS. The owner may also grant gmail.modify
+("Reconnect with sending"), which Google would let send mail too; this module
+never sends on the strength of modify. Modify is used for one thing here:
+saving a draft into Gmail when the owner presses "Save draft" — writing to
+his own mailbox, not to anyone else, and never on Friday's own initiative.
+
+AFTER APPROVAL, A SHORT HOLD. An approved message waits UNDO_SECONDS (or
+until the time it was scheduled for) in a held queue on disk, and the owner
+can cancel it there; cancelling burns the approval, so that message can never
+go. If Friday was not running when a held message fell due and it is more
+than LATE_LIMIT_S late, it is not sent at all: the owner is told and asked
+again, rather than a stranger receiving it hours after it made sense.
 
 ADDING THIS SCOPE REQUIRES RE-CONSENT on every connected account. Nothing here
 works until the owner reconnects and grants it, and that is stated rather than
@@ -58,6 +65,13 @@ APPROVAL_KIND = "external_message"
 SUBJECT_TYPE = "email"
 
 _ADDR = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+#: After approval, how long a message waits for "Undo" before it goes.
+UNDO_SECONDS = 10
+#: A held message this late (Friday was off) is not sent; the owner is asked again.
+LATE_LIMIT_S = 15 * 60
+#: How far ahead "send later" may be scheduled.
+MAX_SCHEDULE_S = 30 * 86400
 
 
 class SendRefused(RuntimeError):
@@ -178,8 +192,32 @@ def _load_attachment(meta: dict) -> bytes:
     return data
 
 
-def _extras(html=None, thread_id=None, in_reply_to=None, references=None, attachments=None) -> dict:
+def _send_at_iso(send_at):
+    """Normalise a requested send time to UTC ISO seconds, or None. Refuses
+    the past and anything beyond MAX_SCHEDULE_S."""
+    if not send_at:
+        return None
+    from datetime import datetime, timezone
+    import time as _t
+    try:
+        dt = datetime.fromisoformat(str(send_at).replace("Z", "+00:00"))
+    except ValueError:
+        raise SendRefused("that send time is not a date and time I can read")
+    if dt.tzinfo is None:
+        dt = dt.astimezone()                     # a local time, as the owner typed it
+    ts = dt.timestamp()
+    if ts < _t.time() + 60:
+        raise SendRefused("that send time is in the past (or under a minute away); send it now instead")
+    if ts > _t.time() + MAX_SCHEDULE_S:
+        raise SendRefused("that send time is more than 30 days away")
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
+
+
+def _extras(html=None, thread_id=None, in_reply_to=None, references=None, attachments=None,
+            send_at=None) -> dict:
     x = {}
+    if send_at:
+        x["send_at"] = send_at
     if html:
         x["html"] = str(html)
     if thread_id:
@@ -224,7 +262,8 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  account_id: str | None = None,
                  requested_by: str = "friday", html: str | None = None,
                  thread_id: str | None = None, in_reply_to: str | None = None,
-                 references: str | None = None, attachments=None) -> dict:
+                 references: str | None = None, attachments=None,
+                 send_at: str | None = None) -> dict:
     """Ask to send. Returns the approval card; sends nothing.
 
     This is the only way to start a send, and it never delivers.
@@ -274,7 +313,8 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
 
     for a in attachments or []:
         _load_attachment(a)                      # present and intact before anyone is asked
-    extras = _extras(html, thread_id, in_reply_to, references, attachments)
+    extras = _extras(html, thread_id, in_reply_to, references, attachments,
+                     _send_at_iso(send_at))
     fp = message_fingerprint(tos, subject, body, cc, bcc, extras or None)
     live = _live_card(fp)
     if live is not None:
@@ -283,6 +323,11 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
 
     ccs = _addresses(cc or [])
     notes = []
+    if extras.get("send_at"):
+        from datetime import datetime
+        local = datetime.fromisoformat(extras["send_at"]).astimezone()
+        notes.append("Scheduled: sent at %s (your time), if Friday is running then."
+                     % local.strftime("%a %d %b %H:%M"))
     if extras.get("thread_id"):
         notes.append("This is a reply in an existing conversation.")
     if extras.get("html"):
@@ -408,26 +453,7 @@ def send(approval_id: str) -> dict:
         raise SendRefused("that account's credentials could not be read, so "
                           "nothing was sent.")
 
-    msg = EmailMessage()
-    msg["To"] = ", ".join(payload.get("to") or [])
-    if payload.get("cc"):
-        msg["Cc"] = ", ".join(payload["cc"])
-    if payload.get("bcc"):
-        msg["Bcc"] = ", ".join(payload["bcc"])
-    msg["Subject"] = payload.get("subject") or ""
-    if extras.get("in_reply_to"):
-        msg["In-Reply-To"] = extras["in_reply_to"]
-        msg["References"] = (extras.get("references") or "") + (" " if extras.get("references") else "") + extras["in_reply_to"]
-    msg.set_content(payload.get("body") or "")
-    if extras.get("html"):
-        msg.add_alternative(extras["html"], subtype="html")
-    for a in extras.get("attachments") or []:
-        data = _load_attachment(a)
-        maintype, _, subtype = (a.get("mime") or "application/octet-stream").partition("/")
-        msg.add_attachment(data, maintype=maintype or "application",
-                           subtype=subtype or "octet-stream", filename=a.get("filename"))
-
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    raw = _mime_raw(payload, extras)
     send_body = {"raw": raw}
     if extras.get("thread_id"):
         send_body["threadId"] = extras["thread_id"]
@@ -466,6 +492,229 @@ def send(approval_id: str) -> dict:
     return {"ok": True, "message_id": sent.get("id"),
             "thread_id": sent.get("threadId"),
             "to": payload.get("to"), "approval_id": approval_id}
+
+
+def _mime_raw(payload: dict, extras: dict) -> str:
+    """The message as Gmail wants it (base64url RFC 822), for send and drafts."""
+    msg = EmailMessage()
+    msg["To"] = ", ".join(payload.get("to") or [])
+    if payload.get("cc"):
+        msg["Cc"] = ", ".join(payload["cc"])
+    if payload.get("bcc"):
+        msg["Bcc"] = ", ".join(payload["bcc"])
+    msg["Subject"] = payload.get("subject") or ""
+    if extras.get("in_reply_to"):
+        msg["In-Reply-To"] = extras["in_reply_to"]
+        msg["References"] = (extras.get("references") or "") + (" " if extras.get("references") else "") + extras["in_reply_to"]
+    msg.set_content(payload.get("body") or "")
+    if extras.get("html"):
+        msg.add_alternative(extras["html"], subtype="html")
+    for a in extras.get("attachments") or []:
+        data = _load_attachment(a)
+        maintype, _, subtype = (a.get("mime") or "application/octet-stream").partition("/")
+        msg.add_attachment(data, maintype=maintype or "application",
+                           subtype=subtype or "octet-stream", filename=a.get("filename"))
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  DRAFTS — saved into the owner's own Gmail when he presses "Save draft"
+# ═══════════════════════════════════════════════════════════════════════════
+
+def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", cc=None,
+               bcc=None, html: str | None = None, thread_id: str | None = None,
+               in_reply_to: str | None = None, references: str | None = None,
+               attachments=None) -> dict:
+    """Write a draft into the account's Gmail Drafts. Sends nothing, asks
+    nothing: the draft sits in his own mailbox, and sending it from Friday
+    still goes through request_send and an approval card."""
+    from agent_friday.services import google_accounts as G
+    rec = G.get_account(account_id) if account_id else None
+    if not rec:
+        raise SendRefused("which account should the draft go to?")
+    if G.GMAIL_MODIFY not in (rec.get("scopes") or []):
+        raise SendRefused("%s has not allowed Friday to change its mailbox, so drafts can't be "
+                          "saved to Gmail. Use Reconnect with sending in Settings."
+                          % (rec.get("email") or account_id))
+    tos = [a for a in _addresses(to or [])] if to else []
+    extras = _extras(html, thread_id, in_reply_to, references, attachments)
+    raw = _mime_raw({"to": tos, "cc": _addresses(cc or []), "bcc": _addresses(bcc or []),
+                     "subject": subject, "body": body}, extras)
+    msg = {"raw": raw}
+    if extras.get("thread_id"):
+        msg["threadId"] = extras["thread_id"]
+    creds = G.credentials_for(account_id)
+    if not creds:
+        raise SendRefused("that account's credentials could not be read")
+    from googleapiclient.discovery import build
+    from agent_friday.services import gmail_api
+    svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    try:
+        d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
+    except gmail_api.GmailError as e:
+        raise SendRefused("Gmail did not save the draft: %s" % e)
+    return {"ok": True, "draft_id": d.get("id"), "account_id": account_id}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  HELD — approved, waiting out the undo window or the scheduled time
+# ═══════════════════════════════════════════════════════════════════════════
+import threading as _threading
+import time as _time
+
+_HELD_LOCK = _threading.RLock()
+_WAKE = _threading.Event()
+
+
+def _held_path():
+    from agent_friday.core import FRIDAY_DIR
+    d = FRIDAY_DIR / "mail_outbox"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "held.json"
+
+
+def _load_held() -> list:
+    try:
+        return json.loads(_held_path().read_text(encoding="utf-8")) or []
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        _log.warning("held queue unreadable: %s", e)
+        return []
+
+
+def _save_held(rows: list) -> None:
+    p = _held_path()
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    tmp.replace(p)
+
+
+def _ts(iso):
+    if not iso:
+        return 0.0
+    from datetime import datetime
+    return datetime.fromisoformat(iso).timestamp()
+
+
+def hold(record: dict, now: float | None = None) -> dict:
+    """Queue an approved message: it goes after the undo window, or at its
+    scheduled time, whichever is later."""
+    now = _time.time() if now is None else now
+    payload = record.get("payload") or {}
+    extras = payload.get("extras") or {}
+    due = max(now + UNDO_SECONDS, _ts(extras.get("send_at")))
+    row = {"approval_id": record.get("approval_id"), "due": due, "held_at": now,
+           "scheduled": bool(extras.get("send_at")),
+           "to": payload.get("to"), "subject": payload.get("subject"),
+           "from": payload.get("from_email")}
+    with _HELD_LOCK:
+        rows = [r for r in _load_held() if r.get("approval_id") != row["approval_id"]]
+        rows.append(row)
+        _save_held(rows)
+    _WAKE.set()
+    return row
+
+
+def held() -> list:
+    """What is waiting to go, soonest first, with seconds left."""
+    now = _time.time()
+    with _HELD_LOCK:
+        rows = sorted(_load_held(), key=lambda r: r.get("due") or 0)
+    return [dict(r, seconds_left=max(0, round(r["due"] - now))) for r in rows]
+
+
+def _burn(approval_id: str, why: str, detail: dict) -> None:
+    from agent_friday.services import approvals as _ap
+    appr = _ap.get_approval(approval_id)
+    if not appr:
+        return
+    _ap._consume(appr)
+    _ap.mark_used(approval_id, why, detail)
+    _outbox_record(appr, ok=False, error=detail.get("reason") or why)
+
+
+def cancel(approval_id: str) -> dict:
+    """Undo send: take a held message back before it goes. The approval is
+    burned, so this message can never be sent by that decision."""
+    with _HELD_LOCK:
+        rows = _load_held()
+        mine = [r for r in rows if r.get("approval_id") == approval_id]
+        if not mine:
+            raise SendRefused("that message is not waiting to be sent (it has already gone, "
+                              "or was never approved)")
+        _save_held([r for r in rows if r.get("approval_id") != approval_id])
+    _burn(approval_id, "gmail_send_cancelled", {"reason": "cancelled by you before it was sent"})
+    return {"ok": True, "approval_id": approval_id, "sent": False}
+
+
+def _deliver(approval_id: str, to) -> None:
+    try:
+        result = send(approval_id)
+        _notify("Email sent", "Your message to %s is on its way." % ", ".join(to or []),
+                priority="low", kind="info")
+        _log.info("held message sent %s", result.get("message_id"))
+    except SendRefused as e:
+        # The owner pressed approve and reasonably believes the message went.
+        _notify("Email NOT sent", str(e), priority="high", kind="warning")
+    except Exception as e:
+        _log.warning("held send crashed: %s", e)
+        _notify("Email NOT sent", "Something went wrong sending it: %s" % str(e)[:200],
+                priority="high", kind="warning")
+
+
+def _tick(now: float | None = None) -> list:
+    """Send what is due. A message due more than LATE_LIMIT_S ago (Friday was
+    off) is not sent: its approval is burned and the owner is told."""
+    now = _time.time() if now is None else now
+    with _HELD_LOCK:
+        rows = _load_held()
+        due = [r for r in rows if (r.get("due") or 0) <= now]
+        if not due:
+            return []
+        _save_held([r for r in rows if (r.get("due") or 0) > now])
+    done = []
+    for r in due:
+        if now - r["due"] > LATE_LIMIT_S:
+            _burn(r["approval_id"], "gmail_send_missed",
+                  {"reason": "not sent: Friday was not running when it was due"})
+            _notify("Email NOT sent",
+                    "Your %s message to %s (\"%s\") was due while Friday was off, so it was not "
+                    "sent late. Ask again if you still want it to go."
+                    % ("scheduled" if r.get("scheduled") else "approved",
+                       ", ".join(r.get("to") or []), r.get("subject") or ""),
+                    priority="high", kind="warning")
+            done.append((r["approval_id"], "missed"))
+            continue
+        _deliver(r["approval_id"], r.get("to"))
+        done.append((r["approval_id"], "sent"))
+    return done
+
+
+def _scheduler_loop():
+    while True:
+        try:
+            _tick()
+            with _HELD_LOCK:
+                nxt = min([r.get("due") or 0 for r in _load_held()] or [_time.time() + 30])
+        except Exception as e:
+            _log.warning("held-mail scheduler: %s", e)
+            nxt = _time.time() + 5
+        _WAKE.wait(timeout=max(0.2, min(30.0, nxt - _time.time())))
+        _WAKE.clear()
+
+
+def start_scheduler() -> None:
+    """Idempotent. Not started under tests (FRIDAY_TESTING), which call _tick."""
+    import os
+    global _SCHED_STARTED
+    if _SCHED_STARTED or os.environ.get("FRIDAY_TESTING"):
+        return
+    _SCHED_STARTED = True
+    _threading.Thread(target=_scheduler_loop, name="gmail-held", daemon=True).start()
+
+
+_SCHED_STARTED = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -544,27 +793,14 @@ def _on_decision(record: dict) -> None:
         return                      # some other external_message card
     if (record.get("status") or "").lower() != "approved":
         return                      # denied or expired: nothing to do
-    approval_id = record.get("approval_id")
-
-    def _run():
-        try:
-            result = send(approval_id)
-            _notify("Email sent",
-                    "Your message to %s is on its way."
-                    % ", ".join(payload.get("to") or []),
-                    priority="low", kind="info")
-            _log.info("hook sent %s", result.get("message_id"))
-        except SendRefused as e:
-            # A refusal here is the important one: the owner pressed approve
-            # and reasonably believes the message went. Say otherwise loudly.
-            _notify("Email NOT sent", str(e), priority="high", kind="warning")
-        except Exception as e:
-            _log.warning("hook send crashed: %s", e)
-            _notify("Email NOT sent",
-                    "Something went wrong sending it: %s" % str(e)[:200],
-                    priority="high", kind="warning")
-
-    threading.Thread(target=_run, name="gmail-send", daemon=True).start()
+    # Approval starts the undo window (or waits for the scheduled time);
+    # the held-mail scheduler sends it when that is over. See HELD above.
+    try:
+        hold(record)
+    except Exception as e:
+        _log.warning("could not hold the approved message: %s", e)
+        _notify("Email NOT sent", "Friday could not queue it: %s" % str(e)[:200],
+                priority="high", kind="warning")
 
 
 def _notify(title: str, body: str, *, priority: str = "medium",
@@ -586,6 +822,7 @@ def register_hooks() -> None:
         from agent_friday.services import approvals as _ap
         _ap.register_decision_hook(APPROVAL_KIND, _on_decision)
         _HOOKS_REGISTERED = True
+        start_scheduler()
     except Exception as e:
         _log.warning("could not register the send hook: %s", e)
 

@@ -7087,14 +7087,23 @@ function ConversationWindow({
       }, /*#__PURE__*/React.createElement("div", {
         style: {
           maxWidth: '86%', padding: '7px 10px', borderRadius: 10,
-          fontSize: 12.5, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+          fontSize: 12.5, lineHeight: 1.5,
+          // The user's own words are not markdown; Friday's are.
+          whiteSpace: m.role === 'user' ? 'pre-wrap' : 'normal',
           wordBreak: 'break-word',
           background: m.role === 'user' ? 'rgba(0,212,255,0.12)'
                       : m.role === 'system' ? 'rgba(255,140,66,0.10)'
                       : 'rgba(255,255,255,0.045)',
           color: m.role === 'system' ? '#ffb27d' : '#dfe7f2'
         }
-      }, m.text))),
+      }, m.role === 'user' ? m.text : /*#__PURE__*/React.createElement(FridayDoc, {
+        // Friday replies in markdown. This window used to print the raw string,
+        // so bold and lists arrived as literal asterisks. FridayDoc is the one
+        // renderer every other surface uses.
+        text: m.text || '',
+        compact: true,
+        style: { margin: 0 }
+      })))),
       loading && /*#__PURE__*/React.createElement("div", {
         style: { color: '#00d4ff', fontSize: 11, padding: '6px 2px' }
       }, "Friday is thinking…"),
@@ -40052,7 +40061,10 @@ function GoogleAccountsPanel() {
       setTimeout(() => setCopied(false), 1800);
     }).catch(() => {});
   };
-  const startConnect = async account => {
+  // opts.mailbox: "Reconnect with sending" -- send AND mailbox changes in one
+  // consent screen. Only this explicit button asks for them.
+  const startConnect = async (account, opts) => {
+    const mailbox = !!(opts && opts.mailbox);
     setLoading(true);
     try {
       const r = await apiFetch('/api/google/accounts/connect', {
@@ -40062,7 +40074,8 @@ function GoogleAccountsPanel() {
         },
         body: JSON.stringify(account ? {
           account_id: account.id,
-          email: account.email
+          email: account.email,
+          mailbox
         } : {
           label,
           include_send: allowSend
@@ -40074,7 +40087,8 @@ function GoogleAccountsPanel() {
         // this app" with no warning reads it as phishing and stops -- and
         // from our side, stopping there is indistinguishable from never
         // having tried. Show what is coming, then let them press the button.
-        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind, account: account || null, requestingSend: !!d.requesting_send });
+        setPending({ url: d.auth_url, brief: d.prebrief || '', kind: d.client_kind, account: account || null, requestingSend: !!d.requesting_send,
+          requestingModify: !!d.requesting_modify, scopes: mailbox ? (d.requested_scopes || []) : null });
         if (!account) { setLabel(''); setAllowSend(false); }
       } else setMsg(d.message || 'Could not start sign-in.');
     } catch (e) {
@@ -40084,6 +40098,7 @@ function GoogleAccountsPanel() {
   };
   const addAccount = () => startConnect(null);
   const reconnectAccount = account => startConnect(account);
+  const reconnectWithSending = account => startConnect(account, { mailbox: true });
   const removeAccount = async (id, email) => {
     if (!window.confirm('Remove ' + email + '? This revokes access.')) return;
     try {
@@ -40132,6 +40147,18 @@ function GoogleAccountsPanel() {
       'Google will also ask to let Friday ',
       /*#__PURE__*/React.createElement("b", null, 'send email on your behalf'),
       '. That is this request, and it is expected. Friday still cannot send anything on its own: every message waits on an approval card showing the exact From, To, Subject and text, and approving that card is what sends it.'),
+    pending.scopes && pending.scopes.length > 0 && /*#__PURE__*/React.createElement("div", {
+      "data-testid": "ga-mailbox-scopes",
+      style: { marginTop: 10, padding: '9px 11px', borderRadius: 6, background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.25)', fontSize: 11.5, lineHeight: 1.55 } },
+      /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: '#9fe6ff', marginBottom: 6 } },
+        'Google will ask ' + (pending.account ? (pending.account.email || 'this account') : 'this account') + ' for exactly these permissions, on one screen:'),
+      pending.scopes.map(x => /*#__PURE__*/React.createElement("div", { key: x.scope, style: { display: 'flex', gap: 8, marginBottom: 4, alignItems: 'baseline' } },
+        /*#__PURE__*/React.createElement("span", { style: { color: x.new ? '#ffb86b' : 'rgba(255,255,255,0.35)', fontWeight: 700, width: 34, flex: 'none' } }, x.new ? 'NEW' : 'has'),
+        /*#__PURE__*/React.createElement("span", null,
+          /*#__PURE__*/React.createElement("span", { style: { color: x.new ? '#fff' : 'rgba(255,255,255,0.6)' } }, x.what),
+          /*#__PURE__*/React.createElement("code", { style: { display: 'block', fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', overflowWrap: 'anywhere' } }, x.scope)))),
+      /*#__PURE__*/React.createElement("div", { style: { ...{ fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }, marginTop: 6 } },
+        'Leave every box ticked on Google\u2019s screen. If you untick one, Friday says so afterwards and that part stays off.')),
     /*#__PURE__*/React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' } },
       /*#__PURE__*/React.createElement("button", { className: 'settings-btn', style: { fontSize: 12, color: '#00d4ff' },
         onClick: () => { const acct = pending.account; window.open(pending.url, '_blank', 'width=600,height=700'); setReconnecting(acct ? acct.id : 'new'); setMsg(acct ? 'Sign in as ' + (acct.email || acct.label || 'that account') + ' in the Google window. This page updates on its own once you are done.' : 'Finish in the Google window. This page updates on its own once you are done.'); setPending(null); } },
@@ -40307,7 +40334,17 @@ function GoogleAccountsPanel() {
     style: { fontSize: 11, padding: '4px 12px', color: '#ff8c42', borderColor: '#ff8c42', whiteSpace: 'nowrap' },
     onClick: () => reconnectAccount(acc),
     disabled: loading
-  }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect'), /*#__PURE__*/React.createElement("button", {
+  }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect'), !(acc.mail && acc.mail.send && acc.mail.modify) && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    "data-testid": "ga-reconnect-sending",
+    title: 'Sign in again and allow Friday to send mail (each message waits for your approval) and to change this mailbox (labels, archive, star, read). One Google screen; it shows you the exact permissions first.',
+    style: { fontSize: 11, padding: '4px 12px', color: '#00d4ff', borderColor: 'rgba(0,212,255,0.5)', whiteSpace: 'nowrap' },
+    onClick: () => reconnectWithSending(acc),
+    disabled: loading
+  }, reconnecting === acc.id ? 'Waiting...' : 'Reconnect with sending'), acc.mail && acc.mail.send && acc.mail.modify && /*#__PURE__*/React.createElement("span", {
+    "data-testid": "ga-mail-full",
+    style: { fontSize: 10, color: '#22c55e', whiteSpace: 'nowrap' }
+  }, '\u2713 can send + update mailbox'), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 11,
