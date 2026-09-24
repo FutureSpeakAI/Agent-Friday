@@ -193,7 +193,8 @@ def describe_source(tool_name: str, tool_input: Optional[dict]) -> str:
     if t in ("read_file", "search_files", "inspect_image", "inspect_audio") or "file" in t:
         p = str(inp.get("path") or inp.get("file_path") or inp.get("file_id") or "")
         name = re.split(r"[\\/]", p)[-1] if p else ""
-        return "a file" + (f" ({name})" if name else "")
+        # A bare number is a file id, not a name; say so rather than "a file (8)".
+        return "a file" + ((f" (id {name})" if name.isdigit() else f" ({name})") if name else "")
     if t in ("read_doc", "search_drive"):
         return "a shared document"
     if t in ("search_contacts",):
