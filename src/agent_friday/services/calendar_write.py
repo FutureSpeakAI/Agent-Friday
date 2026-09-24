@@ -60,14 +60,14 @@ def write_ready() -> tuple:
     if accts:
         return False, (
             "the connected Google account(s) hold Calendar READ-ONLY access. "
-            "Reconnect from Settings -> Connectors -> Reconnect Google to add "
+            "Reconnect from Settings -> Accounts & Keys -> Reconnect Google to add "
             "event editing; it is the same account, re-consented with calendar "
             "writes included.")
 
     # Legacy single-token fallback, for an install that never migrated.
     if not GOOGLE_TOKEN_PATH.exists():
         return False, ("Google is not connected at all. Connect it from "
-                       "Settings -> Connectors, or open /api/google/auth.")
+                       "Settings -> Accounts & Keys, or open /api/google/auth.")
     try:
         data = json.loads(GOOGLE_TOKEN_PATH.read_text(encoding="utf-8"))
     except Exception as e:
@@ -79,7 +79,7 @@ def write_ready() -> tuple:
         "the stored Google token is READ-ONLY for Calendar. It was consented "
         "before write access existed, so it cannot edit events no matter what "
         "tool is called. Reconnect the same Google account to add event "
-        "editing: Settings -> Connectors -> Reconnect Google, or open "
+        "editing: Settings -> Accounts & Keys -> Reconnect Google, or open "
         "/api/google/auth.")
 
 

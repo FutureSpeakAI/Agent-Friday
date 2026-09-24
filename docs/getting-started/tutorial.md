@@ -195,14 +195,14 @@ nobody can recover it for you — not even Friday, which is rather the point.
 
 Start Friday (Step 5 below), then in the browser:
 
-**Settings → Providers → Anthropic → paste your key → Save.**
+**Settings → Accounts & Keys → Anthropic → paste your key → Save.**
 
 That's it. Friday encrypts the key on your machine, starts using it
 immediately without a restart, and loads it automatically every time she starts
 from then on. You never need to touch a file.
 
 *Why not the wizard?* The wizard writes keys as readable text into
-`config.yaml` and a startup script. Settings → Providers puts them through the
+`config.yaml` and a startup script. Settings → Accounts & Keys puts them through the
 encrypted store instead. Both work; only one of them is private.
 
 You can change or remove the key here at any time.
@@ -318,7 +318,7 @@ tools hold up over longer, harder jobs. With both you get one you can talk to
 out loud. Each is real; they're different products, and you can move between
 them whenever you like.
 
-You can add or change keys any time in **Settings → Providers**. Nothing you've
+You can add or change keys any time in **Settings → Accounts & Keys**. Nothing you've
 set up gets lost.
 
 > **One caution.** A no-key install hasn't been tested end to end by anyone yet.

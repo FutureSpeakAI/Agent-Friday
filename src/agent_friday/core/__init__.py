@@ -2006,7 +2006,7 @@ DEFAULT_SETTINGS = {
     # the real defaults (KG_DEFAULT_SETTINGS) and layers the user's saved block
     # on top. This entry exists only so that block SURVIVES the whitelist two
     # lines above this comment's file-mate -- without it, every knowledge-graph
-    # setting the Settings->Knowledge tab saves (index_sources, indexing_mode,
+    # setting the Settings->Privacy & Approvals tab saves (index_sources, indexing_mode,
     # power_indexer, nightly_reindex...) round-trips through settings.json and
     # is silently discarded on the very next read, same defect class as
     # egress_mode and the top-level vault_local_only (docs/design/
@@ -2153,12 +2153,8 @@ DEFAULT_SETTINGS = {
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
-    # Which scorer answers Friday's typed judgments (services/decisions.py).
-    # "keyword" is today's substring scan and stays the default until another
-    # backend is MEASURED to beat it on the log that module now keeps. An
-    # unregistered name falls back to "keyword" loudly rather than raising —
-    # a typo here must not be able to take the approval gate offline.
-    "decision_backend": "keyword",
+    # `decision_backend` (which scorer answers Friday's typed judgments) is
+    # declared once, with the approval-gate block further down.
     # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.
     #
     # NOT `dock_layout`. That name was already taken at line ~2035 by the
@@ -2172,7 +2168,7 @@ DEFAULT_SETTINGS = {
     # Empty means UNCONFIGURED, and show_all_workspaces above governs exactly as
     # it always has. The moment an arrangement exists it wins outright, because
     # two switches over one dock is how you get a control that appears to do
-    # nothing. Settings → Dock says so, and the quick toggle disables itself
+    # nothing. Settings → Appearance & 3D says so, and the quick toggle disables itself
     # rather than silently losing the argument.
     #
     # `order` is a flat list across all three dock groups. Group separators are

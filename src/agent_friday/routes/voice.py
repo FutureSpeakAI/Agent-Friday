@@ -359,7 +359,7 @@ def _compose_final_voice_error(attempt_errors, key_source):
         return (f"Gemini API key invalid or revoked (starts {kp}, loaded from "
                 f"{key_source}; Google says: {detail}). Update the key at that "
                 f"source, or paste a fresh key from aistudio.google.com into "
-                f"Settings → Providers → Google Gemini — it takes effect on the "
+                f"Settings → Accounts & Keys → Google Gemini — it takes effect on the "
                 f"next voice session, no restart needed.")
     if kinds and all(k == "model-missing" for k in kinds):
         # Don't recommend a specific model here: every ID in our own chain was
@@ -1558,9 +1558,9 @@ def voice_setup_status():
             _kstat = "invalid"
             _kdetail = (f"Key from {_ki.get('source')} was rejected by Google "
                         f"({_ki.get('detail')}). Paste a fresh key from "
-                        f"aistudio.google.com in Settings → Providers → Google Gemini.")
+                        f"aistudio.google.com in Settings → Accounts & Keys → Google Gemini.")
         else:
-            _kstat, _kdetail = "missing", "Set via Settings → Providers → Google Gemini"
+            _kstat, _kdetail = "missing", "Set via Settings → Accounts & Keys → Google Gemini"
         steps.append({"id": "key", "label": "Gemini API Key",
                       "status": _kstat, "detail": _kdetail})
         # Validate the configured Live model id — a stale/renamed id surfaces as

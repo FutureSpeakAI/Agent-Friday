@@ -471,6 +471,51 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
         .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.12); box-shadow: 0 0 10px rgba(0,212,255,0.15); }
         .settings-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        /* Settings pane tokens. Every Settings tab reads these instead of
+           hard-coding its own greys, so the pane has one type scale and one
+           palette. */
+        .st-root {
+            --st-accent: #00d4ff; --st-accent-soft: rgba(0,212,255,0.12);
+            --st-text: rgba(255,255,255,0.86); --st-label: rgba(255,255,255,0.78);
+            --st-dim: rgba(255,255,255,0.46); --st-faint: rgba(255,255,255,0.3);
+            --st-line: rgba(255,255,255,0.06); --st-warn: #f59e0b; --st-danger: #ff6b8a;
+            --st-ok: #00ff80; --st-font: 'Inter', system-ui, sans-serif;
+            --st-mono: 'JetBrains Mono', monospace;
+        }
+        .st-switch { all: unset; box-sizing: border-box; display: flex; width: 100%;
+            justify-content: space-between; align-items: center; gap: 12px; cursor: pointer;
+            padding: 9px 0; border-bottom: 1px solid var(--st-line, rgba(255,255,255,0.06)); }
+        .st-switch:focus-visible { outline: 1px solid var(--st-accent, #00d4ff); outline-offset: 2px; border-radius: 4px; }
+        .st-rail-btn { all: unset; box-sizing: border-box; display: block; width: 100%; cursor: pointer;
+            padding: 8px 16px; font-family: var(--st-font); font-size: 12.5px; color: rgba(255,255,255,0.58);
+            border-left: 2px solid transparent; transition: color .15s, background .15s; }
+        .st-rail-btn:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.03); }
+        .st-rail-btn.on { color: var(--st-accent); background: rgba(0,212,255,0.07); border-left-color: var(--st-accent); }
+        .st-rail-btn:focus-visible { outline: 1px solid var(--st-accent); outline-offset: -2px; }
+        button.toggle-pill { font-family: inherit; }
+        .st-root .settings-btn, .st-root .btn { font-family: var(--st-font); letter-spacing: 0; }
+        /* Settings speaks one typeface. Panels written before these tokens set
+           JetBrains Mono or Orbitron inline; inside the Settings pane they take
+           the UI face, with tabular figures so numbers still line up. Text
+           that IS code (a path, a command) keeps the mono face via .st-mono,
+           and the product name keeps its display face via .st-brand. */
+        .st-root [style*="JetBrains Mono"]:not(.st-mono),
+        .st-root [style*="Orbitron"]:not(.st-brand) {
+            font-family: var(--st-font) !important;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: normal !important;
+        }
+        .st-root .st-mono { font-family: var(--st-mono) !important; }
+        /* Nothing in Settings is set in forced capitals or below 11px. */
+        .st-root [style*="text-transform: uppercase"]:not(.st-brand) { text-transform: none !important; }
+        .st-root [style*="font-size: 8px"], .st-root [style*="font-size: 8.5px"],
+        .st-root [style*="font-size: 9px"], .st-root [style*="font-size: 9.5px"],
+        .st-root [style*="font-size: 10px"] { font-size: 11px !important; }
+        .st-root [style*="font-size: 10.5px"] { font-size: 11.5px !important; }
+        /* The Settings shell fills its window, so the section rail stays put
+           and only the content pane scrolls. */
+        .fwin-body:has(> .ws-custom-root > .st-root) { overflow: hidden; }
+        .fwin-body > .ws-custom-root:has(> .st-root) { height: 100%; }
         .settings-toggle {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 0; cursor: pointer;

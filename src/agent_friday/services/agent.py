@@ -256,7 +256,7 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
-                   "model. Load one on the Intelligence tab (or adjust "
+                   "model. Load one in Settings → Models (or adjust "
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
 
@@ -637,7 +637,7 @@ CLAUDE_TOOLS = [
          "workspace": {"type": "string"},
          "limit": {"type": "integer", "description": "How many of the most recent snapshots to show. Default 12, max 40."}},
       "required": ["workspace"]}},
-    {"name": "draft_email", "description": "Write an email and put it in front of the user for approval. This NEVER sends on its own — it creates an approval card showing the exact From/To/Subject/body, and the message goes out only when the user approves that card. Say so plainly in your reply: tell them it's waiting for their approval, not that you sent it. Write the full final text in `body`; the user reads what you wrote, and editing it afterwards invalidates the approval. Requires an account connected with sending allowed — if the tool says none is, tell them Settings → Connectors → Google → Add account with \"allow sending\" ticked, and do NOT claim you can't email at all.",
+    {"name": "draft_email", "description": "Write an email and put it in front of the user for approval. This NEVER sends on its own — it creates an approval card showing the exact From/To/Subject/body, and the message goes out only when the user approves that card. Say so plainly in your reply: tell them it's waiting for their approval, not that you sent it. Write the full final text in `body`; the user reads what you wrote, and editing it afterwards invalidates the approval. Requires an account connected with sending allowed — if the tool says none is, tell them Settings → Accounts & Keys → Google → Add account with \"allow sending\" ticked, and do NOT claim you can't email at all.",
      "input_schema": {"type": "object", "properties": {
          "to": {"type": "string", "description": "One address, or several separated by commas."},
          "subject": {"type": "string"},
@@ -1048,7 +1048,7 @@ _GOOGLE_NOT_CONNECTED_NOTE = (
     "{what} is built in but NOT CONNECTED on this machine yet (no OAuth token). "
     "This is a one-time connection, not a missing feature. Tell the user {what} is "
     "set up and ready to link, and OFFER to walk them through the one-time "
-    "connection — they authorize at /api/google/auth (or Settings -> Connectors). "
+    "connection — they authorize at /api/google/auth (or Settings -> Accounts & Keys). "
     "Do NOT tell them you can't access {reads}; say it just needs connecting."
 )
 
@@ -1081,7 +1081,7 @@ def _summarize_multi_account_errors(result):
                 "status": _st,
                 "error": ("This account's Google authorization has expired and "
                           "it was NOT read this turn - reconnect it in Settings "
-                          "-> Connectors.") if _st == "needs_reauth" else None}
+                          "-> Accounts & Keys.") if _st == "needs_reauth" else None}
     except Exception:
         pass
     for acc in (result.get("accounts") or []):
@@ -2677,7 +2677,7 @@ def _tool_list_sending_accounts(_inp):
         "can_send": bool(accounts),
         "note": ("" if accounts else
                  "No connected account has been granted permission to send. "
-                 "The user grants it at Settings → Connectors → Google → Add "
+                 "The user grants it at Settings → Accounts & Keys → Google → Add "
                  "account, with \"allow sending\" ticked. This is a "
                  "permission, not a bug — don't try another route."),
     }, default=str)
@@ -4918,12 +4918,12 @@ def _cc_check():
         if not _enabled:
             return False, (
                 "Computer control is turned off. Turn on Settings \u2192 Privacy & "
-                "Security \u2192 Computer Control, then press \"Grant for this "
+                "Approvals \u2192 Computer Control, then press \"Grant for this "
                 "session\"."
             )
         return False, (
             "Computer control is enabled, but has not been granted. Open "
-            "Settings \u2192 Privacy & Security \u2192 Computer Control and press "
+            "Settings \u2192 Privacy & Approvals \u2192 Computer Control and press "
             "\"Grant\". The grant then persists across restarts until you revoke it."
         )
     return True, None
@@ -8085,7 +8085,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     client = get_anthropic_client()
     if client is None:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Providers) or as an environment variable, then restart the server."
+            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → Accounts & Keys) or as an environment variable, then restart the server."
         )
 
     if pii_lookup is None:

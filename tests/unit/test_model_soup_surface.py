@@ -168,7 +168,11 @@ def test_the_card_is_rendered_by_the_intelligence_tab(html):
     body = html[html.index("function SettingsTabIntelligence("):]
     body = body[:body.index("\nfunction ", 10)]
     assert "E(ModelSoupCard" in body
-    assert "E(WeightsRows" in body
+    # Where each local model's weights live is a diagnostic: it renders in
+    # Settings > Advanced, beside the machine it describes.
+    diag = html[html.index("function IntelligenceDiagnostics("):]
+    diag = diag[:diag.index("\nfunction ", 10)]
+    assert "E(WeightsRows" in diag
     assert "function ModelSoupCard(" in html
 
 

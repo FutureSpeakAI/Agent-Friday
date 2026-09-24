@@ -1261,7 +1261,7 @@ def api_settings():
         # quietly rewrote his choice back to whatever fits would be the same
         # silent-override defect wearing different clothes. Where his choice
         # cannot be seated the plan records a refusal with its reason, which
-        # /api/residency/status and Settings -> Intelligence both surface.
+        # /api/residency/status and Settings -> Models both surface.
         if any(k in (new_settings or {}) for k in
                ('capability_routing', 'orchestrator_model', 'subagent_model')):
             def _replan_after_seat_change():
@@ -1574,7 +1574,7 @@ def analyze_file():
             events.append({
                 "kind": "vision_cloud",
                 "text": "👁 %s went to Google (Gemini) to be analysed. Switch "
-                        "to Local only in Settings → Intelligence to keep "
+                        "to Local only in Settings → Models to keep "
                         "uploads on this machine." % what,
                 "ts": _time.time(),
             })

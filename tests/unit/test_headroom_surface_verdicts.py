@@ -163,7 +163,10 @@ def test_measured_image_models_are_not_unknown_on_the_reference_card():
 # it is scanned through to the next top-level `function `, i.e. past the end
 # of SettingsTabIntelligence itself.
 _COMPONENT_START = "// ── LOCAL MODELS ON THIS MACHINE (headroom.md §8.2"
-_FN_START = "function SettingsTabIntelligence()"
+_FN_START = "function SettingsTabIntelligence("
+# The machine's own JSX now renders in Settings > Advanced, in the component
+# defined right after the tab; the scan runs through it.
+_DIAG_START = "function IntelligenceDiagnostics("
 
 
 def _settings_tab_intelligence_source() -> str:
@@ -171,7 +174,8 @@ def _settings_tab_intelligence_source() -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
     start = text.index(_COMPONENT_START)
     fn_start = text.index(_FN_START, start)
-    end = text.index("\nfunction ", fn_start + len(_FN_START))
+    diag_start = text.index(_DIAG_START, fn_start)
+    end = text.index("\nfunction ", diag_start + len(_DIAG_START))
     return text[start:end]
 
 

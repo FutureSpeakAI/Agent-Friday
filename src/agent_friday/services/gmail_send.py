@@ -293,7 +293,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     if not sendable:
         raise SendRefused(
             "no connected Google account has granted Friday permission to "
-            "send. Settings → Connectors → Google → Add account, with "
+            "send. Settings → Accounts & Keys → Google → Add account, with "
             "\"allow sending\" ticked. Nothing was queued.")
     if account_id:
         match = [a for a in sendable if a["id"] == account_id]

@@ -6,7 +6,7 @@ All configuration lives in `~/.friday/settings.json`. Settings can be updated vi
 
 ## API Keys
 
-Keys entered in **Settings → Providers** are stored encrypted in Friday's credential store (one file per provider under `~/.friday/providers/keys/`). Keys entered through the `friday setup` wizard are written in plaintext to `~/.friday/settings.json`, `~/.friday/config.yaml` and a `start.bat` launcher; prefer the Settings path for keys. Where each credential lives, and how it is protected, is stated in [SECURITY.md](../../SECURITY.md).
+Keys entered in **Settings → Accounts & Keys** are stored encrypted in Friday's credential store (one file per provider under `~/.friday/providers/keys/`). Keys entered through the `friday setup` wizard are written in plaintext to `~/.friday/settings.json`, `~/.friday/config.yaml` and a `start.bat` launcher; prefer the Settings path for keys. Where each credential lives, and how it is protected, is stated in [SECURITY.md](../../SECURITY.md).
 
 You can also supply keys as environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the stored credentials.
 
@@ -30,7 +30,7 @@ Each of the other built-in providers has its own env-var key — see [Providers]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `orchestrator_model` | string | `claude-sonnet-5` | Model for the main agent brain. Pick from Settings → Intelligence (catalog-driven via `GET /api/models`): Claude Sonnet 5 / Opus 5.5 / Opus 5 / Fable 5 / Haiku 4.5, GPT-4o family, or any installed Ollama model. Opus 4.8/4.7/4.6 and Sonnet 4.6 were removed from the shipped list and are no longer named here. |
+| `orchestrator_model` | string | `claude-sonnet-5` | Model for the main agent brain. Pick from Settings → Models (catalog-driven via `GET /api/models`): Claude Sonnet 5 / Opus 5.5 / Opus 5 / Fable 5 / Haiku 4.5, GPT-4o family, or any installed Ollama model. Opus 4.8/4.7/4.6 and Sonnet 4.6 were removed from the shipped list and are no longer named here. |
 
 ---
 
@@ -76,7 +76,7 @@ Settings under the `model_routing` key (top-level copies of these keys are ignor
 
 ## Providers
 
-Beyond the legacy single-slot `cloud_provider` path above, Friday ships a model-agnostic provider layer with 16 built-in providers, managed via the `/api/providers/*` routes and Settings → Providers.
+Beyond the legacy single-slot `cloud_provider` path above, Friday ships a model-agnostic provider layer with 16 built-in providers, managed via the `/api/providers/*` routes and Settings → Accounts & Keys.
 
 ### `providers` settings key
 

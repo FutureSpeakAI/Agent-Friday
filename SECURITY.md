@@ -38,8 +38,8 @@ There are three places a credential can live, and they are not equivalent.
 
 | Credential | Where it lives | Protection |
 |---|---|---|
-| Provider API keys entered in **Settings → Providers** | `~/.friday/providers/keys/<provider>.key` | Encrypted by `services/credential_store.py`: the vault key (Argon2id → AES-256-GCM) when a vault passphrase is set, otherwise Windows DPAPI, otherwise plaintext with a one-time warning and restricted file permissions. |
-| Provider API keys entered through the **`friday setup` wizard** (source checkout) | `~/.friday/settings.json`, `~/.friday/config.yaml`, and a `start.bat` launcher in the checkout | **Plaintext.** `start.bat` is gitignored and never shipped; the settings files live outside the repository. Treat these files as containing live secrets. Use Settings → Providers for the encrypted store. |
+| Provider API keys entered in **Settings → Accounts & Keys** | `~/.friday/providers/keys/<provider>.key` | Encrypted by `services/credential_store.py`: the vault key (Argon2id → AES-256-GCM) when a vault passphrase is set, otherwise Windows DPAPI, otherwise plaintext with a one-time warning and restricted file permissions. |
+| Provider API keys entered through the **`friday setup` wizard** (source checkout) | `~/.friday/settings.json`, `~/.friday/config.yaml`, and a `start.bat` launcher in the checkout | **Plaintext.** `start.bat` is gitignored and never shipped; the settings files live outside the repository. Treat these files as containing live secrets. Use Settings → Accounts & Keys for the encrypted store. |
 | The vault passphrase | The OS keychain and a DPAPI-wrapped file under `~/.friday/security/` | Never written to any launch script. `services/vault_passphrase.py` is the single resolver. |
 | Connected-account (Google, MCP) tokens | `~/.friday/` | Encrypted through the same `credential_store` mechanism. |
 | Governance HMAC key and Ed25519 attestation key | OS keychain via `keyring`, with a `0600` file fallback under `~/.friday/vault/` | The fallback is logged as a warning. |
