@@ -239,7 +239,10 @@ at the end of **every** background task, so it is a per-task cloud call nobody
 had counted. And it returned `GRADE: PARTIAL` when it *failed to run*, so a step
 that produced nothing at all was scored PARTIAL — the grader's own error
 becoming a judgement of the work, in a field people read as one. It now returns
-`GRADE: UNAVAILABLE` and says the output has not been assessed.
+`GRADE: UNAVAILABLE` and says the output has not been assessed. The evaluator
+now runs only on a local seat that is serving, and is skipped with a recorded
+reason when none is, so the question "should this call happen?" has the answer
+"never to the cloud".
 
 **The check to apply anywhere a cloud call is made:** find the user's policy
 input, not the payload's. If the code path cannot name which setting permits

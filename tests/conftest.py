@@ -299,6 +299,24 @@ def _fresh_swr_cache():
     swr_cache.invalidate("")
 
 
+@pytest.fixture(autouse=True)
+def _no_local_seat_is_serving(monkeypatch):
+    """By default, no local seat is serving.
+
+    `scheduler._resolve_local_seat` asks the machine's own model servers what
+    is running, and the background task worker uses it to pick the seat that
+    grades every task. Left real, any test that runs `_task_worker` would probe
+    the developer's live daemon and send it a grading prompt. A test that needs
+    a serving seat patches `_resolve_local_seat` itself; that patch is applied
+    after this one and wins.
+    """
+    if ("agent_friday.services.agent" in sys.modules
+            or "agent_friday.services.scheduler" in sys.modules):
+        from agent_friday.services import scheduler
+        monkeypatch.setattr(scheduler, "_resolve_local_seat", lambda: None)
+    yield
+
+
 def _settings_file() -> Path:
     """The settings.json the app reads: core's own path once core is loaded."""
     core = sys.modules.get("agent_friday.core")

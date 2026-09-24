@@ -52,13 +52,6 @@ an issue.
   only then records the retry count, so a step that fails before that write
   reads a count of zero and can retry past its budget. (The false-complete
   half of this entry is fixed: an exhausted retry now flips the status.)
-- **The worker's quality evaluator has never run.** It imports
-  `_vault_local_only` from `agent_friday.core`, a name that lives in
-  `services/model_router.py`, so the import fails and the evaluator fails
-  closed on every task. The task journal records this as a `decision` at
-  point `evaluate` with the ImportError as the reason. Repairing it
-  re-enables one cloud call per background task, so it awaits the
-  maintainer's decision rather than a silent fix.
 - **Chain seat overrides are advisory**, not enforced against the capability
   router.
 - **`print()` output from the chat path may not reach the log** when the server
