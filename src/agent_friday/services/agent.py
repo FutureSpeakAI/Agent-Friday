@@ -602,7 +602,7 @@ CLAUDE_TOOLS = [
                       "properties": {"model": {"type": "string",
                                                "description": "The model the user named, in their words."}},
                       "required": ["model"]}},
-    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: home, career, wiki, studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
+    {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: home, career, knowledge (the wiki's pages and its graph), studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces or the liquid UI. Use whenever he says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
      "input_schema": {"type": "object", "properties": {
@@ -2336,8 +2336,11 @@ _WORKSPACE_ALIASES = {
     # to catch.
     'career': 'career', 'jobs': 'career', 'job search': 'career',
     'job pipeline': 'career', 'careers': 'career', 'job': 'career', 'work': 'career',
-    'wiki': 'wiki', 'notes': 'wiki', 'knowledge': 'wiki', 'knowledge base': 'wiki',
-    'knowledgebase': 'wiki', 'second brain': 'wiki',
+    # The wiki's pages and the knowledge graph are one workspace, Knowledge.
+    'knowledge': 'knowledge', 'wiki': 'knowledge', 'notes': 'knowledge',
+    'knowledge base': 'knowledge', 'knowledgebase': 'knowledge',
+    'second brain': 'knowledge', 'knowledge graph': 'knowledge',
+    'galaxy': 'knowledge', 'wiki pages': 'knowledge',
     'studio': 'studio', 'creations': 'studio', 'gallery': 'studio',
     'create': 'studio', 'art': 'studio', 'creative': 'studio',
     'trust': 'trust', 'trust graph': 'trust', 'reputation': 'trust', 'trust score': 'trust',
@@ -2376,7 +2379,7 @@ _WORKSPACE_ALIASES = {
 
 # Display labels for the confirmation message (a few don't title-case cleanly).
 _WORKSPACE_LABELS = {
-    'home': 'Home', 'career': 'Career', 'wiki': 'Wiki', 'studio': 'Studio',
+    'home': 'Home', 'career': 'Career', 'knowledge': 'Knowledge', 'studio': 'Studio',
     'trust': 'Trust', 'system': 'System', 'news': 'News', 'draft': 'Draft',
     'code': 'Code', 'finance': 'Finance', 'health': 'Health',
     'contacts': 'Contacts', 'content': 'Content', 'messages': 'Messages',
@@ -3036,7 +3039,7 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
         n = len(wiki_calls)
         return (f"Reviewed the session and proposed {n} wiki update"
                 f"{'s' if n != 1 else ''} for your approval "
-                f"(`{files}`). Approve or dismiss them in the Wiki workspace.")
+                f"(`{files}`). Approve or dismiss them in Knowledge, on its Pages view.")
 
     if trace:
         # Summarize what the agent actually did, even with no closing prose.
@@ -4254,7 +4257,7 @@ CLAUDE_TOOLS.append({
 
 
 def _tool_propose_wiki_update(inp):
-    """Queue a wiki update as pending — the user approves it in the Wiki workspace."""
+    """Queue a wiki update as pending — the user approves it in Knowledge (Pages)."""
     inp = inp or {}
     file = (inp.get("file") or "").strip()
     new_value = inp.get("new_value") or ""
@@ -4265,7 +4268,7 @@ def _tool_propose_wiki_update(inp):
     if _safe_wiki_path(file) is None:
         return f"propose_wiki_update error: invalid wiki path {file!r} (must stay inside ~/wiki/)."
     pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason)
-    return f"Wiki update proposed (id={pid}) — awaiting your approval in the Wiki workspace."
+    return f"Wiki update proposed (id={pid}) — awaiting your approval in Knowledge, on its Pages view."
 
 
 def _tool_correct_wiki(inp):
@@ -4308,7 +4311,7 @@ def _tool_correct_wiki(inp):
 
 CLAUDE_TOOLS.append({
     "name": "propose_wiki_update",
-    "description": "Propose an update to the user's personal wiki when you learn new information about them. The update is queued as PENDING and the user approves it from the Wiki workspace — it is NOT applied immediately. Use this whenever you learn a new fact about the user, their work, family, preferences, or projects that should outlive the current conversation.",
+    "description": "Propose an update to the user's personal wiki when you learn new information about them. The update is queued as PENDING and the user approves it from the Knowledge workspace — it is NOT applied immediately. Use this whenever you learn a new fact about the user, their work, family, preferences, or projects that should outlive the current conversation.",
     "input_schema": {
         "type": "object",
         "properties": {

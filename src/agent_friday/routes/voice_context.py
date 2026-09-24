@@ -64,7 +64,7 @@ voice_context_bp = Blueprint('voice_context', __name__)
 WORKSPACE_VOICE_LABELS = {
     'home': 'Home', 'news': 'News', 'calendar': 'Calendar',
     'messages': 'Comms Center', 'career': 'Career', 'futurespeak': 'FutureSpeak',
-    'wiki': 'Wiki', 'trust': 'Trust', 'finance': 'Finance', 'health': 'Health',
+    'knowledge': 'Knowledge', 'trust': 'Trust', 'finance': 'Finance', 'health': 'Health',
     'family': 'Family', 'contacts': 'Contacts',
     'studio': 'Studio', 'code': 'Code', 'content': 'Content', 'system': 'System',
 }

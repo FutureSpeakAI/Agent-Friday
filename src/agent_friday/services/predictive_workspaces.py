@@ -294,7 +294,7 @@ def _warm_workspace(ws):
                     swr_cache.get("repos.scan:" + str(PROJECTS_DIR),
                                   lambda: fn(PROJECTS_DIR), fresh_for=20)
                     return True
-        elif ws == "wiki":
+        elif ws in ("knowledge", "wiki"):   # "wiki" is older usage history
             fn = _resolve_warmer(
                 ("agent_friday.services.model_router", "_generate_wiki_indexes"),
             )

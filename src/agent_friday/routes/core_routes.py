@@ -21,6 +21,7 @@ import difflib as _difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 from collections import deque as _deque
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
@@ -87,6 +88,9 @@ def serve_ui():
 # before anything renders, so the page draws that one workspace full-tab and
 # never starts the holographic scene. Settings stays in the desktop.
 _WS_ID = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
+# Workspaces folded into another keep their old tab address. /w/wiki is the
+# Knowledge workspace on its Pages view, still pointing at the same page.
+_WS_TAB_ALIASES = {'wiki': ('knowledge', {'view': 'pages'})}
 
 
 #: Workspaces that used to exist. Their URLs may be bookmarked, linked from an
@@ -108,6 +112,12 @@ def serve_workspace_tab(ws_id):
         return redirect(('/w/' + target) if target else '/')
     if ws_id == 'settings':
         return redirect('/?workspace=settings')
+    if ws_id in _WS_TAB_ALIASES:
+        target, defaults = _WS_TAB_ALIASES[ws_id]
+        args = request.args.to_dict(flat=True)
+        for k, v in defaults.items():
+            args.setdefault(k, v)
+        return redirect('/w/' + target + ('?' + urlencode(args) if args else ''))
     return _serve_index(
         f'<script>window.__FRIDAY_STANDALONE__="{ws_id}";'
         'document.documentElement.classList.add("ws-standalone");</script>')

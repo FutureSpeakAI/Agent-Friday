@@ -2265,5 +2265,103 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .cal-tomorrow-card.career { --ev:var(--cal-career); }
         .cal-tt-time { font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa1b0; flex-shrink:0; width:62px; }
+        /* ── Knowledge: the wiki's pages and its graph, one workspace ──────
+           .kw-root is a flex column: the header rows, the body (flex: 1;
+           min-height: 0) and the bottom bar. The bar therefore stays in view
+           at any window shape; nothing below the body can be pushed out.
+           Each host gives the root a real height: a desktop window body, the
+           standalone tab (/w/knowledge), and fullscreen (the Tour). */
+        .kw-root { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; box-sizing: border-box; color: #dbe6f5; font-family: Inter, system-ui, sans-serif; }
+        .kw-root:fullscreen { height: 100vh; width: 100vw; padding: 12px; background: #070b14; }
+        .fwin-body:has(> .ws-custom-root > .kw-root) { overflow: hidden; }
+        .fwin-body > .ws-custom-root:has(> .kw-root) { height: 100%; }
+        .ws-tab:has(.kw-root) { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+        .ws-tab:has(.kw-root) .ws-tab-body { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 12px; }
+        .ws-tab-body > .kw-root { flex: 1; height: auto; }
+        .kw-head { flex-shrink: 0; display: flex; gap: 8px; align-items: center; }
+        .kw-search-wrap { flex: 1; min-width: 160px; position: relative; display: flex; }
+        .kw-search { flex: 1; background: rgba(255,255,255,0.04); border: 1px solid rgba(170,120,255,0.28); border-radius: 7px; padding: 7px 30px 7px 11px; color: #e6eefc; font-size: 12.5px; outline: none; font-family: inherit; }
+        .kw-search:focus { border-color: rgba(0,212,255,0.55); }
+        .kw-x { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #8fa8c8; cursor: pointer; font-size: 12px; }
+        .kw-views { display: flex; border: 1px solid rgba(0,212,255,0.25); border-radius: 7px; overflow: hidden; flex-shrink: 0; }
+        .kw-view { background: transparent; border: none; color: #9fb3cf; font-size: 12px; padding: 6px 13px; cursor: pointer; font-family: inherit; }
+        .kw-view + .kw-view { border-left: 1px solid rgba(0,212,255,0.18); }
+        .kw-view.on { background: rgba(0,212,255,0.16); color: #dff7ff; }
+        .kw-body { flex: 1; min-height: 0; display: flex; gap: 8px; }
+        .kw-body.kw-stack { flex-direction: column; }
+        .kw-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+        .kw-pane.kw-hidden { display: none; }
+        .kw-graph { flex: 1.25 1 0; }
+        .kw-pages { flex: 1 1 0; border: 1px solid rgba(0,212,255,0.14); border-radius: 8px; overflow: hidden; background: rgba(6,10,18,0.55); }
+        .kw-body.kw-stack .kw-graph { flex: 1.1 1 0; }
+        .kw-body.kw-stack .kw-pages { flex: 1 1 0; }
+        .kw-pages { container-type: inline-size; }
+        /* The graph canvas never sizes its own box: absolutely placed, it
+           follows the space the flex layout gives the scene. */
+        .kw-scene > canvas { position: absolute; inset: 0; }
+        .kw-bar { flex-shrink: 0; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.22); border-radius: 7px; background: rgba(0,212,255,0.05); font-size: 12px; overflow: hidden; white-space: nowrap; }
+        .kw-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .kw-crumb b { color: #7fe3ff; font-weight: 600; }
+        .kw-crumb-sec { color: #8fa8c8; }
+        .kw-crumb-link { background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
+        .kw-crumb-link:hover { color: #00d4ff; text-decoration: underline; }
+        .kw-counts, .kw-hint { overflow: hidden; text-overflow: ellipsis; }
+        .kw-note { color: #ffd28a; overflow: hidden; text-overflow: ellipsis; }
+        .kw-sp { flex: 1; }
+        .kw-dim { color: #8fa3bf; }
+        .kw-small { font-size: 11.5px; }
+        .kw-mono { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+        .kw-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; color: #d6e2f3; font-size: 12px; padding: 4px 10px; cursor: pointer; white-space: nowrap; font-family: inherit; }
+        .kw-btn:hover:not(:disabled) { border-color: rgba(0,212,255,0.5); color: #fff; }
+        .kw-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .kw-go { color: #7dffc0; border-color: rgba(0,255,128,0.35); }
+        .kw-danger { color: #ff8fb0; border-color: rgba(255,0,128,0.35); }
+        .kw-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+        .kw-end { justify-content: flex-end; }
+        .kw-pages-inner { flex: 1; min-height: 0; display: flex; }
+        .kw-side { width: 230px; flex-shrink: 0; overflow-y: auto; padding: 10px; border-right: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 4px; }
+        .kw-side-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+        .kw-create { display: flex; flex-direction: column; gap: 5px; padding: 8px; border: 1px solid rgba(0,255,128,0.22); border-radius: 7px; margin-bottom: 6px; }
+        .kw-create input, .kw-create select, .kw-modal-box input { background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.14); border-radius: 5px; color: #e6eefc; font-size: 12px; padding: 5px 8px; font-family: inherit; outline: none; }
+        .kw-group { margin-top: 6px; }
+        .kw-group-h { font-size: 11.5px; font-weight: 600; color: #b69cff; margin-bottom: 2px; }
+        .kw-sec { display: flex; align-items: center; }
+        .kw-sec.on .kw-sec-t { color: #7fe3ff; }
+        .kw-sec-t { flex: 1; text-align: left; background: none; border: none; color: #9fdcff; font-size: 12px; font-weight: 600; padding: 3px 0; cursor: pointer; font-family: inherit; }
+        .kw-sec-g { background: none; border: none; color: #8fa8c8; cursor: pointer; font-size: 13px; padding: 0 4px; }
+        .kw-sec-g:hover { color: #00d4ff; }
+        .kw-linkrow { display: block; width: 100%; text-align: left; background: none; border: none; color: #aebbd0; font-size: 12px; padding: 2px 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; }
+        .kw-linkrow:hover:not(:disabled), .kw-linkrow.on { color: #00d4ff; }
+        .kw-linkrow:disabled { cursor: default; opacity: 0.6; }
+        .kw-file { padding-left: 14px; }
+        .kw-pending { border: 1px solid rgba(245,158,11,0.3); border-radius: 7px; padding: 6px 8px; background: rgba(245,158,11,0.05); }
+        .kw-pending-h { background: none; border: none; color: #f5b54a; font-size: 12px; font-weight: 600; cursor: pointer; padding: 0; font-family: inherit; }
+        .kw-pending-item { border-top: 1px solid rgba(245,158,11,0.15); margin-top: 6px; padding-top: 6px; }
+        .kw-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 4px; }
+        .kw-diff-old, .kw-diff-new { font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: pre-wrap; max-height: 140px; overflow-y: auto; border-radius: 4px; padding: 5px; }
+        .kw-diff-old { background: rgba(255,0,128,0.06); border: 1px solid rgba(255,0,128,0.18); color: #ffb0c8; }
+        .kw-diff-new { background: rgba(0,255,128,0.06); border: 1px solid rgba(0,255,128,0.18); color: #b0ffc8; }
+        .kw-reader { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+        .kw-toast { font-size: 12px; color: #7fe3ff; }
+        .kw-results { border: 1px solid rgba(0,212,255,0.2); border-radius: 7px; padding: 8px 10px; background: rgba(0,212,255,0.03); max-height: 42%; overflow-y: auto; flex-shrink: 0; }
+        .kw-results-h { font-size: 12px; font-weight: 600; color: #7fe3ff; margin-bottom: 4px; }
+        .kw-hit { display: block; width: 100%; text-align: left; background: none; border: none; border-top: 1px solid rgba(255,255,255,0.05); padding: 5px 0; cursor: pointer; color: inherit; font-family: inherit; }
+        .kw-hit:hover .kw-hit-p { color: #00d4ff; }
+        .kw-hit-p { font-size: 12px; color: #cfe6ff; }
+        .kw-hit-s { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9fb0c6; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kw-empty { color: #b8c7dc; font-size: 13px; display: flex; flex-direction: column; gap: 6px; padding: 18px 4px; }
+        .kw-doc { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+        .kw-doc-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .kw-locked { border: 1px solid rgba(245,158,11,0.35); background: rgba(245,158,11,0.06); color: #ffd699; border-radius: 7px; padding: 8px 10px; font-size: 12px; }
+        .kw-editor { min-height: 320px; flex: 1; width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.35); color: #e6eefc; border: 1px solid rgba(0,212,255,0.25); border-radius: 7px; padding: 10px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; resize: vertical; outline: none; }
+        .kw-doc-body a.kw-link { color: #9fdcff; text-decoration: underline dotted; cursor: pointer; }
+        .kw-links { display: flex; gap: 14px; flex-wrap: wrap; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 8px; }
+        .kw-links-col { flex: 1 1 180px; min-width: 0; }
+        .kw-links-h { font-size: 12px; font-weight: 600; color: #b69cff; margin-bottom: 3px; }
+        .kw-modal { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; }
+        .kw-modal-box { width: min(440px, 90vw); background: rgba(15,5,15,0.97); border: 1px solid rgba(255,0,128,0.45); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 10px; color: #e6eefc; }
+        .kw-modal-h { font-weight: 700; color: #ff6ba8; }
+        @container (max-width: 620px) { .kw-side { width: 160px; } .kw-reader { padding: 10px 12px; } }
+        @media (max-width: 700px) { .kw-view { padding: 6px 9px; } }
     </style>
 </head>

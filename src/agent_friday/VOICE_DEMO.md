@@ -96,7 +96,9 @@ available; the rest you can switch on in Settings.
 - **Calendar** — a visual timeline with a live now-line, natural-language
   quick-add, conflict detection, and prep cards ahead of meetings.
 - **Contacts** — people intelligence backed by the Trust Graph.
-- **Wiki** — a living knowledge base of everything you and I learn together.
+- **Knowledge** — a living knowledge base of everything you and I learn
+  together: read and edit its pages, or explore them as a galaxy of how they
+  connect.
 - **Studio** — my creative suite: a Gallery of everything I've made, Generate
   (real images and video), Music (Lyria), Timeline (FFmpeg editing and
   platform exports), Production (a full logline-to-film pipeline with approval

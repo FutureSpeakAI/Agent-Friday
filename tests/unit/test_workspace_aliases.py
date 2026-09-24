@@ -62,6 +62,16 @@ def test_marketplace_is_navigable():
     assert _resolve_workspace('skill store') == 'marketplace'
 
 
+def test_the_wiki_is_opened_as_knowledge():
+    # One workspace holds the wiki's pages and the knowledge graph; the old
+    # name and the ways people say it all land there.
+    for spoken in ('wiki', 'the wiki', 'knowledge', 'knowledge base',
+                   'knowledge graph', 'galaxy', 'notes', 'second brain'):
+        assert _resolve_workspace(spoken) == 'knowledge', spoken
+    assert 'wiki' not in DOCK_IDS
+    assert _WORKSPACE_LABELS['knowledge'] == 'Knowledge'
+
+
 def test_every_alias_targets_a_real_dock_id():
     bogus = {v for v in _WORKSPACE_ALIASES.values()} - DOCK_IDS
     assert not bogus, f"aliases target nonexistent workspaces: {bogus}"

@@ -3052,6 +3052,104 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .cal-tomorrow-card.career { --ev:var(--cal-career); }
         .cal-tt-time { font-family:'JetBrains Mono',monospace; font-size:11px; color:#9aa1b0; flex-shrink:0; width:62px; }
+        /* ── Knowledge: the wiki's pages and its graph, one workspace ──────
+           .kw-root is a flex column: the header rows, the body (flex: 1;
+           min-height: 0) and the bottom bar. The bar therefore stays in view
+           at any window shape; nothing below the body can be pushed out.
+           Each host gives the root a real height: a desktop window body, the
+           standalone tab (/w/knowledge), and fullscreen (the Tour). */
+        .kw-root { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; box-sizing: border-box; color: #dbe6f5; font-family: Inter, system-ui, sans-serif; }
+        .kw-root:fullscreen { height: 100vh; width: 100vw; padding: 12px; background: #070b14; }
+        .fwin-body:has(> .ws-custom-root > .kw-root) { overflow: hidden; }
+        .fwin-body > .ws-custom-root:has(> .kw-root) { height: 100%; }
+        .ws-tab:has(.kw-root) { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+        .ws-tab:has(.kw-root) .ws-tab-body { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 12px; }
+        .ws-tab-body > .kw-root { flex: 1; height: auto; }
+        .kw-head { flex-shrink: 0; display: flex; gap: 8px; align-items: center; }
+        .kw-search-wrap { flex: 1; min-width: 160px; position: relative; display: flex; }
+        .kw-search { flex: 1; background: rgba(255,255,255,0.04); border: 1px solid rgba(170,120,255,0.28); border-radius: 7px; padding: 7px 30px 7px 11px; color: #e6eefc; font-size: 12.5px; outline: none; font-family: inherit; }
+        .kw-search:focus { border-color: rgba(0,212,255,0.55); }
+        .kw-x { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #8fa8c8; cursor: pointer; font-size: 12px; }
+        .kw-views { display: flex; border: 1px solid rgba(0,212,255,0.25); border-radius: 7px; overflow: hidden; flex-shrink: 0; }
+        .kw-view { background: transparent; border: none; color: #9fb3cf; font-size: 12px; padding: 6px 13px; cursor: pointer; font-family: inherit; }
+        .kw-view + .kw-view { border-left: 1px solid rgba(0,212,255,0.18); }
+        .kw-view.on { background: rgba(0,212,255,0.16); color: #dff7ff; }
+        .kw-body { flex: 1; min-height: 0; display: flex; gap: 8px; }
+        .kw-body.kw-stack { flex-direction: column; }
+        .kw-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+        .kw-pane.kw-hidden { display: none; }
+        .kw-graph { flex: 1.25 1 0; }
+        .kw-pages { flex: 1 1 0; border: 1px solid rgba(0,212,255,0.14); border-radius: 8px; overflow: hidden; background: rgba(6,10,18,0.55); }
+        .kw-body.kw-stack .kw-graph { flex: 1.1 1 0; }
+        .kw-body.kw-stack .kw-pages { flex: 1 1 0; }
+        .kw-pages { container-type: inline-size; }
+        /* The graph canvas never sizes its own box: absolutely placed, it
+           follows the space the flex layout gives the scene. */
+        .kw-scene > canvas { position: absolute; inset: 0; }
+        .kw-bar { flex-shrink: 0; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 5px 10px; border: 1px solid rgba(0,212,255,0.22); border-radius: 7px; background: rgba(0,212,255,0.05); font-size: 12px; overflow: hidden; white-space: nowrap; }
+        .kw-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .kw-crumb b { color: #7fe3ff; font-weight: 600; }
+        .kw-crumb-sec { color: #8fa8c8; }
+        .kw-crumb-link { background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
+        .kw-crumb-link:hover { color: #00d4ff; text-decoration: underline; }
+        .kw-counts, .kw-hint { overflow: hidden; text-overflow: ellipsis; }
+        .kw-note { color: #ffd28a; overflow: hidden; text-overflow: ellipsis; }
+        .kw-sp { flex: 1; }
+        .kw-dim { color: #8fa3bf; }
+        .kw-small { font-size: 11.5px; }
+        .kw-mono { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+        .kw-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; color: #d6e2f3; font-size: 12px; padding: 4px 10px; cursor: pointer; white-space: nowrap; font-family: inherit; }
+        .kw-btn:hover:not(:disabled) { border-color: rgba(0,212,255,0.5); color: #fff; }
+        .kw-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .kw-go { color: #7dffc0; border-color: rgba(0,255,128,0.35); }
+        .kw-danger { color: #ff8fb0; border-color: rgba(255,0,128,0.35); }
+        .kw-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+        .kw-end { justify-content: flex-end; }
+        .kw-pages-inner { flex: 1; min-height: 0; display: flex; }
+        .kw-side { width: 230px; flex-shrink: 0; overflow-y: auto; padding: 10px; border-right: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 4px; }
+        .kw-side-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+        .kw-create { display: flex; flex-direction: column; gap: 5px; padding: 8px; border: 1px solid rgba(0,255,128,0.22); border-radius: 7px; margin-bottom: 6px; }
+        .kw-create input, .kw-create select, .kw-modal-box input { background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.14); border-radius: 5px; color: #e6eefc; font-size: 12px; padding: 5px 8px; font-family: inherit; outline: none; }
+        .kw-group { margin-top: 6px; }
+        .kw-group-h { font-size: 11.5px; font-weight: 600; color: #b69cff; margin-bottom: 2px; }
+        .kw-sec { display: flex; align-items: center; }
+        .kw-sec.on .kw-sec-t { color: #7fe3ff; }
+        .kw-sec-t { flex: 1; text-align: left; background: none; border: none; color: #9fdcff; font-size: 12px; font-weight: 600; padding: 3px 0; cursor: pointer; font-family: inherit; }
+        .kw-sec-g { background: none; border: none; color: #8fa8c8; cursor: pointer; font-size: 13px; padding: 0 4px; }
+        .kw-sec-g:hover { color: #00d4ff; }
+        .kw-linkrow { display: block; width: 100%; text-align: left; background: none; border: none; color: #aebbd0; font-size: 12px; padding: 2px 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; }
+        .kw-linkrow:hover:not(:disabled), .kw-linkrow.on { color: #00d4ff; }
+        .kw-linkrow:disabled { cursor: default; opacity: 0.6; }
+        .kw-file { padding-left: 14px; }
+        .kw-pending { border: 1px solid rgba(245,158,11,0.3); border-radius: 7px; padding: 6px 8px; background: rgba(245,158,11,0.05); }
+        .kw-pending-h { background: none; border: none; color: #f5b54a; font-size: 12px; font-weight: 600; cursor: pointer; padding: 0; font-family: inherit; }
+        .kw-pending-item { border-top: 1px solid rgba(245,158,11,0.15); margin-top: 6px; padding-top: 6px; }
+        .kw-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 4px; }
+        .kw-diff-old, .kw-diff-new { font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: pre-wrap; max-height: 140px; overflow-y: auto; border-radius: 4px; padding: 5px; }
+        .kw-diff-old { background: rgba(255,0,128,0.06); border: 1px solid rgba(255,0,128,0.18); color: #ffb0c8; }
+        .kw-diff-new { background: rgba(0,255,128,0.06); border: 1px solid rgba(0,255,128,0.18); color: #b0ffc8; }
+        .kw-reader { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+        .kw-toast { font-size: 12px; color: #7fe3ff; }
+        .kw-results { border: 1px solid rgba(0,212,255,0.2); border-radius: 7px; padding: 8px 10px; background: rgba(0,212,255,0.03); max-height: 42%; overflow-y: auto; flex-shrink: 0; }
+        .kw-results-h { font-size: 12px; font-weight: 600; color: #7fe3ff; margin-bottom: 4px; }
+        .kw-hit { display: block; width: 100%; text-align: left; background: none; border: none; border-top: 1px solid rgba(255,255,255,0.05); padding: 5px 0; cursor: pointer; color: inherit; font-family: inherit; }
+        .kw-hit:hover .kw-hit-p { color: #00d4ff; }
+        .kw-hit-p { font-size: 12px; color: #cfe6ff; }
+        .kw-hit-s { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9fb0c6; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kw-empty { color: #b8c7dc; font-size: 13px; display: flex; flex-direction: column; gap: 6px; padding: 18px 4px; }
+        .kw-doc { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+        .kw-doc-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .kw-locked { border: 1px solid rgba(245,158,11,0.35); background: rgba(245,158,11,0.06); color: #ffd699; border-radius: 7px; padding: 8px 10px; font-size: 12px; }
+        .kw-editor { min-height: 320px; flex: 1; width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.35); color: #e6eefc; border: 1px solid rgba(0,212,255,0.25); border-radius: 7px; padding: 10px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; resize: vertical; outline: none; }
+        .kw-doc-body a.kw-link { color: #9fdcff; text-decoration: underline dotted; cursor: pointer; }
+        .kw-links { display: flex; gap: 14px; flex-wrap: wrap; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 8px; }
+        .kw-links-col { flex: 1 1 180px; min-width: 0; }
+        .kw-links-h { font-size: 12px; font-weight: 600; color: #b69cff; margin-bottom: 3px; }
+        .kw-modal { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; }
+        .kw-modal-box { width: min(440px, 90vw); background: rgba(15,5,15,0.97); border: 1px solid rgba(255,0,128,0.45); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 10px; color: #e6eefc; }
+        .kw-modal-h { font-weight: 700; color: #ff6ba8; }
+        @container (max-width: 620px) { .kw-side { width: 160px; } .kw-reader { padding: 10px 12px; } }
+        @media (max-width: 700px) { .kw-view { padding: 6px 9px; } }
     </style>
 </head>
 
@@ -5639,7 +5737,7 @@ const FRIDAY_PREFETCH_URLS = {
   calendar: ['/api/calendar/today', '/api/calendar/week', '/api/calendar/tomorrow'],
   code: ['/api/repos/scan'],
   system: ['/api/system'],
-  wiki: ['/api/wiki/structure'],
+  knowledge: ['/api/wiki/structure'],
   contacts: ['/api/contacts'],
   trust: ['/api/trust'],
   news: ['/api/news/clusters']
@@ -5649,7 +5747,7 @@ function fridayPrefetchPanels() {
     timeout: 4000
   }) : setTimeout(cb, 300);
   return apiFetch('/api/workspace/predictions?top=4').then(r => r.json()).catch(() => ({})).then(d => {
-    const predicted = (d && d.predictions || []).map(p => p.workspace);
+    const predicted = (d && d.predictions || []).map(p => fridayWorkspaceId(p.workspace));
     // News last: its first build is a minute-long feed crawl.
     const order = predicted.filter(w => w !== 'news').concat(['home', 'calendar', 'code', 'system', 'news']);
     const urls = [];
@@ -5738,15 +5836,13 @@ const DOCK_GROUPS = [{
 }, {
   name: 'System',
   items: [{
-    id: 'wiki',
-    ico: '📚',
-    label: 'Wiki',
-    core: true
-  }, {
+    // The wiki's pages and the knowledge graph are one workspace. `aka` keeps
+    // the old name findable (Ctrl+K "wiki"); WS_ALIASES keeps it openable.
     id: 'knowledge',
     ico: '🌌',
     label: 'Knowledge',
-    core: true
+    core: true,
+    aka: ['wiki', 'pages', 'notes', 'knowledge graph', 'galaxy']
   }, {
     id: 'trust',
     ico: '🔗',
@@ -5798,9 +5894,22 @@ const WS_GROUP_OF = DOCK_GROUPS.reduce((m, g) => (g.items.forEach(w => { m[w.id]
 // setting asking a question they did not ask to be asked.
 function dockArrangement(custom, showAll) {
   const cust = (custom && typeof custom === 'object') ? custom : {};
-  const rawOrder = Array.isArray(cust.order) ? cust.order : [];
-  const hidden = new Set(Array.isArray(cust.hidden) ? cust.hidden : []);
-  const configured = rawOrder.length > 0 || hidden.size > 0;
+  const savedOrder = Array.isArray(cust.order) ? cust.order : [];
+  const savedHidden = Array.isArray(cust.hidden) ? cust.hidden : [];
+  // An arrangement saved before a workspace was folded into another still
+  // names the old id. The merged icon takes the earlier of the two places,
+  // and stays visible if either was visible: hiding the old Wiki must not
+  // hide the Knowledge that now holds its pages. (A save made after the
+  // merge never names the old id, so its choices apply as saved.)
+  const rawOrder = savedOrder.map(fridayWorkspaceId);
+  const hidden = new Set(savedHidden.map(fridayWorkspaceId));
+  Object.keys(WS_ALIASES).forEach(old => {
+    const nu = WS_ALIASES[old].workspace;
+    const named = savedOrder.indexOf(old) >= 0 || savedHidden.indexOf(old) >= 0;
+    const bothHidden = savedHidden.indexOf(old) >= 0 && savedHidden.indexOf(nu) >= 0;
+    if (named && !bothHidden) hidden.delete(nu);
+  });
+  const configured = savedOrder.length > 0 || savedHidden.length > 0;
 
   // Explicit order first, real ids only, then every workspace the order never
   // mentioned in its registry position. A workspace added by a later version of
@@ -5898,8 +6007,30 @@ function useConnByWs() {
 // opened workspace — mounted by the very click that fired the event — picks up
 // the stashed target on its first render, so the "open window then apply target"
 // race is handled either way (already-open → event; just-opened → stash).
+// Workspace ids folded into another workspace. A saved dock, an old tab or
+// link, a chat or voice command, or a habit (Ctrl+K "wiki") that names the old
+// id lands on the workspace that now holds it, on the view the old id showed.
+const WS_ALIASES = {
+  wiki: {
+    workspace: 'knowledge',
+    view: 'pages'
+  }
+};
+function fridayWorkspaceId(id) {
+  const a = WS_ALIASES[id];
+  return a ? a.workspace : id;
+}
+function fridayResolveTarget(t) {
+  if (!t || !t.workspace || !WS_ALIASES[t.workspace]) return t;
+  const a = WS_ALIASES[t.workspace];
+  return Object.assign({}, t, {
+    workspace: a.workspace,
+    view: t.view || a.view
+  });
+}
 function fridayNavigate(target) {
   if (!target || !target.workspace) return;
+  target = fridayResolveTarget(target);
   window.__fridayNavTarget = target;
   try {
     window.dispatchEvent(new CustomEvent('friday-nav', {
@@ -6195,10 +6326,12 @@ function fridayFallbackMd(md) {
 // #:~:text= fragment highlights the cited passage on the page); the rest render
 // as labelled chips with the full source string in the tooltip.
 function fridayCitationize(src) {
-  if (!src || src.indexOf('[') < 0) return src;
+  if (!src || src.indexOf('[') < 0 && src.indexOf('💬') < 0) return src;
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const base = 'display:inline-block;font-size:0.82em;line-height:1.45;padding:0 5px;margin:0 1px;border-radius:4px;font-family:JetBrains Mono,monospace;vertical-align:baseline;white-space:nowrap;';
-  const chip = (bg, bd, fg, label, title) => '<span class="friday-cite" title="' + esc(title) + '" style="' + base + 'background:' + bg + ';border:1px solid ' + bd + ';color:' + fg + ';cursor:help;">' + esc(label) + '</span>';
+  // `attrs` makes a chip a way in: [wiki:page] opens that page in Knowledge,
+  // a 💬 memory or conversation chip opens Knowledge searching for it.
+  const chip = (bg, bd, fg, label, title, attrs) => '<span class="friday-cite" title="' + esc(title) + '"' + (attrs || '') + ' style="' + base + 'background:' + bg + ';border:1px solid ' + bd + ';color:' + fg + ';cursor:' + (attrs ? 'pointer' : 'help') + ';">' + esc(label) + '</span>';
   let out = src;
   // FR-3 provenance: the server rewrites any [web:URL] citation NOT backed by
   // an executed tool result this turn into [unverified-web:URL]. Render it
@@ -6219,27 +6352,68 @@ function fridayCitationize(src) {
     } catch (e) {}
     return '<a href="' + esc(url) + '" target="_blank" rel="noopener" class="friday-cite" title="' + esc(url) + '" style="' + base + 'background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.4);color:#00d4ff;text-decoration:none;">🔗 ' + esc(host) + '</a>';
   });
-  out = out.replace(/\[wiki:([^\]]+)\]/g, (_, p) => chip('rgba(124,58,237,0.14)', 'rgba(124,58,237,0.45)', '#b794f6', '📄 ' + p.trim(), 'Wiki · ' + p.trim()));
+  out = out.replace(/\[wiki:([^\]]+)\]/g, (_, p) => chip('rgba(124,58,237,0.14)', 'rgba(124,58,237,0.45)', '#b794f6', '📄 ' + p.trim(), 'Open in Knowledge · ' + p.trim(), ' role="link" tabindex="0" data-kw-page="' + esc(p.trim()) + '"'));
   out = out.replace(/\[news:([^\]]+)\]/g, (_, p) => {
     const outlet = p.split('/')[0].trim();
     return chip('rgba(245,158,11,0.14)', 'rgba(245,158,11,0.45)', '#fbbf24', '📰 ' + outlet, 'News · ' + p.trim());
-  });
-  out = out.replace(/\[(?:memory|conversation):([^\]]+)\]/g, (_, p) => {
-    const when = p.split('/')[0].trim();
-    return chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + when, 'From a past conversation · ' + p.trim());
   });
   // B6: raw memory-system artifacts must never render as-is in prose. The
   // recall block feeds the model lines like "- [2026-08-01] You: …", and
   // models sometimes copy the bare bracketed date (or even a literal
   // "💬 2026-08-01" from earlier rendered history) into replies. Normalize
   // both to the same unobtrusive conversation chip. The (?!\() guard keeps
-  // markdown links like [2026-08-01](url) intact.
-  out = out.replace(/\[(\d{4}-\d{2}-\d{2})\](?!\()/g, (_, d) => chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + d, 'From a past conversation · ' + d));
-  out = out.replace(/💬\s*(\d{4}-\d{2}-\d{2})/g, (_, d) => chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + d, 'From a past conversation · ' + d));
+  // markdown links like [2026-08-01](url) intact. The literal form converts
+  // first, while it is still plain text: every conversation chip is labelled
+  // "💬 <date>", so converting it after the chips exist would wrap a second
+  // chip inside each one.
+  out = out.replace(/💬\s*(\d{4}-\d{2}-\d{2})/g, (_, d) => chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + d, 'From a past conversation · ' + d + ' — find it in Knowledge', ' role="link" tabindex="0" data-kw-query="' + d + '"'));
+  out = out.replace(/\[(?:memory|conversation):([^\]]+)\]/g, (_, p) => {
+    const when = p.split('/')[0].trim();
+    return chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + when, 'From a past conversation · ' + p.trim() + ' — find it in Knowledge', ' role="link" tabindex="0" data-kw-query="' + esc(when) + '"');
+  });
+  out = out.replace(/\[(\d{4}-\d{2}-\d{2})\](?!\()/g, (_, d) => chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + d, 'From a past conversation · ' + d + ' — find it in Knowledge', ' role="link" tabindex="0" data-kw-query="' + d + '"'));
   return out;
 }
 if (typeof window !== 'undefined') {
   window.fridayCitationize = fridayCitationize;
+}
+// Open Knowledge from anywhere: the desktop opens its window; a standalone
+// tab or the chat-only window opens a Knowledge tab; Knowledge's own tab
+// navigates in place.
+function fridayOpenKnowledge(target) {
+  const t = Object.assign({
+    workspace: 'knowledge'
+  }, target || {});
+  if (STANDALONE_WS === 'knowledge') {
+    fridayNavigate(t);
+    return;
+  }
+  if (STANDALONE_WS || window.__FRIDAY_CHROME__ === 'chat' || !window.fridayOpenWorkspace) {
+    const p = {};
+    ['page', 'path', 'query', 'view'].forEach(k => {
+      if (t[k]) p[k] = t[k];
+    });
+    fridayOpenWorkspaceTab('knowledge', p);
+    return;
+  }
+  window.fridayOpenWorkspace(t);
+}
+if (typeof document !== 'undefined') {
+  const kwChip = e => {
+    const el = e.target && e.target.closest ? e.target.closest('.friday-cite[data-kw-page], .friday-cite[data-kw-query]') : null;
+    if (!el) return;
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const page = el.getAttribute('data-kw-page');
+    if (page) fridayOpenKnowledge({
+      page
+    });else fridayOpenKnowledge({
+      query: el.getAttribute('data-kw-query'),
+      view: 'split'
+    });
+  };
+  document.addEventListener('click', kwChip);
+  document.addEventListener('keydown', kwChip);
 }
 function renderFridayMarkdown(mdText, opts) {
   const compact = !!(opts && opts.compact);
@@ -6350,6 +6524,16 @@ function ConnectorDot({
     }
   });
 }
+// Workspaces that need more room than the default 660x460 window, with a
+// version for that size (see FWin). Knowledge shows its galaxy and a page
+// side by side.
+const FWIN_FIRST_SIZE = {
+  knowledge: {
+    w: 1180,
+    h: 760,
+    v: 1
+  }
+};
 function FWin({
   id,
   title,
@@ -6394,14 +6578,48 @@ function FWin({
       return null;
     }
   })();
-  const [pos, setPos] = useState(saved && saved.x != null ? {
+  // A workspace listed in FWIN_FIRST_SIZE opens at that size when it has no
+  // saved geometry, or when its saved geometry is smaller and older than the
+  // entry (pv below v). Once saved with the current pv, the user's own size
+  // is kept. A grown window is placed whole between the top bar and the
+  // dock, so nothing the workspace keeps at its foot starts out under the
+  // dock. Worked out once, on the first render.
+  const pref = FWIN_FIRST_SIZE[id];
+  const [grown] = useState(() => {
+    if (!pref || saved && saved.w != null && ((saved.pv || 0) >= pref.v || saved.w >= pref.w && saved.h >= pref.h)) return null;
+    const dock = document.querySelector('.dock:not(.hidden)');
+    const dr = dock && dock.getBoundingClientRect();
+    const floor = (dr && dr.height ? dr.top : vh()) - 8;
+    const p = saved && saved.x != null ? {
+      x: clampX(saved.x),
+      y: clampY(saved.y)
+    } : {
+      x: 60 + Math.random() * 300,
+      y: 40 + Math.random() * 80
+    };
+    const w = clampW(Math.max(pref.w, saved && saved.w || 0));
+    const h = Math.max(280, Math.min(Math.max(pref.h, saved && saved.h || 0), floor - 40));
+    return {
+      w,
+      h,
+      x: Math.max(0, Math.min(p.x, vw() - w - 10)),
+      y: Math.max(30, Math.min(p.y, floor - h))
+    };
+  });
+  const [pos, setPos] = useState(grown ? {
+    x: grown.x,
+    y: grown.y
+  } : saved && saved.x != null ? {
     x: clampX(saved.x),
     y: clampY(saved.y)
   } : {
     x: 60 + Math.random() * 300,
     y: 40 + Math.random() * 80
   });
-  const [size, setSize] = useState(saved && saved.w != null ? {
+  const [size, setSize] = useState(grown ? {
+    w: grown.w,
+    h: grown.h
+  } : saved && saved.w != null ? {
     w: clampW(saved.w),
     h: clampH(saved.h)
   } : {
@@ -6468,7 +6686,8 @@ function FWin({
         x: pos.x,
         y: pos.y,
         w: size.w,
-        h: size.h
+        h: size.h,
+        pv: pref ? pref.v : undefined
       }));
     } catch (_) {}
   }, [pos.x, pos.y, size.w, size.h]);
@@ -8728,7 +8947,7 @@ function CommandPalette({
     fetch('/api/routines').then(r => r.json()).then(d => setRoutines(d.routines || d.items || [])).catch(() => {});
   }, []);
   const query = q.trim().toLowerCase();
-  const wsResults = WS.filter(w => !query || w.label.toLowerCase().includes(query) || w.id.includes(query)).map(w => ({
+  const wsResults = WS.filter(w => !query || w.label.toLowerCase().includes(query) || w.id.includes(query) || (w.aka || []).some(a => a.includes(query))).map(w => ({
     kind: 'ws',
     id: w.id,
     ico: w.ico,
@@ -10023,7 +10242,19 @@ const kgNodeMaterial = () => new THREE.ShaderMaterial({
     }`
 });
 
-function KnowledgeGraphWS() {
+// `props.embedded` is the graph inside Knowledge: the shared search, the page
+// pane and the bottom bar belong to KnowledgeWS, which drives the graph
+// through the state object handed to onReady/onGraphLoaded (focusPath,
+// focusSection, linksForPath, clearFocus, reload).
+function KnowledgeGraphWS(props) {
+  const P = props || {};
+  const embedded = !!P.embedded;
+  // Embedded, the host says how wide the graph's pane is: 'narrow' drops the
+  // stats (the host's bar carries the counts), 'compact' also folds the
+  // arrangement buttons into a menu. Either way the toolbar is one row.
+  const tb = embedded && P.toolbar || 'full';
+  const cbRef = useRef(P);
+  cbRef.current = P;
   const mountRef = useRef(null);
   const kgRef = useRef({}); // all mutable three.js state
   const [status, setStatus] = useState('loading'); // loading|ready|empty|error
@@ -10038,24 +10269,44 @@ function KnowledgeGraphWS() {
   const [arrangement, setArrangement] = useState('galaxy');
   const [hasDates, setHasDates] = useState(false);
   const [touring, setTouring] = useState(false);
-  useNavTarget('knowledge', t => {
+  useNavTarget(embedded ? '__kg_embedded__' : 'knowledge', t => {
     if (t.query) {
       setSearchQ(t.query);
       runSearch(t.query);
     }
   });
+  // A node's page opens beside the graph (Knowledge's Split view).
   const openWikiPage = ent => {
-    const path = ent && ent.provenance && ent.provenance.wiki_pages && ent.provenance.wiki_pages[0];
+    const path = kwPathOf(ent);
     if (!path || ent.type === 'soul') return;
+    if (cbRef.current.onOpen) {
+      cbRef.current.onOpen(ent);
+      return;
+    }
     fridayNavigate({
-      workspace: 'wiki',
-      path
-    });
-    if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({
-      workspace: 'wiki',
+      workspace: 'knowledge',
+      view: 'split',
       path
     });
   };
+  useEffect(() => {
+    if (cbRef.current.onSelect) cbRef.current.onSelect(selected);
+  }, [selected]);
+  // Shared search from Knowledge: titles and summaries here, plus the pages
+  // whose text matched (highlightIds), lit together.
+  useEffect(() => {
+    const S = kgRef.current;
+    S.sharedQuery = P.query || '';
+    S.sharedIds = P.highlightIds || null;
+    if (S.refreshHighlight && S.entities) {
+      S.refreshHighlight();
+      if (S.sharedQuery.trim() && S.highlight && S.frameIds) S.frameIds(S.highlight);
+    }
+  }, [P.query, P.highlightIds]);
+  // Hidden behind the Pages view: stop drawing, keep the scene.
+  useEffect(() => {
+    kgRef.current.paused = !!P.paused;
+  }, [P.paused]);
   const runSearch = q => {
     const S = kgRef.current;
     if (!S.entities) {
@@ -10089,7 +10340,7 @@ function KnowledgeGraphWS() {
     renderer.setClearColor(0x000208, 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     mount.appendChild(renderer.domElement);
-    renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;border-radius:8px;cursor:grab';
+    renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;border-radius:8px;cursor:grab';
     let composer = null,
       bloomPass = null,
       bloomOn = true;
@@ -10666,6 +10917,23 @@ function KnowledgeGraphWS() {
       S.highlight = set;
       if (entranceT0 < -1 || clock.getElapsedTime() - entranceT0 > 4.6) applyColors();
     };
+    // What is lit: a search (Knowledge's shared one) wins; otherwise the open
+    // page with its linked pages, or a focused section; otherwise everything.
+    S.refreshHighlight = () => {
+      const q = (S.sharedQuery || '').trim().toLowerCase();
+      if (q && S.entities) {
+        const ids = new Set();
+        S.entities.forEach(e => {
+          if (((e.title || '') + ' ' + (e.description || '')).toLowerCase().includes(q)) ids.add(e.id);
+        });
+        (S.sharedIds || []).forEach(id => {
+          if (S.entById && S.entById[id]) ids.add(id);
+        });
+        S.setHighlight(ids);
+        return;
+      }
+      S.setHighlight(S.focusSet && S.focusSet.size ? S.focusSet : null);
+    };
 
     // ── data load ────────────────────────────────────────────
     const loadGraph = (community, opts) => {
@@ -10689,6 +10957,13 @@ function KnowledgeGraphWS() {
           setLodMode(false);
           buildScene(d, opts);
           setStatus('ready');
+          S.edgeFocusIdx = null;
+          S.focusSet = null;
+          S.starOn = false;
+          // A live reload (a page saved) keeps the arrangement on screen.
+          if (opts && opts.keepLayout && opts.keepLayout !== 'galaxy' && S.arrange) S.arrange(opts.keepLayout);
+          if (S.refreshHighlight) S.refreshHighlight();
+          if (cbRef.current.onGraphLoaded) cbRef.current.onGraphLoaded(S);
         }
         setStats({
           nodes: d.entities.length,
@@ -11249,23 +11524,37 @@ function KnowledgeGraphWS() {
     };
     // Star map shows only links between near neighbours on the sky, brighter
     // than elsewhere; every other arrangement restores the base colours.
-    const setStarEdges = (on, to) => {
+    // The open page's links (in and out) draw bright and the rest recede;
+    // the star map shows only near neighbours. Both compose here.
+    const recolorEdges = () => {
       if (!S.edgeCol || !S.edgePairs) return;
       const C = S.edgeCol.array,
         B = S.edgeColBase,
         pr = S.edgePairs,
-        near = Math.cos(0.8);
+        near = Math.cos(0.8),
+        to = S.starTo,
+        fi = S.edgeFocusIdx;
       for (let k = 0; k < pr.length; k += 2) {
         let f = 1;
-        if (on) {
+        if (S.starOn && to) {
           const a = pr[k] * 3,
             b = pr[k + 1] * 3;
           const dot = (to[a] * to[b] + to[a + 1] * to[b + 1] + to[a + 2] * to[b + 2]) / (Math.hypot(to[a], to[a + 1], to[a + 2]) * Math.hypot(to[b], to[b + 1], to[b + 2]) || 1);
           f = dot > near ? 2.2 : 0;
         }
-        for (let j = 0; j < 6; j++) C[k * 3 + j] = B[k * 3 + j] * f;
+        if (fi != null) f *= pr[k] === fi || pr[k + 1] === fi ? 3.4 : 0.2;
+        for (let j = 0; j < 6; j++) C[k * 3 + j] = Math.min(1, B[k * 3 + j] * f);
       }
       S.edgeCol.needsUpdate = true;
+    };
+    const setStarEdges = (on, to) => {
+      S.starOn = !!on;
+      S.starTo = on ? to : null;
+      recolorEdges();
+    };
+    S.setEdgeFocus = idx => {
+      S.edgeFocusIdx = idx == null ? null : idx;
+      recolorEdges();
     };
     // Presentation tour: each step arranges, holds while the camera sweeps,
     // then moves on. Any click, drag or scroll in the graph stops it.
@@ -11524,6 +11813,171 @@ function KnowledgeGraphWS() {
       }
     };
     S.arrange = arrange;
+    // ── Knowledge: node ↔ page ───────────────────────────────
+    const entForPath = path => {
+      if (!path || !S.entById) return null;
+      return S.entById[kwNodeIdForPath(path)] || (S.entities || []).find(e => e.type === 'page' && kwPathOf(e) === path) || null;
+    };
+    S.entForPath = entForPath;
+    // Pages that link to this one, pages it links to, and everything else
+    // joined to it (entities it mentions, facts learned from it).
+    S.linksForPath = path => {
+      const ent = entForPath(path);
+      if (!ent) return {
+        missing: true,
+        from: [],
+        to: [],
+        other: []
+      };
+      const seen = new Set(),
+        from = [],
+        to = [],
+        other = [];
+      (S.relationships || []).forEach(r => {
+        let e = null,
+          dir = 0;
+        if (r.target === ent.id) {
+          e = S.entById[r.source];
+          dir = -1;
+        } else if (r.source === ent.id) {
+          e = S.entById[r.target];
+          dir = 1;
+        }
+        if (!e || e.id === ent.id) return;
+        const key = dir + ':' + e.id;
+        if (seen.has(key)) return;
+        seen.add(key);
+        if (e.type !== 'page' && e.type !== 'soul') other.push(e);else (dir < 0 ? from : to).push(e);
+      });
+      const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '');
+      return {
+        node: ent,
+        from: from.sort(byTitle),
+        to: to.sort(byTitle),
+        other: other.filter((e, i, a) => a.findIndex(x => x.id === e.id) === i).sort(byTitle)
+      };
+    };
+    // Fly to a page's node and light it with its links. False when the page
+    // has no node (yet): the caller retries after the next load.
+    S.focusPath = (path, o) => {
+      const opt = o || {};
+      const ent = entForPath(path);
+      if (!ent) return false;
+      const L = S.linksForPath(path);
+      const set = new Set([ent.id]);
+      L.from.concat(L.to, L.other).forEach(e => set.add(e.id));
+      S.focusSet = set;
+      S.setEdgeFocus(ent.__idx);
+      S.refreshHighlight();
+      if (opt.select !== false) {
+        S.spinHold = true;
+        setSelected(ent);
+      }
+      if (opt.fly !== false) {
+        stopTour();
+        camGoal.target.set(ent.x, ent.y, ent.z);
+        camGoal.r = Math.max(70, Math.min(170, cam.r * 0.6));
+        idleSpin = false;
+      }
+      return true;
+    };
+    // A wiki section is a tower in Sections and a ring in Rings: arrange
+    // that way (Rings if already showing, else Sections), light the section's
+    // pages and frame them.
+    S.focusSection = name => {
+      if (!S.entities || !S.entities.length) return false;
+      const members = S.entities.filter(e => e.type !== 'soul' && (e.section || 'core') === name);
+      if (!members.length) return false;
+      const mode = S.layout === 'rings' ? 'rings' : 'section';
+      if (S.layout !== mode) arrange(mode);
+      const tg = layoutTargets(mode).to;
+      let cx = 0,
+        cy = 0,
+        cz = 0;
+      members.forEach(e => {
+        const i = e.__idx * 3;
+        cx += tg[i];
+        cy += tg[i + 1];
+        cz += tg[i + 2];
+      });
+      cx /= members.length;
+      cy /= members.length;
+      cz /= members.length;
+      let R = 0;
+      members.forEach(e => {
+        const i = e.__idx * 3;
+        R = Math.max(R, Math.hypot(tg[i] - cx, tg[i + 1] - cy, tg[i + 2] - cz));
+      });
+      S.focusSet = new Set(members.map(e => e.id));
+      S.setEdgeFocus(null);
+      S.refreshHighlight();
+      setSelected(null);
+      stopTour();
+      if (mode === 'rings') {
+        let far = 0;
+        members.forEach(e => {
+          const i = e.__idx * 3;
+          far = Math.max(far, Math.hypot(tg[i], tg[i + 1], tg[i + 2]));
+        });
+        camGoal.target.set(0, 0, 0);
+        camGoal.r = Math.max(90, Math.min(900, far * 2.3));
+      } else {
+        camGoal.target.set(cx, cy, cz);
+        camGoal.r = Math.max(150, Math.min(460, R * 3.2 + 110));
+      }
+      idleSpin = false;
+      return true;
+    };
+    // Frame a set of nodes (a search's matches) when there are few enough to
+    // read; a broad search leaves the camera where it is.
+    S.frameIds = ids => {
+      if (!ids || !S.entById) return;
+      const es = [...ids].map(id => S.entById[id]).filter(Boolean);
+      if (!es.length || es.length > 40) return;
+      let cx = 0,
+        cy = 0,
+        cz = 0,
+        R = 0;
+      es.forEach(e => {
+        cx += e.x;
+        cy += e.y;
+        cz += e.z;
+      });
+      cx /= es.length;
+      cy /= es.length;
+      cz /= es.length;
+      es.forEach(e => {
+        R = Math.max(R, Math.hypot(e.x - cx, e.y - cy, e.z - cz));
+      });
+      stopTour();
+      camGoal.target.set(cx, cy, cz);
+      camGoal.r = Math.max(90, Math.min(600, R * 2.6 + 60));
+      idleSpin = false;
+    };
+    S.clearFocus = () => {
+      S.focusSet = null;
+      S.setEdgeFocus(null);
+      S.refreshHighlight();
+      setSelected(null);
+      S.spinHold = false;
+    };
+    S.reload = () => {
+      S.lastLocalReload = Date.now();
+      loadGraph(S.focus, {
+        instant: true,
+        keepLayout: S.layout
+      });
+    };
+    // Debug/test hook: what the graph is focused on and where the camera is
+    // heading (read-only; used by the Knowledge smoke tests).
+    window.__kgFocus = () => ({
+      layout: S.layout,
+      lit: S.focusSet ? S.focusSet.size : 0,
+      edgeFocus: S.edgeFocusIdx == null ? null : (S.entities[S.edgeFocusIdx] || {}).id,
+      target: [camGoal.target.x, camGoal.target.y, camGoal.target.z],
+      r: camGoal.r,
+      paused: !!S.paused
+    });
     window.__kgArrange = (mode, opts) => arrange(mode, opts);
     window.__kgTour = () => startTour();
     // Debug/test hook: project entity i to screen coords (used by smoke tests).
@@ -11571,8 +12025,29 @@ function KnowledgeGraphWS() {
         try {
           const msg = JSON.parse(ev.data);
           if (msg.type === 'reindexed') loadGraph(S.focus, {
-            instant: true
-          });else if (msg.type === 'node_ignited') {
+            instant: true,
+            keepLayout: S.layout
+          });else if (msg.type === 'wiki_changed') {
+            // A page was saved, created, deleted or approved. Knowledge's page
+            // list refreshes, and the graph reloads unless it just did so
+            // itself. A burst (a research pass writing many pages) settles into
+            // one refresh: 700 ms after the last event, at most 4 s after the
+            // first.
+            S.wikiFirst = S.wikiFirst || Date.now();
+            clearTimeout(S.wikiTimer);
+            S.wikiTimer = setTimeout(() => {
+              S.wikiFirst = 0;
+              try {
+                window.dispatchEvent(new CustomEvent('friday:wiki-changed', {
+                  detail: msg
+                }));
+              } catch (x) {}
+              if (Date.now() - (S.lastLocalReload || 0) > 2500) loadGraph(S.focus, {
+                instant: true,
+                keepLayout: S.layout
+              });
+            }, Math.max(0, Math.min(700, 4000 - (Date.now() - S.wikiFirst))));
+          } else if (msg.type === 'node_ignited') {
             const e = S.entById && S.entById[msg.id];
             if (e) pulses.push({
               idx: e.__idx,
@@ -11594,6 +12069,10 @@ function KnowledgeGraphWS() {
     const animate = () => {
       if (disposed) return;
       S.raf = requestAnimationFrame(animate);
+      if (S.paused) {
+        clock.getDelta();
+        return;
+      }
       const dt = Math.min(clock.getDelta(), 0.1);
       const t = clock.getElapsedTime();
 
@@ -11899,11 +12378,13 @@ function KnowledgeGraphWS() {
       }
     };
     animate();
+    if (cbRef.current.onReady) cbRef.current.onReady(S);
     loadGraph(null);
     S.focus = null;
     return () => {
       disposed = true;
       cancelAnimationFrame(S.raf);
+      clearTimeout(S.wikiTimer);
       ro.disconnect();
       if (es) {
         try {
@@ -11961,14 +12442,16 @@ function KnowledgeGraphWS() {
       gap: 6
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "kg-tools",
     style: {
       display: 'flex',
       gap: 8,
       rowGap: 6,
-      flexWrap: 'wrap',
-      alignItems: 'center'
+      flexWrap: embedded ? 'nowrap' : 'wrap',
+      alignItems: 'center',
+      flexShrink: 0
     }
-  }, /*#__PURE__*/React.createElement("input", {
+  }, !embedded && /*#__PURE__*/React.createElement("input", {
     value: searchQ,
     onChange: e => {
       setSearchQ(e.target.value);
@@ -12004,13 +12487,38 @@ function KnowledgeGraphWS() {
   }, "\u2190 all constellations"), !lodMode && stats && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      flexWrap: 'wrap',
+      flexWrap: embedded ? 'nowrap' : 'wrap',
+      flexShrink: embedded ? 0 : undefined,
       gap: 2,
       border: '1px solid rgba(170,120,255,0.25)',
       borderRadius: 6,
       padding: 2
     }
-  }, KG_ARRANGEMENTS.map(a => {
+  }, tb === 'compact' ? /*#__PURE__*/React.createElement("select", {
+    value: arrangement,
+    "aria-label": "Arrangement",
+    title: (KG_ARRANGEMENTS.find(a => a.id === arrangement) || {}).tip,
+    onChange: e => {
+      const S = kgRef.current;
+      if (S.arrange) {
+        S.arrange(e.target.value);
+        setArrangement(e.target.value);
+      }
+    },
+    style: {
+      fontSize: 11,
+      padding: '2px 4px',
+      border: 'none',
+      borderRadius: 4,
+      background: 'rgba(0,212,255,0.12)',
+      color: '#bff3ff',
+      fontFamily: 'inherit'
+    }
+  }, KG_ARRANGEMENTS.map(a => /*#__PURE__*/React.createElement("option", {
+    key: a.id,
+    value: a.id,
+    disabled: a.id === 'timeline' && !hasDates
+  }, a.label))) : KG_ARRANGEMENTS.map(a => {
     const off = a.id === 'timeline' && !hasDates;
     return /*#__PURE__*/React.createElement("button", {
       key: a.id,
@@ -12058,13 +12566,14 @@ function KnowledgeGraphWS() {
       background: 'transparent',
       color: '#ffd28a'
     }
-  }, "\u2726 Big Bang"), /*#__PURE__*/React.createElement("button", {
+  }, tb === 'compact' ? "\u2726" : "\u2726 Big Bang"), /*#__PURE__*/React.createElement("button", {
     title: touring ? 'Stop the tour' : 'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen',
     onClick: () => {
       const S = kgRef.current;
       if (touring) S.stopTour && S.stopTour();else {
-        // For an audience the graph fills the screen; Esc returns.
-        const el = mountRef.current;
+        // For an audience the workspace fills the screen, bottom bar and
+        // all; Esc returns.
+        const el = cbRef.current.fullscreenEl && cbRef.current.fullscreenEl() || mountRef.current;
         if (el && el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => {});
         S.startTour && S.startTour();
       }
@@ -12078,7 +12587,7 @@ function KnowledgeGraphWS() {
       background: touring ? 'rgba(255,80,120,0.15)' : 'transparent',
       color: touring ? '#ff9db0' : '#9dffc8'
     }
-  }, touring ? "\u25A0 Stop tour" : "\u25B6 Tour")), /*#__PURE__*/React.createElement("button", {
+  }, tb === 'compact' ? touring ? "\u25A0" : "\u25B6" : touring ? "\u25A0 Stop tour" : "\u25B6 Tour")), /*#__PURE__*/React.createElement("button", {
     className: "btn",
     title: "Rebuild the graph from the wiki",
     style: {
@@ -12086,14 +12595,14 @@ function KnowledgeGraphWS() {
       padding: '4px 9px'
     },
     onClick: reindex
-  }, "\u21BB"), stats && /*#__PURE__*/React.createElement("span", {
+  }, "\u21BB"), stats && tb === 'full' && /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: '#8fa8c8',
       fontFamily: 'JetBrains Mono',
       whiteSpace: 'nowrap'
     }
-  }, "\u2605 ", stats.nodes, " \xB7 \u2500 ", stats.edges, " \xB7 \u2601 ", stats.comms, " \xB7 ", fps, " fps")), searchHits.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "\u2605 ", stats.nodes, " \xB7 \u2500 ", stats.edges, " \xB7 \u2601 ", stats.comms, " \xB7 ", fps, " fps")), !embedded && searchHits.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: 110,
       overflowY: 'auto',
@@ -12125,6 +12634,7 @@ function KnowledgeGraphWS() {
     }
   }, h.section)))), /*#__PURE__*/React.createElement("div", {
     ref: mountRef,
+    className: "kw-scene",
     style: {
       flex: 1,
       minHeight: 0,
@@ -12220,7 +12730,7 @@ function KnowledgeGraphWS() {
       letterSpacing: '.1em',
       zIndex: 3
     }
-  }, "CONSTELLATION VIEW \u2014 click a cluster to enter")), selected && /*#__PURE__*/React.createElement("div", {
+  }, "CONSTELLATION VIEW \u2014 click a cluster to enter")), !embedded && selected && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 10,
@@ -12270,75 +12780,598 @@ function KnowledgeGraphWS() {
     }
   }, "\u2715")));
 }
-function WikiWS() {
+// ═══ KNOWLEDGE — the wiki's pages and its graph, one workspace ═══════════
+// The graph is built from the wiki, so the two are views of the same thing:
+// a node is a page, an edge is a link between pages. Graph / Split / Pages
+// choose what is on screen; one search filters both; clicking a node opens
+// its page, and opening a page flies the graph to its node and lights the
+// links in and out of it. The bottom bar is always in view (the root is a
+// flex column whose middle row takes the slack), names what is open, and
+// carries the jump between the two views.
+const KW_VIEWS = [{
+  id: 'graph',
+  label: 'Graph',
+  tip: 'The galaxy only'
+}, {
+  id: 'split',
+  label: 'Split',
+  tip: 'The galaxy and the open page side by side'
+}, {
+  id: 'pages',
+  label: 'Pages',
+  tip: 'The pages only'
+}];
+// Same key the server gives a page node (wiki_graph._page_key): the relative
+// path without .md, each segment trimmed, lower-cased, spaces to dashes.
+function kwPageKey(path) {
+  let rel = String(path || '').replace(/\\/g, '/');
+  if (/\.md$/i.test(rel)) rel = rel.slice(0, -3);
+  return rel.split('/').map(p => p.trim().toLowerCase().split(' ').join('-')).join('/');
+}
+function kwNodeIdForPath(path) {
+  return 'page:' + kwPageKey(path);
+}
+function kwPathOf(ent) {
+  const p = ent && ent.provenance && ent.provenance.wiki_pages;
+  return p && p[0] || null;
+}
+function kwTitleOf(path) {
+  const f = String(path || '').split('/').pop() || '';
+  return f.replace(/\.(md|txt)$/i, '');
+}
+function kwSlug(title) {
+  return String(title || '').trim().toLowerCase().replace(/[^a-z0-9 _-]+/g, '').trim().split(/\s+/).join('-').slice(0, 80);
+}
+function kwLoadView() {
+  try {
+    const v = localStorage.getItem('friday_kw_view');
+    if (KW_VIEWS.some(x => x.id === v)) return v;
+  } catch (e) {}
+  return 'split';
+}
+function kwSaveView(v) {
+  try {
+    localStorage.setItem('friday_kw_view', v);
+  } catch (e) {}
+}
+// A link in a page that points at another page: no scheme, not an anchor or
+// an absolute URL path, and either a .md/.txt file or an extension-less name.
+function kwIsPageHref(href) {
+  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.charAt(0) === '#' || href.charAt(0) === '/') return false;
+  const bare = href.split('#')[0].split('?')[0];
+  return /\.(md|txt)$/i.test(bare) || !/\.[a-z0-9]{1,5}$/i.test(bare);
+}
+function kwResolveHref(fromPath, href) {
+  let clean = href.split('#')[0].split('?')[0];
+  try {
+    clean = decodeURIComponent(clean);
+  } catch (e) {}
+  const base = String(fromPath || '').split('/').slice(0, -1);
+  clean.split('/').forEach(seg => {
+    if (!seg || seg === '.') return;
+    if (seg === '..') base.pop();else base.push(seg);
+  });
+  let p = base.join('/');
+  if (!/\.(md|txt)$/i.test(p)) p += '.md';
+  return p;
+}
+// [[Page]] and [[Page|label]] are how pages link to each other in the graph;
+// render them as links that open the page here rather than as brackets.
+function kwLinkify(text) {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(text || '').replace(/\[\[([^\]|\n]{1,160})(?:\|([^\]\n]{1,160}))?\]\]/g, (_, target, label) => '<a class="kw-link" href="#" data-kw-page="' + esc(target.trim()) + '">' + esc((label || target).trim()) + '</a>');
+}
+function KnowledgeWS() {
+  const h = React.createElement;
+  const rootRef = useRef(null);
+  const gref = useRef(null); // the graph's live state, once it has loaded
+  const [view, setViewRaw] = useState(kwLoadView);
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(null); // the open page's path
+  const [pageOpts, setPageOpts] = useState(null); // {edit:true} for a page just created
+  const [sel, setSel] = useState(null); // the selected graph node
+  const [section, setSection] = useState(null); // a focused wiki section
+  const [text, setText] = useState({
+    q: '',
+    results: null,
+    busy: false
+  });
+  const [gv, setGv] = useState(0); // bumps each time the graph (re)loads
+  const [stack, setStack] = useState(false); // Split stacks top/bottom when narrow or tall
+  const [note, setNote] = useState('');
+  const pendingPath = useRef(null); // a page to fly to once the graph has it
+  const pendingName = useRef(null); // a cited page name to resolve once loaded
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const setView = useCallback(v => {
+    setViewRaw(v);
+    kwSaveView(v);
+  }, []);
+  const noteTimer = useRef(null);
+  const flash = useCallback(m => {
+    setNote(m);
+    clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setNote(''), 4000);
+  }, []);
+  useEffect(() => () => clearTimeout(noteTimer.current), []);
+
+  // Open a page: it shows (Graph view becomes Split) and the graph flies to
+  // its node, lighting the links in and out of it.
+  const openPage = useCallback((path, o) => {
+    const opt = o || {};
+    if (!path) return;
+    setPage(path);
+    setPageOpts(opt.edit ? {
+      edit: true
+    } : null);
+    setSection(null);
+    if (opt.view) setView(opt.view);else if (viewRef.current === 'graph') setView('split');
+    const S = gref.current;
+    if (S && S.focusPath && S.entities) {
+      const fromGraph = !!opt.fromGraph;
+      if (!S.focusPath(path, {
+        fly: !fromGraph,
+        select: !fromGraph
+      })) {
+        // Not in the galaxy (an _index page, a draft, a .txt note): nothing
+        // to fly to, and the last page's links must not stay lit.
+        if (!fromGraph && S.clearFocus) S.clearFocus();
+        pendingPath.current = path;
+      }
+    } else pendingPath.current = path;
+  }, [setView]);
+
+  // A cited page name ([wiki:name], [[name]]): the page itself if one is
+  // called that, otherwise a search for the name, so a citation never
+  // dead-ends on "not found".
+  const resolveName = useCallback(name => {
+    const n = String(name || '').trim();
+    if (!n) return false;
+    if (/\.(md|txt)$/i.test(n) || n.indexOf('/') >= 0) {
+      openPage(/\.(md|txt)$/i.test(n) ? n : n + '.md');
+      return true;
+    }
+    const S = gref.current;
+    if (!S || !S.entities || !S.entities.length) {
+      pendingName.current = n;
+      return false;
+    }
+    const key = kwPageKey(n),
+      low = n.toLowerCase();
+    const pages = S.entities.filter(e => e.type === 'page');
+    const hit = pages.find(e => e.id === 'page:' + key) || pages.find(e => e.id.endsWith('/' + key)) || pages.find(e => (e.title || '').toLowerCase() === low);
+    if (hit && kwPathOf(hit)) {
+      openPage(kwPathOf(hit));
+      return true;
+    }
+    setQ(n);
+    if (viewRef.current === 'graph') setView('split');
+    flash('No page is called “' + n + '”, so here is everything that mentions it.');
+    return true;
+  }, [openPage, setView, flash]);
+  const focusSection = useCallback(name => {
+    setSection(name);
+    setPage(null);
+    if (viewRef.current === 'pages') setView('split');
+    const S = gref.current;
+    if (S && S.focusSection) S.focusSection(name);
+  }, [setView]);
+  const clearFocus = useCallback(() => {
+    setPage(null);
+    setSel(null);
+    setSection(null);
+    const S = gref.current;
+    if (S && S.clearFocus) S.clearFocus();
+  }, []);
+  useNavTarget('knowledge', t => {
+    if (t.view && KW_VIEWS.some(x => x.id === t.view)) setView(t.view);
+    if (t.query) setQ(String(t.query));else if (t.path || t.page) setQ('');
+    if (t.path) openPage(String(t.path), {
+      view: t.view
+    });else if (t.page) resolveName(String(t.page));
+    if (t.section) focusSection(String(t.section));
+  });
+
+  // ── the graph's side of the conversation ──
+  const onReady = useCallback(S => {
+    gref.current = S;
+  }, []);
+  const onGraphLoaded = useCallback(S => {
+    gref.current = S;
+    setGv(v => v + 1);
+    const want = pendingPath.current || pageRef.current;
+    if (want && S.focusPath) {
+      const fly = !!pendingPath.current;
+      if (S.focusPath(want, {
+        fly,
+        select: fly
+      })) pendingPath.current = null;
+    }
+    if (pendingName.current) {
+      const n = pendingName.current;
+      pendingName.current = null;
+      resolveName(n);
+    }
+  }, [resolveName]);
+  const onSelect = useCallback(ent => {
+    setSel(ent || null);
+    if (!ent) return;
+    const path = kwPathOf(ent);
+    if (path && ent.type !== 'soul' && viewRef.current !== 'graph' && path !== pageRef.current) openPage(path, {
+      fromGraph: true
+    });
+  }, [openPage]);
+  const onOpen = useCallback(ent => {
+    const path = kwPathOf(ent);
+    if (path && ent.type !== 'soul') openPage(path, {
+      fromGraph: true
+    });
+  }, [openPage]);
+
+  // One search for both: the graph dims everything that does not match
+  // (titles and summaries, plus pages whose text matches), and the Pages
+  // pane lists full-text hits with their lines.
+  useEffect(() => {
+    const qq = q.trim();
+    if (!qq) {
+      setText({
+        q: '',
+        results: null,
+        busy: false
+      });
+      return;
+    }
+    setText(t => ({
+      q: qq,
+      results: t.q === qq ? t.results : null,
+      busy: true
+    }));
+    // `live` drops an answer that arrives after the query moved on.
+    let live = true;
+    const id = setTimeout(() => {
+      apiFetch('/api/wiki/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          query: qq
+        })
+      }).then(r => r.json()).then(d => live && setText({
+        q: qq,
+        results: d.results || [],
+        busy: false
+      })).catch(() => live && setText({
+        q: qq,
+        results: [],
+        busy: false
+      }));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(id);
+    };
+  }, [q]);
+  const textIds = React.useMemo(() => (text.results || []).map(r => kwNodeIdForPath(r.path)), [text.results]);
+  const graphHits = React.useMemo(() => {
+    const S = gref.current,
+      qq = q.trim().toLowerCase();
+    if (!qq || !S || !S.entities) return [];
+    return S.entities.filter(e => ((e.title || '') + ' ' + (e.description || '')).toLowerCase().includes(qq)).slice(0, 12);
+  }, [q, gv]);
+  const links = React.useMemo(() => {
+    const S = gref.current;
+    return page && S && S.linksForPath ? S.linksForPath(page) : null;
+  }, [page, gv]);
+  const stats = React.useMemo(() => {
+    const S = gref.current;
+    if (!S || !S.entities) return null;
+    const secs = new Set();
+    let pages = 0;
+    S.entities.forEach(e => {
+      if (e.type === 'page') {
+        pages++;
+        secs.add(e.section || 'core');
+      }
+    });
+    return {
+      pages,
+      nodes: S.entities.length,
+      links: (S.relationships || []).length,
+      sections: secs.size
+    };
+  }, [gv]);
+  const sectionCount = React.useMemo(() => {
+    const S = gref.current;
+    if (!section || !S || !S.entities) return 0;
+    return S.entities.filter(e => e.type === 'page' && (e.section || 'core') === section).length;
+  }, [section, gv]);
+
+  // Split stacks the graph above the page when the space is narrow or tall.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      setStack(r.width < 860 || r.height > r.width * 1.1);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // The graph pane's width picks its toolbar (see KnowledgeGraphWS).
+  const graphPaneRef = useRef(null);
+  const [toolbar, setToolbar] = useState('full');
+  useEffect(() => {
+    const el = graphPaneRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setToolbar(w < 700 ? 'compact' : w < 900 ? 'narrow' : 'full');
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const showInGraph = () => {
+    if (viewRef.current === 'pages') setView('split');
+    const S = gref.current;
+    if (page && S && S.focusPath) S.focusPath(page, {
+      fly: true,
+      select: true
+    });
+  };
+  const graphHidden = view === 'pages',
+    pagesHidden = view === 'graph';
+  const crumb = page ? h('span', {
+    className: 'kw-crumb',
+    title: 'wiki/' + page
+  }, '📄 ', page.split('/').slice(0, -1).map((s, i) => i === 0 ? h('button', {
+    key: i,
+    className: 'kw-crumb-sec kw-crumb-link',
+    onClick: () => focusSection(s),
+    title: 'Show the ' + s + ' section in the galaxy'
+  }, s, ' › ') : h('span', {
+    key: i,
+    className: 'kw-crumb-sec'
+  }, s, ' › ')), h('b', null, kwTitleOf(page))) : sel ? h('span', {
+    className: 'kw-crumb'
+  }, '✦ ', h('b', null, sel.title), sel.type && sel.type !== 'page' ? h('span', {
+    className: 'kw-dim'
+  }, ' \xB7 ', sel.type) : null) : section ? h('span', {
+    className: 'kw-crumb'
+  }, '▦ Section ', h('b', null, section), h('span', {
+    className: 'kw-dim'
+  }, ' \xB7 ', sectionCount, ' pages')) : h('span', {
+    className: 'kw-crumb kw-dim'
+  }, stats ? stats.pages + ' pages in the galaxy \xB7 ' + stats.links + ' links \xB7 ' + stats.sections + ' sections' : 'Knowledge');
+  const selPath = sel && sel.type !== 'soul' ? kwPathOf(sel) : null;
+  return h('div', {
+    ref: rootRef,
+    className: 'kw-root',
+    'data-kw-view': view
+  }, h('div', {
+    className: 'kw-head'
+  }, h('div', {
+    className: 'kw-search-wrap'
+  }, h('input', {
+    className: 'kw-search',
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: 'Search pages and the graph…',
+    'aria-label': 'Search Knowledge'
+  }), q && h('button', {
+    className: 'kw-x',
+    onClick: () => setQ(''),
+    title: 'Clear search',
+    'aria-label': 'Clear search'
+  }, '✕')), h('div', {
+    className: 'kw-views',
+    role: 'tablist',
+    'aria-label': 'View'
+  }, KW_VIEWS.map(v => h('button', {
+    key: v.id,
+    role: 'tab',
+    'aria-selected': view === v.id,
+    className: 'kw-view' + (view === v.id ? ' on' : ''),
+    title: v.tip,
+    onClick: () => setView(v.id)
+  }, v.label)))), h('div', {
+    className: 'kw-body' + (stack && view === 'split' ? ' kw-stack' : '')
+  }, h('div', {
+    ref: graphPaneRef,
+    className: 'kw-pane kw-graph' + (graphHidden ? ' kw-hidden' : '')
+  }, h(KnowledgeGraphWS, {
+    embedded: true,
+    toolbar: toolbar,
+    paused: graphHidden,
+    query: q,
+    highlightIds: textIds,
+    onReady: onReady,
+    onSelect: onSelect,
+    onOpen: onOpen,
+    onGraphLoaded: onGraphLoaded,
+    fullscreenEl: () => rootRef.current
+  })), h('div', {
+    className: 'kw-pane kw-pages' + (pagesHidden ? ' kw-hidden' : '')
+  }, h(KnowledgePages, {
+    path: page,
+    openOpts: pageOpts,
+    onOpenPage: openPage,
+    onOpenName: resolveName,
+    onClosePage: clearFocus,
+    onFocusSection: focusSection,
+    section: section,
+    q: q,
+    text: text,
+    graphHits: graphHits,
+    links: links,
+    onChanged: (path, how) => {
+      const S = gref.current;
+      if (how === 'deleted') clearFocus();else if (path) pendingPath.current = path;
+      if (S && S.reload) S.reload();
+    }
+  }))), h('div', {
+    className: 'kw-bar',
+    'data-kw-bar': '1',
+    role: 'status'
+  }, crumb, links && page && !links.missing ? h('span', {
+    className: 'kw-dim kw-counts'
+  }, '↤ ', links.from.length, ' linked from \xB7 ↦ ', links.to.length, ' links to') : page && links && links.missing ? h('span', {
+    className: 'kw-dim kw-counts',
+    title: 'Index pages, drafts and .txt notes are not drawn in the galaxy'
+  }, 'not in the galaxy') : null, note ? h('span', {
+    className: 'kw-note'
+  }, note) : null, h('span', {
+    className: 'kw-sp'
+  }), !page && !sel && !section && h('span', {
+    className: 'kw-dim kw-hint'
+  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && h('button', {
+    className: 'kw-btn',
+    onClick: showInGraph,
+    title: 'Show this page in the galaxy'
+  }, '🌌 Show in graph'), !page && selPath && h('button', {
+    className: 'kw-btn kw-go',
+    onClick: () => openPage(selPath)
+  }, '📖 Open page'), (page || sel || section) && h('button', {
+    className: 'kw-btn',
+    onClick: clearFocus,
+    title: 'Clear',
+    'aria-label': 'Clear'
+  }, '✕')));
+}
+
+// The Pages side: the wiki's sections, the open page (read or edit), its
+// links, full-text search results, pending updates Friday proposed, a new
+// page form, and delete with a typed confirmation.
+function KnowledgePages({
+  path,
+  openOpts,
+  onOpenPage,
+  onOpenName,
+  onClosePage,
+  onFocusSection,
+  section,
+  q,
+  text,
+  graphHits,
+  links,
+  onChanged
+}) {
+  const h = React.createElement;
   const [struct, setStruct] = useState(null);
   const [recent, setRecent] = useState([]);
   const [pending, setPending] = useState([]);
   const [pendingOpen, setPendingOpen] = useState(true);
-  const [content, setContent] = useState('Select a file from the sidebar');
-  const [path, setPath] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [doc, setDoc] = useState(null); // {path, content, locked, missing}
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
-  const [query, setQuery] = useState('');
-  const [searchResults, setSearchResults] = useState(null);
-  const [searching, setSearching] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmText, setConfirmText] = useState('');
-  const searchTimer = useRef(null);
+  const [creating, setCreating] = useState(false);
+  const [newSec, setNewSec] = useState('');
+  const [newSecName, setNewSecName] = useState('');
+  const [newTitle, setNewTitle] = useState('');
+  const [open, setOpen] = useState(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('friday_kw_open_sections') || '[]'));
+    } catch (e) {
+      return new Set();
+    }
+  });
+  const toastTimer = useRef(null);
   const showToast = m => {
     setToast(m);
-    setTimeout(() => setToast(''), 2200);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 2600);
   };
-  const refreshStructure = () => fetch('/api/wiki/structure').then(r => r.json()).then(d => {
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  const refreshStructure = useCallback(() => apiFetch('/api/wiki/structure').then(r => r.json()).then(d => {
     const raw = d.structure || {};
-    const sections = Object.entries(raw).map(([name, files]) => ({
-      name,
-      files: Array.isArray(files) ? files : []
-    }));
     setStruct({
-      sections
+      sections: Object.entries(raw).map(([name, files]) => ({
+        name,
+        files: Array.isArray(files) ? files : []
+      }))
     });
     setRecent(d.recent || []);
-  }).catch(() => {});
-  const refreshPending = () => fetch('/api/wiki/pending').then(r => r.json()).then(d => setPending(d.pending || [])).catch(() => setPending([]));
+  }).catch(() => setStruct(s => s || {
+    sections: []
+  })), []);
+  const refreshPending = useCallback(() => apiFetch('/api/wiki/pending').then(r => r.json()).then(d => setPending(d.pending || [])).catch(() => setPending([])), []);
   useEffect(() => {
-    Promise.all([refreshStructure(), refreshPending()]).finally(() => setLoading(false));
-  }, []);
-  const load = (s, f) => {
-    const fn = typeof f === 'string' ? f : f.filename || f.name;
-    setPath(`${s}/${fn}`);
-    setEditing(false);
-    setDraft('');
-    setContent('Loading...');
-    fetch(`/api/wiki/${s}/${fn}`).then(r => r.json()).then(d => setContent(d.content || d.error || 'Empty')).catch(() => setContent('Error loading file'));
-  };
-  const loadPath = p => {
-    const [s, ...rest] = p.split('/');
-    const fn = rest.join('/');
-    load(s, fn);
-  };
-
-  // Deep-link target: fridayNavigate({workspace:'wiki', path}) — used by the
-  // Knowledge Galaxy's click-to-open and by chat navigate actions.
-  useNavTarget('wiki', t => {
-    if (t && t.path) loadPath(t.path);
+    refreshStructure();
+    refreshPending();
+    // A page changed anywhere (Friday, another tab, an approval): refresh.
+    const onWiki = () => {
+      refreshStructure();
+      refreshPending();
+    };
+    window.addEventListener('friday:wiki-changed', onWiki);
+    return () => window.removeEventListener('friday:wiki-changed', onWiki);
+  }, [refreshStructure, refreshPending]);
+  const toggleSection = name => setOpen(prev => {
+    const n = new Set(prev);
+    if (n.has(name)) n.delete(name);else n.add(name);
+    try {
+      localStorage.setItem('friday_kw_open_sections', JSON.stringify([...n]));
+    } catch (e) {}
+    return n;
   });
-  const beginEdit = () => {
-    setDraft(content || '');
-    setEditing(true);
-  };
-  const cancelEdit = () => {
+
+  // Load the open page by its path: nested and root-level pages included.
+  // The two-level route is the fallback for a server started before
+  // /api/wiki/page existed.
+  useEffect(() => {
+    if (!path) {
+      setDoc(null);
+      setEditing(false);
+      return;
+    }
+    let on = true;
+    setDoc({
+      path,
+      content: null
+    });
     setEditing(false);
-    setDraft('');
+    const sec = path.split('/').slice(0, -1).join('/');
+    if (sec && !sec.includes('/')) setOpen(prev => prev.has(sec) ? prev : new Set([...prev, sec]));
+    const take = d => {
+      if (!on) return;
+      const content = d && typeof d.content === 'string' ? d.content : null;
+      const locked = !!(d && d.locked) || !!(content && content.indexOf('[vault-encrypted file') === 0);
+      setDoc({
+        path,
+        content: content == null ? '' : content,
+        locked,
+        missing: content == null
+      });
+      if (openOpts && openOpts.edit && !locked && content != null) {
+        setDraft(content);
+        setEditing(true);
+      }
+    };
+    apiFetch('/api/wiki/page?path=' + encodeURIComponent(path)).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(take).catch(() => {
+      const parts = path.split('/');
+      if (parts.length !== 2) return take(null);
+      apiFetch('/api/wiki/' + encodeURIComponent(parts[0]) + '/' + encodeURIComponent(parts[1])).then(r => r.ok ? r.json() : null).then(take).catch(() => take(null));
+    });
+    return () => {
+      on = false;
+    };
+  }, [path, openOpts]);
+  const beginEdit = () => {
+    if (!doc || doc.locked) return;
+    setDraft(doc.content || '');
+    setEditing(true);
   };
   const saveEdit = async () => {
     if (!path) return;
     setSaving(true);
     try {
-      const r = await fetch('/api/wiki/edit', {
+      const r = await apiFetch('/api/wiki/edit', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -12350,66 +13383,40 @@ function WikiWS() {
       });
       const d = await r.json();
       if (d.status === 'ok') {
-        setContent(draft);
+        setDoc(x => Object.assign({}, x, {
+          content: draft
+        }));
         setEditing(false);
-        showToast('Saved · ' + d.bytes + ' bytes');
+        showToast('Saved \xB7 ' + d.bytes + ' bytes');
         refreshStructure();
-      } else showToast('Save failed: ' + (d.message || 'unknown'));
+        onChanged && onChanged(path, 'saved');
+      } else showToast('Not saved: ' + (d.message || 'unknown'));
     } catch (e) {
       showToast('Save error');
     }
     setSaving(false);
   };
-
-  // Debounced search
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!query.trim()) {
-      setSearchResults(null);
-      return;
-    }
-    setSearching(true);
-    searchTimer.current = setTimeout(() => {
-      fetch('/api/wiki/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          query: query.trim()
-        })
-      }).then(r => r.json()).then(d => {
-        setSearchResults(d.results || []);
-        setSearching(false);
-      }).catch(() => {
-        setSearchResults([]);
-        setSearching(false);
-      });
-    }, 300);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [query]);
   const approvePending = async id => {
     try {
-      await fetch(`/api/wiki/pending/${id}/approve`, {
+      await apiFetch('/api/wiki/pending/' + id + '/approve', {
         method: 'POST'
       });
       showToast('Approved');
       refreshPending();
       refreshStructure();
-    } catch {
+      onChanged && onChanged(null, 'approved');
+    } catch (e) {
       showToast('Approve failed');
     }
   };
   const rejectPending = async id => {
     try {
-      await fetch(`/api/wiki/pending/${id}/reject`, {
+      await apiFetch('/api/wiki/pending/' + id + '/reject', {
         method: 'POST'
       });
       showToast('Rejected');
       refreshPending();
-    } catch {
+    } catch (e) {
       showToast('Reject failed');
     }
   };
@@ -12419,7 +13426,7 @@ function WikiWS() {
       return;
     }
     try {
-      const r = await fetch('/api/wiki/file', {
+      const r = await apiFetch('/api/wiki/file', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json'
@@ -12432,517 +13439,345 @@ function WikiWS() {
       const d = await r.json();
       if (d.deleted) {
         showToast('Deleted ' + confirmDelete);
-        if (path === confirmDelete) {
-          setPath('');
-          setContent('Select a file from the sidebar');
-        }
+        if (path === confirmDelete) onChanged && onChanged(confirmDelete, 'deleted');
       } else showToast('Not deleted: ' + (d.message || d.status));
       setConfirmDelete(null);
       setConfirmText('');
       refreshStructure();
-    } catch {
+    } catch (e) {
       showToast('Delete failed');
     }
   };
-  if (loading) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#999',
-      textAlign: 'center',
-      padding: 40
+  const sections = struct && struct.sections || [];
+  const createPage = async () => {
+    const sec = (newSec === '__new__' ? kwSlug(newSecName) : newSec) || '';
+    const slug = kwSlug(newTitle);
+    if (!sec) {
+      showToast('Pick a section, or name a new one');
+      return;
     }
-  }, "Loading wiki...");
-  const totalFiles = struct?.sections?.reduce((a, s) => a + (s.files?.length || 0), 0) || 0;
-  const renderDiff = p => {
-    const oldV = p.old_value || '';
-    const newV = p.new_value || '';
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 6,
-        marginTop: 4
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: 'rgba(255,0,128,0.06)',
-        border: '1px solid rgba(255,0,128,0.18)',
-        borderRadius: 4,
-        padding: 6,
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        color: '#ffb0c8',
-        whiteSpace: 'pre-wrap',
-        maxHeight: 160,
-        overflowY: 'auto'
-      }
-    }, oldV || /*#__PURE__*/React.createElement("em", {
-      style: {
-        color: '#666'
-      }
-    }, "(empty \u2014 will append)")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: 'rgba(0,255,128,0.06)',
-        border: '1px solid rgba(0,255,128,0.18)',
-        borderRadius: 4,
-        padding: 6,
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        color: '#b0ffc8',
-        whiteSpace: 'pre-wrap',
-        maxHeight: 160,
-        overflowY: 'auto'
-      }
-    }, newV));
-  };
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%'
+    if (!slug) {
+      showToast('Give the page a title');
+      return;
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      alignItems: 'center',
-      marginBottom: 8
+    const file = sec + '/' + slug + '.md';
+    const existing = sections.find(s => s.name === sec);
+    if (existing && existing.files.some(f => (f.filename || f.name || f) === slug + '.md')) {
+      showToast('That page already exists, so it is open instead');
+      setCreating(false);
+      onOpenPage(file);
+      return;
     }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: query,
-    onChange: e => setQuery(e.target.value),
-    placeholder: "\uD83D\uDD0D Search wiki...",
-    style: {
-      flex: 1,
-      background: 'rgba(255,255,255,0.04)',
-      border: '1px solid rgba(0,212,255,0.18)',
-      borderRadius: 6,
-      padding: '6px 10px',
-      color: '#ddd',
-      fontSize: 12,
-      fontFamily: 'Inter',
-      outline: 'none'
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    title: "Explore the wiki as a 3D knowledge galaxy",
-    style: {
-      fontSize: 11,
-      padding: '5px 10px',
-      color: '#c996ff',
-      borderColor: 'rgba(170,120,255,0.45)',
-      whiteSpace: 'nowrap',
-      textShadow: '0 0 8px rgba(170,120,255,0.5)'
-    },
-    onClick: () => {
-      if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({
-        workspace: 'knowledge'
-      });else fridayNavigate({
-        workspace: 'knowledge'
+    try {
+      const r = await apiFetch('/api/wiki/edit', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          file,
+          content: '# ' + newTitle.trim() + '\n\n',
+          create: true
+        })
       });
-    }
-  }, "\uD83C\uDF0C Galaxy"), pending.length > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: '#f59e0b',
-      fontFamily: 'Orbitron',
-      letterSpacing: '.05em'
-    }
-  }, pending.length, " pending")), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 6,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "\u2713 ", toast), pending.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8,
-      border: '1px solid rgba(245,158,11,0.25)',
-      borderRadius: 6,
-      background: 'rgba(245,158,11,0.04)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    onClick: () => setPendingOpen(!pendingOpen),
-    style: {
-      padding: '6px 10px',
-      cursor: 'pointer',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 11,
-      color: '#f59e0b',
-      letterSpacing: '.05em'
-    }
-  }, "\uD83D\uDCCB PENDING UPDATES (", pending.length, ")"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#888',
-      fontSize: 11
-    }
-  }, pendingOpen ? '▾' : '▸')), pendingOpen && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 10px 10px',
-      maxHeight: 280,
-      overflowY: 'auto'
-    }
-  }, pending.map(p => /*#__PURE__*/React.createElement("div", {
-    key: p.id,
-    style: {
-      padding: 8,
-      borderTop: '1px solid rgba(245,158,11,0.12)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: 8
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, p.file, p.section ? ` · §${p.section}` : ''), p.reason && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#a8a8b4',
-      fontStyle: 'italic',
-      marginTop: 2
-    }
-  }, p.reason)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 4,
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      padding: '2px 8px',
-      color: '#00ff80',
-      borderColor: 'rgba(0,255,128,0.4)'
-    },
-    onClick: () => approvePending(p.id)
-  }, "Approve"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      padding: '2px 8px',
-      color: '#ff0080',
-      borderColor: 'rgba(255,0,128,0.4)'
-    },
-    onClick: () => rejectPending(p.id)
-  }, "Reject"))), renderDiff(p))))), searchResults !== null && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8,
-      border: '1px solid rgba(0,212,255,0.18)',
-      borderRadius: 6,
-      background: 'rgba(0,212,255,0.03)',
-      padding: 8,
-      maxHeight: 240,
-      overflowY: 'auto'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 11,
-      color: '#00d4ff',
-      marginBottom: 6,
-      letterSpacing: '.05em'
-    }
-  }, searching ? 'Searching...' : `${searchResults.length} match${searchResults.length === 1 ? '' : 'es'} for "${query}"`), searchResults.map((r, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      padding: '6px 0',
-      borderTop: i ? '1px solid rgba(255,255,255,0.04)' : 'none',
-      cursor: 'pointer'
-    },
-    onClick: () => {
-      loadPath(r.path);
-      setQuery('');
-      setSearchResults(null);
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, r.path, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#888'
-    }
-  }, "\xB7 ", r.matches)), (r.snippets || []).map((s, j) => /*#__PURE__*/React.createElement("div", {
-    key: j,
-    style: {
-      fontSize: 11,
-      color: '#bbb',
-      marginLeft: 8,
-      marginTop: 2,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "L", s.line, ": ", s.text))))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 12,
-      flex: 1,
-      minHeight: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 200,
-      borderRight: '1px solid rgba(255,255,255,0.04)',
-      paddingRight: 8,
-      overflowY: 'auto',
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#888',
-      marginBottom: 8,
-      fontFamily: 'JetBrains Mono'
-    }
-  }, totalFiles, " files \xB7 ", struct?.sections?.length || 0, " sections"), recent.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#7c3aed',
-      fontFamily: 'Orbitron',
-      margin: '4px 0 3px',
-      letterSpacing: '.05em'
-    }
-  }, "RECENT"), recent.map(r => /*#__PURE__*/React.createElement("div", {
-    key: r.path,
-    onClick: () => loadPath(r.path),
-    style: {
-      fontSize: 11,
-      color: path === r.path ? '#00d4ff' : '#888',
-      cursor: 'pointer',
-      padding: '2px 0'
-    },
-    title: r.modified_iso || '',
-    onMouseOver: e => e.currentTarget.style.color = '#00d4ff',
-    onMouseOut: e => {
-      if (path !== r.path) e.currentTarget.style.color = '#888';
-    }
-  }, r.section, "/", r.filename))), struct?.sections?.map(s => /*#__PURE__*/React.createElement("div", {
-    key: s.name
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#00d4ff',
-      fontFamily: 'Orbitron',
-      margin: '8px 0 3px',
-      letterSpacing: '.05em'
-    }
-  }, s.name, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#a8a8b4'
-    }
-  }, "(", (s.files || []).length, ")")), (s.files || []).map(f => {
-    const fn = typeof f === 'string' ? f : f.filename || f.name;
-    const p = `${s.name}/${fn}`;
-    return /*#__PURE__*/React.createElement("div", {
-      key: fn,
-      onClick: () => load(s.name, f),
-      style: {
-        fontSize: 11,
-        color: path === p ? '#00d4ff' : '#a8a8b4',
-        cursor: 'pointer',
-        padding: '2px 0',
-        transition: 'color .15s'
-      },
-      onMouseOver: e => e.currentTarget.style.color = '#00d4ff',
-      onMouseOut: e => {
-        if (path !== p) e.currentTarget.style.color = '#a8a8b4';
+      const d = await r.json();
+      if (d.exists) {
+        setCreating(false);
+        showToast('That page already exists, so it is open instead');
+        onOpenPage(file);
+        return;
       }
-    }, fn);
-  })))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      overflowY: 'auto',
-      display: 'flex',
-      flexDirection: 'column'
+      if (d.status !== 'ok') {
+        showToast('Not created: ' + (d.message || 'unknown'));
+        return;
+      }
+      setCreating(false);
+      setNewTitle('');
+      setNewSecName('');
+      await refreshStructure();
+      showToast('Created ' + file);
+      onOpenPage(file, {
+        edit: true
+      });
+      onChanged && onChanged(file, 'created');
+    } catch (e) {
+      showToast('Create failed');
     }
-  }, path && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 8
+  };
+  const renderDiff = p => h('div', {
+    className: 'kw-diff'
+  }, h('div', {
+    className: 'kw-diff-old'
+  }, p.old_value || h('em', null, '(empty — will append)')), h('div', {
+    className: 'kw-diff-new'
+  }, p.new_value || ''));
+  // Links inside a page open the page they point at, here.
+  const onReaderClick = e => {
+    const a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a) return;
+    if (a.classList.contains('kw-link') && a.getAttribute('data-kw-page')) {
+      e.preventDefault();
+      e.stopPropagation();
+      onOpenName(a.getAttribute('data-kw-page'));
+      return;
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#999',
-      fontFamily: 'JetBrains Mono'
+    const href = a.getAttribute('href');
+    if (kwIsPageHref(href)) {
+      e.preventDefault();
+      e.stopPropagation();
+      onOpenPage(kwResolveHref(path, href));
     }
-  }, "wiki/", path), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 4
+  };
+  const linkList = (title, items, empty) => h('div', {
+    className: 'kw-links-col'
+  }, h('div', {
+    className: 'kw-links-h'
+  }, title, ' ', h('span', {
+    className: 'kw-dim'
+  }, '(', items.length, ')')), items.length ? items.slice(0, 40).map(e => {
+    const p = kwPathOf(e);
+    return h('button', {
+      key: e.id,
+      className: 'kw-linkrow',
+      disabled: !p || e.type === 'soul',
+      title: p ? 'wiki/' + p : e.title,
+      onClick: () => p && onOpenPage(p)
+    }, e.title || e.id);
+  }) : h('div', {
+    className: 'kw-dim kw-small'
+  }, empty));
+  const totalFiles = sections.reduce((a, s) => a + (s.files || []).length, 0);
+  const showResults = q && q.trim();
+  return h('div', {
+    className: 'kw-pages-inner'
+  }, h('aside', {
+    className: 'kw-side',
+    'aria-label': 'Pages'
+  }, h('div', {
+    className: 'kw-side-top'
+  }, h('span', {
+    className: 'kw-dim kw-small'
+  }, totalFiles, ' pages \xB7 ', sections.length, ' sections'), h('button', {
+    className: 'kw-btn kw-new',
+    onClick: () => {
+      setCreating(v => !v);
+      if (!newSec && sections[0]) setNewSec(section || sections[0].name);
     }
-  }, !editing && /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      padding: '2px 8px'
+  }, creating ? 'Cancel' : '＋ New page')), creating && h('div', {
+    className: 'kw-create'
+  }, h('select', {
+    value: newSec,
+    onChange: e => setNewSec(e.target.value),
+    'aria-label': 'Section'
+  }, sections.map(s => h('option', {
+    key: s.name,
+    value: s.name
+  }, s.name)), h('option', {
+    value: '__new__'
+  }, 'New section…')), newSec === '__new__' && h('input', {
+    value: newSecName,
+    onChange: e => setNewSecName(e.target.value),
+    placeholder: 'Section name'
+  }), h('input', {
+    value: newTitle,
+    onChange: e => setNewTitle(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') createPage();
     },
-    onClick: beginEdit
-  }, "\u270E Edit"), editing && /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      padding: '2px 8px',
-      color: '#00ff80',
-      borderColor: 'rgba(0,255,128,0.4)'
-    },
+    placeholder: 'Page title',
+    autoFocus: true
+  }), h('button', {
+    className: 'kw-btn kw-go',
+    onClick: createPage
+  }, 'Create')), pending.length > 0 && h('div', {
+    className: 'kw-pending'
+  }, h('button', {
+    className: 'kw-pending-h',
+    onClick: () => setPendingOpen(v => !v),
+    'aria-expanded': pendingOpen
+  }, '📋 Pending updates (', pending.length, ') ', pendingOpen ? '▾' : '▸'), pendingOpen && pending.map(p => h('div', {
+    key: p.id,
+    className: 'kw-pending-item'
+  }, h('button', {
+    className: 'kw-linkrow',
+    onClick: () => onOpenPage(p.file),
+    title: 'Open ' + p.file
+  }, p.file, p.section ? ' \xB7 \xA7' + p.section : ''), p.reason && h('div', {
+    className: 'kw-dim kw-small'
+  }, p.reason), renderDiff(p), h('div', {
+    className: 'kw-row'
+  }, h('button', {
+    className: 'kw-btn kw-go',
+    onClick: () => approvePending(p.id)
+  }, 'Approve'), h('button', {
+    className: 'kw-btn kw-danger',
+    onClick: () => rejectPending(p.id)
+  }, 'Reject'))))), recent.length > 0 && h('div', {
+    className: 'kw-group'
+  }, h('div', {
+    className: 'kw-group-h'
+  }, 'Recent'), recent.map(r => h('button', {
+    key: r.path,
+    className: 'kw-linkrow' + (path === r.path ? ' on' : ''),
+    title: r.modified_iso || '',
+    onClick: () => onOpenPage(r.path)
+  }, r.section, '/', r.filename))), !struct && h('div', {
+    className: 'kw-dim kw-small'
+  }, 'Reading the wiki…'), sections.map(s => {
+    const isOpen = open.has(s.name);
+    return h('div', {
+      key: s.name,
+      className: 'kw-group'
+    }, h('div', {
+      className: 'kw-sec' + (section === s.name ? ' on' : '')
+    }, h('button', {
+      className: 'kw-sec-t',
+      onClick: () => toggleSection(s.name),
+      'aria-expanded': isOpen
+    }, isOpen ? '▾ ' : '▸ ', s.name, h('span', {
+      className: 'kw-dim'
+    }, ' (', (s.files || []).length, ')')), h('button', {
+      className: 'kw-sec-g',
+      onClick: () => onFocusSection(s.name),
+      title: 'Show the ' + s.name + ' section in the galaxy'
+    }, '◎')), isOpen && (s.files || []).map(f => {
+      const fn = typeof f === 'string' ? f : f.filename || f.name;
+      const p = s.name + '/' + fn;
+      return h('button', {
+        key: fn,
+        className: 'kw-linkrow kw-file' + (path === p ? ' on' : ''),
+        onClick: () => onOpenPage(p)
+      }, fn);
+    }));
+  })), h('section', {
+    className: 'kw-reader',
+    'aria-label': 'Page'
+  }, toast && h('div', {
+    className: 'kw-toast',
+    role: 'status'
+  }, '✓ ', toast), showResults && h('div', {
+    className: 'kw-results'
+  }, h('div', {
+    className: 'kw-results-h'
+  }, text.busy ? 'Searching…' : (text.results || []).length + ' page' + ((text.results || []).length === 1 ? '' : 's') + ' mention “' + q.trim() + '”', graphHits.length ? h('span', {
+    className: 'kw-dim'
+  }, ' \xB7 ', graphHits.length, ' in the graph') : null), (text.results || []).slice(0, 30).map((r, i) => h('button', {
+    key: 'p' + i,
+    className: 'kw-hit',
+    onClick: () => onOpenPage(r.path)
+  }, h('div', {
+    className: 'kw-hit-p'
+  }, r.path, ' ', h('span', {
+    className: 'kw-dim'
+  }, '\xB7 ', r.matches)), (r.snippets || []).map((sn, j) => h('div', {
+    key: j,
+    className: 'kw-hit-s'
+  }, 'L', sn.line, ': ', sn.text)))), graphHits.filter(e => e.type !== 'page').map(e => h('button', {
+    key: 'g' + e.id,
+    className: 'kw-hit',
+    onClick: () => {
+      const p = kwPathOf(e);
+      if (p) onOpenPage(p);
+    }
+  }, h('div', {
+    className: 'kw-hit-p'
+  }, '✦ ', e.title, ' ', h('span', {
+    className: 'kw-dim'
+  }, '\xB7 ', e.type || 'entity', kwPathOf(e) ? ' \xB7 in ' + kwPathOf(e) : ''))))), !path && !showResults && h('div', {
+    className: 'kw-empty'
+  }, h('div', null, 'Pick a page on the left, search above, or click a node in the galaxy.'), h('div', {
+    className: 'kw-dim kw-small'
+  }, 'Pages link to each other with [[Page name]] or ordinary Markdown links; the galaxy draws those links.')), path && h('div', {
+    className: 'kw-doc'
+  }, h('div', {
+    className: 'kw-doc-head'
+  }, h('span', {
+    className: 'kw-dim kw-mono'
+  }, 'wiki/', path), h('span', {
+    className: 'kw-sp'
+  }), !editing && h('button', {
+    className: 'kw-btn',
+    onClick: beginEdit,
+    disabled: !doc || doc.content == null || doc.locked || doc.missing,
+    title: doc && doc.locked ? 'This page is encrypted and the vault is locked' : 'Edit this page'
+  }, '✎ Edit'), editing && h('button', {
+    className: 'kw-btn kw-go',
     disabled: saving,
     onClick: saveEdit
-  }, saving ? 'Saving...' : '💾 Save'), editing && /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      padding: '2px 8px'
-    },
-    onClick: cancelEdit
-  }, "Cancel"), !editing && path && /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      padding: '2px 8px',
-      color: '#ff0080',
-      borderColor: 'rgba(255,0,128,0.4)'
-    },
+  }, saving ? 'Saving…' : 'Save'), editing && h('button', {
+    className: 'kw-btn',
+    onClick: () => {
+      setEditing(false);
+      setDraft('');
+    }
+  }, 'Cancel'), !editing && h('button', {
+    className: 'kw-btn kw-danger',
+    disabled: !doc || doc.missing,
     onClick: () => {
       setConfirmDelete(path);
       setConfirmText('');
     }
-  }, "\uD83D\uDDD1 Delete"))), editing ? /*#__PURE__*/React.createElement("textarea", {
+  }, '🗑 Delete'), h('button', {
+    className: 'kw-btn',
+    onClick: onClosePage,
+    title: 'Close page',
+    'aria-label': 'Close page'
+  }, '✕')), doc && doc.locked && h('div', {
+    className: 'kw-locked'
+  }, '🔒 This page is encrypted and the vault is locked. Unlock the vault to read or edit it.'), doc && doc.missing && h('div', {
+    className: 'kw-locked'
+  }, 'This page could not be read. It may have been moved or deleted.'), editing ? h('textarea', {
+    className: 'kw-editor',
     value: draft,
     onChange: e => setDraft(e.target.value),
     spellCheck: false,
-    style: {
-      flex: 1,
-      minHeight: 300,
-      width: '100%',
-      background: 'rgba(0,0,0,0.35)',
-      color: '#ddd',
-      border: '1px solid rgba(0,212,255,0.22)',
-      borderRadius: 6,
-      padding: 10,
-      fontFamily: 'JetBrains Mono',
-      fontSize: 12,
-      lineHeight: 1.6,
-      resize: 'vertical',
-      outline: 'none'
-    }
-  }) : /*#__PURE__*/React.createElement(FridayDoc, {
-    text: content,
+    autoFocus: true,
+    'aria-label': 'Page text'
+  }) : doc && doc.content != null && !doc.locked ? h('div', {
+    className: 'kw-doc-body',
+    onClickCapture: onReaderClick
+  }, h(FridayDoc, {
+    text: kwLinkify(doc.content),
     style: {
       margin: 0
     }
-  }))), confirmDelete && /*#__PURE__*/React.createElement("div", {
+  })) : !doc || doc.content == null && !doc.missing ? h('div', {
+    className: 'kw-dim'
+  }, 'Loading…') : null, !editing && links && !links.missing && h('div', {
+    className: 'kw-links'
+  }, linkList('Linked from', links.from, 'No page links here yet.'), linkList('Links to', links.to, 'This page links nowhere yet.'), links.other.length > 0 && linkList('Mentions', links.other, ''))), confirmDelete && h('div', {
+    className: 'kw-modal',
     onClick: () => {
       setConfirmDelete(null);
       setConfirmText('');
-    },
-    style: {
-      position: 'fixed',
-      inset: 0,
-      zIndex: 300,
-      background: 'rgba(0,0,0,0.7)',
-      backdropFilter: 'blur(6px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, h('div', {
+    className: 'kw-modal-box',
     onClick: e => e.stopPropagation(),
-    style: {
-      width: 'min(440px,90vw)',
-      background: 'rgba(15,5,15,0.97)',
-      border: '1px solid rgba(255,0,128,0.45)',
-      borderRadius: 10,
-      padding: 18,
-      boxShadow: '0 12px 40px rgba(0,0,0,0.85)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 12,
-      color: '#ff0080',
-      letterSpacing: '.1em',
-      marginBottom: 8
-    }
-  }, "\u26A0 DELETE WIKI FILE"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#ddd',
-      marginBottom: 10,
-      lineHeight: 1.5
-    }
-  }, "This will permanently delete ", /*#__PURE__*/React.createElement("strong", {
-    style: {
-      color: '#ff0080'
-    }
-  }, confirmDelete), ". Type ", /*#__PURE__*/React.createElement("strong", null, "DELETE"), " to confirm."), /*#__PURE__*/React.createElement("input", {
+    role: 'dialog',
+    'aria-label': 'Delete page'
+  }, h('div', {
+    className: 'kw-modal-h'
+  }, '⚠ Delete page'), h('div', {
+    className: 'kw-small'
+  }, 'This permanently deletes ', h('b', null, confirmDelete), '. Type ', h('b', null, 'DELETE'), ' to confirm.'), h('input', {
     value: confirmText,
     onChange: e => setConfirmText(e.target.value),
-    placeholder: "DELETE",
-    autoFocus: true,
-    style: {
-      width: '100%',
-      background: 'rgba(0,0,0,0.4)',
-      color: '#fff',
-      border: '1px solid rgba(255,0,128,0.4)',
-      borderRadius: 6,
-      padding: '8px 10px',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 13,
-      outline: 'none',
-      marginBottom: 10
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      justifyContent: 'flex-end'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11
-    },
+    placeholder: 'DELETE',
+    autoFocus: true
+  }), h('div', {
+    className: 'kw-row kw-end'
+  }, h('button', {
+    className: 'kw-btn',
     onClick: () => {
       setConfirmDelete(null);
       setConfirmText('');
     }
-  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11,
-      color: '#ff0080',
-      borderColor: 'rgba(255,0,128,0.5)'
-    },
+  }, 'Cancel'), h('button', {
+    className: 'kw-btn kw-danger',
     disabled: confirmText !== 'DELETE',
     onClick: deleteFile
-  }, "Delete Permanently")))));
+  }, 'Delete permanently'))))));
 }
 // ═══ FUTURESPEAK STUDIO — portfolio project / deployment cockpit ═══
 // Project-management layer over the Dev Studio vibe-coding backend. Each
@@ -24289,7 +25124,7 @@ function newsRecord(source, action, category) {
   } catch (e) {}
 }
 // "In your wiki" — lazily checks an article's title+snippet against wiki page
-// titles and renders a link to the wiki workspace if there's a match.
+// titles and renders a link to the page in Knowledge if there's a match.
 function NewsWikiLink({
   it
 }) {
@@ -24310,10 +25145,10 @@ function NewsWikiLink({
   const go = m => {
     try {
       if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({
-        workspace: 'wiki',
+        workspace: 'knowledge',
         path: m.path
       });else fridayNavigate({
-        workspace: 'wiki',
+        workspace: 'knowledge',
         path: m.path
       });
     } catch (e) {}
@@ -43757,7 +44592,7 @@ function ArbiterStrip() {
    /w/messages?thread_id=... or /w/calendar?date=... open where they point.
    Approval cards reach the tab through its own poller: with only standalone
    tabs open there is no desktop bell to show them. */
-const STANDALONE_WS = function () {
+const STANDALONE_RAW = function () {
   try {
     const m = /^\/w\/([a-z][a-z0-9_-]{0,31})\/?$/.exec(window.location.pathname);
     return window.__FRIDAY_STANDALONE__ || m && m[1] || null;
@@ -43765,13 +44600,20 @@ const STANDALONE_WS = function () {
     return null;
   }
 }();
+// An old tab address (/w/wiki) opens the workspace that holds it now.
+const STANDALONE_WS = STANDALONE_RAW ? fridayWorkspaceId(STANDALONE_RAW) : null;
 if (STANDALONE_WS) {
   try {
-    const t = { workspace: STANDALONE_WS };
+    const t = fridayResolveTarget({ workspace: STANDALONE_RAW });
     new URLSearchParams(window.location.search).forEach((v, k) => {
       t[k] = k === 'view3d' ? v === '1' || v === 'true' : v;
     });
     window.__fridayNavTarget = t;
+    if (STANDALONE_RAW !== STANDALONE_WS) {
+      const q = new URLSearchParams(window.location.search);
+      if (t.view && !q.get('view')) q.set('view', t.view);
+      window.history.replaceState(null, '', '/w/' + STANDALONE_WS + (q.toString() ? '?' + q.toString() : ''));
+    }
   } catch (e) {}
 }
 function fridayWorkspaceTabUrl(id, params) {
@@ -47458,7 +48300,7 @@ function App() {
   // Predictive workspaces — refresh the "Suggested" set Friday glows on the dock.
   useEffect(() => {
     const pull = () => fetch('/api/workspace/predictions?top=4').then(r => r.json()).then(d => {
-      const strong = (d.predictions || []).filter(p => (p.score || 0) >= 0.12).map(p => p.workspace);
+      const strong = (d.predictions || []).filter(p => (p.score || 0) >= 0.12).map(p => fridayWorkspaceId(p.workspace));
       setSuggestedWs(new Set(strong));
     }).catch(() => {});
     pull();
@@ -47759,7 +48601,8 @@ function App() {
   };
   // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
   // so clicking a notification for an already-open workspace doesn't close it.
-  const openWs = id => {
+  const openWs = rawId => {
+    const id = fridayWorkspaceId(rawId);
     cancelClose(id);
     setOpenWins(p => {
       if (p.has(id)) return p;
@@ -47872,6 +48715,7 @@ function App() {
   useEffect(() => {
     window.fridayOpenWorkspace = t => {
       if (!t || !t.workspace) return;
+      t = fridayResolveTarget(t);
       openWs(t.workspace);
       fridayNavigate(t);
     };
@@ -47909,11 +48753,15 @@ function App() {
       wanted = new URLSearchParams(window.location.search).get('workspace') || '';
     } catch (e) { return; }
     if (!wanted) return;
-    if (!WS.some(w => w.id === wanted)) {
+    const id = fridayWorkspaceId(wanted);
+    if (!WS.some(w => w.id === id)) {
       console.warn('[friday] ?workspace=' + wanted + ' is not a workspace');
       return;
     }
-    openWs(wanted);
+    openWs(id);
+    if (id !== wanted) fridayNavigate(fridayResolveTarget({
+      workspace: wanted
+    }));
   }, []);
   // Global Workspace Studio opener — the 💬 button on any window (and custom
   // quick-actions) call this to open that workspace's contextual chat, optionally
@@ -48256,8 +49104,7 @@ function App() {
   }, el) : el;
   const wsMap = {
     career: /*#__PURE__*/React.createElement(CareerWS, null),
-    wiki: /*#__PURE__*/React.createElement(WikiWS, null),
-    knowledge: /*#__PURE__*/React.createElement(KnowledgeGraphWS, null),
+    knowledge: /*#__PURE__*/React.createElement(KnowledgeWS, null),
     futurespeak: showAllWorkspaces ? /*#__PURE__*/React.createElement(FuturespeakWS, null) : /*#__PURE__*/React.createElement(SitesWS, null),
     family: /*#__PURE__*/React.createElement(FamilyWS, null),
     studio: /*#__PURE__*/React.createElement(StudioWS, null),
@@ -50264,7 +51111,8 @@ function App() {
     }
   }, w.ico)), /*#__PURE__*/React.createElement("span", null, w.label), /*#__PURE__*/React.createElement("span", {
     className: "dot"
-  }), w.id === 'wiki' && wikiPending > 0 && /*#__PURE__*/React.createElement("span", {
+  }), w.id === 'knowledge' && wikiPending > 0 && /*#__PURE__*/React.createElement("span", {
+    title: wikiPending + ' wiki update' + (wikiPending === 1 ? '' : 's') + ' waiting for your approval',
     style: {
       position: 'absolute',
       top: 2,

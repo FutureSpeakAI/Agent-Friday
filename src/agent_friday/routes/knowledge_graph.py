@@ -24,7 +24,8 @@ from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 from agent_friday.core import login_required
 from agent_friday.services.knowledge_graph import (
-    kg_settings, peek_wiki_dirty, consume_wiki_dirty, mark_wiki_dirty)
+    kg_settings, peek_wiki_dirty, consume_wiki_dirty, mark_wiki_dirty,
+    on_wiki_dirty)
 from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
 from agent_friday.services.knowledge_graph import wiki_graph, structural_query
 
@@ -46,6 +47,12 @@ def emit_kg_event(event_type: str, payload: dict | None = None) -> None:
                 q.put_nowait(evt)
             except _queue.Full:
                 pass
+
+
+# A page saved, created, deleted or approved anywhere reaches every open
+# Knowledge view as `wiki_changed`, which reloads its graph (and so rebuilds
+# Tier A through _ensure_fresh) instead of waiting for the next manual refresh.
+on_wiki_dirty(lambda reason: emit_kg_event("wiki_changed", {"reason": reason}))
 
 
 def _ensure_fresh() -> KnowledgeGraphStore:
