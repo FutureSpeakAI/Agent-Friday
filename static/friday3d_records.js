@@ -292,7 +292,7 @@
   SOURCES.messages = {
     label: 'Messages', openLabel: 'Open thread', views: ['stack', 'time', 'cluster', 'wall'],
     empty: 'No messages to show.', noun: 'messages', intro: 'deal', carryIco: '✉',
-    zoneNote: 'in Friday only; Gmail is unchanged',
+    zoneNote: 'in Friday only',
     blurb: 'Your inbox dealt into piles by lane. Drag cards onto a zone; every change is Friday-only and can be undone.',
     sorts: {
       newest: { label: 'Newest', cmp: desc(m => secs(m.timestamp)) },
@@ -344,11 +344,19 @@
           return { okIds: ids.filter((_, k) => rs[k].ok), before, error: bad ? (bad.j.message || 'Friday could not move that.') : '' };
         });
       }
-      return post('/api/messages/action', { ids, action: z.action }).then(r => ({
-        okIds: r.ok ? ids : [], before: (r.ok && r.j.before) || {}, error: r.ok ? '' : (r.j.message || 'That did not work.') }),
-        e => ({ okIds: [], before: {}, error: "Couldn't reach Friday: " + e }));
+      // Gmail itself changes too, for accounts reconnected with sending
+      const gmail = recs.map(m => ({ id: m.id, account_id: m.account_id, thread_id: m.thread_id || m.gmail_id }));
+      return post('/api/messages/action', { ids, action: z.action, gmail }).then(r => {
+        const st = Object.values((r.j && r.j.gmail_status) || {});
+        const note = z.action === 'snooze' ? 'in Friday only' : st.includes('synced') && !st.includes('not_permitted') ? 'also in Gmail'
+          : st.includes('synced') ? 'in Gmail where allowed' : 'in Friday only';
+        const bad = Object.values((r.j && r.j.not_changed) || {});
+        return { okIds: r.ok ? (r.j.ids || ids) : [], note,
+          before: r.ok ? { states: r.j.before || {}, gmail: r.j.gmail_changes || {} } : {},
+          error: !r.ok ? (r.j.message || 'That did not work.') : bad.length ? 'Gmail refused: ' + bad[0] : '' };
+      }, e => ({ okIds: [], before: {}, error: "Couldn't reach Friday: " + e }));
     },
-    undo: before => post('/api/messages/restore', { states: before }).then(r => r.ok, () => false)
+    undo: before => post('/api/messages/restore', before && before.states ? { states: before.states, gmail_changes: before.gmail || {} } : { states: before }).then(r => r.ok, () => false)
   };
 
   // ── the panel ──────────────────────────────────────────────────────────
@@ -664,7 +672,7 @@
           undoRef.current.push(u);
           const failed = group.length - ok.size;
           const noun = ok.size > 1 ? ' · ' + ok.size + ' ' + (src.noun || 'items') : '';
-          setToast({ text: z.done + noun + (src.zoneNote ? ' (' + src.zoneNote + ')' : '') + (failed ? ' · ' + failed + ' not changed: ' + res.error : ''), undo: u, err: !!failed });
+          setToast({ text: z.done + noun + ((res.note || src.zoneNote) ? ' (' + (res.note || src.zoneNote) + ')' : '') + (failed ? ' · ' + failed + ' not changed: ' + res.error : ''), undo: u, err: !!failed });
         });
       }).catch(() => { busyRef.current = false; group.forEach(g => eng.setHeld(relIndex(g.rel), false)); setToast({ text: 'Nothing changed: Friday could not be reached.', err: true }); });
     };

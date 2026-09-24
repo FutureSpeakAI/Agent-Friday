@@ -115,6 +115,77 @@ def mail_contacts():
                     "errors": _CONTACTS["errors"]})
 
 
+def _mailbox_call(fn):
+    from agent_friday.services import gmail_mailbox as gm
+    try:
+        return jsonify({"status": "ok", **fn(gm)})
+    except gm.NotPermitted as e:
+        return jsonify({"status": "not_permitted", "message": str(e) + ". Use Reconnect with sending in Settings."}), 403
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e:
+        from agent_friday.services import gmail_api
+        d = gmail_api.describe(e)
+        return jsonify({"status": "error", "kind": d.get("kind"), "message": d.get("message") or str(e)}), 502
+
+
+@gmail_send_bp.route("/api/mail/labels", methods=["GET", "POST"])
+def mail_labels():
+    """GET ?account= : the account's own Gmail labels. POST {account_id, name}: create one."""
+    if request.method == "GET":
+        aid = (request.args.get("account") or "").strip()
+        return _mailbox_call(lambda gm: {"labels": gm.list_labels(aid)})
+    body = request.get_json(silent=True) or {}
+    return _mailbox_call(lambda gm: {"label": gm.create_label((body.get("account_id") or "").strip(), body.get("name") or "")})
+
+
+@gmail_send_bp.route("/api/mail/modify", methods=["POST"])
+def mail_modify():
+    """Add/remove labels on conversations in Gmail. {account_id, thread_ids, add, remove}.
+    Returns `changed` (exactly what was different), which /api/mail/modify/undo reverses."""
+    b = request.get_json(silent=True) or {}
+    return _mailbox_call(lambda gm: gm.modify_threads((b.get("account_id") or "").strip(),
+                                                        b.get("thread_ids") or [], b.get("add") or [], b.get("remove") or []))
+
+
+@gmail_send_bp.route("/api/mail/modify/undo", methods=["POST"])
+def mail_modify_undo():
+    b = request.get_json(silent=True) or {}
+    return _mailbox_call(lambda gm: gm.undo((b.get("account_id") or "").strip(), b.get("changed") or {}))
+
+
+@gmail_send_bp.route("/api/mail/held")
+def mail_held():
+    """Approved messages waiting out the undo window or their scheduled time."""
+    return jsonify({"status": "ok", "held": _gs.held(), "undo_seconds": _gs.UNDO_SECONDS})
+
+
+@gmail_send_bp.route("/api/mail/held/<approval_id>/cancel", methods=["POST"])
+def mail_held_cancel(approval_id):
+    """Undo send. The message does not go, and its approval cannot be reused."""
+    try:
+        return jsonify({"status": "ok", **_gs.cancel(approval_id)})
+    except _gs.SendRefused as e:
+        return jsonify({"status": "refused", "message": str(e)}), 409
+
+
+@gmail_send_bp.route("/api/mail/draft", methods=["POST"])
+def mail_draft():
+    """Save a draft into the account's Gmail Drafts. Sends nothing."""
+    body = request.get_json(silent=True) or {}
+    try:
+        out = _gs.save_draft(
+            account_id=(body.get("account_id") or "").strip(),
+            to=body.get("to") or None, subject=body.get("subject") or "",
+            body=body.get("body") or "", cc=body.get("cc") or None, bcc=body.get("bcc") or None,
+            html=body.get("html") or None, thread_id=body.get("thread_id") or None,
+            in_reply_to=body.get("in_reply_to") or None, references=body.get("references") or None,
+            attachments=_attachments_for(body))
+        return jsonify({"status": "ok", **out})
+    except _gs.SendRefused as e:
+        return jsonify({"status": "refused", "message": str(e)}), 400
+
+
 @gmail_send_bp.route("/api/mail/attachment", methods=["POST"])
 def mail_attachment_upload():
     """Store a file to attach to a message that is about to be requested.
@@ -146,6 +217,7 @@ def mail_request():
             in_reply_to=body.get("in_reply_to") or None,
             references=body.get("references") or None,
             attachments=_attachments_for(body),
+            send_at=body.get("send_at") or None,
         )
     except _gs.SendRefused as e:
         return jsonify({"status": "refused", "message": str(e)}), 400
