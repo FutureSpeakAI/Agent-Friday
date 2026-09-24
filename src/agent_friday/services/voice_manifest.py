@@ -139,6 +139,68 @@ def _reply_cap(s: dict) -> int:
 # ``ENGINE_RUNNERS`` (the functions that actually run an engine), never by
 # poking ``proof.state`` — there is no setter for it.
 
+def plain_language_refusal(exc, stage_noun="voice"):
+    """Turn a raw exception into a sentence someone can act on.
+
+    The readiness panel's whole promise is that it says what is wrong and what
+    to do about it. Falling back to ``TypeError: ...`` keeps that promise only
+    for people who could have read the log anyway. These are the failures
+    actually seen on this machine, in the words the person who hit them needed.
+
+    Returns ``(message, action)``. Anything unrecognised keeps the exception
+    text — an unfamiliar error shown verbatim is worth more than a comforting
+    sentence that names the wrong cause.
+    """
+    name = type(exc).__name__
+    text = str(exc)
+    low = text.lower()
+    retry = {"label": "Prove again", "kind": "retry"}
+
+    # The startup import race. transformers is present and healthy; the import
+    # simply lost a race with another subsystem reaching for torch at boot.
+    # This used to be cached for the life of the process and took the
+    # microphone down with it.
+    if "cannot import name" in low and "transformers" in low:
+        return ("The synthesizer lost an import race while Friday was starting "
+                "up — the package is installed and fine. Friday retries this "
+                "by herself within 30 seconds; pressing Prove voice now asks "
+                "immediately.", retry)
+
+    # Nothing to load yet. Not broken, just not downloaded.
+    if (("no such file" in low or "not found" in low or "does not exist" in low)
+            and (".onnx" in low or "model" in low or ".pt" in low)):
+        return ("The voice models have not been downloaded yet. The first "
+                "voice session fetches them, which takes a few minutes on a "
+                "normal connection.", retry)
+
+    # The card is full. Bonsai and friends are resident; this is expected, and
+    # the CPU path is the designed floor rather than a failure.
+    if "out of memory" in low or "cuda_error_out_of_memory" in low:
+        return ("The graphics card is full — something else is resident on it. "
+                "Voice can run on the CPU: set the GPU policy below to "
+                "'never' for now, or free the card and try again.",
+                {"label": "Prove again", "kind": "retry"})
+
+    if name in ("ModuleNotFoundError", "ImportError") and "no module named" in low:
+        mod = text.split("'")[1] if "'" in text else "a dependency"
+        return (f"Local voice needs {mod}, which is not installed in this "
+                f"environment. Reinstall Friday's voice extras, or switch to "
+                f"Gemini Live in the mode row above.", retry)
+
+    if "espeak" in low:
+        return ("The synthesizer needs espeak-ng and cannot find it. Install "
+                "espeak-ng, or choose Piper above, which does not need it.",
+                retry)
+
+    if name in ("TimeoutError",) or "timed out" in low:
+        return (f"Friday's {stage_noun} did not answer in time. This is "
+                f"usually a model still loading on a cold start — try again "
+                f"in a moment.", retry)
+
+    return (f"Friday couldn't prove her {stage_noun} works right now: "
+            f"{name}: {text[:160]}", retry)
+
+
 class ProofRefused(RuntimeError):
     def __init__(self, code: str, message: str, action: dict | None = None):
         super().__init__(message)
@@ -434,10 +496,8 @@ class VoiceManifest:
                              if code == "local_voice_gpu_refused" else
                              {"label": "Prove again", "kind": "retry"})
             else:
-                self._refuse(stage, "voice_stage_unproven",
-                             f"Friday couldn't prove her {self._noun(stage)} works "
-                             f"right now: {type(e).__name__}: {str(e)[:160]}",
-                             {"label": "Prove again", "kind": "retry"})
+                msg, act = plain_language_refusal(e, self._noun(stage))
+                self._refuse(stage, "voice_stage_unproven", msg, act)
         self._notify()
         return self.snapshot_stage(stage)
 
