@@ -691,7 +691,7 @@ def step_routing(total: int, step: int, existing_mode: str) -> str:
     # user with an eGPU, or a plan to buy a card, is entitled to choose it.
     capable, reason, brain_label = False, "", ""
     try:
-        from agent_friday.services import setup_brain as _sb
+        from agent_friday import setup_brain as _sb
         a = _sb.assess()
         capable = bool(a.get("capable"))
         reason = a.get("reason") or ""
