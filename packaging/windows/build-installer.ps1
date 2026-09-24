@@ -14,8 +14,8 @@
        falls back to fetching it on the target machine, but shipping it means
        one fewer thing that can go wrong on her laptop.
 
-    2. Builds wheels for the five packages that publish sdists only -
-       pyautogui, pyscreeze, pygetwindow, mouseinfo, pytweening. They are pure
+    2. Builds wheels for the four packages that publish sdists only -
+       pyautogui, pyscreeze, pygetwindow, pytweening. They are pure
        Python, so a wheel built here works anywhere. This is what lets the
        installer stay literally --only-binary=:all: on the target machine and
        never invoke a build backend, which matters because pip's build
@@ -433,7 +433,7 @@ if ($NoBundlePython) {
 }
 
 # =========================================================================
-#  3. Wheelhouse: the five sdist-only, pure-Python packages
+#  3. Wheelhouse: the four sdist-only, pure-Python packages
 # =========================================================================
 
 if ($NoWheelhouse) {
@@ -455,7 +455,7 @@ if ($NoWheelhouse) {
     # So we build with the SAME embeddable interpreter we just bundled. It is
     # sitting in staging already, it is the exact version the target machine
     # will run, and it means the build host needs no Python of its own. The
-    # five packages are pure Python, so the resulting wheels are py3-none-any
+    # four packages are pure Python, so the resulting wheels are py3-none-any
     # and work anywhere regardless.
     $buildPy = $null
     $embedZip = $null
@@ -493,7 +493,9 @@ if ($NoWheelhouse) {
     # Every sdist-only package in the PyAutoGUI dependency graph, named
     # explicitly. `pip wheel --no-deps` builds only what you name, and naming
     # them individually means one failing does not take the rest with it.
-    $targets = @('pyautogui','pyscreeze','pygetwindow','mouseinfo','pytweening','pymsgbox','pyperclip','pyrect')
+    # mouseinfo is left out: it is GPL-3.0, pyautogui imports it only inside a
+    # try block, and it cannot load here anyway (it needs tkinter).
+    $targets = @('pyautogui','pyscreeze','pygetwindow','pytweening','pymsgbox','pyperclip','pyrect')
     $failed = @()
     foreach ($p in $targets) {
         $r = Invoke-Native -FilePath $buildPy -Arguments @(

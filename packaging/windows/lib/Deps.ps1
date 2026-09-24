@@ -25,11 +25,11 @@
     core and recommended tiers resolve and install with zero wheel builds.
 
     The exception is the PyAutoGUI family - pyautogui, pyscreeze, pygetwindow,
-    mouseinfo, pytweening. These publish NO wheels at all, only sdists. Their
+    pytweening. These publish NO wheels at all, only sdists. Their
     sdists were inspected and contain no C sources and no ext_modules, so they
     need no compiler; but --only-binary=:all: still refuses them on principle.
     Rather than relaxing that flag on her machine, build-installer.ps1 builds
-    those five into wheels on the BUILD machine and ships them in a local
+    those four into wheels on the BUILD machine and ships them in a local
     wheelhouse. The installer then stays literally wheels-only and never needs
     setuptools, a build backend, or a network round-trip to a build isolation
     environment - which is just as well, because pip's build isolation is
@@ -152,7 +152,7 @@ for b in bad:
 }
 
 function Install-PyAutoGuiFamily {
-    <#  The sdist-only five. Prefers the shipped wheelhouse; falls back to
+    <#  The sdist-only four. Prefers the shipped wheelhouse; falls back to
         --no-build-isolation with pre-installed setuptools.
 
         Kept separate from the tiers on purpose: this is the ONLY place in the
@@ -168,10 +168,15 @@ function Install-PyAutoGuiFamily {
     if ($WheelhouseDir -and (Test-Path -LiteralPath $WheelhouseDir) -and
         (Get-ChildItem -LiteralPath $WheelhouseDir -Filter '*.whl' -ErrorAction SilentlyContinue)) {
         Write-Log "Installing the PyAutoGUI family from the shipped wheelhouse at $WheelhouseDir"
-        $args = @('-m','pip','install','--only-binary=:all:','--no-warn-script-location',
-                  '--disable-pip-version-check','--no-input',
-                  '--find-links', $WheelhouseDir, 'pyautogui')
-        return (Invoke-Native -FilePath $exe -Arguments $args -TimeoutSeconds 900)
+        # pyautogui itself with --no-deps, then its dependencies by name: its
+        # metadata requires mouseinfo (GPL-3.0), which it imports only inside a
+        # try block and which cannot load without tkinter. Friday neither
+        # needs nor ships it.
+        $base = @('-m','pip','install','--only-binary=:all:','--no-warn-script-location',
+                  '--disable-pip-version-check','--no-input','--find-links', $WheelhouseDir)
+        $r = Invoke-Native -FilePath $exe -Arguments ($base + $script:PyAutoGuiDeps) -TimeoutSeconds 900
+        if ($r.ExitCode -ne 0) { return $r }
+        return (Invoke-Native -FilePath $exe -Arguments ($base + @('--no-deps','pyautogui')) -TimeoutSeconds 900)
     }
 
     Add-InstallWarning ('No wheelhouse was shipped, so the PyAutoGUI family was built from ' +
@@ -187,11 +192,15 @@ function Install-PyAutoGuiFamily {
         '--disable-pip-version-check','--no-input','setuptools','wheel'
     ) -TimeoutSeconds 600
 
-    return (Invoke-Native -FilePath $exe -Arguments @(
-        '-m','pip','install','--no-build-isolation','--no-warn-script-location',
-        '--disable-pip-version-check','--no-input','pyautogui'
-    ) -TimeoutSeconds 900)
+    $base = @('-m','pip','install','--no-build-isolation','--no-warn-script-location',
+              '--disable-pip-version-check','--no-input')
+    $r = Invoke-Native -FilePath $exe -Arguments ($base + $script:PyAutoGuiDeps) -TimeoutSeconds 900
+    if ($r.ExitCode -ne 0) { return $r }
+    return (Invoke-Native -FilePath $exe -Arguments ($base + @('--no-deps','pyautogui')) -TimeoutSeconds 900)
 }
+
+# pyautogui's dependencies, without mouseinfo (see Install-PyAutoGuiFamily).
+$script:PyAutoGuiDeps = @('pyscreeze','pygetwindow','pytweening','pymsgbox','pyperclip')
 
 function Get-InstalledDistributions {
     <# Used by the report and by the uninstaller's sanity checks. #>

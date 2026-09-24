@@ -1,37 +1,120 @@
 Agent Friday
 Copyright (c) 2026 FutureSpeak.AI
-Licensed under the MIT License (see LICENSE).
 
-This distribution vendors the following third-party JavaScript under
-static/vendor/, each under its own license as noted in the file headers:
+Agent Friday is licensed under the MIT License (see LICENSE). The names
+"Agent Friday" and "FutureSpeak", and the FutureSpeak logo
+(assets/icons/futurespeak.*), are not licensed under the MIT License.
+
+This NOTICE covers third-party material that is distributed with Agent
+Friday, or that its installer installs and it runs. The complete list, with
+versions, licenses and license texts, is in THIRD_PARTY_LICENSES.md.
+
+-------------------------------------------------------------------------
+1. Third-party code distributed in this repository and the Windows installer
+-------------------------------------------------------------------------
+
+JavaScript and CSS vendored under static/vendor/:
 
   React 18.3.1 and ReactDOM 18.3.1
     Copyright (c) Facebook, Inc. and its affiliates. MIT License.
-  three.js r128 (three.min.js and the post-processing passes and shaders)
+    ReactDOM contains a fragment of Modernizr 3.0.0pre (MIT License).
+  three.js r128 (three.min.js, plus EffectComposer, RenderPass, ShaderPass,
+  CopyShader, LuminosityHighPassShader and UnrealBloomPass from examples/js)
     Copyright 2010-2021 Three.js Authors. MIT License.
   marked 9.1.6
     Copyright (c) 2011-2023, Christopher Jeffrey. MIT License.
-  highlight.js 11.9.0 and the atom-one-dark theme
-    BSD-3-Clause License.
+  highlight.js 11.9.0 and its atom-one-dark theme
+    Copyright (c) 2006, Ivan Sagalaev and other contributors.
+    BSD 3-Clause License.
 
-Friday can run OfficeCLI (https://github.com/iOfficeAI/OfficeCLI) to create and
-edit .docx/.xlsx/.pptx files locally:
+Inside the Windows installer archive:
 
-  OfficeCLI
+  Python 3.12 embeddable distribution for Windows (amd64)
+    Copyright (c) 2001 Python Software Foundation. All rights reserved.
+    Python Software Foundation License Version 2. The distribution contains
+    third-party components under their own licenses, including OpenSSL
+    (Apache License 2.0), libffi (MIT), zlib, bzip2, liblzma, expat (MIT),
+    mpdecimal (BSD-2-Clause) and SQLite (public domain). Their notices are in
+    the LICENSE.txt file inside the embeddable distribution.
+  get-pip.py
+    Copyright (c) 2008-present The pip developers. MIT License.
+  Wheelhouse (pure-Python wheels built from the upstream source releases):
+    pyautogui, pyscreeze, pygetwindow, pytweening, pymsgbox, pyperclip,
+    pyrect
+      Copyright (c) Al Sweigart. BSD 3-Clause or MIT License, as stated in
+      each package.
+
+-------------------------------------------------------------------------
+2. Generated artwork
+-------------------------------------------------------------------------
+
+  Knowledge Galaxy textures (static/galaxy/): nebula_backdrop.jpg,
+  star_glow.png, gas_giant.jpg, ring_profile.png, shockwave.png and
+  spiral_haze.png.
+    Generated with Higgsfield (https://higgsfield.ai) using Google's
+    Nano Banana image model, from a written brief by FutureSpeak.AI, then
+    resized, edge-blended and compressed. They contain no photographs,
+    logos or third-party artwork.
+
+-------------------------------------------------------------------------
+3. Software the installer installs, or that Agent Friday runs
+-------------------------------------------------------------------------
+
+The installer uses pip to install Python packages from PyPI on the user's
+machine, under the packages' own licenses. FutureSpeak.AI does not
+redistribute them. The default installation includes these packages under
+copyleft or weak-copyleft licenses:
+
+  pynput, pystray ........ GNU LGPL v3 or later (core tier)
+  piper-tts .............. GNU GPL v3 or later; embeds espeak-ng (GPL v3)
+                           (recommended tier; the local text-to-speech engine)
+  mutagen ................ GNU GPL v2 or later (recommended tier)
+  imageio-ffmpeg ......... BSD 2-Clause; the ffmpeg executable it contains
+                           is a GPL v3 build (recommended tier)
+  pyttsx3, certifi, tqdm,
+  orjson ................. contain Mozilla Public License 2.0 code
+
+These Apache License 2.0 components include NOTICE files, reproduced here:
+
+  Headroom (headroom-ai), by Tejas Chopra and the Headroom Contributors
+    Copyright 2025 Headroom Contributors
+    This product includes software developed by the Headroom Contributors.
+  Sentence Transformers
+    Copyright 2019-2025 Ubiquitous Knowledge Processing (UKP) Lab,
+    Technische Universitat Darmstadt
+    Copyright 2025-present Hugging Face, Inc.
+  Requests
+    Copyright 2019 Kenneth Reitz
+  yarl, propcache
+    Copyright 2016-2021, Andrew Svetlov and aio-libs team
+
+The installer also downloads and runs Ollama (MIT License,
+https://ollama.com), which it does not redistribute.
+
+OfficeCLI (https://github.com/iOfficeAI/OfficeCLI)
     Copyright (c) the OfficeCLI authors. Apache License 2.0.
     Bundles DocumentFormat.OpenXml (MIT), System.CommandLine (MIT) and the
     .NET runtime (MIT).
+  Agent Friday can run OfficeCLI to create and edit .docx, .xlsx and .pptx
+  files locally. OfficeCLI is not in this repository or in the installer.
+  A pinned release binary is placed in ~/.friday/runtime/officecli/ and
+  checked against the sha256 recorded in INSTALL.json before it runs.
 
-It is NOT redistributed here: no copy lives in this repository or in any build.
-The pinned Windows release binary is downloaded to ~/.friday/runtime/officecli/
-and verified against the sha256 recorded in its INSTALL.json before it is run.
-This attribution is kept because Friday integrates and invokes it, not because
-the tree contains it.
+-------------------------------------------------------------------------
+4. Models and voices
+-------------------------------------------------------------------------
 
-Python dependencies are declared in pyproject.toml and installed from PyPI
-under their own licenses. Two optional extras carry copyleft licenses and
-are not bundled into any binary distribution: mutagen (GPL-2.0, the
-`provenance` extra) and pynput/pystray (LGPL-3.0, Windows-only tray and
-hotkey support). Local language models downloaded at install time (the
-Gemma family by default) are governed by their own model licenses, which the
-installer displays before download.
+Model weights and voices are downloaded from their publishers onto the
+user's machine by the installer or on first use. FutureSpeak.AI does not
+redistribute any of them. Each is governed by its publisher's license:
+
+  Gemma 4 (Ollama gemma4:*) ........... Google, Apache License 2.0
+  embeddinggemma (optional) ........... Google, Gemma Terms of Use
+  all-MiniLM-L6-v2 .................... Apache License 2.0
+  convaiinnovations/laya .............. Apache License 2.0
+  faster-whisper (Systran) ............ MIT (OpenAI Whisper weights)
+  Piper voice en_US-amy-medium ........ see the rhasspy/piper-voices model card
+  Kokoro-82M (optional) ............... Apache License 2.0
+  RapidOCR / PP-OCR models ........... Apache License 2.0
+  NVIDIA Nemotron ASR, NeMo TTS
+  (optional GPU voice) ................ NVIDIA model licenses

@@ -48,5 +48,14 @@ logos or third-party artwork.
 - `shockwave.png` — Big Bang shock ring
 - `spiral_haze.png` — face-on galaxy glow (Spiral arrangement)
 
+### Headroom (github.com/chopratejas/headroom)
+License: Apache-2.0 | Tejas Chopra and the Headroom Contributors
+
+Friday's context compression (`services/context_compressor.py`) uses Headroom
+when its compiled core is installed, and passes text through unchanged when it
+is not.
+
 ## Open Source Dependencies
-See requirements.txt for the full dependency list.
+Every third-party component Friday ships, installs or downloads, with its
+version, license and license text, is listed in THIRD_PARTY_LICENSES.md; the
+attributions those licenses require are in NOTICE.

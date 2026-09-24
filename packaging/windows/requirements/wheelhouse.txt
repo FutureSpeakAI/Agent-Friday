@@ -2,12 +2,11 @@
 #
 # These packages publish NO wheels on PyPI - source distributions only.
 # Verified 2026-08-21 by attempting `pip download --only-binary=:all:
-# --platform win_amd64 --python-version 312` for each: all five refuse.
+# --platform win_amd64 --python-version 312` for each: every one refuses.
 #
 #   pyautogui     0.9.54    sdist only
 #   pyscreeze     1.0.1     sdist only
 #   pygetwindow   0.0.9     sdist only
-#   mouseinfo     0.1.3     sdist only
 #   pytweening    1.2.0     sdist only
 #
 # Their sdists were unpacked and inspected: no .c/.cpp/.pyx/.h files, no
@@ -25,9 +24,10 @@
 #     at all (PYTHONPATH is inert when a ._pth file is present), so building
 #     these on her machine would need --no-build-isolation and a pre-seeded
 #     setuptools. Shipping wheels sidesteps the whole area.
-#   * mouseinfo imports tkinter, which the embeddable distribution does not
-#     have. That is fine: pyautogui imports mouseinfo defensively and works
-#     without it. Verified - `import pyautogui` succeeds, `import mouseinfo`
-#     raises ModuleNotFoundError, and nothing in agent_friday imports tkinter.
+#   * mouseinfo, which pyautogui's metadata requires, is neither built nor
+#     installed: it is GPL-3.0, pyautogui imports it only inside a try block,
+#     and it needs tkinter, which the embeddable distribution does not have.
+#     lib/Deps.ps1 installs pyautogui with --no-deps and its other
+#     dependencies by name.
 
 pyautogui>=0.9

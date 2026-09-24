@@ -97,3 +97,14 @@ def test_a_scanner_failure_holds_the_commit(monkeypatch):
 def test_the_machines_own_username_is_caught_at_commit_time(monkeypatch):
     monkeypatch.setenv("USERNAME", "jdoe" + "test")
     assert "jdoetest" in scan._machine_identity()
+
+
+def test_license_attribution_files_skip_only_the_contact_rules(tmp_path, monkeypatch):
+    lic = tmp_path / "THIRD_PARTY_LICENSES.md"
+    lic.write_text("Copyright (c) Jane Roe <jroe" + "@gmail.com>\n"
+                   + "key = " + SAMPLES["anthropic"] + "\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scan, "tracked_files", lambda: ["THIRD_PARTY_LICENSES.md"])
+    cats = [f[2] for f in scan.detect(whole_tree=True)]
+    assert "Personal email (PII)" not in cats
+    assert any("API key" in c for c in cats)
