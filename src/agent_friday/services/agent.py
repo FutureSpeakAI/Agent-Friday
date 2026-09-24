@@ -3004,6 +3004,18 @@ def _journal_state(task_id):
 
 def _task_log(task_id, line):
     with TASKS_LOCK:
+        if not TASKS.get(task_id):
+            return
+    # Every log line is a checkpoint: the "now:" a reader sees mid-flight and
+    # the last thing a crash record can point at. Disk BEFORE memory, as in
+    # _task_set: a line a reader can see in TASKS is already in the journal,
+    # so a process that dies right after a reader saw it still leaves it on
+    # disk.
+    try:
+        _journal().append(task_id, "checkpoint", summary=str(line)[:200])
+    except Exception:
+        pass
+    with TASKS_LOCK:
         t = TASKS.get(task_id)
         if not t:
             return
@@ -3011,12 +3023,6 @@ def _task_log(task_id, line):
         # Cap log length to keep payloads small
         if len(t['log']) > 200:
             t['log'] = t['log'][-200:]
-    # Every log line is a checkpoint: the "now:" a reader sees mid-flight and
-    # the last thing a crash record can point at.
-    try:
-        _journal().append(task_id, "checkpoint", summary=str(line)[:200])
-    except Exception:
-        pass
     _journal_state(task_id)
 
 
@@ -3026,6 +3032,7 @@ def _task_set(task_id, **fields):
         if not t:
             return
         prev_status = t.get('status')
+        prev_started = t.get('started')
         snap = dict(t)
         snap.update(fields)
         new_status = snap.get('status')
@@ -3041,9 +3048,16 @@ def _task_set(task_id, **fields):
     # lock to mark the task unrecorded, so the order is: write, then commit.
     # Status transitions are journaled as their own events so the record
     # says when work started, stopped and why — not only that fields changed.
+    #
+    # The seat supervisor admits a task by writing status='running' into the
+    # record itself before the worker runs, so the worker's own transition
+    # arrives as running -> running. The first `started` timestamp is what
+    # marks the work actually starting, and it is journaled either way.
+    first_start = (new_status == 'running' and bool(fields.get('started'))
+                   and not prev_started)
     try:
         tj = _journal()
-        if new_status != prev_status:
+        if new_status != prev_status or first_start:
             if new_status == 'running':
                 tj.append(task_id, "started", model=snap.get('model'),
                           seat=snap.get('seat'), provider=snap.get('provider'))

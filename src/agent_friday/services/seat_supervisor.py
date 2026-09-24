@@ -43,6 +43,19 @@ USER_NOTICE = _seat_queue_mod.USER_NOTICE
 _TERMINAL = frozenset({"completed", "failed", KILLED_STATUS, "cancelled", "killed"})
 
 
+def _is_terminal(status: Any) -> bool:
+    """Terminal by this module's statuses OR the task registry's.
+
+    The worker sets its own terminal status ('complete',
+    'completed_unverified', ...) before its finally block calls
+    ``on_task_end``. Overwriting that with the default 'completed' would
+    relabel an unverified result as a plain completion, in memory only,
+    after the journal recorded the honest one.
+    """
+    from agent_friday.services.task_journal import is_terminal
+    return status in _TERMINAL or is_terminal(status)
+
+
 def _seat_is_local(record: Dict[str, Any]) -> bool:
     """Derive locality. An explicit seat_is_local wins; otherwise the seat
     name's prefix decides ("local/..." vs "cloud/...")."""
@@ -187,7 +200,7 @@ class SeatSupervisor:
         task_id, or None."""
         with self._lock:
             record = self._records.get(task_id)
-            if record is not None and record.get("status") not in _TERMINAL:
+            if record is not None and not _is_terminal(record.get("status")):
                 record["status"] = status
             self.queue.complete(task_id)
             return self._sync_promotions()
