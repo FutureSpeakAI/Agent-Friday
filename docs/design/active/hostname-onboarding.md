@@ -1,15 +1,24 @@
 # Sovereign hostname on agent naming — design note
 
 > **Status:** active
-> **Last verified:** 2026-09-06
-> **Implementation:** none (the one-off `agent.friday` reference proxy lives in `ops/`)
+> **Last verified:** 2026-09-24
+> **Implementation:** partial — Windows, in the app itself: `services/local_address.py` (the one setting, the proof that an address reaches this Friday, the two Windows-confirmed steps), `services/local_ca.py` (the authority and certificate), `services/local_proxy.py` (the loopback listener), `routes/local_address.py`, and Settings → General → Local address. The `ops/` Caddy proxy remains a separate demo for `agent.friday` only.
 > **Supersedes / superseded by:** folds into the self-healing-install phase (P7) of [`v6-wholeness-spec.md`](v6-wholeness-spec.md)
 > **Written:** 2026-08-13
 
 ## Implementation notes
 
-- Not built as a product feature. The Windows reference implementation in `ops/` (loopback-only Caddyfile, CA install, boot Scheduled Task, hosts self-heal) is a one-off demo proxy, not the naming-step provisioning this note proposes.
-- Intended to ship inside V6 P7 rather than standalone.
+What exists, and where it departs from the note below:
+
+- **The name:** `agent.<slug of the agent's name>` (`AGENT FRIDAY` → `agent.friday`), or an `agent.<word>` the person picks in Settings. `<name>.local` is refused (mDNS), as is any ending that is a real internet domain (it would hide that website on this PC). One setting, `local_address`, read by the tab links, the tray's "Open Friday Desktop", Friday's listener and the local-trust rule in `core`.
+- **Used only once proven:** the page and the tray use the name only after Friday has reached *this process* through it (`/api/local-address/ping` answers with a per-process id). Until then everything stays on localhost.
+- **No proxy binary:** Friday's own asyncio listener on `127.0.0.1`/`::1` ports 443 and 80, a byte relay to the app port, started only after the person turns it on in Settings. It runs while Friday runs; there is no separate boot service.
+- **The authority is name-constrained:** Friday generates it (like mkcert) with a critical name constraint permitting only the one host and excluding every IP address, so the "a CA can mint certs for any name" risk below does not apply. Windows' own chain engine is tested to refuse certificates it signs for any other name (`tests/unit/test_local_ca.py`).
+- **Trust is per user, and Windows asks:** `certutil -user -addstore Root` (Windows shows its Security Warning with the thumbprint, which the Settings card prints for comparison), not `LocalMachine\Root`. Removal is a button on the same card.
+- **Hosts entry:** an elevated PowerShell step (UAC) that writes only its own marked block, backs the file up once, and is idempotent. No self-heal loop; the `ops/` boot task still self-heals `agent.friday`.
+- **Consent:** two separate steps, each started only by its own Settings button and each confirmed by Windows; neither can run from a test (`_run_system_command` refuses).
+- **Coexists with the demo proxy:** when another program already serves the name for this Friday (the `ops/` Caddy proxy), Friday reports that and uses it.
+- **Not built:** macOS and Linux backends, Firefox's own certificate store, a prompt at the naming step of setup (Settings is the entry point).
 
 ---
 

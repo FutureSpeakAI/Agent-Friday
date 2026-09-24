@@ -62,7 +62,18 @@ test('Settings is not a tab; it opens in the desktop', async ({ page }) => {
 test('every own-tab control targets /w/<id>: dock Ctrl-click, dock middle-click, and the window button', async ({ page }) => {
   await page.addInitScript(() => {
     (window as any).__opened = [];
-    window.open = ((url: string) => { (window as any).__opened.push(String(url)); return { focus() {} } as any; }) as any;
+    (window as any).__targets = [];
+    // Stands in for a new tab: blank until pointed somewhere. The window button
+    // opens its workspace's NAMED tab blank and then points it at /w/<id>
+    // (tests/workspace_tab_open.spec.ts drives the real thing).
+    window.open = ((url: string, target?: string) => {
+      const w = (window as any);
+      w.__targets.push(String(target));
+      if (url) w.__opened.push(String(url));
+      return { focus() {}, postMessage() {},
+        location: { href: 'about:blank', pathname: 'blank', origin: location.origin,
+          replace(u: string) { w.__opened.push(String(u)); } } } as any;
+    }) as any;
   });
   const all = await workspaces(page);
   await page.waitForSelector('.dock-btn', { timeout: 60000 });
@@ -85,9 +96,12 @@ test('every own-tab control targets /w/<id>: dock Ctrl-click, dock middle-click,
   const tabBtns = await page.evaluate(() => [...document.querySelectorAll('[data-ws-tab]')].map(b => ({ id: b.getAttribute('data-ws-tab'), hidden: (b as HTMLElement).hidden })));
   // Settings opens as its own panel, not a window: it offers no own-tab button
   expect(tabBtns.filter(b => b.id === 'settings' && !b.hidden)).toEqual([]);
+  const targets = () => page.evaluate(() => (window as any).__targets.slice());
+  expect((await targets()).every((t: string) => t === '_blank'), 'the dock opens plain (background) tabs').toBe(true);
   for (const b of tabBtns.filter(x => !x.hidden)) {
     await page.locator(`[data-ws-tab="${b.id}"]`).dispatchEvent('click', { bubbles: true });
     expect((await opened()).pop(), b.id).toBe('/w/' + b.id);
+    expect((await targets()).pop(), "the window button uses the workspace's own named tab").toBe('friday-ws-' + b.id);
   }
   expect(tabBtns.filter(x => !x.hidden).map(x => x.id)).toEqual(expect.arrayContaining(['messages', 'studio']));
 });

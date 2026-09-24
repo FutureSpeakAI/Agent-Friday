@@ -403,6 +403,9 @@
       window.addEventListener('friday-nav', f);
       return () => window.removeEventListener('friday-nav', f);
     }, []);
+    // what its own tab (↗) opens on: the same keys as the deep link above
+    (window.fridayUseTabState || function () {})('messages', () => ({
+      lane: lane !== 'all' ? lane : '', thread_id: open ? (open.card.thread_id || open.card.id) : '' }));
 
     const all = (data && data.messages) || [];
     const shown = all.filter(m => (acct === 'all' || m.account_id === acct) && (lane === 'all' || m.lane === lane) && (!unreadOnly || m.unread));
