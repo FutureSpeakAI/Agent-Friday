@@ -87,3 +87,12 @@ def test_ollama_size_probe_uses_the_configured_daemon_url(monkeypatch, _fresh_pr
 
     assert I._ollama_sizes() == {"m:1b": 7}
     assert seen == ["http://box.lan:9999/api/tags"]
+
+
+def test_job_scanner_reaches_the_alert_templates():
+    """scan() builds a priority alert only when _notify resolved."""
+    from agent_friday import notifications
+    from agent_friday.seed.skills.job_scanner import scanner
+
+    assert scanner._notify is notifications
+    assert callable(scanner._notify.priority_job_alert)
