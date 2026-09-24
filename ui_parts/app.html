@@ -5398,6 +5398,7 @@ function SystemWS(){
         :approvals.map(a=><div key={a.approval_id} className="card" style={{marginBottom:6,padding:8}}>
             <div style={{fontSize:12,color:'#ddd'}}>{a.title}</div>
             {a.action_description&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{a.action_description}</div>}
+            <ApprovalProvenance p={a.provenance}/>
             <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginTop:4}}>{a.kind} · {a.policy_class}{a.expires_at?' · expires '+new Date(a.expires_at*1000).toLocaleString():''}</div>
             <div style={{display:'flex',gap:6,marginTop:6}}>
               <button className="btn" style={{fontSize:11,padding:'2px 10px',color:'#00ff80'}} disabled={!!apBusy} onClick={()=>decideApproval(a.approval_id,'approve')}>Approve</button>
@@ -9849,6 +9850,9 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="WHAT NEEDS YOUR SIGN-OFF">
       <ApprovalScannerPanel s={s} save={save}/>
     </StSection>
+    <StSection title="SCHEDULED JOBS: WHAT THEY MAY DO ON THEIR OWN">
+      <GovernanceGrantsPanel/>
+    </StSection>
     <StSection title="COMPUTER CONTROL">
       <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Once granted, permission persists across restarts until you revoke it.</div>
       <StToggle label="Enable Computer Control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
@@ -9871,6 +9875,61 @@ function SettingsTabPrivacy({s,save}){
 // "still loading" or "the download is missing". A switch reading ON while the
 // gate is in fact keyword-only would be the same class of lie the approval log
 // exists to stop.
+// Scheduled jobs: what they may do on their own. A scheduled or background job
+// can take an outward action (change a calendar, schedule a post, run a
+// non-read command, a connector's send) only with a grant made here: named
+// actions, one job, an expiry and a use count. Anything else it tries waits on
+// an approval card. Email is never covered: every message has its own card.
+// Enforced in governance/action_gate.py; this screen only lists, creates and
+// revokes grants through /api/governance/grants.
+function GovernanceGrantsPanel(){
+  const[grants,setGrants]=useState([]);const[jobs,setJobs]=useState([]);const[tools,setTools]=useState([]);
+  const[job,setJob]=useState('');const[picked,setPicked]=useState([]);const[days,setDays]=useState(7);const[uses,setUses]=useState(10);const[msg,setMsg]=useState('');
+  const load=()=>apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>setGrants(Array.isArray(d&&d.grants)?d.grants:[])).catch(()=>{});
+  useEffect(()=>{
+    load();
+    apiFetch('/api/schedules').then(r=>r.json()).then(d=>setJobs(Array.isArray(d&&d.schedules)?d.schedules:[])).catch(()=>{});
+    apiFetch('/api/governance/outward-tools').then(r=>r.json()).then(d=>setTools(Array.isArray(d&&d.tools)?d.tools:[])).catch(()=>{});
+  },[]);
+  const jobName=id=>(jobs.find(j=>j.id===id)||{}).name||id;
+  const labelOf=n=>(tools.find(t=>t.name===n)||{}).label||n;
+  const toggle=n=>setPicked(p=>p.includes(n)?p.filter(x=>x!==n):p.concat([n]));
+  const create=()=>{
+    if(!job||!picked.length){setMsg('Pick a job and at least one action.');return;}
+    apiFetch('/api/governance/grants',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({scope:job,tools:picked,expires_in_seconds:days*86400,max_uses:uses,note:'made in Settings'})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{
+        if(ok){setMsg('Granted: '+jobName(job)+' may '+picked.map(labelOf).join(', ').toLowerCase()+' for '+days+' day(s), up to '+uses+' time(s).');setPicked([]);load();}
+        else setMsg(d&&d.error||'The grant was not created.');
+      }).catch(()=>setMsg('The grant was not created.'));
+  };
+  const revoke=id=>apiFetch('/api/governance/grants/'+encodeURIComponent(id),{method:'DELETE'}).then(()=>{setMsg('Revoked.');load();}).catch(()=>{});
+  const muted={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.6};
+  return <div data-testid="governance-grants">
+    <div style={{...muted,marginBottom:10}}>A scheduled job can't send, post, change your calendar or run a command on its own: with nobody watching, each of those waits on an approval card. To let a job do one of them unattended, give it a grant here. A grant names the job, the actions, how long it lasts and how many times it can be used. Email is never covered: every message still gets its own card.</div>
+    {grants.length===0
+      ?<div style={{...muted,marginBottom:10}}>No grants. Every outward action by a scheduled job waits for you.</div>
+      :grants.map(g=><div key={g.grant_id} className="card" style={{padding:8,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+        <div style={{fontSize:12,color:'#ddd',lineHeight:1.5}}><b>{jobName(g.scope)}</b> may {(g.tools||[]).map(labelOf).join(', ').toLowerCase()}
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.45)'}}>{'until '+new Date(g.expires_at*1000).toLocaleString()+' \xB7 '+g.uses_left+' use(s) left'}</div></div>
+        <button className="settings-btn" style={{fontSize:11,color:'#ff8080'}} onClick={()=>revoke(g.grant_id)}>Revoke</button>
+      </div>)}
+    <div style={{marginTop:10,fontSize:12,color:'#ccc'}}>New grant</div>
+    <select aria-label="Scheduled job" value={job} onChange={e=>setJob(e.target.value)} style={{marginTop:6,width:'100%',fontSize:12}}>
+      <option value="">Choose a scheduled job…</option>
+      {jobs.map(j=><option key={j.id} value={j.id}>{(j.name||j.id)+(j.enabled===false?' (off)':'')}</option>)}
+    </select>
+    <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
+      {tools.map(t=><label key={t.name} title={t.name+': '+t.why} style={{fontSize:11,color:'#bbb',display:'flex',gap:4,alignItems:'center'}}><input type="checkbox" checked={picked.includes(t.name)} onChange={()=>toggle(t.name)}/>{t.label||t.name}</label>)}
+    </div>
+    <div style={{display:'flex',gap:10,alignItems:'center',marginTop:8,fontSize:11,color:'#bbb',flexWrap:'wrap'}}>
+      Lasts <select aria-label="Lasts" value={days} onChange={e=>setDays(Number(e.target.value))} style={{fontSize:11}}>{[1,7,30].map(d=><option key={d} value={d}>{d===1?'1 day':d+' days'}</option>)}</select>
+      Uses <input aria-label="Uses" type="number" min={1} max={1000} value={uses} onChange={e=>setUses(Math.max(1,Number(e.target.value)||1))} style={{width:60,fontSize:11}}/>
+      <button className="settings-btn" style={{fontSize:11}} onClick={create}>Grant</button>
+    </div>
+    {msg&&<div role="status" style={{...muted,marginTop:6,color:'#9fd'}}>{msg}</div>}
+  </div>;
+}
 function ApprovalScannerPanel({s,save}){
   const [st,setSt]=useState(null);
   const load=()=>apiFetch('/api/decisions/gate_status').then(r=>r.json()).then(setSt).catch(()=>setSt(null));
@@ -10939,6 +10998,18 @@ function fridayOpenWorkspaceTab(id,params){
 }
 window.fridayWorkspaceTabUrl=fridayWorkspaceTabUrl;
 window.fridayOpenWorkspaceTab=fridayOpenWorkspaceTab;
+// Where an approval card's details came from (services/taint.py). A detail
+// Friday found in something it read -- an email, a web page, a document --
+// rather than in anything the user typed is named here, above the buttons.
+function ApprovalProvenance({p}){
+  const flags=p&&Array.isArray(p.flags)?p.flags:[];
+  if(!flags.length)return null;
+  const warn=flags.some(f=>f.severity==='warn');
+  return <div data-testid="approval-provenance" role={warn?'alert':'note'} style={{marginTop:6,padding:'6px 8px',borderRadius:6,border:'1px solid '+(warn?'#f59e0b':'rgba(255,255,255,0.15)'),background:warn?'rgba(245,158,11,0.10)':'rgba(255,255,255,0.04)'}}>
+    <div style={{fontSize:12,fontWeight:700,color:warn?'#fbbf24':'#b8c7dc',marginBottom:3}}>{(warn?'\u26A0 ':'\u2139 ')+(p.headline||'')}</div>
+    {flags.map((f,i)=><div key={i} style={{fontSize:12,color:f.severity==='warn'?'#fde68a':'#9fb0c6',marginTop:2}}>{'\u2022 '+f.text}</div>)}
+  </div>;
+}
 function StandaloneApprovals(){
   const[items,setItems]=useState([]);const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');const[fresh,setFresh]=useState(null);
   const seen=useRef(null);
@@ -10959,6 +11030,7 @@ function StandaloneApprovals(){
       {items.map(a=><div key={a.approval_id} className="ws-tab-card">
         <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
         {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
+        <ApprovalProvenance p={a.provenance}/>
         <div style={{display:'flex',gap:8,marginTop:8}}>
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#22c55e',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
           <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>

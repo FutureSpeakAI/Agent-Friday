@@ -78,6 +78,7 @@ from agent_friday.services.model_router import (
     _seal_or_block,
 )  # noqa: E501
 from agent_friday.services import tool_hooks as _hooks
+from agent_friday.services import taint as _taint_mod
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -472,6 +473,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
 # would be a cycle). Re-exported here because call sites import it from agent.
 from agent_friday.services.action_policy import (  # noqa: E402
     ACTION_PERMISSION_POLICY,
+    seal_system_prompt,
 )
 
 
@@ -1829,6 +1831,11 @@ def _tool_run_command(inp):
     bad = blocked_command_token(cmd)
     if bad is not None:
         return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
+    # The governance check already refuses these; this is the backstop.
+    from agent_friday.governance.action_gate import classify_command
+    if classify_command(cmd)[0] == "forbidden":
+        return ("Blocked: this command addresses Friday's own local API, which "
+                "trusts this machine as the owner. It was not run.")
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
@@ -3135,9 +3142,11 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
         )
 
         def _sys_for(provider_name):
-            return _get_friday_system_prompt(
+            # The suffix goes before the policy, which stays last.
+            return seal_system_prompt(_get_friday_system_prompt(
                 prompt, workspace='task', provider=provider_name,
-                vault_control=_gated_vault_control()) + _bg_suffix
+                vault_control=_gated_vault_control()) + _bg_suffix,
+                "background task prompt")
 
         _task_provider = _predict_route_provider(
             keywords=prompt, workspace='task', has_tools=True)
@@ -3186,7 +3195,12 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
             messages, system=system, system_builder=_sys_for,
             max_tokens=16384, model=subagent_model,
             session_ctx={"authenticated": True, "is_background_task": True,
-                         "task_id": task_id},
+                         "task_id": task_id,
+                         # A scheduled job's outward actions need a grant
+                         # scoped to that schedule (governance/action_gate).
+                         "schedule_id": (description.split(":", 1)[1]
+                                         if str(description or "").startswith("scheduled:")
+                                         else None)},
             orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
             workspace='task', on_route=_log_route, tools=_tools_override,
         )
@@ -4268,6 +4282,17 @@ def _tool_propose_wiki_update(inp):
     return f"Wiki update proposed (id={pid}) — awaiting your approval in the Wiki workspace."
 
 
+#: The ~/.friday JSON files that hold FACTS, which correct_wiki may fix. Every
+#: other file there is control state -- settings, the approvals queue,
+#: connector commands, schedules, credentials, message rules, source trust --
+#: and a text replace across it could approve pending cards, register a
+#: connector or rewrite a rule. A fact correction never needs to reach those.
+CORRECTABLE_JSON = frozenset({
+    "memory.json", "user_profile.json", "contacts_meta.json",
+    "futurespeak_projects.json", "read_later.json",
+})
+
+
 def _tool_correct_wiki(inp):
     """Replace old_text with new_text across every wiki file and ~/.friday JSONs."""
     inp = inp or {}
@@ -4293,6 +4318,8 @@ def _tool_correct_wiki(inp):
                     pass
     if FRIDAY_DIR.exists():
         for f in FRIDAY_DIR.glob('*.json'):
+            if f.name not in CORRECTABLE_JSON:
+                continue
             try:
                 text = wiki_read_text(f)
             except Exception:
@@ -4322,7 +4349,7 @@ CLAUDE_TOOLS.append({
 })
 CLAUDE_TOOLS.append({
     "name": "correct_wiki",
-    "description": "Correct wrong information across the ENTIRE wiki at once. Use this when the user says you (or the wiki) got a fact wrong — replaces old_text with new_text in every wiki file plus ~/.friday JSONs. Applies immediately (no approval needed) because corrections are user-initiated.",
+    "description": "Correct wrong information across the ENTIRE wiki at once. Use this when the user says you (or the wiki) got a fact wrong — replaces old_text with new_text in every wiki file plus the fact files in ~/.friday (never settings, approvals, connectors or schedules). Applies immediately when the correction came from the user; a correction whose text came from something you read goes to an approval card first.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -6507,6 +6534,15 @@ def prepare_confirmation_ctx(session_id, message, base_ctx=None):
     ctx["session_id"] = session_id
     if not session_id:
         return ctx
+    # What the user typed is the trusted side of the provenance ledger: a
+    # recipient or link found here is theirs, one found only in a tool result
+    # is not (services/taint.py).
+    ctx["taint_key"] = session_id
+    try:
+        from agent_friday.services import taint as _taint
+        _taint.note_user_message(session_id, message)
+    except Exception as e:
+        _log.debug("taint ledger unavailable: %s", e)
     # Every turn gets an id. The gate uses it to tell "the user did not answer
     # me" from "the model called the same tool twice in one breath".
     ctx["confirm_turn"] = uuid.uuid4().hex[:12]
@@ -6552,7 +6588,8 @@ def _confirmation_question(name, tool_input):
     if name == "write_file":
         tgt = inp.get("path") or "a file"
         return f"Would you like me to create {tgt}?"
-    return "Would you like me to go ahead with that?"
+    # Outward actions routed here by the governance check: say what it is.
+    return f"{_taint_title(name, inp)} — shall I go ahead?"
 
 
 def _task_log_tool(session_ctx, name, args):
@@ -6644,7 +6681,7 @@ def _resolve_tool_name(name):
     return None, sorted(near)[:6]
 
 
-def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
+def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
     Every native and MCP tool call passes through here — the single choke point.
@@ -6655,8 +6692,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
 
     pii_lookup: if a dict, scrub PII into it instead of destructively redacting.
     session_ctx: ring-2/3 policy evaluation + hook attribution (workspace/run).
+    handler: for an executor whose tool is not in CLAUDE_TOOL_HANDLERS (the
+    voice surface's own helpers). It runs through exactly the same chain;
+    there is no other way to invoke a tool handler.
     """
-    handler = CLAUDE_TOOL_HANDLERS.get(name)
+    handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
         if resolved:
@@ -6702,9 +6742,13 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         _tok = _CURRENT_CONVERSATION.set(
             ((session_ctx or {}).get("conversation_id")
              or (session_ctx or {}).get("conversation")) or None)
+        # Provenance of this call's arguments, for any approval card the
+        # handler raises (the email card is created inside draft_email).
+        _ttok = _taint_mod.CURRENT.set(ctx.meta.get("taint"))
         try:
             result = handler(ctx.input)
         finally:
+            _taint_mod.CURRENT.reset(_ttok)
             _CURRENT_CONVERSATION.reset(_tok)
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
@@ -6780,10 +6824,15 @@ def _hook_confirmation_gate(ctx):
     name = ctx.tool_name
     session_ctx = ctx.session_ctx
     _sid = (session_ctx or {}).get("session_id")
+    if (getattr(ctx, "meta", None) or {}).get("taint_card_approved"):
+        # The user already decided this exact call on a card that showed
+        # where its details came from. Asking again in chat adds nothing.
+        return _hooks.ALLOW
     if _creations_write_preapproved(name, ctx.input):
         return _hooks.ALLOW
-    if (name in _tools_requiring_confirmation() and _sid
-            and not _confirmation_bypassed(session_ctx)):
+    _meta = getattr(ctx, "meta", None) or {}
+    if ((name in _tools_requiring_confirmation() or _meta.get("gov_confirm"))
+            and _sid and not _confirmation_bypassed(session_ctx)):
         _fp = _action_fingerprint(name, ctx.input)
         _turn = (session_ctx or {}).get("confirm_turn")
 
@@ -6910,13 +6959,164 @@ def _escalate_confirmation(session_id, name, tool_input, fingerprint, question):
             f"for.")
 
 
-def _hook_governance_rings(ctx):
-    """Ring 0–3 cLaw governance (critical, fail-closed). Pre, priority 20."""
+def _taint_input(ctx):
+    """The call's arguments with privacy placeholders put back, so the lookup
+    compares the real address the tool would use."""
+    inp = ctx.input or {}
+    if not isinstance(ctx.pii_lookup, dict) or not ctx.pii_lookup:
+        return inp
+    try:
+        from agent_friday.core import _rehydrate_pii
+        return {k: (_rehydrate_pii(v, ctx.pii_lookup) if isinstance(v, str) else v)
+                for k, v in inp.items()}
+    except Exception:
+        return inp
+
+
+def _hook_governance(ctx):
+    """THE per-action governance check. Pre, priority 1, critical.
+
+    Every tool call, from every surface, passes here before its handler runs
+    (`_execute_tool` is the only way a handler is invoked; the discovery test
+    in tests/unit/test_every_action_is_governed.py holds that line). In order:
+
+      * privilege rings and subagent scope (`_governance_check`);
+      * provenance: did a sensitive argument come from something Friday read
+        (services/taint.py);
+      * `governance.action_gate.authorize`: cLaws integrity, internal vs
+        outward, approval or grant, signed receipt, fail closed.
+
+    Critical, so it cannot be switched off in settings and an exception in it
+    denies the call.
+    """
     allowed, reason = _governance_check(ctx.tool_name, ctx.input,
                                         session_ctx=ctx.session_ctx)
     if not allowed:
         return _hooks.DENY(f"[GOVERNANCE DENY] {reason}")
-    return _hooks.ALLOW
+    from agent_friday.governance import action_gate as _gate
+    key = _taint_mod.ledger_key(ctx.session_ctx)
+    d = _taint_mod.evaluate(key, ctx.tool_name, _taint_input(ctx))
+    ctx.meta["taint"] = d
+    if d.action == "deny":
+        why = "; ".join(d.reasons) or "a detail came from outside content"
+        return _hooks.DENY(
+            f"[BLOCKED — FROM OUTSIDE CONTENT] '{ctx.tool_name}' was NOT "
+            f"executed: {why}. Do not retry it. Tell the user what you were "
+            f"about to do and where that detail came from.")
+    v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
+                        tainted=(d.action == "ask"))
+    ctx.meta["governance"] = v
+    if v.action == "allow":
+        return _hooks.ALLOW
+    if v.action == "deny":
+        return _hooks.DENY(
+            f"[GOVERNANCE HOLD] '{ctx.tool_name}' was NOT executed: {v.reason}. "
+            f"Do not retry it. Tell the user plainly what you were about to do "
+            f"and why it did not run.")
+    if v.action == "confirm":
+        # Outward, interactive, nothing from outside content: the chat
+        # confirmation gate (next, priority 10) asks yes/no.
+        ctx.meta["gov_confirm"] = True
+        return _hooks.ALLOW
+    if ctx.tool_name in _taint_mod.SELF_CARDING:
+        return _hooks.ALLOW
+    return _taint_card(ctx, d, key)
+
+
+def _taint_card(ctx, decision, key):
+    """Raise (or read back) the approval card for a flagged call.
+
+    One decision, one action: an approved card lets exactly this call through
+    once, and is then marked used.
+    """
+    name, inp = ctx.tool_name, ctx.input or {}
+    fp = _taint_mod.fingerprint(name, inp)
+    subject = f"taint:{key}:{fp}"
+    try:
+        from agent_friday.services import approvals as _appr
+        rec = _appr.find_for_subject("tool_action", subject, "tainted_action")
+        if rec and rec.get("status") == "approved" and not rec.get("consumed"):
+            _appr.mark_used(rec["approval_id"], f"tool:{name}")
+            ctx.meta["taint_card_approved"] = True
+            return _hooks.ALLOW
+        if rec and rec.get("status") in ("denied", "blocked"):
+            return _hooks.DENY(
+                f"[DECLINED] The user declined '{name}' with these details on "
+                f"an approval card. It was NOT executed. Do not retry it.")
+        if rec is None or rec.get("status") in ("expired",) or rec.get("consumed"):
+            if rec is not None:
+                subject = f"{subject}:{uuid.uuid4().hex[:6]}"
+            flags = decision.warn or decision.flags
+            why_text = (flags[0].text if flags else
+                        "This acts outside the conversation, and nobody could be "
+                        "asked about it in chat.")
+            _ptok = _taint_mod.CURRENT.set(decision)
+            try:
+                rec = _appr.create_approval(
+                    kind="tainted_action", subject_type="tool_action",
+                    subject_id=subject,
+                    title=_taint_title(name, inp),
+                    action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                    description=why_text,
+                    force_gate=True,
+                    payload={"tool": name, "input": inp},
+                    requested_by="taint_gate")
+            finally:
+                _taint_mod.CURRENT.reset(_ptok)
+    except Exception as e:
+        _log.warning("taint card unavailable: %s", e)
+        return _hooks.DENY(
+            f"[NOT RUN] '{name}' uses details that came from outside content "
+            f"and the approval card could not be created ({e}). It was NOT "
+            f"executed. Tell the user.")
+    srcs = ", ".join(sorted({f.source for f in decision.warn}))
+    why = (f"Some of its details came from {srcs}, not from the user, so it"
+           if srcs else "It acts outside this conversation and nobody can be "
+                        "asked about it in chat, so it")
+    return _hooks.DENY(
+        f"[APPROVAL CARD RAISED] '{name}' was NOT executed. {why} needs the "
+        f"user's decision on an approval card (Approvals, System workspace). "
+        f"Do NOT call it again this turn and do not ask for a yes in chat "
+        f"instead. Tell the user plainly that a card is waiting and what it is "
+        f"for" + (", and where the flagged detail came from." if srcs else "."))
+
+
+def _taint_title(name, inp):
+    """A plain one-line title for a flagged action's card."""
+    inp = inp or {}
+    if name == "create_calendar_event":
+        return f"Create calendar event “{_short_txt(inp.get('title'))}” and invite {_short_txt(inp.get('attendees'))}"
+    if name in ("browse_web", "open_url"):
+        return f"Open {_short_txt(inp.get('url'))}"
+    if name == "write_file":
+        return f"Write the file {_short_txt(inp.get('path'))}"
+    if name == "run_command":
+        return f"Run a command: {_short_txt(inp.get('command'))}"
+    if name in ("learn_skill", "correct_wiki", "propose_wiki_update"):
+        return "Save something into Friday's memory"
+    if name == "spawn_task":
+        return f"Start a background task: {_short_txt(inp.get('name') or inp.get('description'))}"
+    return f"Let Friday run ‘{name}’"
+
+
+def _short_txt(v, n=70):
+    if isinstance(v, list) and all(isinstance(x, str) for x in v):
+        s = ", ".join(v)
+    else:
+        s = json.dumps(v, default=str) if isinstance(v, (list, dict)) else str(v or "")
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _hook_taint_record(ctx, result):
+    """Record what a tool returned as content Friday READ. Post, priority 85:
+    before the PII scrub, so the ledger holds the values tools will be called
+    with."""
+    try:
+        _taint_mod.note_tool_output(_taint_mod.ledger_key(ctx.session_ctx),
+                                    ctx.tool_name, ctx.input, result)
+    except Exception as e:
+        _log.debug("taint record failed: %s", e)
+    return result
 
 
 def _hook_vault_zt(ctx):
@@ -7055,10 +7255,14 @@ def _hook_cost_attribution(ctx, result):
 
 def _register_builtin_tool_hooks():
     """Register the built-in hooks once, at import time."""
+    _hooks.register_pre_hook(_hook_governance, name="governance_rings",
+                             priority=1, critical=True)
+    _hooks.register_post_hook(_hook_taint_record, name="taint_record",
+                              priority=85, critical=True)
+    # Critical: the yes/no question for outward actions is part of the
+    # governance check, so it can be neither switched off nor fail open.
     _hooks.register_pre_hook(_hook_confirmation_gate, name="confirmation_gate",
-                             priority=10)
-    _hooks.register_pre_hook(_hook_governance_rings, name="governance_rings",
-                             priority=20, critical=True)
+                             priority=10, critical=True)
     _hooks.register_pre_hook(_hook_vault_zt, name="vault_zt",
                              priority=25, critical=True)
     _hooks.register_pre_hook(_hook_sandbox_policy, name="sandbox_policy",

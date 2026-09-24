@@ -38,5 +38,9 @@ class TestToolResultsAnnotated:
         # Unknown tools default to ring 2 (network) and get governance-denied
         # without a session — this probe is a local read.
         monkeypatch.setitem(agent_mod.TOOL_RINGS, "clock_probe_tool", 0)
+        # An unknown tool is outward to the governance check; this one reads.
+        from agent_friday.governance import action_gate
+        monkeypatch.setattr(action_gate, "INTERNAL_TOOLS",
+                            action_gate.INTERNAL_TOOLS | {"clock_probe_tool"})
         result = agent_mod._execute_tool("clock_probe_tool", {})
         assert "2026-08-14 (Friday)" in result

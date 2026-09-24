@@ -124,3 +124,9 @@ Thumbs.db
 /_*
 /openai
 /Microsoft/
+
+# Tool state written into whatever directory a process started in (bridge
+# tokens, ports), and notes kept local on purpose. Never repository content.
+.asimovs-mind/
+*.local.md
+*.local.txt
