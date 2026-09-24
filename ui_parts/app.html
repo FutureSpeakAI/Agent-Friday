@@ -173,7 +173,7 @@ function fridayPrefetchPanels() {
   });
 }
 if (typeof document !== 'undefined') {
-  if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
+  if (window.__FRIDAY_STANDALONE__) {/* one workspace, nothing else to warm */} else if (document.readyState === 'complete') setTimeout(fridayPrefetchPanels, 5000);else window.addEventListener('load', () => setTimeout(fridayPrefetchPanels, 5000));
 }
 // ── end panel data cache ──────────────────────────────────────────────────
 // Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
@@ -501,6 +501,176 @@ function ConnectorDot({wsId}){
   return <span title={tip} style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:col,boxShadow:`0 0 6px ${col}`,marginLeft:7,verticalAlign:'middle'}}/>;
 }
 
+// ═══ CHAT KEYS ═══ (see index.html)
+// Every chat box: Enter sends, Shift+Enter is a new line, nothing while an IME is composing.
+function fridayIsComposing(e){const n=(e&&e.nativeEvent)||e||{};return !!(e&&(e.isComposing||n.isComposing||e.keyCode===229||n.keyCode===229))}
+function fridayEnterSends(e,send){if(!e||e.key!=='Enter'||e.shiftKey||fridayIsComposing(e))return false;e.preventDefault();send();return true}
+window.fridayEnterSends=fridayEnterSends;
+// A chat text box that grows with what is typed.
+function FridayChatInput({value,onChange,onSend,placeholder,disabled,inputRef,className,style,maxHeight,autoFocus}){
+  const own=useRef(null);const ref=inputRef||own;
+  React.useLayoutEffect(()=>{const el=ref.current;if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight+2,maxHeight||160)+'px'},[value]);
+  return <textarea ref={ref} rows={1} className={className} value={value} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder} aria-label={placeholder} data-chat-input=""
+    onChange={e=>onChange(e.target.value)} onKeyDown={e=>fridayEnterSends(e,onSend)}
+    style={{resize:'none',overflowY:'auto',boxSizing:'border-box',lineHeight:1.45,fontFamily:'Inter, sans-serif',display:'block',...(style||{})}}/>;
+}
+// ═══ WINDOW EDGES ═══ four edges and four corners resize a floating window.
+const FRIDAY_EDGES=['n','s','e','w','ne','nw','se','sw'];
+function fridayEdgeHandles(onStart){return FRIDAY_EDGES.map(d=><div key={'edge-'+d} className={'win-edge win-edge-'+d} data-edge={d} onMouseDown={e=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();onStart(e,d)}}/>)}
+function fridayResizeRect(s,dir,cx,cy,lim){
+  const dx=cx-s.px,dy=cy-s.py;const minX=lim.minX||0,minY=lim.minY||0;
+  const cw=v=>Math.max(lim.minW,Math.min(lim.maxW,v));const ch=v=>Math.max(lim.minH,Math.min(lim.maxH,v));
+  let x=s.x,y=s.y,w=s.w,h=s.h;
+  if(dir.indexOf('e')>=0)w=cw(s.w+dx);
+  if(dir.indexOf('w')>=0){w=cw(s.w-dx);x=s.x+(s.w-w);if(x<minX){w=s.x+s.w-minX;x=minX}}
+  if(dir.indexOf('s')>=0)h=ch(s.h+dy);
+  if(dir.indexOf('n')>=0){h=ch(s.h-dy);y=s.y+(s.h-h);if(y<minY){h=s.y+s.h-minY;y=minY}}
+  if(lim.maxRight!=null&&dir.indexOf('e')>=0)w=Math.min(w,Math.max(lim.minW,lim.maxRight-x));
+  if(lim.maxBottom!=null&&dir.indexOf('s')>=0)h=Math.min(h,Math.max(lim.minH,lim.maxBottom-y));
+  return{x,y,w,h};
+}
+function fridayResizeCursor(dir){const c=!dir?'':(dir==='n'||dir==='s')?'ns-resize':(dir==='e'||dir==='w')?'ew-resize':(dir==='ne'||dir==='sw')?'nesw-resize':'nwse-resize';document.body.style.cursor=c;document.body.style.userSelect=dir?'none':''}
+// ═══ CHAT SURFACE ═══ the one chat: docked panel and chat windows (see index.html).
+function ChatSurface({mode,agentSettings,audioDevicePopup,audioDevicePopupRef,audioInputDevices,audioOutputDevices,chatEnd,chatIn,chatLoad,chatMsgs,micLevel,micTestActive,micTestLevel,micTestMsg,pausePending,refreshAudioDevicesRef,saveAgentSettings,sendChat,setAudioDevicePopup,setChatIn,setChatMsgs,setChatOpen,setPausePending,showSources,speakerTestActive,speakerTestMsg,testMicrophone,testSpeaker,toggleCiteSources,toggleVoice,voiceOn,voiceStatus}){
+  return(<>
+      <div data-chat-head="" style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',rowGap:6,padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
+          <button onClick={()=>setChatOpen(false)} title="Close chat" aria-label="Close chat" style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
+        </div>
+      </div>
+      <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
+        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
+        {pausePending&&<PauseWarning f={pausePending.forecast} msg={pausePending.message}
+          onChoose={(id)=>{
+            const m=pausePending.message;
+            if(id==='when_away'){
+              setPausePending(null);
+              apiFetch('/api/work/proposals',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({title:m.slice(0,60),tasks:[{title:m.slice(0,60),detail:m,cls:'heavy'}]})})
+                .then(r=>r.json()).then(d=>d&&d.proposal&&
+                  apiFetch('/api/work/proposals/'+d.proposal.id+'/decide',{method:'POST',
+                    headers:{'Content-Type':'application/json'},body:JSON.stringify({execution:'when_away'})}))
+                .then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'queued',
+                  text:'Parked for when you are away. It will run in a batch with anything else waiting.'}]))
+                .catch(()=>{});
+              return;
+            }
+            sendChat(m,{skipForecast:true,alreadyShown:true,routeMode:id==='now_cloud'?'cloud':undefined});
+          }}
+          onCancel={()=>{const m=pausePending.message;setChatIn(m);setPausePending(null);
+            setChatMsgs(p=>{const i=p.map(x=>x.role==='user'&&x.text===m).lastIndexOf(true);return i<0?p:p.filter((_,j)=>j!==i)})}}/>}
+        {chatMsgs.map((m,i)=>m.role==='system'
+          /* B2: system lines — seat changes and other transparency notices.
+             Amber, centered, unmistakably NOT Friday speaking. Never sent to
+             the model (server excludes role:system from context replay). */
+          ?<div key={i} style={{textAlign:'center',margin:'10px 0'}}>
+            <span title={m.kind==='seat_change'?'Model seat configuration changed — this notice is generated by the server, not the model.':'System notice'} style={{display:'inline-block',fontSize:10,fontFamily:'JetBrains Mono',color:'#f59e0b',background:'rgba(245,158,11,0.07)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:5,padding:'3px 10px',maxWidth:'92%',textAlign:'left',lineHeight:1.5}}>{m.text}</span>
+          </div>
+          :<div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
+          <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',minWidth:0,justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',whiteSpace:m.role==='friday'&&m.via!=='voice'?undefined:'pre-wrap',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
+              {m.role==='friday'&&m.via!=='voice'
+                ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
+                :m.text}
+            </div>
+            {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
+          </div>
+          {/* local_only refused (no local seat available) rather than
+             silently answering from the cloud — offer the explicit choice
+             to switch instead of a dead end. */}
+          {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
+            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
+          <div style={{fontSize:11,color:'#888',marginTop:1}}>
+            {m.role==='user'?'You':'Friday'} · {m.time||''}
+            {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
+            {/* B1: model badge — exact id + seat class on every assistant
+               message, amber for local seats, cyan for cloud. Persisted
+               server-side, so it survives reloads (VOICE badge pattern). */}
+            {m.role==='friday'&&m.model&&<span title={'Actually generated by '+m.model+' ('+(m.seat||'unknown')+' seat)'+((m.fallback_chain&&m.fallback_chain.length)?'\nFallbacks this turn:\n· '+m.fallback_chain.join('\n· '):'')} style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:m.seat==='local'?'rgba(245,158,11,0.10)':'rgba(0,212,255,0.08)',border:'1px solid '+(m.seat==='local'?'rgba(245,158,11,0.35)':'rgba(0,212,255,0.25)'),color:m.seat==='local'?'#f59e0b':'#00d4ff',fontSize:9,letterSpacing:'0.05em',fontFamily:'JetBrains Mono'}}>{m.model}{m.seat?' · '+m.seat:''}{(m.fallback_chain&&m.fallback_chain.length)?<span title="This reply reached this model via fallback — hover for the chain" style={{marginLeft:3,color:'#f59e0b'}}>⚠</span>:null}</span>}
+          </div>
+        </div>)}
+        {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
+        <div ref={chatEnd}/>
+      </div>
+      <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
+        {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em',display:'flex',alignItems:'center',gap:6}}>
+          {/* Level meter — green pulse when the mic is hearing sound, grey when silent. */}
+          <span title={'Mic level: '+(micLevel||0).toFixed(3)} style={{display:'inline-block',width:9,height:9,borderRadius:5,background:micLevel>0.005?'#3effa1':'#4a5364',boxShadow:micLevel>0.005?'0 0 '+Math.min(14,Math.round(micLevel*70))+'px #3effa1':'none',transform:'scale('+(1+Math.min(0.6,micLevel*4)).toFixed(2)+')',transition:'background .12s, box-shadow .12s, transform .12s'}}/>
+          <span>LIVE · {voiceStatus||'connecting…'}</span>
+        </div>}
+        {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
+        {/* Source Production controls — cite-every-claim toggle + dossier generator */}
+        <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}>
+          <button onClick={toggleCiteSources} title={agentSettings.cite_sources?'Cited mode ON — Friday cites every factual claim. Click to turn off.':'Turn on Source Production Mode — Friday cites every factual claim inline.'}
+            style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
+              background:agentSettings.cite_sources?'rgba(52,211,153,0.14)':'rgba(255,255,255,0.03)',
+              border:'1px solid '+(agentSettings.cite_sources?'rgba(52,211,153,0.5)':'rgba(255,255,255,0.1)'),
+              color:agentSettings.cite_sources?'#34d399':'#888',transition:'all .15s'}}>
+            📎 Cite Sources{agentSettings.cite_sources?' · ON':''}
+          </button>
+          <button onClick={showSources} title="Generate a source dossier for this conversation — every claim, its source, confidence, and link"
+            style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
+              background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',transition:'all .15s'}}>
+            📋 Show Sources
+          </button>
+        </div>
+        <div style={{display:'flex',gap:6,minWidth:0,alignItems:'flex-end'}}>
+          <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
+            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>
+            {voiceOn?'■':'🎤'}
+          </button>
+          {/* Audio device quick-switcher */}
+          <div style={{position:'relative',flexShrink:0,zIndex:1}}>
+            <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
+              title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
+              style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
+            {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
+              <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
+              {[{deviceId:'',label:'System Default'},...audioInputDevices].map(d=>{const sel=agentSettings.audio_input_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Mic ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
+                onClick={()=>{saveAgentSettings({audio_input_device_id:d.deviceId});setAudioDevicePopup(false)}}
+                style={{padding:'5px 10px',cursor:'pointer',color:sel?'#00d4ff':'#ccc',background:sel?'rgba(0,212,255,0.1)':'transparent',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'background .1s'}}
+                onMouseOver={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)'}
+                onMouseOut={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.1)':'transparent'}>
+                {sel&&<span style={{marginRight:5,color:'#00d4ff'}}>✓</span>}{lbl}
+              </div>)})}
+              {audioOutputDevices.length>0&&<>
+                <div style={{height:1,background:'rgba(0,212,255,0.1)',margin:'5px 0'}}/>
+                <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>SPEAKER OUT</div>
+                {[{deviceId:'',label:'System Default'},...audioOutputDevices].map(d=>{const sel=agentSettings.audio_output_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Speaker ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
+                  onClick={()=>{saveAgentSettings({audio_output_device_id:d.deviceId});setAudioDevicePopup(false)}}
+                  style={{padding:'5px 10px',cursor:'pointer',color:sel?'#00d4ff':'#ccc',background:sel?'rgba(0,212,255,0.1)':'transparent',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'background .1s'}}
+                  onMouseOver={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)'}
+                  onMouseOut={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.1)':'transparent'}>
+                  {sel&&<span style={{marginRight:5,color:'#00d4ff'}}>✓</span>}{lbl}
+                </div>)})}
+              </>}
+              <div style={{height:1,background:'rgba(255,255,255,0.06)',margin:'5px 0'}}/>
+              {/* Test buttons — validate the SELECTED devices right here (the
+                  AirPods-on-Windows zero-PCM case the level meter exists for). */}
+              <div style={{display:'flex',gap:6,padding:'4px 10px'}}>
+                <button className="btn" style={{fontSize:10,padding:'3px 8px',flex:1}} onClick={testMicrophone} disabled={micTestActive}>{micTestActive?'Listening…':'🎙 Test Mic'}</button>
+                <button className="btn" style={{fontSize:10,padding:'3px 8px',flex:1}} onClick={testSpeaker} disabled={speakerTestActive}>{speakerTestActive?'Playing…':'🔊 Test Speaker'}</button>
+              </div>
+              {micTestActive&&<div style={{padding:'2px 10px'}}>
+                <div style={{height:6,background:'rgba(255,255,255,0.08)',borderRadius:3,overflow:'hidden'}}>
+                  <div style={{height:'100%',width:Math.min(100,Math.round(micTestLevel*100))+'%',background:micTestLevel>0.02?'#00ff80':'#f59e0b',transition:'width .08s'}}/>
+                </div>
+              </div>}
+              {micTestMsg&&<div style={{padding:'3px 10px',fontSize:10,color:micTestMsg.startsWith('✓')?'#00ff80':'#f59e0b',whiteSpace:'normal'}}>{micTestMsg}</div>}
+              {speakerTestMsg&&<div style={{padding:'3px 10px',fontSize:10,color:speakerTestMsg.startsWith('✓')?'#00ff80':'#f59e0b',whiteSpace:'normal'}}>{speakerTestMsg}</div>}
+              <div onClick={()=>{refreshAudioDevicesRef.current?.()}} style={{padding:'4px 10px',cursor:'pointer',color:'rgba(255,255,255,0.45)',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'.04em'}}
+                onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>↺ refresh list</div>
+            </div>}
+          </div>
+          <FridayChatInput className="input" style={{flex:1,minWidth:0}} value={chatIn} onChange={setChatIn} onSend={()=>sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
+          <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
+        </div>
+      </div>
+  </>);
+}
+
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   // Size & position persist per workspace and are clamped to the viewport so a
   // window can never be dragged or resized off-screen.
@@ -522,7 +692,9 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const[dragging,setDragging]=useState(false);const[resizing,setResizing]=useState(false);
   const dOff=useRef({x:0,y:0});const rStart=useRef({x:0,y:0,w:0,h:0});
   useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:clampX(e.clientX-dOff.current.x),y:clampY(e.clientY-dOff.current.y)});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
-  useEffect(()=>{if(!resizing)return;const mv=e=>setSize({w:clampW(rStart.current.w+e.clientX-rStart.current.x),h:clampH(rStart.current.h+e.clientY-rStart.current.y)});const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
+  // Resize from any edge or corner; the dragged side moves, the opposite one stays.
+  const startResize=(e,dir)=>{rStart.current={px:e.clientX,py:e.clientY,x:pos.x,y:pos.y,w:size.w,h:size.h,dir};setResizing(dir);onFocus()};
+  useEffect(()=>{if(!resizing)return;fridayResizeCursor(resizing);const mv=e=>{const r=fridayResizeRect(rStart.current,rStart.current.dir||'se',e.clientX,e.clientY,{minW:400,minH:280,maxW:vw()-20,maxH:vh()-50,minY:30,maxRight:vw()-4,maxBottom:vh()-4});setSize({w:Math.round(r.w),h:Math.round(r.h)});setPos({x:Math.round(r.x),y:Math.round(r.y)})};const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{fridayResizeCursor(null);removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
   // Persist geometry whenever it settles.
   useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h}))}catch(_){}},[pos.x,pos.y,size.w,size.h]);
   // ── Live customization Friday applied to THIS workspace via the 💬 chat ──
@@ -551,7 +723,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   },[id]);
   return(<div className={'fwin'+(closing?' closing':'')} ref={fwinRef} style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button><button onClick={onClose}>×</button></div>
+      <span className="fwin-title">{emoji} {title}<ConnectorDot wsId={id}/>{customized&&<span title="Friday has customized this workspace — open 💬 to tweak or revert" style={{marginLeft:6,fontSize:10,opacity:.85}}>🛠️</span>}</span><div className="fwin-btns"><button title={`Chat with Friday about ${title} — tweak the layout, add features, undo changes`} aria-label={`Workspace chat for ${title}`} onClick={e=>{e.stopPropagation();openWsChat()}} style={{fontSize:12}}>💬</button><button title={`Talk to Friday about ${title}`} aria-label={`Start voice for ${title}`} onClick={e=>{e.stopPropagation();window.fridayStartWorkspaceVoice&&window.fridayStartWorkspaceVoice(id)}} style={{fontSize:12}}>🎤</button><button title={`Earlier versions of ${title} — review and roll back`} aria-label={`Version history for ${title}`} onClick={e=>{e.stopPropagation();setHistOpen(v=>!v)}} style={{fontSize:12,color:histOpen?'#00d4ff':undefined}}>🕒</button>{/* ANY WORKSPACE BUT SETTINGS CAN BE ITS OWN TAB: /w/<id> (see StandaloneShell) */}<button title={`Open ${title} in its own tab`} aria-label={`Open ${title} in its own tab`} data-ws-tab={id} hidden={id==='settings'} onClick={e=>{e.stopPropagation();fridayOpenWorkspaceTab(id)}} style={{fontSize:12}}>↗</button><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body"><div className="ws-custom-root" data-ws={id} style={{position:'relative'}}>
       {custCss&&<style dangerouslySetInnerHTML={{__html:custCss}}/>}
       {cust.accent&&<div className="ws-accent-bar" style={{position:'absolute',left:0,right:0,top:-2,height:2,opacity:.75,borderRadius:2}}/>}
@@ -560,7 +732,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
       {children}
     </div></div>
     {histOpen&&<WorkspaceHistory wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
-    <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
+    <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
   </div>);
 }
 
@@ -646,7 +818,7 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
     </div>
     {toast&&<div style={{padding:'4px 12px',fontSize:11,color:'#00d4ff',background:'rgba(0,212,255,0.06)'}}>{toast}</div>}
     <div style={{padding:'8px 10px',borderTop:'1px solid rgba(255,255,255,0.08)',display:'flex',gap:6,alignItems:'flex-end'}}>
-      <textarea ref={inRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
+      <textarea ref={inRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>fridayEnterSends(e,send)}
         placeholder={`Ask Friday to change ${label}…`} rows={1}
         style={{flex:1,resize:'none',maxHeight:90,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,color:'#dde',fontSize:12.5,padding:'7px 9px',fontFamily:'Inter',outline:'none'}}/>
       <button onClick={()=>send()} disabled={loading||!input.trim()} className="btn" style={{fontSize:12,fontWeight:600,opacity:(loading||!input.trim())?0.5:1}}>Send</button>
@@ -3877,7 +4049,7 @@ function StudioPromptBar({onCreated}){
   const files=(result&&result.files)||[];
   const isDemo=result&&result.status==='demo';
   return(<div className="card" style={{marginBottom:12,padding:14,border:'1px solid rgba(0,212,255,0.18)'}}>
-    <textarea className="input" rows={2} style={{width:'100%',resize:'vertical',minHeight:46,marginBottom:8,boxSizing:'border-box'}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what you want to create..." onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();go();}}}/>
+    <textarea className="input" rows={2} style={{width:'100%',resize:'vertical',minHeight:46,marginBottom:8,boxSizing:'border-box'}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what you want to create..." onKeyDown={e=>fridayEnterSends(e,go)}/>
     <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
       {STUDIO_TYPES.map(x=>{const off=avail&&avail[x.id]&&avail[x.id].available===false;return(
         <button key={x.id} className={'btn '+(type===x.id?'':'btn-magenta')} style={{fontSize:11,opacity:off?0.6:1}} title={off?(avail[x.id].reason||'Unavailable'):('Create '+x.label.toLowerCase()+' — e.g. '+x.ph)} onClick={()=>{setType(x.id);setErr(null);setResult(null)}}>{x.ico} {x.label}{off?' ⚠':''}</button>);})}
@@ -6215,7 +6387,7 @@ function NewsWS(){
       {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
         <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
         <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Thinking...</div>}</div>
-        <div style={{display:'flex',gap:4}}><input className="input" style={{flex:1,fontSize:11}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendBriefingChat()} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:11}} onClick={sendBriefingChat}>Send</button></div>
+        <div style={{display:'flex',gap:4,alignItems:'flex-end'}}><FridayChatInput className="input" style={{flex:1,fontSize:11}} maxHeight={110} value={chatIn} onChange={setChatIn} onSend={sendBriefingChat} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:11}} onClick={sendBriefingChat}>Send</button></div>
       </div>}
     </div>
   </div>);
@@ -12044,6 +12216,72 @@ function ArbiterStrip(){
     })}
   </span>;
 }
+// ═══ A WORKSPACE AS ITS OWN TAB (/w/<id>) ═══
+// The server marks the page (window.__FRIDAY_STANDALONE__) before anything
+// renders; the scene never starts and App draws that one workspace full-tab
+// under a slim header. Query parameters become the workspace's nav target.
+// Approval cards reach the tab through its own poller.
+const STANDALONE_WS=(function(){try{const m=/^\/w\/([a-z][a-z0-9_-]{0,31})\/?$/.exec(window.location.pathname);return window.__FRIDAY_STANDALONE__||(m&&m[1])||null}catch(e){return null}})();
+if(STANDALONE_WS){try{const t={workspace:STANDALONE_WS};new URLSearchParams(window.location.search).forEach((v,k)=>{t[k]=k==='view3d'?(v==='1'||v==='true'):v});window.__fridayNavTarget=t}catch(e){}}
+function fridayWorkspaceTabUrl(id,params){const q=params&&Object.keys(params).length?'?'+new URLSearchParams(params).toString():'';return '/w/'+encodeURIComponent(id)+q}
+function fridayOpenWorkspaceTab(id,params){
+  if(!id||id==='settings')return false;
+  const w=window.open(fridayWorkspaceTabUrl(id,params),'_blank');   // no feature string: a tab, not a popup
+  if(!w){alert('The browser blocked that tab. Allow pop-ups for Friday and try again.');return false}
+  try{w.focus()}catch(e){}
+  return true;
+}
+window.fridayWorkspaceTabUrl=fridayWorkspaceTabUrl;
+window.fridayOpenWorkspaceTab=fridayOpenWorkspaceTab;
+function StandaloneApprovals(){
+  const[items,setItems]=useState([]);const[open,setOpen]=useState(false);const[busy,setBusy]=useState('');const[fresh,setFresh]=useState(null);
+  const seen=useRef(null);
+  const load=useCallback(()=>fetch('/api/approvals?status=pending').then(r=>r.json()).then(d=>{
+    const list=Array.isArray(d&&d.approvals)?d.approvals:[];
+    if(seen.current){const nu=list.find(a=>!seen.current.has(a.approval_id));if(nu)setFresh(nu)}
+    seen.current=new Set(list.map(a=>a.approval_id));setItems(list);
+  }).catch(()=>{}),[]);
+  useEffect(()=>{load();const iv=setInterval(()=>{if(document.visibilityState!=='hidden')load()},8000);const onVis=()=>{if(document.visibilityState==='visible')load()};document.addEventListener('visibilitychange',onVis);return()=>{clearInterval(iv);document.removeEventListener('visibilitychange',onVis)}},[load]);
+  useEffect(()=>{if(!fresh)return;const t=setTimeout(()=>setFresh(null),12000);return()=>clearTimeout(t)},[fresh]);
+  const decide=(id,decision)=>{setBusy(id);fetch('/api/approvals/'+encodeURIComponent(id)+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision})}).catch(()=>{}).then(()=>{setBusy('');load()})};
+  useEffect(()=>{window.__fridayPendingApprovals=items.length},[items.length]);
+  return(<>
+    <button className={'ws-tab-ask'+(items.length?'':' none')} data-testid="ws-tab-approvals" onClick={()=>setOpen(v=>!v)} title={items.length?'Friday is waiting for your approval':'Nothing is waiting for your approval'}>{items.length?'✋ '+items.length+' waiting for you':'✋ No approvals waiting'}</button>
+    {open&&<div className="ws-tab-drawer" role="dialog" aria-label="Approvals">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><b style={{color:'#ffd699'}}>Waiting for your approval</b><button className="ws-tab-link" onClick={()=>setOpen(false)}>✕</button></div>
+      {!items.length&&<div style={{color:'#7f93ad',fontSize:12}}>Nothing is waiting.</div>}
+      {items.map(a=><div key={a.approval_id} className="ws-tab-card">
+        <div style={{fontWeight:700,color:'#fff',marginBottom:4}}>{a.title}</div>
+        {a.action_description&&<div style={{whiteSpace:'pre-wrap',fontSize:12,color:'#b8c7dc',maxHeight:220,overflow:'auto'}}>{a.action_description}</div>}
+        <div style={{display:'flex',gap:8,marginTop:8}}>
+          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#22c55e',color:'#86efac'}} onClick={()=>decide(a.approval_id,'approve')}>{busy===a.approval_id?'…':'Approve'}</button>
+          <button className="ws-tab-link" disabled={!!busy} style={{borderColor:'#ef4444',color:'#fca5a5'}} onClick={()=>decide(a.approval_id,'deny')}>Deny</button>
+        </div></div>)}
+    </div>}
+    {fresh&&!open&&<div className="ws-tab-toast" role="status">✋ Friday is asking: {fresh.title||'an approval'}<button className="ws-tab-link" onClick={()=>{setOpen(true);setFresh(null)}}>Review</button></div>}
+  </>);
+}
+function StandaloneShell({ws,children}){
+  useEffect(()=>{
+    document.title=ws.label+' — Friday';
+    const iconUrl=ws.id==='workflows'?null:'/assets/icons/'+ws.id+'.svg';
+    const emojiIcon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="52">'+(ws.ico||'▣')+'</text></svg>');
+    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(l=>l.parentNode.removeChild(l));
+    const link=document.createElement('link');link.rel='icon';link.href=iconUrl||emojiIcon;if(iconUrl)link.type='image/svg+xml';link.onerror=()=>{link.href=emojiIcon};document.head.appendChild(link);
+  },[ws.id]);
+  return(<div className="ws-tab" data-standalone={ws.id}>
+    <header className="ws-tab-head">
+      <a className="ws-tab-mark" href="/" title="Friday desktop">FRIDAY</a>
+      <div className="ws-tab-name">{ws.id!=='workflows'&&<img src={'/assets/icons/'+ws.id+'.svg'} alt="" onError={e=>{e.target.style.display='none'}}/>}<span>{ws.label}</span></div>
+      <span className="ws-tab-sp"/>
+      <StandaloneApprovals/>
+      <a className="ws-tab-link" href="/?chrome=chat" target="_blank" rel="noopener" title="Talk to Friday in a tab of its own">💬 Chat</a>
+      <a className="ws-tab-link" href={'/?workspace='+encodeURIComponent(ws.id)} data-testid="ws-tab-back" title="Back to the Friday desktop, with this workspace open">← Back to desktop</a>
+    </header>
+    <main className="ws-tab-body">{children}</main>
+  </div>);
+}
+
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -12731,92 +12969,11 @@ function App(){
     const f2pcm=(float32,outRate,inRate)=>{const ratio=inRate/outRate;const outLen=Math.floor(float32.length/ratio);const out=new Int16Array(outLen);for(let i=0;i<outLen;i++){const src=i*ratio,i0=Math.floor(src),i1=Math.min(i0+1,float32.length-1),f=src-i0;const s=Math.max(-1,Math.min(1,float32[i0]*(1-f)+float32[i1]*f));out[i]=s<0?s*0x8000:s*0x7FFF}return out};
     const i16ToB64=(int16)=>{const bytes=new Uint8Array(int16.buffer);let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)};
     const b64ToI16=(b64)=>{const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return new Int16Array(bytes.buffer)};
-    // AudioWorklet PCM player. Runs on the audio RENDER thread (not the main
-    // thread), so it is immune to the React/GC/console jank that progressively
-    // glitches the context over a long call. It keeps ONE persistent node fed by
-    // a ring buffer and resamples srcRate->ctxRate CONTINUOUSLY — carrying the
-    // fractional read cursor across chunks — so there is no per-chunk resampler
-    // reset (the real source of progressive rasp) and no churn of thousands of
-    // short-lived BufferSource/AudioBuffer objects. The ring is the jitter buffer
-    // that absorbs Gemini's faster-than-realtime bursts; underruns emit clean
-    // silence rather than distortion. registerProcessor name: 'friday-pcm-player'.
-    const PCM_PLAYER_WORKLET_SRC=`
-class FridayPCMPlayer extends AudioWorkletProcessor {
-  constructor(o){
-    super();
-    this.srcRate = (o.processorOptions && o.processorOptions.srcRate) || 24000;
-    this.step = this.srcRate / sampleRate;     // src samples consumed per output sample
-    // Ring sized for the WHOLE of even a long read-aloud: Gemini streams a
-    // response faster than realtime, so the buffer legitimately holds the entire
-    // pending utterance (a 90s answer arrives in ~30s → ~60s buffered). Consumed
-    // at exactly realtime, it drains to zero between turns. 180s covers any
-    // realistic single turn without the overflow guard ever truncating it.
-    this.size = Math.ceil(this.srcRate * 180); // 180s ring at source rate
-    this.ring = new Float32Array(this.size);
-    this.writeIdx = 0;                          // absolute samples written
-    this.readIdx = 0;                           // absolute fractional read cursor
-    this.lastPlaying = false;
-    // Jitter buffer: Gemini streams 24kHz PCM in faster-than-realtime bursts
-    // over a jittery network. Playing the instant the first sample lands makes
-    // the ring underrun on the next network gap — each underrun is a click, and
-    // over a long call the accumulated clicks read as progressive rasp. So we
-    // PRIME: hold ~120ms before starting, and re-prime after any underrun, so
-    // playback only ever runs off a cushioned buffer.
-    this.prefill = Math.max(1, Math.round(this.srcRate * 0.12));   // 120ms cushion
-    // Anti-wrap guard ONLY (not latency management): if the producer somehow
-    // gets within a hair of lapping the read pointer — a >~3min continuous
-    // monologue delivered faster than realtime — fast-forward the reader to
-    // drop the oldest audio rather than let the write pointer overwrite unread
-    // samples (silent corruption = rasp). Sits just under the ring so it NEVER
-    // fires on a normal multi-second turn (which must buffer fully, not be
-    // truncated). A dropped 3-minutes-ago sample is inaudible; a lapped pointer
-    // is not.
-    this.maxLag = this.size - Math.round(this.srcRate * 2);        // ~178s, anti-wrap only
-    this.priming = true;                        // waiting for the initial cushion
-    this.port.onmessage = (e) => {
-      const m = e.data;
-      if (m.type === 'samples') {
-        const f = m.data;
-        for (let i = 0; i < f.length; i++) { this.ring[this.writeIdx % this.size] = f[i]; this.writeIdx++; }
-        // Overflow guard: keep the producer at most maxLag ahead of the reader.
-        const lag = this.writeIdx - Math.floor(this.readIdx);
-        if (lag > this.maxLag) this.readIdx = this.writeIdx - this.maxLag;
-      } else if (m.type === 'flush') {
-        this.readIdx = this.writeIdx;            // drop everything pending
-        this.priming = true;                      // re-cushion before next audio
-      }
-    };
-  }
-  _avail(){ return this.writeIdx - Math.floor(this.readIdx); }     // src samples ahead of read
-  process(inputs, outputs) {
-    const out = outputs[0][0];
-    if (!out) return true;
-    if (this.priming) {
-      // Still building the cushion — emit silence until we have prefill samples,
-      // so we never start into an immediate underrun.
-      if (this._avail() < this.prefill) { for (let i=0;i<out.length;i++) out[i]=0; return true; }
-      this.priming = false;
-    }
-    for (let i = 0; i < out.length; i++) {
-      const base = Math.floor(this.readIdx);
-      if (base + 1 < this.writeIdx) {
-        const frac = this.readIdx - base;
-        const s0 = this.ring[base % this.size];
-        const s1 = this.ring[(base + 1) % this.size];
-        out[i] = s0 * (1 - frac) + s1 * frac;
-        this.readIdx += this.step;
-      } else {
-        out[i] = 0;                              // underrun -> clean silence
-        this.priming = true;                     // re-cushion before resuming
-      }
-    }
-    const playing = !this.priming && (Math.floor(this.readIdx) + 1) < this.writeIdx;
-    if (playing !== this.lastPlaying) { this.lastPlaying = playing; this.port.postMessage({ type: playing ? 'active' : 'drained' }); }
-    return true;
-  }
-}
-registerProcessor('friday-pcm-player', FridayPCMPlayer);
-`;
+    // THE one PCM player, shared with the FRIDAY LIVE PWA so the two cannot
+    // drift apart. One always-running node fed by a ring buffer, resampling
+    // continuously — never a node per chunk, which steps the waveform at every
+    // boundary and grains up over a long reply. See the file for the numbers.
+    const PCM_PLAYER_WORKLET_URL='/static/js/friday_pcm_player.worklet.js';
     try{
       // Pin the context to Gemini's 24kHz output rate. (A device-native-rate
       // experiment — worklet resampling 24k→48k — coincided with heavy
@@ -12836,10 +12993,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       v.usePlayerWorklet=false;v.fridaySpeaking=false;
       try{
         if(v.audioCtx.audioWorklet){
-          const _blob=new Blob([PCM_PLAYER_WORKLET_SRC],{type:'application/javascript'});
-          const _url=URL.createObjectURL(_blob);
-          await v.audioCtx.audioWorklet.addModule(_url);
-          try{URL.revokeObjectURL(_url)}catch(_){}
+          await v.audioCtx.audioWorklet.addModule(PCM_PLAYER_WORKLET_URL);
           v.playerNode=new AudioWorkletNode(v.audioCtx,'friday-pcm-player',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[1],processorOptions:{srcRate:PCM_OUT_RATE}});
           v.playerNode.connect(v.audioCtx.destination);
           try{v.playerNode.connect(v.holoAnalyser)}catch(_){}
@@ -13100,17 +13254,16 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           setVoiceStatus('speaking');
           return;
         }
-        const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
-        const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
-        const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
-        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}
-        // Track the node so a barge-in / disconnect can stop it mid-playback;
-        // self-evict from the queue when it finishes cleanly.
-        if(!v.activeSources)v.activeSources=[];
-        v.activeSources.push(src);
-        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1);if(!v.activeSources||v.activeSources.length===0)_wsSpeak(false);window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk ended naturally, remaining='+(v.activeSources?v.activeSources.length:0))};
-        src.start(startAt);
-        _wsSpeak(true);
+        // NO PER-CHUNK FALLBACK. Scheduling one AudioBufferSourceNode per
+        // arriving chunk is the thing that grains: every boundary restarts the
+        // browser's resampler and carries a scheduling rounding error, which
+        // measured 34 discontinuities in six seconds of a pure tone on Chrome
+        // 153 — steps of 0.62 where the signal can only move 0.07. It also
+        // exposed the Chrome 152 repeated-render-block screech. Audio that is
+        // audibly wrong is not a safer outcome than audio that is missing, and
+        // the missing case is loud in the console rather than silent.
+        console.warn('[voice] no AudioWorklet player — dropping a '+int16.length+
+                     '-sample chunk rather than playing it through per-chunk scheduling');
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: playing audio chunk, activeSources='+v.activeSources.length);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
@@ -14100,6 +14253,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const structures=window.fridayVibe?.getStructures?.()??[];
   const moods=window.fridayVibe?.getMoods?.()??['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
 
+  // A workspace in its own tab: that workspace, full-tab, and nothing else of the desktop.
+  if(STANDALONE_WS&&STANDALONE_WS!=='settings'){
+    const sw=wsInfo[STANDALONE_WS];
+    return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
+      {sw?<StandaloneShell ws={sw}><Safe name={sw.label}>{wsMap[sw.id]||<div>Coming soon</div>}</Safe></StandaloneShell>
+        :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the Friday desktop</a></div>}
+    </WsCustomCtx.Provider>);
+  }
+
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
     {/* ── Setup Wizard (first-run) ── */}
     {!setupDone&&<SetupWizard
@@ -14480,7 +14642,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       </div>}
       {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
-        <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
+        <FridayChatInput value={promptText} onChange={setPromptText} onSend={sendPrompt} maxHeight={120}
           placeholder="Ask Friday anything..."
           style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
         <button onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
@@ -14546,141 +14708,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       <div className="chat-resize-w" title="Drag to resize width" onMouseDown={e=>{e.preventDefault();chatRStart.current={...chatRStart.current,x:e.clientX,w:chatW};setChatResize('w')}}/>
       {/* top-edge height handle */}
       <div className="chat-resize-h" title="Drag to resize height" onMouseDown={e=>{e.preventDefault();const cur=chatH||(e.currentTarget.parentNode.getBoundingClientRect().height);chatRStart.current={...chatRStart.current,y:e.clientY,h:cur};setChatResize('h')}}/>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
-          <button onClick={()=>setChatOpen(false)} title="Close chat" aria-label="Close chat" style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
-        </div>
-      </div>
-      <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
-        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
-        {pausePending&&<PauseWarning f={pausePending.forecast} msg={pausePending.message}
-          onChoose={(id)=>{
-            const m=pausePending.message;
-            if(id==='when_away'){
-              setPausePending(null);
-              apiFetch('/api/work/proposals',{method:'POST',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({title:m.slice(0,60),tasks:[{title:m.slice(0,60),detail:m,cls:'heavy'}]})})
-                .then(r=>r.json()).then(d=>d&&d.proposal&&
-                  apiFetch('/api/work/proposals/'+d.proposal.id+'/decide',{method:'POST',
-                    headers:{'Content-Type':'application/json'},body:JSON.stringify({execution:'when_away'})}))
-                .then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'queued',
-                  text:'Parked for when you are away. It will run in a batch with anything else waiting.'}]))
-                .catch(()=>{});
-              return;
-            }
-            sendChat(m,{skipForecast:true,alreadyShown:true,routeMode:id==='now_cloud'?'cloud':undefined});
-          }}
-          onCancel={()=>{const m=pausePending.message;setChatIn(m);setPausePending(null);
-            setChatMsgs(p=>{const i=p.map(x=>x.role==='user'&&x.text===m).lastIndexOf(true);return i<0?p:p.filter((_,j)=>j!==i)})}}/>}
-        {chatMsgs.map((m,i)=>m.role==='system'
-          /* B2: system lines — seat changes and other transparency notices.
-             Amber, centered, unmistakably NOT Friday speaking. Never sent to
-             the model (server excludes role:system from context replay). */
-          ?<div key={i} style={{textAlign:'center',margin:'10px 0'}}>
-            <span title={m.kind==='seat_change'?'Model seat configuration changed — this notice is generated by the server, not the model.':'System notice'} style={{display:'inline-block',fontSize:10,fontFamily:'JetBrains Mono',color:'#f59e0b',background:'rgba(245,158,11,0.07)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:5,padding:'3px 10px',maxWidth:'92%',textAlign:'left',lineHeight:1.5}}>{m.text}</span>
-          </div>
-          :<div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
-          <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',minWidth:0,justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
-              {m.role==='friday'&&m.via!=='voice'
-                ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
-                :m.text}
-            </div>
-            {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
-          </div>
-          {/* local_only refused (no local seat available) rather than
-             silently answering from the cloud — offer the explicit choice
-             to switch instead of a dead end. */}
-          {m.role==='friday'&&m.offer_cloud_switch&&<button className="btn" style={{marginTop:6,fontSize:10,display:'block'}}
-            onClick={()=>apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:{model_routing:{mode:'cloud_only'}}})}).then(r=>r.json()).then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Switched to Cloud-Only mode — send your message again.',time:new Date().toLocaleTimeString()}])).catch(()=>setChatMsgs(p=>[...p,{role:'system',kind:'seat_change',text:'⚙ Could not switch modes — try Settings → Models directly.',time:new Date().toLocaleTimeString()}]))}>Switch to Cloud-Only Mode</button>}
-          <div style={{fontSize:11,color:'#888',marginTop:1}}>
-            {m.role==='user'?'You':'Friday'} · {m.time||''}
-            {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
-            {/* B1: model badge — exact id + seat class on every assistant
-               message, amber for local seats, cyan for cloud. Persisted
-               server-side, so it survives reloads (VOICE badge pattern). */}
-            {m.role==='friday'&&m.model&&<span title={'Actually generated by '+m.model+' ('+(m.seat||'unknown')+' seat)'+((m.fallback_chain&&m.fallback_chain.length)?'\nFallbacks this turn:\n· '+m.fallback_chain.join('\n· '):'')} style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:m.seat==='local'?'rgba(245,158,11,0.10)':'rgba(0,212,255,0.08)',border:'1px solid '+(m.seat==='local'?'rgba(245,158,11,0.35)':'rgba(0,212,255,0.25)'),color:m.seat==='local'?'#f59e0b':'#00d4ff',fontSize:9,letterSpacing:'0.05em',fontFamily:'JetBrains Mono'}}>{m.model}{m.seat?' · '+m.seat:''}{(m.fallback_chain&&m.fallback_chain.length)?<span title="This reply reached this model via fallback — hover for the chain" style={{marginLeft:3,color:'#f59e0b'}}>⚠</span>:null}</span>}
-          </div>
-        </div>)}
-        {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
-        <div ref={chatEnd}/>
-      </div>
-      <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-        {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em',display:'flex',alignItems:'center',gap:6}}>
-          {/* Level meter — green pulse when the mic is hearing sound, grey when silent. */}
-          <span title={'Mic level: '+(micLevel||0).toFixed(3)} style={{display:'inline-block',width:9,height:9,borderRadius:5,background:micLevel>0.005?'#3effa1':'#4a5364',boxShadow:micLevel>0.005?'0 0 '+Math.min(14,Math.round(micLevel*70))+'px #3effa1':'none',transform:'scale('+(1+Math.min(0.6,micLevel*4)).toFixed(2)+')',transition:'background .12s, box-shadow .12s, transform .12s'}}/>
-          <span>LIVE · {voiceStatus||'connecting…'}</span>
-        </div>}
-        {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
-        {/* Source Production controls — cite-every-claim toggle + dossier generator */}
-        <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}>
-          <button onClick={toggleCiteSources} title={agentSettings.cite_sources?'Cited mode ON — Friday cites every factual claim. Click to turn off.':'Turn on Source Production Mode — Friday cites every factual claim inline.'}
-            style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
-              background:agentSettings.cite_sources?'rgba(52,211,153,0.14)':'rgba(255,255,255,0.03)',
-              border:'1px solid '+(agentSettings.cite_sources?'rgba(52,211,153,0.5)':'rgba(255,255,255,0.1)'),
-              color:agentSettings.cite_sources?'#34d399':'#888',transition:'all .15s'}}>
-            📎 Cite Sources{agentSettings.cite_sources?' · ON':''}
-          </button>
-          <button onClick={showSources} title="Generate a source dossier for this conversation — every claim, its source, confidence, and link"
-            style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
-              background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',transition:'all .15s'}}>
-            📋 Show Sources
-          </button>
-        </div>
-        <div style={{display:'flex',gap:6,minWidth:0}}>
-          <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
-            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>
-            {voiceOn?'■':'🎤'}
-          </button>
-          {/* Audio device quick-switcher */}
-          <div style={{position:'relative',flexShrink:0,zIndex:1}}>
-            <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
-              title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
-              style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
-            {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
-              <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
-              {[{deviceId:'',label:'System Default'},...audioInputDevices].map(d=>{const sel=agentSettings.audio_input_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Mic ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
-                onClick={()=>{saveAgentSettings({audio_input_device_id:d.deviceId});setAudioDevicePopup(false)}}
-                style={{padding:'5px 10px',cursor:'pointer',color:sel?'#00d4ff':'#ccc',background:sel?'rgba(0,212,255,0.1)':'transparent',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'background .1s'}}
-                onMouseOver={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)'}
-                onMouseOut={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.1)':'transparent'}>
-                {sel&&<span style={{marginRight:5,color:'#00d4ff'}}>✓</span>}{lbl}
-              </div>)})}
-              {audioOutputDevices.length>0&&<>
-                <div style={{height:1,background:'rgba(0,212,255,0.1)',margin:'5px 0'}}/>
-                <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>SPEAKER OUT</div>
-                {[{deviceId:'',label:'System Default'},...audioOutputDevices].map(d=>{const sel=agentSettings.audio_output_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Speaker ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
-                  onClick={()=>{saveAgentSettings({audio_output_device_id:d.deviceId});setAudioDevicePopup(false)}}
-                  style={{padding:'5px 10px',cursor:'pointer',color:sel?'#00d4ff':'#ccc',background:sel?'rgba(0,212,255,0.1)':'transparent',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',transition:'background .1s'}}
-                  onMouseOver={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.12)':'rgba(255,255,255,0.05)'}
-                  onMouseOut={e=>e.currentTarget.style.background=sel?'rgba(0,212,255,0.1)':'transparent'}>
-                  {sel&&<span style={{marginRight:5,color:'#00d4ff'}}>✓</span>}{lbl}
-                </div>)})}
-              </>}
-              <div style={{height:1,background:'rgba(255,255,255,0.06)',margin:'5px 0'}}/>
-              {/* Test buttons — validate the SELECTED devices right here (the
-                  AirPods-on-Windows zero-PCM case the level meter exists for). */}
-              <div style={{display:'flex',gap:6,padding:'4px 10px'}}>
-                <button className="btn" style={{fontSize:10,padding:'3px 8px',flex:1}} onClick={testMicrophone} disabled={micTestActive}>{micTestActive?'Listening…':'🎙 Test Mic'}</button>
-                <button className="btn" style={{fontSize:10,padding:'3px 8px',flex:1}} onClick={testSpeaker} disabled={speakerTestActive}>{speakerTestActive?'Playing…':'🔊 Test Speaker'}</button>
-              </div>
-              {micTestActive&&<div style={{padding:'2px 10px'}}>
-                <div style={{height:6,background:'rgba(255,255,255,0.08)',borderRadius:3,overflow:'hidden'}}>
-                  <div style={{height:'100%',width:Math.min(100,Math.round(micTestLevel*100))+'%',background:micTestLevel>0.02?'#00ff80':'#f59e0b',transition:'width .08s'}}/>
-                </div>
-              </div>}
-              {micTestMsg&&<div style={{padding:'3px 10px',fontSize:10,color:micTestMsg.startsWith('✓')?'#00ff80':'#f59e0b',whiteSpace:'normal'}}>{micTestMsg}</div>}
-              {speakerTestMsg&&<div style={{padding:'3px 10px',fontSize:10,color:speakerTestMsg.startsWith('✓')?'#00ff80':'#f59e0b',whiteSpace:'normal'}}>{speakerTestMsg}</div>}
-              <div onClick={()=>{refreshAudioDevicesRef.current?.()}} style={{padding:'4px 10px',cursor:'pointer',color:'rgba(255,255,255,0.45)',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'.04em'}}
-                onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>↺ refresh list</div>
-            </div>}
-          </div>
-          <input className="input" style={{flex:1,minWidth:0}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
-          <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
-        </div>
-      </div>
+      <ChatSurface mode="panel" agentSettings={agentSettings} audioDevicePopup={audioDevicePopup} audioDevicePopupRef={audioDevicePopupRef} audioInputDevices={audioInputDevices} audioOutputDevices={audioOutputDevices} chatEnd={chatEnd} chatIn={chatIn} chatLoad={chatLoad} chatMsgs={chatMsgs} micLevel={micLevel} micTestActive={micTestActive} micTestLevel={micTestLevel} micTestMsg={micTestMsg} pausePending={pausePending} refreshAudioDevicesRef={refreshAudioDevicesRef} saveAgentSettings={saveAgentSettings} sendChat={sendChat} setAudioDevicePopup={setAudioDevicePopup} setChatIn={setChatIn} setChatMsgs={setChatMsgs} setChatOpen={setChatOpen} setPausePending={setPausePending} showSources={showSources} speakerTestActive={speakerTestActive} speakerTestMsg={speakerTestMsg} testMicrophone={testMicrophone} testSpeaker={testSpeaker} toggleCiteSources={toggleCiteSources} toggleVoice={toggleVoice} voiceOn={voiceOn} voiceStatus={voiceStatus}/>
     </div>
 
     {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
@@ -14996,7 +15024,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} onClick={()=>toggle(w.id)} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();fridayOpenWorkspaceTab(w.id);return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();fridayOpenWorkspaceTab(w.id)}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
               {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
               {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
