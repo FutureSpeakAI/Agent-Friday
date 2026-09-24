@@ -210,7 +210,7 @@ def test_music_prompt_lyrics_and_negative_prompt_are_gated(monkeypatch, gate_spy
 def test_annotate_events_gates_location_and_note(monkeypatch, gate_spy):
     from agent_friday.services import calendar_write as cw
     monkeypatch.setattr(cw, "write_ready", lambda: (True, None))
-    monkeypatch.setattr(cw, "find_events", lambda q: {"ok": True, "series": [], "events": [
+    monkeypatch.setattr(cw, "find_events", lambda q, **k: {"ok": True, "series": [], "events": [
         {"id": "e1", "title": "Dentist", "location": "", "description": "", "recurring_event_id": None}]})
     bodies = []
 
@@ -225,7 +225,7 @@ def test_annotate_events_gates_location_and_note(monkeypatch, gate_spy):
         def patch(self, calendarId, eventId, body): return _Patch(body)
 
     svc = types.SimpleNamespace(events=lambda: _Events())
-    monkeypatch.setattr(cw, "_service", lambda: (svc, None))
+    monkeypatch.setattr(cw, "_service", lambda *a, **k: (svc, None))
     res = cw.annotate_events("dentist", location="Suite 4, " + SSN, note="bring " + SSN)
     fields = {f for _, f, _ in gate_spy}
     assert {"calendar.location", "calendar.description"} <= fields, fields

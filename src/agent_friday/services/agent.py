@@ -538,21 +538,24 @@ CLAUDE_TOOLS = [
          "phone": {"type": "string", "description": "Phone number to add to the event's description."},
          "note": {"type": "string", "description": "Any other line to add to the description."},
          "apply_to_series": {"type": "boolean", "description": "Default true — edit the whole recurring series rather than a single occurrence."},
-         "dry_run": {"type": "boolean", "description": "Preview the changes without writing."}},
+         "dry_run": {"type": "boolean", "description": "Preview the changes without writing."},
+         "account_id": {"type": "string", "description": "Which connected Google account's calendar to write to (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
       "required": ["query"]}},
     {"name": "create_calendar_event", "description": "Create a new event on the user's Google Calendar. Times are ISO 8601. If the token is read-only, say so plainly and offer to reconnect Google.",
      "input_schema": {"type": "object", "properties": {
          "title": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 start, e.g. 2026-08-18T11:30:00-05:00"},
          "end": {"type": "string", "description": "ISO 8601 end. Defaults to one hour after start."},
          "location": {"type": "string"}, "description": {"type": "string"},
-         "attendees": {"type": "array", "items": {"type": "string"}}},
+         "attendees": {"type": "array", "items": {"type": "string"}},
+         "account_id": {"type": "string", "description": "Which connected Google account's calendar to write to (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
       "required": ["title", "start"]}},
     {"name": "update_calendar_event", "description": "Change one existing event by id (title, time, location, description). Use annotate_calendar_events instead when adding the same detail to several events. CLEARING a field is refused unless allow_clearing is true, because blanking loses information — if the user wants a field emptied, confirm that specifically and pass the flag.",
      "input_schema": {"type": "object", "properties": {
          "event_id": {"type": "string"}, "title": {"type": "string"},
          "start": {"type": "string"}, "end": {"type": "string"},
          "location": {"type": "string"}, "description": {"type": "string"},
-         "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."}},
+         "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."},
+         "account_id": {"type": "string", "description": "Which connected Google account's calendar to write to (id, email or label). Required when more than one account can write; the tool will say so and list them."}},
       "required": ["event_id"]}},
     {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
      "input_schema": {"type": "object", "properties": {
@@ -1136,7 +1139,8 @@ def _tool_annotate_calendar_events(inp):
         phone=(inp.get("phone") or "").strip(),
         note=(inp.get("note") or "").strip(),
         apply_to_series=inp.get("apply_to_series", True),
-        dry_run=bool(inp.get("dry_run")))
+        dry_run=bool(inp.get("dry_run")),
+        account_id=(inp.get("account_id") or "").strip() or None)
     return _calendar_write_summary(res, "update those calendar entries")
 
 
@@ -1149,7 +1153,8 @@ def _tool_create_calendar_event(inp):
         end=(inp.get("end") or "").strip(),
         location=(inp.get("location") or "").strip(),
         description=(inp.get("description") or "").strip(),
-        attendees=inp.get("attendees") or None)
+        attendees=inp.get("attendees") or None,
+        account_id=(inp.get("account_id") or "").strip() or None)
     return _calendar_write_summary(res, "create that event")
 
 
@@ -1163,7 +1168,8 @@ def _tool_update_calendar_event(inp):
         eid, title=inp.get("title"), start=inp.get("start"),
         end=inp.get("end"), location=inp.get("location"),
         description=inp.get("description"),
-        allow_clearing=bool(inp.get("allow_clearing")))
+        allow_clearing=bool(inp.get("allow_clearing")),
+        account_id=(inp.get("account_id") or "").strip() or None)
     return _calendar_write_summary(res, "update that event")
 
 

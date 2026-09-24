@@ -83,8 +83,83 @@ def write_ready() -> tuple:
         "/api/google/auth.")
 
 
-def _service():
-    creds = _google_credentials()
+def writable_accounts() -> list:
+    """Connected accounts whose token can write events and whose Calendar
+    service is switched on. Public, token-free records."""
+    try:
+        from agent_friday.services import google_accounts as ga
+        accts = ga.list_accounts() or []
+    except Exception:
+        return []
+    out = []
+    for a in accts:
+        if not isinstance(a, dict) or a.get("status") != "connected":
+            continue
+        if (a.get("services") or {}).get("calendar", True) is False:
+            continue
+        granted = list(a.get("scopes") or [])
+        if CALENDAR_WRITE_SCOPE in granted or FULL_CALENDAR_SCOPE in granted:
+            out.append(a)
+    return out
+
+
+def describe_accounts(accts) -> str:
+    """'Work <w@example.com> (account_id abc123)', comma-separated."""
+    parts = []
+    for a in accts or []:
+        label = a.get("label") or ""
+        email = a.get("email") or ""
+        who = ("%s <%s>" % (label, email)) if label and email else (label or email)
+        parts.append("%s (account_id %s)" % (who or "account", a.get("id")))
+    return ", ".join(parts)
+
+
+def resolve_write_account(account_id=None) -> tuple:
+    """(account_id | None, error | None) for a calendar WRITE.
+
+    Invariant: a write names the calendar it lands on. With more than one
+    account able to write, an unnamed write is refused and the refusal lists
+    the accounts, because an event on the wrong calendar is seen by the wrong
+    people. With exactly one writable account, that account is the answer.
+    With none in the multi-account store, (None, None) selects the legacy
+    single-token path.
+
+    `account_id` matches an account's id, email or label, case-insensitively.
+    """
+    accts = writable_accounts()
+    want = str(account_id or "").strip().lower()
+    if want:
+        for a in accts:
+            keys = {str(a.get(k) or "").strip().lower()
+                    for k in ("id", "email", "label")}
+            if want in keys:
+                return a.get("id"), None
+        return None, ("no connected account named %r can write to a calendar. "
+                      "Nothing was changed. Accounts that can: %s"
+                      % (str(account_id), describe_accounts(accts) or "none"))
+    if len(accts) > 1:
+        return None, ("more than one Google account can write to a calendar: "
+                      "%s. Say which calendar this goes on (pass account_id). "
+                      "Nothing was changed." % describe_accounts(accts))
+    if len(accts) == 1:
+        return accts[0].get("id"), None
+    return None, None
+
+
+def _service(account_id=None):
+    """A Calendar client for `account_id`, or for the legacy single-token
+    connection when no account is named."""
+    if account_id:
+        try:
+            from agent_friday.services import google_accounts as ga
+            creds = ga.credentials_for(account_id)
+        except Exception as e:
+            return None, "could not load that account's credentials: %s" % e
+        if not creds:
+            return None, ("that Google account needs reconnecting; its "
+                          "credentials could not be used.")
+    else:
+        creds = _google_credentials()
     if not creds:
         return None, "Google is not connected."
     try:
@@ -99,15 +174,17 @@ def _service():
 
 
 def find_events(query: str, *, days_back: int = 60, days_ahead: int = 400,
-                include_series: bool = True) -> dict:
+                include_series: bool = True, account_id=None) -> dict:
     """Search the calendar by text. {ok, events[], series[]} or {error}.
 
     `include_series` is what makes "ALL of my entries about a chiropractor"
     answerable. Recurring appointments come back from the API as individual
     instances; patching one changes one appointment. Patching the series master
     changes every occurrence, which is what "all" means to a person.
+
+    `account_id` selects the account searched; unnamed reads the primary one.
     """
-    svc, err = _service()
+    svc, err = _service(account_id)
     if svc is None:
         return {"error": err}
     now = datetime.now().astimezone()
@@ -185,7 +262,7 @@ def _already_there(current: str, addition: str) -> bool:
 
 def annotate_events(query: str, *, location: str = "", phone: str = "",
                     note: str = "", apply_to_series: bool = True,
-                    dry_run: bool = False) -> dict:
+                    dry_run: bool = False, account_id=None) -> dict:
     """ADD a location / phone / note to every event matching `query`.
 
     Strictly additive. A field that already contains the text is left alone; a
@@ -200,10 +277,13 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
         return {"error": why, "needs_reconnect": True}
     if not (location or phone or note):
         return {"error": "nothing to add — give a location, a phone, or a note"}
-    found = find_events(query)
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    found = find_events(query, account_id=aid)
     if found.get("error"):
         return found
-    svc, err = _service()
+    svc, err = _service(aid)
     if svc is None:
         return {"error": err}
 
@@ -277,7 +357,7 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
         changed.append({"id": t["id"], "title": t.get("title"),
                         "kind": t["kind"], "set": patch, "before": before})
     return {"ok": True, "dry_run": bool(dry_run), "matched": len(targets),
-            "changed": changed, "skipped": skipped}
+            "account_id": aid, "changed": changed, "skipped": skipped}
 
 
 def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
@@ -305,14 +385,20 @@ def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
 
 
 def create_event(*, title: str, start: str, end: str = "", location: str = "",
-                 description: str = "", attendees=None) -> dict:
-    """Create an event. `start`/`end` are ISO 8601 datetimes."""
+                 description: str = "", attendees=None,
+                 account_id=None) -> dict:
+    """Create an event. `start`/`end` are ISO 8601 datetimes.
+
+    `account_id` names the calendar; see `resolve_write_account`."""
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
     if not title or not start:
         return {"error": "a title and a start time are required"}
-    svc, err = _service()
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
     if svc is None:
         return {"error": err}
     title, title_err = _gate_calendar_field(title, "title")
@@ -342,22 +428,29 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
         return {"error": "could not create the event: %s" % e}
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "html_link": ev.get("htmlLink"), "start": start, "end": end}
+            "account_id": aid, "html_link": ev.get("htmlLink"),
+            "start": start, "end": end}
 
 
 def update_event(event_id: str, *, title=None, start=None, end=None,
                  location=None, description=None,
-                 allow_clearing: bool = False) -> dict:
+                 allow_clearing: bool = False, account_id=None) -> dict:
     """Update one event. CLEARING a field requires `allow_clearing=True`.
 
     The asymmetry is the design: setting a value is recoverable from the
     receipt below, blanking one is not, so erasure has to be asked for
     explicitly rather than achieved by passing an empty string.
+
+    `account_id` names the calendar the event lives on; see
+    `resolve_write_account`.
     """
     ready, why = write_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
-    svc, err = _service()
+    aid, acct_err = resolve_write_account(account_id)
+    if acct_err:
+        return {"error": acct_err, "needs_account": True}
+    svc, err = _service(aid)
     if svc is None:
         return {"error": err}
     try:
@@ -398,7 +491,7 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
         return {"error": "could not update the event: %s" % e}
     _drop_calendar_cache()
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "set": patch,
+            "account_id": aid, "set": patch,
             "before": {"summary": before.get("summary"),
                        "location": before.get("location") or "",
                        "description": (before.get("description") or "")[:300]}}
