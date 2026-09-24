@@ -253,6 +253,37 @@ def create_governance_grant():
     return jsonify({"grant": g}), 201
 
 
+@goals_bp.route("/api/governance/receipts", methods=["GET"])
+@login_required
+def governance_receipts():
+    """What Friday did: every checkpoint decision in a window, each with its
+    signature checked, plus the background tasks that finished in it.
+    Read-only. `since` / `until` are epoch seconds; `since` defaults to 24
+    hours ago. `date=YYYY-MM-DD` with `tz_offset_min` (the browser's
+    getTimezoneOffset) selects that local day instead."""
+    import calendar as _cal
+    import time as _t
+    from datetime import datetime as _dt
+    from agent_friday.services import morning_receipt
+    now = _t.time()
+    try:
+        day = (request.args.get("date") or "").strip()
+        if day:
+            # Local midnight in UTC = UTC midnight of that date plus the
+            # browser's offset (getTimezoneOffset is UTC minus local).
+            off = int(request.args.get("tz_offset_min") or 0)
+            start = _cal.timegm(_dt.strptime(day, "%Y-%m-%d").timetuple()) + off * 60
+            since, until = float(start), float(start + 86400)
+        else:
+            since = float(request.args.get("since") or (now - 86400))
+            until = float(request.args["until"]) if request.args.get("until") else now
+    except (TypeError, ValueError):
+        return jsonify({"error": "since/until must be epoch seconds; date must be YYYY-MM-DD"}), 400
+    if until < since:
+        return jsonify({"error": "until is before since"}), 400
+    return jsonify(morning_receipt.build(since, until))
+
+
 @goals_bp.route("/api/governance/grants/<grant_id>", methods=["DELETE"])
 @login_required
 def revoke_governance_grant(grant_id):

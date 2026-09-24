@@ -475,10 +475,34 @@ def _receipt(entry: dict) -> None:
     entry = dict(entry, timestamp=datetime.utcnow().isoformat() + "Z")
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
     entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
-    path = Path(friday_home()) / "decision-bom.jsonl"
+    path = receipts_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, default=str) + "\n")
+
+
+def receipts_path() -> Path:
+    return Path(friday_home()) / "decision-bom.jsonl"
+
+
+def verify_receipt(entry: dict, key: Optional[bytes] = None) -> bool:
+    """True when `entry` carries an HMAC that matches its own content under
+    the governance key -- the inverse of `_receipt`. Read-only; a receipt
+    with no signature, a changed field, or a key that cannot be loaded is
+    reported as not verified, never as verified."""
+    if not isinstance(entry, dict):
+        return False
+    sig = entry.get("hmac")
+    if not isinstance(sig, str) or not sig:
+        return False
+    body = {k: v for k, v in entry.items() if k != "hmac"}
+    try:
+        k = key or _governance_key()
+        canonical = json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+        want = _hmac.new(k, canonical, hashlib.sha256).hexdigest()
+    except Exception:
+        return False
+    return _hmac.compare_digest(want, sig)
 
 
 # ── The checkpoint ──────────────────────────────────────────────────────────
@@ -529,7 +553,10 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                                                          default=str).encode()).hexdigest(),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
-                  "grant": (v.grant or {}).get("grant_id")})
+                  "grant": (v.grant or {}).get("grant_id"),
+                  # Which background task took the action, so the morning
+                  # receipt can link a decision to the work it belonged to.
+                  "task_id": ctx.get("task_id")})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
