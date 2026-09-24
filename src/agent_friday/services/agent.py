@@ -3151,6 +3151,12 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
             f"there was nothing actionable to do.")
 
 
+def _task_schedule_id(task_id):
+    """The schedule a task runs for, as recorded by `_spawn_task`, or None."""
+    with TASKS_LOCK:
+        return (TASKS.get(task_id) or {}).get('schedule_id') or None
+
+
 def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                  model=None, tools=None):
     """`_task_worker_untraced` under the task's reasoning trace, nested under
@@ -3159,7 +3165,7 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
     with TASKS_LOCK:
         rec = TASKS.get(task_id) or {}
         tid, parent = rec.get('trace_id'), rec.get('parent_trace_id')
-    kind = "scheduled" if str(description or "").startswith("scheduled:") else "subagent"
+    kind = "scheduled" if rec.get('schedule_id') else "subagent"
     trace = _rtrace.start(kind, name or description or "Background task", model=model,
                           task_id=task_id, parent_id=parent, trace_id=tid)
     try:
@@ -3309,9 +3315,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                              "task_id": task_id,
                              # A scheduled job's outward actions need a grant
                              # scoped to that schedule (governance/action_gate).
-                             "schedule_id": (description.split(":", 1)[1]
-                                             if str(description or "").startswith("scheduled:")
-                                             else None)},
+                             # Only the scheduler sets it; see _spawn_task.
+                             "schedule_id": _task_schedule_id(task_id)},
                 orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
                 workspace='task', on_route=_log_route, tools=_tools_override,
             )
@@ -3693,8 +3698,13 @@ def _report_task_completion(task_id, name, status, result_text):
 
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
-                model=None, tools=None, conversation_id=None):
+                model=None, tools=None, conversation_id=None, schedule_id=None):
     """Spawn a background task.
+
+    schedule_id: set only by the scheduler, for a run of that schedule. It is
+        the scope a pre-approved governance grant is matched against, so it
+        is never derived from `description` or anything else a model writes:
+        a model-spawned task must not be able to claim a schedule's grants.
 
     conversation_id: WHERE THIS TASK REPORTS. Without it a task belongs to
         nobody, and `reconcile.resolve` sends everything it has to say to Main
@@ -3759,6 +3769,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # an interruption notice goes; None means Main, which is where
             # explanations go to be unread.
             'conversation_id': conversation_id,
+            # The governance grant scope of a scheduled run (see docstring).
+            'schedule_id': str(schedule_id) if schedule_id else None,
             # Defect E: seat-supervisor admission fields. The queue keys on
             # id + seat; the watchdog view reads tool_calls off the record.
             'id': task_id,
