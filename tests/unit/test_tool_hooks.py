@@ -82,11 +82,11 @@ def test_post_hook_exception_passthrough():
 def test_tool_scoping():
     seen = []
     h.register_pre_hook(lambda c: seen.append(c.tool_name) or h.ALLOW,
-                        name="t_scoped", priority=10, tools={"write_file"})
+                        name="t_scoped", priority=10, tools={"search_files"})
     h.run_pre_hooks(_ctx(name="read_file"))   # not scoped → skipped
     assert seen == []
-    h.run_pre_hooks(_ctx(name="write_file"))  # scoped → runs
-    assert seen == ["write_file"]
+    h.run_pre_hooks(_ctx(name="search_files"))  # scoped → runs
+    assert seen == ["search_files"]
 
 
 def test_rate_limiter_bucket():

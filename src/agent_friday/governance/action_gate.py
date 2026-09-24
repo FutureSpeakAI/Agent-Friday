@@ -139,7 +139,7 @@ INTERNAL_TOOLS = frozenset({
     "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "open_path", "navigate", "switch_model", "list_sending_accounts",
     "get_career_pipeline", "get_briefing", "spawn_task", "propose_wiki_update",
-    "correct_wiki", "epistemic_score", "personality_show",
+    "correct_wiki", "learn_skill", "epistemic_score", "personality_show",
     "personality_check_sycophancy", "generate_image", "generate_video",
     "generate_music", "compose_timeline", "create_presentation", "create_website",
     "office_check",                 # validates; renders a preview PNG beside it
@@ -155,10 +155,9 @@ INTERNAL_TOOLS = frozenset({
 })
 
 #: Classified by argument: run_command by its command, content_create_post by
-#: whether it schedules, write_file by where it writes, learn_skill by whether
-#: it changes a skill.
+#: whether it schedules, write_file by where it writes.
 BY_ARGUMENT = frozenset({"run_command", "content_create_post", "office",
-                         "write_file", "learn_skill"})
+                         "write_file"})
 
 _READ_VERBS = ("get", "list", "search", "read", "fetch", "query", "find", "check",
                "lookup", "describe", "show", "view", "count", "status", "explore",
@@ -341,12 +340,6 @@ def classify(tool_name: str, args: Optional[dict]) -> tuple:
             return OUTWARD, f"the office command could not be classified ({e})"
     if tool_name == "write_file":
         return classify_write(a.get("path"))
-    if tool_name == "learn_skill":
-        # Skills are instructions Friday loads into later turns. Listing them
-        # reads; creating, changing or deleting one changes what Friday does.
-        if str(a.get("action") or "create").lower() == "list":
-            return INTERNAL, "it lists skills"
-        return OUTWARD, "it changes a skill Friday loads as instructions"
     if tool_name == "content_create_post":
         if a.get("publish_at") or a.get("optimal_time"):
             return OUTWARD, "it schedules a post to go out"
