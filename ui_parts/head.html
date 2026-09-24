@@ -31,6 +31,10 @@ window.addEventListener('error',function(e){
 <script src="/static/vendor/marked-9.1.6.min.js"></script>
 <link rel="stylesheet" href="/static/vendor/atom-one-dark-11.9.0.min.css">
 <script src="/static/vendor/highlight-11.9.0.min.js"></script>
+<!-- Push-to-transcribe inside the tab. One file rather than two
+     hand-maintained copies; the tray suppresses the hotkey while the
+     system-wide version is on, so only one of them ever fires. -->
+<script src="/static/js/friday_push_to_transcribe.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){

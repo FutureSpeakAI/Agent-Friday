@@ -2073,6 +2073,22 @@ DEFAULT_SETTINGS = {
     #   "auto"      — GPU tier when ready, else CPU; local preferred over cloud
     "voice_engine": "local",
     "local_voice_asr_model": "small",      # Tier-1 faster-whisper size: tiny|base|small|medium
+    # ── Push-to-transcribe ────────────────────────────────────────────────
+    # Hold a key anywhere in Windows, speak, release, and the local transcript
+    # is pasted into whatever window has focus. On by default, and system-wide
+    # by default, because a dictation key that only works in one window is a
+    # worse version of the microphone button that is already there.
+    #
+    # Detecting a HELD key needs a low-level keyboard hook, which Windows hands
+    # every key event in the system. services/push_to_talk.py compares one
+    # field against the one configured key and returns before any branch that
+    # could record, count or classify anything else; the Settings copy says so
+    # in the same words. Turning this off removes the hook entirely.
+    "push_to_transcribe": True,
+    "push_to_transcribe_hotkey": "alt+t",   # NOT alt+f: that opens Chrome's menu
+    # A tap shorter than this is replayed to the focused window, so Alt+T keeps
+    # working in applications that wanted it.
+    "push_to_transcribe_hold_ms": 150,
     "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
     # Which synthesizer the Tier-1 (CPU) path uses. Piper is the default and
     # stays the default: it is the only local synthesizer that runs acceptably

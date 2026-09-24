@@ -7,6 +7,7 @@ viewing the voice debug log, and quitting cleanly.
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import socket
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -50,6 +52,8 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
 ICON_PATH = PROJECT_DIR / "assets" / "icons" / "futurespeak.png"
+log = logging.getLogger(__name__)
+
 VOICE_LOG = friday_home() / "voice_debug.log"
 SERVER_STDERR_LOG = friday_home() / "server_stderr.log"
 SERVER_URL = "http://localhost:3000"
@@ -121,6 +125,125 @@ def _wait_for_health(timeout: float = SERVER_START_TIMEOUT_S,
     return False, f"NOT RESPONDING after {timeout:.0f}s (process still alive)"
 
 
+# ── Push-to-transcribe ──────────────────────────────────────────────────────
+# The tray is where a system-wide hotkey belongs: it is the one Friday process
+# that is always running and has a desktop session to send keystrokes into.
+# The server owns the ear, so the tray records and asks it for the words.
+
+class PushToTranscribe:
+    """Holds the hotkey service and keeps it in step with the settings."""
+
+    def __init__(self, server_url=SERVER_URL):
+        self.server_url = server_url
+        self.service = None
+        self.indicator = None
+        self.detail = "not started"
+
+    # -- settings ---------------------------------------------------------
+    def _settings(self) -> dict:
+        try:
+            import json
+            import urllib.request
+            with urllib.request.urlopen(self.server_url + "/api/settings",
+                                        timeout=5) as r:
+                body = json.load(r)
+            return body.get("settings", body) or {}
+        except Exception as e:
+            log.info("push-to-transcribe could not read settings: %s", e)
+            return {}
+
+    # -- the ear lives in the server --------------------------------------
+    def _transcribe(self, pcm: bytes) -> str:
+        import json
+        import urllib.request
+        req = urllib.request.Request(
+            self.server_url + "/api/voice/transcribe", data=pcm,
+            method="POST",
+            headers={"Content-Type": "application/octet-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                body = json.load(r)
+        except urllib.error.HTTPError as e:
+            try:
+                detail = json.load(e).get("error") or e.reason
+            except Exception:
+                detail = str(e.reason)
+            raise RuntimeError(detail) from None
+        except Exception:
+            raise RuntimeError(
+                "Friday's server is not answering. Is it still starting up?"
+            ) from None
+        return body.get("text") or ""
+
+    # -- lifecycle --------------------------------------------------------
+    def apply(self) -> None:
+        """Start, stop or rebind to match the current settings."""
+        s = self._settings()
+        want = bool(s.get("push_to_transcribe", True))
+        hotkey = str(s.get("push_to_transcribe_hotkey") or "alt+t")
+        hold_ms = int(s.get("push_to_transcribe_hold_ms") or 150)
+
+        if not want:
+            self.stop()
+            self.detail = "off"
+            return
+
+        try:
+            from agent_friday.services import push_to_talk as ptt
+        except Exception as e:
+            self.detail = "unavailable (%s)" % e
+            log.info("push-to-transcribe unavailable: %s", e)
+            return
+
+        try:
+            ptt.parse_hotkey(hotkey)
+        except ptt.HotkeyError as e:
+            # Refuse rather than bind something the user did not ask for.
+            self.detail = "bad hotkey: %s" % e
+            log.warning("push-to-transcribe %s", self.detail)
+            self.stop()
+            return
+
+        if self.service is not None:
+            try:
+                self.service.set_hotkey(hotkey)
+                self.service.hold_ms = hold_ms
+                self.detail = ptt.describe_hotkey(hotkey)
+            except Exception as e:
+                self.detail = "could not rebind: %s" % e
+            return
+
+        if self.indicator is None:
+            try:
+                from agent_friday.services.ptt_indicator import Indicator
+                self.indicator = Indicator()
+            except Exception as e:
+                log.info("push-to-transcribe indicator unavailable: %s", e)
+
+        self.service = ptt.PushToTalk(
+            hotkey=hotkey, hold_ms=hold_ms, transcribe=self._transcribe,
+            indicator=self.indicator)
+        if self.service.start():
+            self.detail = ptt.describe_hotkey(hotkey)
+            log.info("push-to-transcribe active: hold %s anywhere", self.detail)
+        else:
+            self.service = None
+            self.detail = "could not install the keyboard hook"
+
+    def stop(self) -> None:
+        svc, self.service = self.service, None
+        if svc:
+            try:
+                svc.stop()
+            except Exception:
+                pass
+
+    def label(self) -> str:
+        if self.service is not None:
+            return "Push-to-Transcribe: hold %s" % self.detail
+        return "Push-to-Transcribe: %s" % self.detail
+
+
 class FridayTray:
     def __init__(self) -> None:
         self.server_proc: subprocess.Popen | None = None
@@ -139,6 +262,7 @@ class FridayTray:
         # debounce is defense-in-depth for a double-click regardless: cheap,
         # removes any doubt, costs nothing when idle.
         self._restart_in_flight = threading.Lock()
+        self.ptt = PushToTranscribe()
 
     # ── Server lifecycle ──────────────────────────────────────────────
     def start_server(self) -> None:
@@ -261,6 +385,7 @@ class FridayTray:
             pystray.MenuItem("Restart Server", self._restart),
             pystray.MenuItem("Voice Debug Log", self._open_voice_log),
             pystray.MenuItem(self._status_label, None, enabled=False),
+            pystray.MenuItem(lambda _i: self.ptt.label(), None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
         )
@@ -320,8 +445,30 @@ class FridayTray:
 
         threading.Thread(target=self.start_server, daemon=True).start()
         threading.Thread(target=self._watchdog, daemon=True).start()
+        threading.Thread(target=self._start_push_to_transcribe,
+                         daemon=True).start()
 
         self.icon.run()
+
+    def _start_push_to_transcribe(self) -> None:
+        """Install the dictation hotkey once the ear is reachable.
+
+        It waits for health rather than racing it: the hook would install
+        fine, but the first hold would reach a server that is not listening
+        yet, and "it did nothing the first time" is how a feature gets
+        written off.
+        """
+        healthy, detail = _wait_for_health(timeout=120.0)
+        if not healthy:
+            self.ptt.detail = "the server never came up"
+            log.info("push-to-transcribe: not installing the hotkey (%s)",
+                     detail)
+            return
+        try:
+            self.ptt.apply()
+        except Exception as e:
+            log.warning("push-to-transcribe failed to start: %s", e)
+        self._refresh_menu()
 
 
 #: Held for the life of the process. A module global rather than a local,
