@@ -94,25 +94,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .bottom-right .dot { bottom: 25%; right: 25%; }
 
         /* HEADER */
-        .hud-header {
-            position: absolute; top: 80px; left: 140px; right: 140px;
-            display: flex; justify-content: space-between; align-items: flex-start;
-            font-family: 'Courier New', Courier, monospace; font-size: 11px;
-            color: rgba(var(--hud-r), var(--hud-g), var(--hud-b), calc(var(--hud-opacity) + 0.7));
-            letter-spacing: 4px;
-            text-shadow: 0 0 8px rgba(0,0,0,0.9), 0 0 20px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.8);
-            font-weight: 400; text-transform: uppercase;
-        }
-
-        .hud-title-container { display: flex; flex-direction: column; gap: 6px; }
-        .hud-main-title {
-            font-size: 13px; color: #fff; letter-spacing: 6px; font-weight: 500;
-            text-decoration: none; pointer-events: auto; cursor: pointer; transition: text-shadow 0.3s;
-            text-shadow: 0 0 8px rgba(0,0,0,0.9), 0 0 16px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.8);
-        }
-        .hud-main-title:hover { text-shadow: 0 0 15px rgba(255,255,255,0.8), 0 0 8px rgba(0,0,0,0.85); }
-        
-        .hud-laws { display: flex; align-items: center; gap: 8px; }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
         .status-dot.green { background: #00ff66; box-shadow: 0 0 10px #00ff66, 0 0 2px #fff inset; }
         .status-dot.red { background: #ff0033; box-shadow: 0 0 10px #ff0033, 0 0 2px #fff inset; }
@@ -257,10 +238,6 @@ window.addEventListener('DOMContentLoaded',function(){
            and whatever still does not fit is clipped rather than sticking out
            over the scene. */
         .top-bar > * { min-width: 0; overflow: hidden; }
-        .top-edge-hover {
-            position: fixed; top: 0; left: 0; right: 0; height: 18px; z-index: 69;
-            pointer-events: auto; background: transparent;
-        }
 
         /* Kill Switch — floating always-visible emergency stop */
         .kill-switch {
@@ -308,17 +285,6 @@ window.addEventListener('DOMContentLoaded',function(){
             50% { opacity: 0.3; }
         }
 
-        /* Model status pills */
-        .model-pill {
-            display: inline-flex; align-items: center; gap: 5px;
-            padding: 2px 8px; border-radius: 10px; font-size: 11px;
-            font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
-            color: rgba(255,255,255,0.82); transition: all 0.3s;
-        }
-        .model-pill .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-        .model-pill .dot.active { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
-        .model-pill .dot.idle { background: #888; }
 
         /* Dock — solid-anchored gradient backdrop so labels read against bright scene */
         .dock {
@@ -505,7 +471,6 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Badges */
         .badge-green { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(0,255,128,0.1); color: #00ff80; border: 1px solid rgba(0,255,128,0.2); }
         .badge-cyan { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(0,212,255,0.1); color: #00d4ff; border: 1px solid rgba(0,212,255,0.2); }
-        .badge-magenta { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(255,0,128,0.1); color: #ff0080; border: 1px solid rgba(255,0,128,0.2); }
         .badge-amber { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); }
 
         /* Progress bars */
@@ -831,9 +796,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-panel.open { right: 0; }
         .settings-panel::-webkit-scrollbar { width: 4px; }
         .settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
-        .settings-section {
-            padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
         .settings-section-title {
             font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.95);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
@@ -842,9 +804,6 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.78);
             letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px;
             font-weight: 600;
-        }
-        .settings-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
         }
         .settings-btn {
             background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
@@ -927,51 +886,6 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .settings-toggle-switch.on { background: rgba(0,212,255,0.2); border-color: rgba(0,212,255,0.4); }
         .settings-toggle-switch.on::after { left: 16px; background: #00d4ff; box-shadow: 0 0 6px rgba(0,212,255,0.5); }
-        /* Collapsible body with smooth slide animation */
-        .settings-coll-body {
-            max-height: 0; overflow: hidden;
-            transition: max-height 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.22s ease-out;
-            opacity: 0;
-        }
-        .settings-coll-body.open { max-height: 6000px; opacity: 1; }
-        .settings-coll-header {
-            cursor: pointer; padding: 12px 16px;
-            display: flex; justify-content: space-between; align-items: center;
-            user-select: none;
-        }
-        .settings-coll-header:hover { background: rgba(255,255,255,0.025); }
-        .settings-coll-header .chev {
-            font-family: 'JetBrains Mono', monospace; font-size: 13px;
-            color: rgba(0,212,255,0.6); transition: transform 0.25s;
-        }
-        .settings-coll-header.open .chev { color: rgba(0,212,255,0.95); }
-        /* Subsection — used inside Audio & Voice for the "advanced voice tuning" block */
-        .settings-subcoll-header {
-            cursor: pointer; padding: 8px 0;
-            display: flex; justify-content: space-between; align-items: center;
-            user-select: none; font-family: 'JetBrains Mono', monospace; font-size: 10px;
-            color: rgba(255,255,255,0.78); letter-spacing: 0.1em; text-transform: uppercase;
-            font-weight: 600;
-        }
-        /* Mic-test level bar */
-        .miclevel-bar {
-            height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.08); overflow: hidden; margin-top: 6px;
-        }
-        .miclevel-fill {
-            height: 100%; background: linear-gradient(90deg, #00ff80 0%, #f59e0b 70%, #ff0080 100%);
-            transition: width 0.08s linear; box-shadow: 0 0 8px rgba(0,255,128,0.4);
-        }
-        /* API-key status pill */
-        .keystatus-row {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 6px 8px; background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.06); border-radius: 5px;
-            font-family: 'JetBrains Mono', monospace; font-size: 11px;
-            color: rgba(255,255,255,0.78); margin-bottom: 4px;
-        }
-        .keystatus-row .ok { color: #00ff80; font-weight: 700; }
-        .keystatus-row .missing { color: #ff5588; font-weight: 700; }
 
         /* Camera Mode */
         .camera-pip {
@@ -1004,10 +918,6 @@ window.addEventListener('DOMContentLoaded',function(){
         .camera-pip .cam-active .pulse {
             width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
             box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
-        }
-        .camera-pip .cam-eye {
-            position: absolute; bottom: 5px; right: 6px;
-            font-size: 13px; color: #00d4ff; text-shadow: 0 0 6px rgba(0,212,255,0.7);
         }
         .camera-control-panel {
             position: fixed; top: 42px; right: 12px; width: 240px; z-index: 71;
@@ -1901,16 +1811,9 @@ window.addEventListener('DOMContentLoaded',function(){
           /* Hide decorative HUD corners — too large on small screens */
           .hud-corner { display: none; }
 
-          /* Compact HUD header */
-          .hud-header {
-            top: 44px; left: 12px; right: 12px;
-            font-size: 9px; letter-spacing: 2px;
-          }
-          .hud-main-title { font-size: 10px; letter-spacing: 3px; }
 
           /* Top bar — keep compact */
           .top-bar { padding: 0 8px; height: 40px; }
-          .model-pill { font-size: 9px; padding: 1px 5px; }
 
           /* Dock — wrapped, NOT a scrollable strip. The strip predates the
              wrap and fought it: flex-start plus overflow-x kept laying the
@@ -1990,7 +1893,6 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Extra-small screens (iPhone SE, etc.) */
         @media (max-width: 390px) {
           .dock-btn { min-width: 44px; font-size: 9px; }
-          .model-pill { display: none; }
         }
 
         /* ─── Process Orb Labels (Layer 2) ─── */
@@ -2119,46 +2021,6 @@ window.addEventListener('DOMContentLoaded',function(){
             .thread-panel { max-width: calc(100vw - 16px); }
         }
 
-        /* Markdown-rendered Friday responses */
-        .md-body { line-height: 1.55; color: #bbb; }
-        .md-body p { margin: 0 0 8px; }
-        .md-body p:last-child { margin-bottom: 0; }
-        .md-body h1,.md-body h2,.md-body h3,.md-body h4 {
-            font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: 0.04em;
-            color: #00d4ff; margin: 10px 0 5px;
-        }
-        .md-body h1 { font-size: 13px; }
-        .md-body h2 { font-size: 12px; }
-        .md-body h3,.md-body h4 { font-size: 11px; color: #7c9cbf; }
-        .md-body ul,.md-body ol { margin: 0 0 8px 16px; padding: 0; }
-        .md-body li { margin-bottom: 3px; }
-        .md-body strong { color: #e0e0e0; font-weight: 600; }
-        .md-body em { color: #a0c4d8; font-style: italic; }
-        .md-body a { color: #00d4ff; text-decoration: none; background: linear-gradient(90deg,#00d4ff,#7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-        .md-body a:hover { opacity: 0.8; }
-        .md-body code {
-            font-family: 'JetBrains Mono', monospace; font-size: 10px;
-            background: rgba(0,212,255,0.07); border: 1px solid rgba(0,212,255,0.15);
-            border-radius: 3px; padding: 1px 4px; color: #7dd3fc;
-        }
-        .md-body pre {
-            background: rgba(0,0,0,0.45); border: 1px solid rgba(0,212,255,0.18);
-            border-radius: 6px; padding: 10px 12px; margin: 6px 0 10px;
-            overflow-x: auto; backdrop-filter: blur(8px);
-            box-shadow: inset 0 1px 0 rgba(0,212,255,0.08);
-        }
-        .md-body pre code {
-            background: none; border: none; padding: 0;
-            font-size: 10px; color: #a5f3fc; white-space: pre;
-        }
-        .md-body blockquote {
-            border-left: 2px solid rgba(0,212,255,0.35); margin: 6px 0;
-            padding: 4px 10px; color: #88a; font-style: italic;
-        }
-        .md-body hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 8px 0; }
-        .md-body table { border-collapse: collapse; font-size: 11px; width: 100%; margin: 6px 0; }
-        .md-body th { color: #00d4ff; border-bottom: 1px solid rgba(0,212,255,0.25); padding: 4px 8px; text-align: left; }
-        .md-body td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 4px 8px; }
 
         /* ═══ FRIDAY-DOC — branded markdown renderer (briefing-grade) ═══
            Used by chat responses, notification details, wiki viewer, research
@@ -2373,13 +2235,6 @@ window.addEventListener('DOMContentLoaded',function(){
             text-transform: uppercase; padding: 8px 12px 3px;
             user-select: none;
         }
-        .model-option-local {
-            display: flex; align-items: center; gap: 8px;
-            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
-            font-family: 'JetBrains Mono', monospace; font-size: 11px;
-            color: rgba(255,255,255,0.85);
-        }
-        .model-option-local:hover { background: rgba(245,158,11,0.1); }
         .model-option-cloud {
             display: flex; align-items: center; gap: 8px;
             padding: 5px 12px; cursor: pointer; transition: background 0.15s;
@@ -2400,19 +2255,6 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'JetBrains Mono', monospace;
             background: rgba(0,212,255,0.1); color: #00d4ff;
             border: 1px solid rgba(0,212,255,0.2);
-        }
-        .ollama-status-dot {
-            width: 6px; height: 6px; border-radius: 50%;
-            display: inline-block; flex-shrink: 0;
-        }
-        .ollama-status-dot.online { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
-        .ollama-status-dot.offline { background: #555; }
-        .inference-slots {
-            display: inline-flex; align-items: center; gap: 4px;
-            font-family: 'JetBrains Mono', monospace; font-size: 10px;
-            color: rgba(245,158,11,0.85); padding: 2px 7px;
-            border-radius: 8px; background: rgba(245,158,11,0.08);
-            border: 1px solid rgba(245,158,11,0.18);
         }
 
         /* ═══════════════════════════════════════════════════════════
