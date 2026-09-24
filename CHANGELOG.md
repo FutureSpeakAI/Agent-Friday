@@ -153,6 +153,11 @@ Everything since the 5.13.0 tag. The plain-language summary is in
   findings and fails closed on its own errors.
 - A read-only observer credential lets an orchestrator read a task's journal
   without owner access.
+- **The wiki no longer copies itself to a fixed Google Drive folder.** A
+  mirror is opt-in (`wiki_mirror_dir`, off by default) and goes only to a
+  folder you choose. Earlier builds copied every wiki write to
+  `G:\My Drive\Wiki` whenever that folder existed; if you use Google Drive
+  for desktop on drive G:, check for and remove that folder.
 
 ### Fixed
 

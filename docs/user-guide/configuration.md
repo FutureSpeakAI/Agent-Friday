@@ -141,6 +141,7 @@ A capability that is not in the defaults is removed on the next save.
 | `context_logging_enabled` | `true` | The append-only context log in `~/.friday/vault/context-log/`. |
 | `context_retention_days` | `0` | 0 keeps the log forever; otherwise prune after 30, 90, 180 or 365 days. |
 | `wiki_encrypted_sections` | `[]` | Wiki sections to encrypt with the vault key, for example `["health", "legal", "family"]`. Needs a vault passphrase. Encrypted sections are also kept out of the cloud knowledge block. |
+| `wiki_mirror_dir` | `""` (off) | An absolute path to an existing folder you choose. Every wiki write and delete is copied there. Encrypted sections are copied as ciphertext, everything else as plain text. If the folder is synced by OneDrive, Google Drive, Dropbox or similar, every mirrored page leaves this computer through that client. |
 | `judgment_gate` | off; model `gemma4:e2b` | A local model that judges ambiguous privacy cases. |
 | `task_journal` | keep forever; capture reasoning; encrypted | The background-task journal in `~/.friday/tasks/`. |
 | `reasoning_traces` | capture on; keep forever | The reasoning-trace archive in `~/.friday/traces/`. See [reasoning traces](../reference/reasoning-traces.md). |

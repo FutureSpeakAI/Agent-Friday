@@ -40,7 +40,33 @@ from agent_friday.core import (
 
 # ── Wiki helpers ──────────────────────────────────────────────
 WIKI_PENDING_FILE = FRIDAY_DIR / "wiki-pending.json"
-WIKI_MIRROR_DIR = Path(r"G:\My Drive\Wiki")
+
+
+# ── Opt-in wiki mirror ────────────────────────────────────────
+# `wiki_mirror_dir` in settings.json names a folder that receives a copy of
+# every wiki write and delete. It is empty (off) by default and there is no
+# built-in location: the owner chooses the folder. If that folder is synced
+# by a cloud client (OneDrive, Google Drive, Dropbox), every mirrored page
+# leaves the machine through that client. Encrypted sections are copied as
+# their on-disk ciphertext, never as plaintext.
+
+def _wiki_mirror_dir():
+    """The owner-chosen mirror folder, or None when mirroring is off.
+
+    Returns None unless the setting names an absolute path to an existing
+    directory; a mirror never creates its own root.
+    """
+    from agent_friday.core import _load_settings
+    try:
+        raw = str((_load_settings() or {}).get("wiki_mirror_dir") or "").strip()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    p = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not p.is_absolute() or not p.is_dir():
+        return None
+    return p
 
 
 # ── Opt-in per-section encryption at rest ─────────────────────
@@ -150,18 +176,19 @@ def _safe_wiki_path(rel):
 
 
 def _mirror_wiki_file(rel, content):
-    """Write content to WIKI_DIR/rel and mirror to Google Drive if mounted."""
+    """Write content to WIKI_DIR/rel, and to the opt-in mirror when one is set."""
     rel = rel.replace('\\', '/').lstrip('/')
     primary = WIKI_DIR / rel
     primary.parent.mkdir(parents=True, exist_ok=True)
     old_content = wiki_read_text(primary) if primary.exists() else ""
     wiki_write_text(primary, content)
     try:
-        if WIKI_MIRROR_DIR.exists():
-            mirror = WIKI_MIRROR_DIR / rel
+        mirror_root = _wiki_mirror_dir()
+        if mirror_root is not None:
+            mirror = mirror_root / rel
             mirror.parent.mkdir(parents=True, exist_ok=True)
             # Mirror the on-disk BYTES, not the plaintext — an encrypted
-            # section must reach the cloud-synced Drive as ciphertext.
+            # section reaches the mirror folder as ciphertext.
             mirror.write_bytes(primary.read_bytes())
     except Exception as e:
         print(f"  [WIKI] Mirror failed for {rel}: {e}")
@@ -175,7 +202,7 @@ def _mirror_wiki_file(rel, content):
 
 
 def _delete_wiki_file(rel):
-    """Delete primary + mirror if present."""
+    """Delete primary, and the opt-in mirror's copy when a mirror is set."""
     rel = rel.replace('\\', '/').lstrip('/')
     primary = WIKI_DIR / rel
     deleted = False
@@ -183,8 +210,9 @@ def _delete_wiki_file(rel):
         primary.unlink()
         deleted = True
     try:
-        if WIKI_MIRROR_DIR.exists():
-            mirror = WIKI_MIRROR_DIR / rel
+        mirror_root = _wiki_mirror_dir()
+        if mirror_root is not None:
+            mirror = mirror_root / rel
             if mirror.exists() and mirror.is_file():
                 mirror.unlink()
     except Exception as e:
