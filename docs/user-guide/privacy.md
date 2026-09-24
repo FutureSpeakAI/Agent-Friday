@@ -31,7 +31,7 @@ First-run setup asks, and Settings → Models lets you change it per job.
 | Choice | What happens |
 |---|---|
 | **Cloud** (`cloud_only`) | Friday thinks at the cloud provider you chose. Your messages go there over an encrypted connection, after the egress gate. |
-| **On this computer only** (`local_only`) | A model on this PC answers. If no local model is running, Friday refuses the turn and offers to answer it in the cloud; nothing is sent until you choose. (The first-run screen still says it falls back to the cloud; the code refuses.) |
+| **On this computer only** (`local_only`) | A model on this PC answers. If no local model is running, Friday refuses the turn and offers to answer it in the cloud; nothing is sent until you choose. |
 | **Both** (`local_preferred`) | This PC by default; the cloud when it would clearly help. |
 
 Every reply says which model answered it.

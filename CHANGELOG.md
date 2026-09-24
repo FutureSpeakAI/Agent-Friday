@@ -187,6 +187,10 @@ Everything since the 5.13.0 tag. The plain-language summary is in
 - The installer build refuses a payload that is not the committed tree.
 - Task states Interrupted, Stopped and Stalled are readable on the dark
   panel.
+- The first-run routing screen says what "On this computer only" does: with
+  no local model running, Friday refuses the message and asks whether to
+  answer it in the cloud. The refusal and two chat notices point to
+  Settings > Models, the tab's current name.
 
 ### Removed
 

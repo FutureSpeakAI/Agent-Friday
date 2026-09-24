@@ -388,12 +388,12 @@ def _seat_divergence_text(chosen_model, actual_model, *, routing_mode=None,
                 "so this turn stayed on this machine and was answered by %s. %s "
                 "is a cloud model and cannot be installed here -- to be answered "
                 "by it, set routing mode to Smart or Cloud only in Settings > "
-                "Intelligence." % (chosen, label, actual, chosen))
+                "Models." % (chosen, label, actual, chosen))
         return (
             "You chose %s for the reasoning seat, but this turn was answered on "
             "this machine by %s. %s is a cloud model, so nothing was missing "
             "from this machine -- something kept the turn local. Check routing "
-            "mode and the provider key in Settings > Intelligence."
+            "mode and the provider key in Settings > Models."
             % (chosen, actual, chosen))
 
     # Two cloud models: not an absent local install, so offer no install advice.
@@ -881,7 +881,7 @@ def chat():
                         "kind": "vision_cloud",
                         "text": "👁 %s went to Google (Gemini) to be described. "
                                 "Switch to Local only in Settings → "
-                                "Intelligence to keep images on this machine."
+                                "Models to keep images on this machine."
                                 % _what.capitalize(),
                         "ts": _time.time(),
                     })
