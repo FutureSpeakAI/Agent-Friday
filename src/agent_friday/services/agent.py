@@ -8020,6 +8020,57 @@ def _ledger_model_invocation(model, provider, seat, duration_ms, tokens_in,
         pass
 
 
+def _no_empty_text(messages):
+    """A copy of `messages` the Messages API will accept: no empty text.
+
+    Three sources, all seen in practice: the model's own turn carrying a text
+    block of "" beside a tool call, which the loop echoes back; a tool that
+    returns an empty string (no hits, an empty list), which becomes a
+    tool_result with empty text; and a resumed or compacted history that
+    already holds one. Empty text blocks are dropped; a message or tool
+    result left with nothing says so in words instead. Pure and
+    deterministic, so the transcript's cached prefix is unchanged.
+    """
+    def blank(v):
+        return not str(v or "").strip()
+
+    out = []
+    for m in messages:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        role = m.get("role")
+        filler = "(no reply)" if role == "assistant" else "(empty message)"
+        c = m.get("content")
+        if isinstance(c, str):
+            out.append(dict(m, content=c if not blank(c) else filler))
+            continue
+        if not isinstance(c, list):
+            out.append(m)
+            continue
+        blocks = []
+        for b in c:
+            if not isinstance(b, dict):
+                blocks.append(b)
+                continue
+            t = b.get("type")
+            if t == "text" and blank(b.get("text")):
+                continue
+            if t == "tool_result":
+                rc = b.get("content")
+                if isinstance(rc, str) and blank(rc):
+                    b = dict(b, content="(no output)")
+                elif isinstance(rc, list):
+                    kept = [x for x in rc if not (isinstance(x, dict) and x.get("type") == "text"
+                                                  and blank(x.get("text")))]
+                    b = dict(b, content=kept or "(no output)")
+                elif rc is None:
+                    b = dict(b, content="(no output)")
+            blocks.append(b)
+        out.append(dict(m, content=blocks or [{"type": "text", "text": filler}]))
+    return out
+
+
 def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠', resumed_tool_trace=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
@@ -8245,6 +8296,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     ]
             except Exception:
                 pass
+            # No empty text anywhere in the request: the API rejects the whole
+            # call for one (HTTP 400, "text content blocks must be
+            # non-empty") and the turn dies. Before the cache breakpoints, so
+            # a marker is never placed on a block this then removes.
+            kwargs["messages"] = _no_empty_text(kwargs.get("messages") or [])
             # Prompt-cache breakpoints, applied last — after the gate and
             # after schema normalisation — so nothing downstream can drop
             # them. This loop is where Friday's cloud bill actually lives:
