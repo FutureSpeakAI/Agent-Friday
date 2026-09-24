@@ -22,7 +22,8 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 
-const WIN_W = 422;          // border-box width of a ConversationWindow
+// A ConversationWindow is found by its class: its width is the user's to choose now.
+const WIN = '.chat-win';
 const SHORT = { width: 1440, height: 620 };   // laptop with browser chrome
 
 type Box = { top: number; bottom: number; height: number; z: number };
@@ -40,13 +41,13 @@ async function openWindows(page: Page, n: number): Promise<string[]> {
 
 /** Every floating chat window, plus the dock, measured together. */
 async function measure(page: Page): Promise<{ vh: number; dockTop: number; dockH: number; dockZ: number; wins: Box[] }> {
-  return page.evaluate((w: number) => {
+  return page.evaluate((sel: string) => {
     const dock = document.querySelector('.dock') as HTMLElement;
     const dr = dock.getBoundingClientRect();
-    const wins = ([...document.querySelectorAll('body *')] as HTMLElement[])
+    const wins = ([...document.querySelectorAll(sel)] as HTMLElement[])
       .filter(el => {
         const s = getComputedStyle(el), r = el.getBoundingClientRect();
-        return s.position === 'fixed' && Math.round(r.width) === w && r.height > 100;
+        return s.position === 'fixed' && r.height > 100;
       })
       .map(el => {
         const r = el.getBoundingClientRect();
@@ -61,7 +62,7 @@ async function measure(page: Page): Promise<{ vh: number; dockTop: number; dockH
       dockZ: parseInt(getComputedStyle(dock).zIndex || '0', 10),
       wins,
     };
-  }, WIN_W);
+  }, WIN);
 }
 
 test.describe('Chat windows and the dock', () => {
@@ -101,12 +102,13 @@ test.describe('Chat windows and the dock', () => {
     const before = await measure(page);
     expect(before.wins.length).toBe(1);
 
-    const bar = page.locator(`div[style*="width: ${WIN_W}"]`).first();
+    // the window's title strip is what it is moved by
+    const bar = page.locator(`${WIN} .chat-win-bar`).first();
     const box = await bar.boundingBox();
     expect(box).not.toBeNull();
 
     // Grab the title bar and shove far past the bottom edge.
-    await page.mouse.move(box!.x + 200, box!.y + 10);
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 2);
     await page.mouse.down();
     for (const y of [300, 600, 1200, 2400]) {
       await page.mouse.move(box!.x + 200, y);
@@ -134,20 +136,17 @@ test.describe('Chat windows and the dock', () => {
     // at 70, so somewhere around the 28th raise - an ordinary afternoon -
     // windows began painting over the shell. 60 raises is well past that.
     const RAISES = 60;
-    const worst = await page.evaluate(async ({ ids, raises, w }: any) => {
+    const worst = await page.evaluate(async ({ ids, raises, sel }: any) => {
       let maxZ = 0;
       for (let n = 0; n < raises; n++) {
         (window as any).fridayOpenChatWindow(ids[n % ids.length]);
         await new Promise(r => setTimeout(r, 20));
-        for (const el of [...document.querySelectorAll('body *')] as HTMLElement[]) {
-          const s = getComputedStyle(el);
-          if (s.position !== 'fixed') continue;
-          if (Math.round(el.getBoundingClientRect().width) !== w) continue;
-          maxZ = Math.max(maxZ, parseInt(s.zIndex || '0', 10));
+        for (const el of [...document.querySelectorAll(sel)] as HTMLElement[]) {
+          maxZ = Math.max(maxZ, parseInt(getComputedStyle(el).zIndex || '0', 10));
         }
       }
       return maxZ;
-    }, { ids, raises: RAISES, w: WIN_W });
+    }, { ids, raises: RAISES, sel: WIN });
 
     const m = await measure(page);
     expect(worst, `after ${RAISES} raises a window reached z=${worst}, at or above the dock's ${m.dockZ}`)
@@ -174,10 +173,7 @@ test.describe('Chat windows and the dock', () => {
       window.dispatchEvent(new Event('resize'));
       await new Promise(r => setTimeout(r, 600));
       const dr = d.getBoundingClientRect();
-      const win = ([...document.querySelectorAll('body *')] as HTMLElement[]).find(el => {
-        const s = getComputedStyle(el), b = el.getBoundingClientRect();
-        return s.position === 'fixed' && Math.round(b.width) === 422 && b.height > 100;
-      })!;
+      const win = document.querySelector('.chat-win') as HTMLElement;
       const wr = win.getBoundingClientRect();
       return {
         claimsHidden: d.classList.contains('hidden'),

@@ -48,11 +48,11 @@ class TestChatBubbleInlineStyles:
     def test_source_jsx_has_wrap_and_minwidth(self):
         app = _read("ui_parts/app.html")
         # app.html has TWO chatMsgs.map(...) renderers: a small 280px-wide
-        # "Discuss Briefing" sidebar chat, and the main FRIDAY CHAT panel
-        # (the "You ·" / "Friday ·" + VOICE-tag window the maintainer screenshotted)
-        # — rindex targets the latter, which is this fix's actual scope.
+        # "Discuss Briefing" sidebar chat, and the main FRIDAY CHAT (the
+        # "You ·" / "Friday ·" + VOICE-tag window the maintainer screenshotted),
+        # which lives in ChatSurface — this fix's actual scope.
         assert "overflowX:'hidden'" in app
-        anchor = app.rindex("chatMsgs.map((m,i)=>")
+        anchor = app.index("chatMsgs.map((m,i)=>", app.index("function ChatSurface("))
         # Window widened from 1200: the B2 system-line branch (seat-change
         # notices) renders before the message bubble inside the same map.
         window = app[anchor:anchor + 3000]
