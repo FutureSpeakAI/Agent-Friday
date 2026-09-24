@@ -105,3 +105,15 @@ test('the tab header carries the desktop wordmark, and the title names the works
   expect(font).toContain('Orbitron');
   await expect(page).toHaveTitle('News · Agent Friday');
 });
+
+test('a workspace tab shrunk very small stays a workspace, not the desktop widget', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 440 });
+  await prepare(page);
+  await page.goto(BASE + '/w/news');
+  await page.waitForSelector('[data-standalone="news"] .ws-tab-body > *', { timeout: 60000 });
+  await page.waitForTimeout(1500);
+  const s = await page.evaluate(() => ({ condensed: document.body.classList.contains('condensed'), ui: getComputedStyle(document.getElementById('ui-root')!).display }));
+  expect(s.condensed).toBe(false);
+  expect(s.ui).not.toBe('none');
+  await expect(page.locator('.ws-tab-head')).toBeVisible();
+});
