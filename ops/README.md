@@ -8,6 +8,12 @@ This lives **beside** the app. It does **not** touch Friday's source, voice code
 knowledge/galaxy code, or its `:3000` port. It is a hosts entry + a Caddy reverse
 proxy, nothing more.
 
+Friday can now provide this address itself, for whatever the agent is named
+(Settings → General → Local address; `services/local_address.py`). When this
+proxy is already serving `agent.friday` for the running Friday, Friday detects it
+and uses it; this proxy knows only `agent.friday`, so a renamed agent needs
+Friday's own listener instead (which cannot share port 443 with this one).
+
 ```
 browser ──HTTPS──▶  agent.friday:443  (Caddy, loopback only, internal CA)
                           │

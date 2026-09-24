@@ -72,6 +72,45 @@
         .ws-tab-body > .f3-host:has(> .f3-content > .ws-fill) { flex: 1 1 auto; min-height: 0; }
         .fwin-body:has(> .ws-custom-root > .ws-fill), .fwin-body:has(> .ws-custom-root > .f3-host.on),
         .fwin-body:has(> .ws-custom-root > .f3-host > .f3-content > .ws-fill) { display: flex; flex-direction: column; }
+        /* The browser refused a workspace's own tab: said under the title bar. */
+        .fwin-tab-blocked { display: flex; gap: 8px; align-items: flex-start; margin: 6px 10px 0; padding: 7px 10px; border-radius: 8px; background: rgba(255,196,0,0.10); border: 1px solid rgba(255,196,0,0.38); color: #ffe7a3; font-size: 12px; line-height: 1.45; }
+        .fwin-tab-blocked b { color: #fff3c9; }
+        .fwin-tab-blocked button { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+        /* Settings -> General -> Local address (LocalAddressSettings) */
+        .la-card { font-size: 12px; }
+        .la-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+        .la-addr { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #7fe9ff; text-decoration: none; word-break: break-all; }
+        a.la-addr:hover { text-decoration: underline; }
+        .la-pill { font-family: 'Orbitron', sans-serif; font-size: 9px; letter-spacing: .12em; padding: 3px 8px; border-radius: 10px; border: 1px solid; text-transform: uppercase; }
+        .la-pill.ok { color: #6dffb0; border-color: rgba(109,255,176,.45); }
+        .la-pill.warn { color: #ffd479; border-color: rgba(255,212,121,.45); }
+        .la-pill.off { color: rgba(255,255,255,.55); border-color: rgba(255,255,255,.2); }
+        .la-sub { font-size: 11px; color: rgba(255,255,255,.45); line-height: 1.5; margin-bottom: 12px; }
+        .la-line { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 11px; }
+        .la-ind { width: 18px; height: 18px; border-radius: 9px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; margin-top: 1px; }
+        .la-ind.ok { background: rgba(109,255,176,.14); color: #6dffb0; }
+        .la-ind.no { background: rgba(255,107,138,.12); color: #ff8aa3; }
+        .la-ind.wait { background: rgba(255,255,255,.06); color: rgba(255,255,255,.5); }
+        .la-label { font-size: 12px; color: rgba(255,255,255,.8); font-family: 'JetBrains Mono', monospace; }
+        .la-detail { font-size: 11px; color: rgba(255,255,255,.52); line-height: 1.55; margin-top: 2px; }
+        .la-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+        .la-hint { font-size: 11px; color: rgba(255,255,255,.42); line-height: 1.5; }
+        .la-link { display: block; text-align: left; background: none; border: 0; padding: 0; margin-top: 5px; color: #7fe9ff; font-size: 11px; cursor: pointer; text-decoration: underline; }
+        .la-link:disabled { opacity: .45; cursor: default; }
+        .la-warn { font-size: 11px; color: #ffd479; line-height: 1.5; margin: 3px 0 8px; }
+        .la-err { font-size: 11px; color: #ff8aa3; line-height: 1.5; margin-top: 8px; }
+        .la-job { font-size: 11px; line-height: 1.5; margin: 2px 0 12px 28px; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); color: rgba(255,255,255,.75); }
+        .la-job.waiting { border-color: rgba(255,212,121,.4); color: #ffe6a8; background: rgba(255,212,121,.06); }
+        .la-job.done { border-color: rgba(109,255,176,.35); color: #b9ffd9; }
+        .la-job.cancelled, .la-job.failed { border-color: rgba(255,107,138,.35); color: #ffc2cf; }
+        .la-consent { margin: 2px 0 14px 28px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(0,212,255,.3); background: rgba(0,212,255,.05); font-size: 12px; line-height: 1.6; color: rgba(255,255,255,.84); }
+        .la-consent-title { font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: .12em; color: #00d4ff; margin-bottom: 8px; text-transform: uppercase; }
+        .la-consent p { margin: 0 0 8px; }
+        .la-consent ul { margin: 0 0 8px 18px; padding: 0; }
+        .la-consent li { margin-bottom: 4px; }
+        .la-thumb { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #fff; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 6px 8px; margin: 0 0 8px; word-break: break-all; letter-spacing: .04em; }
+        .la-check { display: flex; gap: 6px; align-items: flex-start; font-size: 11px; color: rgba(255,255,255,.6); line-height: 1.5; margin: 6px 0; }
+        .la-check code { font-size: 10.5px; color: #7fe9ff; word-break: break-all; }
         .ws-custom-root:has(> .ws-fill), .ws-custom-root:has(> .f3-host.on),
         .ws-custom-root:has(> .f3-host > .f3-content > .ws-fill) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
         .ws-custom-root > .ws-fill, .ws-custom-root > .f3-host.on,

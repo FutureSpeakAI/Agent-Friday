@@ -453,6 +453,7 @@ _CDN_HEADER_PREFIXES = ('cf-',)
 
 #: Hosts a local proxy may legitimately present. `agent.friday` is the hosts-file
 #: alias Caddy serves; anything else public (e.g. *.trycloudflare.com) is not us.
+#: The configured agent.<name> is added at request time (_forwarded_host_is_local).
 _LOCAL_FORWARDED_HOSTS = {
     'agent.friday', 'localhost', '127.0.0.1', '::1', '[::1]',
 }
@@ -542,7 +543,17 @@ def _forwarded_host_is_local() -> bool:
         return True
     first = str(host).split(',')[0].strip().lower()
     bare = first.rsplit(':', 1)[0] if first.count(':') == 1 else first
-    return first in _LOCAL_FORWARDED_HOSTS or bare in _LOCAL_FORWARDED_HOSTS
+    if first in _LOCAL_FORWARDED_HOSTS or bare in _LOCAL_FORWARDED_HOSTS:
+        return True
+    # The address the person configured for this PC (agent.<their agent's
+    # name>, services/local_address.py) is as local as agent.friday. Only ever
+    # agent.<one word>, validated when set, so it cannot name a tunnel host --
+    # and the CF-* and whole-chain checks in _looks_proxied still apply to it.
+    try:
+        from agent_friday.services.local_address import local_hosts
+        return bare in local_hosts()
+    except Exception:
+        return False
 
 
 def _looks_proxied():
@@ -2659,6 +2670,18 @@ DEFAULT_SETTINGS = {
     "google_oauth": {
         "redirect_base_override": "",
     },
+    # ── Friday's address on this PC (services/local_address.py) ──
+    # host: "" means "from the agent's name" (AGENT FRIDAY -> agent.friday).
+    # serve: Friday's own loopback listeners on https_port/http_port, turned on
+    # by the Settings button and never at install. Trusting the certificate and
+    # adding the name to the hosts file are separate steps Windows asks the
+    # person about; neither is a setting.
+    "local_address": {
+        "host": "",
+        "serve": False,
+        "https_port": 443,
+        "http_port": 80,
+    },
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.
@@ -2899,7 +2922,7 @@ def _load_settings():
 #: it edited (rounds, or the clock, or tokens), and a wholesale replace would
 #: drop the other two back to the module defaults every time one is changed.
 _DEEP_MERGED_BLOCKS = ("capability_routing", "model_routing", "content",
-                       "turn_budget")
+                       "turn_budget", "local_address")
 
 
 def _save_settings(data, *, _internal_cloud_consent_write: bool = False):
