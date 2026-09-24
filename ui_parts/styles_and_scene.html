@@ -1,5 +1,12 @@
 <body>
     <style>
+    /* Native controls in a dark UI. A select's open list, and a date
+       picker, are drawn by the browser from the page's colour scheme, not
+       from the control's own colours: without this the options are painted
+       on white while inheriting the control's light text, so they read
+       white on white. */
+    select, input[type="date"], input[type="time"], input[type="datetime-local"], input[type="month"] { color-scheme: dark; }
+    select option, select optgroup { background-color: #0b1220; color: #e6f0ff; }
     /* Edge and corner grab zones (fridayEdgeHandles) on workspace and chat windows. */
     .win-edge{position:absolute;z-index:5}
     .win-edge-n,.win-edge-s{left:12px;right:12px;height:6px;cursor:ns-resize}

@@ -1,7 +1,7 @@
 # Google Housekeeper — Tasks, Calendar and Gmail write access
 
 > **Status:** partially-implemented
-> **Last verified:** 2026-09-06
+> **Last verified:** 2026-09-24
 > **Implementation:** `services/agent.py` (Tasks tools), `services/google_accounts.py`, `services/calendar_write.py`
 > **Supersedes / superseded by:** —
 > **Written:** 2026-08-26
@@ -9,6 +9,7 @@
 ## Implementation notes
 
 - HK-1 and HK-4 are landed (Tasks write tools in `services/agent.py`: `complete_task`, `create_task`, `update_task`, `delete_task`; `delete_task` in `_ALWAYS_CONFIRM`; `GOOGLE_MULTI_SCOPES` in `services/google_accounts.py` carries the read-write `tasks` scope). Do not rebuild them; see the reconciliation notes inside those work orders.
+- The owner-facing half of HK-9 is built: from the Messages workspace the owner archives, moves to Trash and restores (`threads().trash`/`untrash`, 30 days; nothing calls `delete`), reports spam, marks importance and labels, in `services/gmail_mailbox.py` via `/api/messages/action` and `/api/mail/modify`, each undoable. A request that is not the owner's own click (`requested_by` other than `ui:…`, or none) becomes an approval card instead (`services/mail_proposals.py`). HK-9's agent tools (`archive_email`, `trash_email`, `label_email`) are not built; when they are, they go through that proposal path.
 - Nothing writes yet: both connected accounts on disk still hold only `tasks.readonly` + `gmail.readonly` (`status: needs_reauth`), so every write 403s until each account is re-consented through the `+ Add Account` flow. Verified four times, most recently 2026-09-06.
 - Still open: the calendar primary-account-only bug (HK-2 — `calendar_write._service()` resolves through `primary_credentials()`, no `account_id` on any calendar tool); no `delete_calendar_event`; no Gmail write scope or tools (HK-5 through HK-9); no UI renders `/api/approvals` (HK-7).
 - Q-H1..Q-H6 remain unanswered; nothing has been decided on the maintainer's behalf.

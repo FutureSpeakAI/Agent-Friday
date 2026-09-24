@@ -1,7 +1,7 @@
 """Archive, read/unread, star and labels change Gmail itself for an account
 that granted gmail.modify, and undo reverses exactly what changed. Accounts
-without the permission change in Friday only and are told so. Spam and trash
-are never touched."""
+without the permission change in Friday only and are told so. Trash and spam
+are never label changes (see test_mail_gmail_parity.py for Delete and spam)."""
 import pytest
 
 from agent_friday.services import gmail_mailbox as gm
@@ -94,7 +94,7 @@ def test_messages_action_syncs_gmail_and_restore_undoes_it(client, monkeypatch):
     from agent_friday.routes import messages as rm
     monkeypatch.setattr(rm, "_load_message_state", lambda: {k: dict(v) for k, v in store["s"].items()})
     monkeypatch.setattr(rm, "_save_message_state", lambda st: store.__setitem__("s", {k: dict(v) for k, v in st.items()}))
-    r = client.post("/api/messages/action", json={
+    r = client.post("/api/messages/action", json={"requested_by": "ui:test",
         "ids": ["c1", "c3"], "action": "archive",
         "gmail": [{"id": "c1", "account_id": "acct_m", "thread_id": "t1"},
                   {"id": "c3", "account_id": "acct_r", "thread_id": "t3"}]}).get_json()
@@ -114,4 +114,7 @@ def test_labels_list_create_apply_and_undo(client):
     assert "Label_2" in THREADS["t3"]
     client.post("/api/mail/modify/undo", json={"account_id": "acct_m", "changed": r["changed"]})
     assert "Label_2" not in THREADS["t3"]
-    assert client.get("/api/mail/labels?account=acct_r").status_code == 403
+    # browsing labels needs only read access; creating or applying one needs more
+    assert client.get("/api/mail/labels?account=acct_r").status_code == 200
+    assert client.post("/api/mail/labels", json={"account_id": "acct_r", "name": "X"}).status_code == 403
+    assert client.post("/api/mail/modify", json={"account_id": "acct_r", "thread_ids": ["t3"], "add": ["Label_2"]}).status_code == 403

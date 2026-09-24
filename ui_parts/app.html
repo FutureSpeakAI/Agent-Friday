@@ -6965,7 +6965,7 @@ function MessagesWS(){
     const m=msgs.find(x=>x.thread_id===want||x.id===want);
     if(m){pendingThread.current=null;if(expanded!==m.id)openThread(m);}
   },[msgs]);
-  const act=async(m,action,silent)=>{try{await fetch('/api/messages/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,action})});
+  const act=async(m,action,silent)=>{try{await fetch('/api/messages/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,requested_by:'ui:messages-classic',action})});
     if(action==='archive'){setMsgs(x=>x.filter(z=>z.id!==m.id));if(expanded===m.id){setExpanded(null);setThread(null)}}
     else setMsgs(x=>x.map(z=>z.id===m.id?{...z,flagged:action==='flag'?true:action==='unflag'?false:z.flagged,unread:action==='read'?false:action==='unread'?true:z.unread}:z));
     if(!silent)flash(action.charAt(0).toUpperCase()+action.slice(1)+'d');loadStats()}catch(e){}};

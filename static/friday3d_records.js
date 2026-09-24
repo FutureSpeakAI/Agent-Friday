@@ -49,6 +49,8 @@
     week: { id: 'week', label: 'Week', ico: '▤', tip: 'Day columns, hour by hour' },
     orbit: { id: 'orbit', label: 'Orbit', ico: '◌', tip: 'Rings around now, the closest innermost' },
     stack: { id: 'stack', label: 'Stacks', ico: '☰', tip: 'One pile per group' },
+    constellation: { id: 'constellation', label: 'Senders', ico: '✺', tip: 'One star per person: as big as how much they send, rising and amber with what waits for your reply' },
+    river: { id: 'river', label: 'River', ico: '〰', tip: 'The inbox as a stream through time, newest nearest; long conversations stand as stacks' },
     city: { id: 'city', label: 'City', ico: '▥', tip: 'Towers by size' }
   };
   const by = f => (a, b) => { const x = f(a), y = f(b); return x < y ? -1 : x > y ? 1 : 0; };
@@ -289,11 +291,16 @@
   // Messages: the triaged inbox, stacked by lane, sender, state or account.
   const LANE_ORDER = ['career', 'finance', 'futurespeak', 'family', 'subscriptions', 'noise'];
   const LANE_NAME = { career: 'Career', finance: 'Finance', futurespeak: 'Projects', family: 'Family', subscriptions: 'Subscriptions', noise: 'Noise', other: 'Other' };
+  // Snooze until tomorrow morning, as a local wall-clock time (Friday's own).
+  const snoozeUntil = () => { const d = new Date(Date.now() + 86400e3); d.setHours(8, 0, 0, 0); return d; };
+  const localIso = d => { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':00'; };
+  const whenShort = d => d.toLocaleString([], { weekday: 'short', hour: 'numeric' });
   SOURCES.messages = {
-    label: 'Messages', openLabel: 'Open thread', views: ['stack', 'time', 'cluster', 'wall'],
+    label: 'Messages', openLabel: 'Open thread', views: ['stack', 'river', 'constellation', 'time', 'cluster', 'wall'],
     empty: 'No messages to show.', noun: 'messages', intro: 'deal', carryIco: '✉',
     zoneNote: 'in Friday only',
-    blurb: 'Your inbox dealt into piles by lane. Drag cards onto a zone; every change is Friday-only and can be undone.',
+    blurb: 'Your inbox dealt into piles by lane. Drag cards onto a zone, or lasso several. A card moves only once the change is made (in Gmail too where the account allows it) and bounces back if it is refused. Everything can be undone; Trash is Gmail’s, kept 30 days. Green edges: waiting for your reply.',
+    glow: m => !!m.awaiting_reply,
     sorts: {
       newest: { label: 'Newest', cmp: desc(m => secs(m.timestamp)) },
       unread: { label: 'Unread first', cmp: (a, b) => (b.unread ? 1 : 0) - (a.unread ? 1 : 0) || secs(b.timestamp) - secs(a.timestamp) },
@@ -304,12 +311,13 @@
       { id: 'flag', label: 'Flagged', test: m => !!m.flagged },
       { id: 'att', label: 'Attachments', test: m => !!m.has_attachment }
     ],
-    keys: { e: 'archive', s: 'flag' },
+    keys: { e: 'archive', s: 'flag', '#': 'trash', Delete: 'trash', b: 'snooze' },
     // a failed read is an error on screen, never an empty inbox
     load: () => json('/api/messages?lane=all').then(d => { if (d.status === 'error') throw new Error(d.error || 'Could not read mail.'); return d.messages || []; }),
     toItem: m => ({ id: m.id || m.thread_id, title: m.subject || '(no subject)', sub: m.snippet || '',
-      badge: (m.unread ? '● ' : '') + (m.sender || m.sender_email || ''), strip: m.sender || m.subject,
-      weight: (m.unread ? 2 : 0) + (m.flagged ? 2 : 0) + (m.has_attachment ? 1 : 0), time: secs(m.timestamp) }),
+      badge: (m.awaiting_reply ? '↩ ' : '') + (m.unread ? '● ' : '') + (m.sender || m.sender_email || ''), strip: m.sender || m.subject,
+      weight: (m.unread ? 2 : 0) + (m.flagged ? 2 : 0) + (m.has_attachment ? 1 : 0), time: secs(m.timestamp),
+      person: m.sender || m.sender_email || 'unknown', awaiting: !!m.awaiting_reply, thread: m.thread_count || 1 }),
     groupings: {
       lane: { label: 'lane', key: m => m.lane || 'other',
         style: k => { const r = LANE_ORDER.indexOf(k); return { rank: r < 0 ? 9 : r, label: LANE_NAME[k] || k }; } },
@@ -319,23 +327,54 @@
       account: { label: 'account', key: m => m.account_label || 'inbox' }
     },
     detail: m => [['From', m.sender_email ? (m.sender || '') + ' <' + m.sender_email + '>' : m.sender], ['When', m.timestamp ? fmtDate(secs(m.timestamp)) : null],
-      ['Lane', m.lane], ['Account', m.account_label], ['State', [m.unread && 'unread', m.flagged && 'flagged', m.has_attachment && 'attachment'].filter(Boolean).join(', ')],
+      ['Lane', m.lane], ['Account', m.account_label], ['State', [m.awaiting_reply && 'waiting for your reply', m.unread && 'unread', m.flagged && 'starred', m.has_attachment && 'attachment'].filter(Boolean).join(', ')],
+      ['Conversation', (m.thread_count || 1) > 1 ? m.thread_count + ' messages' : null],
       ['Preview', m.snippet]],
     open: m => nav('messages', { view3d: false, lane: 'all', thread_id: m.thread_id || m.id }),
-    // Drop zones. Every one changes Friday's view only (Gmail is not
-    // touched) and every one can be undone; there is no delete zone.
+    // Drop zones. Archive, star and read change Gmail too for an account
+    // reconnected with sending, and Friday's view only otherwise; Trash and
+    // labels exist only in Gmail and are refused (the card bounces back) on
+    // an account that has not allowed it. Snooze is Friday's own. Every zone
+    // can be undone; Trash is Gmail's, kept 30 days; nothing deletes for good.
     zones: [
-      { id: 'archive', ico: '🗄', label: 'Archive', action: 'archive', away: true, done: 'Archived', inDetail: true, tip: 'Archive (in Friday only)' },
-      { id: 'snooze', ico: '😴', label: 'Snooze 4h', action: 'snooze', away: true, done: 'Snoozed for 4 hours', inDetail: true, tip: 'Snooze for 4 hours (in Friday only)' },
-      { id: 'flag', ico: '🚩', label: 'Flag', action: 'flag', patch: { flagged: true }, done: 'Flagged', inDetail: true, when: m => !m.flagged, whenNot: 'Already flagged.' },
+      { id: 'archive', ico: '🗄', label: 'Archive', action: 'archive', away: true, done: 'Archived', inDetail: true, tip: 'Archive (in Gmail too where the account allows it)' },
+      { id: 'trash', ico: '🗑', label: 'Trash', action: 'trash', away: true, done: 'Moved to Trash', inDetail: true, danger: true, tip: 'Delete: to Gmail’s Trash, kept 30 days and restorable' },
+      { id: 'snooze', ico: '⏰', label: () => 'Snooze · ' + whenShort(snoozeUntil()), action: 'snooze', away: true, done: () => 'Snoozed until ' + whenShort(snoozeUntil()), inDetail: true, tip: 'Snooze until tomorrow morning (in Friday only)' },
+      { id: 'flag', ico: '⭐', label: 'Star', action: 'flag', patch: { flagged: true }, done: 'Starred', inDetail: true, when: m => !m.flagged, whenNot: 'Already starred.' },
       { id: 'read', ico: '✓', label: 'Read', action: 'read', patch: { unread: false }, done: 'Marked read', when: m => !!m.unread, whenNot: 'Already read.' },
       { id: 'unread', ico: '●', label: 'Unread', action: 'unread', patch: { unread: true }, done: 'Marked unread', inDetail: true, when: m => !m.unread, whenNot: 'Already unread.' }
     ].concat([['career', '💼 Career'], ['finance', '💰 Finance'], ['futurespeak', '🚀 Projects'], ['family', '👪 Family'], ['subscriptions', '📰 Subscriptions'], ['noise', '🔇 Noise']]
       .map(([k, l]) => ({ id: 'lane:' + k, ico: l.split(' ')[0], label: l.split(' ').slice(1).join(' '), lane: k, patch: { lane: k }, done: 'Moved to ' + l.split(' ').slice(1).join(' '), kind: 'lane',
         when: m => m.lane !== k, whenNot: 'Already in that lane.', tip: 'Move to the ' + l.split(' ').slice(1).join(' ') + ' lane (Friday learns from it)' }))),
+    // One zone per Gmail label (by name: each account has its own labels).
+    loadZones: () => json('/api/google/accounts').then(d => {
+      const accts = (d.accounts || []).filter(a => Array.isArray(a.services) ? a.services.includes('gmail') : !!(a.services && a.services.gmail));
+      return Promise.all(accts.map(a => json('/api/mail/labels?account=' + encodeURIComponent(a.id)).then(r => ({ a, labels: r.labels || [] }), () => ({ a, labels: [] }))));
+    }).then(rows => {
+      const names = new Map();
+      rows.forEach(({ a, labels }) => labels.forEach(l => { if (!names.has(l.name)) names.set(l.name, {}); names.get(l.name)[a.id] = l.id; }));
+      return Array.from(names.keys()).sort((x, y) => x.localeCompare(y)).slice(0, 12).map(name => ({
+        id: 'label:' + name, ico: '🏷', label: name, kind: 'label', gmailLabel: name, labelIds: names.get(name),
+        done: 'Labelled “' + name + '”', tip: 'Add the Gmail label “' + name + '” (needs an account reconnected with sending)' }));
+    }).catch(() => []),
     // -> { okIds, before, error }: which messages the server actually changed
     act: (recs, z) => {
       const ids = recs.map(r => r.id);
+      if (z.gmailLabel) {
+        const byAcct = {};
+        recs.forEach(m => { (byAcct[m.account_id] = byAcct[m.account_id] || []).push(m); });
+        return Promise.all(Object.keys(byAcct).map(aid => {
+          const lid = (z.labelIds || {})[aid];
+          if (!lid) return Promise.resolve({ aid, err: 'that account has no label “' + z.gmailLabel + '”' });
+          return post('/api/mail/modify', { account_id: aid, thread_ids: byAcct[aid].map(m => m.thread_id || m.gmail_id), add: [lid] })
+            .then(r => r.ok && r.j.status === 'ok' ? { aid, changed: r.j.changed } : { aid, err: r.j.message || 'Gmail refused' }, e => ({ aid, err: String(e) }));
+        })).then(rs => {
+          const good = rs.filter(r => r.changed);
+          return { okIds: [].concat.apply([], good.map(r => byAcct[r.aid].map(m => m.id))), note: 'in Gmail',
+            before: { gmailMulti: good.map(r => ({ account_id: r.aid, changed: r.changed })) },
+            error: (rs.find(r => r.err) || {}).err || '' };
+        });
+      }
       if (z.lane) {
         return Promise.all(ids.map(id => post('/api/messages/classify', { id, lane: z.lane }).catch(e => ({ ok: false, j: { message: String(e) } })))).then(rs => {
           const before = {};
@@ -346,9 +385,11 @@
       }
       // Gmail itself changes too, for accounts reconnected with sending
       const gmail = recs.map(m => ({ id: m.id, account_id: m.account_id, thread_id: m.thread_id || m.gmail_id }));
-      return post('/api/messages/action', { ids, action: z.action, gmail }).then(r => {
+      const body = { ids, action: z.action, gmail, requested_by: 'ui:messages-3d' };
+      if (z.action === 'snooze') body.until = localIso(snoozeUntil());
+      return post('/api/messages/action', body).then(r => {
         const st = Object.values((r.j && r.j.gmail_status) || {});
-        const note = z.action === 'snooze' ? 'in Friday only' : st.includes('synced') && !st.includes('not_permitted') ? 'also in Gmail'
+        const note = z.action === 'snooze' ? 'in Friday only' : z.action === 'trash' ? 'in Gmail, kept 30 days' : st.includes('synced') && !st.includes('not_permitted') ? 'also in Gmail'
           : st.includes('synced') ? 'in Gmail where allowed' : 'in Friday only';
         const bad = Object.values((r.j && r.j.not_changed) || {});
         return { okIds: r.ok ? (r.j.ids || ids) : [], note,
@@ -356,7 +397,16 @@
           error: !r.ok ? (r.j.message || 'That did not work.') : bad.length ? 'Gmail refused: ' + bad[0] : '' };
       }, e => ({ okIds: [], before: {}, error: "Couldn't reach Friday: " + e }));
     },
-    undo: before => post('/api/messages/restore', before && before.states ? { states: before.states, gmail_changes: before.gmail || {} } : { states: before }).then(r => r.ok, () => false)
+    undo: before => before && before.gmailMulti
+      ? Promise.all(before.gmailMulti.map(g => post('/api/mail/modify/undo', g).then(r => r.ok && r.j.status === 'ok', () => false))).then(oks => oks.every(Boolean))
+      : post('/api/messages/restore', before && before.states ? { states: before.states, gmail_changes: before.gmail || {} } : { states: before }).then(r => r.ok, () => false),
+    // Triage: the unread dealt one at a time; arrows act like swipes.
+    triage: {
+      label: 'Triage unread', pick: m => !!m.unread,
+      keys: { ArrowLeft: 'archive', ArrowDown: 'trash', ArrowRight: 'snooze' },
+      reply: m => nav('messages', { view3d: false, lane: 'all', thread_id: m.thread_id || m.id, reply: true }),
+      hints: [['←', 'archive'], ['↓', 'trash'], ['→', 'later (snooze)'], ['↑', 'reply'], ['Space', 'keep, next'], ['Esc', 'stop']]
+    }
   };
 
   // ── the panel ──────────────────────────────────────────────────────────
@@ -432,7 +482,7 @@
       .f3-zones button.hot { transform:scale(1.12); background:rgba(0,212,255,0.25); border-color:#00d4ff; box-shadow:0 0 16px rgba(0,212,255,0.55); }
       .f3-toast { top:10px; left:50%; transform:translateX(-50%); display:flex; gap:10px; align-items:center; padding:7px 12px; font-size:12px; max-width:70%; z-index:3; }
       .f3-toast.err { color:#ffb4b4; border-color:rgba(239,68,68,0.6); }
-      .f3-marks { top:10px; left:50%; transform:translateX(-50%); display:flex; gap:8px; align-items:center; padding:5px 10px; font-size:12px; color:#ffd1ea; border-color:rgba(255,0,128,0.55); }
+      .f3-marks { top:54px; left:50%; transform:translateX(-50%); display:flex; gap:8px; align-items:center; padding:5px 10px; font-size:12px; color:#ffd1ea; border-color:rgba(255,0,128,0.55); }
     `;
     document.head.appendChild(st);
   }
@@ -460,7 +510,12 @@
     const [help, setHelp] = useState(false);
     const [legend, setLegend] = useState([]);
     const itemsRef = useRef([]), groupsRef = useRef([]);
-    const zones = src.zones || null;
+    const [extraZones, setExtraZones] = useState([]);
+    useEffect(() => { if (src.loadZones) src.loadZones().then(z => setExtraZones(z || []), () => {}); }, [source]);
+    const zones = src.zones ? src.zones.concat(extraZones) : null;
+    const zlabel = z => (typeof z.label === 'function' ? z.label() : z.label);
+    const [lasso, setLasso] = useState(null);           // {on, pts:[[x,y]...], add}
+    const [triage, setTriage] = useState(null);         // {queue:[rel], at}
     const [marks, setMarks] = useState(() => new Set());
     const marksRef = useRef(marks); marksRef.current = marks;
     const [carry, setCarry] = useState(null);
@@ -519,6 +574,7 @@
       } catch (e) { setErr('3D is unavailable in this browser.'); return; }
       engRef.current = eng;
       window.__friday3d = eng;
+      window.__friday3dItems = () => itemsRef.current;     // which record each card shows (tests)
       const iv = setInterval(() => setStats(eng.stats()), 1000);
       api('/api/settings').then(r => r.json()).then(d => { const v = ((d && (d.settings || d)) || {}).studio_dazzle; if (v) setDazzle(v); }).catch(() => {});
       const onDz = e => e && e.detail && setDazzle(e.detail);
@@ -550,6 +606,7 @@
         const base = src.toItem(rec);
         const key = keyOf(rec);
         return { i, rel: String(base.id != null ? base.id : i), name: base.title || '(untitled)', dir: false,
+          person: base.person, awaiting: !!base.awaiting, thread: base.thread || 1,
           size: base.weight || 0, mtime: base.time || 0, dur: base.dur || 0, ext: '', cat: 'rec:' + source + ':' + key, ord: ordOf[i],
           parent: -1, depth: 1, kids: [], card: { title: base.title || '(untitled)', sub: base.sub || '', badge: base.badge || '' },
           strip: base.strip || base.title, img: base.img || null, rec, key };
@@ -573,6 +630,11 @@
       if (!eng || !eng.setMarked) return;
       eng.setMarked(itemsRef.current.map((it, k) => marks.has(it.rel) ? k : -1).filter(k => k >= 0));
     }, [marks, recs, grouping, sortKey]);
+    useEffect(() => {
+      const eng = engRef.current;
+      if (!eng || !eng.setGlow || !src.glow) return;
+      eng.setGlow(itemsRef.current.map((it, k) => src.glow(it.rec) ? k : -1).filter(k => k >= 0));
+    }, [recs, grouping, sortKey]);
     useEffect(() => { engRef.current && engRef.current.setView(view); }, [view]);
 
     // What is shown: the workspace's filters, the legend's one group, and
@@ -664,7 +726,7 @@
         });
         return Promise.all(anims).then(() => {
           busyRef.current = false;
-          if (!ok.size) { setToast({ text: 'Nothing changed: ' + (res.error || 'the change was refused.'), err: true }); return; }
+          if (!ok.size) { setToast({ text: 'Nothing changed: ' + (res.error || 'the change was refused.'), err: true }); if (fnRef.current.afterAct) fnRef.current.afterAct(false); return; }
           if (!z.away) group.forEach(g => ok.has(String(g.rec.id)) && retileRef.current.add(g.rel));
           setRecs(rs => { const next = z.away ? rs.filter(r => !ok.has(String(r.id))) : rs.map(r => ok.has(String(r.id)) ? Object.assign({}, r, z.patch) : r); const c = CACHE.get(ckey); if (c) CACHE.set(ckey, { recs: next, at: c.at }); return next; });
           setMarks(new Set());
@@ -672,7 +734,9 @@
           undoRef.current.push(u);
           const failed = group.length - ok.size;
           const noun = ok.size > 1 ? ' · ' + ok.size + ' ' + (src.noun || 'items') : '';
-          setToast({ text: z.done + noun + ((res.note || src.zoneNote) ? ' (' + (res.note || src.zoneNote) + ')' : '') + (failed ? ' · ' + failed + ' not changed: ' + res.error : ''), undo: u, err: !!failed });
+          const done = typeof z.done === 'function' ? z.done() : z.done;
+          if (fnRef.current.afterAct) fnRef.current.afterAct(true);
+          setToast({ text: done + noun + ((res.note || src.zoneNote) ? ' (' + (res.note || src.zoneNote) + ')' : '') + (failed ? ' · ' + failed + ' not changed: ' + res.error : ''), undo: u, err: !!failed });
         });
       }).catch(() => { busyRef.current = false; group.forEach(g => eng.setHeld(relIndex(g.rel), false)); setToast({ text: 'Nothing changed: Friday could not be reached.', err: true }); });
     };
@@ -689,9 +753,79 @@
     };
     useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), toast.undo ? 9000 : 4000); return () => clearTimeout(t); }, [toast]);
 
+    // ── triage: deal the cards one at a time ──
+    const triageCur = () => { if (!triage) return null; const rel = triage.queue[triage.at]; return itemsRef.current.find(x => x.rel === rel) || null; };
+    const showTriage = (t) => {
+      const eng = engRef.current; if (!eng) return;
+      const it = t && itemsRef.current.find(x => x.rel === t.queue[t.at]);
+      if (!it) { setTriage(null); setSel(null); eng.select(-1); setToast({ text: 'Triage done: nothing unread left here.' }); return; }
+      const k = itemsRef.current.indexOf(it);
+      setSel(it); eng.select(k, true);
+    };
+    const startTriage = () => {
+      const tr = src.triage; if (!tr) return;
+      const list = itemsRef.current.filter(it => tr.pick(it.rec) && (!maskRef.current || maskRef.current[it.i]))
+        .sort((a, b) => b.mtime - a.mtime).map(it => it.rel);
+      if (!list.length) { setToast({ text: 'Nothing unread to triage.' }); return; }
+      const t = { queue: list, at: 0 };
+      setTriage(t); setMarks(new Set());
+      setTimeout(() => showTriage(t), 0);
+    };
+    const triageNext = () => setTriage(t => { if (!t) return t; const n = { queue: t.queue, at: t.at + 1 }; setTimeout(() => showTriage(n), 0); return n; });
+    fnRef.current.afterAct = okDone => { if (triage && okDone) triageNext(); };
+    const triageKey = k => {
+      const tr = src.triage, cur = triageCur();
+      if (!cur) return false;
+      if (k === 'Escape') { setTriage(null); return true; }
+      if (k === ' ' || k === 'Spacebar') { triageNext(); return true; }
+      if (k === 'ArrowUp' && tr.reply) { tr.reply(cur.rec); return true; }
+      const zid = tr.keys[k];
+      if (zid) { const z = zones.find(x => x.id === zid); if (z) perform([cur], z); return true; }
+      return false;
+    };
+
+    // ── lasso: draw round cards to pick them ──
+    // The drawing follows the pointer at window level, so it works whether it
+    // began on the lasso layer (the Lasso button or Q) or with Alt held on
+    // the scene itself.
+    const inside = (x, y, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+    const beginLasso = (e, mode) => {
+      if (e.button !== 0) return;
+      const stage = e.currentTarget.closest ? e.currentTarget.closest('.f3-stage') || e.currentTarget : e.currentTarget;
+      const r = stage.getBoundingClientRect();
+      const pts = [[e.clientX - r.left, e.clientY - r.top]], add = e.shiftKey || e.ctrlKey;
+      setLasso({ on: mode, pts: pts.slice(), add, drawing: true });
+      const mv = ev => {
+        const p = [ev.clientX - r.left, ev.clientY - r.top], last = pts[pts.length - 1];
+        if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 4) return;
+        pts.push(p);
+        setLasso(l => l && Object.assign({}, l, { pts: pts.slice() }));
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', mv, true);
+        window.removeEventListener('pointerup', up, true);
+        setLasso(mode === 'sticky' ? { on: 'sticky', pts: [] } : null);
+        const eng = engRef.current;
+        if (!eng || pts.length < 3) return;
+        const mask = maskRef.current, picked = [];
+        itemsRef.current.forEach((it, k) => {
+          if (mask && !mask[k]) return;
+          const p = eng.screenPos(k);
+          if (p && !p.behind && inside(p.x, p.y, pts)) picked.push(it.rel);
+        });
+        setMarks(prev => { const n = add ? new Set(prev) : new Set(); picked.forEach(x => n.add(x)); return n; });
+        setToast({ text: picked.length ? picked.length + ' picked · drag them onto a zone, or click one' : 'The lasso caught nothing.' });
+      };
+      window.addEventListener('pointermove', mv, true);
+      window.addEventListener('pointerup', up, true);
+    };
+
     const onKey = e => {
       const eng = engRef.current;
       if (!eng || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (triage) { if (triageKey(e.key)) { e.preventDefault(); e.stopPropagation(); } return; }
+      if (zones && (e.key === 'q' || e.key === 'Q')) { setLasso(l => l && l.on === 'sticky' ? null : { on: 'sticky', pts: [] }); e.preventDefault(); return; }
+      if (lasso && e.key === 'Escape') { setLasso(null); e.preventDefault(); return; }
       const cur = itemsRef.current.indexOf(sel);
       const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
       const vi = '123456789'.indexOf(e.key);
@@ -727,18 +861,31 @@
           onClick: () => setFilters(o => Object.assign({}, o, { [f.id]: !o[f.id] })), title: f.tip || f.label }, (filters[f.id] ? '✓ ' : '') + f.label)),
         h('input', { className: 'f3-search', value: query, onChange: e => setQuery(e.target.value), placeholder: 'Search ' + noun + '…', 'aria-label': 'Search in 3D' }),
         (src.tools || []).map(t => h('button', { key: t.id, className: 'btn btn-magenta f3-tool', onClick: () => t.run(ctx), title: t.tip || t.label, disabled: t.disabled ? t.disabled(ctx) : false }, t.label)),
+        zones && h('button', { className: 'btn f3-tool' + (lasso && lasso.on === 'sticky' ? '' : ' btn-magenta'), 'aria-pressed': !!(lasso && lasso.on === 'sticky'), onClick: () => setLasso(l => l && l.on === 'sticky' ? null : { on: 'sticky', pts: [] }), title: 'Lasso: draw round cards to pick several (Q, or hold Alt and drag). Shift adds to the pick.' }, '⬚ Lasso'),
+        src.triage && h('button', { className: 'btn f3-tool' + (triage ? '' : ' btn-magenta'), 'aria-pressed': !!triage, onClick: () => (triage ? setTriage(null) : startTriage()), title: 'Deal the unread one at a time; arrows act like swipes' }, triage ? '■ Stop triage' : '🃏 ' + src.triage.label),
         h('button', { className: 'btn btn-magenta f3-tool', onClick: () => load(true), title: 'Read again' }, '↻'),
         h('button', { className: 'btn btn-magenta f3-tool', onClick: () => setHelp(v => !v), title: 'Mouse and keys (?)', 'aria-pressed': help }, '?')),
       legend.length > 1 && h('div', { className: 'f3-legend', role: 'group', 'aria-label': 'Groups' },
         legend.map(g => h('button', { key: g.key, className: solo && solo !== g.key ? 'off' : '', 'aria-pressed': solo === g.key, onClick: () => setSolo(s => s === g.key ? null : g.key), title: solo === g.key ? 'Show every group' : 'Show only ' + g.label },
           h('span', { className: 'sw', style: { background: hex(g.color) } }), clip(g.label, 28), h('span', { className: 'n' }, g.n)))),
-      h('div', { className: 'f3-stage' },
+      h('div', { className: 'f3-stage', onPointerDownCapture: e => { if (zones && e.altKey && !lasso) { e.preventDefault(); e.stopPropagation(); beginLasso(e, 'once'); } } },
         h('div', { ref: mountRef, style: { position: 'absolute', inset: 0 } }),
+        lasso && h('div', { 'data-testid': 'f3-lasso', style: { position: 'absolute', inset: 0, zIndex: 2, cursor: 'crosshair', touchAction: 'none' },
+          onPointerDown: e => { if (!lasso.drawing) beginLasso(e, lasso.on === 'sticky' ? 'sticky' : 'once'); } },
+          h('svg', { width: '100%', height: '100%', style: { position: 'absolute', inset: 0, pointerEvents: 'none' } },
+            lasso.pts.length > 1 && h('polygon', { points: lasso.pts.map(p => p.join(',')).join(' '), fill: 'rgba(255,0,128,0.10)', stroke: '#ff4fa3', strokeWidth: 1.5, strokeDasharray: '5 4' })),
+          lasso.on === 'sticky' && !lasso.drawing && h('div', { className: 'f3-glass', style: { top: 10, left: 10, padding: '5px 9px', fontSize: 11, color: '#ffd1ea', borderColor: 'rgba(255,0,128,0.55)' } }, 'Lasso on: draw round the cards you want (Shift adds). Q or Esc to stop.')),
+        triage && triageCur() && h('div', { className: 'f3-glass', role: 'dialog', 'aria-label': 'Triage', 'data-testid': 'f3-triage', style: { left: '50%', bottom: 86, transform: 'translateX(-50%)', width: 'min(560px, 80%)', padding: '12px 14px', zIndex: 3, borderColor: 'rgba(0,212,255,0.55)' } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', color: '#8fa6c4', fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase' } }, h('span', null, 'Triage · ' + (triage.at + 1) + ' of ' + triage.queue.length), h('span', null, triageCur().rec.account_label || '')),
+          h('div', { style: { fontSize: 14, fontWeight: 700, color: '#fff', margin: '6px 0 2px' } }, triageCur().card.title),
+          h('div', { style: { color: '#9fd0ff', fontSize: 12 } }, triageCur().rec.sender || ''),
+          h('div', { style: { color: '#b8c7dc', fontSize: 12, marginTop: 4, maxHeight: 54, overflow: 'hidden' } }, triageCur().card.sub),
+          h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 } }, src.triage.hints.map(([k, d]) => h('button', { key: k, className: 'btn f3-tool', onClick: () => triageKey(k === 'Space' ? ' ' : k === 'Esc' ? 'Escape' : { '←': 'ArrowLeft', '↓': 'ArrowDown', '→': 'ArrowRight', '↑': 'ArrowUp' }[k]) }, h('b', null, k), ' ' + d)))),
         (err && !(recs && recs.length)) && h('div', { className: 'f3-glass', role: 'alert', style: { top: 12, left: 12, padding: '7px 11px', color: '#ff9a9a', fontSize: 12, borderColor: 'rgba(239,68,68,0.5)' } }, '⚠ ' + err + ' This is not an empty ' + (src.label || '').toLowerCase() + ' view: the read failed.'),
         recs === null && !err && h('div', { className: 'f3-glass', style: { top: 12, left: 12, padding: '6px 10px', color: '#9fd0ff', fontSize: 12 } }, 'Reading ' + (src.label || '').toLowerCase() + '…'),
         recs && !recs.length && !err && !busy && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7f93ad', fontSize: 13 } }, src.empty),
         carry && h('div', { style: { position: 'fixed', left: carry.x + 14, top: carry.y + 10, pointerEvents: 'none', zIndex: 60, padding: '6px 10px', borderRadius: 8, background: 'rgba(6,10,18,0.94)', border: '1px solid ' + (carry.hot ? '#00d4ff' : '#ff0080'), color: '#e6f0ff', fontSize: 12, boxShadow: '0 6px 24px rgba(0,0,0,0.5)', maxWidth: 280 } },
-          (src.carryIco || '▣') + ' ' + (carry.group.length > 1 ? carry.group.length + ' ' + noun : clip(carry.group[0].card.title, 60)) + (carry.hot ? ' → ' + carry.hot.label : '')),
+          (src.carryIco || '▣') + ' ' + (carry.group.length > 1 ? carry.group.length + ' ' + noun : clip(carry.group[0].card.title, 60)) + (carry.hot ? ' → ' + zlabel(carry.hot) : '')),
         !carry && hover && hover.it && hover.it !== sel && h('div', { style: { position: 'fixed', left: hover.x + 14, top: hover.y + 12, pointerEvents: 'none', padding: '5px 8px', borderRadius: 6, background: 'rgba(6,10,18,0.92)', border: '1px solid #2e5a8f', color: '#e6f0ff', fontSize: 11, zIndex: 50, maxWidth: 300 } },
           h('div', { style: { fontWeight: 600 } }, clip(hover.it.card.title, 90)), hover.it.card.sub && h('div', { style: { color: '#8fa6c4' } }, clip(hover.it.card.sub, 120))),
         h('div', { className: 'f3-glass f3-status' + (status && status.warn ? ' warn' : '') },
@@ -749,10 +896,11 @@
         zones && h('div', { role: 'toolbar', 'aria-label': 'Drop zones', className: 'f3-glass f3-zones' + (carry ? ' live' : ''), style: { right: sel ? 'calc(min(360px, 44%) + 20px)' : 10 } },
           zones.map((z, k) => {
             const hot = carry && carry.hot && carry.hot.id === z.id;
-            const divider = z.kind === 'lane' && (k === 0 || zones[k - 1].kind !== 'lane');
+            const divider = (z.kind === 'lane' || z.kind === 'label') && (k === 0 || zones[k - 1].kind !== z.kind);
             return [divider && h('span', { key: 'd' + k, style: { width: 1, alignSelf: 'stretch', background: 'rgba(120,160,220,0.3)', margin: '0 4px' } }),
-              h('button', { key: z.id, 'data-zone': z.id, className: 'btn f3-tool' + (z.kind === 'lane' ? ' btn-magenta' : '') + (hot ? ' hot' : ''), title: z.tip || z.label,
-                onClick: () => { const t = targets(); if (t.length) perform(t, z); else setToast({ text: 'Pick a card first, or drag one here.' }); } }, z.ico + ' ' + z.label)];
+              h('button', { key: z.id, 'data-zone': z.id, className: 'btn f3-tool' + (z.kind === 'lane' || z.kind === 'label' ? ' btn-magenta' : '') + (hot ? ' hot' : ''), title: z.tip || zlabel(z),
+                style: z.danger ? { borderColor: 'rgba(239,68,68,0.6)', color: '#ffb4b4' } : undefined,
+                onClick: () => { const t = targets(); if (t.length) perform(t, z); else setToast({ text: 'Pick a card first, or drag one here.' }); } }, z.ico + ' ' + zlabel(z))];
           })),
         toast && h('div', { role: 'status', className: 'f3-glass f3-toast' + (toast.err ? ' err' : '') },
           toast.text, toast.undo && h('button', { className: 'btn f3-tool', onClick: () => undo(toast.undo) }, 'Undo (Z)')),
@@ -760,7 +908,7 @@
           h('div', { style: { fontWeight: 700, marginBottom: 4, color: '#9fe6ff' } }, (src.label || '') + ' in 3D'),
           src.blurb && h('div', { style: { color: '#9fb0c8', marginBottom: 6 } }, src.blurb),
           [[zones ? 'drag a card' : 'drag', zones ? 'carry it to a zone' : 'turn the view'], zones && ['drag space', 'turn the view'], ['right-drag', 'slide'], ['scroll', 'zoom'],
-            zones && ['Ctrl/Shift-click', 'pick several'], ['1–' + src.views.length, 'switch view'], ['arrows', 'next card'], ['Enter', src.openLabel.toLowerCase()],
+            zones && ['Ctrl/Shift-click', 'pick several'], zones && ['Q or Alt-drag', 'lasso several'], src.triage && ['🃏 button', src.triage.label.toLowerCase()], ['1–' + src.views.length, 'switch view'], ['arrows', 'next card'], ['Enter', src.openLabel.toLowerCase()],
             zones && ['Z', 'undo'], ['R', 'recentre'], ['Esc', 'back / close']].filter(Boolean)
             .map(([k, d]) => h('div', { key: k }, h('kbd', null, k), d))),
         sel && h('div', { className: 'f3-glass f3-detail' },
@@ -772,7 +920,7 @@
             src.detail(sel.rec).filter(r => r && r[1] != null && r[1] !== '').map(([k, v], j) => [h('div', { key: 'k' + j, className: 'k' }, k), h('div', { key: 'v' + j, style: { wordBreak: 'break-word' } }, String(v))])),
           h('div', { className: 'f3-acts' },
             h('button', { className: 'btn f3-tool', onClick: () => src.open(sel.rec) }, '↗ ' + src.openLabel),
-            (zones || []).filter(z => z.inDetail && (!z.when || z.when(sel.rec))).map(z => h('button', { key: z.id, className: 'btn btn-magenta f3-tool', onClick: () => perform([sel], z) }, z.ico + ' ' + z.label))))));
+            (zones || []).filter(z => z.inDetail && (!z.when || z.when(sel.rec))).map(z => h('button', { key: z.id, className: 'btn btn-magenta f3-tool', onClick: () => perform([sel], z) }, z.ico + ' ' + zlabel(z)))))));
   }
 
   // The bar every wrapped workspace gets. The workspace itself stays mounted

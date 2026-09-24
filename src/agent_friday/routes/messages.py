@@ -81,12 +81,23 @@ def api_messages():
     except (TypeError, ValueError):
         limit = 40
     # ?q= is a Gmail search, sent to Gmail's own q= across every account.
+    # ?folder= is one of Gmail's folders (Inbox, Sent, Trash, a label...),
+    # read the same way; it shows what Gmail holds there, so Friday's own
+    # "put away" state does not hide anything in it.
     gmail_q = (request.args.get("q") or "").strip() or None
+    folder = (request.args.get("folder") or "").strip()
+    folder_q = folder_query(folder)
+    if folder and folder_q is None:
+        return jsonify({"status": "error", "message": "unknown folder %r" % folder}), 400
+    if folder_q:
+        gmail_q = (folder_q + " " + (gmail_q or "")).strip()
+        include_archived = True
     result = message_triage.collect(limit_per_account=limit, query=gmail_q)
     cards, source = result["messages"], result["source"]
     now_iso = datetime.now().isoformat(timespec="seconds")
     if not include_archived:
         cards = [c for c in cards if not c["archived"]
+                 and not c.get("trashed") and not c.get("spam") and not c.get("muted")
                  and not (c["snoozed_until"] and c["snoozed_until"] > now_iso)]
     if lane and lane in MESSAGE_LANE_IDS:
         cards = [c for c in cards if c["lane"] == lane]
@@ -98,6 +109,8 @@ def api_messages():
         min_confidence=min_confidence,
         exclude_bulk=bool(_qbool(exclude_bulk)),
         has_attachment=_qbool(has_attachments),
+        include_archived=include_archived,
+        include_snoozed=include_archived,
     )
     # Cross-reference: flag messages whose sender is an attendee of an upcoming
     # event (next 7 days). Best-effort — failures must not break the inbox.
@@ -125,6 +138,7 @@ def api_messages():
         "lanes": MESSAGE_LANES,
         "generated_at": now_iso,
         "query": gmail_q,
+        "folder": folder or None,
         "errors": result.get("errors") or [],
         "partial": bool(result.get("partial")),
         "rate_limited": bool(result.get("rate_limited")),
@@ -134,6 +148,32 @@ def api_messages():
         out.update(status="error", search_failed=True, total=None,
                    error=_failure_text(result.get("errors") or []))
     return jsonify(out)
+
+
+#: Gmail's folders, as the searches Gmail itself uses for them.
+FOLDERS = {
+    "inbox": "in:inbox", "starred": "is:starred", "important": "is:important",
+    "snoozed": "in:snoozed", "sent": "in:sent", "drafts": "in:drafts",
+    "scheduled": "in:scheduled", "all": "-in:spam -in:trash",
+    "spam": "in:spam", "trash": "in:trash",
+}
+CATEGORIES = ("primary", "social", "promotions", "updates", "forums")
+
+
+def folder_query(folder):
+    """'' -> '' (Friday's triage view); a folder, 'category:<c>' or
+    'label:<name>' -> Gmail's search for it; anything else -> None."""
+    folder = (folder or "").strip()
+    if not folder:
+        return ""
+    if folder in FOLDERS:
+        return FOLDERS[folder]
+    if folder.startswith("category:") and folder[9:] in CATEGORIES:
+        return "in:inbox category:" + folder[9:]
+    if folder.startswith("label:") and folder[6:].strip():
+        name = folder[6:].strip().replace('"', "")
+        return 'label:"%s"' % name
+    return None
 
 
 def _failure_text(errors):
@@ -302,7 +342,26 @@ def api_messages_classify():
                     "learned": learned, "before": {mid: before}})
 
 
-_LOCAL_ACTIONS = ("archive", "unarchive", "snooze", "unsnooze", "flag", "unflag", "read", "unread")
+_LOCAL_ACTIONS = ("archive", "unarchive", "snooze", "unsnooze", "flag", "unflag", "read", "unread",
+                  "trash", "untrash", "spam", "notspam", "important", "unimportant", "mute", "unmute")
+#: Only meaningful in Gmail itself: without Gmail's confirmation nothing changes,
+#: in Friday either. (Deleting in Friday alone would hide mail that is still
+#: in the inbox, which is not what Delete means.)
+GMAIL_ONLY = ("trash", "untrash", "spam", "notspam", "important", "unimportant")
+#: What Friday may not do on its own initiative: when the request comes from
+#: Friday rather than from the owner's own click, it becomes an approval card.
+NEEDS_APPROVAL_FROM_FRIDAY = ("trash", "spam", "archive", "mute")
+NOT_PERMITTED_TEXT = ("this account has not allowed Friday to change Gmail. Reconnect it "
+                      "with sending (Settings > Connectors > Google) to delete, label "
+                      "and archive in Gmail itself")
+
+
+def _is_owner(actor):
+    """A click in Friday's own UI (requested_by "ui:<surface>") is the owner
+    acting. Anything else, including a request that does not say who made it,
+    is Friday acting, and waits for approval: the safe reading of silence."""
+    actor = str(actor or "").strip().lower()
+    return actor == "ui" or actor.startswith("ui:")
 
 
 def _apply_local(st, action, data):
@@ -325,24 +384,38 @@ def _apply_local(st, action, data):
     elif action == "unread":
         st["read"] = False
         st["unread"] = True
+    elif action in ("trash", "untrash"):
+        st["trashed"] = action == "trash"
+    elif action in ("spam", "notspam"):
+        st["spam"] = action == "spam"
+    elif action in ("important", "unimportant"):
+        st["important"] = action == "important"
+    elif action in ("mute", "unmute"):
+        st["muted"] = action == "mute"
     return st
 
 
 @messages_bp.route('/api/messages/action', methods=['POST'])
 def api_messages_action():
-    """Archive / snooze / flag / mark read or unread, for one message
-    ({id}) or many ({ids}). Every call returns `before` (each message's
-    previous local state) so the UI can undo it exactly with
+    """Archive / snooze / star / mark read or unread / important / mute,
+    delete (move to Trash) and restore, report spam and not spam, for one
+    message ({id}) or many ({ids}). Every call returns `before` (each
+    message's previous local state) so the UI can undo it exactly with
     /api/messages/restore.
 
-    With `gmail: [{id, account_id, thread_id}]`, archive, read/unread and
-    flag (star) also change Gmail itself for accounts that granted
-    gmail.modify. Gmail goes first: a conversation Gmail refused is not
-    changed in Friday either, so the two never disagree. `gmail_changes`
-    (exactly what was added and removed per conversation) goes back to
-    /api/messages/restore to undo it in Gmail too. Snooze stays Friday's own:
-    Gmail's API has none. Accounts without the permission change in Friday
-    only, and `gmail_status` says so."""
+    With `gmail: [{id, account_id, thread_id}]` the change is made in Gmail
+    itself for accounts that granted gmail.modify. Gmail goes first: a
+    conversation Gmail refused is not changed in Friday either, so the two
+    never disagree. `gmail_changes` (exactly what was changed per
+    conversation) goes back to /api/messages/restore to undo it in Gmail too.
+    Snooze and mute are Friday's own: Gmail's API has neither. Archive, star
+    and read state on an account without the permission change in Friday
+    only, and `gmail_status` says so; Trash, spam and importance exist only in
+    Gmail, so there they are refused rather than faked.
+
+    The owner's own click (`requested_by` absent or "ui:...") runs at once,
+    with undo. A request from Friday itself to delete, archive, mute or
+    report spam becomes an approval card instead (202)."""
     data = request.get_json(silent=True) or {}
     ids = [str(i).strip() for i in (data.get("ids") or []) if str(i).strip()]
     if not ids and str(data.get("id") or "").strip():
@@ -352,7 +425,19 @@ def api_messages_action():
         return jsonify({"status": "error", "message": "id(s) and action required"}), 400
     if action not in _LOCAL_ACTIONS:
         return jsonify({"status": "error", "message": f"unknown action {action}"}), 400
-    gmail_changes, gmail_status, not_changed = _sync_gmail(action, ids, data.get("gmail"))
+    if action in NEEDS_APPROVAL_FROM_FRIDAY and not _is_owner(data.get("requested_by")):
+        from agent_friday.services import mail_proposals
+        return jsonify(mail_proposals.propose(action, ids, data.get("gmail") or [],
+                                              requested_by=str(data.get("requested_by")),
+                                              reason=str(data.get("reason") or ""))), 202
+    out = run_action(action, ids, data.get("gmail"), data)
+    return jsonify(out)
+
+
+def run_action(action, ids, gmail_items, data=None):
+    """The change itself, shared by the owner's click and an approved proposal."""
+    data = data or {}
+    gmail_changes, gmail_status, not_changed = _sync_gmail(action, ids, gmail_items)
     ids = [i for i in ids if i not in not_changed]
     before = {}
     with _MESSAGE_LOCK:
@@ -371,7 +456,7 @@ def api_messages_action():
     if len(before) == 1:
         mid = next(iter(before))
         out.update(id=mid, state=state[mid])
-    return jsonify(out)
+    return out
 
 
 def _sync_gmail(action, ids, items):
@@ -381,19 +466,28 @@ def _sync_gmail(action, ids, items):
         not_changed {card_id: why})"""
     from agent_friday.services import gmail_mailbox as gm
     changes, status, not_changed = {}, {}, {}
-    if action not in gm.ACTIONS or not isinstance(items, list):
+    gmail_only = action in GMAIL_ONLY
+    if action not in gm.ACTIONS and action not in gm.TRASH_ACTIONS:
         return changes, status, not_changed
+    items = items if isinstance(items, list) else []
     wanted = set(ids)
-    by_acct = {}
+    by_acct, located = {}, set()
     for it in items:
         if not isinstance(it, dict) or str(it.get("id")) not in wanted:
             continue
         aid, tid = str(it.get("account_id") or ""), str(it.get("thread_id") or "")
         if aid and tid:
             by_acct.setdefault(aid, []).append((str(it["id"]), tid))
+            located.add(str(it["id"]))
+    if gmail_only:
+        for cid in wanted - located:
+            not_changed[cid] = "Friday does not know which Gmail account holds this message"
     for aid, pairs in by_acct.items():
         if not gm.can_modify(aid):
             status[aid] = "not_permitted"
+            if gmail_only:
+                for cid, _ in pairs:
+                    not_changed[cid] = NOT_PERMITTED_TEXT
             continue
         try:
             res = gm.apply_action(aid, [t for _, t in pairs], action)
@@ -429,7 +523,8 @@ def api_messages_restore():
             message_triage._collect_cache.clear()
             return jsonify({"status": "ok" if not gfailed else "partial", "restored": 0, "gmail_failed": gfailed})
         return jsonify({"status": "error", "message": "states required"}), 400
-    allowed = {"archived", "snoozed_until", "flagged", "read", "unread", "lane_override", "sender"}
+    allowed = {"archived", "snoozed_until", "flagged", "read", "unread", "lane_override", "sender",
+               "trashed", "spam", "important", "muted"}
     with _MESSAGE_LOCK:
         state = _load_message_state()
         for mid, st in list(states.items())[:500]:
