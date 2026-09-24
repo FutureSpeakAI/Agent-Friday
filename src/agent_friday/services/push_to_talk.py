@@ -262,11 +262,13 @@ class WaveInRecorder:
                 # those lengths back throws away the end of the sentence.
                 winmm.waveInReset(h)
                 time.sleep(0.03)
-                for hdr in hdrs:
+                # Indexed rather than looked up: hdrs.index(hdr) compares
+                # ctypes structures, and pairing a header with the wrong
+                # buffer would splice unrelated audio into the tail.
+                for i, hdr in enumerate(hdrs):
                     n = int(hdr.dwBytesRecorded)
                     if n:
-                        self._chunks.append(
-                            bufs[hdrs.index(hdr)].raw[:n])
+                        self._chunks.append(bufs[i].raw[:n])
                     winmm.waveInUnprepareHeader(h, ctypes.byref(hdr),
                                                 ctypes.sizeof(hdr))
                 winmm.waveInClose(h)
@@ -381,15 +383,15 @@ def insert_text(text, send_input=None, clipboard=None, target=None):
 
     if target is not None and not refocus(target):
         # The words are already on the clipboard above, so they are not lost.
-        return False, ("the window you dictated into is no longer in front — "
-                       "the text is on your clipboard, press Ctrl+V")
+        return False, (_why_refused() + " — the text is on your clipboard, "
+                       "press Ctrl+V")
 
     try:
         (send_input or _send_ctrl_v)()
     except Exception as e:
         log.info("push-to-transcribe paste failed: %s", e)
-        return False, ("the window would not accept the paste — it is on "
-                       "your clipboard, press Ctrl+V")
+        return False, (_why_refused() + " — the text is on your clipboard, "
+                       "press Ctrl+V")
 
     # Long enough for the target app to service the paste, short enough that
     # nobody notices. Restoring too eagerly pastes the *old* clipboard.
@@ -435,6 +437,20 @@ def _send_ctrl_v():
     with kb.pressed(Key.ctrl):
         kb.press("v")
         kb.release("v")
+
+
+def _why_refused():
+    """Say which kind of refusal this was, since they need different answers.
+
+    An administrator window is not a bug and not something the user can fix
+    from Friday's side; a window that merely moved might just be moved back.
+    Reporting both as "the paste failed" leaves someone retrying a thing that
+    can never work.
+    """
+    if foreground_window_is_elevated():
+        return ("Windows does not let Friday type into an administrator "
+                "window")
+    return "the window you dictated into would not take the text"
 
 
 def foreground_window_is_elevated():
