@@ -743,7 +743,9 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* ─── Notifications + Tasks dropdown (under bell icon) ─── */
         .notif-dropdown {
-            position: fixed; width: 360px; max-height: 400px;
+            /* Tall enough to read a reasoning trace in; never wider than the window. */
+            position: fixed; width: 380px; max-width: calc(100vw - 16px);
+            max-height: min(640px, calc(100vh - 90px));
             z-index: 80;
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
