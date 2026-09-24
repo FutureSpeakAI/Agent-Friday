@@ -193,7 +193,7 @@ data should exist. Golden frames stored per workspace; diff on change.
 
 **B. The honesty surfaces.** These are the screens that lie when they break,
 and today proved each one can:
-- Settings → Intelligence: does the seat shown match `describe_dispatch`?
+- Settings → Models: does the seat shown match `describe_dispatch`?
 - Model Soup card: does the posture shown match `settings.json` on disk?
 - Connectors: does Google's status match the token store?
 - Voice settings: does "effective" match what a session would actually get?

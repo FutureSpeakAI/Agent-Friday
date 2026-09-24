@@ -36297,7 +36297,7 @@ function SettingsTabWork() {
   })));
 }
 // ═══════════════════════════════════════════════════════════════
-//  INTELLIGENCE — the model quick switch and Settings → Intelligence.
+//  INTELLIGENCE — the model quick switch and Settings → Models.
 //
 //  Both surfaces read ONE payload (/api/intelligence) so they cannot
 //  disagree with each other. Written with E = React.createElement rather
@@ -36562,8 +36562,8 @@ function StateChip({ m, serving }) {
     }, 'answering now');
   }
   const map = {
-    resident: { t: 'resident', c: '#00ff80' },
-    cold: { t: 'cold', c: 'rgba(255,255,255,0.45)' },
+    resident: { t: 'loaded', c: '#00ff80' },
+    cold: { t: 'not loaded', c: 'rgba(255,255,255,0.45)' },
     cloud: { t: 'cloud', c: '#7b61ff' },
   };
   const s = m.seat_status === 'leased' ? { t: 'in use', c: '#f59e0b' } : (map[m.state] || map.cloud);
@@ -36588,11 +36588,12 @@ function ModelRow({ m, need, current, onPick, machine, servingId }) {
     title: (off && m.hint ? m.hint + '\n' : '') + m.id + (m.providers && m.providers.length > 1 ? '  (offered by ' + m.providers.join(', ') + ')' : ''),
     style: {
       display: 'block', width: '100%', textAlign: 'left', cursor: off ? 'not-allowed' : 'pointer',
-      opacity: off ? 0.45 : 1,
+      // Unavailable is dimmer than merely unsuited; one opacity, not two
+      // keys where the second silently overrode the first.
+      opacity: off ? 0.45 : (fit.ok ? 1 : 0.62),
       background: isCur ? 'rgba(0,212,255,0.10)' : 'transparent',
       border: '1px solid ' + (isCur ? 'rgba(0,212,255,0.45)' : 'transparent'),
       borderRadius: 7, padding: '7px 9px', marginBottom: 2,
-      opacity: fit.ok ? 1 : 0.62,
     },
     onMouseEnter: e => { if (!isCur) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; },
     onMouseLeave: e => { if (!isCur) e.currentTarget.style.background = 'transparent'; },
@@ -37384,7 +37385,7 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
       }, 'Delete'))));
 }
 
-// ── Surface 2: Settings → Intelligence ───────────────────────────────────────
+// ── Surface 2: Settings → Models ───────────────────────────────────────
 
 function Bar({ used, total, reserve, label, sub }) {
   const pct = total ? Math.min(100, (used / total) * 100) : 0;
@@ -37440,16 +37441,16 @@ function RefusalGroup({ rows, tone, heading, blurb }) {
     choice:  { fg: '#cfefff', bg: 'rgba(0,212,255,0.05)',  bd: 'rgba(0,212,255,0.20)' },
     info:    { fg: 'rgba(255,255,255,0.72)', bg: 'rgba(255,255,255,0.03)', bd: 'rgba(255,255,255,0.10)' },
   }[tone] || {};
-  return E('div', { style: { marginTop: 12 } },
+  return E('div', { style: { margin: '4px 0 22px' } },
     E('div', {
       style: {
-        fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase',
-        color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', marginBottom: 4,
+        fontSize: 12, fontWeight: 600, color: 'var(--st-text)',
+        fontFamily: 'var(--st-font)', marginBottom: 4,
       },
     }, heading),
     blurb && E('div', {
       style: {
-        fontSize: 10, color: 'rgba(255,255,255,0.42)', fontFamily: 'JetBrains Mono',
+        fontSize: 11.5, color: 'var(--st-dim)', fontFamily: 'var(--st-font)',
         lineHeight: 1.5, marginBottom: 6,
       },
     }, blurb),
@@ -37481,10 +37482,10 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
       E('div', { style: { width: 168, flexShrink: 0 } },
         E('div', {
-          style: { fontFamily: 'Orbitron', fontSize: 12, color: 'rgba(255,255,255,0.9)' },
+          style: { fontFamily: 'var(--st-font)', fontSize: 12.5, fontWeight: 500, color: 'var(--st-label)' },
         }, r.label),
         E('div', {
-          style: { fontSize: 9.5, color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', marginTop: 2 },
+          style: { fontSize: 11, color: 'var(--st-dim)', fontFamily: 'var(--st-font)', marginTop: 2, lineHeight: 1.4 },
         }, r.help)),
       E('button', {
         onClick: () => onOpen(openFor === r.key ? null : r.key),
@@ -37506,7 +37507,7 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
               fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.92)', flex: 1,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             },
-          }, r.model ? prettyModel(r.model, m && m.label) : (r.awaiting_choice ? 'no model chosen yet' : (r.blocked_because ? 'cannot be seated' : 'not set'))),
+          }, r.model ? prettyModel(r.model, m && m.label) : (r.awaiting_choice ? 'no model chosen yet' : (r.blocked_because ? 'no model can do this yet' : 'not set'))),
           m && E(StateChip, { m: m })),
         E('div', {
           style: {
@@ -37515,10 +37516,10 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
           },
         }, !fit.ok ? fit.why
           : r.awaiting_choice
-            ? 'This seat is yours to choose. Friday will not pick one for you.'
+            ? 'This job is yours to choose. Friday will not pick a model for you.'
           : r.blocked_because ? r.blocked_because
           : [r.where || (m && !m.local ? 'cloud' : '—'),
-             r.proven ? 'proven — has served ' + (fmtAgo(r.last_used) || 'before') : 'untested on this machine',
+             r.proven ? 'has answered ' + (fmtAgo(r.last_used) || 'before') : 'not used on this machine yet',
             ].join(' · '))),
       ),
     openFor === r.key && E('div', { style: { position: 'absolute', right: 0, top: '100%', zIndex: 60 } },
@@ -37742,7 +37743,7 @@ function LocalModelsSection({ lm, fetchFor, setFetchFor, confirmFetch, fetching,
 // spare.
 //
 // `onFetch` is a no-op here on purpose. LocalModelRow's Fetch button and the
-// pre-fetch card (FetchPreflightCard) are Settings -> Intelligence features
+// pre-fetch card (FetchPreflightCard) are Settings -> Models features
 // (§8.2) that need a `fetchFor`/confirm flow this step does not have its own
 // state for; the wizard's own one-click pull stays WizardGemmaPull, rendered
 // just above this section. A future pass CAN wire Fetch here by lifting that
@@ -37840,7 +37841,7 @@ function SoupRow({ label, main, detail, state, reason, action }) {
     style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
   },
     E('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' } },
-      E('span', { style: { fontFamily: 'Orbitron', fontSize: 9.5, letterSpacing: 0.7, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' } }, label),
+      E('span', { style: { fontFamily: 'var(--st-font)', fontSize: 12, fontWeight: 600, color: 'var(--st-text)' } }, label),
       E('span', { style: { color: color, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8 } },
         E('span', null, glyph + ' ' + (detail || state || '')),
         action)),
@@ -37911,7 +37912,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     modes.map(m => {
       const on = mode === m.id;
       return E('button', {
-        key: m.id, onClick: () => setMode(m.id), title: m.help,
+        key: m.id, type: 'button', 'aria-pressed': on, onClick: () => setMode(m.id), title: m.help,
         style: {
           flex: '1 1 180px', textAlign: 'left', cursor: 'pointer',
           background: on ? 'rgba(0,212,255,0.12)' : 'rgba(255,255,255,0.03)',
@@ -37919,16 +37920,16 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
           borderRadius: 8, padding: '8px 10px',
         },
       },
-        E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 12, color: on ? '#cfefff' : 'rgba(255,255,255,0.85)', display: 'flex', alignItems: 'center', gap: 6 } },
+        E('div', { style: { fontFamily: 'var(--st-font)', fontSize: 12.5, fontWeight: 500, color: on ? '#cfefff' : 'rgba(255,255,255,0.85)', display: 'flex', alignItems: 'center', gap: 6 } },
           E('span', { style: { width: 7, height: 7, borderRadius: 4, flexShrink: 0, background: on ? '#00d4ff' : 'rgba(255,255,255,0.22)' } }),
           m.label,
           savingMode === m.id && E('span', { style: { fontSize: 9, color: '#f59e0b' } }, 'saving...')),
-        E('div', { style: { fontSize: 9.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono', marginTop: 3, lineHeight: 1.45 } }, m.help));
+        E('div', { style: { fontSize: 11.5, color: 'var(--st-dim)', fontFamily: 'var(--st-font)', marginTop: 3, lineHeight: 1.45 } }, m.help));
     }));
   // An older server build answers without `soup`. Say so, and keep the mode
   // buttons: a control that vanishes because the payload is short is the
   // silent failure this card exists to end.
-  if (!soup || soup.error) return E(StSection, { title: 'WHAT IS ABOUT TO ANSWER YOU' },
+  if (!soup || soup.error) return E(StSection, { title: 'What answers you', desc: 'The model that will answer your next message, where it runs and what it costs, and how Friday chooses between this machine and the cloud.' },
     E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11, color: '#f59e0b', lineHeight: 1.5 } },
       soup && soup.error ? 'The card could not be built: ' + soup.error
         : 'The running server is an older build that does not report the model soup yet. Restart Friday to see what is about to answer you.'),
@@ -37950,10 +37951,9 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const postureTxt = [
     mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
-    'KG indexes ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'locally' + (post.kg_local_possible ? '' : ' (cannot run: nothing is serving)')),
-    'egress ' + (post.egress_mode || 'audit'),
+    'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
-  return E(StSection, { title: 'WHAT IS ABOUT TO ANSWER YOU' },
+  return E(StSection, { title: 'What answers you', desc: 'The model that will answer your next message, where it runs and what it costs, and how Friday chooses between this machine and the cloud.' },
     E(SoupRow, {
       label: 'Now answering',
       main: (now.label || now.model || 'nothing') + ' · ' + whereTxt(now),
@@ -37961,7 +37961,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
       state: now.state, reason: now.why || now.reason,
     }),
     soup.local && soup.local.model && now.model !== soup.local.model && E(SoupRow, {
-      label: 'Local seat',
+      label: 'Local model',
       main: (soup.local.label || soup.local.model) + ' · ' + whereTxt(soup.local),
       detail: stateDetail(soup.local), state: soup.local.state, reason: soup.local.reason,
     }),
@@ -37980,13 +37980,13 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     E('div', {
       style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
     },
-      E('div', { style: { fontFamily: 'Orbitron', fontSize: 9.5, letterSpacing: 0.7, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' } }, 'Posture'),
+      E('div', { style: { fontFamily: 'var(--st-font)', fontSize: 12, fontWeight: 600, color: 'var(--st-text)' } }, 'Where your data goes'),
       E('div', { style: { color: 'rgba(255,255,255,0.85)', margin: '2px 0 4px', lineHeight: 1.5 } }, postureTxt),
       E(CloudConsentRow, { consent: consent, onChanged: reload, compact: true })),
     E('div', {
       style: { padding: '8px 0', borderTop: '1px solid rgba(255,255,255,0.05)', fontFamily: 'JetBrains Mono', fontSize: 11 },
     },
-      E('div', { style: { fontFamily: 'Orbitron', fontSize: 9.5, letterSpacing: 0.7, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' } }, 'Ledger'),
+      E('div', { style: { fontFamily: 'var(--st-font)', fontSize: 12, fontWeight: 600, color: 'var(--st-text)' } }, 'Recent use'),
       E('div', { style: { color: 'rgba(255,255,255,0.85)', display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 2, lineHeight: 1.5 } },
         E('span', null, 'Last 24 h: ' + (l24.calls || 0) + ' calls · ' + (l24.local || 0) + ' local · ' + (l24.cloud || 0) + ' cloud · ' + fmtUsd(l24.cost_usd || 0, 2)),
         E('span', null, 'Last 30 d: ' + (l30.calls || 0) + ' · ' + (l30.local || 0) + ' local · ' + (l30.cloud || 0) + ' cloud · ' + fmtUsd(l30.cost_usd || 0, 2)))),
@@ -38021,7 +38021,7 @@ function WeightsRows({ rows }) {
     }));
 }
 
-function SettingsTabIntelligence() {
+function SettingsTabIntelligence({ s, save }) {
   const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
@@ -38035,7 +38035,6 @@ function SettingsTabIntelligence() {
   const [fetchFor, setFetchFor] = useState(null);   // model_id or null
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState('');
-  const [yielding, setYielding] = useState(false);
 
   /* CONFIRM FROM THE FAST ROUTE, NOT THE SLOW ONE.
      Reported as "nothing changed when I picked Opus 5.5 for either seat". The
@@ -38092,19 +38091,11 @@ function SettingsTabIntelligence() {
   if (!d && err) return E('div', { style: { padding: 14 } },
     E(LoadFailure, { err: err, onRetry: reload }));
   if (!d) return E('div', {
-    style: { padding: 18, fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.5)' },
-  }, 'Reading the machine…');
+    style: { padding: 18, fontFamily: 'var(--st-font)', fontSize: 12.5, color: 'var(--st-dim)' },
+  }, 'Reading which models are available…');
 
   const mach = d.machine || {};
-  const vram = mach.vram || {};
-  const ram = mach.ram || {};
-  const vUsed = (vram.total_mib || 0) - (vram.free_mib || 0);
-  // §8.3's third bar: the SYSTEM volume (the pagefile, ~/.friday, logs),
-  // watched regardless of where models live (HR5) -- against the EXISTING
-  // DISK_FLOOR_MIB (R8), not a new number.
-  const diskSys = mach.disk_system || {};
-  const diskUsed = (diskSys.total_mib || 0) - (diskSys.free_mib || 0);
-  const contract = mach.contract || {};
+  const roleLabel = key => ((d.roles || []).filter(r => r.key === key)[0] || {}).label || key;
 
   const confirmFetch = (card) => {
     const modelId = card.model_id;
@@ -38137,16 +38128,6 @@ function SettingsTabIntelligence() {
     setTimeout(() => setFetchMsg(''), 15000);
   };
 
-  const pressYield = () => {
-    setYielding(true);
-    apiFetch('/api/machine/level', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ level: 'yield' }),
-    }).then(r => r.json()).then(d2 => {
-      alert(d2.message || 'Noted.');
-    }).catch(() => {}).finally(() => setYielding(false));
-  };
-
   const setMode = (id) => {
     setSavingMode(id);
     apiFetch('/api/settings', {
@@ -38163,46 +38144,47 @@ function SettingsTabIntelligence() {
       }).catch(() => {}).finally(() => setSavingMode(null));
   };
 
-  return E('div', { style: { padding: '4px 2px' } },
+  return E('div', null,
 
-    // ── THE CARD ─────────────────────────────────────────────────────────────
-    // What is about to answer, where, at what cost, and the three mode buttons
-    // that change the answer. The mode governs every seat below it.
+    // What answers you, where, at what cost, and the routing mode that
+    // governs every job below it.
     E(ModelSoupCard, {
       soup: d.soup, d: d, mode: d.routing_mode || 'local_preferred',
       setMode: setMode, savingMode: savingMode, reload: reload,
     }),
 
     /* Did my pick take? One line, set from the SERVER's confirmation rather
-       than from the 12-second panel refresh, because the refresh not landing is
-       what made a working save look like it did nothing. Layout deliberately
-       minimal — the Settings polish pass owns the styling of this panel. */
+       than from the slow panel refresh, because the refresh not landing is
+       what made a working save look like it did nothing. */
     seatNote && E('div', {
+      role: 'status',
       style: {
-        margin: '6px 2px 2px', padding: '6px 9px', borderRadius: 6,
-        fontSize: 12, lineHeight: 1.45,
+        margin: '0 0 18px', padding: '8px 11px', borderRadius: 7,
+        fontSize: 12.5, lineHeight: 1.45, fontFamily: 'var(--st-font)',
+        color: 'var(--st-text)',
         background: seatNote.err ? 'rgba(220,60,60,0.10)' : 'rgba(60,200,140,0.10)',
         border: '1px solid ' + (seatNote.err ? 'rgba(220,60,60,0.35)'
                                              : 'rgba(60,200,140,0.35)'),
       },
     }, seatNote.err
-        ? ('Could not seat ' + seatNote.label + ' for ' + seatNote.key + ': ' +
+        ? ('Could not use ' + seatNote.label + ' for ' + roleLabel(seatNote.key) + ': ' +
            seatNote.err)
-        : ('Now using ' + seatNote.label + ' for ' + seatNote.key + '.')),
+        : ('Now using ' + seatNote.label + ' for ' + roleLabel(seatNote.key) + '.')),
 
-    // ── ROLES ────────────────────────────────────────────────────────────────
-    E(StSection, { title: 'WHAT RUNS EACH JOB' },
-      E('div', {
-        style: {
-          fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
-          lineHeight: 1.6, marginBottom: 4,
-        },
-      }, 'One row per job, and every row here has code that reads it. Clicking a row shows only models that can actually do it. ' +
-         'Voice is chosen on the Voice tab.'),
-      // Grouped by when a seat costs memory, because a flat list of sixteen
-      // jobs reads as sixteen models loaded at once. Only the resident tier
-      // is warm; the rest arrive when the work does and leave after. Seven
-      // roles routinely share three or four models.
+    // Faults only. Optional choices and machine facts live in Advanced.
+    E(RefusalGroup, {
+      rows: mach.problems, tone: 'problem',
+      heading: 'Needs your attention',
+      blurb: 'Something here cannot work until it is changed.',
+    }),
+
+    E(StSection, {
+      title: 'Model for each job',
+      desc: 'Click a job to choose its model. The list shows only models that can do that job. Voice is chosen in Voice & Tracking.',
+    },
+      // Grouped by when a model takes memory, because a flat list of jobs
+      // reads as that many models loaded at once. Several jobs routinely
+      // share one model.
       ['resident', 'leased', 'on-demand', null].map(cls => {
         const rows = (d.roles || []).filter(r => (r.residency || null) === cls);
         if (!rows.length) return null;
@@ -38211,23 +38193,19 @@ function SettingsTabIntelligence() {
             style: {
               display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 14,
               marginBottom: 2, paddingBottom: 4,
-              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              borderBottom: '1px solid var(--st-line)',
             },
           },
             E('span', {
               style: {
-                fontFamily: 'Orbitron', fontSize: 10.5, letterSpacing: 0.6,
-                color: cls === 'resident' ? '#00d4ff' : 'rgba(255,255,255,0.55)',
-                textTransform: 'uppercase',
+                fontFamily: 'var(--st-font)', fontSize: 12, fontWeight: 600,
+                color: 'var(--st-text)',
               },
-            }, cls === 'resident' ? 'Always warm'
-               : cls === 'leased' ? 'Only while working'
-               : cls === 'on-demand' ? 'Wakes when needed' : 'Other'),
+            }, cls === 'resident' ? 'Always loaded'
+               : cls === 'leased' ? 'Loaded while working'
+               : cls === 'on-demand' ? 'Loaded when needed' : 'Other'),
             E('span', {
-              style: {
-                fontFamily: 'JetBrains Mono', fontSize: 9.5,
-                color: 'rgba(255,255,255,0.38)',
-              },
+              style: { fontFamily: 'var(--st-font)', fontSize: 11, color: 'var(--st-dim)' },
             }, ((d.residency_help || {})[cls] || ''))),
           rows.map(r => E(RoleRow, {
             key: r.key, r: r, intel: d, onOpen: onOpen, openFor: openFor,
@@ -38235,23 +38213,68 @@ function SettingsTabIntelligence() {
           })));
       }),
       saving && E('div', {
-        style: { fontSize: 10, color: '#f59e0b', fontFamily: 'JetBrains Mono', marginTop: 8 },
-      }, 'Saving ' + saving + '…')),
+        role: 'status',
+        style: { fontSize: 11.5, color: 'var(--st-warn)', fontFamily: 'var(--st-font)', marginTop: 8 },
+      }, 'Saving ' + roleLabel(saving) + '…')),
 
-    // The spend dial belongs beside the job it governs. Choosing the router
-    // on this tab and hunting its cost control on another is how a feature
-    // reads as unfinished.
+    // The spend dial belongs beside the job it governs.
     (d.roles || []).some(rr => rr.model === 'openrouter/auto') &&
       E(AutoRouterControls, { s: s || {}, save: save, orReady: true }),
 
-    // ── MACHINE ──────────────────────────────────────────────────────────────
-    E(StSection, { title: 'THE MACHINE' },
+    // headroom.md §8.2: what this machine can run, measured.
+    E(LocalModelsSection, {
+      lm: d.local_models || {}, fetchFor: fetchFor, setFetchFor: setFetchFor,
+      confirmFetch: confirmFetch, fetching: fetching, fetchMsg: fetchMsg,
+    }),
+
+    // Every model from every connected provider. Choosing models happens on
+    // this tab and nowhere else in Settings.
+    E(StSection, {
+      title: 'Model browser',
+      desc: "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed. Keys are added in Accounts & Keys.",
+    }, with3DModels(E(ModelBrowser, { save: save }))),
+  );
+}
+
+// ── Advanced → the machine and provider activity ────────────────────────────
+// Diagnostics a person rarely needs to act on: memory bars against their
+// reserves, what is loaded, where each local model's weights live, optional
+// jobs nobody has filled, and which providers have actually served anything.
+function IntelligenceDiagnostics() {
+  const { d, err, reload } = useIntelligence(30000);
+  const [yielding, setYielding] = useState(false);
+  if (!d) return E(StSection, { title: 'This machine' },
+    err ? E(LoadFailure, { err: err, onRetry: reload })
+      : E('div', {
+          style: { fontFamily: 'var(--st-font)', fontSize: 12.5, color: 'var(--st-dim)' },
+        }, 'Reading the machine… this can take a few seconds.'));
+  const mach = d.machine || {};
+  const vram = mach.vram || {};
+  const ram = mach.ram || {};
+  const vUsed = (vram.total_mib || 0) - (vram.free_mib || 0);
+  // §8.3's third bar: the SYSTEM volume (the pagefile, ~/.friday, logs),
+  // watched regardless of where models live (HR5) -- against the EXISTING
+  // DISK_FLOOR_MIB (R8), not a new number.
+  const diskSys = mach.disk_system || {};
+  const diskUsed = (diskSys.total_mib || 0) - (diskSys.free_mib || 0);
+  const contract = mach.contract || {};
+  const pressYield = () => {
+    setYielding(true);
+    apiFetch('/api/machine/level', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'yield' }),
+    }).then(r => r.json()).then(d2 => {
+      alert(d2.message || 'Noted.');
+    }).catch(() => {}).finally(() => setYielding(false));
+  };
+  return E('div', null,
+    E(StSection, { title: 'This machine' },
       E(Bar, {
         label: (vram.gpu || 'GPU') + ' — video memory',
         used: vUsed, total: vram.total_mib, reserve: vram.reserve_mib,
         sub: vram.total_mib
           ? Math.round((vram.free_mib || 0) / 1024 * 10) / 10 + ' GB free of ' +
-            Math.round(vram.total_mib / 1024) + ' GB' + (vram.at_risk ? ' — under the display reserve' : '')
+            Math.round(vram.total_mib / 1024) + ' GB' + (vram.at_risk ? ' — under the amount kept for the display' : '')
           : 'unavailable',
       }),
       ram.total_mib && E(Bar, {
@@ -38261,75 +38284,51 @@ function SettingsTabIntelligence() {
         sub: Math.round((ram.available_mib || 0) / 1024) + ' GB free of ' +
              Math.round(ram.total_mib / 1024) + ' GB',
       }),
-      // §8.3's third bar: the SYSTEM volume, against the EXISTING
-      // DISK_FLOOR_MIB (R8) -- not a new number. Independent of wherever
-      // OLLAMA_MODELS points; this is the drive the pagefile and
-      // ~/.friday live on, and it is the one that can fill to zero while
-      // none of the model-store checks notice (HR5).
       diskSys.total_mib && E(Bar, {
         label: 'System drive (Windows, Friday’s own data)',
         used: diskUsed, total: diskSys.total_mib, reserve: diskSys.floor_mib,
         sub: Math.round((diskSys.free_mib || 0) / 1024) + ' GB free of ' +
              Math.round(diskSys.total_mib / 1024) + ' GB',
       }),
-      // Contract level (§8.3 item 4). The full working/away/yield Contract
-      // is D1 -- a maintainer decision not yet made. This line is only the idle
-      // timer work_queue already tracks, next to a button that is honest
-      // about being a stub: nothing here actually releases a lease or
-      // changes what the planner enforces yet.
+      // The working/away/yield contract is D1, not yet decided; this is only
+      // the idle timer work_queue tracks, beside a button that says plainly
+      // it is not enforced yet.
       E('div', {
         style: {
           display: 'flex', alignItems: 'center', gap: 8, marginTop: 8,
-          fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.5)',
+          fontSize: 11.5, fontFamily: 'var(--st-font)', color: 'var(--st-dim)',
         },
       },
-        E('span', null, 'Posture: '),
-        E('span', { style: { color: 'rgba(255,255,255,0.8)' } }, contract.level || 'working'),
+        E('span', null, 'Machine mode: '),
+        E('span', { style: { color: 'var(--st-text)' } }, contract.level || 'working'),
         !contract.levels_enforced && E('span', {
-          title: 'The full working/away/yield Contract is not built yet (headroom.md D1) — this label does not change what is enforced.',
-          style: { color: 'rgba(255,255,255,0.32)' },
-        }, '(not yet enforced)'),
+          title: 'The full working/away/yield contract is not built yet (headroom.md D1); this label does not change what is enforced.',
+          style: { color: 'var(--st-faint)' },
+        }, '(not enforced yet)'),
         typeof contract.idle_s === 'number' && E('span', {
-          style: { color: 'rgba(255,255,255,0.35)' },
+          style: { color: 'var(--st-faint)' },
         }, '· idle ' + Math.round(contract.idle_s) + 's'),
         E('button', {
-          onClick: pressYield, disabled: yielding,
+          type: 'button', className: 'settings-btn', onClick: pressYield, disabled: yielding,
           title: 'Tell Friday you need the machine now. Today this is noted but not enforced.',
-          style: {
-            cursor: yielding ? 'default' : 'pointer', marginLeft: 'auto',
-            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.18)',
-            borderRadius: 5, padding: '3px 9px', color: 'rgba(255,255,255,0.75)',
-            fontFamily: 'JetBrains Mono', fontSize: 10,
-          },
-        }, yielding ? 'noting…' : 'I need my machine')),
+          style: { marginLeft: 'auto', fontSize: 11.5 },
+        }, yielding ? 'Noting…' : 'I need my machine')),
       E('div', {
-        style: { fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.55)', marginTop: 6 },
+        style: { fontSize: 11.5, fontFamily: 'var(--st-font)', color: 'var(--st-text)', marginTop: 6 },
       },
-        E('span', { style: { color: 'rgba(255,255,255,0.38)' } }, 'Loaded now: '),
+        E('span', { style: { color: 'var(--st-dim)' } }, 'Loaded now: '),
         (mach.resident || []).length
           ? (mach.resident || []).map(x => prettyModel(x)).join(', ')
-          // Never claim an idle card while the bar shows it full. If residency
-          // reported nothing but the memory is gone, say the truth: something
-          // is holding it and we cannot name it.
+          // Never claim an idle card while the bar shows it full.
           : (vram.total_mib && (vram.free_mib || 0) < vram.total_mib * 0.5
               ? 'not reported — but ' +
                 Math.round((vram.total_mib - (vram.free_mib || 0)) / 1024) +
                 ' GB is in use by something'
               : 'nothing — the card is idle')),
       E(WeightsRows, { rows: (d.soup || {}).weights }),
-      // Three sections, because there are three different things here and
-      // rendering them identically is what made ten amber boxes read as
-      // wallpaper. Only a PROBLEM is amber. A seat nobody has chosen is an
-      // available option, not a fault. A fact about the machine is not yellow
-      // at all. See KNOWN_ISSUES.md §1.
-      E(RefusalGroup, {
-        rows: mach.problems, tone: 'problem',
-        heading: 'Needs your attention',
-        blurb: 'Something here cannot work until it is changed.',
-      }),
       E(RefusalGroup, {
         rows: mach.choices, tone: 'choice',
-        heading: 'Optional seats you have not filled',
+        heading: 'Optional jobs you have not filled',
         blurb: 'These are yours to choose. Friday will not pick for you, and ' +
                'leaving them empty is a normal, working setup.',
       }),
@@ -38338,28 +38337,15 @@ function SettingsTabIntelligence() {
         heading: 'Worth knowing',
         blurb: null,
       })),
-
-    // ── LOCAL MODELS ON THIS MACHINE ────────────────────────────────────────
-    // headroom.md §8.2. Not a new tab -- 65f70ce fixed a round of links to
-    // Settings tabs that did not exist, and the machine already lives here.
-    E(LocalModelsSection, {
-      lm: d.local_models || {}, fetchFor: fetchFor, setFetchFor: setFetchFor,
-      confirmFetch: confirmFetch, fetching: fetching, fetchMsg: fetchMsg,
-    }),
-
-    // ── PROVIDERS ────────────────────────────────────────────────────────────
-    E(StSection, { title: 'PROVIDERS' },
-      E('div', {
-        style: {
-          fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
-          lineHeight: 1.6, marginBottom: 6,
-        },
-      }, 'Connected is not the same as used. The last column is what has actually been served.'),
+    E(StSection, {
+      title: 'Provider activity',
+      desc: 'Connected is not the same as used. The last column is what each provider has actually served. Keys are managed in Accounts & Keys.',
+    },
       (d.providers || []).map(p => E('div', {
         key: p.name,
         style: {
           display: 'flex', alignItems: 'center', gap: 10, padding: '8px 2px',
-          borderTop: '1px solid rgba(255,255,255,0.05)',
+          borderTop: '1px solid var(--st-line)', fontFamily: 'var(--st-font)',
         },
       },
         E('span', {
@@ -38369,28 +38355,22 @@ function SettingsTabIntelligence() {
             background: p.connected ? '#00ff80' : 'rgba(255,255,255,0.25)',
           },
         }),
-        E('div', { style: { width: 150, flexShrink: 0 } },
-          E('div', {
-            style: { fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.9)' },
-          }, p.label),
-          E('div', {
-            style: { fontSize: 9.5, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono' },
-          }, p.key_env ? (p.key_present ? p.key_env + ' set' : p.key_env + ' missing') : 'no key needed')),
-        E('div', {
-          style: { flex: 1, fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.5)' },
-        }, p.models + ' model' + (p.models === 1 ? '' : 's')),
+        E('div', { style: { width: 170, flexShrink: 0 } },
+          E('div', { style: { fontSize: 12.5, color: 'var(--st-text)' } }, p.label),
+          E('div', { style: { fontSize: 11, color: 'var(--st-dim)' } },
+            p.key_env ? (p.key_present ? 'key set' : 'no key') : 'no key needed')),
+        E('div', { style: { flex: 1, fontSize: 11.5, color: 'var(--st-dim)' } },
+          p.models + ' model' + (p.models === 1 ? '' : 's')),
         E('div', {
           style: {
-            width: 190, textAlign: 'right', fontSize: 10.5, fontFamily: 'JetBrains Mono',
-            color: p.last_used ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)',
+            width: 210, textAlign: 'right', fontSize: 11.5, fontFamily: 'var(--st-mono)',
+            color: p.last_used ? 'var(--st-text)' : 'var(--st-faint)',
           },
         }, p.last_used
           ? [fmtAgo(p.last_used), p.calls + ' calls',
              p.cost_usd > 0 ? '$' + p.cost_usd.toFixed(2) : 'free'].join(' · ')
-          : 'never served anything')))),
-  );
+          : 'never served anything')))));
 }
-
 
 function VoiceSetupWizard({
   onClose
@@ -39271,7 +39251,7 @@ function SettingsTabPrivacy({
         vault_local_only: (s.model_routing || {}).vault_local_only === false
       }
     }),
-    desc: "Vault-tier notes (finance, health, legal, private) are stripped from cloud prompts, and questions that touch them run on the local model. Everything else follows the routing mode in Intelligence. When no local model is serving, turning this on makes vault questions refuse rather than leak."
+    desc: "Vault-tier notes (finance, health, legal, private) are stripped from cloud prompts, and questions that touch them run on the local model. Everything else follows the routing mode in Models. When no local model is serving, turning this on makes vault questions refuse rather than leak."
   })), /*#__PURE__*/React.createElement(StSection, {
     title: "Cloud consent"
   }, /*#__PURE__*/React.createElement(PrivacyCloudConsent, null), /*#__PURE__*/React.createElement("div", {
@@ -41284,17 +41264,17 @@ function ModelBrowser({
       fontSize: 10,
       padding: '3px 8px'
     },
-    title: "Use as orchestrator (main brain)",
+    title: "Use for everyday conversation (the main model)",
     onClick: () => useAs('orchestrator_model', m.id)
-  }, "Orchestrator"), /*#__PURE__*/React.createElement("button", {
+  }, "Use for chat"), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 10,
       padding: '3px 8px'
     },
-    title: "Use as sub-agent model",
+    title: "Use for sub-tasks Friday hands off to a helper",
     onClick: () => useAs('subagent_model', m.id)
-  }, "Subagent"), (m.modalities || []).includes('image') && /*#__PURE__*/React.createElement("button", {
+  }, "Use for sub-tasks"), (m.modalities || []).includes('image') && /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 10,
@@ -41413,11 +41393,7 @@ function SettingsTabProviders({
     disabled = rows.filter(p => !p.enabled);
   const orProv = provs.filter(p => p.name === 'openrouter')[0];
   const orReady = !!(orProv && orProv.enabled && orProv.key_source && orProv.key_source !== 'none');
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(AutoRouterControls, {
-    s: s,
-    save: save,
-    orReady: orReady
-  }), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "Model providers"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -41486,18 +41462,7 @@ function SettingsTabProviders({
       fontFamily: 'JetBrains Mono',
       marginTop: 10
     }
-  }, "\u25CF healthy \xB7 \u25D0 needs attention \xB7 \u25CB disabled. The dot reflects measured response time and error rate.")), /*#__PURE__*/React.createElement(StSection, {
-    title: "Model browser"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.4)',
-      marginBottom: 10,
-      lineHeight: 1.5
-    }
-  }, "Search the model lists of every connected provider, including OpenRouter's full list once it has been refreshed."), /*#__PURE__*/with3DModels(/*#__PURE__*/React.createElement(ModelBrowser, {
-    save: save
-  }))));
+  }, "\u25CF healthy \xB7 \u25D0 needs attention \xB7 \u25CB disabled. The dot reflects measured response time and error rate.")));
 }
 // `part` splits the panel: Google accounts are something every user
 // connects (Accounts & Keys); the MCP server list and the platform connector
@@ -41576,32 +41541,36 @@ function SettingsTabConnectors({
       color: 'rgba(255,255,255,0.38)',
       fontSize: 12
     }
-  }, "No connectors available."), connectors.map((c, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
+  }, "No connectors available."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, connectors.map((c, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    title: c.connected ? 'Connected' : 'Not connected',
+    style: {
+      display: 'inline-flex',
       alignItems: 'center',
-      padding: '8px 12px',
-      background: 'rgba(255,255,255,0.03)',
-      borderRadius: 6,
-      marginBottom: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: 'rgba(255,255,255,0.85)',
+      gap: 6,
+      padding: '4px 10px',
+      borderRadius: 12,
       fontSize: 12,
-      fontFamily: 'JetBrains Mono'
+      fontFamily: 'var(--st-font)',
+      background: c.connected ? 'rgba(0,255,128,0.08)' : 'rgba(255,255,255,0.03)',
+      border: '1px solid ' + (c.connected ? 'rgba(0,255,128,0.3)' : 'rgba(255,255,255,0.08)'),
+      color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
-  }, c.name || c.id), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
     style: {
-      fontSize: 10,
-      padding: '2px 8px',
-      borderRadius: 4,
-      background: c.connected ? 'rgba(0,255,128,0.1)' : 'rgba(255,255,255,0.04)',
-      color: c.connected ? '#00ff80' : '#555'
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
     }
-  }, c.connected ? 'on' : 'off')))));
+  }), c.name || c.id)))));
 }
 function SettingsTabAbout() {
   const [h, setH] = useState(null);
@@ -42662,8 +42631,8 @@ function SettingsWS() {
     sub: 'Her name, her personality, and which workspaces the dock offers.'
   }, {
     id: 'intelligence',
-    label: 'Intelligence',
-    sub: 'Which model does each job, and whether it runs here or in the cloud.'
+    label: 'Models',
+    sub: 'Which model does each job, and whether it runs on this machine or in the cloud.'
   }, {
     // Spend keys and the accounts Friday may use sit together: both are
     // things a person connects once and then forgets about.
@@ -42893,7 +42862,7 @@ function SettingsTabAdvanced({
   save
 }) {
   // SettingsTabWork brings its own "Proposed work" and "Queue" sections.
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsTabWork, null), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsTabWork, null), /*#__PURE__*/React.createElement(IntelligenceDiagnostics, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Knowledge graph indexing"
   }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
     s: s,
@@ -47808,7 +47777,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }])).catch(() => setChatMsgs(p => [...p, {
       role: 'system',
       kind: 'seat_change',
-      text: '⚙ Could not switch modes — try Settings → Intelligence directly.',
+      text: '⚙ Could not switch modes — try Settings → Models directly.',
       time: new Date().toLocaleTimeString()
     }]))
   }, "Switch to Cloud-Only Mode")), /*#__PURE__*/React.createElement("div", {

@@ -253,7 +253,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     if route.get('refuse'):
         return (route.get('warning')
                 or "This request needs vault access, which requires a local "
-                   "model. Load one on the Intelligence tab (or adjust "
+                   "model. Load one in Settings → Models (or adjust "
                    "model_routing.vault_cloud_fallback), then retry."), []
     vault_access = bool(route.get('vault_access'))
 

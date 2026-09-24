@@ -132,7 +132,7 @@ def seat() -> Dict[str, Any]:
     if not model:
         return {"assigned": False, "model": "", "provider": provider,
                 "reason": "No model assigned to the memory_manager seat. "
-                          "Settings -> Intelligence -> Memory keeper."}
+                          "Settings -> Models -> Memory keeper."}
     return {"assigned": True, "model": model, "provider": provider,
             "reason": ""}
 
