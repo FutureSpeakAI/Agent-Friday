@@ -203,9 +203,14 @@ class WaveInRecorder:
             self._error = self._winmm_reason(rc)
             return
 
-        # ~100 ms per buffer: responsive enough for a level meter, few enough
-        # buffers that nothing is dropped between requeues.
-        n_buf, buf_bytes = 4, int(self.rate * CAPTURE_WIDTH * 0.1)
+        # 20 ms per buffer, eight of them. The buffer size is the floor on
+        # how much speech is lost at each end: a buffer only becomes readable
+        # once it is full, and whatever is still in flight when the key comes
+        # up has to be drained. At 100 ms this measured half a second missing
+        # from every recording, which is a clipped first and last word; at
+        # 20 ms it is about a tenth of that. Eight buffers keep 160 ms queued,
+        # which is ample headroom for a 10 ms poll.
+        n_buf, buf_bytes = 8, int(self.rate * CAPTURE_WIDTH * 0.02)
         bufs, hdrs = [], []
         try:
             for _ in range(n_buf):
@@ -252,7 +257,11 @@ class WaveInRecorder:
         finally:
             try:
                 winmm.waveInStop(h)
+                # waveInReset returns every queued buffer to us with whatever
+                # it managed to record. Draining before the driver has written
+                # those lengths back throws away the end of the sentence.
                 winmm.waveInReset(h)
+                time.sleep(0.03)
                 for hdr in hdrs:
                     n = int(hdr.dwBytesRecorded)
                     if n:
@@ -295,8 +304,55 @@ def _rms(pcm):
 
 # ── Putting the words where the person was looking ──────────────────────────
 
-def insert_text(text, send_input=None, clipboard=None):
-    """Put ``text`` into the focused window.
+def foreground_window():
+    """The window that has focus right now, or None."""
+    try:
+        import ctypes
+        return ctypes.windll.user32.GetForegroundWindow() or None
+    except Exception:
+        return None
+
+
+def refocus(hwnd):
+    """Put focus back on ``hwnd``. True when it worked.
+
+    Windows only grants this to a process that recently received input, which
+    a dictation key has by definition — the user just held it.
+    """
+    if not hwnd:
+        return False
+    try:
+        import ctypes
+        u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+        if u32.GetForegroundWindow() == hwnd:
+            return True
+        cur = k32.GetCurrentThreadId()
+        tgt = u32.GetWindowThreadProcessId(hwnd, None)
+        u32.AttachThreadInput(cur, tgt, True)
+        try:
+            u32.SetForegroundWindow(hwnd)
+            u32.SetFocus(hwnd)
+        finally:
+            u32.AttachThreadInput(cur, tgt, False)
+        time.sleep(0.05)
+        return u32.GetForegroundWindow() == hwnd
+    except Exception:
+        return False
+
+
+def insert_text(text, send_input=None, clipboard=None, target=None):
+    """Put ``text`` into the window the person was looking at.
+
+    ``target`` is the window that had focus when the key went down. It is not
+    the same as the window that has focus now: transcription takes a moment,
+    and anything that steals focus in that moment — a notification, another
+    application finishing its startup — would otherwise receive the sentence
+    instead. Observed live, where a dictated sentence went to a different
+    application entirely while its target sat in the background.
+
+    Pasting private speech into whatever window happened to be in front is a
+    disclosure, so when focus has moved and cannot be restored, this refuses
+    and leaves the words on the clipboard.
 
     Clipboard-and-paste rather than synthetic typing: it is one event instead
     of one per character, it survives Chrome's and Word's input handling, and
@@ -322,6 +378,11 @@ def insert_text(text, send_input=None, clipboard=None):
         clip.set(text)
     except Exception as e:
         return False, "could not reach the clipboard: %s" % e
+
+    if target is not None and not refocus(target):
+        # The words are already on the clipboard above, so they are not lost.
+        return False, ("the window you dictated into is no longer in front — "
+                       "the text is on your clipboard, press Ctrl+V")
 
     try:
         (send_input or _send_ctrl_v)()
@@ -428,7 +489,7 @@ class PushToTalk:
     def __init__(self, hotkey=DEFAULT_HOTKEY, hold_ms=DEFAULT_HOLD_MS,
                  transcribe=None, insert=None, indicator=None,
                  recorder_factory=None, modifiers_held=None, replay=None,
-                 clock=None):
+                 clock=None, mask=None):
         self.set_hotkey(hotkey)
         self.hold_ms = int(hold_ms)
         self._transcribe = transcribe
@@ -437,9 +498,13 @@ class PushToTalk:
         self._recorder_factory = recorder_factory or WaveInRecorder
         self._modifiers_held = modifiers_held or _modifiers_held
         self._replay = replay or _replay_chord
+        self._mask = mask or (lambda: mask_alt_release(self.mods))
         self._clock = clock or time.monotonic
         self.state = IDLE
         self._rec = None
+        self._mic_error = ""
+        self._heard_audio = False
+        self._target = None
         self._listener = None
         self._timer = None
         self._lock = threading.RLock()
@@ -471,6 +536,17 @@ class PushToTalk:
                 if not self._modifiers_held(self.mods):
                     return PASS_THROUGH      # the bare key belongs to the app
                 self.state = PENDING
+                # Whose window this sentence belongs to is decided now, while
+                # the person is looking at it — not later, when the transcript
+                # is ready and focus may have moved.
+                self._target = foreground_window()
+                # Opening the microphone costs ~150ms (measured: waveInOpen is
+                # 149ms on this machine). Paying that AFTER the hold threshold
+                # would clip the first word off every sentence, because people
+                # start speaking as they press. So the device opens now, during
+                # the window in which we are still deciding whose keystroke
+                # this is, and a tap throws the audio away unheard.
+                self._start_recorder()
                 self._timer = threading.Timer(self.hold_ms / 1000.0,
                                               self._promote)
                 self._timer.daemon = True
@@ -486,37 +562,71 @@ class PushToTalk:
                     self._timer.cancel()
                     self._timer = None
         if state == PENDING:
-            # A tap. It was never ours, so give it back to whichever
-            # application was listening for it.
+            # A tap. It was never ours: discard the audio unheard and give the
+            # keystroke back to whichever application was listening for it.
+            self._discard_recorder()
             try:
                 self._replay(self.mods, self.vk)
             except Exception as e:
                 log.info("could not replay the tapped hotkey: %s", e)
             return SUPPRESS
         if state == RECORDING:
+            # Before the user lifts Alt: give Windows a keystroke inside the
+            # chord so the release is not read as a bare Alt.
+            try:
+                self._mask()
+            except Exception as e:
+                log.debug("could not mask the modifier release: %s", e)
             self._finish()
             return SUPPRESS
         return PASS_THROUGH
 
     # -- transitions -------------------------------------------------------
+    def _start_recorder(self):
+        """Open the microphone. Called on key-down, before we know whose
+        keystroke this is; a tap discards whatever it captured."""
+        self._heard_audio = False
+        rec = self._recorder_factory(on_level=self._on_level)
+        try:
+            rec.start()
+        except Exception as e:
+            log.warning("push-to-transcribe could not start the mic: %s", e)
+            self._notify("error", "Could not start the microphone: %s" % e)
+            self._rec = None
+            self._mic_error = str(e)
+            return
+        self._mic_error = ""
+        self._rec = rec
+
+    def _discard_recorder(self):
+        rec, self._rec = self._rec, None
+        if rec:
+            try:
+                rec.stop()
+            except Exception:
+                pass
+
     def _promote(self):
         """Still down past hold_ms, so this one is ours."""
         with self._lock:
             if self.state != PENDING:
                 return
-            self.state = RECORDING
-        self._rec = self._recorder_factory(on_level=self._on_level)
-        try:
-            self._rec.start()
-        except Exception as e:
-            log.warning("push-to-transcribe could not start the mic: %s", e)
-            self._notify("error", "Could not start the microphone: %s" % e)
-            with self._lock:
+            if self._rec is None:
                 self.state = IDLE
-            self._rec = None
-            return
-        self._notify("recording",
-                     "Listening… release to transcribe, Esc to cancel")
+                return          # the mic never opened; _start_recorder said so
+            self.state = RECORDING
+        # Not "Listening…" yet. Windows takes about 600ms to deliver the first
+        # sample after the device is opened (measured on this machine:
+        # 0.57-0.81s), and no amount of buffer tuning moves it — it is the
+        # capture stack starting up. Announcing "Listening" on a timer would
+        # invite someone to start speaking into a microphone that is not
+        # recording yet and lose their first word. So the card says what is
+        # actually true, and the first real sample is what flips it.
+        if not self._heard_audio:
+            self._notify("arming", "Opening the microphone…")
+        else:
+            self._notify("recording",
+                         "Listening… release to transcribe, Esc to cancel")
 
     def _cancel(self, why):
         with self._lock:
@@ -564,11 +674,18 @@ class PushToTalk:
         if not text:
             self._notify("idle", "Nothing was said")
             return
-        ok, note = self._insert(text)
+        ok, note = self._insert(text, target=self._target)
         self.last_result = {"text": text, "ok": bool(ok), "note": note}
         self._notify("done" if ok else "clipboard", note or text)
 
     def _on_level(self, level):
+        # The first sample is the go signal: it is the moment the microphone
+        # is genuinely recording rather than merely open.
+        if not self._heard_audio:
+            self._heard_audio = True
+            if self.state == RECORDING:
+                self._notify("recording",
+                             "Listening… release to transcribe, Esc to cancel")
         if self._indicator:
             try:
                 self._indicator.level(level)
@@ -595,17 +712,22 @@ class PushToTalk:
         WM_KEYUP, WM_SYSKEYUP = 0x0101, 0x0105
 
         def _filter(msg, data):
+            # suppress_event() signals pynput by RAISING, so it has to be
+            # called outside the guard. Catching it here instead swallows the
+            # signal: the hook reports success, suppression silently never
+            # happens, and every hold types a stray "t" into the document it
+            # was dictating into.
+            verdict = PASS_THROUGH
             try:
                 if msg in (WM_KEYDOWN, WM_SYSKEYDOWN):
                     verdict = self.on_key_event(data.vkCode, True)
                 elif msg in (WM_KEYUP, WM_SYSKEYUP):
                     verdict = self.on_key_event(data.vkCode, False)
-                else:
-                    return True
-                if verdict == SUPPRESS:
-                    listener.suppress_event()
             except Exception as e:      # a hook that raises stops delivering
-                log.warning("push-to-transcribe hook error: %s", e)
+                log.warning("push-to-transcribe hook error: %s: %s",
+                            type(e).__name__, e)
+            if verdict == SUPPRESS:
+                listener.suppress_event()
             return True
 
         listener = kb.Listener(win32_event_filter=_filter,
@@ -640,6 +762,51 @@ def _modifiers_held(mods):
         import ctypes
         g = ctypes.windll.user32.GetAsyncKeyState
         return all(g(_MODIFIER_VK[m]) & 0x8000 for m in mods)
+    except Exception:
+        return False
+
+
+VK_SHIFT = 0x10
+
+
+def keyboard_layout_count():
+    """How many keyboard layouts this machine has installed."""
+    try:
+        import ctypes
+        return int(ctypes.windll.user32.GetKeyboardLayoutList(0, None)) or 1
+    except Exception:
+        return 1
+
+
+def mask_alt_release(mods=("alt",), layouts=None):
+    """Stop a suppressed Alt chord from reading as a bare Alt press.
+
+    We swallow the T of Alt+T, which leaves Windows seeing Alt pressed and
+    released with nothing in between — the chord that opens a menu bar. In
+    Chrome that moves focus out of the text field, and the dictated sentence
+    then pastes into nothing. Measured against a Chrome textarea: no Alt at
+    all pastes; a bare Alt does not.
+
+    Giving Windows a keystroke between the two is what prevents it. Of the
+    candidates tried against Chrome only Shift worked — a Ctrl tap, a second
+    Alt tap, and the documented dummy keys (VK_NONAME, vk07, 0xFF) all still
+    lost the field.
+
+    Alt+Shift is also the legacy layout-switch chord, so this only masks when
+    the machine has a single keyboard layout and there is nothing to switch
+    between. On a multi-layout machine the menu bar takes focus and the
+    transcript stays on the clipboard, which is worse but not wrong.
+    """
+    if "alt" not in mods:
+        return False
+    if (layouts if layouts is not None else keyboard_layout_count()) > 1:
+        return False
+    try:
+        import ctypes
+        u32 = ctypes.windll.user32
+        u32.keybd_event(VK_SHIFT, 0, 0, 0)
+        u32.keybd_event(VK_SHIFT, 0, 0x0002, 0)
+        return True
     except Exception:
         return False
 

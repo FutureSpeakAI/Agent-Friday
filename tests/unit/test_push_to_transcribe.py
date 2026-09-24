@@ -48,8 +48,9 @@ class Spy:
         self.replayed = []
         self.notes = []
 
-    def insert(self, text):
+    def insert(self, text, target=None):
         self.inserted.append(text)
+        self.target = target
         return True, ""
 
     def replay(self, mods, vk):
@@ -141,7 +142,13 @@ def test_a_quick_tap_is_given_back_to_the_focused_app():
     assert spy.replayed == [(frozenset({"alt"}), VK_T)], (
         "a tap that is neither passed through nor replayed is a broken "
         "Alt+T in every application that wanted it")
-    assert not FakeRecorder.instances, "a tap must not record"
+    # The microphone IS opened on key-down — see
+    # test_the_microphone_opens_on_key_down_not_after_the_hold for why. What a
+    # tap must never do is keep, transcribe or insert what it heard.
+    assert all(r.stopped for r in FakeRecorder.instances), (
+        "a tap must release the microphone again")
+    assert spy.inserted == [] and svc.last_result is None, (
+        "a tap must transcribe nothing")
 
 
 def test_a_hold_starts_recording_and_a_release_transcribes():
@@ -213,7 +220,7 @@ def test_when_the_window_refuses_the_paste_the_words_are_still_reachable():
     reason to throw away the sentence someone just spoke."""
     spy = Spy()
 
-    def refuse(text):
+    def refuse(text, target=None):
         return False, "it is on your clipboard, press Ctrl+V"
 
     svc = _svc(spy, hold_ms=20)
@@ -341,3 +348,193 @@ def test_empty_speech_is_not_pasted_over_the_clipboard():
     ok, _note = ptt.insert_text("   ", send_input=lambda: None, clipboard=clip)
     assert ok is False
     assert clip.value == "precious"
+
+
+# ── The first word ──────────────────────────────────────────────────────────
+
+def test_the_microphone_opens_on_key_down_not_after_the_hold():
+    """Opening the device costs ~150ms (waveInOpen measured at 149ms here).
+
+    Paying that after the hold threshold clips the first word off every
+    sentence, because people start speaking as they press.
+    """
+    spy = Spy()
+    svc = _svc(spy, hold_ms=150)
+    svc.on_key_event(VK_T, True)
+    assert FakeRecorder.instances and FakeRecorder.instances[0].started, (
+        "the microphone must already be open while we are still deciding "
+        "whether this is a tap or a hold")
+    assert svc.state == ptt.PENDING
+
+
+def test_a_tap_discards_the_audio_it_captured_while_deciding():
+    """Pre-arming is only acceptable if a tap throws the audio away."""
+    spy = Spy()
+    svc = _svc(spy, hold_ms=150)
+    svc.on_key_event(VK_T, True)
+    rec = FakeRecorder.instances[0]
+    svc.on_key_event(VK_T, False)
+    assert rec.stopped, "the microphone must be released on a tap"
+    assert spy.inserted == []
+    assert svc.last_result is None, "a tap transcribes nothing"
+
+
+def test_a_microphone_that_will_not_open_does_not_pretend_to_record():
+    spy = Spy()
+
+    class Dead(FakeRecorder):
+        def start(self):
+            raise OSError("no microphone")
+
+    svc = ptt.PushToTalk(hotkey="alt+t", hold_ms=20,
+                         transcribe=lambda p: "x", insert=spy.insert,
+                         indicator=spy, replay=spy.replay,
+                         recorder_factory=Dead,
+                         modifiers_held=lambda m: True)
+    svc.on_key_event(VK_T, True)
+    time.sleep(0.12)
+    assert svc.state == ptt.IDLE, (
+        "with no microphone there is nothing to promote to")
+    assert any(s == "error" for s, _m in spy.notes)
+
+
+def test_the_card_does_not_say_listening_until_the_microphone_really_is():
+    """Windows takes ~600ms to deliver the first sample after the device
+    opens. Announcing "Listening" on a timer invites someone to speak into a
+    microphone that is not recording yet and lose their first word."""
+    spy = Spy()
+    svc = _svc(spy, hold_ms=20)
+    svc.on_key_event(VK_T, True)
+    time.sleep(0.1)
+    states = [s for s, _m in spy.notes]
+    assert "arming" in states, (
+        "before the first sample the card must say the microphone is "
+        "opening, not that it is listening: %r" % (spy.notes,))
+    assert "recording" not in states
+
+    svc._on_level(0.2)                      # the first real sample arrives
+    assert any(s == "recording" for s, _m in spy.notes), (
+        "the first sample is the go signal")
+
+
+def test_the_suppression_signal_is_not_swallowed_by_the_error_guard():
+    """pynput signals suppression by RAISING out of win32_event_filter.
+
+    Calling suppress_event() inside a try/except Exception catches that
+    signal: the hook reports success, suppression silently never happens, and
+    every hold types a stray "t" into the document being dictated into. Caught
+    live in Notepad, where the only symptom was an empty log line.
+    """
+    import inspect
+    src = inspect.getsource(ptt.PushToTalk.start)
+    # Comments in this function necessarily talk about suppress_event(), so
+    # compare code only.
+    code = "\n".join(ln for ln in src.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    body = code.split("def _filter")[1]
+    guard = body.split("except Exception")[0]
+    assert "suppress_event()" not in guard, (
+        "suppress_event() must be called AFTER the try/except, not inside it")
+    assert "suppress_event()" in body, "something must still suppress"
+
+
+# ── The words go where the person was looking ───────────────────────────────
+
+def test_the_target_window_is_chosen_at_key_down_not_at_paste_time():
+    """Transcription takes a moment, and focus can move inside it.
+
+    Observed live: a dictated sentence arrived in a different application
+    entirely while the window it was meant for sat in the background. Pasting
+    speech into whatever happens to be in front is a disclosure, not a typo.
+    """
+    spy = Spy()
+    svc = _svc(spy, hold_ms=20)
+    # Window 111 is in front when the key goes down; 222 steals focus while
+    # the transcriber is still working.
+    seen = iter([111, 222, 222, 222])
+    ptt.foreground_window, original = (lambda: next(seen, 222),
+                                       ptt.foreground_window)
+    try:
+        svc.on_key_event(VK_T, True)
+        time.sleep(0.1)
+        svc.on_key_event(VK_T, False)
+        _settle(svc)
+    finally:
+        ptt.foreground_window = original
+    assert spy.target == 111, (
+        "the sentence must be aimed at the window that was in front when the "
+        "key went down, not the one that stole focus afterwards: got %r"
+        % (spy.target,))
+
+
+def test_insert_refuses_rather_than_pasting_into_the_wrong_window():
+    clip = FakeClip("old")
+    pasted = []
+    moved = ptt.refocus
+    try:
+        ptt.refocus = lambda hwnd: False        # focus could not be restored
+        ok, note = ptt.insert_text("a private sentence",
+                                   send_input=lambda: pasted.append(1),
+                                   clipboard=clip, target=4242)
+    finally:
+        ptt.refocus = moved
+    assert ok is False
+    assert not pasted, (
+        "if the window you dictated into is gone, pasting anyway puts private "
+        "speech into whatever is in front")
+    assert clip.value == "a private sentence", "the words are still reachable"
+    assert "clipboard" in note
+
+
+def test_insert_with_no_target_still_works():
+    """Called without a target — as the in-page path does — nothing changes."""
+    clip = FakeClip("old")
+    ok, _note = ptt.insert_text("words", send_input=lambda: None,
+                                clipboard=clip)
+    assert ok is True
+
+
+# ── Not leaving a menu bar open behind us ───────────────────────────────────
+
+def test_the_suppressed_chord_does_not_read_as_a_bare_alt():
+    """Swallowing the T of Alt+T leaves Windows seeing Alt pressed and
+    released with nothing between — which opens a menu bar and takes focus
+    out of the text field. Measured against Chrome: with a bare Alt the paste
+    lands nowhere."""
+    spy = Spy()
+    masked = []
+    svc = ptt.PushToTalk(hotkey="alt+t", hold_ms=20,
+                         transcribe=lambda p: "words", insert=spy.insert,
+                         indicator=spy, replay=spy.replay,
+                         recorder_factory=FakeRecorder,
+                         modifiers_held=lambda m: True,
+                         mask=lambda: masked.append(1))
+    svc.on_key_event(VK_T, True)
+    time.sleep(0.1)
+    svc.on_key_event(VK_T, False)
+    assert masked, (
+        "the modifier release must be masked before the user lifts Alt")
+
+
+def test_a_second_keyboard_layout_disables_the_mask():
+    """Alt+Shift is the legacy layout-switch chord. Masking there would
+    change the keyboard on every dictation."""
+    assert ptt.mask_alt_release(("alt",), layouts=2) is False
+    assert ptt.mask_alt_release(("ctrl",), layouts=1) is False, (
+        "a chord without Alt has nothing to mask")
+
+
+def test_a_tap_needs_no_mask_because_the_chord_is_replayed():
+    """Replaying Alt+T gives Windows a real chord, not a bare Alt."""
+    spy = Spy()
+    masked = []
+    svc = ptt.PushToTalk(hotkey="alt+t", hold_ms=200,
+                         transcribe=lambda p: "x", insert=spy.insert,
+                         indicator=spy, replay=spy.replay,
+                         recorder_factory=FakeRecorder,
+                         modifiers_held=lambda m: True,
+                         mask=lambda: masked.append(1))
+    svc.on_key_event(VK_T, True)
+    svc.on_key_event(VK_T, False)
+    assert spy.replayed, "a tap is replayed"
+    assert not masked
