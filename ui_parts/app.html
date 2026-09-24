@@ -3228,10 +3228,10 @@ function KnowledgeGraphWS(props){
             style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:off?'default':'pointer',opacity:off?0.35:1,
               background:arrangement===a.id?'rgba(0,212,255,0.18)':'transparent',color:arrangement===a.id?'#bff3ff':'#8fa8c8'}}>{a.label}</button>)})}
         <span style={{width:1,alignSelf:'stretch',background:'rgba(170,120,255,0.25)',margin:'0 3px'}}/>
-        <button title="Collapse everything to a point and explode into this arrangement; pages arrive in the order they were written"
+        <button aria-label="Big Bang: collapse everything to a point and explode into this arrangement" title="Collapse everything to a point and explode into this arrangement; pages arrive in the order they were written"
           onClick={()=>{const S=kgRef.current;if(S.arrange)S.arrange(S.layout||'galaxy',{bang:true})}}
           style={{fontSize:11,padding:'3px 8px',border:'none',borderRadius:4,cursor:'pointer',background:'transparent',color:'#ffd28a'}}>{tb==='compact'?'✦':'✦ Big Bang'}</button>
-        <button title={touring?'Stop the tour':'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen'}
+        <button aria-label={touring?'Stop the tour':'Presentation tour'} title={touring?'Stop the tour':'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen'}
           onClick={()=>{const S=kgRef.current;if(touring)S.stopTour&&S.stopTour();else{
             // For an audience the workspace fills the screen, bottom bar and
             // all; Esc returns.
@@ -4149,6 +4149,7 @@ function KnowledgePages({
     }, ' (', (s.files || []).length, ')')), h('button', {
       className: 'kw-sec-g',
       onClick: () => onFocusSection(s.name),
+      'aria-label': 'Show the ' + s.name + ' section in the galaxy',
       title: 'Show the ' + s.name + ' section in the galaxy'
     }, '◎')), isOpen && (s.files || []).map(f => {
       const fn = typeof f === 'string' ? f : f.filename || f.name;

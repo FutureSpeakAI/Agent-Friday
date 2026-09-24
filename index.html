@@ -12804,6 +12804,7 @@ function KnowledgeGraphWS(props) {
       margin: '0 3px'
     }
   }), /*#__PURE__*/React.createElement("button", {
+    "aria-label": "Big Bang: collapse everything to a point and explode into this arrangement",
     title: "Collapse everything to a point and explode into this arrangement; pages arrive in the order they were written",
     onClick: () => {
       const S = kgRef.current;
@@ -12821,6 +12822,7 @@ function KnowledgeGraphWS(props) {
       color: '#ffd28a'
     }
   }, tb === 'compact' ? "\u2726" : "\u2726 Big Bang"), /*#__PURE__*/React.createElement("button", {
+    "aria-label": touring ? 'Stop the tour' : 'Presentation tour',
     title: touring ? 'Stop the tour' : 'Presentation tour, full screen: cycles through the arrangements with camera moves; any click or scroll in the graph stops it, Esc leaves full screen',
     onClick: () => {
       const S = kgRef.current;
@@ -13901,6 +13903,7 @@ function KnowledgePages({
     }, ' (', (s.files || []).length, ')')), h('button', {
       className: 'kw-sec-g',
       onClick: () => onFocusSection(s.name),
+      'aria-label': 'Show the ' + s.name + ' section in the galaxy',
       title: 'Show the ' + s.name + ' section in the galaxy'
     }, '◎')), isOpen && (s.files || []).map(f => {
       const fn = typeof f === 'string' ? f : f.filename || f.name;
