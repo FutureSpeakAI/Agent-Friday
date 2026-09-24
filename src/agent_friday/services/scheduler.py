@@ -257,6 +257,32 @@ def delete_schedule(sid) -> bool:
 
 
 # ── Built-in task registration ───────────────────────────────────────────────
+#: Schedules that ship LOCAL-ONLY, by Stephen's decision (2026-09-24):
+#: "daily creation, briefings, and news/front page should default to the local
+#: reasoning model to eliminate cost. So should the heartbeat."
+#:
+#: local-only means STRICTLY local: if no local seat is serving, the run is
+#: SKIPPED with a reason rather than quietly sent to a paid provider. Cloud is
+#: only ever used when a job is explicitly opted in.
+#:
+#: `sch_heartbeat` was already set this way on 2026-09-18 after his earlier
+#: request, and the ledger shows it worked: 2,357 runs / $438.76 before, then 47
+#: runs / $0.42 after, 46 of those 47 on arbiter-local/bonsai2:27b at $0.00. The
+#: one that escaped went through `_generate_agent`'s fallback ladder, which is why
+#: `local_only_guard` now refuses at the transports rather than only pinning a
+#: model at spawn.
+#:
+#: A DEFAULT, not a lock. The user's edits in schedules.json still win --
+#: `_seed_and_reconcile` only seeds a schedule that does not exist yet.
+LOCAL_ONLY_BY_DEFAULT = {
+    "sch_daily_creation",
+    "sch_news_morning",
+    "sch_front_page_evening",
+    "sch_afternoon_briefing",
+    "sch_heartbeat",
+}
+
+
 def register_builtin_task(ref, fn, *, label, default_trigger="daily",
                           default_spec=None, notify="on_complete",
                           weekday_only=None, default_enabled=True):
@@ -291,6 +317,105 @@ def register_daily_job(name, hour, minute, fn):
 # ── Trigger math ─────────────────────────────────────────────────────────────
 def _spec_hm(spec):
     return int(spec.get("hour", 9)), int(spec.get("minute", 0))
+
+
+#: How long the user must be away before idle work starts, and the default
+#: window. Overridable per schedule via `spec`, and globally in settings.
+_IDLE_DEFAULT_AFTER_S = 600          # 10 minutes away
+_IDLE_DEFAULT_WINDOW = (9, 23)       # 09:00-23:00, so it never runs overnight
+                                     # on a machine he left on by accident
+
+
+def _idle_settings():
+    """The user's on/off switch and window, from settings."""
+    try:
+        from agent_friday.core import _load_settings
+        blk = (_load_settings() or {}).get("idle_work") or {}
+    except Exception:
+        blk = {}
+    return {
+        "enabled": bool(blk.get("enabled", True)),
+        "after_s": float(blk.get("idle_after_s") or _IDLE_DEFAULT_AFTER_S),
+        "from_hour": int(blk.get("from_hour", _IDLE_DEFAULT_WINDOW[0])),
+        "to_hour": int(blk.get("to_hour", _IDLE_DEFAULT_WINDOW[1])),
+    }
+
+
+def idle_work_blocked_reason(rec=None, spec=None, now=None):
+    """Why idle work cannot start right now, or "" when it can.
+
+    A string rather than a bool so the skip notice can say which condition it
+    was waiting on. Every one of these is "wait", never "fail".
+    """
+    import datetime as _dt
+    now = now or _dt.datetime.now()
+    spec = spec or {}
+    cfg = _idle_settings()
+    if not cfg["enabled"]:
+        return "idle work is switched off in Settings"
+
+    lo = int(spec.get("from_hour", cfg["from_hour"]))
+    hi = int(spec.get("to_hour", cfg["to_hour"]))
+    if not (lo <= now.hour < hi):
+        return "outside the idle window (%02d:00-%02d:00)" % (lo, hi)
+
+    # The user asked for the machine: nothing background touches it.
+    try:
+        from agent_friday.services import stand_down as _sd
+        if _sd.is_stood_down():
+            return "Friday is stood down — you asked for the machine"
+    except Exception:
+        pass
+
+    after = float(spec.get("idle_after_s", cfg["after_s"]))
+    try:
+        from agent_friday.services import work_queue as _wq
+        idle = _wq.idle_seconds()
+    except Exception:
+        return "could not read how long you have been away"
+    if idle < after:
+        return ("you were active %d s ago; idle work waits for %d s"
+                % (int(idle), int(after)))
+
+    # Friday busy on her own account counts as not-idle: a background render
+    # must not contend with an interactive turn on the same card.
+    try:
+        with _RUNNING_LOCK:
+            busy = len(_RUNNING)
+        if busy:
+            return "Friday is busy with %d other scheduled run(s)" % busy
+    except Exception:
+        pass
+
+    # `exclusive_lease()` is the module-level answer to "does something own the
+    # card right now". Its own docstring records the exact failure this guards:
+    # "An hourly heartbeat launched while I was running my last image job and the
+    # whole computer slowed to a crawl." An earlier draft of this called a
+    # `lease_held()` that does not exist, wrapped in try/except -- a silent no-op,
+    # which is the defect class this file keeps fixing.
+    try:
+        from agent_friday.services.residency_arbiter import exclusive_lease
+        lease = exclusive_lease()
+        if lease:
+            return ("the GPU is held by %s"
+                    % (lease.get("role") or lease.get("holder") or "other work"))
+    except Exception:
+        pass                      # no arbiter answer is not a reason to refuse
+
+    return ""
+
+
+def _idle_window_ok(rec, spec, now) -> bool:
+    reason = idle_work_blocked_reason(rec, spec, now)
+    if not reason:
+        return True
+    # Noisy at DEBUG only: this is evaluated every tick and "still at the
+    # keyboard" is the normal answer, not an event.
+    try:
+        _log.debug("idle job %s waiting: %s", rec.get("id"), reason)
+    except Exception:
+        pass
+    return False
 
 
 def _is_due(rec, now) -> bool:
@@ -328,6 +453,18 @@ def _is_due(rec, now) -> bool:
     today = now.strftime("%Y-%m-%d")
     if rec.get("last_run_date") == today:
         return False
+    if trig == "idle_daily":
+        # Once a day, but WHILE THE USER IS AWAY rather than at a fixed hour.
+        #
+        # Stephen: "Why doesn't the daily creation run by default during idle
+        # time?" It was not running at all -- `sch_daily_creation` carried
+        # `enabled: false`, last ran 2026-09-09, and the newest artifact on disk
+        # is 2026-08-30. Not cost, not GPU contention: switched off.
+        #
+        # Every condition below is a reason to WAIT, not to fail, and the day's
+        # mark is only set when it actually runs -- so a day the user never steps
+        # away simply does not produce one, and says so rather than pretending.
+        return _idle_window_ok(rec, spec, now)
     if trig == "daily":
         return (now.hour, now.minute) >= _spec_hm(spec)
     if trig == "weekly":
@@ -578,6 +715,18 @@ def _run_task(rec):
         meta = BUILTIN_TASKS.get(ref)
         if not meta:
             raise RuntimeError(f"unknown builtin task ref {ref!r}")
+        # `local_only` used to be read ONLY on the agent_prompt path below, so
+        # every builtin schedule -- daily creation, the briefings, the news front
+        # page -- ignored it completely and each job picked its own model. The
+        # flag is a property of the RUN, so it is applied here as a context that
+        # the cloud transports refuse inside.
+        if task.get("local_only"):
+            from agent_friday.services import local_only_guard as _log_guard
+            with _log_guard.local_only(meta.get("label") or ref):
+                try:
+                    return meta["fn"]()
+                except _log_guard.CloudRefused as exc:
+                    raise SkippedRun(str(exc)) from exc
         return meta["fn"]()
     # agent_prompt — run through the existing background-task machinery so the
     # scheduled run gets its own fresh vault context, orbs, and verification.
@@ -612,9 +761,21 @@ def _run_task(rec):
             raise SkippedRun(
                 "local_only schedule skipped: no local seat is serving right "
                 "now, and this job is not permitted to run in the cloud")
-    tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
-                      description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
-                      tools=task.get("tools"), model=_model)
+    # Pinning the model at spawn is not the same as forbidding cloud for the
+    # whole run: `_generate_agent`'s fallback ladder can retry a failed leg on
+    # another provider, and one heartbeat run did exactly that on 2026-09-22 for
+    # $0.42 (almost all of it cache-write tokens). The context closes that.
+    if task.get("local_only"):
+        from agent_friday.services import local_only_guard as _log_guard
+        with _log_guard.local_only(rec.get("name") or "this schedule"):
+            tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
+                              description=f"scheduled:{rec.get('id')}",
+                              orb_icon="⏰", tools=task.get("tools"),
+                              model=_model)
+    else:
+        tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
+                          description=f"scheduled:{rec.get('id')}", orb_icon="⏰",
+                          tools=task.get("tools"), model=_model)
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
@@ -821,7 +982,10 @@ def _seed_and_reconcile():
                 "name": meta["label"],
                 "trigger": meta["default_trigger"],
                 "spec": meta["default_spec"],
-                "task": {"kind": "builtin", "ref": ref},
+                "task": ({"kind": "builtin", "ref": ref,
+                          "local_only": True}
+                         if sid in LOCAL_ONLY_BY_DEFAULT
+                         else {"kind": "builtin", "ref": ref}),
                 # Most builtins seed on; a few (the content publisher) are
                 # maintenance for a feature the owner may never touch, and a
                 # job nobody asked for should not run by default.
@@ -830,9 +994,45 @@ def _seed_and_reconcile():
             }, source="builtin")
             recs.append(rec)
             added += 1
-        if added:
+        # Apply the local-only default to schedules that ALREADY exist and have
+        # never been given an explicit answer. Absent is not the same as chosen:
+        # these were seeded before the default existed, so leaving them cloud-
+        # capable would make the decision a no-op for every current install --
+        # including Stephen's, whose four target schedules all carry
+        # Daily creation moves from a fixed 08:00 slot to "once a day, while he
+        # is away", and is turned back ON. It carried `enabled: false` with its
+        # last run on 2026-09-09, which is the whole of why nothing happened.
+        # Applied only while the record still looks untouched on this point, so a
+        # deliberate later choice is never overwritten.
+        for r in recs:
+            if r.get("id") != "sch_daily_creation":
+                continue
+            if r.get("trigger") == "daily" and (r.get("spec") or {}).get("hour") == 8:
+                r["trigger"] = "idle_daily"
+                r["spec"] = {"from_hour": 9, "to_hour": 23, "idle_after_s": 600}
+                r["enabled"] = True
+                print("  [scheduler] daily creation now runs on idle, and is on.")
+
+        # `local_only: None`. An explicit false is left alone.
+        migrated = 0
+        for r in recs:
+            t = r.get("task") or {}
+            if t.get("kind") != "builtin":
+                continue
+            if r.get("id") not in LOCAL_ONLY_BY_DEFAULT:
+                continue
+            if "local_only" in t:
+                continue
+            t["local_only"] = True
+            r["task"] = t
+            migrated += 1
+        if migrated:
+            print(f"  [scheduler] {migrated} schedule(s) now default to the "
+                  f"local seat (no cloud fallback).")
+        if added or migrated:
             _write_store(recs)
-            print(f"  [scheduler] seeded {added} built-in schedule(s).")
+            if added:
+                print(f"  [scheduler] seeded {added} built-in schedule(s).")
 
 
 # ── Default built-in roster (the 7 migrated tasks + the existing extras) ──────

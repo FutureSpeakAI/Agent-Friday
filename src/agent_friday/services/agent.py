@@ -2328,8 +2328,12 @@ def _maybe_handle_open_intent(message):
 # navigation (a structured action the client executes) instead of text that only
 # claims it will. Keep keys lowercase and singular-ish; the resolver normalizes.
 _WORKSPACE_ALIASES = {
-    'home': 'home', 'dashboard': 'home', 'overview': 'home',
-    'main': 'home', 'start': 'home', 'launchpad': 'home',
+    # 'home' and its synonyms are GONE, not retargeted. The Home workspace was
+    # removed 2026-09-24 and the desktop hero is the landing screen, so there is
+    # no window for "take me home" to open -- closing the open windows is what
+    # that means now, and that is not an alias's job. An alias pointing at a
+    # workspace that does not exist is the drift `test_workspace_aliases` exists
+    # to catch.
     'career': 'career', 'jobs': 'career', 'job search': 'career',
     'job pipeline': 'career', 'careers': 'career', 'job': 'career', 'work': 'career',
     'wiki': 'wiki', 'notes': 'wiki', 'knowledge': 'wiki', 'knowledge base': 'wiki',

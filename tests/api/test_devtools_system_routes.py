@@ -878,29 +878,42 @@ class TestRoutines:
         resp = client.post("/api/routines/no-such-routine/run")
         assert resp.status_code == 404
 
-    def test_routine_run_known_returns_ok(self, client, _block_subprocess):
-        """Running a real routine enqueues a VIBE_TERMINAL entry.
-        _run_claude_terminal is patched to no-op so nothing actually launches."""
-        first_id = friday_server.ROUTINE_REGISTRY[0]["id"]
-        resp = client.post(f"/api/routines/{first_id}/run")
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["status"] == "ok"
-        assert data["routine"] == first_id
-        assert "task_id" in data
+    def test_routine_run_known_returns_ok_or_an_honest_refusal(self, client):
+        """Every registry routine answers honestly: 200 when it started,
+        501 when this build has no handler for it, 409 while Friday is stood
+        down. What it may never do is claim it launched when it did not.
+        """
+        from agent_friday.services.misc_engine import ROUTINE_REGISTRY
+        for reg in ROUTINE_REGISTRY:
+            r = client.post("/api/routines/%s/run" % reg["id"])
+            assert r.status_code in (200, 409, 501), (
+                "%s -> HTTP %s" % (reg["id"], r.status_code))
+            body = r.get_json() or {}
+            if r.status_code != 200:
+                assert body.get("status") != "ok"
 
-    def test_routine_run_creates_vibe_terminal_entry(self, client, _block_subprocess):
-        first_id = friday_server.ROUTINE_REGISTRY[0]["id"]
-        resp = client.post(f"/api/routines/{first_id}/run")
-        tid = resp.get_json()["task_id"]
-        status = client.get("/api/vibe-code/status").get_json()
-        known_ids = [t["id"] for t in status["terminals"]]
-        assert tid in known_ids
+    def test_routine_run_starts_the_real_job(self, client, monkeypatch):
+        """A 200 must mean work started.
 
+        This used to assert that a VIBE_TERMINALS entry appeared with
+        status "pending" -- the artefact of a launch that never happened.
+        `run_routine` wrote that row, recorded last_status "launched" and
+        returned success without starting a thread, and nothing anywhere
+        consumed a pending row. Asserting the row was asserting the lie.
+        """
+        from agent_friday.services import scheduler
+        from agent_friday.routes import workflows
 
-# ═══════════════════════════════════════════════════════════════
-#  9. LOGS
-# ═══════════════════════════════════════════════════════════════
+        ran = []
+        monkeypatch.setitem(scheduler.BUILTIN_TASKS, "daily_creation",
+                            {"fn": lambda: ran.append(1),
+                             "label": "Daily Creation"})
+        monkeypatch.setattr(workflows, "_start_routine_thread",
+                            lambda ref, fn: fn(), raising=False)
+
+        r = client.post("/api/routines/daily-creation/run")
+        assert r.status_code == 200, r.get_json()
+        assert ran, "the endpoint returned ok without running anything"
 
 class TestLogsRecent:
     def test_returns_ok(self, client):
