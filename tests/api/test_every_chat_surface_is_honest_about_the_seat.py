@@ -193,10 +193,18 @@ def _conversation_window_source():
     does not contain this component at all), so it is what gets asserted.
     """
     src = (REPO / "index.html").read_text(encoding="utf-8", errors="replace")
-    start = src.index("function ConversationWindow(")
-    # The next top-level declaration ends the component.
-    end = src.index("\nfunction ", start + 10)
-    return src[start:end]
+    def body(name):
+        start = src.index("function " + name + "(")
+        # The next top-level declaration ends the component.
+        end = src.index("\nfunction ", start + 10)
+        return src[start:end]
+
+    win = body("ConversationWindow")
+    # The window draws its transcript through ChatSurface, the component the
+    # docked chat uses, so what it renders is ChatSurface's code.
+    if "React.createElement(ChatSurface," in win:
+        win += body("ChatSurface")
+    return win
 
 
 def test_the_new_window_renders_markdown_like_every_other_surface():
