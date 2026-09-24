@@ -232,12 +232,15 @@ def release_budget(workspace: str, amount_mψ: int) -> None:
 
 def _maybe_warn(workspace: str, spent: int, cap: int):
     try:
-        from agent_friday.services.notifications import push_notification
+        import agent_friday.notifications_engine as notifier
         pct = int((spent / cap) * 100)
-        push_notification(
-            f"Budget alert: {workspace} has used {pct}% of monthly compute budget "
-            f"({spent // 1000}ψ / {cap // 1000}ψ)",
+        notifier.push(
+            title=(f"Budget alert: {workspace} has used {pct}% of monthly compute budget "
+                   f"({spent // 1000}ψ / {cap // 1000}ψ)"),
             kind="budget_warning",
+            source="budget",
+            priority="high",
+            dedupe_key=f"budget_warning:{workspace}:{_month_key()}",
         )
     except Exception:
         pass

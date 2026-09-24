@@ -447,11 +447,10 @@ def _ollama_sizes():
     if hit is None and stamp and (now - stamp) < _OLLAMA_DOWN_BACKOFF_S:
         # Known down, recently. Answer without touching the socket.
         return {}
-    try:
-        from agent_friday.routing.ollama_manager import OLLAMA_HOST  # type: ignore
-        host = OLLAMA_HOST
-    except Exception:
-        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    # The daemon address is the model_routing.ollama_url setting, the same
+    # one dispatch uses; local_call.ollama_url() reads it and never raises.
+    from agent_friday.services.local_call import ollama_url
+    host = ollama_url()
     sizes = {}
     try:
         import requests
