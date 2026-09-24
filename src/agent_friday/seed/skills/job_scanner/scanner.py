@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - fallback for partial installs
     from job_tracker_schema import JobListing, JobTracker  # type: ignore
 
 try:
-    import notifications as _notify
+    from agent_friday import notifications as _notify
 except ImportError:  # pragma: no cover
     _notify = None  # type: ignore
 
