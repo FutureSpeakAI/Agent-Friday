@@ -163,6 +163,15 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     temperature: accepted for backward-compat but IGNORED — newer Claude
         models (Opus 5+, Sonnet 5+) reject the deprecated param.
     """
+    # A local-only run (a scheduled job pinned to the local seat) must not reach
+    # a paid provider, even through a fallback leg. This is the last point before
+    # the money is spent, and the one place a new fallback path cannot route
+    # around.
+    try:
+        from agent_friday.services.local_only_guard import refuse_if_active
+        refuse_if_active("anthropic", str(model or ""))
+    except ImportError:
+        pass
     client = get_anthropic_client()
     if client is None:
         raise RuntimeError(
@@ -1118,6 +1127,15 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
     can prefer healthy providers, and every response is cost-metered under the
     provider's REGISTRY name.
     """
+    # A local-only run (a scheduled job pinned to the local seat) must not reach
+    # a paid provider, even through a fallback leg. This is the last point before
+    # the money is spent, and the one place a new fallback path cannot route
+    # around.
+    try:
+        from agent_friday.services.local_only_guard import refuse_if_active
+        refuse_if_active(str(provider or "openai"), str(model or ""))
+    except ImportError:
+        pass
     import requests
     # Lazy for the same reason as in _call_ollama: defined in the upper layer.
     from agent_friday.services.agent import _oai_agentic_loop

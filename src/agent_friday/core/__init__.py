@@ -2250,6 +2250,17 @@ DEFAULT_SETTINGS = {
     # remaining daily creative budget is low.
     "daily_creation_free_choice": True,         # False reverts to the legacy text rotation
     "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
+    # ── Idle-time work ──
+    # Stephen: "Why doesn't the daily creation run by default during idle time?"
+    # It was not running at all -- its schedule carried `enabled: false`. This is
+    # the switch and the window for work that should happen while he is away
+    # rather than at a fixed hour. ON by default, which is what he asked for.
+    "idle_work": {
+        "enabled": True,
+        "idle_after_s": 600,   # how long away before idle work starts
+        "from_hour": 9,        # never overnight on a machine left on by accident
+        "to_hour": 23,
+    },
     # ── Family / Minor mode (§7) ──
     # When on, generation runs an age-appropriate filter ON TOP of the adult harm
     # floor — this half is real and re-checked live on every generation call.

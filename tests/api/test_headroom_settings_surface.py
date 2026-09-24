@@ -34,15 +34,19 @@ def test_fetch_preflight_known_model_returns_the_five_line_card(client):
             "measured", "derived", "declared", "unknown")
 
 
-def test_machine_level_is_a_stub_that_says_so(client):
+def test_machine_level_now_enforces(client):
+    """It was a stub, deliberately, while headroom.md D1 was open: it
+    accepted the click and said plainly that nothing was enforced. D1 was
+    answered 2026-09-24 and `services/stand_down.py` implements it, so the
+    route reports enforcement and no longer disclaims it.
+    """
     r = client.post("/api/machine/level", json={"level": "yield"})
     assert r.status_code == 200
-    d = r.get_json()
-    assert d["status"] == "ok"
-    assert d["accepted"] is True
-    assert d["enforced"] is False
-    assert "not" in d["message"].lower()
-
+    body = r.get_json()
+    assert body.get("enforced") is True
+    assert "nothing enforces" not in (body.get("message") or "").lower()
+    # put the machine back so no later test inherits a stood-down state
+    client.post("/api/machine/level", json={"level": "working"})
 
 def test_machine_level_defaults_to_yield_with_no_body(client):
     r = client.post("/api/machine/level")
