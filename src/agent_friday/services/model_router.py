@@ -23,6 +23,7 @@ the canonical source is routing/model_router.py.
 import os
 import io
 import json
+import functools as _functools
 import glob
 import subprocess
 import base64
@@ -191,6 +192,12 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     }
     if system:
         kwargs["system"] = system
+    # Ask Claude 5 models for their reasoning summary (see
+    # reasoning_trace.anthropic_thinking); older models are left as they were.
+    from agent_friday.services import reasoning_trace as _rt
+    _thinking_cfg = _rt.anthropic_thinking(model)
+    if _thinking_cfg:
+        kwargs["thinking"] = _thinking_cfg
     # NOTE: `temperature` is intentionally NOT forwarded. Newer Claude models
     # (Opus 5+, Sonnet 5+) reject the param with a 400 "temperature is
     # deprecated for this model". The param is kept in the signature for
@@ -235,6 +242,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
                   duration_ms=int((_time.time() - _t0) * 1000), kind="text")
     except Exception:
         pass
+    _rt.after_anthropic_response(resp, model=model, seat="cloud",
+                                 thinking_requested=bool(_thinking_cfg))
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
     # Badge truth: text-only Claude calls (validator's
     # tools-stripped retry, briefings) attribute like every other primitive.
@@ -379,7 +388,7 @@ def _claude_safe_model(candidate, settings):
     return None  # primitive's own configured default (ANTHROPIC_MODEL_DEFAULT)
 
 
-def _generate_text(messages, system=None, model=None, max_tokens=16384,
+def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                    temperature=None, orb_label=None, workspace=None,
                    system_builder=None):
     """Single-shot text generation via the user's CONFIGURED provider.
@@ -555,6 +564,21 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
         "an OpenAI-compatible endpoint in Settings, or run Ollama locally, then "
         "restart the server."
     )
+
+# Keeps its own name and docstring; __wrapped__ carries the real signature.
+@_functools.wraps(_generate_text_untraced, assigned=("__module__", "__annotations__"))
+def _generate_text(*args, **kwargs):
+    """`_generate_text_untraced` under a reasoning trace.
+
+    Runs inside the caller's trace when there is one (a chat turn, a
+    subagent, a scheduled job); otherwise opens a background trace named
+    after the orb label, so a briefing or Front Page run that nothing else
+    wraps still has its reasoning captured and archived.
+    """
+    from agent_friday.services import reasoning_trace as _rt_scope
+    _label = kwargs.get("orb_label") or kwargs.get("workspace") or "Background model call"
+    with _rt_scope.scope("background", str(_label)):
+        return _generate_text_untraced(*args, **kwargs)
 
 
 _seat_logger = logging.getLogger("friday.model_seat_gate")
@@ -1000,7 +1024,7 @@ def auto_router_cost_tier(settings=None):
     return tier if tier in AUTO_ROUTER_COST_TIERS else AUTO_ROUTER_DEFAULT_TIER
 
 
-def _consume_sse_completion(resp, on_delta=None):
+def _consume_sse_completion(resp, on_delta=None, reasoning_source=None):
     """Assemble an OpenAI-compatible SSE stream into ONE response dict.
 
     The returned dict is shape-identical to a non-streamed
@@ -1014,6 +1038,10 @@ def _consume_sse_completion(resp, on_delta=None):
     a per-model cost breakdown turns into one opaque `openrouter/auto` bucket.
 
     `on_delta(text)` fires per content fragment for progressive rendering.
+
+    `reasoning_source` (a reasoning_trace SOURCE_* key) routes reasoning
+    deltas to the current reasoning trace AS THEY ARRIVE, so the tray spools
+    the thinking live. They still never reach `on_delta`.
     """
     content_parts = []
     # REASONING DELTAS WERE BEING THROWN ON THE FLOOR.
@@ -1037,6 +1065,14 @@ def _consume_sse_completion(resp, on_delta=None):
     # journal line and the failure messages can read it and nothing else
     # changes.
     reasoning_parts = []
+    _rt_sink = None
+    if reasoning_source:
+        try:
+            from agent_friday.services import reasoning_trace as _rt
+            if _rt.current():
+                _rt_sink = _rt.reasoning
+        except Exception:
+            _rt_sink = None
     tool_calls = {}          # index -> partial tool call
     finish_reason = None
     served_model = None
@@ -1104,8 +1140,10 @@ def _consume_sse_completion(resp, on_delta=None):
             # `reasoning` is OpenRouter's. No on_delta: progressive rendering
             # shows the answer, not the scratchpad.
             _think = delta.get("reasoning_content") or delta.get("reasoning")
-            if _think:
+            if _think and isinstance(_think, str):
                 reasoning_parts.append(_think)
+                if reasoning_source and _rt_sink is not None:
+                    _rt_sink(_think, reasoning_source, model=served_model)
             # Tool calls arrive fragmented: the id/name land on the first
             # chunk for an index, the arguments accrete character-wise after.
             for tc in delta.get("tool_calls") or []:
@@ -1128,6 +1166,8 @@ def _consume_sse_completion(resp, on_delta=None):
         message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
     out = {"choices": [{"message": message,
                         "finish_reason": finish_reason or "stop"}]}
+    if reasoning_parts and _rt_sink is not None:
+        out["_reasoning_traced"] = True
     if served_model:
         out["model"] = served_model
     if usage:
@@ -1665,8 +1705,12 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if _want_stream and "text/event-stream" not in (
                     (getattr(r, "headers", None) or {}).get("Content-Type") or ""):
                 _want_stream = False
-            resp = (_consume_sse_completion(r, on_delta=on_delta or DELTA_SINK.get())
+            resp = (_consume_sse_completion(
+                        r, on_delta=on_delta or DELTA_SINK.get(),
+                        reasoning_source=("full" if local_bypass else "provider"))
                     if _want_stream else r.json())
+            if isinstance(resp, dict):
+                resp["_reasoning_local"] = bool(local_bypass)
             # Publish the seat's timings (llama-server) to whoever asked for
             # them -- the voice session records `prompt_n` as prefill_tokens.
             _tsink = TIMINGS_SINK.get()
