@@ -359,6 +359,15 @@ function notifTargetLabel(t){
 // Friday's UI. Prefers marked.js (loaded via CDN in head.html) and falls back
 // to a tiny regex parser if marked isn't ready yet. Output is always wrapped
 // in .friday-doc so the holographic CSS in head.html takes over.
+// Friday's own transient notice. The implementation lives in index.html (the
+// served, authoritative UI); this mirror calls through to it. Raw browser
+// fridayToast() is not used anywhere: it is a modal the app cannot style, queue or
+// dismiss, and it blocks the tab until clicked.
+function fridayToast(msg, opts){
+  if (window.fridayToast && window.fridayToast !== fridayToast) return window.fridayToast(msg, opts);
+  try { console.warn('[friday]', msg); } catch(e) {}
+}
+
 function fridayEscapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fridayFallbackMd(md){
   const lines=String(md||'').replace(/\r\n/g,'\n').split('\n');
@@ -976,7 +985,7 @@ function TalkToFridayButton({contentType,title,summary,style}){
   const onClick=(e)=>{
     e.stopPropagation();
     if(!window.fridayVoice){
-      alert('Enable voice mode first, then try again.');
+      fridayToast('Enable voice mode first, then try again.');
       return;
     }
     setActive(true);
@@ -1018,7 +1027,7 @@ function HomeWS(){
   const runRoutine=async(id,label)=>{setRunningRoutine(id);try{const r=await fetch('/api/routines/'+id+'/run',{method:'POST'});const d=await r.json();setRoutineToast(d.status==='ok'?(label+' launched'):'Launch failed');loadRoutines()}catch(e){setRoutineToast('Launch failed')}setRunningRoutine(null);setTimeout(()=>setRoutineToast(''),2500)};
   const approveTodo=id=>fetch(`/api/todos/${id}/approve`,{method:'POST'}).then(()=>setTodos(t=>t.map(x=>x.id===id?{...x,status:'approved'}:x)));
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
-  const runMorningRoutines=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing','Run email scan'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>alert('Morning routines launched')).catch(()=>{})};
+  const runMorningRoutines=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing','Run email scan'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>fridayToast('Morning routines launched')).catch(()=>{})};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading systems...</div>;
   const pending=todos.filter(t=>t.status==='proposed').length;
   const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days??c.days_until??'?'}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
@@ -1067,8 +1076,8 @@ function CareerWS(){
     fetch('/api/pipeline/jobs').then(r=>r.json()).then(d=>setEngineJobs(d.jobs||[])).catch(()=>[])
   ]).then(()=>setLoading(false))},[]);
   const loadReport=name=>{fetch('/api/career-ops/report/'+name).then(r=>r.json()).then(d=>{setReportContent(d.content||'');setView('report')}).catch(()=>{})};
-  const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:'~\\Projects\\career-ops'})}).then(()=>{setEvalUrl('');alert('Evaluation launched')}).catch(()=>{})};
-  const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:'~\\Projects\\career-ops'})}).then(()=>alert('Scan launched')).catch(()=>{})};
+  const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:'~\\Projects\\career-ops'})}).then(()=>{setEvalUrl('');fridayToast('Evaluation launched')}).catch(()=>{})};
+  const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:'~\\Projects\\career-ops'})}).then(()=>fridayToast('Scan launched')).catch(()=>{})};
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading career pipeline...</div>;
   const entries=tracker?.entries||[];const applied=entries.filter(e=>(e.status||'').toLowerCase().includes('appli')).length;
   const interviewing=entries.filter(e=>(e.status||'').toLowerCase().includes('interview')).length;
@@ -4136,7 +4145,7 @@ function StudioWS(){
   // prompts post straight to /api/create/<type> via StudioPromptBar; this
   // launcher (the old mis-wired "Create Now" button) is the only Studio
   // control that touches the terminal launcher, and it says so before it runs.
-  const runDailyAgent=()=>{if(!confirm("Launch Friday's autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar."))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>alert(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>alert('Could not launch the daily creation agent.'))};
+  const runDailyAgent=()=>{if(!confirm("Launch Friday's autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar."))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>fridayToast(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>fridayToast('Could not launch the daily creation agent.'))};
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
@@ -4341,8 +4350,8 @@ function DefederationPanel(){
     try{
       const r=await fetch(`/api/defederation/withdraw/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
       const d=await r.json();
-      if(d.ok)load();else alert('Withdraw failed: '+(d.error||'unknown'));
-    }catch(e){alert('Error: '+e.message);}
+      if(d.ok)load();else fridayToast('Withdraw failed: '+(d.error||'unknown'));
+    }catch(e){fridayToast('Error: '+e.message);}
   };
   if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading defederation data...</div>;
   return(<div>
@@ -5129,9 +5138,9 @@ function WorkflowsWS(){
   const deleteChain=(slug)=>{if(!confirm('Delete workflow "'+slug+'"?'))return;apiFetch('/api/workflows/chains/'+slug,{method:'DELETE'}).then(()=>loadChains())};
   const saveChain=()=>{
     const steps=draft.steps.filter(s=>(s.prompt||'').trim());
-    if(!draft.name.trim()||!steps.length){alert('A workflow needs a name and at least one step with a prompt.');return}
+    if(!draft.name.trim()||!steps.length){fridayToast('A workflow needs a name and at least one step with a prompt.');return}
     apiFetch('/api/workflows/chains',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:draft.name,description:draft.description,seat:draft.seat||null,steps})})
-      .then(r=>r.json()).then(d=>{if(d.status==='ok'){setShowNew(false);setDraft({name:'',description:'',seat:'',steps:[{name:'',prompt:''}]});loadChains()}else alert(d.message||'Save failed')});
+      .then(r=>r.json()).then(d=>{if(d.status==='ok'){setShowNew(false);setDraft({name:'',description:'',seat:'',steps:[{name:'',prompt:''}]});loadChains()}else fridayToast(d.message||'Save failed')});
   };
   const setStep=(i,k,v)=>{const s=draft.steps.slice();s[i]=Object.assign({},s[i],{[k]:v});setDraft(Object.assign({},draft,{steps:s}))};
   const stepColor=(st)=>st==='completed'?'#2ecc71':st==='running'?'#00d4ff':st==='queued'?'#f1c40f':st==='failed'?'#ff0080':'#666';
@@ -5140,7 +5149,7 @@ function WorkflowsWS(){
   const runSched=(s)=>{apiFetch('/api/schedules/'+s.id+'/run-now',{method:'POST'}).then(()=>setTimeout(loadSchedules,1500))};
   const deleteSched=(s)=>{if(!confirm('Delete schedule "'+(s.name||s.id)+'"?'))return;apiFetch('/api/schedules/'+s.id,{method:'DELETE'}).then(()=>loadSchedules())};
   const saveSched=()=>{
-    if(!sdraft.name.trim()||!sdraft.prompt.trim()){alert('A schedule needs a name and a prompt.');return}
+    if(!sdraft.name.trim()||!sdraft.prompt.trim()){fridayToast('A schedule needs a name and a prompt.');return}
     const spec=sdraft.trigger==='interval'?{every_minutes:Number(sdraft.every)||60}
       :sdraft.trigger==='weekly'?{weekday:Number(sdraft.weekday),hour:Number(sdraft.hour),minute:Number(sdraft.minute)}
       :sdraft.trigger==='once'?{at:Math.floor(new Date(sdraft.at||Date.now()).getTime()/1000)}
@@ -6195,10 +6204,10 @@ function NewsWS(){
   const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
   const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
   const loadWeekly=()=>{setWkLoading(true);fetch('/api/news/front-page/weekly/latest').then(r=>r.json()).then(d=>{setWeekly(d.digest||null);setWkList(d.digests||[]);setWkLoading(false)}).catch(()=>setWkLoading(false))};
-  const genWeekly=async()=>{if(wkGen)return;setWkGen(true);try{const r=await fetch('/api/news/front-page/weekly/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.digest)throw new Error(d.message||'Generation failed');setWeekly(d.digest);loadWeekly()}catch(e){alert('Weekly Digest generation failed: '+(e.message||e))}finally{setWkGen(false)}};
+  const genWeekly=async()=>{if(wkGen)return;setWkGen(true);try{const r=await fetch('/api/news/front-page/weekly/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.digest)throw new Error(d.message||'Generation failed');setWeekly(d.digest);loadWeekly()}catch(e){fridayToast('Weekly Digest generation failed: '+(e.message||e))}finally{setWkGen(false)}};
   const loadEditorial=()=>{setEdLoading(true);fetch('/api/news/editorial/latest').then(r=>r.json()).then(d=>{setEditorial(d.editorial||null);setEdList(d.editorials||[]);setEdLoading(false)}).catch(()=>setEdLoading(false))};
   const loadEdWeek=(id)=>{fetch('/api/news/editorial/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.editorial)setEditorial(d.editorial)}).catch(()=>{})};
-  const genEditorial=async()=>{if(edGen)return;setEdGen(true);try{const r=await fetch('/api/news/editorial/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.editorial)throw new Error(d.message||'Generation failed');setEditorial(d.editorial);loadEditorial()}catch(e){alert('Editorial generation failed: '+(e.message||e))}finally{setEdGen(false)}};
+  const genEditorial=async()=>{if(edGen)return;setEdGen(true);try{const r=await fetch('/api/news/editorial/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.editorial)throw new Error(d.message||'Generation failed');setEditorial(d.editorial);loadEditorial()}catch(e){fridayToast('Editorial generation failed: '+(e.message||e))}finally{setEdGen(false)}};
   const loadReadLater=()=>{setRlLoading(true);fetch('/api/news/read-later').then(r=>r.json()).then(d=>{const it=d.items||[];setReadLater(it);setSavedUrls(Object.fromEntries(it.map(a=>[a.url,true])));setRlLoading(false)}).catch(()=>setRlLoading(false))};
   const loadAnnotations=()=>fetch('/api/news/annotations').then(r=>r.json()).then(d=>{setAnnotations(d.annotations||[]);const m={};(d.annotated_ids||[]).forEach(id=>{if(id)m[id]=true});setAnnById(m)}).catch(()=>{});
   const loadClusters=()=>{setClLoading(true);fetch('/api/news/clusters').then(r=>r.json()).then(d=>{setClusters(d.clusters||[]);setClLoading(false)}).catch(()=>setClLoading(false))};
@@ -6240,7 +6249,7 @@ function NewsWS(){
   },[tab,feedLoading]);
 
   // Front Page generation + Read Later actions + background open.
-  const genFrontPage=async()=>{if(fpGen)return;setFpGen(true);try{const r=await fetch('/api/news/front-page/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.edition)throw new Error(d.message||'Generation failed');setFp(d.edition);loadFrontPage()}catch(e){alert('Front Page generation failed: '+(e.message||e))}finally{setFpGen(false)}};
+  const genFrontPage=async()=>{if(fpGen)return;setFpGen(true);try{const r=await fetch('/api/news/front-page/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.edition)throw new Error(d.message||'Generation failed');setFp(d.edition);loadFrontPage()}catch(e){fridayToast('Front Page generation failed: '+(e.message||e))}finally{setFpGen(false)}};
   const saveLater=async(it)=>{if(!it||!it.url)return;setSavedUrls(s=>({...s,[it.url]:true}));newsRecord(it.source,'read_later',it.category);try{await fetch('/api/news/read-later',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:it.url,title:it.title,source:it.source,snippet:it.snippet,category:it.category,color:it.color})});loadReadLater()}catch(e){}};
   const removeLater=async(url)=>{setReadLater(l=>l.filter(a=>a.url!==url));setSavedUrls(s=>{const n={...s};delete n[url];return n});try{await fetch('/api/news/read-later?url='+encodeURIComponent(url),{method:'DELETE'})}catch(e){}};
   // Open without stealing focus: pop the tab, then blur it and refocus this window.
@@ -6361,7 +6370,7 @@ function NewsWS(){
     try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');
       setHtmlContent(d.content);setSelected({date:d.date,filename:d.filename,isHtml:false});setTab('briefings');
       fetch('/api/briefings').then(r=>r.json()).then(x=>setBriefings(x.briefings||[])).catch(()=>{})}
-    catch(e){alert('Briefing generation failed: '+(e.message||e))}
+    catch(e){fridayToast('Briefing generation failed: '+(e.message||e))}
     finally{if(genTimer.current)clearInterval(genTimer.current);setGenerating(false);setGenStep(-1);setGenDone([])}};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
@@ -11102,7 +11111,7 @@ function fridayWorkspaceTabUrl(id,params){const q=params&&Object.keys(params).le
 function fridayOpenWorkspaceTab(id,params){
   if(!id||id==='settings')return false;
   const w=window.open(fridayWorkspaceTabUrl(id,params),'_blank');   // no feature string: a tab, not a popup
-  if(!w){alert('The browser blocked that tab. Allow pop-ups for Friday and try again.');return false}
+  if(!w){fridayToast('The browser blocked that tab. Allow pop-ups for Friday and try again.');return false}
   try{w.focus()}catch(e){}
   return true;
 }

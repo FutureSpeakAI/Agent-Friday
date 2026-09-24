@@ -5781,6 +5781,111 @@ function notifTargetLabel(t) {
 // Friday's UI. Prefers marked.js (loaded via CDN in head.html) and falls back
 // to a tiny regex parser if marked isn't ready yet. Output is always wrapped
 // in .friday-doc so the holographic CSS in head.html takes over.
+// ═══ TOAST + STAND-DOWN BANNER ═══
+// Friday's own transient notice, replacing every raw browser fridayToast().
+//
+// A browser fridayToast() is a modal the app cannot style, cannot queue, and cannot
+// dismiss for the user; it also blocks the whole tab until clicked. It was how a
+// dead button confessed to being dead ("Noted, but nothing enforces machine
+// levels yet"), which is the worst possible surface for that sentence.
+function fridayToast(msg, opts) {
+  try {
+    var text = (msg == null ? '' : String(msg));
+    if (!text.trim()) return;
+    var bad = !!(opts && opts.error);
+    var host = document.getElementById('friday-toast-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'friday-toast-host';
+      host.style.cssText = 'position:fixed;z-index:99999;right:16px;bottom:16px;' +
+        'display:flex;flex-direction:column;gap:8px;align-items:flex-end;' +
+        'pointer-events:none;max-width:min(520px,calc(100vw - 32px))';
+      document.body.appendChild(host);
+    }
+    var el = document.createElement('div');
+    el.setAttribute('role', 'status');
+    el.style.cssText = 'pointer-events:auto;font-family:JetBrains Mono,monospace;' +
+      'font-size:12px;line-height:1.5;padding:10px 13px;border-radius:8px;' +
+      'color:#e8eef8;background:' + (bad ? 'rgba(90,20,30,0.94)' : 'rgba(18,22,30,0.94)') +
+      ';border:1px solid ' + (bad ? 'rgba(255,90,110,0.55)' : 'rgba(255,255,255,0.16)') +
+      ';box-shadow:0 8px 28px rgba(0,0,0,0.45);white-space:pre-wrap;' +
+      'opacity:0;transform:translateY(6px);transition:opacity .16s,transform .16s';
+    el.textContent = text;
+    el.onclick = function () { el.remove(); };
+    host.appendChild(el);
+    requestAnimationFrame(function () {
+      el.style.opacity = '1'; el.style.transform = 'translateY(0)';
+    });
+    // Long messages need longer than a glance; an error stays until dismissed.
+    var ms = bad ? 15000 : Math.min(14000, 3200 + text.length * 28);
+    setTimeout(function () {
+      el.style.opacity = '0'; el.style.transform = 'translateY(6px)';
+      setTimeout(function () { el.remove(); }, 200);
+    }, ms);
+  } catch (e) { /* a notice that throws is worse than no notice */ }
+}
+window.fridayToast = fridayToast;
+
+// The stand-down banner. Fixed to the top so it reads as a state of the whole
+// app rather than of whichever panel is open, with Resume right there -- the
+// state is useless if getting out of it means hunting through Settings.
+function fridayStandDownBanner(state) {
+  try {
+    var active = !!(state && state.active);
+    var bar = document.getElementById('friday-stand-down-bar');
+    if (!active) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'friday-stand-down-bar';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99998;' +
+        'display:flex;align-items:center;gap:12px;padding:7px 14px;' +
+        'font-family:JetBrains Mono,monospace;font-size:12px;color:#ffd9a8;' +
+        'background:rgba(60,34,8,0.96);border-bottom:1px solid rgba(255,170,60,0.45)';
+      document.body.appendChild(bar);
+    }
+    bar.innerHTML = '';
+    var label = document.createElement('span');
+    label.textContent = '\u23FB  Friday is stood down \u2014 the machine is yours. ' +
+      'Local models are unloaded and background jobs are paused.';
+    var btn = document.createElement('button');
+    btn.textContent = 'Resume';
+    btn.style.cssText = 'margin-left:auto;cursor:pointer;font-family:inherit;' +
+      'font-size:11px;padding:3px 12px;border-radius:5px;color:#fff;' +
+      'background:rgba(255,170,60,0.22);border:1px solid rgba(255,170,60,0.6)';
+    btn.onclick = function () {
+      btn.disabled = true; btn.textContent = 'resuming…';
+      (window.apiFetch || window.fetch)('/api/machine/level', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level: 'working' }),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        fridayToast((d && d.message) || 'Friday is back.');
+        fridayStandDownBanner({ active: false });
+      }).catch(function () {
+        btn.disabled = false; btn.textContent = 'Resume';
+        fridayToast('Could not resume — try again.', { error: true });
+      });
+    };
+    bar.appendChild(label);
+    bar.appendChild(btn);
+  } catch (e) { /* never let the banner break the app */ }
+}
+window.fridayStandDownBanner = fridayStandDownBanner;
+
+// Poll the state so the banner is right after a restart or an auto-resume, not
+// only right after a click.
+(function () {
+  function poll() {
+    try {
+      (window.apiFetch || window.fetch)('/api/machine/level')
+        .then(function (r) { return r.json(); })
+        .then(function (d) { fridayStandDownBanner((d && d.state) || null); })
+        .catch(function () {});
+    } catch (e) {}
+  }
+  setTimeout(poll, 1500);
+  setInterval(poll, 30000);
+})();
+
 function fridayEscapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
@@ -7219,7 +7324,7 @@ function ChatSurface(props) {
       const url = '/?conversation=' + encodeURIComponent(cid) + '&chrome=chat';
       const w = window.open(url, '_blank');
       if (!w) {
-        alert('The browser blocked that tab. Allow pop-ups for Friday and '
+        fridayToast('The browser blocked that tab. Allow pop-ups for Friday and '
               + 'try again.');
         return;
       }
@@ -8142,7 +8247,7 @@ function ConversationWindow({
     }).then(r => r.json()).then(d => {
       const got = ((d.conversation || {}).seat || {}).model || null;
       if ((s && got !== s.model) || (!s && got)) {
-        alert('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
+        fridayToast('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
         setSeat((d.conversation || {}).seat || null);
         return;
       }
@@ -8664,7 +8769,7 @@ function TalkToFridayButton({
   const onClick = e => {
     e.stopPropagation();
     if (!window.fridayVoice) {
-      alert('Enable voice mode first, then try again.');
+      fridayToast('Enable voice mode first, then try again.');
       return;
     }
     setActive(true);
@@ -8753,7 +8858,7 @@ function HomeWS() {
         tasks: ['Run daily news briefing', 'Run email scan'],
         cwd: '~\\Projects\\friday-desktop'
       })
-    }).then(() => alert('Morning routines launched')).catch(() => {});
+    }).then(() => fridayToast('Morning routines launched')).catch(() => {});
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -9029,7 +9134,7 @@ function CareerWS() {
       })
     }).then(() => {
       setEvalUrl('');
-      alert('Evaluation launched');
+      fridayToast('Evaluation launched');
     }).catch(() => {});
   };
   const launchScan = () => {
@@ -9042,7 +9147,7 @@ function CareerWS() {
         tasks: ['Run portal scan'],
         cwd: '~\\Projects\\career-ops'
       })
-    }).then(() => alert('Scan launched')).catch(() => {});
+    }).then(() => fridayToast('Scan launched')).catch(() => {});
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -17417,7 +17522,7 @@ function StudioWS() {
         tasks: ['Run friday daily creation'],
         cwd: '~\\Projects\\friday-desktop'
       })
-    }).then(r => r.json()).then(d => alert(d && d.status === 'ok' ? 'Daily creation agent launched — watch the Code workspace for progress.' : 'Could not launch: ' + (d && d.message || 'unknown error'))).catch(() => alert('Could not launch the daily creation agent.'));
+    }).then(r => r.json()).then(d => fridayToast(d && d.status === 'ok' ? 'Daily creation agent launched — watch the Code workspace for progress.' : 'Could not launch: ' + (d && d.message || 'unknown error'))).catch(() => fridayToast('Could not launch the daily creation agent.', { error: true }));
   };
   const openCreation = async f => {
     setSelected(f);
@@ -18207,9 +18312,9 @@ function DefederationPanel() {
         body: JSON.stringify({})
       });
       const d = await r.json();
-      if (d.ok) load();else alert('Withdraw failed: ' + (d.error || 'unknown'));
+      if (d.ok) load();else fridayToast('Withdraw failed: ' + (d.error || 'unknown'));
     } catch (e) {
-      alert('Error: ' + e.message);
+      fridayToast('Error: ' + e.message, { error: true });
     }
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {
@@ -21181,7 +21286,7 @@ function WorkflowsWS() {
   const saveChain = () => {
     const steps = draft.steps.filter(s => (s.prompt || '').trim());
     if (!draft.name.trim() || !steps.length) {
-      alert('A workflow needs a name and at least one step with a prompt.');
+      fridayToast('A workflow needs a name and at least one step with a prompt.');
       return;
     }
     apiFetch('/api/workflows/chains', {
@@ -21208,7 +21313,7 @@ function WorkflowsWS() {
           }]
         });
         loadChains();
-      } else alert(d.message || 'Save failed');
+      } else fridayToast(d.message || 'Save failed');
     });
   };
   const setStep = (i, k, v) => {
@@ -21253,7 +21358,7 @@ function WorkflowsWS() {
   };
   const saveSched = () => {
     if (!sdraft.name.trim() || !sdraft.prompt.trim()) {
-      alert('A schedule needs a name and a prompt.');
+      fridayToast('A schedule needs a name and a prompt.');
       return;
     }
     const spec = sdraft.trigger === 'interval' ? {
@@ -25028,7 +25133,7 @@ function NewsWS() {
       setWeekly(d.digest);
       loadWeekly();
     } catch (e) {
-      alert('Weekly Digest generation failed: ' + (e.message || e));
+      fridayToast('Weekly Digest generation failed: ' + (e.message || e));
     } finally {
       setWkGen(false);
     }
@@ -25062,7 +25167,7 @@ function NewsWS() {
       setEditorial(d.editorial);
       loadEditorial();
     } catch (e) {
-      alert('Editorial generation failed: ' + (e.message || e));
+      fridayToast('Editorial generation failed: ' + (e.message || e));
     } finally {
       setEdGen(false);
     }
@@ -25193,7 +25298,7 @@ function NewsWS() {
       setFp(d.edition);
       loadFrontPage();
     } catch (e) {
-      alert('Front Page generation failed: ' + (e.message || e));
+      fridayToast('Front Page generation failed: ' + (e.message || e));
     } finally {
       setFpGen(false);
     }
@@ -25797,7 +25902,7 @@ function NewsWS() {
       setTab('briefings');
       fetch('/api/briefings').then(r => r.json()).then(x => setBriefings(x.briefings || [])).catch(() => {});
     } catch (e) {
-      alert('Briefing generation failed: ' + (e.message || e));
+      fridayToast('Briefing generation failed: ' + (e.message || e));
     } finally {
       if (genTimer.current) clearInterval(genTimer.current);
       setGenerating(false);
@@ -38198,7 +38303,7 @@ function ChatSidebar({ convList, projList, convId, onOpenConversation,
   const note = d => {
     // The API answers with what IS, and a `note` when what was asked for did
     // not happen. Surfacing it is the whole point of it being there.
-    if (d && d.note) alert(d.note);
+    if (d && d.note) fridayToast(d.note);
     return d;
   };
 
@@ -38405,7 +38510,7 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
       // The response carries the project as it now IS. A default model the
       // machine cannot seat comes back refused with a reason, and saying so
       // here is cheaper than finding out during a turn that hangs.
-      if (d && d.note) alert(d.note);
+      if (d && d.note) fridayToast(d.note);
       onSaved();
     }).catch(() => setSaving(false));
   };
@@ -38416,7 +38521,7 @@ function ProjectSettings({ project, apiFetch, onClose, onSaved }) {
     apiFetch('/api/projects/' + encodeURIComponent(project.id),
              { method: 'DELETE' })
       .then(r => r.json()).then(d => {
-        if (d && d.note) alert(d.note);
+        if (d && d.note) fridayToast(d.note);
         onSaved();
       }).catch(() => {});
   };
@@ -39295,8 +39400,12 @@ function SettingsTabIntelligence() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ level: 'yield' }),
     }).then(r => r.json()).then(d2 => {
-      alert(d2.message || 'Noted.');
-    }).catch(() => {}).finally(() => setYielding(false));
+      fridayToast(d2.message || 'Noted.');
+      // Put the banner up immediately rather than waiting for the next poll.
+      if (window.fridayStandDownBanner) window.fridayStandDownBanner(d2.state || null);
+    }).catch(() => fridayToast('Could not stand Friday down — try again.',
+                              { error: true }))
+      .finally(() => setYielding(false));
   };
 
   const setMode = (id) => {
@@ -39308,7 +39417,7 @@ function SettingsTabIntelligence() {
       .then(r => r.json()).then(d => {
         const got = ((d || {}).settings || {}).model_routing || {};
         if ((got.mode || '') !== id) {
-          alert('That mode did not stick — the server still has ' + (got.mode || 'nothing') + '.');
+          fridayToast('That mode did not stick — the server still has ' + (got.mode || 'nothing') + '.');
           return;
         }
         reload();
@@ -39437,23 +39546,23 @@ function SettingsTabIntelligence() {
       },
         E('span', null, 'Posture: '),
         E('span', { style: { color: 'rgba(255,255,255,0.8)' } }, contract.level || 'working'),
-        !contract.levels_enforced && E('span', {
-          title: 'The full working/away/yield Contract is not built yet (headroom.md D1) — this label does not change what is enforced.',
-          style: { color: 'rgba(255,255,255,0.32)' },
-        }, '(not yet enforced)'),
+        contract.stood_down && E('span', {
+          title: contract.stand_down_reason || 'Friday is stood down.',
+          style: { color: 'rgba(255,170,60,0.95)' },
+        }, '· stood down'),
         typeof contract.idle_s === 'number' && E('span', {
           style: { color: 'rgba(255,255,255,0.35)' },
         }, '· idle ' + Math.round(contract.idle_s) + 's'),
         E('button', {
           onClick: pressYield, disabled: yielding,
-          title: 'Tell Friday you need the machine now. Today this is noted but not enforced.',
+          title: 'Release the machine: unload local models from the GPU and pause every background and scheduled job until you press Resume. Chat keeps working on a cloud seat.',
           style: {
             cursor: yielding ? 'default' : 'pointer', marginLeft: 'auto',
             background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.18)',
             borderRadius: 5, padding: '3px 9px', color: 'rgba(255,255,255,0.75)',
             fontFamily: 'JetBrains Mono', fontSize: 10,
           },
-        }, yielding ? 'noting…' : 'I need my machine')),
+        }, yielding ? 'standing down…' : 'I need my machine')),
       E('div', {
         style: { fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.55)', marginTop: 6 },
       },
@@ -44170,7 +44279,7 @@ function fridayOpenWorkspaceTab(id, params) {
   // No feature string: that is what keeps it a tab rather than a popup.
   const w = window.open(fridayWorkspaceTabUrl(id, params), '_blank');
   if (!w) {
-    alert('The browser blocked that tab. Allow pop-ups for Friday and try again.');
+    fridayToast('The browser blocked that tab. Allow pop-ups for Friday and try again.');
     return false;
   }
   try { w.focus(); } catch (e) {}
@@ -44398,7 +44507,7 @@ function App() {
     }).then(r => r.json()).then(d => {
       const got = ((d.conversation || {}).seat || {}).model || null;
       if ((seat && got !== seat.model) || (!seat && got)) {
-        alert('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
+        fridayToast('That binding did not stick — this chat still has ' + (got || 'no model') + '.');
         setConvSeat((d.conversation || {}).seat || null);
         return;
       }
@@ -49062,7 +49171,7 @@ function App() {
           if (seated !== m.id) {
             setPendingSeat(null);
             console.error('[seat] save did not take: asked for', m.id, 'server holds', seated);
-            alert('That model did not stick — the server still has ' + (seated || 'nothing') +
+            fridayToast('That model did not stick — the server still has ' + (seated || 'nothing') +
                   '. Nothing was changed.');
             return;
           }
@@ -49070,7 +49179,7 @@ function App() {
           try { fridayInvalidateModelCatalog(); } catch (_) {}
         }).catch(e => {
           setPendingSeat(null);
-          if (e && e.message) alert(e.message);
+          if (e && e.message) fridayToast(e.message);
         });
     }
   })), /*#__PURE__*/React.createElement("div", {

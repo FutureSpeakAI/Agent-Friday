@@ -219,30 +219,48 @@ def fetch_preflight():
 @residency_bp.route("/api/machine/level", methods=["POST"])
 @login_required
 def machine_level():
-    """The 'I need my machine' / yield button (headroom.md §8.1, §8.3,
-    §12 Phase 4 item 3).
+    """The 'I need my machine' / Resume button (headroom.md D1, now decided).
 
-    STUBBED, deliberately: the full working/away/yield Headroom Contract is
-    **D1** (spec §13), and D1 is not decided -- there is no Phase 5 handler
-    in this tree that actually stands leases down or changes what the
-    planner enforces. This route exists so the button in Settings is not
-    dead (a click that goes nowhere is its own invisible-success defect,
-    KNOWN_ISSUES.md §1), and it says exactly what it is: accepted, and not
-    yet enforced. When Phase 5 lands, this becomes the real handler; nothing
-    about this response shape needs to change for that to happen.
+    This was a deliberate stub while D1 was open: it accepted the click and said
+    plainly that nothing was enforced. D1 was answered on 2026-09-24 and this is
+    the real handler.
+
+    `level`: "yield"/"away" stands Friday down, "working" resumes. `hours`
+    optionally sets an auto-resume window; omitted means "until Resume".
     """
+    from agent_friday.services import stand_down as sd
     data = request.get_json(silent=True) or {}
-    level = data.get("level") or "yield"
+    level = (data.get("level") or "yield").strip().lower()
+    who = (data.get("requested_by") or "").strip()
+    hours = data.get("hours")
+
+    if level in ("working", "resume", "back"):
+        st = sd.resume(requested_by=who)
+        return jsonify({
+            "status": "ok", "accepted": True, "enforced": True,
+            "level_requested": level, "active": False, "state": st,
+            "message": "Welcome back — Friday has the card again and background "
+                       "jobs are running.",
+        })
+
+    st = sd.stand_down(requested_by=who, hours=hours)
     return jsonify({
-        "status": "ok",
-        "accepted": True,
-        "enforced": False,
-        "level_requested": level,
-        "message": "Noted, but nothing enforces machine levels yet -- "
-                   "working/away/yield is a decision the maintainer has not made "
-                   "(headroom.md D1). This click does not release or stand "
-                   "anything down.",
+        "status": "ok", "accepted": True, "enforced": True,
+        "level_requested": level, "active": True, "state": st,
+        "message": ("The machine is yours. Local models are unloaded and every "
+                    "background and scheduled job is paused. Chat still works on "
+                    "a cloud seat. Press Resume when you want Friday back."),
     })
+
+
+@residency_bp.route("/api/machine/level", methods=["GET"])
+@login_required
+def machine_level_state():
+    """Current stand-down state, for the header banner."""
+    from agent_friday.services import stand_down as sd
+    st = sd.state()
+    return jsonify({"status": "ok", "enforced": True, "state": st,
+                    "active": bool(st.get("active")), "reason": sd.reason()})
 
 
 @residency_bp.route("/api/residency/replan", methods=["POST"])

@@ -989,7 +989,30 @@ worktrees. Phase 3 needs 2's record shape (not its measurements). Phase 4 needs 
 
 | # | Decision | Options | This document's recommendation |
 |---|---|---|---|
-| **D1** | The default contract level and the slack numbers (§4.2) | `working` with 1,024 / 4,096; smaller; larger | `working` as written. It is the level at which his own second monitor survives. |
+| **D1** | The default contract level and the slack numbers (§4.2) | `working` with 1,024 / 4,096; smaller; larger | **DECIDED 2026-09-24.** Default stays `working` with 1,024 / 4,096 — it is the level at which his own second monitor survives. The `yield` level is now BUILT and ENFORCED: see below. |
+
+**D1 resolution (2026-09-24).** "I need my machine" releases the machine. It was
+a placebo until this date: the route answered "Noted, but nothing enforces
+machine levels yet ... This click does not release or stand anything down" in a
+raw browser `alert()`. The decided behaviour, implemented in
+`services/stand_down.py`:
+
+* local models are unloaded from the GPU (`adopt_or_reap(set())`). Laya is a CPU
+  encoder and is untouched, so it keeps working;
+* every background and scheduled job is paused at the single gate in
+  `scheduler._run_task`, which raises `StoodDown` so the run is recorded as a
+  SKIP with a reason rather than silently dropped;
+* the state is PERSISTED at `~/.friday/stand_down.json`. A stand-down that forgot
+  itself across a tray restart would hand the card straight back;
+* a fixed banner reads "Friday is stood down — the machine is yours" with a
+  Resume button, because a state whose exit is buried in Settings is a trap;
+* it lasts until Resume, or auto-resumes after a chosen number of hours
+  (`hours` on the POST; omitted means "until Resume");
+* background work never wakes the GPU while stood down, and neither does
+  interactive work — `may_use_local_gpu()` is False for both. Chat continues on a
+  cloud seat with its usual visible model label, or says it is waiting when cloud
+  is off. Standing down is about the CARD, not about going silent:
+  `blocks_interactive_chat()` is always False.
 | **D2** | May a chain that touched the vault at any stage offer cloud for a later, non-derived stage? | Provenance decides (§6.2 rule 5); or no cloud anywhere in a vault-touching chain | Provenance. The stricter rule is available as a setting. |
 | **D3** | Automatic cancel of an in-flight render | Only on display-reserve breach (HR17); also on VRAM-slack breach; never — always ask | HR17 as written. |
 | **D4** | Are models with `degraded` on *runs well* offered for fetch at all? | Offered with the reason on the button; hidden behind "show everything"; never | Offered. Hiding is the phantom in reverse. |
