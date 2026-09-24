@@ -98,8 +98,9 @@ def test_the_edition_workspace_tab_redirects_home(client):
         % r.status_code)
     target = r.headers.get("Location", "")
     assert "edition" not in target, "redirected back to itself: %r" % target
-    assert "home" in target or target.rstrip("/").endswith(("", "/")), (
-        "/w/edition redirects to %r, which is not Home" % target)
+    # With Home gone too, the desktop itself is the destination.
+    assert "/w/" not in target, (
+        "/w/edition redirects to %r; it should land on the desktop" % target)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,20 +131,22 @@ def test_the_dock_has_no_edition_icon(path, pattern):
     (INDEX, r"\bid:\s*'([a-z0-9_-]+)'"),
     (APP, r"\bid:'([a-z0-9_-]+)'"),
 ])
-def test_home_is_now_first_in_the_dock(path, pattern):
-    """Edition held the first slot. Removing it must leave Home there rather
-    than whatever happened to be third."""
+def test_neither_edition_nor_home_is_in_the_dock(path, pattern):
+    """Both were landing screens and both are gone. Edition held the first dock
+    slot and Home the second; the dock now starts with whatever followed them."""
     ids = _dock_ids(path, pattern)
-    assert ids[0] == "home", (
-        "%s dock now starts with %r, not Home" % (path.name, ids[0]))
+    assert "edition" not in ids, "%s still ships an edition icon" % path.name
+    assert "home" not in ids, "%s still ships a home icon" % path.name
 
 
-def test_the_desktop_opens_home_on_load():
+def test_the_desktop_auto_opens_nothing():
+    """The desktop hero IS the landing screen now -- the greeting, the countdown
+    ticker and START MY DAY. Auto-opening a workspace window over it is exactly
+    what was complained about, first for Edition and then for Home."""
     src = INDEX.read_text(encoding="utf-8", errors="replace")
-    assert "openWs('edition')" not in src, (
-        "the desktop still auto-opens the Edition workspace on load")
-    assert "openWs('home')" in src, (
-        "the desktop no longer opens anything on load; Stephen asked for Home")
+    assert "openWs('edition')" not in src
+    assert "openWs('home')" not in src, (
+        "the desktop still auto-opens Home over the hero")
 
 
 @pytest.mark.parametrize("path", [INDEX, APP])
@@ -194,7 +197,7 @@ def test_news_engine_still_composes_front_pages():
     assert hasattr(ne, "_read_front_page")
 
 
-@pytest.mark.parametrize("ws", ["news", "home"])
+@pytest.mark.parametrize("ws", ["news", "studio"])
 def test_the_surviving_workspaces_still_serve_as_tabs(client, ws):
     assert client.get("/w/" + ws).status_code == 200
 
@@ -216,3 +219,17 @@ def test_nothing_deletes_the_existing_edition_data():
                     r"rmtree|unlink|os\.remove|shutil\.rm", line):
                 suspects.append("%s: %s" % (p.name, line.strip()[:90]))
     assert not suspects, "code that deletes edition data: %s" % suspects
+
+
+def test_the_home_workspace_tab_also_redirects(client):
+    """`/w/home` was a real URL and is now retired the same way."""
+    r = client.get("/w/home")
+    assert r.status_code in (301, 302, 303, 307, 308), (
+        "/w/home returned HTTP %s" % r.status_code)
+    assert "/w/" not in r.headers.get("Location", "")
+
+
+def test_the_home_component_is_gone():
+    for path in (INDEX, APP):
+        src = path.read_text(encoding="utf-8", errors="replace")
+        assert "HomeWS" not in src, "%s still references HomeWS" % path.name

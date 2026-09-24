@@ -93,7 +93,7 @@ _WS_ID = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
 #: old notification or sitting in someone's history, so they redirect rather than
 #: 404. `edition` (The Friday Edition, E0) was removed 2026-09-24 in favour of
 #: the briefings; its data is untouched at ~/.friday/edition.
-_RETIRED_WORKSPACES = {'edition': 'home'}
+_RETIRED_WORKSPACES = {'edition': None, 'home': None}
 
 
 @core_bp.route('/w/<ws_id>')
@@ -101,7 +101,11 @@ def serve_workspace_tab(ws_id):
     if not _WS_ID.match(ws_id or ''):
         return "Not a workspace name.", 404
     if ws_id in _RETIRED_WORKSPACES:
-        return redirect('/w/' + _RETIRED_WORKSPACES[ws_id])
+        # None means "the desktop itself". Home and Edition were both landing
+        # screens; with both gone the desktop hero IS the landing screen, so
+        # their URLs go there rather than to another workspace window.
+        target = _RETIRED_WORKSPACES[ws_id]
+        return redirect(('/w/' + target) if target else '/')
     if ws_id == 'settings':
         return redirect('/?workspace=settings')
     return _serve_index(

@@ -253,44 +253,118 @@ def list_routines():
     return jsonify({"status": "ok", "routines": out})
 
 
+#: Routine id -> the scheduler builtin that actually does the work.
+#:
+#: `run_routine` used to write a "pending" VIBE_TERMINALS entry, record
+#: `last_status: "launched"` and return `"<label> launched"` -- without starting
+#: anything. No thread, no subprocess, and nothing anywhere consumes a pending
+#: VIBE_TERMINALS row, so the entry sat there forever while the UI reported a
+#: launch. That is why "I tried to launch the daily creation routine and nothing
+#: happened" (2026-09-24): nothing was ever started, and the API said otherwise.
+#:
+#: The scheduler already owns these jobs, so a routine button runs the SAME code
+#: the timer runs. One implementation, two triggers.
+ROUTINE_TASKS = {
+    "daily-creation": "daily_creation",
+    "morning-briefing": "news_morning",
+    "afternoon-briefing": "afternoon_briefing",
+    "repo-sync": "repo_sync",
+}
+
+#: Registry entries with no implementation in this build. They are allowed to
+#: exist and say so; they are NOT allowed to claim they ran. Listing them
+#: explicitly is what stops a new registry entry falling through to the old lie
+#: -- a test asserts every routine is in one set or the other.
+ROUTINES_WITHOUT_HANDLERS = {
+    "weekly-legal-prep",
+    "family-weekend-prep",
+    "portfolio-snapshot",
+    "content-pipeline",
+    "job-intelligence",
+}
+
+
+def _start_routine_thread(ref, fn):
+    """Run a routine's job off the request thread. Seam for tests."""
+    import threading
+    threading.Thread(target=fn, daemon=True,
+                     name="routine-%s" % ref).start()
+
+
 @workflows_bp.route('/api/routines/<routine_id>/run', methods=['POST'])
 @login_required
 def run_routine(routine_id):
-    """Trigger a routine on demand. Launches a background Vibe-Code task and records status."""
+    """Trigger a routine on demand.
+
+    Three honest outcomes, and no fourth:
+      * 200 -- the real job was started;
+      * 501 -- this routine has no handler in this build, named plainly;
+      * 409 -- Friday is stood down, so background work is paused.
+
+    `last_status` is only ever written as "launched" when something was actually
+    launched.
+    """
     reg = next((r for r in ROUTINE_REGISTRY if r['id'] == routine_id), None)
     if not reg:
         return jsonify({"status": "error", "message": "Unknown routine"}), 404
 
-    template = ROUTINES_DIR / f"{routine_id}.md"
-    task_desc = f"Run routine: {reg['label']}"
-    if template.exists():
-        task_desc += f" (see {template.name})"
-
-    stamp = datetime.now().isoformat()
-    tid = str(uuid.uuid4())[:8]
+    # The user asked for the machine; background work waits.
     try:
-        VIBE_TERMINALS[tid] = {
-            "id": tid, "task": task_desc,
-            "status": "pending", "cwd": str(Path.cwd()),
-            "started": stamp, "log_file": None
-        }
+        from agent_friday.services import stand_down as _sd
+        if _sd.is_stood_down():
+            return jsonify({
+                "status": "error", "routine": routine_id,
+                "message": "Friday is stood down — you asked for the machine, so "
+                           "background routines are paused. Press Resume to run "
+                           "%s." % reg['label'],
+            }), 409
     except Exception:
         pass
+
+    ref = ROUTINE_TASKS.get(routine_id)
+    if not ref:
+        return jsonify({
+            "status": "error", "routine": routine_id,
+            "message": "%s has no handler in this build — nothing was started. "
+                       "It is listed in the routine registry but no automated job "
+                       "implements it yet." % reg['label'],
+        }), 501
+
+    try:
+        from agent_friday.services.scheduler import BUILTIN_TASKS
+        meta = BUILTIN_TASKS.get(ref)
+        fn = (meta or {}).get("fn")
+        if not callable(fn):
+            return jsonify({
+                "status": "error", "routine": routine_id,
+                "message": "%s maps to the scheduled job %r, which is not "
+                           "registered right now — nothing was started."
+                           % (reg['label'], ref),
+            }), 501
+    except Exception as exc:
+        return jsonify({
+            "status": "error", "routine": routine_id,
+            "message": "Could not reach the scheduler to run %s: %s"
+                       % (reg['label'], exc),
+        }), 500
+
+    stamp = datetime.now().isoformat()
+    _start_routine_thread(ref, fn)
 
     status = _load_routine_status()
     status[routine_id] = {
         "last_run": stamp,
         "last_status": "launched",
-        "last_task_id": tid,
+        "last_task_ref": ref,
     }
     _save_routine_status(status)
 
     return jsonify({
         "status": "ok",
         "routine": routine_id,
-        "task_id": tid,
+        "task_ref": ref,
         "started_at": stamp,
-        "message": f"{reg['label']} launched",
+        "message": "%s started — it runs the same job as its timer." % reg['label'],
     })
 
 
