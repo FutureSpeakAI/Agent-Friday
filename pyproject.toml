@@ -86,6 +86,12 @@ pii = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]
 keyring = ["keyring>=24.0"]
 windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0", "pystray>=0.19"]  # computer control + global kill-switch + tray icon
 pdf = ["pdfplumber>=0.11"]  # retained alias; pdfplumber is now a core dependency
+# Fill, sign and OCR PDFs (services/pdf_forms.py, services/pdf_signing.py and
+# the OCR fallback in services/file_extraction.py). Each degrades gracefully
+# when absent. PyPDFForm (MIT) fills forms and stamps images; pyHanko (MIT)
+# makes digital signatures; rapidocr-onnxruntime (Apache-2.0) is local OCR
+# whose ONNX models ship inside the wheel, so nothing downloads at runtime.
+documents = ["PyPDFForm>=5.6", "pyHanko>=0.37", "rapidocr-onnxruntime>=1.2.3"]
 # Development and CI: the test runner and the fatal-rule linter.
 # pytest-xdist is not optional: pytest.ini defaults to `-n auto --dist
 # loadfile`, and without it every `pytest` invocation fails on an unknown
@@ -104,6 +110,9 @@ all = [
     "headroom-ai[all]>=0.22",
     "pynacl>=1.5",
     "pdfplumber>=0.11",
+    "PyPDFForm>=5.6",
+    "pyHanko>=0.37",
+    "rapidocr-onnxruntime>=1.2.3",
     # Egress-gate Layer 2 NER. This comment used to read "the recommended
     # install ships with the FULL gate, not a weakened one". That is no longer
     # true and should not be restored: Presidio is installed but runs

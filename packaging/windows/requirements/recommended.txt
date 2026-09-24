@@ -28,6 +28,16 @@ pynacl>=1.5
 # --- PDF text extraction ---------------------------------------------------
 pdfplumber>=0.10
 
+# --- Fill, sign and OCR PDFs (pyproject extra `documents`) -----------------
+#     PyPDFForm (MIT) fills forms and stamps a signature image; pyHanko (MIT)
+#     makes digital signatures; rapidocr-onnxruntime (Apache-2.0) reads
+#     scanned pages locally with ONNX models bundled in its wheel, so nothing
+#     is downloaded at runtime. It reuses the onnxruntime above and pulls
+#     opencv-python, Shapely and pyclipper.
+PyPDFForm>=5.6
+pyHanko>=0.37
+rapidocr-onnxruntime>=1.2.3
+
 # --- Creative trimmings ----------------------------------------------------
 imageio-ffmpeg>=0.5
 mutagen>=1.47

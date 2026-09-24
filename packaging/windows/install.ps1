@@ -739,7 +739,8 @@ $null = Invoke-Step -Id 'deps.recommended' -Title 'Installing voice, PDF reading
     -Verify {
         Test-ModulesImportable -InstallRoot $InstallRoot -Modules @(
             'faster_whisper','piper','onnxruntime','pyttsx3',
-            'presidio_analyzer','presidio_anonymizer','nacl','pdfplumber'
+            'presidio_analyzer','presidio_anonymizer','nacl','pdfplumber',
+            'PyPDFForm','pyhanko','rapidocr_onnxruntime'
         )
     }
 
