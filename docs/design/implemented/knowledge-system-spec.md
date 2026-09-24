@@ -1,7 +1,7 @@
 # Agent Friday — Knowledge System Overhaul: Technical Specification
 
 > **Status:** implemented
-> **Last verified:** 2026-09-06
+> **Last verified:** 2026-09-24
 > **Implementation:** `services/knowledge_graph.py`, `services/knowledge_graph/`, `services/wiki_engine.py`
 > **Supersedes / superseded by:** —
 > **Written:** 2026-07-06
@@ -229,7 +229,7 @@ Backend (Flask blueprint `routes/knowledge_graph.py`, auto-discovered; **also ad
 
 Contract notes: `/graph` **must** return precomputed `x,y,z` (client does not cold-start a full simulation); responses are capped/paginated (server never streams 10k nodes unasked — it returns the top community level and lets the client drill down); the WS channel reuses friday-desktop's existing `/ws/live` pattern.
 
-Frontend consumes this via the existing `apiFetch` wrapper (adds `X-Friday-Token`). Clicking a node fires `fridayNavigate('wiki', {file})` to open the page in `WikiWS`.
+Frontend consumes this via the existing `apiFetch` wrapper (adds `X-Friday-Token`). The graph and the wiki's pages are one workspace, Knowledge (`KnowledgeWS`): clicking a page's node opens that page beside the graph (Split view), and opening a page flies the graph to its node and lights the links in and out of it. The old `wiki` workspace id and `/w/wiki` resolve to Knowledge's Pages view.
 
 ---
 

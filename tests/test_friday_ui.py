@@ -156,7 +156,7 @@ class TestThreeJs:
 # 4. WORKSPACE NAVIGATION
 # ────────────────────────────────────────────────────────────────────────────
 class TestWorkspaces:
-    WS_LABELS = ["Home", "Career", "FutureSpeak", "Contacts", "Wiki", "System"]
+    WS_LABELS = ["Home", "Career", "FutureSpeak", "Contacts", "Knowledge", "System"]
 
     def test_dock_visible(self, loaded_page: Page):
         dock = loaded_page.locator(".dock")
@@ -590,7 +590,7 @@ class TestErrorHandling:
     def test_workspace_walkthrough_no_uncaught(self, loaded_page: Page, console_messages):
         """Open + close every workspace; assert no uncaught exceptions surface."""
         labels = ["Home", "Family", "Health", "Finance", "Career", "FutureSpeak",
-                  "Contacts", "Wiki", "Trust", "Studio", "Code"]
+                  "Contacts", "Knowledge", "Trust", "Studio", "Code"]
         for label in labels:
             btn = loaded_page.locator(f".dock-btn:has-text('{label}')").first
             if btn.count() == 0:

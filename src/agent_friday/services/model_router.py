@@ -2308,7 +2308,8 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
 
 # Instructions injected when the chat request sets cite_sources=true. Friday is
 # told to attribute every factual claim using the inline citation grammar the UI
-# knows how to render (renderFridayMarkdown turns these into clickable chips).
+# knows how to render (renderFridayMarkdown turns these into chips; a [wiki:…]
+# or a conversation chip opens it in the Knowledge workspace).
 CITATION_INSTRUCTIONS = (
     "\n== SOURCE PRODUCTION MODE (cite every factual claim) ==\n"
     "You are in cited mode. EVERY factual claim — anything a skeptical reader "
@@ -3088,6 +3089,7 @@ def _detect_context_needs(message, workspace):
         'career': {'career', 'trust'},
         'trust': {'trust'},
         'wiki': {'wiki'},
+        'knowledge': {'wiki'},
         'home': {'todos', 'personality'},
         'family': {'trust'},
         'futurespeak': {'career'},

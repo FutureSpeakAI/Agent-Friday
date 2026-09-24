@@ -16,7 +16,7 @@ BUILTIN_DISTROS = {
     "default": {
         "name": "default",
         "description": "Standard Agent Friday — the default personality, no tone override",
-        "default_workspaces": ["home", "news", "messages", "calendar", "career", "code", "wiki", "contacts", "sites", "settings", "studio"],
+        "default_workspaces": ["home", "news", "messages", "calendar", "career", "code", "knowledge", "contacts", "sites", "settings", "studio"],
         "default_providers": ["anthropic", "google-gemini", "ollama-local"],
         "default_recipes": ["morning-briefing"],
         "system_prompt_overrides": {},
@@ -26,7 +26,7 @@ BUILTIN_DISTROS = {
     "journalist": {
         "name": "journalist",
         "description": "Personality only — Friday speaks like an investigative-research assistant, prioritizing source verification and editorial rigor. Does not change which workspaces, tools, or providers are available.",
-        "default_workspaces": ["home", "news", "messages", "calendar", "wiki", "contacts", "settings", "studio", "content"],
+        "default_workspaces": ["home", "news", "messages", "calendar", "knowledge", "contacts", "settings", "studio", "content"],
         "default_providers": ["anthropic", "google-gemini", "ollama-local"],
         "default_recipes": ["morning-briefing", "weekly-review"],
         "system_prompt_overrides": {
@@ -39,7 +39,7 @@ BUILTIN_DISTROS = {
     "developer": {
         "name": "developer",
         "description": "Personality only — Friday speaks like a pair programmer, focused on code quality and architecture. Does not add GitHub integration, CI/CD awareness, or any dev tools beyond what's already installed.",
-        "default_workspaces": ["home", "code", "news", "messages", "calendar", "wiki", "settings", "studio"],
+        "default_workspaces": ["home", "code", "news", "messages", "calendar", "knowledge", "settings", "studio"],
         "default_providers": ["anthropic", "ollama-local"],
         "default_recipes": [],
         "system_prompt_overrides": {
@@ -51,7 +51,7 @@ BUILTIN_DISTROS = {
     "researcher": {
         "name": "researcher",
         "description": "Personality only — Friday speaks like a research analyst, prioritizing depth, citations, and structured long-form synthesis. Does not change which workspaces, tools, or providers are available.",
-        "default_workspaces": ["home", "wiki", "news", "code", "messages", "calendar", "contacts", "settings", "studio"],
+        "default_workspaces": ["home", "knowledge", "news", "code", "messages", "calendar", "contacts", "settings", "studio"],
         "default_providers": ["anthropic", "google-gemini", "ollama-local"],
         "default_recipes": ["morning-briefing"],
         "system_prompt_overrides": {

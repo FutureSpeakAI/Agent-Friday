@@ -209,13 +209,14 @@ stored via `friday vault-setup`; `FRIDAY_PASSWORD` works as a legacy fallback):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `wiki_encrypted_sections` | string[] | `[]` | Wiki top-level sections to encrypt at rest, e.g. `["health", "legal", "family"]`. Existing files are encrypted in place on the next server start; reads, search, smart context, and the wiki UI work transparently. The Google Drive mirror receives ciphertext, never plaintext. Direct file editing of listed sections is no longer possible — use the wiki UI. |
+| `wiki_encrypted_sections` | string[] | `[]` | Wiki top-level sections to encrypt at rest, e.g. `["health", "legal", "family"]`. Existing files are encrypted in place on the next server start; reads, search, smart context, and the Knowledge workspace's Pages view work transparently. The Google Drive mirror receives ciphertext, never plaintext. Direct file editing of listed sections is no longer possible — use the Pages view. While the vault is locked, encrypted pages show as locked and cannot be edited. |
 
 ---
 
 ## Knowledge Graph
 
-The two-tier knowledge graph behind the 🌌 Knowledge Galaxy workspace. All
+The two-tier knowledge graph behind the 🌌 Knowledge workspace (its Graph
+view; the Pages view reads and edits the same wiki). All
 keys live under one `knowledge_graph` object; defaults apply when the block
 is absent. Derived artifacts live in `~/.friday/knowledge-graph/` and are
 always safe to delete (the wiki is the source of truth). Records derived

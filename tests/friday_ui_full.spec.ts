@@ -36,7 +36,7 @@ async function waitForLiquidUI(page: Page) {
 const WORKSPACES = [
   'Home', 'News', 'Messages', 'Calendar', 'Family', 'Co-Parent', 'Health',
   'Finance', 'Career', 'Contacts', 'Code', 'Sites', 'Draft', 'Content',
-  'Wiki', 'Trust', 'Studio', 'System',
+  'Knowledge', 'Trust', 'Studio', 'System',
 ];
 
 // Recalled models — must never surface in UI or config. (Fable 5 shipped in
